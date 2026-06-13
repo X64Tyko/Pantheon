@@ -1,0 +1,22 @@
+services:
+  kairos:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/kairos:/data
+      - /mnt/user/Media:/media:ro
+    restart: unless-stopped
+
+  tunarr:
+    image: chrisbenincasa/tunarr:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - HERMES_URL=http://kairos:8080
+    volumes:
+      - ./data/tunarr:/config/tunarr
+      - /mnt/user/Media:/media:ro
+    depends_on:
+      - kairos
+    restart: unless-stopped

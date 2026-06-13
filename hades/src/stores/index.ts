@@ -1,0 +1,7 @@
+import { ChannelStore } from './ChannelStore'
+import { SourceStore }  from './SourceStore'
+import { SystemStore }  from './SystemStore'
+
+export const sourceStore  = new SourceStore()
+export const channelStore = new ChannelStore()
+export const systemStore  = new SystemStore()

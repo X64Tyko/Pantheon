@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+/* ─── Color scheme ─────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+}
+
+/* ─── Base ─────────────────────────────────────────────────────────────────── */
+
+body {
+  @apply bg-zinc-950 text-zinc-100 min-h-screen;
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+}
+
+::selection {
+  @apply bg-violet-800/60 text-white;
+}
+
+/* ─── Scrollbar — dark with subtle violet accent ───────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(109 40 217 / 0.35) transparent;
+}
+
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgb(109 40 217 / 0.35);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(139 92 246 / 0.55);
+}
+
+/* ─── Utility: .scrollbar-dark (same as global but reusable on single elements) */
+.scrollbar-dark {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(109 40 217 / 0.35) transparent;
+}
+
+/* ─── Shared component styles ──────────────────────────────────────────────── */
+
+/* Section sub-heading */
+.section-label {
+  @apply text-[10px] font-semibold uppercase tracking-widest text-violet-400/80;
+}
+
+/* Card panel */
+.card {
+  @apply rounded-lg border border-violet-900/40 bg-zinc-900;
+}
+
+/* Primary input */
+.input {
+  @apply bg-zinc-900 border border-zinc-700/60 rounded px-3 py-1.5 text-sm
+         text-zinc-100 placeholder:text-zinc-600
+         outline-none focus:border-violet-500 transition-colors;
+}
+
+/* Button variants */
+.btn-primary {
+  @apply px-3 py-1.5 bg-amber-500 hover:bg-amber-400 active:bg-amber-600
+         text-black text-sm rounded font-semibold transition-colors;
+}
+
+.btn-secondary {
+  @apply px-3 py-1.5 bg-violet-900/40 hover:bg-violet-800/50 active:bg-violet-900/60
+         text-violet-300 text-sm rounded border border-violet-700/40 transition-colors;
+}
+
+.btn-ghost {
+  @apply px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 active:bg-zinc-800
+         text-zinc-400 hover:text-zinc-200 text-sm rounded transition-colors;
+}
+
+.btn-danger {
+  @apply px-2 py-0.5 bg-red-950/50 hover:bg-red-900/50
+         text-red-400 text-xs rounded border border-red-900/30 transition-colors;
+}
+
+/* ─── Animations ───────────────────────────────────────────────────────────── */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 0.8s linear infinite;
+}

@@ -1,0 +1,79 @@
+{
+    "name": "mobx",
+    "version": "6.16.1",
+    "description": "Simple, scalable state management.",
+    "source": "src/mobx.ts",
+    "main": "dist/index.js",
+    "umd:main": "dist/mobx.umd.production.min.js",
+    "unpkg": "dist/mobx.umd.production.min.js",
+    "jsdelivr": "dist/mobx.umd.production.min.js",
+    "jsnext:main": "dist/mobx.esm.production.min.js",
+    "module": "dist/mobx.esm.js",
+    "react-native": "dist/mobx.esm.js",
+    "types": "dist/mobx.d.ts",
+    "typings": "dist/mobx.d.ts",
+    "files": [
+        "src",
+        "dist",
+        "LICENSE",
+        "CHANGELOG.md",
+        "README.md"
+    ],
+    "sideEffects": false,
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/mobxjs/mobx.git"
+    },
+    "author": "Michel Weststrate",
+    "license": "MIT",
+    "funding": {
+        "type": "opencollective",
+        "url": "https://opencollective.com/mobx"
+    },
+    "bugs": {
+        "url": "https://github.com/mobxjs/mobx/issues"
+    },
+    "homepage": "https://mobx.js.org/",
+    "dependencies": {},
+    "devDependencies": {
+        "@babel/core": "^7.9.0",
+        "@babel/plugin-proposal-class-properties": "^7.8.3",
+        "@babel/plugin-proposal-decorators": "^7.8.3",
+        "@babel/plugin-transform-runtime": "^7.9.0",
+        "@babel/preset-env": "^7.9.5",
+        "@babel/preset-typescript": "^7.9.0",
+        "@babel/runtime": "^7.9.2",
+        "conditional-type-checks": "^1.0.5"
+    },
+    "keywords": [
+        "mobx",
+        "mobservable",
+        "observable",
+        "react-component",
+        "react",
+        "reactjs",
+        "reactive",
+        "model",
+        "frp",
+        "functional-reactive-programming",
+        "state management",
+        "data flow"
+    ],
+    "scripts": {
+        "test": "jest --config jest.projects.js",
+        "lint": "eslint src/**/*",
+        "build": "node ../../scripts/build.js mobx",
+        "build:test": "npm run build -- --target test",
+        "perf": "scripts/perf.sh",
+        "perf-legacy": "node --expose-gc ./__tests__/perf/index.js legacy",
+        "perf-proxy": "node --expose-gc ./__tests__/perf/index.js proxy",
+        "perf-decorator": "tsc -p ./__tests__/perf/tsconfig.decorator.json && node --expose-gc ./__tests__/perf/compiled/lazy-computed-decorator.js && node --expose-gc ./__tests__/perf/compiled/lazy-observable-decorator.js",
+        "test:performance": "npm run perf -- proxy && npm run perf -- legacy && npm run perf-decorator",
+        "test:mixed-versions": "npm test -- --testRegex mixed-versions",
+        "test:types": "tsc --noEmit",
+        "test:coverage": "npm test -- -i --coverage",
+        "test:size": "import-size --report . observable computed autorun action",
+        "test:check": "npm run test:types",
+        "prepublishOnly": "node ./scripts/prepublish.js && npm run build -- --target publish"
+    }
+}

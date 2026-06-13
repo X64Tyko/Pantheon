@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/api/client.ts","./src/api/types.ts","./src/components/layout.tsx","./src/pages/activitypage.tsx","./src/pages/channelspage.tsx","./src/pages/contentpage.tsx","./src/pages/sourcespage.tsx","./src/stores/channelstore.ts","./src/stores/sourcestore.ts","./src/stores/systemstore.ts","./src/stores/index.ts"],"version":"5.9.3"}
