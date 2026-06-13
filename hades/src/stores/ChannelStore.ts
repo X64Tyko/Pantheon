@@ -22,7 +22,7 @@ export class ChannelStore {
     }
   }
 
-  async add(data: Omit<Channel, 'channel_id'>) {
+  async add(data: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection'>) {
     await api.createChannel(data)
     await this.fetchAll()
   }

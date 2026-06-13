@@ -11,6 +11,7 @@ add_subdirectory(hades)
 add_subdirectory(kairos)
 add_subdirectory(hermes)
 add_subdirectory(hephaestus)
+add_subdirectory(momus)
 
 # Ensure the UI is built before the kairos binary is linked so a fresh
 # build always produces a deployable server + UI together.

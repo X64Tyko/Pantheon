@@ -1,29 +1,5 @@
-# Build
-build/
-cmake-build-*/
+# Root .gitignore covers all build, node, IDE, and runtime patterns.
+# Only kairos-specific overrides belong here.
 
-# IDE
-.idea/
-*.iml
-.vscode/
-
-# CMake
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-
-# FetchContent cache (large, re-fetched on clean build)
-_deps/
-
-# Runtime data (SQLite files are host-volume state, not source)
-data/kairos/*.db
-data/kairos/*.db-shm
-data/kairos/*.db-wal
-
-# Credentials — never commit
-kairos.conf
-
-# OS
-.DS_Store
-Thumbs.db
+# Keep ui-dist tracked — it is the compiled Hades UI served by the kairos binary.
+!ui-dist/

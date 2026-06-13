@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -36,4 +38,7 @@ private:
     std::filesystem::file_time_type          mtime_{};
     std::unordered_map<std::string, Entry>   entries_;
     mutable std::mutex                       mu_;
+
+    // Throttle maybeReload() to at most once per 30 seconds.
+    mutable std::atomic<std::chrono::steady_clock::rep> last_check_ns_{0};
 };

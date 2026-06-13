@@ -7,9 +7,14 @@
 #include "db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <thread>
+#include <vector>
+
+using json = nlohmann::json;
 
 SyncManager::SyncManager(Database& db, ConfStore& conf) : db_(db), conf_(conf) {}
 
@@ -97,6 +102,7 @@ void SyncManager::syncSource(const std::string& source_id) {
             syncMovies(*src, source_id, library_id, external_lib_id);
     }
 
+    syncPlexLinks(source_id);
     std::cout << "[sync] done: " << source_id << '\n';
 }
 
@@ -308,6 +314,132 @@ std::vector<std::string> SyncManager::sourceIds() const {
     for (const auto& s : sources_) ids.push_back(s->sourceId());
     return ids;
 }
+
+// ---------------------------------------------------------------------------
+// Plex-linked list sync
+// ---------------------------------------------------------------------------
+
+void SyncManager::triggerPlexLinkSync() {
+    bool expected = false;
+    if (!plex_sync_running_.compare_exchange_strong(expected, true)) {
+        std::cout << "[sync] plex-link sync already running — ignoring trigger\n";
+        return;
+    }
+    std::thread([this]() {
+        try {
+            for (const auto& src : sources_)
+                syncPlexLinks(src->sourceId());
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] plex-link sync error: " << e.what() << '\n';
+        }
+        plex_sync_running_.store(false);
+    }).detach();
+}
+
+void SyncManager::syncPlexLinks(const std::string& source_id) {
+    // Only Plex sources have playlists/collections
+    std::string base_url, source_type;
+    {
+        SQLite::Statement sq(db_.get(),
+            "SELECT base_url, source_type FROM media_source WHERE source_id = ? AND enabled = 1");
+        sq.bind(1, source_id);
+        if (!sq.executeStep()) return;
+        base_url    = sq.getColumn(0).getString();
+        source_type = sq.getColumn(1).getString();
+    }
+    if (source_type != "plex" || base_url.empty()) return;
+
+    std::string token = conf_.token(source_id);
+    if (token.empty()) return;
+
+    struct LinkRow { std::string list_type, list_id, external_id, plex_type; };
+    std::vector<LinkRow> links;
+    {
+        SQLite::Statement q(db_.get(),
+            "SELECT list_type, list_id, external_id, plex_type "
+            "FROM plex_list_link WHERE source_id = ?");
+        q.bind(1, source_id);
+        while (q.executeStep()) {
+            links.push_back({
+                q.getColumn(0).getString(), q.getColumn(1).getString(),
+                q.getColumn(2).getString(), q.getColumn(3).getString()
+            });
+        }
+    }
+    if (links.empty()) return;
+
+    std::cout << "[sync] re-syncing " << links.size() << " Plex-linked list(s)\n";
+
+    httplib::Client client(base_url);
+    client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
+    client.set_connection_timeout(10);
+    client.set_read_timeout(30);
+
+    for (const auto& link : links) {
+        try {
+            std::string path = (link.plex_type == "playlist")
+                ? "/playlists/" + link.external_id + "/items"
+                : "/library/metadata/" + link.external_id + "/children";
+
+            auto r = client.Get(path.c_str());
+            if (!r || r->status != 200) {
+                std::cerr << "[sync] failed to fetch Plex items for list "
+                          << link.list_id << " (HTTP " << (r ? r->status : 0) << ")\n";
+                continue;
+            }
+
+            struct Item { std::string item_type; std::string kairos_id; };
+            std::vector<Item> items;
+            auto j = json::parse(r->body);
+            const auto& md = j["MediaContainer"];
+            if (md.contains("Metadata")) {
+                for (const auto& item : md["Metadata"]) {
+                    std::string pt = item.value("type", "");
+                    std::string it = (pt == "movie") ? "movie" : "episode";
+                    std::string rk = item["ratingKey"].get<std::string>();
+                    SQLite::Statement lk(db_.get(),
+                        "SELECT kairos_id FROM source_mapping "
+                        "WHERE source_id=? AND external_id=? AND item_type=?");
+                    lk.bind(1, source_id); lk.bind(2, rk); lk.bind(3, it);
+                    if (lk.executeStep()) items.push_back({ it, lk.getColumn(0).getString() });
+                }
+            }
+
+            const std::string fk_col   = (link.list_type == "playlist") ? "playlist_id"    : "filler_list_id";
+            const std::string item_tbl = (link.list_type == "playlist") ? "playlist_item"  : "filler_list_item";
+
+            SQLite::Transaction txn(db_.get());
+            SQLite::Statement del(db_.get(),
+                "DELETE FROM " + item_tbl + " WHERE " + fk_col + " = ?");
+            del.bind(1, link.list_id); del.exec();
+
+            int pos = 0;
+            for (const auto& item : items) {
+                SQLite::Statement ins(db_.get(),
+                    "INSERT OR IGNORE INTO " + item_tbl +
+                    " (" + fk_col + ", position, item_type, item_id) VALUES (?,?,?,?)");
+                ins.bind(1, link.list_id); ins.bind(2, pos++);
+                ins.bind(3, item.item_type); ins.bind(4, item.kairos_id);
+                ins.exec();
+            }
+
+            SQLite::Statement ts(db_.get(),
+                "UPDATE plex_list_link SET last_synced_at = ? WHERE list_type = ? AND list_id = ?");
+            ts.bind(1, static_cast<int64_t>(std::time(nullptr)));
+            ts.bind(2, link.list_type); ts.bind(3, link.list_id);
+            ts.exec();
+
+            txn.commit();
+            std::cout << "[sync]   \"" << link.list_id << "\": "
+                      << items.size() << " item(s)\n";
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] error syncing list " << link.list_id
+                      << ": " << e.what() << '\n';
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 MediaSource* SyncManager::findSource(const std::string& source_id) const {
     for (const auto& s : sources_)

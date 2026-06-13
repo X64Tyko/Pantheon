@@ -262,6 +262,201 @@ constexpr Migration kMigrations[] = {
 
 )SQL" }
 
+,
+
+// ── v4: add program_count — block stops after N programs (0=no limit); end_time
+//        remains as an optional hard time cutoff; either condition stops the block.
+{ 4, R"SQL(
+    ALTER TABLE block ADD COLUMN program_count INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
+,
+
+// ── v5: advancement/cursor_scope move to block level; season_filter + expanded
+//        content types on block_content; filler_list tables; playlist_item id.
+{ 5, R"SQL(
+
+    -- Advancement now lives on the block, not on individual content rows
+    ALTER TABLE block ADD COLUMN advancement  TEXT NOT NULL DEFAULT 'sequential'
+        CHECK(advancement IN ('sequential','shuffle','rerun_shuffle'));
+    ALTER TABLE block ADD COLUMN cursor_scope TEXT NOT NULL DEFAULT 'block'
+        CHECK(cursor_scope IN ('global','channel','block'));
+
+    -- Rebuild block_content: drop advancement/cursor_scope, add season_filter,
+    -- expand content_type to include 'episode' and 'filler_list'.
+    CREATE TABLE block_content_v5 (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        block_id      TEXT    NOT NULL REFERENCES block(block_id) ON DELETE CASCADE,
+        content_type  TEXT    NOT NULL
+                      CHECK(content_type IN ('show','movie','episode','playlist','filler_list')),
+        content_id    TEXT    NOT NULL,
+        position      INTEGER NOT NULL DEFAULT 0,
+        season_filter INTEGER,
+        UNIQUE (block_id, content_type, content_id)
+    );
+
+    INSERT INTO block_content_v5 (id, block_id, content_type, content_id, position)
+    SELECT id, block_id, content_type, content_id, position
+    FROM block_content;
+
+    DROP TABLE block_content;
+    ALTER TABLE block_content_v5 RENAME TO block_content;
+
+    CREATE INDEX IF NOT EXISTS idx_block_content_block ON block_content(block_id, position);
+
+    -- Rebuild playlist_item to add auto-increment id for REST delete operations
+    CREATE TABLE playlist_item_v5 (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        playlist_id TEXT    NOT NULL REFERENCES playlist(playlist_id) ON DELETE CASCADE,
+        position    INTEGER NOT NULL,
+        item_type   TEXT    NOT NULL CHECK(item_type IN ('episode','movie')),
+        item_id     TEXT    NOT NULL,
+        UNIQUE (playlist_id, position)
+    );
+
+    INSERT INTO playlist_item_v5 (playlist_id, position, item_type, item_id)
+    SELECT playlist_id, position, item_type, item_id FROM playlist_item;
+
+    DROP TABLE playlist_item;
+    ALTER TABLE playlist_item_v5 RENAME TO playlist_item;
+
+    CREATE INDEX IF NOT EXISTS idx_playlist_item ON playlist_item(playlist_id, position);
+
+    -- Filler lists: reusable pools of short content for gap-filling
+    CREATE TABLE filler_list (
+        filler_list_id TEXT    PRIMARY KEY,
+        title          TEXT    NOT NULL,
+        advancement    TEXT    NOT NULL DEFAULT 'shuffle'
+                               CHECK(advancement IN ('sequential','shuffle'))
+    );
+
+    CREATE TABLE filler_list_item (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        filler_list_id TEXT    NOT NULL REFERENCES filler_list(filler_list_id) ON DELETE CASCADE,
+        item_type      TEXT    NOT NULL CHECK(item_type IN ('episode','movie')),
+        item_id        TEXT    NOT NULL,
+        position       INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (filler_list_id, item_type, item_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_filler_list_item ON filler_list_item(filler_list_id, position);
+
+)SQL", true /* requires_fk_off */ }
+
+,
+
+// ── v6: late_start_mins — block can start up to N minutes past start_time if
+//        preempted by higher-priority content that finishes within that window.
+{ 6, R"SQL(
+    ALTER TABLE block ADD COLUMN late_start_mins INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
+,
+
+// ── v7: plex_list_link — tracks which playlists/filler-lists mirror a Plex
+//        playlist or collection so they can be re-synced automatically.
+{ 7, R"SQL(
+    CREATE TABLE IF NOT EXISTS plex_list_link (
+        list_type      TEXT    NOT NULL CHECK(list_type IN ('playlist','filler_list')),
+        list_id        TEXT    NOT NULL,
+        source_id      TEXT    NOT NULL REFERENCES media_source(source_id) ON DELETE CASCADE,
+        external_id    TEXT    NOT NULL,
+        plex_type      TEXT    NOT NULL CHECK(plex_type IN ('playlist','collection')),
+        last_synced_at INTEGER,
+        PRIMARY KEY (list_type, list_id)
+    );
+)SQL" }
+
+,
+
+// ── v8: block filler assignments, channel filler defaults, and new block
+//        scheduling fields (align_to_mins, inter_filler, early_start_secs,
+//        filler_selection).
+{ 8, R"SQL(
+    ALTER TABLE block ADD COLUMN align_to_mins    INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE block ADD COLUMN inter_filler     INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE block ADD COLUMN early_start_secs INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE block ADD COLUMN filler_selection TEXT    NOT NULL DEFAULT 'round_robin';
+
+    ALTER TABLE channel ADD COLUMN default_filler_selection TEXT NOT NULL DEFAULT 'round_robin';
+
+    CREATE TABLE block_filler_entry (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        block_id       TEXT    NOT NULL REFERENCES block(block_id) ON DELETE CASCADE,
+        filler_list_id TEXT    NOT NULL REFERENCES filler_list(filler_list_id) ON DELETE CASCADE,
+        advancement    TEXT    NOT NULL DEFAULT 'sequential'
+                               CHECK(advancement IN ('sequential','shuffle','sized')),
+        weight         INTEGER NOT NULL DEFAULT 1,
+        position       INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (block_id, filler_list_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_block_filler_entry ON block_filler_entry(block_id, position);
+
+    CREATE TABLE channel_filler_entry (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id     TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        filler_list_id TEXT    NOT NULL REFERENCES filler_list(filler_list_id) ON DELETE CASCADE,
+        advancement    TEXT    NOT NULL DEFAULT 'sequential'
+                               CHECK(advancement IN ('sequential','shuffle','sized')),
+        weight         INTEGER NOT NULL DEFAULT 1,
+        position       INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (channel_id, filler_list_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_channel_filler_entry ON channel_filler_entry(channel_id, position);
+)SQL" }
+
+,
+
+// ── v9: block_state — tracks round-robin content position per (block, channel).
+//        Needed by the RuleEngine to cycle through block_content slots without
+//        depending on media_cursor (which tracks per-show episode position).
+{ 9, R"SQL(
+    CREATE TABLE IF NOT EXISTS block_state (
+        block_id         TEXT    NOT NULL REFERENCES block(block_id) ON DELETE CASCADE,
+        channel_id       TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        content_position INTEGER NOT NULL DEFAULT 0,
+        updated_at       INTEGER NOT NULL,
+        PRIMARY KEY (block_id, channel_id)
+    );
+)SQL" }
+
+,
+
+// ── v10: scheduled_program — persisted materialized schedule.
+//         Each row stores the SimState cursor snapshot after that entry was
+//         scheduled, so the EPGMaterializer can extend the schedule forward
+//         from exactly where it left off without re-deriving state from play
+//         history. status tracks actual playback: scheduled → aired | skipped.
+{ 10, R"SQL(
+    CREATE TABLE IF NOT EXISTS scheduled_program (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id       TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        block_id         TEXT    REFERENCES block(block_id) ON DELETE SET NULL,
+        item_type        TEXT    NOT NULL CHECK(item_type IN ('episode','movie')),
+        item_id          TEXT    NOT NULL,
+        wall_clock_start INTEGER NOT NULL,
+        wall_clock_end   INTEGER NOT NULL,
+        status           TEXT    NOT NULL DEFAULT 'scheduled'
+                         CHECK(status IN ('scheduled','aired','skipped')),
+        cursor_json      TEXT    NOT NULL DEFAULT '{}',
+        created_at       INTEGER NOT NULL,
+        UNIQUE(channel_id, wall_clock_start)
+    );
+    CREATE INDEX IF NOT EXISTS idx_sched_channel_time
+        ON scheduled_program(channel_id, wall_clock_start);
+    CREATE INDEX IF NOT EXISTS idx_sched_channel_end
+        ON scheduled_program(channel_id, wall_clock_end DESC);
+)SQL" }
+
+,
+
+// ── v11: per-channel seed for deterministic EPG preview projection.
+{ 11, R"SQL(
+    ALTER TABLE channel ADD COLUMN seed INTEGER NOT NULL DEFAULT 12345;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

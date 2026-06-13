@@ -1,0 +1,35 @@
+# ── Node / pnpm ───────────────────────────────────────────────────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+
+# ── CMake / C++ build ─────────────────────────────────────────────────────────
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+_deps/
+
+# ── Runtime data (host-volume state — never commit) ───────────────────────────
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# ── Credentials ───────────────────────────────────────────────────────────────
+kairos.conf
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Design handoff / one-off assets ───────────────────────────────────────────
+/design_handoff_hades_scheduler/

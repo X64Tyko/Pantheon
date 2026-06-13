@@ -4,7 +4,35 @@
 
 :root {
   color-scheme: dark;
+
+  /* ── HADES design tokens ─────────────────────────────────────────────────── */
+  --hds-bg:     oklch(0.152 0.016 286);
+  --hds-bg-2:   oklch(0.19 0.018 286);
+  --hds-bg-3:   oklch(0.235 0.02 286);
+  --hds-bg-4:   oklch(0.28 0.022 286);
+  --hds-line:   oklch(0.34 0.02 286);
+  --hds-line-s: oklch(0.255 0.016 286);
+  --hds-txt:    oklch(0.93 0.008 90);
+  --hds-txt-2:  oklch(0.66 0.012 286);
+  --hds-txt-3:  oklch(0.5 0.012 286);
+  --hds-gold:   oklch(0.83 0.13 84);
+  --hds-gold-2: oklch(0.72 0.12 80);
+  --hds-violet: oklch(0.7 0.13 287);
 }
+
+/* ─── HADES animations ─────────────────────────────────────────────────────── */
+
+@keyframes hds-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes hds-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+.hds-in { animation: hds-in 0.17s ease both; }
 
 /* ─── Base ─────────────────────────────────────────────────────────────────── */
 

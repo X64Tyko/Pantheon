@@ -37,23 +37,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
-# ── kairos ────────────────────────────────────────────────────────────────────
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
+# ── kairos_core (all sources except main.cpp — linkable by tests) ─────────────
+file(GLOB_RECURSE ALL_SOURCES CONFIGURE_DEPENDS src/*.cpp)
+list(FILTER ALL_SOURCES EXCLUDE REGEX ".*[/\\\\]main\\.cpp$")
 
-add_executable(kairos ${SOURCES})
+add_library(kairos_core STATIC ${ALL_SOURCES})
 
-target_include_directories(kairos PRIVATE src)
+target_include_directories(kairos_core PUBLIC src)
 
-target_link_libraries(kairos
-    PRIVATE
+target_link_libraries(kairos_core
+    PUBLIC
     nlohmann_json::nlohmann_json
     SQLiteCpp
     httplib::httplib
 )
 
 if(UNIX)
-    target_link_libraries(kairos PRIVATE pthread dl)
+    target_link_libraries(kairos_core PUBLIC pthread dl)
 endif()
+
+# ── kairos executable ─────────────────────────────────────────────────────────
+add_executable(kairos src/main.cpp)
+target_link_libraries(kairos PRIVATE kairos_core)
 
 # When built as part of Pantheon, sequence after hades so ui-dist is ready.
 if(TARGET hades)

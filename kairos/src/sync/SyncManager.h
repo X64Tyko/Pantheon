@@ -20,6 +20,10 @@ public:
     void triggerSync(const std::string& source_id = "");
     bool isSyncing() const { return sync_running_.load(); }
 
+    // Re-syncs all Plex-linked playlists/filler-lists without a full library scan
+    void triggerPlexLinkSync();
+    bool isPlexLinkSyncing() const { return plex_sync_running_.load(); }
+
     std::vector<std::string> sourceIds()                              const;
     MediaSource*             findSource(const std::string& source_id) const;
 
@@ -34,6 +38,8 @@ private:
                        const std::string& source_id,
                        const std::string& library_id,
                        const std::string& external_id);
+
+    void syncPlexLinks(const std::string& source_id);
 
     void syncShows(MediaSource& src,
                    const std::string& source_id,
@@ -53,4 +59,5 @@ private:
     ConfStore&                                conf_;
     std::vector<std::unique_ptr<MediaSource>> sources_;
     std::atomic<bool>                         sync_running_{false};
+    std::atomic<bool>                         plex_sync_running_{false};
 };

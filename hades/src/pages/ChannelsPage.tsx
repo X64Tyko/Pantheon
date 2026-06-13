@@ -1,5 +1,6 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { channelStore } from '../stores'
 
 export default observer(function ChannelsPage() {
@@ -77,12 +78,14 @@ export default observer(function ChannelsPage() {
                 <div className="text-[10px] text-zinc-600 mt-0.5">{ch.timezone}</div>
               </div>
             </div>
-            <button
-              onClick={() => store.remove(ch.channel_id)}
-              className="btn-danger"
-            >
-              Remove
-            </button>
+            <div className="flex gap-2">
+              <Link to={`/channels/${ch.channel_id}`} className="btn-secondary">
+                Edit Schedule
+              </Link>
+              <button onClick={() => store.remove(ch.channel_id)} className="btn-danger">
+                Remove
+              </button>
+            </div>
           </div>
         ))}
       </div>

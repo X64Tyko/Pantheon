@@ -42,6 +42,14 @@ ConfStore::ConfStore(std::string path) : path_(std::move(path)) {
 }
 
 void ConfStore::maybeReload() {
+    // Throttle: skip the filesystem stat if we checked within the last 30 seconds.
+    const auto now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto prev   = last_check_ns_.load(std::memory_order_relaxed);
+    constexpr auto kInterval = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::seconds{30}).count();
+    if (now_ns - prev < kInterval) return;
+    last_check_ns_.store(now_ns, std::memory_order_relaxed);
+
     std::error_code ec;
     auto mtime = std::filesystem::last_write_time(path_, ec);
     if (ec) return;

@@ -5,6 +5,8 @@
 #include "conf/ConfStore.h"
 #include "db/Database.h"
 #include "log/LogBuffer.h"
+#include "scheduler/EPGMaterializer.h"
+#include "scheduler/RuleEngine.h"
 #include "sync/SyncManager.h"
 
 int main(int argc, char* argv[]) {
@@ -27,9 +29,11 @@ int main(int argc, char* argv[]) {
             conf_path = argv[++i];
     }
 
-    Database    db(db_path);
-    ConfStore   conf(conf_path);
-    SyncManager sync(db, conf);
+    Database         db(db_path);
+    ConfStore        conf(conf_path);
+    SyncManager      sync(db, conf);
+    RuleEngine       engine(db);
+    EPGMaterializer  materializer(db, engine);
     sync.loadSources();
 
     httplib::Server svr;
@@ -39,7 +43,7 @@ int main(int argc, char* argv[]) {
         res.set_content(R"({"status":"ok","service":"kairos"})", "application/json");
     });
 
-    Router router(svr, db, sync, conf, log_buffer);
+    Router router(svr, db, sync, conf, log_buffer, engine, materializer);
     router.registerRoutes();
 
     std::cout << "[kairos] listening on 0.0.0.0:" << port
