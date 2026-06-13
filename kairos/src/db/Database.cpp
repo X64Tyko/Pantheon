@@ -457,6 +457,48 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE channel ADD COLUMN seed INTEGER NOT NULL DEFAULT 12345;
 )SQL" }
 
+,
+
+// ── v12: add ON DELETE CASCADE to block.channel_id.
+//         v2 rebuilt block without CASCADE, so deleting a channel left orphaned
+//         blocks behind (FK violation). Full table rebuild required — SQLite
+//         does not support ALTER FOREIGN KEY.
+{ 12, R"SQL(
+    CREATE TABLE block_v12 (
+        block_id           TEXT    PRIMARY KEY,
+        channel_id         TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        block_type         TEXT    NOT NULL CHECK(block_type IN ('episode','premier','filler','movie')),
+        day_mask           INTEGER NOT NULL DEFAULT 127,
+        start_time         TEXT    NOT NULL DEFAULT '00:00',
+        end_time           TEXT,
+        priority           INTEGER NOT NULL DEFAULT 0,
+        max_content_rating TEXT,
+        config_json        TEXT    NOT NULL DEFAULT '{}',
+        program_count      INTEGER NOT NULL DEFAULT 0,
+        advancement        TEXT    NOT NULL DEFAULT 'sequential'
+                           CHECK(advancement IN ('sequential','shuffle','rerun_shuffle')),
+        cursor_scope       TEXT    NOT NULL DEFAULT 'block'
+                           CHECK(cursor_scope IN ('global','channel','block')),
+        late_start_mins    INTEGER NOT NULL DEFAULT 0,
+        align_to_mins      INTEGER NOT NULL DEFAULT 0,
+        inter_filler       INTEGER NOT NULL DEFAULT 0,
+        early_start_secs   INTEGER NOT NULL DEFAULT 0,
+        filler_selection   TEXT    NOT NULL DEFAULT 'round_robin'
+    );
+
+    INSERT INTO block_v12
+        SELECT block_id, channel_id, block_type, day_mask, start_time, end_time,
+               priority, max_content_rating, config_json, program_count,
+               advancement, cursor_scope, late_start_mins, align_to_mins,
+               inter_filler, early_start_secs, filler_selection
+        FROM block;
+
+    DROP TABLE block;
+    ALTER TABLE block_v12 RENAME TO block;
+
+    CREATE INDEX IF NOT EXISTS idx_block_channel ON block(channel_id, priority);
+)SQL", true /* requires_fk_off */ }
+
 }; // kMigrations
 
 } // namespace

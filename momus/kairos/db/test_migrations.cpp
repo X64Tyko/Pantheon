@@ -45,10 +45,10 @@ protected:
 // Migration count & sequencing
 // ---------------------------------------------------------------------------
 
-TEST_F(MigrationTest, AllElevenMigrationsApplied) {
+TEST_F(MigrationTest, AllTwelveMigrationsApplied) {
     SQLite::Statement q(db.get(), "SELECT COUNT(*) FROM schema_migrations");
     q.executeStep();
-    EXPECT_EQ(q.getColumn(0).getInt(), 11);
+    EXPECT_EQ(q.getColumn(0).getInt(), 12);
 }
 
 TEST_F(MigrationTest, MigrationVersionsAreContiguousFrom1) {
@@ -57,8 +57,8 @@ TEST_F(MigrationTest, MigrationVersionsAreContiguousFrom1) {
         "SELECT version FROM schema_migrations ORDER BY version");
     while (q.executeStep())
         versions.push_back(q.getColumn(0).getInt());
-    ASSERT_EQ(versions.size(), 11u);
-    for (int i = 0; i < 11; ++i)
+    ASSERT_EQ(versions.size(), 12u);
+    for (int i = 0; i < 12; ++i)
         EXPECT_EQ(versions[i], i + 1) << "Gap at migration " << (i + 1);
 }
 
@@ -205,7 +205,7 @@ TEST_F(MigrationTest, AllKeyIndicesExist) {
 
 TEST_F(MigrationTest, NoDoubleMigrationsDuringStartup) {
     SQLite::Statement q(db.get(),
-        "SELECT COUNT(*) FROM schema_migrations WHERE version > 11");
+        "SELECT COUNT(*) FROM schema_migrations WHERE version > 12");
     q.executeStep();
     EXPECT_EQ(q.getColumn(0).getInt(), 0) << "Unexpected extra migration row";
 }

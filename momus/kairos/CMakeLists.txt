@@ -16,6 +16,7 @@ add_executable(momus_kairos
     db/test_migrations.cpp
     db/test_schema_constraints.cpp
     scheduler/test_rule_engine.cpp
+    scheduler/test_epg_output.cpp
 )
 
 # kairos_core brings in SQLiteCpp, nlohmann_json, httplib, and the src/ include
