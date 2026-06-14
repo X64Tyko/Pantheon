@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite'
 import { makeAutoObservable, runInAction } from 'mobx'
-import { CSSProperties, ReactNode, useEffect, useRef, useState } from 'react'
+import { Component, CSSProperties, ReactNode, useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { channelStore } from '../stores'
@@ -49,6 +49,7 @@ const BLANK_DRAFT: BlockDraft = {
   priority: 1, max_content_rating: '',
   filler_selection: 'round_robin',
   align_to_mins: 0, inter_filler: false,
+  smart_pct: 30, start_scope: 'block',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -109,6 +110,7 @@ function blockToDraft(block: Block): BlockDraft {
     priority: block.priority, max_content_rating: block.max_content_rating,
     filler_selection: block.filler_selection ?? 'round_robin',
     align_to_mins: block.align_to_mins ?? 0, inter_filler: block.inter_filler ?? false,
+    smart_pct: block.smart_pct ?? 30, start_scope: block.start_scope ?? 'block',
   }
 }
 
@@ -234,10 +236,10 @@ class ChannelDetailStore {
     }
   }
 
-  async loadEpg(channelId: string) {
+  async loadEpg(channelId: string, force = false) {
     this.epgLoading = true
     try {
-      const items = await api.previewChannelEpg(channelId, 48, this.channelDraftSeed)
+      const items = await api.previewChannelEpg(channelId, 168, this.channelDraftSeed, force)
       runInAction(() => { this.epgItems = items; this.epgLoading = false })
     } catch {
       runInAction(() => { this.epgLoading = false })
@@ -345,7 +347,7 @@ class ChannelDetailStore {
       const toRemoveContent = origContent.filter(c  => !draftContent.some(dc => dc.id === c.id))
       const toAddContent    = draftContent.filter(dc => dc.id < 0)
       for (const c  of toRemoveContent) await api.removeBlockContent(channelId, blockId, c.id)
-      for (const c  of toAddContent)    await api.addBlockContent(channelId, blockId, { content_type: c.content_type, content_id: c.content_id, season_filter: c.season_filter })
+      for (const c  of toAddContent)    await api.addBlockContent(channelId, blockId, { content_type: c.content_type, content_id: c.content_id, season_filter: c.season_filter, weight: c.weight, run_count: c.run_count })
 
       // Sync filler entries
       const toRemoveFiller = origFiller.filter(fe  => !draftFiller.some(dfe => dfe.id === fe.id))
@@ -361,7 +363,7 @@ class ChannelDetailStore {
 
       await this.load(channelId)
       runInAction(() => {
-        const { filler_selection, align_to_mins, inter_filler, early_start_secs } = this.draft
+        const { filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope } = this.draft
         const block = this.blocks.find(b => b.block_id === blockId) ?? null
         this.saving       = false
         this.isNewMode    = false
@@ -369,7 +371,7 @@ class ChannelDetailStore {
         this.editing      = block
         this.contentDirty = false
         if (block) {
-          this.draft              = { ...blockToDraft(block), filler_selection, align_to_mins, inter_filler, early_start_secs }
+          this.draft              = { ...blockToDraft(block), filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope }
           this.draftContent       = [...block.content]
           this.draftFillerEntries = [...block.filler_entries]
         }
@@ -383,7 +385,7 @@ class ChannelDetailStore {
     if (!this.editing) return
     const src = this.editing
     const payload = blockToDraft(src)
-    const { filler_selection, align_to_mins, inter_filler, early_start_secs } = src
+    const { filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope } = src
     try {
       const { block_id } = await api.createBlock(channelId, payload)
       for (const c of src.content) {
@@ -399,7 +401,7 @@ class ChannelDetailStore {
           this.selectedId         = block_id
           this.editing            = block
           this.isNewMode          = false
-          this.draft              = { ...blockToDraft(block), filler_selection, align_to_mins, inter_filler, early_start_secs }
+          this.draft              = { ...blockToDraft(block), filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope }
           this.draftContent       = [...block.content]
           this.draftFillerEntries = [...block.filler_entries]
           this.contentDirty       = false
@@ -429,6 +431,8 @@ class ChannelDetailStore {
       position: pos,
       season_filter: item.season_filter ?? undefined,
       title: item.title ?? item.content_id,
+      weight: 1,
+      run_count: 1,
     }]
     this.contentDirty = true
   }
@@ -436,6 +440,15 @@ class ChannelDetailStore {
   removeContent(channelId: string, cid: number) {
     this.draftContent = this.draftContent.filter(c => c.id !== cid)
     this.contentDirty = true
+  }
+
+  updateContentField(channelId: string, cid: number, field: 'weight' | 'run_count', value: number) {
+    this.draftContent = this.draftContent.map(c => c.id === cid ? { ...c, [field]: value } : c)
+    this.contentDirty = true
+    // Persist immediately for saved items (id > 0)
+    if (cid > 0 && this.editing) {
+      api.updateBlockContent(channelId, this.editing.block_id, cid, { [field]: value }).catch(() => {})
+    }
   }
 
   async addBlockFiller(channelId: string, body: { filler_list_id: string; advancement: FillerEntryAdvancement; weight: number }) {
@@ -742,7 +755,9 @@ export default observer(function ChannelDetailPage() {
           </div>
 
           {/* EPG Preview */}
-          <EpgPreview blocks={epgBlocks} epgItems={store.epgItems} epgLoading={store.epgLoading} epgDay={store.epgDay} onDay={d => { store.epgDay = d }} onRefresh={() => store.loadEpg(id)} onSelectBlock={blockId => store.select(blockId)} />
+          <EpgErrorBoundary>
+            <EpgPreview blocks={epgBlocks} epgItems={store.epgItems} epgLoading={store.epgLoading} epgDay={store.epgDay} timezone={channel?.timezone ?? 'UTC'} onDay={d => { store.epgDay = d }} onRefresh={() => store.loadEpg(id)} onSelectBlock={blockId => store.select(blockId)} />
+          </EpgErrorBoundary>
         </div>
 
         {/* Side panel (always visible) */}
@@ -919,33 +934,93 @@ function computeEpg(blocks: Block[], dayIdx: number): EpgSeg[] {
   return segs
 }
 
-function EpgPreview({ blocks, epgItems, epgLoading, epgDay, onDay, onRefresh, onSelectBlock }: {
+const EPG_ZOOM_LEVELS = [1, 2, 3, 6] as const
+
+class EpgErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null }
+  static getDerivedStateFromError(e: unknown) { return { error: String(e) } }
+  render() {
+    if (this.state.error) return (
+      <div style={{ padding: '12px 24px', fontSize: 11, color: 'oklch(0.65 0.12 22)', borderTop: '1px solid var(--hds-line-s)' }}>
+        EPG preview error: {this.state.error}
+      </div>
+    )
+    return this.props.children
+  }
+}
+
+// Convert an epoch-ms timestamp to minutes-since-midnight in the given IANA timezone.
+// Falls back to UTC if the timezone is invalid or the date is out of range.
+function msToTzMins(ms: number, tz: string): number {
+  try {
+    const d = new Date(ms)
+    if (isNaN(d.getTime())) return 0
+    const safeTz = tz || 'UTC'
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: safeTz, hour: 'numeric', minute: 'numeric', hour12: false,
+    }).formatToParts(d)
+    const h = parseInt(parts.find(p => p.type === 'hour')?.value   ?? '0', 10) % 24
+    const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0', 10)
+    return h * 60 + m
+  } catch {
+    const d = new Date(ms)
+    return d.getUTCHours() * 60 + d.getUTCMinutes()
+  }
+}
+
+// Returns JS getDay() (0=Sun … 6=Sat) for the date in the given timezone.
+// Falls back to UTC if the timezone is invalid or the date is out of range.
+function getDayInTZ(ms: number, tz: string): number {
+  try {
+    const d = new Date(ms)
+    if (isNaN(d.getTime())) return d.getUTCDay()
+    const safeTz = tz || 'UTC'
+    const p = new Intl.DateTimeFormat('en-US', {
+      timeZone: safeTz, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(d)
+    const yr = parseInt(p.find(x => x.type === 'year')?.value  ?? '2000', 10)
+    const mo = parseInt(p.find(x => x.type === 'month')?.value ?? '1',    10) - 1
+    const dy = parseInt(p.find(x => x.type === 'day')?.value   ?? '1',    10)
+    return new Date(yr, mo, dy).getDay()
+  } catch {
+    return new Date(ms).getUTCDay()
+  }
+}
+
+function EpgPreview({ blocks, epgItems, epgLoading, epgDay, timezone, onDay, onRefresh, onSelectBlock }: {
   blocks:        Block[]
   epgItems:      EpgProgram[]
   epgLoading:    boolean
   epgDay:        number
+  timezone:      string
   onDay:         (d: number) => void
   onRefresh:     () => void
   onSelectBlock: (blockId: string) => void
 }) {
+  const tz = timezone || 'UTC'
+
+  const [zoom, setZoom] = useState<number>(1)
+  const zoomIdx    = EPG_ZOOM_LEVELS.indexOf(zoom as typeof EPG_ZOOM_LEVELS[number])
+  const canZoomIn  = zoomIdx < EPG_ZOOM_LEVELS.length - 1
+  const canZoomOut = zoomIdx > 0
+
   const targetDOW = [1, 2, 3, 4, 5, 6, 0][epgDay]
-  const dayItems  = epgItems.filter(item => new Date(item.wall_clock_start_ms).getDay() === targetDOW)
+  const dayItems  = epgItems.filter(item => getDayInTZ(item.wall_clock_start_ms, tz) === targetDOW)
   const hasEpg    = dayItems.length > 0
   const hasCached = hasEpg && dayItems.some(i => i.status === 'aired' || i.status === 'scheduled')
 
   const segs: EpgSeg[] = hasEpg
     ? dayItems.flatMap(item => {
-        const d   = new Date(item.wall_clock_start_ms)
-        const end = new Date(item.wall_clock_end_ms)
-        let startMins = d.getHours() * 60 + d.getMinutes()
-        let endMins   = end.getHours() * 60 + end.getMinutes()
+        let startMins = msToTzMins(item.wall_clock_start_ms, tz)
+        let endMins   = msToTzMins(item.wall_clock_end_ms,   tz)
         if (endMins <= startMins && endMins < 60) endMins = 1440
         endMins = Math.min(endMins, 1440)
         if (endMins <= startMins) return []
-        const block   = blocks.find(b => b.block_id === item.block_id)
-        const meta    = block ? BLOCK_META[block.block_type] : BLOCK_META.episode
-        const isEp    = item.item_type === 'episode' && item.show_title
-        const epLabel = isEp && item.season != null && item.episode_num != null
+        const isFiller = item.item_type === 'filler'
+        const block    = blocks.find(b => b.block_id === item.block_id)
+        const meta     = isFiller ? BLOCK_META.filler : (block ? BLOCK_META[block.block_type] : BLOCK_META.episode)
+        const isEp     = item.item_type === 'episode' && item.show_title
+        const epLabel  = isEp && item.season != null && item.episode_num != null
           ? `S${String(item.season).padStart(2, '0')}E${String(item.episode_num).padStart(2, '0')}`
           : undefined
         return [{
@@ -953,10 +1028,11 @@ function EpgPreview({ blocks, epgItems, epgLoading, epgDay, onDay, onRefresh, on
           widthPct: Math.max((endMins - startMins) / 1440 * 100, 0.25),
           bg:       meta.bg,
           time:     m2t(startMins),
-          title:    isEp ? item.show_title! : item.title,
+          title:    isEp ? item.show_title! : isFiller ? 'Filler' : item.title,
           subtitle: isEp ? item.title : undefined,
           epLabel,
           blockId:  item.block_id || undefined,
+          faded:    isFiller,
         }]
       })
     : computeEpg(blocks, epgDay)
@@ -967,14 +1043,24 @@ function EpgPreview({ blocks, epgItems, epgLoading, epgDay, onDay, onRefresh, on
       ? `${hasCached ? 'live' : 'simulated'} · ${dayItems.length} programs`
       : 'block coverage · no scheduled programs'
 
+  const btnBase: React.CSSProperties = { padding: '3px 7px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', color: 'var(--hds-txt-2)' }
+
   return (
     <div style={{ flexShrink: 0, borderTop: '1px solid var(--hds-line-s)', background: 'oklch(0.17 0.018 286 / 0.7)', padding: '12px 24px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <span style={{ fontSize: 10, letterSpacing: '0.22em', color: 'var(--hds-txt-2)', whiteSpace: 'nowrap' }}>EPG PREVIEW</span>
         <span style={{ flex: 1, fontSize: 10, color: hasCached ? 'oklch(0.62 0.1 145)' : hasEpg ? 'oklch(0.62 0.1 220)' : 'var(--hds-txt-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {statusText}
         </span>
-        <button onClick={onRefresh} title="Refresh EPG" style={{ padding: '3px 7px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', color: epgLoading ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: epgLoading ? 'default' : 'pointer', opacity: epgLoading ? 0.5 : 1 }}>↺</button>
+
+        {/* Zoom controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+          <button onClick={() => canZoomOut && setZoom(EPG_ZOOM_LEVELS[zoomIdx - 1])} disabled={!canZoomOut} title="Zoom out" style={{ ...btnBase, opacity: canZoomOut ? 1 : 0.35, cursor: canZoomOut ? 'pointer' : 'default' }}>−</button>
+          <span style={{ fontSize: 9, color: 'var(--hds-txt-3)', width: 24, textAlign: 'center', letterSpacing: '0.05em' }}>{zoom}×</span>
+          <button onClick={() => canZoomIn  && setZoom(EPG_ZOOM_LEVELS[zoomIdx + 1])} disabled={!canZoomIn}  title="Zoom in"  style={{ ...btnBase, opacity: canZoomIn  ? 1 : 0.35, cursor: canZoomIn  ? 'pointer' : 'default' }}>+</button>
+        </div>
+
+        <button onClick={onRefresh} title="Refresh EPG" style={{ ...btnBase, color: epgLoading ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)', cursor: epgLoading ? 'default' : 'pointer', opacity: epgLoading ? 0.5 : 1 }}>↺</button>
         <div style={{ display: 'flex', gap: 3, background: 'var(--hds-bg-3)', borderRadius: 8, padding: 3, flexShrink: 0 }}>
           {DAYS.map(([short], i) => {
             const active = epgDay === i
@@ -987,61 +1073,61 @@ function EpgPreview({ blocks, epgItems, epgLoading, epgDay, onDay, onRefresh, on
         </div>
       </div>
 
-      <div style={{ position: 'relative', height: 68, borderRadius: 8, overflow: 'hidden', background: 'oklch(0.13 0.014 286)', border: '1px solid var(--hds-line-s)' }}>
-        {segs.map((s, i) => {
-          const clickable = !!s.blockId && !s.faded
-          const tooltip   = [s.time, s.title, s.subtitle, s.epLabel].filter(Boolean).join('  ·  ')
-          return (
-            <div
-              key={i}
-              title={tooltip}
-              onClick={() => s.blockId && onSelectBlock(s.blockId)}
-              style={{
-                position: 'absolute', top: 0, bottom: 0,
-                left: `${s.leftPct}%`, width: `${s.widthPct}%`,
-                background: s.bg,
-                borderLeft: '1px solid oklch(0.13 0.014 286)',
-                padding: '7px 8px',
-                overflow: 'hidden',
-                cursor: clickable ? 'pointer' : 'default',
-                opacity: s.faded ? 0.5 : 1,
-                transition: 'filter .1s',
-              }}
-              onMouseEnter={e => { if (clickable) (e.currentTarget as HTMLDivElement).style.filter = 'brightness(1.2)' }}
-              onMouseLeave={e => { if (clickable) (e.currentTarget as HTMLDivElement).style.filter = '' }}
-            >
-              {/* Time */}
-              <div style={{ fontSize: 9, color: s.faded ? 'var(--hds-txt-3)' : 'oklch(0.78 0.04 286)', letterSpacing: '0.06em', lineHeight: 1 }}>
-                {s.time}
-              </div>
-              {/* Title */}
-              <div style={{ fontSize: 11, fontWeight: 700, color: s.faded ? 'var(--hds-txt-3)' : 'var(--hds-txt)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 3, lineHeight: 1.2 }}>
-                {s.title}
-              </div>
-              {/* Episode title + badge row */}
-              {(s.subtitle || s.epLabel) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3, minWidth: 0 }}>
-                  {s.epLabel && (
-                    <span style={{ flexShrink: 0, fontSize: 8.5, letterSpacing: '0.06em', padding: '1px 4px', borderRadius: 3, background: 'oklch(0.98 0 0 / 0.13)', color: 'oklch(0.82 0.05 286)' }}>
-                      {s.epLabel}
-                    </span>
-                  )}
-                  {s.subtitle && (
-                    <span style={{ fontSize: 10, color: 'var(--hds-txt-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {s.subtitle}
-                    </span>
-                  )}
+      {/* Scrollable timeline wrapper */}
+      <div style={{ borderRadius: 8, border: '1px solid var(--hds-line-s)', overflowX: zoom > 1 ? 'auto' : 'hidden', overflowY: 'hidden' }}>
+        <div style={{ position: 'relative', height: 68, width: `${zoom * 100}%`, minWidth: '100%', background: 'oklch(0.13 0.014 286)' }}>
+          {segs.map((s, i) => {
+            const clickable = !!s.blockId && !s.faded
+            const tooltip   = [s.time, s.title, s.subtitle, s.epLabel].filter(Boolean).join('  ·  ')
+            return (
+              <div
+                key={i}
+                title={tooltip}
+                onClick={() => s.blockId && onSelectBlock(s.blockId)}
+                style={{
+                  position: 'absolute', top: 0, bottom: 0,
+                  left: `${s.leftPct}%`, width: `${s.widthPct}%`,
+                  background: s.bg,
+                  borderLeft: '1px solid oklch(0.13 0.014 286)',
+                  padding: '7px 8px',
+                  overflow: 'hidden',
+                  cursor: clickable ? 'pointer' : 'default',
+                  opacity: s.faded ? 0.5 : 1,
+                  transition: 'filter .1s',
+                }}
+                onMouseEnter={e => { if (clickable) (e.currentTarget as HTMLDivElement).style.filter = 'brightness(1.2)' }}
+                onMouseLeave={e => { if (clickable) (e.currentTarget as HTMLDivElement).style.filter = '' }}
+              >
+                <div style={{ fontSize: 9, color: s.faded ? 'var(--hds-txt-3)' : 'oklch(0.78 0.04 286)', letterSpacing: '0.06em', lineHeight: 1 }}>
+                  {s.time}
                 </div>
-              )}
-            </div>
-          )
-        })}
-        {segs.length === 0 && !epgLoading && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>No programs scheduled for this day</div>
-        )}
-        {epgLoading && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>Loading…</div>
-        )}
+                <div style={{ fontSize: 11, fontWeight: 700, color: s.faded ? 'var(--hds-txt-3)' : 'var(--hds-txt)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 3, lineHeight: 1.2 }}>
+                  {s.title}
+                </div>
+                {(s.subtitle || s.epLabel) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3, minWidth: 0 }}>
+                    {s.epLabel && (
+                      <span style={{ flexShrink: 0, fontSize: 8.5, letterSpacing: '0.06em', padding: '1px 4px', borderRadius: 3, background: 'oklch(0.98 0 0 / 0.13)', color: 'oklch(0.82 0.05 286)' }}>
+                        {s.epLabel}
+                      </span>
+                    )}
+                    {s.subtitle && (
+                      <span style={{ fontSize: 10, color: 'var(--hds-txt-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {s.subtitle}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {segs.length === 0 && !epgLoading && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>No programs scheduled for this day</div>
+          )}
+          {epgLoading && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>Loading…</div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1410,12 +1496,29 @@ const EditorForm = observer(function EditorForm({ channelId, store, limitMode }:
         <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 14, lineHeight: 1.55 }}>{limitHelp}</div>
 
         {/* Align start */}
-        <div style={{ fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>ALIGN START</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)' }}>ALIGN START</div>
+          {d.align_to_mins > 0 && (
+            <div style={{ display: 'flex', border: '1px solid var(--hds-line)', borderRadius: 6, overflow: 'hidden' }}>
+              {(['block', 'episode'] as const).map(scope => {
+                const on = (d.start_scope ?? 'block') === scope
+                return (
+                  <button key={scope} onClick={() => store.setDraft('start_scope', scope)}
+                    style={{ padding: '3px 8px', border: 'none', background: on ? 'var(--hds-violet)' : 'var(--hds-bg-3)', color: on ? '#fff' : 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    {scope}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
         <select value={String(d.align_to_mins)} onChange={e => store.setDraft('align_to_mins', +e.target.value)} style={{ ...inputStyle, width: '100%', marginBottom: 6 }}>
           {ALIGN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', lineHeight: 1.55 }}>
-          Snaps the first program to the next time boundary; fills the gap with filler.
+          {(d.start_scope ?? 'block') === 'episode'
+            ? 'Snaps each episode to the next time boundary. Early/late start define the tolerance window.'
+            : 'Snaps the first program of the block to the next time boundary.'}
         </div>
       </AccordionSection>
 
@@ -1438,9 +1541,15 @@ const EditorForm = observer(function EditorForm({ channelId, store, limitMode }:
           <div>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>ORDER</div>
             <select value={d.advancement} onChange={e => store.setDraft('advancement', e.target.value as Advancement)} style={inputStyle}>
-              <option value="sequential">Sequential</option>
-              <option value="shuffle">Shuffle</option>
-              <option value="rerun_shuffle">Rerun Shuffle</option>
+              <optgroup label="Standard">
+                <option value="sequential">Sequential</option>
+                <option value="shuffle">Shuffle</option>
+                <option value="smart_shuffle">Smart Shuffle</option>
+              </optgroup>
+              <optgroup label="Reruns">
+                <option value="rerun_shuffle">Rerun Shuffle</option>
+                <option value="rerun_smart">Rerun Smart</option>
+              </optgroup>
             </select>
           </div>
           <div>
@@ -1452,6 +1561,21 @@ const EditorForm = observer(function EditorForm({ channelId, store, limitMode }:
             </select>
           </div>
         </div>
+        {(d.advancement === 'smart_shuffle' || d.advancement === 'rerun_smart') && (
+          <div style={{ marginTop: 9 }}>
+            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>COOLDOWN THRESHOLD</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="range" min={5} max={80} step={5}
+                value={d.smart_pct ?? 30}
+                onChange={e => store.setDraft('smart_pct', Number(e.target.value))}
+                style={{ flex: 1 }} />
+              <span style={{ fontSize: 11, color: 'var(--hds-txt-2)', minWidth: 36 }}>{d.smart_pct ?? 30}%</span>
+            </div>
+            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 3 }}>
+              Episodes won't repeat until {d.smart_pct ?? 30}% of the pool has played since last air
+            </div>
+          </div>
+        )}
       </AccordionSection>
 
       {/* ── CONTENT ── */}
@@ -1474,13 +1598,44 @@ const EditorForm = observer(function EditorForm({ channelId, store, limitMode }:
           style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40, padding: store.dragItem ? 8 : 0, border: store.dragItem ? '1px dashed var(--hds-violet)' : '1px solid transparent', borderRadius: 9, transition: '.12s' }}
         >
           {store.draftContent.map(item => {
-            const dot = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
+            const dot       = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
+            const canReset  = item.id > 0 && item.content_type === 'show' && !!store.editing
+            const isRerun   = store.draft.advancement === 'rerun_shuffle' || store.draft.advancement === 'rerun_smart'
+            const showRerunControls = isRerun && item.content_type === 'show'
+            const miniInp: React.CSSProperties = { width: 36, padding: '2px 4px', background: 'var(--hds-bg)', border: '1px solid var(--hds-line)', borderRadius: 4, color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, textAlign: 'center' }
             return (
-              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', background: 'var(--hds-bg-3)', border: `1px solid ${item.id < 0 ? 'oklch(0.55 0.12 290 / 0.6)' : 'var(--hds-line-s)'}`, borderRadius: 7 }}>
-                <span style={{ color: 'var(--hds-txt-3)', fontSize: 13 }}>⋮⋮</span>
-                <span style={{ width: 7, height: 7, borderRadius: 2, background: dot, flexShrink: 0 }} />
-                <span style={{ flex: 1, fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title || item.content_id}</span>
-                <button onClick={() => store.removeContent(channelId, item.id)} style={{ width: 22, height: 22, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 13 }}>×</button>
+              <div key={item.id} style={{ background: 'var(--hds-bg-3)', border: `1px solid ${item.id < 0 ? 'oklch(0.55 0.12 290 / 0.6)' : 'var(--hds-line-s)'}`, borderRadius: 7, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px' }}>
+                  <span style={{ color: 'var(--hds-txt-3)', fontSize: 13 }}>⋮⋮</span>
+                  <span style={{ width: 7, height: 7, borderRadius: 2, background: dot, flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title || item.content_id}</span>
+                  {canReset && (
+                    <button
+                      onClick={() =>
+                        api.resetBlockContentCursor(channelId, store.editing!.block_id, item.id)
+                          .then(() => store.loadEpg(channelId, true))
+                          .catch(e => alert(`Cursor reset failed: ${e?.message ?? e}`))
+                      }
+                      title="Reset cursor to beginning"
+                      style={{ width: 22, height: 22, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 12 }}
+                    >⏮</button>
+                  )}
+                  <button onClick={() => store.removeContent(channelId, item.id)} style={{ width: 22, height: 22, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 13 }}>×</button>
+                </div>
+                {showRerunControls && (
+                  <div style={{ display: 'flex', gap: 16, padding: '4px 10px 8px', borderTop: '1px solid var(--hds-line-s)' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9.5, letterSpacing: '0.1em', color: 'var(--hds-txt-3)' }}>
+                      WEIGHT
+                      <input type="number" min={1} max={99} value={item.weight ?? 1} style={miniInp}
+                        onChange={e => store.updateContentField(channelId, item.id, 'weight', Number(e.target.value))} />
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9.5, letterSpacing: '0.1em', color: 'var(--hds-txt-3)' }}>
+                      RUN
+                      <input type="number" min={1} max={99} value={item.run_count ?? 1} style={miniInp}
+                        onChange={e => store.updateContentField(channelId, item.id, 'run_count', Number(e.target.value))} />
+                    </label>
+                  </div>
+                )}
               </div>
             )
           })}

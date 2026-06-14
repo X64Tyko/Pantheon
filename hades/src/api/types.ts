@@ -132,7 +132,8 @@ export interface CredentialStatus {
 }
 
 export type BlockType              = 'episode' | 'premier' | 'filler' | 'movie'
-export type Advancement            = 'sequential' | 'shuffle' | 'rerun_shuffle'
+export type Advancement            = 'sequential' | 'shuffle' | 'smart_shuffle' | 'rerun_shuffle' | 'rerun_smart'
+export type StartScope             = 'block' | 'episode'
 export type FillerAdvancement      = 'sequential' | 'shuffle'
 export type FillerEntryAdvancement = 'sequential' | 'shuffle' | 'sized'
 export type FillerSelectionMode    = 'round_robin' | 'random' | 'weighted'
@@ -155,6 +156,8 @@ export interface BlockContent {
   content_id:    string
   position:      number
   season_filter?: number   // only for content_type='show'; absent = all seasons
+  weight:        number    // weighted selection probability (rerun modes)
+  run_count:     number    // sequential episodes per selection (rerun modes)
   title:         string    // display-ready label (computed server-side)
 }
 
@@ -176,7 +179,25 @@ export interface Block {
   filler_selection:    FillerSelectionMode
   align_to_mins:       number           // 0=none; 15/30/60 = snap first program to next N-min boundary
   inter_filler:        boolean          // insert filler between programs
+  smart_pct:           number           // cooldown threshold % for smart_shuffle / rerun_smart
+  start_scope:         StartScope       // 'block' = align/early/late on block entry; 'episode' = per-item
   content:             BlockContent[]
+}
+
+export interface EpisodeGroupMember {
+  id:         number
+  episode_id: string
+  part_num:   number
+  season:     number
+  episode:    number
+  title:      string
+}
+
+export interface EpisodeGroup {
+  group_id:   string
+  name:       string
+  group_type: 'multipart'
+  members:    EpisodeGroupMember[]
 }
 
 // ── Plex link metadata ────────────────────────────────────────────────────────
@@ -250,7 +271,7 @@ export interface EpisodeSearchResult {
 }
 
 export interface EpgProgram {
-  item_type:           'episode' | 'movie'
+  item_type:           'episode' | 'movie' | 'filler'
   item_id:             string
   block_id:            string
   title:               string

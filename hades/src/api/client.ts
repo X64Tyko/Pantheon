@@ -1,6 +1,6 @@
 import type {
-  Block, BlockContent, Channel, ContentType, CredentialStatus, Episode, EpisodeSearchResult,
-  EpgProgram,
+  Block, BlockContent, Channel, ContentType, CredentialStatus, Episode, EpisodeGroup,
+  EpisodeSearchResult, EpgProgram, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PlexBrowseItem, PlexBrowseList,
@@ -86,13 +86,22 @@ export const api = {
   getBlocks:         (channelId: string)                                          => request<Block[]>('GET', `/channels/${channelId}/blocks`),
   createBlock:       (channelId: string, b: Omit<Block, 'block_id'|'channel_id'|'content'|'filler_entries'>) =>
                        request<{block_id: string}>('POST', `/channels/${channelId}/blocks`, b),
-  updateBlock:       (channelId: string, blockId: string, b: Partial<Block>)      => request<void>('PATCH', `/channels/${channelId}/blocks/${blockId}`, b),
+  updateBlock:       (channelId: string, blockId: string, b: Partial<Omit<Block, 'block_id'|'channel_id'|'content'|'filler_entries'>>) => request<void>('PATCH', `/channels/${channelId}/blocks/${blockId}`, b),
   deleteBlock:       (channelId: string, blockId: string)                         => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}`),
-  addBlockContent:   (channelId: string, blockId: string, b: { content_type: ContentType; content_id: string; season_filter?: number | null }) =>
+  addBlockContent:   (channelId: string, blockId: string, b: { content_type: ContentType; content_id: string; season_filter?: number | null; weight?: number; run_count?: number }) =>
                        request<{id: number, position: number}>('POST', `/channels/${channelId}/blocks/${blockId}/content`, b),
-  updateBlockContent:(channelId: string, blockId: string, cid: number, b: { season_filter?: number | null; position?: number }) =>
+  updateBlockContent:(channelId: string, blockId: string, cid: number, b: { season_filter?: number | null; position?: number; weight?: number; run_count?: number }) =>
                        request<void>('PATCH', `/channels/${channelId}/blocks/${blockId}/content/${cid}`, b),
-  removeBlockContent:  (channelId: string, blockId: string, cid: number)          => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}/content/${cid}`),
+  removeBlockContent:       (channelId: string, blockId: string, cid: number)     => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}/content/${cid}`),
+  resetBlockContentCursor:  (channelId: string, blockId: string, cid: number)     => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}/content/${cid}/cursor`),
+
+  // Episode groups
+  getEpisodeGroups:       (showId: string)                                         => request<EpisodeGroup[]>('GET',    `/shows/${showId}/groups`),
+  createEpisodeGroup:     (showId: string, b: { name: string; group_type?: string })  => request<{group_id: string}>('POST', `/shows/${showId}/groups`, b),
+  deleteEpisodeGroup:     (showId: string, groupId: string)                        => request<void>('DELETE', `/shows/${showId}/groups/${groupId}`),
+  addGroupMember:         (showId: string, groupId: string, b: { episode_id: string; part_num: number }) =>
+                            request<{id: number, part_num: number}>('POST',   `/shows/${showId}/groups/${groupId}/members`, b),
+  removeGroupMember:      (showId: string, groupId: string, memberId: number)      => request<void>('DELETE', `/shows/${showId}/groups/${groupId}/members/${memberId}`),
 
   // Block filler entries
   addBlockFiller:    (channelId: string, blockId: string, b: { filler_list_id: string; advancement: FillerEntryAdvancement; weight?: number }) =>
@@ -106,8 +115,9 @@ export const api = {
   getChannelEpg: (channelId: string, hours?: number) =>
     request<EpgProgram[]>('GET', `/channels/${channelId}/epg${hours != null ? `?hours=${hours}` : ''}`),
   // EPG preview — returns cached schedule if available, else in-memory projection (no DB writes)
-  previewChannelEpg: (channelId: string, hours?: number, seed?: number) => {
-    const params = qs({ hours: hours ?? undefined, seed: seed ?? undefined })
+  // Pass force=true to bypass cache and always simulate from current cursor state.
+  previewChannelEpg: (channelId: string, hours?: number, seed?: number, force?: boolean) => {
+    const params = qs({ hours: hours ?? undefined, seed: seed ?? undefined, force: force ? 1 : undefined })
     return request<EpgProgram[]>('GET', `/channels/${channelId}/epg/preview${params ? `?${params}` : ''}`)
   },
 

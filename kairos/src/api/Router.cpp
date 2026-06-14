@@ -100,6 +100,10 @@ Router::Router(httplib::Server& svr, Database& db, SyncManager& sync,
       engine_(engine), materializer_(materializer)
 {}
 
+static void logErr(const std::string& ctx, const std::exception& e) {
+    std::cerr << "[error] " << ctx << ": " << e.what() << "\n";
+}
+
 void Router::registerRoutes() {
     // CORS preflight — allows curl/Postman during dev without the Vite proxy
     svr_.Options(".*", [](const Req&, Res& res) {
@@ -583,6 +587,7 @@ void Router::registerConfigRoutes() {
 void Router::registerChannelRoutes() {
 
     svr_.Get("/api/channels", [this](const Req&, Res& res) {
+      try {
         SQLite::Statement q(db_.get(),
             "SELECT channel_id, name, number, timezone, default_filler_selection, seed "
             "FROM channel ORDER BY number");
@@ -620,6 +625,9 @@ void Router::registerChannelRoutes() {
             result.push_back(channel);
         }
         ok(res, result.dump());
+      } catch (const std::exception& e) {
+        logErr("GET /api/channels", e); err(res, 500, e.what());
+      }
     });
 
     svr_.Post("/api/channels", [this](const Req& req, Res& res) {
@@ -754,12 +762,14 @@ void Router::registerBlockRoutes() {
 
     // List all blocks for a channel (with content items + title joins)
     svr_.Get("/api/channels/:id/blocks", [this](const Req& req, Res& res) {
+      try {
         auto channel_id = req.path_params.at("id");
 
         SQLite::Statement q(db_.get(), R"(
             SELECT block_id, block_type, day_mask, start_time, end_time,
                    program_count, priority, max_content_rating, advancement, cursor_scope,
-                   late_start_mins, align_to_mins, inter_filler, early_start_secs, filler_selection
+                   late_start_mins, align_to_mins, inter_filler, early_start_secs,
+                   filler_selection, smart_pct, start_scope
             FROM block WHERE channel_id = ?
             ORDER BY start_time, priority DESC
         )");
@@ -784,12 +794,15 @@ void Router::registerBlockRoutes() {
                 {"inter_filler",       q.getColumn(12).getInt() != 0},
                 {"early_start_secs",   q.getColumn(13).getInt()},
                 {"filler_selection",   q.getColumn(14).getString()},
+                {"smart_pct",          q.getColumn(15).getInt()},
+                {"start_scope",        q.getColumn(16).getString()},
             };
             if (!q.getColumn(4).isNull()) block["end_time"] = q.getColumn(4).getString();
 
             // Content items — multi-type title join
             SQLite::Statement cq(db_.get(), R"(
                 SELECT bc.id, bc.content_type, bc.content_id, bc.position, bc.season_filter,
+                       bc.weight, bc.run_count,
                        CASE bc.content_type
                            WHEN 'show'        THEN COALESCE(sw.title,'') ||
                                                    CASE WHEN bc.season_filter IS NOT NULL
@@ -821,7 +834,9 @@ void Router::registerBlockRoutes() {
                     {"content_type", cq.getColumn(1).getString()},
                     {"content_id",   cq.getColumn(2).getString()},
                     {"position",     cq.getColumn(3).getInt()},
-                    {"title",        cq.getColumn(5).getString()},
+                    {"weight",       cq.getColumn(5).getInt()},
+                    {"run_count",    cq.getColumn(6).getInt()},
+                    {"title",        cq.getColumn(7).getString()},
                 };
                 if (!cq.getColumn(4).isNull()) item["season_filter"] = cq.getColumn(4).getInt();
                 content.push_back(item);
@@ -853,6 +868,9 @@ void Router::registerBlockRoutes() {
             result.push_back(block);
         }
         ok(res, result.dump());
+      } catch (const std::exception& e) {
+        logErr("GET /api/channels/:id/blocks", e); err(res, 500, e.what());
+      }
     });
 
     // Create block
@@ -875,14 +893,16 @@ void Router::registerBlockRoutes() {
             int         inter_filler     = b.value("inter_filler",       false) ? 1 : 0;
             int         early_start_secs = b.value("early_start_secs",   0);
             std::string filler_selection = b.value("filler_selection",   "round_robin");
+            int         smart_pct        = b.value("smart_pct",          30);
+            std::string start_scope      = b.value("start_scope",        "block");
 
             SQLite::Statement s(db_.get(), R"(
                 INSERT INTO block (block_id, channel_id, block_type, day_mask,
                                    start_time, end_time, program_count, priority,
                                    max_content_rating, advancement, cursor_scope,
                                    late_start_mins, align_to_mins, inter_filler,
-                                   early_start_secs, filler_selection)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                   early_start_secs, filler_selection, smart_pct, start_scope)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             )");
             s.bind(1, block_id);       s.bind(2, channel_id);    s.bind(3, block_type);
             s.bind(4, day_mask);       s.bind(5, start_time);
@@ -890,7 +910,7 @@ void Router::registerBlockRoutes() {
             s.bind(7, program_count);  s.bind(8, priority);       s.bind(9, max_rating);
             s.bind(10, advancement);   s.bind(11, cursor_scope);  s.bind(12, late_start_mins);
             s.bind(13, align_to_mins); s.bind(14, inter_filler);  s.bind(15, early_start_secs);
-            s.bind(16, filler_selection);
+            s.bind(16, filler_selection); s.bind(17, smart_pct);  s.bind(18, start_scope);
             s.exec();
 
             res.status = 201;
@@ -931,6 +951,8 @@ void Router::registerBlockRoutes() {
             if (b.contains("inter_filler"))        updI("inter_filler",      b["inter_filler"].is_boolean() ? (b["inter_filler"].get<bool>() ? 1 : 0) : b["inter_filler"].get<int>());
             if (b.contains("early_start_secs"))    updI("early_start_secs",  b["early_start_secs"]);
             if (b.contains("filler_selection"))    upd("filler_selection",   b["filler_selection"]);
+            if (b.contains("smart_pct"))           updI("smart_pct",         b["smart_pct"]);
+            if (b.contains("start_scope"))         upd("start_scope",        b["start_scope"]);
             if (b.contains("end_time")) {
                 if (b["end_time"].is_null() || b["end_time"].get<std::string>().empty())
                     updNull("end_time");
@@ -956,6 +978,8 @@ void Router::registerBlockRoutes() {
             auto b = json::parse(req.body);
             std::string content_type = b.value("content_type", "show");
             std::string content_id   = b.value("content_id",   "");
+            int         weight       = b.value("weight",    1);
+            int         run_count    = b.value("run_count", 1);
 
             int position = 0;
             {
@@ -966,14 +990,16 @@ void Router::registerBlockRoutes() {
             }
 
             SQLite::Statement s(db_.get(), R"(
-                INSERT INTO block_content (block_id, content_type, content_id, position, season_filter)
-                VALUES (?,?,?,?,?)
+                INSERT INTO block_content
+                    (block_id, content_type, content_id, position, season_filter, weight, run_count)
+                VALUES (?,?,?,?,?,?,?)
             )");
             s.bind(1, bid); s.bind(2, content_type); s.bind(3, content_id); s.bind(4, position);
             if (b.contains("season_filter") && !b["season_filter"].is_null())
                 s.bind(5, b["season_filter"].get<int>());
             else
                 s.bind(5);  // NULL
+            s.bind(6, weight); s.bind(7, run_count);
             s.exec();
 
             res.status = 201;
@@ -1003,6 +1029,16 @@ void Router::registerBlockRoutes() {
                     "UPDATE block_content SET position = ? WHERE id = ?");
                 s.bind(1, b["position"].get<int>()); s.bind(2, std::stoi(cid)); s.exec();
             }
+            if (b.contains("weight")) {
+                SQLite::Statement s(db_.get(),
+                    "UPDATE block_content SET weight = ? WHERE id = ?");
+                s.bind(1, b["weight"].get<int>()); s.bind(2, std::stoi(cid)); s.exec();
+            }
+            if (b.contains("run_count")) {
+                SQLite::Statement s(db_.get(),
+                    "UPDATE block_content SET run_count = ? WHERE id = ?");
+                s.bind(1, b["run_count"].get<int>()); s.bind(2, std::stoi(cid)); s.exec();
+            }
             ok(res, json{{"ok", true}}.dump());
         } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
@@ -1013,6 +1049,138 @@ void Router::registerBlockRoutes() {
         SQLite::Statement s(db_.get(), "DELETE FROM block_content WHERE id = ?");
         s.bind(1, std::stoi(cid)); s.exec();
         ok(res, json{{"deleted", std::stoi(cid)}}.dump());
+    });
+
+    // Reset cursor for a show content item
+    svr_.Delete("/api/channels/:id/blocks/:bid/content/:cid/cursor", [this](const Req& req, Res& res) {
+        auto channel_id = req.path_params.at("id");
+        auto block_id   = req.path_params.at("bid");
+        int  cid        = std::stoi(req.path_params.at("cid"));
+
+        std::string content_type, content_id;
+        {
+            SQLite::Statement q(db_.get(),
+                "SELECT content_type, content_id FROM block_content WHERE id = ?");
+            q.bind(1, cid);
+            if (!q.executeStep()) { err(res, 404, "content item not found"); return; }
+            content_type = q.getColumn(0).getString();
+            content_id   = q.getColumn(1).getString();
+        }
+        if (content_type != "show") { err(res, 400, "cursor reset only applies to show content"); return; }
+
+        std::string advancement, cursor_scope;
+        {
+            SQLite::Statement q(db_.get(),
+                "SELECT advancement, cursor_scope FROM block WHERE block_id = ?");
+            q.bind(1, block_id);
+            if (!q.executeStep()) { err(res, 404, "block not found"); return; }
+            advancement  = q.getColumn(0).getString();
+            cursor_scope = q.getColumn(1).getString();
+        }
+
+        if (advancement == "rerun_shuffle" || advancement == "rerun_smart") {
+            // Rerun episode cursors are block-scoped show_rerun rows keyed by content_id.
+            // Only delete this show's episode position; leave block_state (show selection) intact.
+            SQLite::Statement s(db_.get(), R"(
+                DELETE FROM media_cursor
+                WHERE content_type='show_rerun' AND content_id=? AND cursor_scope='block' AND scope_id=?
+            )");
+            s.bind(1, content_id); s.bind(2, block_id); s.exec();
+        } else {
+            std::string scope_id;
+            if      (cursor_scope == "global")  scope_id = "";
+            else if (cursor_scope == "channel") scope_id = channel_id;
+            else                                scope_id = block_id;
+
+            SQLite::Statement s(db_.get(), R"(
+                DELETE FROM media_cursor
+                WHERE content_type='show' AND content_id=? AND cursor_scope=? AND scope_id=?
+            )");
+            s.bind(1, content_id); s.bind(2, cursor_scope); s.bind(3, scope_id); s.exec();
+        }
+
+        ok(res, json{{"ok", true}}.dump());
+    });
+
+    // ── Episode groups (multipart markup) ────────────────────────────────────
+
+    // List groups for a show
+    svr_.Get("/api/shows/:id/groups", [this](const Req& req, Res& res) {
+        auto show_id = req.path_params.at("id");
+        SQLite::Statement q(db_.get(),
+            "SELECT group_id, name, group_type FROM episode_group WHERE show_id=? ORDER BY name");
+        q.bind(1, show_id);
+        json arr = json::array();
+        while (q.executeStep()) {
+            std::string gid = q.getColumn(0).getString();
+            json g = {{"group_id", gid}, {"name", q.getColumn(1).getString()},
+                      {"group_type", q.getColumn(2).getString()}, {"members", json::array()}};
+            SQLite::Statement mq(db_.get(),
+                "SELECT egm.id, egm.episode_id, egm.part_num, e.season, e.episode, e.title "
+                "FROM episode_group_member egm JOIN episode e ON e.episode_id=egm.episode_id "
+                "WHERE egm.group_id=? ORDER BY egm.part_num");
+            mq.bind(1, gid);
+            while (mq.executeStep())
+                g["members"].push_back({{"id", mq.getColumn(0).getInt()},
+                    {"episode_id", mq.getColumn(1).getString()},
+                    {"part_num",   mq.getColumn(2).getInt()},
+                    {"season",     mq.getColumn(3).getInt()},
+                    {"episode",    mq.getColumn(4).getInt()},
+                    {"title",      mq.getColumn(5).getString()}});
+            arr.push_back(g);
+        }
+        ok(res, arr.dump());
+    });
+
+    // Create group
+    svr_.Post("/api/shows/:id/groups", [this](const Req& req, Res& res) {
+        auto show_id = req.path_params.at("id");
+        try {
+            auto b = json::parse(req.body);
+            std::string group_id   = generateId();
+            std::string name       = b.value("name",       "");
+            std::string group_type = b.value("group_type", "multipart");
+            if (name.empty()) { err(res, 400, "name required"); return; }
+            SQLite::Statement s(db_.get(),
+                "INSERT INTO episode_group (group_id, show_id, name, group_type) VALUES (?,?,?,?)");
+            s.bind(1, group_id); s.bind(2, show_id); s.bind(3, name); s.bind(4, group_type);
+            s.exec();
+            res.status = 201;
+            ok(res, json{{"group_id", group_id}}.dump());
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
+    });
+
+    // Delete group
+    svr_.Delete("/api/shows/:id/groups/:gid", [this](const Req& req, Res& res) {
+        auto gid = req.path_params.at("gid");
+        SQLite::Statement s(db_.get(), "DELETE FROM episode_group WHERE group_id=?");
+        s.bind(1, gid); s.exec();
+        ok(res, json{{"deleted", gid}}.dump());
+    });
+
+    // Add member to group
+    svr_.Post("/api/shows/:id/groups/:gid/members", [this](const Req& req, Res& res) {
+        auto gid = req.path_params.at("gid");
+        try {
+            auto b = json::parse(req.body);
+            std::string episode_id = b.value("episode_id", "");
+            int         part_num   = b.value("part_num",   1);
+            if (episode_id.empty()) { err(res, 400, "episode_id required"); return; }
+            SQLite::Statement s(db_.get(),
+                "INSERT INTO episode_group_member (group_id, episode_id, part_num) VALUES (?,?,?)");
+            s.bind(1, gid); s.bind(2, episode_id); s.bind(3, part_num); s.exec();
+            res.status = 201;
+            ok(res, json{{"id", db_.get().getLastInsertRowid()}, {"part_num", part_num}}.dump());
+        } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
+          catch (const std::exception& e)    { err(res, 400, e.what()); }
+    });
+
+    // Remove member
+    svr_.Delete("/api/shows/:id/groups/:gid/members/:mid", [this](const Req& req, Res& res) {
+        auto mid = req.path_params.at("mid");
+        SQLite::Statement s(db_.get(), "DELETE FROM episode_group_member WHERE id=?");
+        s.bind(1, std::stoi(mid)); s.exec();
+        ok(res, json{{"deleted", std::stoi(mid)}}.dump());
     });
 
     // ── Block filler entry CRUD ───────────────────────────────────────────────
@@ -2318,6 +2486,7 @@ void Router::registerSchedulerRoutes() {
 
     // ── What's playing now on a channel ──────────────────────────────────────
     svr_.Get(R"(/api/channels/([^/]+)/now)", [this](const Req& req, Res& res) {
+      try {
         std::string channel_id = req.matches[1];
         auto t = std::time(nullptr);
 
@@ -2344,6 +2513,9 @@ void Router::registerSchedulerRoutes() {
             j["episode_num"] = item.episode_num;
         }
         ok(res, j.dump());
+      } catch (const std::exception& e) {
+        logErr("GET /api/channels/now", e); err(res, 500, e.what());
+      }
     });
 
     // ── What's playing next on a channel ─────────────────────────────────────
@@ -2397,6 +2569,7 @@ void Router::registerSchedulerRoutes() {
     // ── EPG preview — returns cached schedule if available, else in-memory projection ──
     // Never calls ensureScheduled(); only reads cache or simulates, no DB writes.
     svr_.Get(R"(/api/channels/([^/]+)/epg/preview)", [this](const Req& req, Res& res) {
+      try {
         std::string channel_id = req.matches[1];
         int hours = 48;
         if (req.has_param("hours")) {
@@ -2408,8 +2581,9 @@ void Router::registerSchedulerRoutes() {
         auto horizon = static_cast<int64_t>(now + hours * 3600LL);
 
         // Check if the cache already has entries for this channel in the window.
+        bool force = req.has_param("force") && req.get_param_value("force") == "1";
         bool has_cache = false;
-        {
+        if (!force) {
             SQLite::Statement ck(db_.get(), R"(
                 SELECT 1 FROM scheduled_program
                 WHERE channel_id=? AND wall_clock_start >= ? AND wall_clock_start < ?
@@ -2468,6 +2642,33 @@ void Router::registerSchedulerRoutes() {
                 }
                 arr.push_back(j);
             }
+
+            // Filler clips are never written to scheduled_program, so the cache
+            // has holes wherever filler would have played.  Synthesize a single
+            // "filler" entry to cover each gap so the preview looks contiguous.
+            if (arr.size() > 1) {
+                json filled = json::array();
+                for (size_t i = 0; i < arr.size(); ++i) {
+                    if (i > 0) {
+                        int64_t gap_start = arr[i - 1]["wall_clock_end_ms"].get<int64_t>();
+                        int64_t gap_end   = arr[i]["wall_clock_start_ms"].get<int64_t>();
+                        if (gap_end > gap_start) {
+                            filled.push_back({
+                                {"item_type",           "filler"},
+                                {"item_id",             ""},
+                                {"block_id",            arr[i]["block_id"]},
+                                {"wall_clock_start_ms", gap_start},
+                                {"wall_clock_end_ms",   gap_end},
+                                {"status",              "scheduled"},
+                                {"title",               ""},
+                                {"duration_ms",         gap_end - gap_start},
+                            });
+                        }
+                    }
+                    filled.push_back(arr[i]);
+                }
+                arr = std::move(filled);
+            }
         } else {
             // No cache — run in-memory projection using the channel's seed.
             int seed = 12345;
@@ -2503,10 +2704,14 @@ void Router::registerSchedulerRoutes() {
         }
 
         ok(res, arr.dump());
+      } catch (const std::exception& e) {
+        logErr("GET /api/channels/epg/preview", e); err(res, 500, e.what());
+      }
     });
 
     // ── EPG projection for a single channel (JSON, cache-backed) ────────────
     svr_.Get(R"(/api/channels/([^/]+)/epg)", [this](const Req& req, Res& res) {
+      try {
         std::string channel_id = req.matches[1];
         int hours = 24;
         if (req.has_param("hours")) {
@@ -2565,5 +2770,8 @@ void Router::registerSchedulerRoutes() {
             arr.push_back(j);
         }
         ok(res, arr.dump());
+      } catch (const std::exception& e) {
+        logErr("GET /api/channels/epg", e); err(res, 500, e.what());
+      }
     });
 }

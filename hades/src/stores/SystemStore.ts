@@ -1,25 +1,54 @@
 import { makeAutoObservable, runInAction } from 'mobx'
 import { api } from '../api/client'
 
-export class SystemStore {
-  syncing = false
-  private _timer: ReturnType<typeof setTimeout> | null = null
+export interface LogEntry {
+  id:      number
+  ts:      string
+  line:    string
+  isError: boolean
+}
 
-  constructor() { makeAutoObservable(this) }
+export interface ErrorToast {
+  id:  number
+  msg: string
+  ts:  string
+}
+
+let _logId = 0
+
+export class SystemStore {
+  syncing       = false
+  logs:         LogEntry[]      = []
+  liveStatus:   'connecting' | 'live' | 'disconnected' = 'disconnected'
+  unreadErrors: number          = 0
+  toast:        ErrorToast | null = null
+
+  private _pollTimer:  ReturnType<typeof setTimeout> | null = null
+  private _es:         EventSource | null = null
+  private _toastTimer: ReturnType<typeof setTimeout> | null = null
+
+  constructor() {
+    makeAutoObservable(this, {
+      _pollTimer:  false,
+      _es:         false,
+      _toastTimer: false,
+    } as any)
+  }
+
+  // ── Sync polling ─────────────────────────────────────────────────────────────
 
   startPolling() {
-    if (this._timer) return
+    if (this._pollTimer) return
     this._poll()
   }
 
   stopPolling() {
-    if (this._timer) { clearTimeout(this._timer); this._timer = null }
+    if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null }
   }
 
   private async _poll() {
     await this._fetchStatus()
-    // Poll every 2s while a sync is running; every 15s when idle.
-    this._timer = setTimeout(() => this._poll(), this.syncing ? 2000 : 15000)
+    this._pollTimer = setTimeout(() => this._poll(), this.syncing ? 2000 : 15000)
   }
 
   private async _fetchStatus() {
@@ -27,5 +56,63 @@ export class SystemStore {
       const { running } = await api.getSyncStatus()
       runInAction(() => { this.syncing = running })
     } catch {}
+  }
+
+  // ── Log stream ───────────────────────────────────────────────────────────────
+
+  connectLogs() {
+    if (this._es) return
+    this._openSSE()
+  }
+
+  private _openSSE() {
+    const es = new EventSource('/api/logs/stream')
+    this._es = es
+    runInAction(() => { this.liveStatus = 'connecting' })
+
+    es.onopen = () => runInAction(() => { this.liveStatus = 'live' })
+
+    es.onerror = () => {
+      runInAction(() => { this.liveStatus = 'disconnected' })
+      es.close()
+      this._es = null
+      setTimeout(() => { if (!this._es) this._openSSE() }, 5000)
+    }
+
+    es.onmessage = (e: MessageEvent) => {
+      const line: string = e.data
+      const isError = /^\[error\]/i.test(line)
+      const entry: LogEntry = {
+        id:      _logId++,
+        ts:      new Date().toLocaleTimeString('en-US', { hour12: false }),
+        line,
+        isError,
+      }
+      runInAction(() => {
+        this.logs.push(entry)
+        if (this.logs.length > 1000) this.logs.splice(0, this.logs.length - 1000)
+
+        if (isError) {
+          this.unreadErrors++
+          // Strip the [error] tag to get a human-readable summary.
+          const msg = line.replace(/^\[[^\]]+\]\s*/, '').slice(0, 160)
+          if (this._toastTimer) clearTimeout(this._toastTimer)
+          this.toast = { id: entry.id, msg, ts: entry.ts }
+          this._toastTimer = setTimeout(
+            () => runInAction(() => { this.toast = null }),
+            8000,
+          )
+        }
+      })
+    }
+  }
+
+  clearUnreadErrors() {
+    this.unreadErrors = 0
+  }
+
+  dismissToast() {
+    if (this._toastTimer) { clearTimeout(this._toastTimer); this._toastTimer = null }
+    this.toast = null
   }
 }

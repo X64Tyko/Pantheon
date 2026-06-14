@@ -41,59 +41,66 @@ std::string EPGMaterializer::fmtXMLTVTime(std::time_t t) {
 void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                                        std::time_t from, int horizon_hours) {
     std::time_t horizon = from + static_cast<std::time_t>(horizon_hours) * 3600;
-
-    // Find the absolute last scheduled entry (any status) — its cursor_json is
-    // the correct SimState to resume extension from.
-    std::time_t last_end    = 0;
-    std::string last_cursor = "{}";
-    {
-        SQLite::Statement q(db_.get(), R"(
-            SELECT wall_clock_end, cursor_json FROM scheduled_program
-            WHERE channel_id = ?
-            ORDER BY wall_clock_end DESC LIMIT 1
-        )");
-        q.bind(1, channel_id);
-        if (q.executeStep()) {
-            last_end    = static_cast<std::time_t>(q.getColumn(0).getInt64());
-            last_cursor = q.getColumn(1).getString();
-        }
-    }
-
-    if (last_end >= horizon) return; // cache covers the requested range already
-
-    // Project forward from the tail of the existing cache (or `from` if empty).
-    std::time_t extend_from = (last_end > from) ? last_end : from;
-    // Request slightly more than needed to avoid rounding gaps.
-    int extend_hours = static_cast<int>((horizon - extend_from) / 3600) + 2;
-
-    auto items = engine_.project(channel_id, extend_from, extend_hours, last_cursor);
-    if (items.empty()) return;
-
-    SQLite::Transaction txn(db_.get());
-    SQLite::Statement ins(db_.get(), R"(
-        INSERT OR IGNORE INTO scheduled_program
-            (channel_id, block_id, item_type, item_id,
-             wall_clock_start, wall_clock_end, cursor_json, created_at)
-        VALUES (?,?,?,?,?,?,?,?)
-    )");
-
     auto now = static_cast<int64_t>(std::time(nullptr));
-    for (const auto& item : items) {
-        std::time_t item_end = item.wall_clock_end_ms / 1000;
-        if (item_end > horizon + 7200) break; // don't overshoot by more than 2 h
 
-        ins.bind(1, channel_id);
-        if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
-        ins.bind(3, item.item_type);
-        ins.bind(4, item.item_id);
-        ins.bind(5, item.wall_clock_start_ms / 1000);
-        ins.bind(6, item_end);
-        ins.bind(7, item.cursor_json);
-        ins.bind(8, now);
-        ins.exec();
-        ins.reset();
+    // Loop until the cache fully covers the horizon. project() is capped at
+    // MAX_ITEMS per call; for channels with short clips this loop re-extends
+    // from the tail on each pass rather than leaving a gap.
+    for (int guard = 0; guard < 200; ++guard) {
+        // Re-query the tail each pass — the previous pass may have added rows.
+        std::time_t last_end    = 0;
+        std::string last_cursor = "{}";
+        {
+            SQLite::Statement q(db_.get(), R"(
+                SELECT wall_clock_end, cursor_json FROM scheduled_program
+                WHERE channel_id = ?
+                ORDER BY wall_clock_end DESC LIMIT 1
+            )");
+            q.bind(1, channel_id);
+            if (q.executeStep()) {
+                last_end    = static_cast<std::time_t>(q.getColumn(0).getInt64());
+                last_cursor = q.getColumn(1).getString();
+            }
+        }
+
+        if (last_end >= horizon) return; // fully covered
+
+        std::time_t extend_from = (last_end > from) ? last_end : from;
+        int extend_hours = static_cast<int>((horizon - extend_from) / 3600) + 2;
+
+        auto items = engine_.project(channel_id, extend_from, extend_hours, last_cursor);
+        if (items.empty()) return; // no content — nothing to schedule
+
+        SQLite::Transaction txn(db_.get());
+        SQLite::Statement ins(db_.get(), R"(
+            INSERT OR IGNORE INTO scheduled_program
+                (channel_id, block_id, item_type, item_id,
+                 wall_clock_start, wall_clock_end, cursor_json, created_at)
+            VALUES (?,?,?,?,?,?,?,?)
+        )");
+
+        bool any_new = false;
+        for (const auto& item : items) {
+            if (item.is_filler) continue;
+            std::time_t item_end = item.wall_clock_end_ms / 1000;
+            if (item_end > horizon + 7200) break;
+
+            ins.bind(1, channel_id);
+            if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
+            ins.bind(3, item.item_type);
+            ins.bind(4, item.item_id);
+            ins.bind(5, item.wall_clock_start_ms / 1000);
+            ins.bind(6, item_end);
+            ins.bind(7, item.cursor_json);
+            ins.bind(8, now);
+            ins.exec();
+            if (db_.get().getChanges() > 0) any_new = true;
+            ins.reset();
+        }
+        txn.commit();
+
+        if (!any_new) return; // all items were already in the cache — done
     }
-    txn.commit();
 }
 
 void EPGMaterializer::notifyPlayed(const std::string& channel_id,

@@ -499,6 +499,112 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX IF NOT EXISTS idx_block_channel ON block(channel_id, priority);
 )SQL", true /* requires_fk_off */ }
 
+,
+
+// ── v13: five advancement modes; weight + run_count on block_content;
+//         runs_remaining on block_state; fix media_cursor CHECK to include
+//         show_rerun and filler_list; smart_pct on block;
+//         episode_group / episode_group_member for multipart markup.
+{ 13, R"SQL(
+
+    -- Rebuild block: expand advancement CHECK, add smart_pct.
+    CREATE TABLE block_v13 (
+        block_id           TEXT    PRIMARY KEY,
+        channel_id         TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        block_type         TEXT    NOT NULL CHECK(block_type IN ('episode','premier','filler','movie')),
+        day_mask           INTEGER NOT NULL DEFAULT 127,
+        start_time         TEXT    NOT NULL DEFAULT '00:00',
+        end_time           TEXT,
+        priority           INTEGER NOT NULL DEFAULT 0,
+        max_content_rating TEXT,
+        config_json        TEXT    NOT NULL DEFAULT '{}',
+        program_count      INTEGER NOT NULL DEFAULT 0,
+        advancement        TEXT    NOT NULL DEFAULT 'sequential'
+                           CHECK(advancement IN (
+                               'sequential','shuffle','smart_shuffle',
+                               'rerun_shuffle','rerun_smart')),
+        cursor_scope       TEXT    NOT NULL DEFAULT 'block'
+                           CHECK(cursor_scope IN ('global','channel','block')),
+        late_start_mins    INTEGER NOT NULL DEFAULT 0,
+        align_to_mins      INTEGER NOT NULL DEFAULT 0,
+        inter_filler       INTEGER NOT NULL DEFAULT 0,
+        early_start_secs   INTEGER NOT NULL DEFAULT 0,
+        filler_selection   TEXT    NOT NULL DEFAULT 'round_robin',
+        smart_pct          INTEGER NOT NULL DEFAULT 30
+    );
+
+    INSERT INTO block_v13
+        SELECT block_id, channel_id, block_type, day_mask, start_time, end_time,
+               priority, max_content_rating, config_json, program_count,
+               advancement, cursor_scope, late_start_mins, align_to_mins,
+               inter_filler, early_start_secs, filler_selection, 30
+        FROM block;
+
+    DROP TABLE block;
+    ALTER TABLE block_v13 RENAME TO block;
+
+    CREATE INDEX IF NOT EXISTS idx_block_channel ON block(channel_id, priority);
+
+    -- weight: weighted random show selection (rerun modes).
+    -- run_count: episodes to play sequentially per selection (rerun modes).
+    ALTER TABLE block_content ADD COLUMN weight    INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE block_content ADD COLUMN run_count INTEGER NOT NULL DEFAULT 1;
+
+    -- runs_remaining: plays left in the current show's run (rerun modes).
+    ALTER TABLE block_state ADD COLUMN runs_remaining INTEGER NOT NULL DEFAULT 0;
+
+    -- Rebuild media_cursor: expand content_type CHECK to include show_rerun and filler_list.
+    CREATE TABLE media_cursor_v13 (
+        content_type TEXT    NOT NULL
+                     CHECK(content_type IN ('show','show_rerun','movie','playlist','filler_list')),
+        content_id   TEXT    NOT NULL,
+        cursor_scope TEXT    NOT NULL CHECK(cursor_scope IN ('global','channel','block')),
+        scope_id     TEXT    NOT NULL DEFAULT '',
+        episode_id   TEXT    REFERENCES episode(episode_id),
+        movie_id     TEXT    REFERENCES movie(movie_id),
+        position     INTEGER NOT NULL DEFAULT 0,
+        updated_at   INTEGER NOT NULL,
+        PRIMARY KEY (content_type, content_id, cursor_scope, scope_id)
+    );
+
+    INSERT INTO media_cursor_v13
+        SELECT content_type, content_id, cursor_scope, scope_id,
+               episode_id, movie_id, COALESCE(position, 0), updated_at
+        FROM media_cursor
+        WHERE content_type IN ('show','movie','playlist');
+
+    DROP TABLE media_cursor;
+    ALTER TABLE media_cursor_v13 RENAME TO media_cursor;
+
+    -- Episode groups: link multipart episodes so the scheduler keeps them together.
+    CREATE TABLE episode_group (
+        group_id   TEXT PRIMARY KEY,
+        show_id    TEXT NOT NULL REFERENCES show(show_id) ON DELETE CASCADE,
+        name       TEXT NOT NULL,
+        group_type TEXT NOT NULL DEFAULT 'multipart'
+                   CHECK(group_type IN ('multipart'))
+    );
+
+    CREATE TABLE episode_group_member (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id   TEXT    NOT NULL REFERENCES episode_group(group_id) ON DELETE CASCADE,
+        episode_id TEXT    NOT NULL REFERENCES episode(episode_id) ON DELETE CASCADE,
+        part_num   INTEGER NOT NULL DEFAULT 1,
+        UNIQUE (group_id, episode_id),
+        UNIQUE (group_id, part_num)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_episode_group_show ON episode_group(show_id);
+    CREATE INDEX IF NOT EXISTS idx_episode_group_member_ep ON episode_group_member(episode_id);
+
+)SQL", true /* requires_fk_off */ }
+
+,
+// ── v14: start_scope — whether align/early/late apply to the block or each episode ──
+{ 14, R"SQL(
+    ALTER TABLE block ADD COLUMN start_scope TEXT NOT NULL DEFAULT 'block';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

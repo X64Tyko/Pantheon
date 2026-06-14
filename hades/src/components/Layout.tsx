@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { systemStore } from '../stores'
 
 const navItems = [
@@ -13,9 +13,15 @@ const navItems = [
 ]
 
 export default observer(function Layout() {
-  const location = useLocation()
+  const location     = useLocation()
+  const navigate     = useNavigate()
   const isChannelDetail = /^\/channels\/.+/.test(location.pathname)
+  const onActivity   = location.pathname === '/activity'
 
+  // Connect the global SSE log stream once and keep it alive.
+  useEffect(() => { systemStore.connectLogs() }, [])
+
+  // Sync polling lifecycle — pause when tab is hidden.
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
@@ -31,6 +37,13 @@ export default observer(function Layout() {
       systemStore.stopPolling()
     }
   }, [])
+
+  // Clear unread-error badge while the user is on the Activity page.
+  useEffect(() => {
+    if (onActivity) systemStore.clearUnreadErrors()
+  }, [onActivity])
+
+  const hasErrors = systemStore.unreadErrors > 0
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--hds-bg)' }}>
@@ -81,8 +94,27 @@ export default observer(function Layout() {
                     {icon}
                   </span>
                   <span>{label}</span>
-                  {to === '/activity' && systemStore.syncing && (
-                    <span style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: 'var(--hds-violet)', animation: 'hds-pulse 2.6s ease-in-out infinite' }} />
+
+                  {/* Activity indicator: red error badge > purple sync dot */}
+                  {to === '/activity' && (
+                    hasErrors ? (
+                      <span style={{
+                        marginLeft: 'auto',
+                        minWidth: 18, height: 18, borderRadius: 9,
+                        padding: '0 5px',
+                        background: 'oklch(0.55 0.22 22)',
+                        color: '#fff',
+                        fontSize: 9.5, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: '0 0 10px oklch(0.55 0.22 22 / 0.7)',
+                        animation: 'hds-pulse 2s ease-in-out infinite',
+                        letterSpacing: 0,
+                      }}>
+                        {systemStore.unreadErrors > 99 ? '99+' : systemStore.unreadErrors}
+                      </span>
+                    ) : systemStore.syncing ? (
+                      <span style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: 'var(--hds-violet)', animation: 'hds-pulse 2.6s ease-in-out infinite' }} />
+                    ) : null
                   )}
                 </div>
               )}
@@ -118,6 +150,102 @@ export default observer(function Layout() {
       >
         <Outlet />
       </main>
+
+      {/* ── Error toast ─────────────────────────────────────────────────────── */}
+      {systemStore.toast && (
+        <ErrorToast
+          toast={systemStore.toast}
+          onViewLogs={() => { systemStore.dismissToast(); navigate('/activity') }}
+          onDismiss={() => systemStore.dismissToast()}
+        />
+      )}
     </div>
   )
 })
+
+// ── Error toast popup ─────────────────────────────────────────────────────────
+
+function ErrorToast({
+  toast, onViewLogs, onDismiss,
+}: {
+  toast:      { id: number; msg: string; ts: string }
+  onViewLogs: () => void
+  onDismiss:  () => void
+}) {
+  return (
+    <div style={{
+      position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+      width: 360, maxWidth: 'calc(100vw - 48px)',
+      background: 'oklch(0.16 0.022 286)',
+      border: '1px solid oklch(0.35 0.12 22 / 0.8)',
+      borderLeft: '4px solid oklch(0.55 0.22 22)',
+      borderRadius: 10,
+      boxShadow: '0 8px 32px -4px rgba(0,0,0,0.7), 0 0 0 1px oklch(0.55 0.22 22 / 0.15)',
+      fontFamily: "'JetBrains Mono', monospace",
+      overflow: 'hidden',
+      animation: 'hds-toast-in 0.22s cubic-bezier(0.22,1,0.36,1)',
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '10px 12px 8px',
+        borderBottom: '1px solid oklch(0.25 0.02 286)',
+      }}>
+        <span style={{
+          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+          background: 'oklch(0.62 0.22 22)',
+          boxShadow: '0 0 8px oklch(0.62 0.22 22)',
+          animation: 'hds-pulse 2s ease-in-out infinite',
+        }} />
+        <span style={{ fontSize: 10, letterSpacing: '0.18em', color: 'oklch(0.7 0.16 22)', fontWeight: 700, flex: 1 }}>
+          ENGINE ERROR
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>{toast.ts}</span>
+        <button
+          onClick={onDismiss}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 14, lineHeight: 1, padding: '0 2px' }}
+          title="Dismiss"
+        >✕</button>
+      </div>
+
+      {/* Message */}
+      <div style={{ padding: '10px 14px 12px', fontSize: 12, color: 'var(--hds-txt-2)', lineHeight: 1.55, wordBreak: 'break-word' }}>
+        {toast.msg || 'An unexpected error occurred in the engine.'}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: '0 12px 12px', display: 'flex', gap: 8 }}>
+        <button
+          onClick={onViewLogs}
+          style={{
+            flex: 1, padding: '7px 0',
+            background: 'oklch(0.55 0.22 22 / 0.18)',
+            border: '1px solid oklch(0.55 0.22 22 / 0.5)',
+            borderRadius: 7,
+            color: 'oklch(0.78 0.16 22)',
+            fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: '0.06em',
+            transition: 'background .12s',
+          }}
+        >
+          View Logs →
+        </button>
+        <button
+          onClick={onDismiss}
+          style={{
+            padding: '7px 14px',
+            background: 'transparent',
+            border: '1px solid var(--hds-line)',
+            borderRadius: 7,
+            color: 'var(--hds-txt-3)',
+            fontSize: 11, cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  )
+}

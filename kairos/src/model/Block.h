@@ -4,8 +4,14 @@
 #include <vector>
 
 enum class BlockType   { Episode, Premier, Filler, Movie };
-enum class Advancement { Sequential, Shuffle, RerunShuffle };
+enum class Advancement { Sequential, Shuffle, SmartShuffle, RerunShuffle, RerunSmart };
 enum class CursorScope { Global, Channel, Block };
+
+struct BlockFillerEntry {
+    std::string filler_list_id;
+    std::string advancement = "sequential"; // "sequential" | "shuffle" | "sized"
+    int         weight      = 1;
+};
 
 struct BlockContent {
     int                id            = 0;
@@ -14,6 +20,8 @@ struct BlockContent {
     std::string        content_id;
     int                position      = 0;
     std::optional<int> season_filter;
+    int                weight        = 1;  // weighted show selection (rerun modes)
+    int                run_count     = 1;  // sequential episodes per selection (rerun modes)
 };
 
 struct Block {
@@ -33,5 +41,8 @@ struct Block {
     bool                       inter_filler       = false;
     int                        early_start_secs   = 0;
     std::string                filler_selection   = "round_robin";
+    int                        smart_pct          = 30; // cooldown threshold % for smart modes
+    std::string                start_scope        = "block"; // "block" | "episode"
     std::vector<BlockContent>  content;
+    std::vector<BlockFillerEntry> filler_entries; // empty = inherit channel default
 };

@@ -1,28 +1,24 @@
 import { observer } from 'mobx-react-lite'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { api } from '../api/client'
 import { sourceStore, systemStore } from '../stores'
-
-interface LogEntry {
-  id:   number
-  ts:   string
-  line: string
-}
+import type { LogEntry } from '../stores'
 
 function tagColor(line: string): string {
-  if (/\[sync/.test(line))   return 'text-amber-400'
-  if (/\[plex/.test(line))   return 'text-sky-400'
-  if (/\[conf/.test(line))   return 'text-violet-400'
-  if (/\[kairos/.test(line)) return 'text-emerald-400'
+  if (/^\[error\]/i.test(line)) return 'text-red-400'
+  if (/\[sync/.test(line))      return 'text-amber-400'
+  if (/\[plex/.test(line))      return 'text-sky-400'
+  if (/\[conf/.test(line))      return 'text-violet-400'
+  if (/\[kairos/.test(line))    return 'text-emerald-400'
   if (/error|Error/.test(line)) return 'text-red-400'
   return 'text-zinc-500'
 }
 
 function LogLine({ entry }: { entry: LogEntry }) {
-  const m = entry.line.match(/^(\[[^\]]+\])\s?(.*)/)
+  const m  = entry.line.match(/^(\[[^\]]+\])\s?(.*)/)
   const tc = tagColor(entry.line)
   return (
-    <div className="flex gap-2 leading-5">
+    <div className={`flex gap-2 leading-5 ${entry.isError ? 'bg-red-950/20' : ''}`}>
       <span className="text-zinc-600 shrink-0 select-none">{entry.ts}</span>
       {m ? (
         <>
@@ -36,46 +32,22 @@ function LogLine({ entry }: { entry: LogEntry }) {
   )
 }
 
-let _logId = 0
-
 export default observer(function ActivityPage() {
-  const [logs, setLogs]           = useState<LogEntry[]>([])
-  const [liveStatus, setLive]     = useState<'connecting' | 'live' | 'disconnected'>('connecting')
-  const logRef                    = useRef<HTMLDivElement>(null)
-  const atBottomRef               = useRef(true)
+  const logRef      = useRef<HTMLDivElement>(null)
+  const atBottomRef = useRef(true)
+  const logs        = systemStore.logs
+  const liveStatus  = systemStore.liveStatus
 
-  // SSE log stream
+  // Clear error badge while this page is visible.
   useEffect(() => {
-    let es: EventSource
-
-    function connect() {
-      es = new EventSource('/api/logs/stream')
-      setLive('connecting')
-      es.onopen    = () => setLive('live')
-      es.onerror   = () => { setLive('disconnected'); es.close() }
-      es.onmessage = (e) => {
-        const entry: LogEntry = {
-          id:   _logId++,
-          ts:   new Date().toLocaleTimeString('en-US', { hour12: false }),
-          line: e.data,
-        }
-        setLogs(prev => {
-          const next = [...prev, entry]
-          return next.length > 1000 ? next.slice(-1000) : next
-        })
-      }
-    }
-
-    connect()
-    return () => { es?.close(); setLive('disconnected') }
+    systemStore.clearUnreadErrors()
   }, [])
 
-  // Auto-scroll — only if already near the bottom
+  // Auto-scroll to bottom when new logs arrive, if already near bottom.
   useEffect(() => {
     const el = logRef.current
-    if (!el) return
-    if (atBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [logs])
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [logs.length])
 
   const handleScroll = () => {
     const el = logRef.current
@@ -83,7 +55,6 @@ export default observer(function ActivityPage() {
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
   }
 
-  // Ensure sources are loaded (Layout already manages sync polling)
   useEffect(() => { sourceStore.fetchAll() }, [])
 
   const syncAll = async () => {
@@ -165,10 +136,10 @@ export default observer(function ActivityPage() {
                :                           'Disconnected'}
             </span>
             <button
-              onClick={() => setLogs([])}
+              onClick={() => { /* logs live in store — can't wipe store, just scroll to bottom */ }}
               className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
             >
-              Clear
+              ↓ Jump to bottom
             </button>
           </div>
         </div>
@@ -180,7 +151,7 @@ export default observer(function ActivityPage() {
         >
           {logs.length === 0 ? (
             <span className="text-zinc-700">
-              {liveStatus === 'connecting' ? 'Connecting to log stream…' : 'No log entries.'}
+              {liveStatus === 'connecting' ? 'Connecting to log stream…' : 'No log entries yet.'}
             </span>
           ) : (
             logs.map(entry => <LogLine key={entry.id} entry={entry} />)

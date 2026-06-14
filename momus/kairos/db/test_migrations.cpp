@@ -5,6 +5,10 @@
 #include <string>
 #include <vector>
 
+// Bump this when a new migration is added. Every test that cares about the
+// total count reads from here — no other number to update.
+static constexpr int kMigrationCount = 14;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -45,10 +49,10 @@ protected:
 // Migration count & sequencing
 // ---------------------------------------------------------------------------
 
-TEST_F(MigrationTest, AllTwelveMigrationsApplied) {
+TEST_F(MigrationTest, AllMigrationsApplied) {
     SQLite::Statement q(db.get(), "SELECT COUNT(*) FROM schema_migrations");
     q.executeStep();
-    EXPECT_EQ(q.getColumn(0).getInt(), 12);
+    EXPECT_EQ(q.getColumn(0).getInt(), kMigrationCount);
 }
 
 TEST_F(MigrationTest, MigrationVersionsAreContiguousFrom1) {
@@ -57,8 +61,8 @@ TEST_F(MigrationTest, MigrationVersionsAreContiguousFrom1) {
         "SELECT version FROM schema_migrations ORDER BY version");
     while (q.executeStep())
         versions.push_back(q.getColumn(0).getInt());
-    ASSERT_EQ(versions.size(), 12u);
-    for (int i = 0; i < 12; ++i)
+    ASSERT_EQ(versions.size(), static_cast<size_t>(kMigrationCount));
+    for (int i = 0; i < kMigrationCount; ++i)
         EXPECT_EQ(versions[i], i + 1) << "Gap at migration " << (i + 1);
 }
 
@@ -133,6 +137,8 @@ TEST_F(MigrationTest, BlockColumnsIncludeAllMigrationAdditions) {
     EXPECT_GT(cols.count("inter_filler"),    0u) << "added v8";
     EXPECT_GT(cols.count("early_start_secs"),0u) << "added v8";
     EXPECT_GT(cols.count("filler_selection"),0u) << "added v8";
+    EXPECT_GT(cols.count("smart_pct"),       0u) << "added v13";
+    EXPECT_GT(cols.count("start_scope"),     0u) << "added v14";
 }
 
 TEST_F(MigrationTest, ScheduledProgramColumnsFromV10) {
@@ -169,6 +175,8 @@ TEST_F(MigrationTest, BlockContentHasSeasonFilterFromV5) {
     EXPECT_GT(cols.count("content_id"),   0u);
     EXPECT_GT(cols.count("position"),     0u);
     EXPECT_GT(cols.count("season_filter"),0u) << "added v5";
+    EXPECT_GT(cols.count("weight"),       0u) << "added v13";
+    EXPECT_GT(cols.count("run_count"),    0u) << "added v13";
     // advancement and cursor_scope were moved to block level in v5
     EXPECT_EQ(cols.count("advancement"),   0u) << "moved to block in v5";
     EXPECT_EQ(cols.count("cursor_scope"),  0u) << "moved to block in v5";
@@ -199,13 +207,14 @@ TEST_F(MigrationTest, AllKeyIndicesExist) {
 
 // ---------------------------------------------------------------------------
 // Idempotency — second Database open on same :memory: can't easily reuse the
-// same connection, so we verify the migration count stays exactly 11 (no
+// same connection, so we verify no rows exist beyond kMigrationCount (no
 // double-apply happened during the single-pass startup).
 // ---------------------------------------------------------------------------
 
 TEST_F(MigrationTest, NoDoubleMigrationsDuringStartup) {
     SQLite::Statement q(db.get(),
-        "SELECT COUNT(*) FROM schema_migrations WHERE version > 12");
+        "SELECT COUNT(*) FROM schema_migrations WHERE version > ?");
+    q.bind(1, kMigrationCount);
     q.executeStep();
     EXPECT_EQ(q.getColumn(0).getInt(), 0) << "Unexpected extra migration row";
 }
