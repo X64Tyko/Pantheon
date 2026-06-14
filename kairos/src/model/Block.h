@@ -7,6 +7,15 @@ enum class BlockType   { Episode, Premier, Filler, Movie };
 enum class Advancement { Sequential, Shuffle, SmartShuffle, RerunShuffle, RerunSmart };
 enum class CursorScope { Global, Channel, Block };
 
+// What to do when a show in a rerun block has no play history on this channel.
+enum class NoHistoryBehavior {
+    Normal,      // play as a regular show: all episodes, sequential show cursor
+    FallbackAll, // treat the full episode catalog as the rerun pool (keep rerun advancement)
+    Exclude,     // exclude from weighted selection until the show has play history
+    Filler,      // fill the slot with filler content instead
+    Skip,        // skip the slot entirely (nullopt → dead air / gap)
+};
+
 struct BlockFillerEntry {
     std::string filler_list_id;
     std::string advancement = "sequential"; // "sequential" | "shuffle" | "sized"
@@ -27,22 +36,23 @@ struct BlockContent {
 struct Block {
     std::string                block_id;
     std::string                channel_id;
-    BlockType                  block_type         = BlockType::Episode;
-    int                        day_mask           = 127; // Sun=1 Mon=2 Tue=4 Wed=8 Thu=16 Fri=32 Sat=64
-    std::string                start_time         = "00:00";
+    BlockType                  block_type          = BlockType::Episode;
+    int                        day_mask            = 127; // Sun=1 Mon=2 Tue=4 Wed=8 Thu=16 Fri=32 Sat=64
+    std::string                start_time          = "00:00";
     std::optional<std::string> end_time;
-    int                        priority           = 0;
-    int                        program_count      = 0;
+    int                        priority            = 0;
+    int                        program_count       = 0;
     std::string                max_content_rating;
-    Advancement                advancement        = Advancement::Sequential;
-    CursorScope                cursor_scope       = CursorScope::Block;
-    int                        late_start_mins    = 0;
-    int                        align_to_mins      = 0;
-    bool                       inter_filler       = false;
-    int                        early_start_secs   = 0;
-    std::string                filler_selection   = "round_robin";
-    int                        smart_pct          = 30; // cooldown threshold % for smart modes
-    std::string                start_scope        = "block"; // "block" | "episode"
+    Advancement                advancement         = Advancement::Sequential;
+    CursorScope                cursor_scope        = CursorScope::Block;
+    int                        late_start_mins     = 0;
+    int                        align_to_mins       = 0;
+    bool                       inter_filler        = false;
+    int                        early_start_secs    = 0;
+    std::string                filler_selection    = "round_robin";
+    int                        smart_pct           = 30; // cooldown threshold % for smart modes
+    std::string                start_scope         = "block"; // "block" | "episode"
+    NoHistoryBehavior          no_history_behavior = NoHistoryBehavior::Normal;
     std::vector<BlockContent>  content;
     std::vector<BlockFillerEntry> filler_entries; // empty = inherit channel default
 };

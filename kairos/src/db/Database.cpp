@@ -605,6 +605,15 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE block ADD COLUMN start_scope TEXT NOT NULL DEFAULT 'block';
 )SQL" }
 
+,
+
+// ── v15: no_history_behavior — per-block policy for shows in a rerun block that
+//         have no play history on this channel yet.
+{ 15, R"SQL(
+    ALTER TABLE block ADD COLUMN no_history_behavior TEXT NOT NULL DEFAULT 'normal'
+        CHECK(no_history_behavior IN ('normal','fallback_all','exclude','filler','skip'));
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

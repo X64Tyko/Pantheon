@@ -133,6 +133,7 @@ export interface CredentialStatus {
 
 export type BlockType              = 'episode' | 'premier' | 'filler' | 'movie'
 export type Advancement            = 'sequential' | 'shuffle' | 'smart_shuffle' | 'rerun_shuffle' | 'rerun_smart'
+export type NoHistoryBehavior      = 'normal' | 'fallback_all' | 'exclude' | 'filler' | 'skip'
 export type StartScope             = 'block' | 'episode'
 export type FillerAdvancement      = 'sequential' | 'shuffle'
 export type FillerEntryAdvancement = 'sequential' | 'shuffle' | 'sized'
@@ -181,6 +182,7 @@ export interface Block {
   inter_filler:        boolean          // insert filler between programs
   smart_pct:           number           // cooldown threshold % for smart_shuffle / rerun_smart
   start_scope:         StartScope       // 'block' = align/early/late on block entry; 'episode' = per-item
+  no_history_behavior: NoHistoryBehavior
   content:             BlockContent[]
 }
 

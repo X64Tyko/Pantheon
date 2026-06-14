@@ -98,6 +98,14 @@ static CursorScope parseCursorScope(const std::string& s) {
     return CursorScope::Block;
 }
 
+static NoHistoryBehavior parseNoHistoryBehavior(const std::string& s) {
+    if (s == "fallback_all") return NoHistoryBehavior::FallbackAll;
+    if (s == "exclude")      return NoHistoryBehavior::Exclude;
+    if (s == "filler")       return NoHistoryBehavior::Filler;
+    if (s == "skip")         return NoHistoryBehavior::Skip;
+    return NoHistoryBehavior::Normal;
+}
+
 // ── SimState JSON serialization ───────────────────────────────────────────────
 
 static json simStateToJson(const RuleEngine::SimState& s) {
@@ -162,7 +170,7 @@ std::vector<Block> RuleEngine::loadBlocks(const std::string& channel_id) {
         SELECT block_id, block_type, day_mask, start_time, end_time,
                program_count, priority, max_content_rating, advancement, cursor_scope,
                late_start_mins, align_to_mins, inter_filler, early_start_secs,
-               filler_selection, smart_pct, start_scope
+               filler_selection, smart_pct, start_scope, no_history_behavior
         FROM block WHERE channel_id = ?
         ORDER BY priority DESC
     )");
@@ -187,8 +195,9 @@ std::vector<Block> RuleEngine::loadBlocks(const std::string& channel_id) {
         b.inter_filler       = q.getColumn(12).getInt() != 0;
         b.early_start_secs   = q.getColumn(13).getInt();
         b.filler_selection   = q.getColumn(14).getString();
-        b.smart_pct          = q.getColumn(15).getInt();
-        b.start_scope        = q.getColumn(16).getString();
+        b.smart_pct           = q.getColumn(15).getInt();
+        b.start_scope         = q.getColumn(16).getString();
+        b.no_history_behavior = parseNoHistoryBehavior(q.getColumn(17).getString());
 
         SQLite::Statement cq(db_.get(), R"(
             SELECT id, content_type, content_id, position, season_filter, weight, run_count
@@ -627,7 +636,26 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
             auto eps = (block.advancement == Advancement::RerunSmart)
                 ? getPlayedEpisodesWithCooldown(bc.content_id, channel_id, bc.season_filter, block.smart_pct)
                 : getPlayedEpisodes(bc.content_id, channel_id, bc.season_filter);
-            if (eps.empty()) return std::nullopt;
+            if (eps.empty()) {
+                switch (block.no_history_behavior) {
+                    case NoHistoryBehavior::Normal: {
+                        // Play as a regular show: all episodes, sequential show cursor.
+                        auto all = getEpisodes(bc.content_id, bc.season_filter);
+                        if (all.empty()) return std::nullopt;
+                        int pos = readCursorPos("show", bc.content_id,
+                                                scopeStr(block), scopeId(block, channel_id));
+                        return itemFromShow(channel_id, block.block_id, all, pos, showTitle(bc.content_id));
+                    }
+                    case NoHistoryBehavior::FallbackAll:
+                        // Treat full catalog as the rerun pool; fall through with all eps.
+                        eps = getEpisodes(bc.content_id, bc.season_filter);
+                        if (eps.empty()) return std::nullopt;
+                        break;
+                    default:
+                        // Exclude, Filler, Skip: no content for this slot.
+                        return std::nullopt;
+                }
+            }
             int pos = readCursorPos("show_rerun", bc.content_id, "block", block.block_id);
             return itemFromShow(channel_id, block.block_id, eps, pos, showTitle(bc.content_id));
         }
@@ -759,10 +787,34 @@ std::optional<ScheduledItem> RuleEngine::nextItemSim(const std::string& channel_
 
             bool need_select = (runs <= 0);
             if (need_select) {
-                // Weighted random selection seeded for determinism.
                 std::mt19937_64 rng(static_cast<uint64_t>(seed >= 0 ? seed : 0)
                                     ^ std::hash<std::string>{}(block.block_id));
-                sel  = selectWeighted(block, rng);
+                if (block.no_history_behavior == NoHistoryBehavior::Exclude) {
+                    // Weighted selection among only content entries with play history.
+                    std::vector<int> eligible;
+                    int total_w = 0;
+                    for (int i = 0; i < n; i++) {
+                        const auto& cbc = block.content[i];
+                        if (cbc.content_type == "show") {
+                            auto ceps = (block.advancement == Advancement::RerunSmart)
+                                ? getPlayedEpisodesWithCooldown(cbc.content_id, channel_id, cbc.season_filter, block.smart_pct)
+                                : getPlayedEpisodes(cbc.content_id, channel_id, cbc.season_filter);
+                            if (ceps.empty()) continue;
+                        }
+                        eligible.push_back(i);
+                        total_w += std::max(1, cbc.weight);
+                    }
+                    if (eligible.empty()) { runs = 0; return std::nullopt; }
+                    std::uniform_int_distribution<int> dist(0, total_w - 1);
+                    int r = dist(rng);
+                    sel = eligible.back();
+                    for (int idx : eligible) {
+                        r -= std::max(1, block.content[idx].weight);
+                        if (r < 0) { sel = idx; break; }
+                    }
+                } else {
+                    sel = selectWeighted(block, rng);
+                }
                 runs = std::max(1, block.content[sel].run_count);
             }
 
@@ -770,14 +822,37 @@ std::optional<ScheduledItem> RuleEngine::nextItemSim(const std::string& channel_
             auto eps = (block.advancement == Advancement::RerunSmart)
                 ? getPlayedEpisodesWithCooldown(sel_bc.content_id, channel_id, sel_bc.season_filter, block.smart_pct)
                 : getPlayedEpisodes(sel_bc.content_id, channel_id, sel_bc.season_filter);
-            if (eps.empty())
-                eps = getEpisodes(sel_bc.content_id, sel_bc.season_filter); // sim fallback
 
             if (eps.empty()) {
-                // No eligible episodes; skip this block slot.
-                runs = 0;
-                rr   = (rr + 1) % n;
-                return std::nullopt;
+                switch (block.no_history_behavior) {
+                    case NoHistoryBehavior::Normal: {
+                        // Play as a regular show: all episodes, sequential show cursor.
+                        auto all = getEpisodes(sel_bc.content_id, sel_bc.season_filter);
+                        if (all.empty()) { runs = 0; return std::nullopt; }
+                        std::string norm_key = "rerun_normal:" + block.block_id + ":" + sel_bc.content_id;
+                        if (!state.show_pos.count(norm_key))
+                            state.show_pos[norm_key] = seed >= 0
+                                ? (seed % static_cast<int>(all.size()))
+                                : readCursorPos("show", sel_bc.content_id,
+                                                scopeStr(block), scopeId(block, channel_id));
+                        auto& ep_pos = state.show_pos[norm_key];
+                        auto item = itemFromShow(channel_id, block.block_id, all, ep_pos,
+                                                 showTitle(sel_bc.content_id));
+                        ep_pos = (ep_pos + 1) % static_cast<int>(all.size());
+                        --runs;
+                        return item;
+                    }
+                    case NoHistoryBehavior::FallbackAll:
+                        // Treat full catalog as the rerun pool; continue with rerun logic.
+                        eps = getEpisodes(sel_bc.content_id, sel_bc.season_filter);
+                        if (eps.empty()) { runs = 0; rr = (rr + 1) % n; return std::nullopt; }
+                        break;
+                    default:
+                        // Exclude (shouldn't reach here after pre-filter), Filler, Skip.
+                        runs = 0;
+                        rr   = (rr + 1) % n;
+                        return std::nullopt;
+                }
             }
 
             std::string key = "rerun:" + block.block_id + ":" + sel_bc.content_id;
@@ -804,10 +879,14 @@ std::optional<ScheduledItem> RuleEngine::nextItemSim(const std::string& channel_
         if (eps.empty()) { rr = (rr + 1) % n; return std::nullopt; }
 
         std::string key = scopeStr(block) + ":" + scopeId(block, channel_id) + ":" + bc.content_id;
-        if (!state.show_pos.count(key))
-            state.show_pos[key] = (seed >= 0)
+        if (!state.show_pos.count(key)) {
+            // Premier blocks always start from the live cursor — seed offsetting is
+            // for episode/rerun blocks that can legitimately start mid-series.
+            bool use_seed = (seed >= 0) && (block.block_type != BlockType::Premier);
+            state.show_pos[key] = use_seed
                 ? (seed % static_cast<int>(eps.size()))
                 : readCursorPos("show", bc.content_id, scopeStr(block), scopeId(block, channel_id));
+        }
         auto& ep_pos = state.show_pos[key];
 
         std::optional<ScheduledItem> item;
@@ -1390,18 +1469,70 @@ void RuleEngine::markPlayed(const std::string& channel_id, const std::string& bl
                         int next_pos = (pos + 1) % static_cast<int>(eps.size());
                         writeCursorPos("show_rerun", bc.content_id, "block", b.block_id,
                                        next_pos, eps[next_pos].episode_id);
+                    } else if (b.no_history_behavior == NoHistoryBehavior::Normal) {
+                        // No play history: advance the regular show cursor instead.
+                        auto all = getEpisodes(bc.content_id, bc.season_filter);
+                        if (!all.empty()) {
+                            std::string scope    = scopeStr(b);
+                            std::string scope_id = scopeId(b, channel_id);
+                            int pos      = readCursorPos("show", bc.content_id, scope, scope_id);
+                            int next_pos = (pos + 1) % static_cast<int>(all.size());
+                            writeCursorPos("show", bc.content_id, scope, scope_id,
+                                           next_pos, all[next_pos].episode_id);
+                        }
+                    } else if (b.no_history_behavior == NoHistoryBehavior::FallbackAll) {
+                        // Full catalog treated as rerun pool: advance the show_rerun cursor.
+                        auto all = getEpisodes(bc.content_id, bc.season_filter);
+                        if (!all.empty()) {
+                            int pos      = readCursorPos("show_rerun", bc.content_id, "block", b.block_id);
+                            int next_pos = (pos + 1) % static_cast<int>(all.size());
+                            writeCursorPos("show_rerun", bc.content_id, "block", b.block_id,
+                                           next_pos, all[next_pos].episode_id);
+                        }
                     }
 
                     if (runs_rem <= 1) {
-                        // Run complete — pick next show (weighted random) and set its start.
+                        // Run complete — pick next show (weighted random) and set its starting position.
                         std::mt19937_64 rng{std::random_device{}()};
-                        int next_sel = selectWeighted(b, rng);
+                        int next_sel;
+                        if (b.no_history_behavior == NoHistoryBehavior::Exclude) {
+                            // Select only from shows that have play history.
+                            int cnt = static_cast<int>(b.content.size());
+                            std::vector<int> eligible;
+                            int total_w = 0;
+                            for (int i = 0; i < cnt; i++) {
+                                const auto& cbc = b.content[i];
+                                if (cbc.content_type == "show") {
+                                    auto ceps = (b.advancement == Advancement::RerunSmart)
+                                        ? getPlayedEpisodesWithCooldown(cbc.content_id, channel_id, cbc.season_filter, b.smart_pct)
+                                        : getPlayedEpisodes(cbc.content_id, channel_id, cbc.season_filter);
+                                    if (ceps.empty()) continue;
+                                }
+                                eligible.push_back(i);
+                                total_w += std::max(1, cbc.weight);
+                            }
+                            if (eligible.empty()) {
+                                writeRerunState(b.block_id, channel_id, 0, 0);
+                                break;
+                            }
+                            std::uniform_int_distribution<int> dist(0, total_w - 1);
+                            int r = dist(rng);
+                            next_sel = eligible.back();
+                            for (int idx : eligible) {
+                                r -= std::max(1, b.content[idx].weight);
+                                if (r < 0) { next_sel = idx; break; }
+                            }
+                        } else {
+                            next_sel = selectWeighted(b, rng);
+                        }
                         const auto& next_bc = b.content[next_sel];
                         auto next_eps = (b.advancement == Advancement::RerunSmart)
                             ? getPlayedEpisodesWithCooldown(next_bc.content_id, channel_id, next_bc.season_filter, b.smart_pct)
                             : getPlayedEpisodes(next_bc.content_id, channel_id, next_bc.season_filter);
-                        if (next_eps.empty())
+                        if (next_eps.empty() && b.no_history_behavior == NoHistoryBehavior::FallbackAll)
                             next_eps = getEpisodes(next_bc.content_id, next_bc.season_filter);
+                        // For Normal: show_rerun cursor is irrelevant until the show gains history;
+                        // leave it at 0 so it starts from the first played episode when it does.
                         if (!next_eps.empty()) {
                             std::uniform_int_distribution<int> dist(0, static_cast<int>(next_eps.size()) - 1);
                             int start = dist(rng);

@@ -9,7 +9,7 @@ import type { FilterRule } from '../components/PickerFilters'
 import type {
   Advancement, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
   EpisodeSearchResult, EpgProgram, FillerEntry, FillerEntryAdvancement, FillerList, FillerSelectionMode,
-  LibraryWithSource, Movie, Playlist, Show,
+  LibraryWithSource, Movie, NoHistoryBehavior, Playlist, Show,
 } from '../api/types'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -41,6 +41,14 @@ const ALIGN_OPTS: [number, string][]     = [[0,'None'],[15,':00/:15/:30/:45'],[3
 const FILLER_ADV_OPTS: [FillerEntryAdvancement, string][] = [['sequential','Sequential'],['shuffle','Shuffle'],['sized','Sized']]
 const FILLER_SEL_OPTS: [FillerSelectionMode, string][]    = [['round_robin','Round-robin'],['random','Random'],['weighted','Weighted']]
 
+const NO_HISTORY_OPTS: [NoHistoryBehavior, string, string][] = [
+  ['normal',       'Normal',       'Shows without premiers play as a regular episode show'],
+  ['fallback_all', 'Fallback All', 'Use the full episode catalog as the rerun pool'],
+  ['exclude',      'Exclude',      'Skip shows with no play history during selection'],
+  ['filler',       'Filler',       'Fill the slot with filler content'],
+  ['skip',         'Skip',         'Leave the slot empty'],
+]
+
 const BLANK_DRAFT: BlockDraft = {
   block_type: 'episode', day_mask: 62,
   start_time: '20:00', end_time: '21:00',
@@ -50,6 +58,7 @@ const BLANK_DRAFT: BlockDraft = {
   filler_selection: 'round_robin',
   align_to_mins: 0, inter_filler: false,
   smart_pct: 30, start_scope: 'block',
+  no_history_behavior: 'normal',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -111,6 +120,7 @@ function blockToDraft(block: Block): BlockDraft {
     filler_selection: block.filler_selection ?? 'round_robin',
     align_to_mins: block.align_to_mins ?? 0, inter_filler: block.inter_filler ?? false,
     smart_pct: block.smart_pct ?? 30, start_scope: block.start_scope ?? 'block',
+    no_history_behavior: block.no_history_behavior ?? 'normal',
   }
 }
 
@@ -1573,6 +1583,21 @@ const EditorForm = observer(function EditorForm({ channelId, store, limitMode }:
             </div>
             <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 3 }}>
               Episodes won't repeat until {d.smart_pct ?? 30}% of the pool has played since last air
+            </div>
+          </div>
+        )}
+        {(d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart') && (
+          <div style={{ marginTop: 9 }}>
+            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>NO HISTORY BEHAVIOR</div>
+            <select
+              value={d.no_history_behavior ?? 'normal'}
+              onChange={e => store.setDraft('no_history_behavior', e.target.value as NoHistoryBehavior)}
+              style={inputStyle}
+            >
+              {NO_HISTORY_OPTS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
+            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 3 }}>
+              {NO_HISTORY_OPTS.find(([v]) => v === (d.no_history_behavior ?? 'normal'))?.[2]}
             </div>
           </div>
         )}

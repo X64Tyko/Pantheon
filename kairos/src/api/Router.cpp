@@ -769,7 +769,7 @@ void Router::registerBlockRoutes() {
             SELECT block_id, block_type, day_mask, start_time, end_time,
                    program_count, priority, max_content_rating, advancement, cursor_scope,
                    late_start_mins, align_to_mins, inter_filler, early_start_secs,
-                   filler_selection, smart_pct, start_scope
+                   filler_selection, smart_pct, start_scope, no_history_behavior
             FROM block WHERE channel_id = ?
             ORDER BY start_time, priority DESC
         )");
@@ -794,8 +794,9 @@ void Router::registerBlockRoutes() {
                 {"inter_filler",       q.getColumn(12).getInt() != 0},
                 {"early_start_secs",   q.getColumn(13).getInt()},
                 {"filler_selection",   q.getColumn(14).getString()},
-                {"smart_pct",          q.getColumn(15).getInt()},
-                {"start_scope",        q.getColumn(16).getString()},
+                {"smart_pct",           q.getColumn(15).getInt()},
+                {"start_scope",         q.getColumn(16).getString()},
+                {"no_history_behavior", q.getColumn(17).getString()},
             };
             if (!q.getColumn(4).isNull()) block["end_time"] = q.getColumn(4).getString();
 
@@ -893,16 +894,18 @@ void Router::registerBlockRoutes() {
             int         inter_filler     = b.value("inter_filler",       false) ? 1 : 0;
             int         early_start_secs = b.value("early_start_secs",   0);
             std::string filler_selection = b.value("filler_selection",   "round_robin");
-            int         smart_pct        = b.value("smart_pct",          30);
-            std::string start_scope      = b.value("start_scope",        "block");
+            int         smart_pct           = b.value("smart_pct",           30);
+            std::string start_scope         = b.value("start_scope",         "block");
+            std::string no_history_behavior = b.value("no_history_behavior", "normal");
 
             SQLite::Statement s(db_.get(), R"(
                 INSERT INTO block (block_id, channel_id, block_type, day_mask,
                                    start_time, end_time, program_count, priority,
                                    max_content_rating, advancement, cursor_scope,
                                    late_start_mins, align_to_mins, inter_filler,
-                                   early_start_secs, filler_selection, smart_pct, start_scope)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                   early_start_secs, filler_selection, smart_pct,
+                                   start_scope, no_history_behavior)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             )");
             s.bind(1, block_id);       s.bind(2, channel_id);    s.bind(3, block_type);
             s.bind(4, day_mask);       s.bind(5, start_time);
@@ -911,6 +914,7 @@ void Router::registerBlockRoutes() {
             s.bind(10, advancement);   s.bind(11, cursor_scope);  s.bind(12, late_start_mins);
             s.bind(13, align_to_mins); s.bind(14, inter_filler);  s.bind(15, early_start_secs);
             s.bind(16, filler_selection); s.bind(17, smart_pct);  s.bind(18, start_scope);
+            s.bind(19, no_history_behavior);
             s.exec();
 
             res.status = 201;
@@ -951,8 +955,9 @@ void Router::registerBlockRoutes() {
             if (b.contains("inter_filler"))        updI("inter_filler",      b["inter_filler"].is_boolean() ? (b["inter_filler"].get<bool>() ? 1 : 0) : b["inter_filler"].get<int>());
             if (b.contains("early_start_secs"))    updI("early_start_secs",  b["early_start_secs"]);
             if (b.contains("filler_selection"))    upd("filler_selection",   b["filler_selection"]);
-            if (b.contains("smart_pct"))           updI("smart_pct",         b["smart_pct"]);
-            if (b.contains("start_scope"))         upd("start_scope",        b["start_scope"]);
+            if (b.contains("smart_pct"))            updI("smart_pct",            b["smart_pct"]);
+            if (b.contains("start_scope"))          upd("start_scope",           b["start_scope"]);
+            if (b.contains("no_history_behavior"))  upd("no_history_behavior",   b["no_history_behavior"]);
             if (b.contains("end_time")) {
                 if (b["end_time"].is_null() || b["end_time"].get<std::string>().empty())
                     updNull("end_time");
