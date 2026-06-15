@@ -6,5 +6,6 @@
     <mapping directory="$PROJECT_DIR$/cmake-build-debug/_deps/sqlitecpp-src" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/cmake-build-debug/_deps/sqlitecpp-src/googletest" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/kairos/build/_deps/nlohmann_json-src" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tunarr" vcs="Git" />
   </component>
 </project>
