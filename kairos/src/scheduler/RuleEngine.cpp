@@ -962,7 +962,7 @@ std::optional<ScheduledItem> RuleEngine::nextItemSim(const std::string& channel_
                 ? (seed % static_cast<int>(items.size()))
                 : readCursorPos(bc.content_type, bc.content_id, scopeStr(block), scopeId(block, channel_id));
         auto& pos = state.show_pos[key];
-        pos = pos % static_cast<int>(items.size());
+    pos = pos % static_cast<int>(items.size());
         const auto& [ptype, pid] = items[pos];
         pos = (pos + 1) % static_cast<int>(items.size());
 
