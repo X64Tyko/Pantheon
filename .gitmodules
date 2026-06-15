@@ -1,0 +1,4 @@
+[submodule "tunarr"]
+	path = tunarr
+	url = https://github.com/X64Tyko/tunarr.git
+	branch = kairos-integration
