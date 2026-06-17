@@ -1,0 +1,39 @@
+# Pantheon — Kairos + Tunarr stack
+#
+# Unraid Compose Manager URL:
+#   https://raw.githubusercontent.com/X64Tyko/Pantheon/master/docker-compose.yml
+#
+# Before first run, edit the two MEDIA_PATH lines below to point at wherever
+# your media library lives on the host (e.g. /mnt/user/Media on Unraid).
+#
+# Kairos stores its database and kairos.conf in ./data/kairos.
+# On first start Kairos creates a blank kairos.conf there.  Open the Kairos
+# UI (port 8081) and configure your Plex credentials + path maps through it.
+
+services:
+  kairos:
+    image: ghcr.io/x64tyko/kairos:latest
+    ports:
+      - "8081:8080"
+    environment:
+      # Number of parallel workers used when syncing episode metadata from Plex.
+      - KAIROS_SYNC_THREADS=4
+      # Uncomment to enable verbose EPG scheduling logs.
+      # - KAIROS_DEBUG_EPG=1
+    volumes:
+      - ./data/kairos:/data
+      - /mnt/user/Media:/media:ro   # <-- change to your media path
+    restart: unless-stopped
+
+  tunarr:
+    image: chrisbenincasa/tunarr:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - KAIROS_URL=http://kairos:8080
+    volumes:
+      - ./data/tunarr:/config/tunarr
+      - /mnt/user/Media:/media:ro   # <-- same path as above
+    depends_on:
+      - kairos
+    restart: unless-stopped

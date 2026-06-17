@@ -91,6 +91,13 @@ void Router::err(Res& res, int status, const std::string& msg) {
     res.set_content(json{{"error", msg}}.dump(), "application/json");
 }
 
+void Router::clearScheduleCache(const std::string& channel_id) {
+    SQLite::Statement d(db_.get(),
+        "DELETE FROM scheduled_program WHERE channel_id = ?");
+    d.bind(1, channel_id);
+    d.exec();
+}
+
 // ---------------------------------------------------------------------------
 
 Router::Router(httplib::Server& svr, Database& db, SyncManager& sync,
@@ -674,6 +681,9 @@ void Router::registerChannelRoutes() {
                 SQLite::Statement s(db_.get(), "UPDATE channel SET seed = ? WHERE channel_id = ?");
                 s.bind(1, b["seed"].get<int>()); s.bind(2, id); s.exec();
             }
+            // timezone and seed changes alter what gets scheduled.
+            if (b.contains("timezone") || b.contains("seed"))
+                clearScheduleCache(id);
             ok(res, json{{"ok", true}}.dump());
         } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
@@ -917,6 +927,7 @@ void Router::registerBlockRoutes() {
             s.bind(19, no_history_behavior);
             s.exec();
 
+            clearScheduleCache(channel_id);
             res.status = 201;
             ok(res, json{{"block_id", block_id}}.dump());
         } catch (const std::exception& e) { err(res, 400, e.what()); }
@@ -924,7 +935,8 @@ void Router::registerBlockRoutes() {
 
     // Update block properties
     svr_.Patch("/api/channels/:id/blocks/:bid", [this](const Req& req, Res& res) {
-        auto bid = req.path_params.at("bid");
+        auto channel_id = req.path_params.at("id");
+        auto bid        = req.path_params.at("bid");
         try {
             auto b = json::parse(req.body);
             auto upd = [&](const char* col, const std::string& val) {
@@ -964,21 +976,25 @@ void Router::registerBlockRoutes() {
                 else
                     upd("end_time", b["end_time"]);
             }
+            clearScheduleCache(channel_id);
             ok(res, json{{"ok", true}}.dump());
         } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
 
     // Delete block (cascade deletes content via FK)
     svr_.Delete("/api/channels/:id/blocks/:bid", [this](const Req& req, Res& res) {
-        auto bid = req.path_params.at("bid");
+        auto channel_id = req.path_params.at("id");
+        auto bid        = req.path_params.at("bid");
         SQLite::Statement s(db_.get(), "DELETE FROM block WHERE block_id = ?");
         s.bind(1, bid); s.exec();
+        clearScheduleCache(channel_id);
         ok(res, json{{"deleted", bid}}.dump());
     });
 
     // Add content to block
     svr_.Post("/api/channels/:id/blocks/:bid/content", [this](const Req& req, Res& res) {
-        auto bid = req.path_params.at("bid");
+        auto channel_id = req.path_params.at("id");
+        auto bid        = req.path_params.at("bid");
         try {
             auto b = json::parse(req.body);
             std::string content_type = b.value("content_type", "show");
@@ -1007,6 +1023,7 @@ void Router::registerBlockRoutes() {
             s.bind(6, weight); s.bind(7, run_count);
             s.exec();
 
+            clearScheduleCache(channel_id);
             res.status = 201;
             ok(res, json{{"id", db_.get().getLastInsertRowid()}, {"position", position}}.dump());
         } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
@@ -1015,7 +1032,8 @@ void Router::registerBlockRoutes() {
 
     // Update content item (season_filter or reorder)
     svr_.Patch("/api/channels/:id/blocks/:bid/content/:cid", [this](const Req& req, Res& res) {
-        auto cid = req.path_params.at("cid");
+        auto channel_id = req.path_params.at("id");
+        auto cid        = req.path_params.at("cid");
         try {
             auto b = json::parse(req.body);
             if (b.contains("season_filter")) {
@@ -1044,15 +1062,18 @@ void Router::registerBlockRoutes() {
                     "UPDATE block_content SET run_count = ? WHERE id = ?");
                 s.bind(1, b["run_count"].get<int>()); s.bind(2, std::stoi(cid)); s.exec();
             }
+            clearScheduleCache(channel_id);
             ok(res, json{{"ok", true}}.dump());
         } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
 
     // Remove content item
     svr_.Delete("/api/channels/:id/blocks/:bid/content/:cid", [this](const Req& req, Res& res) {
-        auto cid = req.path_params.at("cid");
+        auto channel_id = req.path_params.at("id");
+        auto cid        = req.path_params.at("cid");
         SQLite::Statement s(db_.get(), "DELETE FROM block_content WHERE id = ?");
         s.bind(1, std::stoi(cid)); s.exec();
+        clearScheduleCache(channel_id);
         ok(res, json{{"deleted", std::stoi(cid)}}.dump());
     });
 
@@ -1104,6 +1125,7 @@ void Router::registerBlockRoutes() {
             s.bind(1, content_id); s.bind(2, cursor_scope); s.bind(3, scope_id); s.exec();
         }
 
+        clearScheduleCache(channel_id);
         ok(res, json{{"ok", true}}.dump());
     });
 
@@ -1191,7 +1213,8 @@ void Router::registerBlockRoutes() {
     // ── Block filler entry CRUD ───────────────────────────────────────────────
 
     svr_.Post("/api/channels/:id/blocks/:bid/filler", [this](const Req& req, Res& res) {
-        auto block_id = req.path_params.at("bid");
+        auto channel_id = req.path_params.at("id");
+        auto block_id   = req.path_params.at("bid");
         try {
             auto b = json::parse(req.body);
             std::string filler_list_id = b.value("filler_list_id", "");
@@ -1222,6 +1245,7 @@ void Router::registerBlockRoutes() {
             s.bind(4, weight);   s.bind(5, position);
             s.exec();
             int64_t new_id = db_.get().getLastInsertRowid();
+            clearScheduleCache(channel_id);
             res.status = 201;
             ok(res, json{{"id", new_id}, {"filler_list_id", filler_list_id},
                          {"title", title}, {"advancement", advancement},
@@ -1231,7 +1255,8 @@ void Router::registerBlockRoutes() {
     });
 
     svr_.Patch("/api/channels/:id/blocks/:bid/filler/:eid", [this](const Req& req, Res& res) {
-        auto eid = std::stoi(req.path_params.at("eid"));
+        auto channel_id = req.path_params.at("id");
+        auto eid        = std::stoi(req.path_params.at("eid"));
         try {
             auto b = json::parse(req.body);
             if (b.contains("advancement")) {
@@ -1244,14 +1269,17 @@ void Router::registerBlockRoutes() {
                     "UPDATE block_filler_entry SET weight = ? WHERE id = ?");
                 s.bind(1, b["weight"].get<int>()); s.bind(2, eid); s.exec();
             }
+            clearScheduleCache(channel_id);
             ok(res, json{{"ok", true}}.dump());
         } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/channels/:id/blocks/:bid/filler/:eid", [this](const Req& req, Res& res) {
-        auto eid = std::stoi(req.path_params.at("eid"));
+        auto channel_id = req.path_params.at("id");
+        auto eid        = std::stoi(req.path_params.at("eid"));
         SQLite::Statement s(db_.get(), "DELETE FROM block_filler_entry WHERE id = ?");
         s.bind(1, eid); s.exec();
+        clearScheduleCache(channel_id);
         ok(res, json{{"deleted", eid}}.dump());
     });
 }
@@ -2505,7 +2533,7 @@ void Router::registerSchedulerRoutes() {
         json j = {
             {"item_type",            item.item_type},
             {"item_id",              item.item_id},
-            {"file_path",            item.file_path},
+            {"file_path",            conf_.applyPathMap(item.file_path)},
             {"duration_ms",          item.duration_ms},
             {"title",                item.title},
             {"block_id",             item.block_id},
@@ -2536,7 +2564,7 @@ void Router::registerSchedulerRoutes() {
         json j = {
             {"item_type",            item.item_type},
             {"item_id",              item.item_id},
-            {"file_path",            item.file_path},
+            {"file_path",            conf_.applyPathMap(item.file_path)},
             {"duration_ms",          item.duration_ms},
             {"title",                item.title},
             {"block_id",             item.block_id},

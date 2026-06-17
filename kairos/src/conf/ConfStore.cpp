@@ -92,6 +92,13 @@ void ConfStore::parseLocked(const std::string& text) {
         auto val = trim(line.substr(eq + 1));
         if (key == "token")   entries_[section].token   = val;
         if (key == "user_id") entries_[section].user_id = val;
+        if (key == "path_map") {
+            // Format: /from_prefix:/to_prefix — split on first colon.
+            auto colon = val.find(':');
+            if (colon != std::string::npos && colon > 0)
+                entries_[section].path_maps.push_back(
+                    {val.substr(0, colon), val.substr(colon + 1)});
+        }
     }
 }
 
@@ -119,6 +126,19 @@ bool ConfStore::hasUserId(const std::string& source_id) const {
     std::lock_guard lock(mu_);
     auto it = entries_.find(source_id);
     return it != entries_.end() && !it->second.user_id.empty();
+}
+
+std::string ConfStore::applyPathMap(const std::string& path) const {
+    std::lock_guard lock(mu_);
+    for (const auto& [sid, e] : entries_) {
+        for (const auto& [from, to] : e.path_maps) {
+            if (!from.empty() && path.size() >= from.size() &&
+                path.compare(0, from.size(), from) == 0) {
+                return to + path.substr(from.size());
+            }
+        }
+    }
+    return path;
 }
 
 std::vector<std::string> ConfStore::allSources() const {
@@ -157,6 +177,8 @@ void ConfStore::saveLocked() const {
         f << "[" << sid << "]\n";
         if (!e.token.empty())   f << "token = "   << e.token   << "\n";
         if (!e.user_id.empty()) f << "user_id = " << e.user_id << "\n";
+        for (const auto& [from, to] : e.path_maps)
+            f << "path_map = " << from << ":" << to << "\n";
         f << "\n";
     }
 }

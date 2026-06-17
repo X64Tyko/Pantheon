@@ -78,7 +78,11 @@ private:
                                                         const std::string& channel_id,
                                                         std::optional<int> season,
                                                         int smart_pct);
-    std::optional<Movie> getMovie(const std::string& movie_id);
+    std::optional<Movie>         getMovie(const std::string& movie_id);
+    std::optional<ScheduledItem> episodeById(const std::string& episode_id);
+    // Returns (item_type, item_id) pairs from a playlist or filler_list in order.
+    std::vector<std::pair<std::string, std::string>>
+        loadListItems(const std::string& content_type, const std::string& content_id);
     std::string          showTitle(const std::string& show_id);
 
     // Weighted random selection of a content-item index from a block's content list.

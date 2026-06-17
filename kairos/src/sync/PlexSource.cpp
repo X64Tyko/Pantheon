@@ -171,8 +171,24 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
 // ---------------------------------------------------------------------------
 
 std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_id) {
-    auto res = get("/library/metadata/" + external_show_id + "/allLeaves");
-    if (!res || res->status != 200) return {};
+    // Builds its own client rather than reusing client_: this runs concurrently
+    // across shows during sync, and client_ is not safe to share across threads.
+    httplib::Client client(base_url_);
+    client.set_default_headers({{"X-Plex-Token", token_}, {"Accept", "application/json"}});
+    client.set_connection_timeout(10);
+    client.set_read_timeout(30);
+
+    auto res = client.Get("/library/metadata/" + external_show_id + "/allLeaves");
+    if (!res) {
+        std::cerr << "[plex:" << source_id_ << "] /library/metadata/" << external_show_id
+                  << "/allLeaves — " << httplib::to_string(res.error()) << '\n';
+        return {};
+    }
+    if (res->status != 200) {
+        std::cerr << "[plex:" << source_id_ << "] /library/metadata/" << external_show_id
+                  << "/allLeaves — HTTP " << res->status << '\n';
+        return {};
+    }
 
     std::vector<Episode> result;
     try {

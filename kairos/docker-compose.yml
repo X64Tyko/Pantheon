@@ -3,6 +3,13 @@ services:
     build: .
     ports:
       - "8080:8080"
+    environment:
+      # Optional: override the sync episode-fetch worker count. Defaults to
+      # the container's effective core count, capped at 8.
+      - KAIROS_SYNC_THREADS=4
+      # Set to 1 to enable verbose EPG scheduling logs (project/ensureScheduled detail).
+      # Uncomment to diagnose empty guide issues; disable in normal operation.
+      # - KAIROS_DEBUG_EPG=1
     volumes:
       - ./data/kairos:/data
       - /mnt/user/Media:/media:ro
@@ -13,7 +20,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - HERMES_URL=http://kairos:8080
+      - KAIROS_URL=http://kairos:8080
     volumes:
       - ./data/tunarr:/config/tunarr
       - /mnt/user/Media:/media:ro

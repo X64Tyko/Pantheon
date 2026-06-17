@@ -22,6 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /src/build/kairos /usr/local/bin/kairos
 
+# Working directory is the data volume so kairos.conf is found automatically
+# without an explicit --conf flag.
+WORKDIR /data
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/kairos"]
 CMD ["--db", "/data/kairos.db", "--port", "8080"]

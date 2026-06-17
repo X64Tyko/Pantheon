@@ -6,12 +6,16 @@
 #include "conf/ConfStore.h"
 #include "db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 using json = nlohmann::json;
@@ -23,6 +27,9 @@ SyncManager::SyncManager(Database& db, ConfStore& conf) : db_(db), conf_(conf) {
 // ---------------------------------------------------------------------------
 
 namespace {
+// Serialises log output so concurrent worker threads don't interleave lines.
+std::mutex s_log_mu;
+
 std::string envVar(const char* prefix, const std::string& source_id) {
     const std::string key = std::string(prefix) + source_id;
     const char* val = std::getenv(key.c_str());
@@ -42,7 +49,7 @@ void SyncManager::loadSources() {
                                q.getColumn(2).getString());
         if (src) sources_.push_back(std::move(src));
     }
-    std::cout << "[sync] loaded " << sources_.size() << " source(s)\n";
+    std::cout << "[sync] loaded " << sources_.size() << " source(s)" << std::endl;
 }
 
 // ---------------------------------------------------------------------------
@@ -52,7 +59,7 @@ void SyncManager::loadSources() {
 void SyncManager::triggerSync(const std::string& source_id) {
     bool expected = false;
     if (!sync_running_.compare_exchange_strong(expected, true)) {
-        std::cout << "[sync] already running — ignoring trigger\n";
+        std::cout << "[sync] already running — ignoring trigger" << std::endl;
         return;
     }
     // detach so the HTTP handler returns immediately (202)
@@ -63,7 +70,7 @@ void SyncManager::triggerSync(const std::string& source_id) {
             else
                 syncSource(source_id);
         } catch (const std::exception& e) {
-            std::cerr << "[sync] error: " << e.what() << '\n';
+            std::cerr << "[sync] error: " << e.what() << std::endl;
         }
         sync_running_.store(false);
     }).detach();
@@ -73,7 +80,7 @@ void SyncManager::syncAll() {
     for (const auto& src : sources_) {
         if (!src->isSupported()) {
             std::cout << "[sync] " << src->sourceId()
-                      << " (" << src->sourceType() << ") not yet supported\n";
+                      << " (" << src->sourceType() << ") not yet supported" << std::endl;
             continue;
         }
         syncSource(src->sourceId());
@@ -84,7 +91,7 @@ void SyncManager::syncSource(const std::string& source_id) {
     MediaSource* src = findSource(source_id);
     if (!src || !src->isSupported()) return;
 
-    std::cout << "[sync] syncing source: " << source_id << '\n';
+    std::cout << "[sync] syncing source: " << source_id << std::endl;
 
     SQLite::Statement q(db_.get(),
         "SELECT library_id, external_lib_id, library_type "
@@ -103,86 +110,150 @@ void SyncManager::syncSource(const std::string& source_id) {
     }
 
     syncPlexLinks(source_id);
-    std::cout << "[sync] done: " << source_id << '\n';
+    std::cout << "[sync] done: " << source_id << std::endl;
 }
 
 // ---------------------------------------------------------------------------
 // Show + episode sync
 // ---------------------------------------------------------------------------
 
+namespace {
+constexpr int kEpisodeFetchConcurrency = 8;
+
+// Worker count for the episode-fetch pool. KAIROS_SYNC_THREADS overrides the
+// default for container deployments where the assigned cgroup quota is known
+// up front; otherwise this defaults to the local core count, capped at
+// kEpisodeFetchConcurrency so a high-core host doesn't flood the media server
+// with simultaneous requests.
+int syncThreadCount() {
+    if (const char* env = std::getenv("KAIROS_SYNC_THREADS")) {
+        try {
+            int n = std::stoi(env);
+            if (n > 0) return n;
+        } catch (const std::exception&) {}
+        std::cerr << "[sync] invalid KAIROS_SYNC_THREADS value '" << env << "' — ignoring" << std::endl;
+    }
+    const unsigned hw = std::thread::hardware_concurrency();
+    return std::min<int>(kEpisodeFetchConcurrency, hw > 0 ? static_cast<int>(hw) : kEpisodeFetchConcurrency);
+}
+} // namespace
+
 void SyncManager::syncShows(MediaSource& src,
                              const std::string& source_id,
                              const std::string& library_id,
                              const std::string& external_lib_id) {
     auto shows = src.fetchShows(external_lib_id);
-    std::cout << "[sync]   " << external_lib_id << ": " << shows.size() << " show(s)\n";
+    std::cout << "[sync]   " << external_lib_id << ": " << shows.size() << " show(s)" << std::endl;
+    if (shows.empty()) return; // skip stale cleanup — empty fetch may be a source error
+
+    // Resolve IDs and upsert show metadata first so ext_show_id is captured
+    // before the episode fetch below, which mutates show.show_id in place.
+    // Build live_show_ids here rather than in a separate pass.
+    std::vector<std::string> ext_show_ids(shows.size());
+    std::unordered_set<std::string> live_show_ids;
+    {
+        SQLite::Transaction txn(db_.get());
+        for (size_t i = 0; i < shows.size(); ++i) {
+            auto& show = shows[i];
+            const std::string ext_show_id = show.show_id; // Plex rating key before resolution
+            const std::string kairos_id   = resolveId("show", source_id, ext_show_id);
+            ext_show_ids[i] = ext_show_id;
+            show.show_id    = kairos_id;
+            live_show_ids.insert(kairos_id);
+
+            SQLite::Statement s(db_.get(), R"(
+                INSERT INTO show (show_id, title, content_rating, overview, studio, status,
+                                  genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
+                                  originally_available_at, year, audience_rating)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(show_id) DO UPDATE SET
+                    title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
+                    content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
+                    overview                = CASE WHEN locked THEN overview                ELSE excluded.overview                END,
+                    studio                  = CASE WHEN locked THEN studio                  ELSE excluded.studio                  END,
+                    status                  = CASE WHEN locked THEN status                  ELSE excluded.status                  END,
+                    genres                  = CASE WHEN locked THEN genres                  ELSE excluded.genres                  END,
+                    thumb                   = CASE WHEN locked THEN thumb                   ELSE excluded.thumb                   END,
+                    art                     = CASE WHEN locked THEN art                     ELSE excluded.art                     END,
+                    imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE excluded.imdb_id                 END,
+                    tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE excluded.tvdb_id                 END,
+                    tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE excluded.tmdb_id                 END,
+                    originally_available_at = CASE WHEN locked THEN originally_available_at ELSE excluded.originally_available_at END,
+                    year                    = CASE WHEN locked THEN year                    ELSE excluded.year                    END,
+                    audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END
+            )");
+            s.bind(1,  show.show_id);
+            s.bind(2,  show.title);
+            s.bind(3,  show.content_rating);
+            s.bind(4,  show.overview);
+            s.bind(5,  show.studio);
+            s.bind(6,  show.status);
+            s.bind(7,  show.genres);
+            s.bind(8,  show.thumb);
+            s.bind(9,  show.art);
+            s.bind(10, show.imdb_id);
+            s.bind(11, show.tvdb_id);
+            s.bind(12, show.tmdb_id);
+            s.bind(13, show.originally_available_at);
+            if (show.year.has_value())            s.bind(14, show.year.value());
+            else                                  s.bind(14);
+            if (show.audience_rating.has_value()) s.bind(15, show.audience_rating.value());
+            else                                  s.bind(15);
+            s.exec();
+
+            upsertMapping("show", kairos_id, source_id, library_id, ext_show_id);
+        }
+        txn.commit();
+    }
+
+    // Episode fetches are one HTTP round-trip per show and dominate sync time,
+    // so they run across a small worker pool. DB writes stay single-threaded
+    // below, so the shared connection is never touched from multiple threads.
+    // Requires fetchEpisodes() to tolerate concurrent calls on the same source.
+    std::vector<std::vector<Episode>> episodes_by_show(shows.size());
+    {
+        std::atomic<size_t> next{0};
+        const int worker_count = std::min<int>(syncThreadCount(),
+                                                static_cast<int>(shows.size()));
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<size_t>(worker_count));
+        for (int w = 0; w < worker_count; ++w) {
+            workers.emplace_back([&]() {
+                for (size_t i = next.fetch_add(1); i < shows.size(); i = next.fetch_add(1)) {
+                    episodes_by_show[i] = src.fetchEpisodes(ext_show_ids[i]);
+                    std::lock_guard lock(s_log_mu);
+                    std::cout << "[sync]     \"" << shows[i].title << "\": "
+                              << episodes_by_show[i].size() << " episode(s)" << std::endl;
+                }
+            });
+        }
+        for (auto& t : workers) t.join();
+    }
 
     SQLite::Transaction txn(db_.get());
+    for (size_t i = 0; i < shows.size(); ++i) {
+        auto& show     = shows[i];
+        auto& episodes = episodes_by_show[i];
 
-    for (auto& show : shows) {
-        const std::string ext_show_id = show.show_id; // Plex rating key before resolution
-        const std::string kairos_id   = resolveId("show", source_id, ext_show_id);
-        show.show_id = kairos_id;
+        // Clear existing episodes before reinserting the current set.
+        // media_cursor.episode_id references episode(episode_id) with no ON DELETE
+        // clause (RESTRICT), so we must nullify those refs before deleting episodes.
+        { SQLite::Statement q(db_.get(),
+              "UPDATE media_cursor SET episode_id = NULL "
+              "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
+          q.bind(1, show.show_id); q.exec(); }
+        { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id=?");
+          d.bind(1, show.show_id); d.exec(); }
 
-        SQLite::Statement s(db_.get(), R"(
-            INSERT INTO show (show_id, title, content_rating, overview, studio, status,
-                              genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
-                              originally_available_at, year, audience_rating)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(show_id) DO UPDATE SET
-                title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
-                content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
-                overview                = CASE WHEN locked THEN overview                ELSE excluded.overview                END,
-                studio                  = CASE WHEN locked THEN studio                  ELSE excluded.studio                  END,
-                status                  = CASE WHEN locked THEN status                  ELSE excluded.status                  END,
-                genres                  = CASE WHEN locked THEN genres                  ELSE excluded.genres                  END,
-                thumb                   = CASE WHEN locked THEN thumb                   ELSE excluded.thumb                   END,
-                art                     = CASE WHEN locked THEN art                     ELSE excluded.art                     END,
-                imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE excluded.imdb_id                 END,
-                tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE excluded.tvdb_id                 END,
-                tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE excluded.tmdb_id                 END,
-                originally_available_at = CASE WHEN locked THEN originally_available_at ELSE excluded.originally_available_at END,
-                year                    = CASE WHEN locked THEN year                    ELSE excluded.year                    END,
-                audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END
-        )");
-        s.bind(1,  show.show_id);
-        s.bind(2,  show.title);
-        s.bind(3,  show.content_rating);
-        s.bind(4,  show.overview);
-        s.bind(5,  show.studio);
-        s.bind(6,  show.status);
-        s.bind(7,  show.genres);
-        s.bind(8,  show.thumb);
-        s.bind(9,  show.art);
-        s.bind(10, show.imdb_id);
-        s.bind(11, show.tvdb_id);
-        s.bind(12, show.tmdb_id);
-        s.bind(13, show.originally_available_at);
-        if (show.year.has_value())            s.bind(14, show.year.value());
-        else                                  s.bind(14);
-        if (show.audience_rating.has_value()) s.bind(15, show.audience_rating.value());
-        else                                  s.bind(15);
-        s.exec();
-
-        upsertMapping("show", kairos_id, source_id, library_id, ext_show_id);
-
-        auto episodes = src.fetchEpisodes(ext_show_id); // pass the Plex key
         for (auto& ep : episodes) {
             const std::string ext_ep_id = ep.episode_id;
             ep.episode_id = resolveId("episode", source_id, ext_ep_id);
-            ep.show_id    = kairos_id; // already resolved above
+            ep.show_id    = show.show_id;
 
             SQLite::Statement e(db_.get(), R"(
-                INSERT INTO episode (episode_id, show_id, season, episode, title, file_path, duration_ms,
-                                     overview, air_date, thumb)
+                INSERT INTO episode (episode_id, show_id, season, episode, title, file_path,
+                                     duration_ms, overview, air_date, thumb)
                 VALUES (?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(episode_id) DO UPDATE SET
-                    title       = excluded.title,
-                    file_path   = excluded.file_path,
-                    duration_ms = excluded.duration_ms,
-                    overview    = excluded.overview,
-                    air_date    = excluded.air_date,
-                    thumb       = excluded.thumb
             )");
             e.bind(1,  ep.episode_id);
             e.bind(2,  ep.show_id);
@@ -198,9 +269,44 @@ void SyncManager::syncShows(MediaSource& src,
 
             upsertMapping("episode", ep.episode_id, source_id, library_id, ext_ep_id);
         }
-        std::cout << "[sync]     \"" << show.title << "\": "
-                  << episodes.size() << " episode(s)\n";
     }
+
+    // Remove shows that were in this library last sync but not returned this time.
+    // Collect stale IDs before deleting so we don't modify while iterating.
+    std::vector<std::string> stale_shows;
+    {
+        SQLite::Statement q(db_.get(),
+            "SELECT kairos_id FROM source_mapping "
+            "WHERE item_type='show' AND source_id=? AND library_id=?");
+        q.bind(1, source_id); q.bind(2, library_id);
+        while (q.executeStep()) {
+            const std::string kid = q.getColumn(0).getString();
+            if (!live_show_ids.contains(kid)) stale_shows.push_back(kid);
+        }
+    }
+    for (const auto& kid : stale_shows) {
+        // episode.show_id has no ON DELETE CASCADE, so delete episodes explicitly.
+        // Nullify media_cursor.episode_id refs first (FK: RESTRICT).
+        { SQLite::Statement q(db_.get(),
+              "UPDATE media_cursor SET episode_id = NULL "
+              "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
+          q.bind(1, kid); q.exec(); }
+        { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id = ?");
+          d.bind(1, kid); d.exec(); }
+        { SQLite::Statement d(db_.get(), "DELETE FROM show WHERE show_id=?");
+          d.bind(1, kid); d.exec(); }
+        std::cout << "[sync]   removed stale show: " << kid << std::endl;
+    }
+
+    // Prune source_mapping for any removed shows or orphaned episode entries.
+    { SQLite::Statement d(db_.get(),
+          "DELETE FROM source_mapping WHERE item_type='show' AND source_id=? AND library_id=?"
+          " AND kairos_id NOT IN (SELECT show_id FROM show)");
+      d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
+    { SQLite::Statement d(db_.get(),
+          "DELETE FROM source_mapping WHERE item_type='episode' AND source_id=? AND library_id=?"
+          " AND kairos_id NOT IN (SELECT episode_id FROM episode)");
+      d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
 
     txn.commit();
 }
@@ -214,13 +320,16 @@ void SyncManager::syncMovies(MediaSource& src,
                               const std::string& library_id,
                               const std::string& external_lib_id) {
     auto movies = src.fetchMovies(external_lib_id);
-    std::cout << "[sync]   " << external_lib_id << ": " << movies.size() << " movie(s)\n";
+    std::cout << "[sync]   " << external_lib_id << ": " << movies.size() << " movie(s)" << std::endl;
+    if (movies.empty()) return;
 
+    std::unordered_set<std::string> live_movie_ids;
     SQLite::Transaction txn(db_.get());
 
     for (auto& movie : movies) {
         const std::string ext_movie_id = movie.movie_id;
         movie.movie_id = resolveId("movie", source_id, ext_movie_id);
+        live_movie_ids.insert(movie.movie_id);
 
         SQLite::Statement s(db_.get(), R"(
             INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
@@ -266,6 +375,28 @@ void SyncManager::syncMovies(MediaSource& src,
 
         upsertMapping("movie", movie.movie_id, source_id, library_id, ext_movie_id);
     }
+
+    std::vector<std::string> stale_movies;
+    {
+        SQLite::Statement q(db_.get(),
+            "SELECT kairos_id FROM source_mapping "
+            "WHERE item_type='movie' AND source_id=? AND library_id=?");
+        q.bind(1, source_id); q.bind(2, library_id);
+        while (q.executeStep()) {
+            const std::string kid = q.getColumn(0).getString();
+            if (!live_movie_ids.contains(kid)) stale_movies.push_back(kid);
+        }
+    }
+    for (const auto& kid : stale_movies) {
+        SQLite::Statement d(db_.get(), "DELETE FROM movie WHERE movie_id=?");
+        d.bind(1, kid); d.exec();
+        std::cout << "[sync]   removed stale movie: " << kid << std::endl;
+    }
+
+    { SQLite::Statement d(db_.get(),
+          "DELETE FROM source_mapping WHERE item_type='movie' AND source_id=? AND library_id=?"
+          " AND kairos_id NOT IN (SELECT movie_id FROM movie)");
+      d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
 
     txn.commit();
 }
@@ -322,7 +453,7 @@ std::vector<std::string> SyncManager::sourceIds() const {
 void SyncManager::triggerPlexLinkSync() {
     bool expected = false;
     if (!plex_sync_running_.compare_exchange_strong(expected, true)) {
-        std::cout << "[sync] plex-link sync already running — ignoring trigger\n";
+        std::cout << "[sync] plex-link sync already running — ignoring trigger" << std::endl;
         return;
     }
     std::thread([this]() {
@@ -330,7 +461,7 @@ void SyncManager::triggerPlexLinkSync() {
             for (const auto& src : sources_)
                 syncPlexLinks(src->sourceId());
         } catch (const std::exception& e) {
-            std::cerr << "[sync] plex-link sync error: " << e.what() << '\n';
+            std::cerr << "[sync] plex-link sync error: " << e.what() << std::endl;
         }
         plex_sync_running_.store(false);
     }).detach();
@@ -368,7 +499,7 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
     }
     if (links.empty()) return;
 
-    std::cout << "[sync] re-syncing " << links.size() << " Plex-linked list(s)\n";
+    std::cout << "[sync] re-syncing " << links.size() << " Plex-linked list(s)" << std::endl;
 
     httplib::Client client(base_url);
     client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
@@ -384,7 +515,7 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
             auto r = client.Get(path.c_str());
             if (!r || r->status != 200) {
                 std::cerr << "[sync] failed to fetch Plex items for list "
-                          << link.list_id << " (HTTP " << (r ? r->status : 0) << ")\n";
+                          << link.list_id << " (HTTP " << (r ? r->status : 0) << ")" << std::endl;
                 continue;
             }
 
@@ -431,10 +562,10 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
 
             txn.commit();
             std::cout << "[sync]   \"" << link.list_id << "\": "
-                      << items.size() << " item(s)\n";
+                      << items.size() << " item(s)" << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "[sync] error syncing list " << link.list_id
-                      << ": " << e.what() << '\n';
+                      << ": " << e.what() << std::endl;
         }
     }
 }
@@ -459,7 +590,7 @@ std::unique_ptr<MediaSource> SyncManager::buildSource(const std::string& source_
     if (source_type == "plex") {
         if (token.empty()) {
             std::cout << "[sync] no token for " << source_id
-                      << " (set via UI or KAIROS_TOKEN_" << source_id << ") — skipping\n";
+                      << " (set via UI or KAIROS_TOKEN_" << source_id << ") — skipping" << std::endl;
             return nullptr;
         }
         return std::make_unique<PlexSource>(source_id, base_url, token);
@@ -471,6 +602,6 @@ std::unique_ptr<MediaSource> SyncManager::buildSource(const std::string& source_
     if (source_type == "local")
         return std::make_unique<LocalSource>(source_id, base_url);
 
-    std::cout << "[sync] unknown source type '" << source_type << "' — skipping\n";
+    std::cout << "[sync] unknown source type '" << source_type << "' — skipping" << std::endl;
     return nullptr;
 }

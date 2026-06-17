@@ -7,7 +7,7 @@
 
 // Bump this when a new migration is added. Every test that cares about the
 // total count reads from here — no other number to update.
-static constexpr int kMigrationCount = 14;
+static constexpr int kMigrationCount = 15;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -138,7 +138,8 @@ TEST_F(MigrationTest, BlockColumnsIncludeAllMigrationAdditions) {
     EXPECT_GT(cols.count("early_start_secs"),0u) << "added v8";
     EXPECT_GT(cols.count("filler_selection"),0u) << "added v8";
     EXPECT_GT(cols.count("smart_pct"),       0u) << "added v13";
-    EXPECT_GT(cols.count("start_scope"),     0u) << "added v14";
+    EXPECT_GT(cols.count("start_scope"),         0u) << "added v14";
+    EXPECT_GT(cols.count("no_history_behavior"), 0u) << "added v15";
 }
 
 TEST_F(MigrationTest, ScheduledProgramColumnsFromV10) {

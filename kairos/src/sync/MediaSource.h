@@ -21,6 +21,10 @@ public:
     // Sync: only called for libraries the user has explicitly added
     virtual std::vector<Show>     fetchShows(const std::string& external_lib_id)      = 0;
     virtual std::vector<Movie>    fetchMovies(const std::string& external_lib_id)     = 0;
+
+    // SyncManager::syncShows calls this concurrently across shows from a worker
+    // pool — implementations must not share mutable state (e.g. one persistent
+    // HTTP client) across calls.
     virtual std::vector<Episode>  fetchEpisodes(const std::string& external_show_id)  = 0;
     virtual std::vector<Playlist> fetchPlaylists(const std::string& external_lib_id)  = 0;
 };

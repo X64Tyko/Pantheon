@@ -1,8 +1,18 @@
 #include "EPGMaterializer.h"
 #include "../db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <cstdlib>
 #include <ctime>
+#include <iostream>
 #include <sstream>
+
+static bool epgDebug() {
+    static const bool v = [] {
+        const char* e = std::getenv("KAIROS_DEBUG_EPG");
+        return e && std::string(e) == "1";
+    }();
+    return v;
+}
 
 EPGMaterializer::EPGMaterializer(Database& db, RuleEngine& engine)
     : db_(db), engine_(engine) {}
@@ -43,6 +53,10 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
     std::time_t horizon = from + static_cast<std::time_t>(horizon_hours) * 3600;
     auto now = static_cast<int64_t>(std::time(nullptr));
 
+    if (epgDebug())
+        std::cout << "[epg] ensureScheduled channel=" << channel_id
+                  << " from=" << from << " horizon_hours=" << horizon_hours << '\n';
+
     // Loop until the cache fully covers the horizon. project() is capped at
     // MAX_ITEMS per call; for channels with short clips this loop re-extends
     // from the tail on each pass rather than leaving a gap.
@@ -63,13 +77,39 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             }
         }
 
-        if (last_end >= horizon) return; // fully covered
+        if (epgDebug())
+            std::cout << "[epg]   guard=" << guard
+                      << " last_end=" << last_end << " horizon=" << horizon
+                      << " last_cursor_len=" << last_cursor.size() << '\n';
+
+        if (last_end >= horizon) {
+            if (epgDebug()) std::cout << "[epg]   cache fully covers horizon — done\n";
+            return;
+        }
 
         std::time_t extend_from = (last_end > from) ? last_end : from;
         int extend_hours = static_cast<int>((horizon - extend_from) / 3600) + 2;
 
-        auto items = engine_.project(channel_id, extend_from, extend_hours, last_cursor);
-        if (items.empty()) return; // no content — nothing to schedule
+        // Use the cached cursor only when extending FORWARD from existing future
+        // entries. If the entire cache is in the past, re-seed from live DB
+        // cursors so the projection matches actual play state after a restart.
+        const std::string& cursor = (last_end > from) ? last_cursor : "{}";
+
+        if (epgDebug())
+            std::cout << "[epg]   calling project() extend_from=" << extend_from
+                      << " extend_hours=" << extend_hours
+                      << " using_cached_cursor=" << (last_end > from) << '\n';
+
+        auto items = engine_.project(channel_id, extend_from, extend_hours, cursor);
+
+        if (epgDebug())
+            std::cout << "[epg]   project() returned " << items.size() << " items\n";
+
+        if (items.empty()) {
+            std::cout << "[epg] WARNING: project() returned 0 items for channel="
+                      << channel_id << " — EPG will be empty\n";
+            return;
+        }
 
         SQLite::Transaction txn(db_.get());
         SQLite::Statement ins(db_.get(), R"(
@@ -80,10 +120,11 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         )");
 
         bool any_new = false;
+        int inserted = 0, skipped_dup = 0, skipped_horizon = 0, skipped_filler = 0;
         for (const auto& item : items) {
-            if (item.is_filler) continue;
+            if (item.is_filler) { ++skipped_filler; continue; }
             std::time_t item_end = item.wall_clock_end_ms / 1000;
-            if (item_end > horizon + 7200) break;
+            if (item_end > horizon + 7200) { ++skipped_horizon; break; }
 
             ins.bind(1, channel_id);
             if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
@@ -94,12 +135,24 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             ins.bind(7, item.cursor_json);
             ins.bind(8, now);
             ins.exec();
-            if (db_.get().getChanges() > 0) any_new = true;
+            if (db_.get().getChanges() > 0) { any_new = true; ++inserted; }
+            else ++skipped_dup;
             ins.reset();
         }
         txn.commit();
 
-        if (!any_new) return; // all items were already in the cache — done
+        if (epgDebug())
+            std::cout << "[epg]   inserted=" << inserted
+                      << " dup_skipped=" << skipped_dup
+                      << " horizon_skipped=" << skipped_horizon
+                      << " filler_skipped=" << skipped_filler
+                      << " any_new=" << any_new << '\n';
+
+        if (!any_new) {
+            if (epgDebug())
+                std::cout << "[epg]   all items already cached — done\n";
+            return;
+        }
     }
 }
 
@@ -135,6 +188,10 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
 
     std::time_t now     = std::time(nullptr);
     std::time_t horizon = now + static_cast<std::time_t>(horizon_hours) * 3600;
+
+    if (epgDebug())
+        std::cout << "[epg] generateXMLTV: " << channels.size()
+                  << " channel(s), horizon_hours=" << horizon_hours << '\n';
 
     // Extend cache for every channel before building the XML.
     for (const auto& ch : channels)
@@ -175,7 +232,9 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
         q.bind(2, static_cast<int64_t>(now));
         q.bind(3, static_cast<int64_t>(horizon));
 
+        int prog_count = 0;
         while (q.executeStep()) {
+            ++prog_count;
             std::time_t start       = static_cast<std::time_t>(q.getColumn(1).getInt64());
             std::time_t stop        = static_cast<std::time_t>(q.getColumn(2).getInt64());
             std::string item_title  = q.getColumn(3).getString();
@@ -210,6 +269,12 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
 
             xml << "  </programme>\n";
         }
+        if (epgDebug())
+            std::cout << "[epg]   XMLTV channel=" << ch.id
+                      << " programmes=" << prog_count << '\n';
+        else if (prog_count == 0)
+            std::cout << "[epg] WARNING: channel=" << ch.id
+                      << " (" << ch.name << ") has 0 programmes in XMLTV window\n";
     }
 
     xml << "</tv>\n";

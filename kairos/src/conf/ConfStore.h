@@ -5,11 +5,22 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // Reads and writes a simple INI-style credentials file (kairos.conf).
 // Hot-reload: call maybeReload() before any lookup; it re-parses if the file's
 // mtime has changed (e.g. after a UI update via the API).
+//
+// Per-source path_map lines rewrite file paths returned by the /now endpoint
+// so that media server paths (e.g. /data on Plex) can be translated to paths
+// accessible on the machine running Tunarr (e.g. /media in Docker, or an NFS
+// mount path in dev). Multiple path_map lines per section are supported.
+//
+// Example:
+//   [my_plex]
+//   token = abc123
+//   path_map = /data:/media
 class ConfStore {
 public:
     explicit ConfStore(std::string path);
@@ -22,13 +33,21 @@ public:
     bool hasUserId(const std::string& source_id) const;
     std::vector<std::string> allSources() const;
 
+    // Rewrite a file path by applying the first matching path_map prefix across
+    // all configured sources. Returns the path unchanged if no mapping matches.
+    std::string applyPathMap(const std::string& path) const;
+
     void setCredentials(const std::string& source_id,
                         const std::string& token,
                         const std::string& user_id);
     void removeSource(const std::string& source_id);
 
 private:
-    struct Entry { std::string token, user_id; };
+    struct Entry {
+        std::string token, user_id;
+        // Each pair is {from_prefix, to_prefix}.
+        std::vector<std::pair<std::string, std::string>> path_maps;
+    };
 
     void loadLocked();
     void parseLocked(const std::string& text);

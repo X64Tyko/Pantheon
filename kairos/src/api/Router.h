@@ -32,6 +32,10 @@ private:
     void proxyImage(const std::string& imgPath, const std::string& sourceId,
                     httplib::Response& res);
 
+    // Delete all cached schedule rows for a channel so the next EPG request
+    // rebuilds from the current block configuration.
+    void clearScheduleCache(const std::string& channel_id);
+
     // Fetch items from a Plex playlist/collection, replace list items, record link.
     void syncPlexListItems(httplib::Response& res,
                            const std::string& list_type,
