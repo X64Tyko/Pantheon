@@ -16,7 +16,9 @@ services:
     restart: unless-stopped
 
   tunarr:
-    image: chrisbenincasa/tunarr:latest
+    build:
+      context: ../tunarr
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     environment:

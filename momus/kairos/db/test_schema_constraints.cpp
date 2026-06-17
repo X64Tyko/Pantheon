@@ -312,7 +312,8 @@ TEST_F(SchemaConstraintTest, Cascade_DeleteBlockRemovesBlockContent) {
     EXPECT_EQ(check.getColumn(0).getInt(), 0);
 }
 
-TEST_F(SchemaConstraintTest, Cascade_DeleteChannelRemovesBlocks) {
+TEST_F(SchemaConstraintTest, Cascade_DeleteChannelRemovesBlocks
+) {
     insertChannel("c1", 1);
     insertBlock("b1", "c1");
     insertBlock("b2", "c1");
