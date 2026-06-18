@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
 
   tunarr:
-    image: chrisbenincasa/tunarr:latest
+    image: ghcr.io/x64tyko/tunarr:latest
     ports:
       - "8000:8000"
     environment:
