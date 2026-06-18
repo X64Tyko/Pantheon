@@ -21,10 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/kairos /usr/local/bin/kairos
+COPY --from=builder /src/ui-dist /app/ui-dist
 
-# Working directory is the data volume so kairos.conf is found automatically
-# without an explicit --conf flag.
-WORKDIR /data
+# /app is the working directory so ./ui-dist resolves correctly.
+# Config and database live in /data (the mounted volume) and are
+# referenced by explicit absolute paths.
+WORKDIR /app
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/kairos"]
-CMD ["--db", "/data/kairos.db", "--port", "8080"]
+CMD ["--db", "/data/kairos.db", "--conf", "/data/kairos.conf", "--port", "8080"]
