@@ -2581,6 +2581,84 @@ void Router::registerSchedulerRoutes() {
         std::string channel_id = req.matches[1];
         auto t = std::time(nullptr);
 
+        // Ensure the EPG cache covers a window around the current time so that
+        // mid-episode joins and channels that have been idle for days all get a
+        // wall-clock-accurate answer. Project from 1 hour ago so any episode
+        // that started before now is already in the cache.
+        materializer_.ensureScheduled(channel_id, t - 3600, 4);
+
+        // Look up which scheduled entry is airing right now.
+        {
+            SQLite::Statement q(db_.get(), R"(
+                SELECT sp.item_type, sp.item_id,
+                       COALESCE(sp.block_id, '')          AS block_id,
+                       sp.wall_clock_start,
+                       COALESCE(e.title,  m.title,  '')   AS title,
+                       COALESCE(s.title,  '')             AS show_title,
+                       COALESCE(e.show_id,'')             AS show_id,
+                       COALESCE(e.season, 0)              AS season,
+                       COALESCE(e.episode,0)              AS ep_num,
+                       COALESCE(e.file_path, m.file_path,'') AS file_path,
+                       COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms
+                FROM scheduled_program sp
+                LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
+                LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id =s.show_id
+                LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
+                WHERE sp.channel_id    = ?
+                  AND sp.wall_clock_start <= ?
+                  AND sp.wall_clock_end   >  ?
+                  AND sp.status != 'skipped'
+                ORDER BY sp.wall_clock_start DESC
+                LIMIT 1
+            )");
+            q.bind(1, channel_id);
+            q.bind(2, static_cast<int64_t>(t));
+            q.bind(3, static_cast<int64_t>(t));
+            if (q.executeStep()) {
+                std::string item_type  = q.getColumn(0).getString();
+                std::string item_id    = q.getColumn(1).getString();
+                std::string block_id   = q.getColumn(2).getString();
+                int64_t     wall_start = q.getColumn(3).getInt64();
+                std::string title      = q.getColumn(4).getString();
+                std::string show_title = q.getColumn(5).getString();
+                std::string show_id    = q.getColumn(6).getString();
+                int         season     = q.getColumn(7).getInt();
+                int         ep_num     = q.getColumn(8).getInt();
+                std::string file_path  = q.getColumn(9).getString();
+                int64_t     duration_ms= q.getColumn(10).getInt64();
+
+                json j = {
+                    {"item_type",           item_type},
+                    {"item_id",             item_id},
+                    {"file_path",           conf_.applyPathMap(file_path)},
+                    {"duration_ms",         duration_ms},
+                    {"title",               title},
+                    {"block_id",            block_id},
+                    {"wall_clock_start_ms", wall_start * 1000LL},
+                };
+                if (!show_title.empty()) {
+                    j["show_title"]  = show_title;
+                    j["show_id"]     = show_id;
+                    j["season"]      = season;
+                    j["episode_num"] = ep_num;
+                }
+                try {
+                    SQLite::Statement sm(db_.get(),
+                        "SELECT source_id, external_id FROM source_mapping "
+                        "WHERE kairos_id = ? LIMIT 1");
+                    sm.bind(1, item_id);
+                    if (sm.executeStep()) {
+                        j["source_id"]   = sm.getColumn(0).getString();
+                        j["external_id"] = sm.getColumn(1).getString();
+                    }
+                } catch (...) {}
+                ok(res, j.dump());
+                return;
+            }
+        }
+
+        // No cache entry for the current time (filler gap or unscheduled period).
+        // Fall back to live block resolution.
         auto block_opt = engine_.resolveBlock(channel_id, t);
         if (!block_opt) { err(res, 404, "no active block at current time"); return; }
 
