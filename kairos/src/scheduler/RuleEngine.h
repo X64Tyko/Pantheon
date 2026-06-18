@@ -95,10 +95,16 @@ private:
     // Shuffle helpers.
     static std::vector<int> shufflePermutation(const std::string& seed_str, int n);
 
+    // Like shufflePermutation but keeps multipart episodes (Part 1/2/…) consecutive.
+    // Groups are shuffled as atomic units; within each group parts retain their part_num order.
+    std::vector<int> groupedShufflePermutation(const std::string& seed_str,
+                                               const std::vector<Episode>& eps) const;
+
     // Rerun-mode helpers: read/write the selected content position and runs_remaining.
     int  readRunsRemaining(const std::string& block_id, const std::string& channel_id);
+    int  readConsecutiveCount(const std::string& block_id, const std::string& channel_id);
     void writeRerunState(const std::string& block_id, const std::string& channel_id,
-                         int content_pos, int runs_remaining);
+                         int content_pos, int runs_remaining, int consecutive_count = 0);
 
     int  readCursorPos(const std::string& content_type, const std::string& content_id,
                        const std::string& scope, const std::string& scope_id);

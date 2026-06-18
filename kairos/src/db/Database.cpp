@@ -614,6 +614,17 @@ constexpr Migration kMigrations[] = {
         CHECK(no_history_behavior IN ('normal','fallback_all','exclude','filler','skip'));
 )SQL" }
 
+,
+
+// ── v16: max_consecutive_episodes on block; consecutive_count on block_state.
+//         Controls how many episodes from the same show can play in a row before
+//         a random restart is forced (0 = unlimited). consecutive_count tracks the
+//         running tally so show-switches always reset to a fresh random start.
+{ 16, R"SQL(
+    ALTER TABLE block ADD COLUMN max_consecutive_episodes INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE block_state ADD COLUMN consecutive_count INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

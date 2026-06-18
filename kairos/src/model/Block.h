@@ -50,7 +50,8 @@ struct Block {
     bool                       inter_filler        = false;
     int                        early_start_secs    = 0;
     std::string                filler_selection    = "round_robin";
-    int                        smart_pct           = 30; // cooldown threshold % for smart modes
+    int                        smart_pct                  = 30; // cooldown threshold % for smart modes
+    int                        max_consecutive_episodes   = 0;  // 0 = unlimited
     std::string                start_scope         = "block"; // "block" | "episode"
     NoHistoryBehavior          no_history_behavior = NoHistoryBehavior::Normal;
     std::vector<BlockContent>  content;
