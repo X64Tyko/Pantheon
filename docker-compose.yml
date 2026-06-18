@@ -27,10 +27,13 @@ services:
 
   tunarr:
     image: ghcr.io/x64tyko/tunarr:latest
+    runtime: nvidia
     ports:
       - "8000:8000"
     environment:
       - KAIROS_URL=http://kairos:8080
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
     volumes:
       - /mnt/user/appdata/tunarr:/config/tunarr
       - /mnt/user/Media:/media:ro   # <-- same path as above
