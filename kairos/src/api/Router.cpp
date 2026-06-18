@@ -2603,6 +2603,16 @@ void Router::registerSchedulerRoutes() {
             j["season"]      = item.season;
             j["episode_num"] = item.episode_num;
         }
+        try {
+            SQLite::Statement sm(db_.get(),
+                "SELECT source_id, external_id FROM source_mapping "
+                "WHERE kairos_id = ? LIMIT 1");
+            sm.bind(1, item.item_id);
+            if (sm.executeStep()) {
+                j["source_id"]   = sm.getColumn(0).getString();
+                j["external_id"] = sm.getColumn(1).getString();
+            }
+        } catch (...) {}
         ok(res, j.dump());
       } catch (const std::exception& e) {
         logErr("GET /api/channels/now", e); err(res, 500, e.what());
