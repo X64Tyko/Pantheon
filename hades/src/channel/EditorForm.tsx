@@ -59,6 +59,20 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
     ? 'Hard cutoff at end time. Whatever is playing is cut off when the clock hits it.'
     : 'Fills until midnight, or until a higher-priority block takes over.'
 
+  const orderHint: Record<string, string> = {
+    sequential:    'Plays shows in order by position. COUNT on each show controls episodes before switching to the next.',
+    shuffle:       'Picks shows randomly each slot, weighted by WEIGHT. Episodes advance sequentially within each show.',
+    smart_shuffle: 'Weighted random show selection, but skips recently played episodes within each show.',
+    rerun_shuffle: 'Only plays episodes already aired on this channel. Requires play history to function.',
+    rerun_smart:   'Rerun pool with cooldown — avoids repeating episodes aired recently within the pool.',
+  }
+
+  const cursorHint: Record<string, string> = {
+    block:   'Episode positions are tracked per block. The same show in two blocks plays independently.',
+    channel: 'All blocks on this channel share episode positions for the same show.',
+    global:  'Positions and rerun history are shared across all channels — a true cross-channel pool.',
+  }
+
   const contentCount = store.draftContent.length
   const fillerCount  = store.draftFillerEntries.length
 
@@ -117,12 +131,22 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <select value={String(d.late_start_mins)} onChange={e => store.setDraft('late_start_mins', +e.target.value)} style={inputStyle}>
               {DELAY_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
+            {d.late_start_mins > 0 && (
+              <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+                Block may start up to {d.late_start_mins} min late if preempted by a higher-priority block.
+              </div>
+            )}
           </div>
           <div>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>EARLY START</div>
             <select value={String(d.early_start_secs)} onChange={e => store.setDraft('early_start_secs', +e.target.value)} style={inputStyle}>
               {EARLY_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
+            {d.early_start_secs > 0 && (
+              <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+                Block may steal up to {d.early_start_secs}s of trailing dead air from the previous block.
+              </div>
+            )}
           </div>
         </div>
 
@@ -192,14 +216,17 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <select value={d.advancement} onChange={e => store.setDraft('advancement', e.target.value as Advancement)} style={inputStyle}>
               <optgroup label="Standard">
                 <option value="sequential">Sequential</option>
-                <option value="shuffle">Shuffle</option>
-                <option value="smart_shuffle">Smart Shuffle</option>
+                {d.block_type !== 'premier' && <option value="shuffle">Shuffle</option>}
+                {d.block_type !== 'premier' && <option value="smart_shuffle">Smart Shuffle</option>}
               </optgroup>
               <optgroup label="Reruns">
                 <option value="rerun_shuffle">Rerun Shuffle</option>
                 <option value="rerun_smart">Rerun Smart</option>
               </optgroup>
             </select>
+            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+              {orderHint[d.advancement]}
+            </div>
           </div>
           <div>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>CURSOR</div>
@@ -208,6 +235,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
               <option value="channel">Per channel</option>
               <option value="global">Global</option>
             </select>
+            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+              {cursorHint[d.cursor_scope]}
+            </div>
           </div>
         </div>
         {(d.advancement === 'smart_shuffle' || d.advancement === 'rerun_smart') && (
@@ -249,8 +279,11 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                 onChange={e => store.setDraft('max_consecutive_episodes', Math.max(0, parseInt(e.target.value) || 0))}
                 style={{ ...inputStyle, width: 64 }} />
               <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)' }}>
-                {(d.max_consecutive_episodes ?? 0) === 0 ? 'unlimited' : 'max before switching show'}
+                {(d.max_consecutive_episodes ?? 0) === 0 ? 'no limit' : 'max consecutive from the same show'}
               </span>
+            </div>
+            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+              When the limit is hit the engine re-rolls show selection, forcing a switch even if the same show wins.
             </div>
           </div>
         )}
@@ -278,8 +311,11 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           {store.draftContent.map(item => {
             const dot       = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
             const canReset  = item.id > 0 && item.content_type === 'show' && !!store.editing
-            const isRerun   = store.draft.advancement === 'rerun_shuffle' || store.draft.advancement === 'rerun_smart'
-            const showRerunControls = isRerun && item.content_type === 'show'
+            const isRerun      = store.draft.advancement === 'rerun_shuffle' || store.draft.advancement === 'rerun_smart'
+            const isShuffle    = store.draft.advancement === 'shuffle'       || store.draft.advancement === 'smart_shuffle'
+            const isSequential = store.draft.advancement === 'sequential'
+            const showWeightControl = (isRerun || isShuffle || isSequential) && item.content_type === 'show'
+            const weightLabel  = isSequential ? 'COUNT' : 'WEIGHT'
             const miniInp: React.CSSProperties = { width: 36, padding: '2px 4px', background: 'var(--hds-bg)', border: '1px solid var(--hds-line)', borderRadius: 4, color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, textAlign: 'center' }
             return (
               <div key={item.id} style={{ background: 'var(--hds-bg-3)', border: `1px solid ${item.id < 0 ? 'oklch(0.55 0.12 290 / 0.6)' : 'var(--hds-line-s)'}`, borderRadius: 7, overflow: 'hidden' }}>
@@ -300,18 +336,27 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                   )}
                   <button onClick={() => store.removeContent(channelId, item.id)} style={{ width: 22, height: 22, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 13 }}>×</button>
                 </div>
-                {showRerunControls && (
-                  <div style={{ display: 'flex', gap: 16, padding: '4px 10px 8px', borderTop: '1px solid var(--hds-line-s)' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9.5, letterSpacing: '0.1em', color: 'var(--hds-txt-3)' }}>
-                      WEIGHT
-                      <input type="number" min={1} max={99} value={item.weight ?? 1} style={miniInp}
-                        onChange={e => store.updateContentField(channelId, item.id, 'weight', Number(e.target.value))} />
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9.5, letterSpacing: '0.1em', color: 'var(--hds-txt-3)' }}>
-                      RUN
-                      <input type="number" min={1} max={99} value={item.run_count ?? 1} style={miniInp}
-                        onChange={e => store.updateContentField(channelId, item.id, 'run_count', Number(e.target.value))} />
-                    </label>
+                {showWeightControl && (
+                  <div style={{ borderTop: '1px solid var(--hds-line-s)' }}>
+                    <div style={{ display: 'flex', gap: 16, padding: '4px 10px 6px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9.5, letterSpacing: '0.1em', color: 'var(--hds-txt-3)' }}>
+                        {weightLabel}
+                        <input type="number" min={1} max={99} value={item.weight ?? 1} style={miniInp}
+                          onChange={e => store.updateContentField(channelId, item.id, 'weight', Number(e.target.value))} />
+                      </label>
+                      {isRerun && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9.5, letterSpacing: '0.1em', color: 'var(--hds-txt-3)' }}>
+                          RUN
+                          <input type="number" min={1} max={99} value={item.run_count ?? 1} style={miniInp}
+                            onChange={e => store.updateContentField(channelId, item.id, 'run_count', Number(e.target.value))} />
+                        </label>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', padding: '0 10px 7px', lineHeight: 1.5 }}>
+                      {isSequential && 'Episodes before switching shows. 1 = strict rotation.'}
+                      {isShuffle && 'Selection probability relative to other shows in the block.'}
+                      {isRerun && 'WEIGHT: pick probability. RUN: consecutive episodes per selection before re-rolling.'}
+                    </div>
                   </div>
                 )}
               </div>

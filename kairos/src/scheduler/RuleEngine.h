@@ -72,13 +72,15 @@ private:
     std::vector<Episode> getPlayedEpisodes(const std::string& show_id,
                                             const std::string& channel_id,
                                             std::optional<int> season,
-                                            std::time_t before_time);
+                                            std::time_t before_time,
+                                            bool global_scope = false);
     // Like getPlayedEpisodes but excludes the most-recently-played smart_pct% of the pool.
     std::vector<Episode> getPlayedEpisodesWithCooldown(const std::string& show_id,
                                                         const std::string& channel_id,
                                                         std::optional<int> season,
                                                         int smart_pct,
-                                                        std::time_t before_time);
+                                                        std::time_t before_time,
+                                                        bool global_scope = false);
     std::optional<Movie>         getMovie(const std::string& movie_id);
     std::optional<ScheduledItem> episodeById(const std::string& episode_id);
     // Returns (item_type, item_id) pairs from a playlist or filler_list in order.

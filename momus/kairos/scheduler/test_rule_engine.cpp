@@ -67,6 +67,15 @@ protected:
         if (season_filter.has_value()) s.bind(4, *season_filter); else s.bind(4);
         s.exec();
     }
+
+    void addContentWeighted(const std::string& bid, const std::string& type,
+                            const std::string& id, int weight, int run_count = 1) {
+        SQLite::Statement s(db.get(),
+            "INSERT INTO block_content (block_id,content_type,content_id,weight,run_count)"
+            " VALUES (?,?,?,?,?)");
+        s.bind(1, bid); s.bind(2, type); s.bind(3, id); s.bind(4, weight); s.bind(5, run_count);
+        s.exec();
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -461,4 +470,100 @@ TEST_F(RuleEngineTest, Project_NoItemsWhenBlockInactive) {
     // 1-hour projection at 12:00 → block not yet active → no items
     auto items = engine.project("c1", kMonNoon, 1);
     EXPECT_TRUE(items.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2a: Weighted show selection for non-rerun modes
+// ---------------------------------------------------------------------------
+
+TEST_F(RuleEngineTest, Sequential_WeightRunCount_PlaysNEpisodesPerShowBeforeSwitching) {
+    // s1 (weight=2): plays 2 episodes before switching; s2 (weight=1): plays 1.
+    auto& raw = db.get();
+    raw.exec("INSERT INTO show (show_id, title) VALUES ('s2','Show 2')");
+    raw.exec("INSERT INTO episode (episode_id,show_id,season,episode,title,file_path,duration_ms)"
+             " VALUES ('e4','s2',1,1,'S2E1','/e4.mkv',3600000)");
+    raw.exec("INSERT INTO episode (episode_id,show_id,season,episode,title,file_path,duration_ms)"
+             " VALUES ('e5','s2',1,2,'S2E2','/e5.mkv',3600000)");
+
+    insertBlock("b1", "episode", "00:00");
+    addContentWeighted("b1", "show", "s1", 2);
+    addContentWeighted("b1", "show", "s2", 1);
+
+    // Project 3 episodes (3-hour window, each ep = 1 hr).
+    auto items = engine.project("c1", kMonNoon, 3);
+    ASSERT_GE(items.size(), 3u);
+
+    const std::set<std::string> s1_eps = {"e1", "e2", "e3"};
+    const std::set<std::string> s2_eps = {"e4", "e5"};
+    EXPECT_TRUE(s1_eps.count(items[0].item_id)) << "slot 0 should be from s1 (weight=2)";
+    EXPECT_TRUE(s1_eps.count(items[1].item_id)) << "slot 1 should be from s1 (weight=2)";
+    EXPECT_TRUE(s2_eps.count(items[2].item_id)) << "slot 2 should switch to s2 (weight=1)";
+}
+
+TEST_F(RuleEngineTest, Shuffle_WeightedShowSelection_SchedulesWithoutError) {
+    // Smoke test: weighted shuffle with 2 shows must schedule items without crashing.
+    auto& raw = db.get();
+    raw.exec("INSERT INTO show (show_id, title) VALUES ('s2','Show 2')");
+    raw.exec("INSERT INTO episode (episode_id,show_id,season,episode,title,file_path,duration_ms)"
+             " VALUES ('e4','s2',1,1,'S2E1','/e4.mkv',3600000)");
+
+    insertBlock("b1", "episode", "00:00");
+    raw.exec("UPDATE block SET advancement='shuffle' WHERE block_id='b1'");
+    addContentWeighted("b1", "show", "s1", 3);
+    addContentWeighted("b1", "show", "s2", 1);
+
+    auto items = engine.project("c1", kMonNoon, 4);
+    EXPECT_FALSE(items.empty()) << "weighted shuffle should still schedule items";
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2b: Cursor scope semantic cleanup
+// ---------------------------------------------------------------------------
+
+TEST_F(RuleEngineTest, GlobalScope_RerunBlockSchedulesEpisodesPlayedOnOtherChannel) {
+    // e1 played on c2 only. A rerun block on c1 with cursor_scope=global should
+    // include it in the pool and schedule it; channel-scoped c1 would get no items.
+    auto& raw = db.get();
+    raw.exec("INSERT INTO channel (channel_id, name, number) VALUES ('c2','Ch 2',2)");
+    raw.exec("INSERT INTO play_history (channel_id,item_type,item_id,aired_at,is_scheduled)"
+             " VALUES ('c2','episode','e1'," + std::to_string(kMonNoon - 3600) + ",1)");
+
+    insertBlock("b1", "episode", "00:00");
+    addContent("b1", "show", "s1");
+    // no_history_behavior=skip: empty pool → no output (avoids Normal fallback to all-eps).
+    raw.exec("UPDATE block SET advancement='rerun_shuffle', cursor_scope='channel',"
+             " no_history_behavior='skip' WHERE block_id='b1'");
+
+    // Channel-scoped: c1 has no play history → rerun pool empty → skip → no items.
+    auto ch_items = engine.project("c1", kMonNoon, 1);
+    EXPECT_TRUE(ch_items.empty()) << "channel-scoped rerun should find no c1 play history";
+
+    // Switch to global scope: pool includes c2's play of e1 → items scheduled.
+    raw.exec("UPDATE block SET cursor_scope='global' WHERE block_id='b1'");
+    auto gl_items = engine.project("c1", kMonNoon, 1);
+    EXPECT_FALSE(gl_items.empty()) << "global-scoped rerun should see c2's play of e1";
+    if (!gl_items.empty())
+        EXPECT_EQ(gl_items[0].item_id, "e1");
+}
+
+TEST_F(RuleEngineTest, ChannelScope_RerunCursorUsesChannelScopedKey) {
+    // With cursor_scope=channel the rerun cursor key should be ("show_rerun", s1, "channel", c1).
+    // We prime it via project() and verify the DB row has cursor_scope="channel".
+    auto& raw = db.get();
+    raw.exec("INSERT INTO play_history (channel_id,item_type,item_id,aired_at,is_scheduled)"
+             " VALUES ('c1','episode','e1'," + std::to_string(kMonNoon - 3600) + ",1)");
+
+    insertBlock("b1", "episode", "00:00");
+    addContent("b1", "show", "s1");
+    raw.exec("UPDATE block SET advancement='rerun_shuffle', cursor_scope='channel' WHERE block_id='b1'");
+
+    engine.project("c1", kMonNoon, 1);
+
+    // The rerun cursor should be stored with cursor_scope='channel', scope_id='c1'.
+    SQLite::Statement q(raw,
+        "SELECT cursor_scope, scope_id FROM media_cursor"
+        " WHERE content_type='show_rerun' AND content_id='s1'");
+    ASSERT_TRUE(q.executeStep()) << "rerun cursor should exist after project()";
+    EXPECT_EQ(q.getColumn(0).getString(), "channel");
+    EXPECT_EQ(q.getColumn(1).getString(), "c1");
 }
