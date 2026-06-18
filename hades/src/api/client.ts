@@ -3,7 +3,7 @@ import type {
   EpisodeSearchResult, EpgProgram, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
-  Movie, MovieDetail, PagedResult, PlexBrowseItem, PlexBrowseList,
+  Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, Show, ShowDetail, Source, SourceType,
 } from './types'
 
@@ -68,6 +68,13 @@ export const api = {
   setCredentials:    (id: string, b: {token: string, user_id?: string}) =>
                                                         request<{ok: boolean}>('PUT',    `/config/credentials/${id}`, b),
   deleteCredentials: (id: string)                       => request<{ok: boolean}>('DELETE', `/config/credentials/${id}`),
+
+  // Path maps (kairos.conf via API)
+  getPathMaps:       (id: string)                       => request<PathMap[]>        ('GET', `/config/path-maps/${id}`),
+  setPathMaps:       (id: string, maps: PathMap[])      => request<{ok: boolean}>    ('PUT', `/config/path-maps/${id}`, { maps }),
+
+  // Sample raw file path from this source (pre-mapping) for UI hint
+  getSamplePath:     (id: string)                       => request<{path: string | null}>('GET', `/sources/${id}/sample-path`),
 
   // Sync status
   getSyncStatus:    ()                                  => request<{running: boolean}>('GET', '/sync/status'),

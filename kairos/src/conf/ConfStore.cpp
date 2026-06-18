@@ -151,11 +151,30 @@ std::vector<std::string> ConfStore::allSources() const {
 
 // ---------------------------------------------------------------------------
 
+std::vector<std::pair<std::string,std::string>> ConfStore::getPathMaps(const std::string& source_id) const {
+    std::lock_guard lock(mu_);
+    auto it = entries_.find(source_id);
+    return (it != entries_.end()) ? it->second.path_maps
+                                  : std::vector<std::pair<std::string,std::string>>{};
+}
+
+void ConfStore::setPathMaps(const std::string& source_id,
+                             const std::vector<std::pair<std::string,std::string>>& maps) {
+    std::lock_guard lock(mu_);
+    entries_[source_id].path_maps = maps;
+    saveLocked();
+    std::error_code ec;
+    mtime_ = std::filesystem::last_write_time(path_, ec);
+}
+
 void ConfStore::setCredentials(const std::string& source_id,
                                 const std::string& tkn,
                                 const std::string& uid) {
     std::lock_guard lock(mu_);
-    entries_[source_id] = {tkn, uid};
+    auto& e   = entries_[source_id];
+    e.token   = tkn;
+    e.user_id = uid;
+    // path_maps preserved as-is
     saveLocked();
     std::error_code ec;
     mtime_ = std::filesystem::last_write_time(path_, ec);

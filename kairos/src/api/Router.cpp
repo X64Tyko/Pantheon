@@ -585,6 +585,64 @@ void Router::registerConfigRoutes() {
         sync_.loadSources();
         ok(res, json{{"ok", true}}.dump());
     });
+
+    svr_.Get("/api/config/path-maps/:source_id", [this](const Req& req, Res& res) {
+        auto sid  = req.path_params.at("source_id");
+        auto maps = conf_.getPathMaps(sid);
+        json result = json::array();
+        for (const auto& [from, to] : maps)
+            result.push_back({{"from", from}, {"to", to}});
+        ok(res, result.dump());
+    });
+
+    svr_.Put("/api/config/path-maps/:source_id", [this](const Req& req, Res& res) {
+        try {
+            auto sid = req.path_params.at("source_id");
+            auto b   = json::parse(req.body);
+            std::vector<std::pair<std::string,std::string>> maps;
+            if (b.contains("maps") && b["maps"].is_array()) {
+                for (const auto& m : b["maps"]) {
+                    auto from = m.value("from", "");
+                    auto to   = m.value("to",   "");
+                    if (!from.empty()) maps.push_back({from, to});
+                }
+            }
+            conf_.setPathMaps(sid, maps);
+            ok(res, json{{"ok", true}}.dump());
+        } catch (const json::exception& e) { err(res, 400, e.what()); }
+    });
+
+    // Return one raw (pre-mapping) file path from this source so the user can
+    // see the actual prefix they need to map from.
+    svr_.Get("/api/sources/:id/sample-path", [this](const Req& req, Res& res) {
+        auto source_id = req.path_params.at("id");
+        std::string sample;
+        SQLite::Statement q(db_.get(), R"(
+            SELECT e.file_path FROM episode e
+            JOIN source_mapping sm ON sm.kairos_id = e.episode_id AND sm.item_type = 'episode'
+            JOIN media_library ml ON ml.library_id = sm.library_id
+            WHERE ml.source_id = ? AND e.file_path != ''
+            LIMIT 1
+        )");
+        q.bind(1, source_id);
+        if (q.executeStep()) {
+            sample = q.getColumn(0).getString();
+        } else {
+            SQLite::Statement mq(db_.get(), R"(
+                SELECT m.file_path FROM movie m
+                JOIN source_mapping sm ON sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
+                JOIN media_library ml ON ml.library_id = sm.library_id
+                WHERE ml.source_id = ? AND m.file_path != ''
+                LIMIT 1
+            )");
+            mq.bind(1, source_id);
+            if (mq.executeStep()) sample = mq.getColumn(0).getString();
+        }
+        if (sample.empty())
+            ok(res, json{{"path", nullptr}}.dump());
+        else
+            ok(res, json{{"path", sample}}.dump());
+    });
 }
 
 // ---------------------------------------------------------------------------

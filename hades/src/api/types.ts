@@ -131,6 +131,11 @@ export interface CredentialStatus {
   has_user_id: boolean
 }
 
+export interface PathMap {
+  from: string
+  to:   string
+}
+
 export type BlockType              = 'episode' | 'premier' | 'filler' | 'movie'
 export type Advancement            = 'sequential' | 'shuffle' | 'smart_shuffle' | 'rerun_shuffle' | 'rerun_smart'
 export type NoHistoryBehavior      = 'normal' | 'fallback_all' | 'exclude' | 'filler' | 'skip'

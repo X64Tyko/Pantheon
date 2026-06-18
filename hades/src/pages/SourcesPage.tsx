@@ -1,6 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import type { PathMap } from '../api/types'
 import { sourceStore } from '../stores'
 
 type TestState = 'idle' | 'testing' | 'ok' | 'failed'
@@ -62,8 +63,36 @@ export default observer(function SourcesPage() {
   const [editingCreds, setEditingCreds] = useState(false)
   const [credToken, setCredToken]       = useState('')
 
+  // ── Path maps ──────────────────────────────────────────────────────────────
+  const [pathMaps, setPathMaps]   = useState<PathMap[]>([])
+  const [samplePath, setSample]   = useState<string | null>(null)
+  const [pmFrom, setPmFrom]       = useState('')
+  const [pmTo, setPmTo]           = useState('')
+  const [showAddPm, setShowAddPm] = useState(false)
+
   useEffect(() => { setEditingCreds(false); setCredToken('') }, [store.selectedId])
+  useEffect(() => {
+    if (!store.selectedId) { setPathMaps([]); setSample(null); return }
+    api.getPathMaps(store.selectedId).then(setPathMaps).catch(() => setPathMaps([]))
+    api.getSamplePath(store.selectedId).then(r => setSample(r.path)).catch(() => setSample(null))
+  }, [store.selectedId])
   useEffect(() => { store.fetchAll() }, [])
+
+  const savePathMaps = async (maps: PathMap[]) => {
+    if (!store.selectedId) return
+    await api.setPathMaps(store.selectedId, maps)
+    setPathMaps(maps)
+  }
+
+  const addPathMap = async () => {
+    if (!pmFrom) return
+    await savePathMaps([...pathMaps, { from: pmFrom, to: pmTo }])
+    setPmFrom(''); setPmTo(''); setShowAddPm(false)
+  }
+
+  const removePathMap = async (idx: number) => {
+    await savePathMaps(pathMaps.filter((_, i) => i !== idx))
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -267,6 +296,76 @@ export default observer(function SourcesPage() {
                 )}
               </div>
             )}
+
+            {/* Path Maps */}
+            <div className="card p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="section-label">Path Maps</span>
+                <button
+                  onClick={() => setShowAddPm(v => !v)}
+                  className="text-xs px-2 py-0.5 bg-violet-900/30 hover:bg-violet-800/40
+                             text-violet-300 rounded border border-violet-800/30 transition-colors"
+                >
+                  + Add
+                </button>
+              </div>
+
+              {samplePath !== null && (
+                <div className="text-[10px] text-zinc-600 font-mono break-all leading-relaxed
+                                bg-zinc-900/60 border border-zinc-800/40 rounded px-2 py-1.5">
+                  <span className="text-zinc-500 not-italic font-sans">Example path: </span>
+                  {samplePath}
+                </div>
+              )}
+
+              {pathMaps.length === 0 && !showAddPm && (
+                <span className="text-xs text-zinc-600">No path maps configured.</span>
+              )}
+
+              {pathMaps.map((pm, idx) => (
+                <div key={idx} className="flex items-center gap-2 text-xs font-mono">
+                  <span className="text-zinc-300 truncate flex-1">{pm.from}</span>
+                  <span className="text-zinc-600 shrink-0">→</span>
+                  <span className="text-zinc-300 truncate flex-1">{pm.to}</span>
+                  <button
+                    onClick={() => removePathMap(idx)}
+                    className="btn-danger shrink-0"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+
+              {showAddPm && (
+                <div className="space-y-2 pt-1 border-t border-zinc-800/40">
+                  <div className="flex gap-2">
+                    <input
+                      placeholder="From (e.g. /data)"
+                      value={pmFrom}
+                      onChange={e => setPmFrom(e.target.value)}
+                      className="input flex-1 font-mono text-xs"
+                    />
+                    <input
+                      placeholder="To (e.g. /media)"
+                      value={pmTo}
+                      onChange={e => setPmTo(e.target.value)}
+                      className="input flex-1 font-mono text-xs"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={addPathMap} disabled={!pmFrom} className="btn-primary disabled:opacity-40">
+                      Save
+                    </button>
+                    <button
+                      onClick={() => { setShowAddPm(false); setPmFrom(''); setPmTo('') }}
+                      className="btn-ghost"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Libraries */}
             <div className="space-y-3">

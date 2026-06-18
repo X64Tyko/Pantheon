@@ -37,6 +37,10 @@ public:
     // all configured sources. Returns the path unchanged if no mapping matches.
     std::string applyPathMap(const std::string& path) const;
 
+    std::vector<std::pair<std::string,std::string>> getPathMaps(const std::string& source_id) const;
+    void setPathMaps(const std::string& source_id,
+                     const std::vector<std::pair<std::string,std::string>>& maps);
+
     void setCredentials(const std::string& source_id,
                         const std::string& token,
                         const std::string& user_id);
