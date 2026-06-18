@@ -10,10 +10,12 @@ public:
     EPGMaterializer(Database& db, RuleEngine& engine);
 
     // Ensure the schedule for `channel_id` is populated from `from` through
-    // `from + horizon_hours`. Extends the cached schedule_program table forward
-    // using the cursor snapshot from the last stored entry.
+    // `from + horizon_hours`. seed >= 0 randomises starting positions for
+    // a fresh generation; -1 reads the channel's stored seed (or no seed if
+    // extending an existing schedule).
     void ensureScheduled(const std::string& channel_id,
-                         std::time_t from, int horizon_hours);
+                         std::time_t from, int horizon_hours,
+                         int seed = -1);
 
     // Mark the earliest matching scheduled entry as aired.
     // Called by the /played endpoint after markPlayed().

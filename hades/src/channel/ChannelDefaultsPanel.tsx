@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
-import type { Channel, FillerEntryAdvancement, FillerSelectionMode } from '../api/types'
+import type { AdvanceMode, Channel, FillerEntryAdvancement, FillerSelectionMode } from '../api/types'
 import { FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
 import { inputStyle, filterInputStyle } from './styles'
 import { SectionLabel } from './SectionLabel'
@@ -47,7 +47,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>TIMEZONE</div>
           <input value={store.channelDraftTimezone} onChange={e => store.setChannelDraft({ timezone: e.target.value })} style={inputStyle} placeholder="UTC" />
         </div>
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>EPG SEED</div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <input type="number" min={0} value={store.channelDraftSeed} onChange={e => store.setChannelDraft({ seed: Math.max(0, +e.target.value || 0) })} style={{ ...inputStyle, flex: 1 }} />
@@ -59,6 +59,20 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
           </div>
           <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
             Controls the starting position for EPG simulation when no live schedule exists. Change to get a different ordering.
+          </div>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>ADVANCE MODE</div>
+          <select
+            value={store.channelDraftAdvanceMode}
+            onChange={e => store.setChannelDraft({ advance_mode: e.target.value as AdvanceMode })}
+            style={inputStyle}
+          >
+            <option value="scheduled">Scheduled — advance on EPG clock</option>
+            <option value="on_play">On Play — advance only when confirmed played</option>
+          </select>
+          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+            On Play pauses the channel when nobody is streaming. Episodes only advance after Tunarr confirms playback.
           </div>
         </div>
 

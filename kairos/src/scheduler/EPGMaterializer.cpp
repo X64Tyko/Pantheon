@@ -49,7 +49,73 @@ std::string EPGMaterializer::fmtXMLTVTime(std::time_t t) {
 // ── Schedule cache management ─────────────────────────────────────────────────
 
 void EPGMaterializer::ensureScheduled(const std::string& channel_id,
-                                       std::time_t from, int horizon_hours) {
+                                       std::time_t from, int horizon_hours,
+                                       int seed) {
+    // ── on_play mode: cursors advance only on confirmed playback. ─────────────
+    // project() runs inside a SAVEPOINT so its cursor/history writes are rolled
+    // back; only the generated scheduled_program rows are committed. The EPG is
+    // always regenerated from the current cursor position (no caching between plays).
+    {
+        bool on_play = false;
+        {
+            SQLite::Statement q(db_.get(), "SELECT advance_mode FROM channel WHERE channel_id=?");
+            q.bind(1, channel_id);
+            if (q.executeStep()) on_play = (q.getColumn(0).getString() == "on_play");
+        }
+        if (on_play) {
+            auto now_ts = static_cast<int64_t>(std::time(nullptr));
+
+            // Clear the stale schedule and unconfirmed history — the EPG always
+            // reflects the current cursor position, not a clock-driven plan.
+            {
+                SQLite::Statement d1(db_.get(),
+                    "DELETE FROM scheduled_program WHERE channel_id=?");
+                d1.bind(1, channel_id); d1.exec();
+            }
+            {
+                SQLite::Statement d2(db_.get(),
+                    "DELETE FROM play_history WHERE channel_id=? AND is_scheduled=1");
+                d2.bind(1, channel_id); d2.exec();
+            }
+
+            // Generate items with project() inside a SAVEPOINT — cursor advances
+            // and play_history writes are rolled back; items stay in memory.
+            db_.get().exec("SAVEPOINT onplay_gen_sp");
+            auto items = engine_.project(channel_id, from, horizon_hours, -1);
+            db_.get().exec("ROLLBACK TO SAVEPOINT onplay_gen_sp");
+            db_.get().exec("RELEASE SAVEPOINT onplay_gen_sp");
+
+            // Commit only the scheduled_program entries.
+            db_.get().exec("SAVEPOINT sp_ens");
+            SQLite::Statement ins(db_.get(), R"(
+                INSERT OR IGNORE INTO scheduled_program
+                    (channel_id, block_id, item_type, item_id,
+                     wall_clock_start, wall_clock_end, cursor_json, created_at)
+                VALUES (?,?,?,?,?,?,?,?)
+            )");
+            for (const auto& item : items) {
+                if (item.is_filler) continue;
+                ins.bind(1, channel_id);
+                if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
+                ins.bind(3, item.item_type);
+                ins.bind(4, item.item_id);
+                ins.bind(5, item.wall_clock_start_ms / 1000);
+                ins.bind(6, item.wall_clock_end_ms   / 1000);
+                ins.bind(7, item.cursor_json);
+                ins.bind(8, now_ts);
+                ins.exec();
+                ins.reset();
+            }
+            db_.get().exec("RELEASE SAVEPOINT sp_ens");
+
+            if (epgDebug())
+                std::cout << "[epg] ensureScheduled on_play channel=" << channel_id
+                          << " => " << items.size() << " items projected\n";
+            return;
+        }
+    }
+    // ── scheduled mode (default) ──────────────────────────────────────────────
+
     std::time_t horizon = from + static_cast<std::time_t>(horizon_hours) * 3600;
     auto now = static_cast<int64_t>(std::time(nullptr));
 
@@ -62,25 +128,21 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
     // from the tail on each pass rather than leaving a gap.
     for (int guard = 0; guard < 200; ++guard) {
         // Re-query the tail each pass — the previous pass may have added rows.
-        std::time_t last_end    = 0;
-        std::string last_cursor = "{}";
+        std::time_t last_end = 0;
         {
             SQLite::Statement q(db_.get(), R"(
-                SELECT wall_clock_end, cursor_json FROM scheduled_program
+                SELECT wall_clock_end FROM scheduled_program
                 WHERE channel_id = ?
                 ORDER BY wall_clock_end DESC LIMIT 1
             )");
             q.bind(1, channel_id);
-            if (q.executeStep()) {
-                last_end    = static_cast<std::time_t>(q.getColumn(0).getInt64());
-                last_cursor = q.getColumn(1).getString();
-            }
+            if (q.executeStep())
+                last_end = static_cast<std::time_t>(q.getColumn(0).getInt64());
         }
 
         if (epgDebug())
             std::cout << "[epg]   guard=" << guard
-                      << " last_end=" << last_end << " horizon=" << horizon
-                      << " last_cursor_len=" << last_cursor.size() << '\n';
+                      << " last_end=" << last_end << " horizon=" << horizon << '\n';
 
         if (last_end >= horizon) {
             if (epgDebug()) std::cout << "[epg]   cache fully covers horizon — done\n";
@@ -90,17 +152,30 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         std::time_t extend_from = (last_end > from) ? last_end : from;
         int extend_hours = static_cast<int>((horizon - extend_from) / 3600) + 2;
 
-        // Use the cached cursor only when extending FORWARD from existing future
-        // entries. If the entire cache is in the past, re-seed from live DB
-        // cursors so the projection matches actual play state after a restart.
-        const std::string& cursor = (last_end > from) ? last_cursor : "{}";
+        // Determine seed for this pass:
+        // - guard 0 with no cache: apply seed (explicit or read from channel table)
+        // - guard 0 with existing cache (extending forward): no seed
+        // - guard > 0: always no seed (DB cursors drive continuation)
+        int pass_seed = -1;
+        if (guard == 0) {
+            if (seed >= 0) {
+                pass_seed = seed;
+            } else if (last_end == 0) {
+                SQLite::Statement qs(db_.get(),
+                    "SELECT seed FROM channel WHERE channel_id=?");
+                qs.bind(1, channel_id);
+                if (qs.executeStep()) pass_seed = qs.getColumn(0).getInt();
+            }
+        }
 
         if (epgDebug())
             std::cout << "[epg]   calling project() extend_from=" << extend_from
                       << " extend_hours=" << extend_hours
-                      << " using_cached_cursor=" << (last_end > from) << '\n';
+                      << " seed=" << pass_seed << '\n';
 
-        auto items = engine_.project(channel_id, extend_from, extend_hours, cursor);
+        // project() writes play_history (is_scheduled=1) and advances DB cursors
+        // as it schedules each item; DB state is the authoritative resume point.
+        auto items = engine_.project(channel_id, extend_from, extend_hours, pass_seed);
 
         if (epgDebug())
             std::cout << "[epg]   project() returned " << items.size() << " items\n";
@@ -111,7 +186,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             return;
         }
 
-        SQLite::Transaction txn(db_.get());
+        db_.get().exec("SAVEPOINT sp_ens");
         SQLite::Statement ins(db_.get(), R"(
             INSERT OR IGNORE INTO scheduled_program
                 (channel_id, block_id, item_type, item_id,
@@ -139,7 +214,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             else ++skipped_dup;
             ins.reset();
         }
-        txn.commit();
+        db_.get().exec("RELEASE SAVEPOINT sp_ens");
 
         if (epgDebug())
             std::cout << "[epg]   inserted=" << inserted

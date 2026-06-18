@@ -12,7 +12,6 @@ enum class NoHistoryBehavior {
     Normal,      // play as a regular show: all episodes, sequential show cursor
     FallbackAll, // treat the full episode catalog as the rerun pool (keep rerun advancement)
     Exclude,     // exclude from weighted selection until the show has play history
-    Filler,      // fill the slot with filler content instead
     Skip,        // skip the slot entirely (nullopt → dead air / gap)
 };
 

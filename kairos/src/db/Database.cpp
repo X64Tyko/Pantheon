@@ -625,6 +625,33 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE block_state ADD COLUMN consecutive_count INTEGER NOT NULL DEFAULT 0;
 )SQL" }
 
+,
+
+// ── v17: is_scheduled on play_history — distinguishes EPG-generated entries
+//         (is_scheduled=1, written at schedule time) from Tunarr-confirmed plays
+//         (is_scheduled=0, written by markPlayed). Scheduled entries are purged
+//         when clearScheduleCache regenerates a channel's EPG.
+{ 17, R"SQL(
+    ALTER TABLE play_history ADD COLUMN is_scheduled INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
+,
+
+// ── v18: per-channel advance mode. 'scheduled' (default) means the EPG
+//         projection drives cursor advancement; 'on_play' means cursors only
+//         move on confirmed playback, suitable for pause-while-not-streaming.
+{ 18, R"SQL(
+    ALTER TABLE channel ADD COLUMN advance_mode TEXT NOT NULL DEFAULT 'scheduled';
+)SQL" }
+
+,
+
+// ── v19: 'filler' was a NoHistoryBehavior that was never implemented — it
+//         collapsed to Skip. Convert any stored values to 'skip'.
+{ 19, R"SQL(
+    UPDATE block SET no_history_behavior = 'skip' WHERE no_history_behavior = 'filler';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

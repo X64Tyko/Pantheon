@@ -58,6 +58,7 @@ export function blockToDraft(block: Block): BlockDraft {
     filler_selection: block.filler_selection ?? 'round_robin',
     align_to_mins: block.align_to_mins ?? 0, inter_filler: block.inter_filler ?? false,
     smart_pct: block.smart_pct ?? 30, start_scope: block.start_scope ?? 'block',
-    no_history_behavior: block.no_history_behavior ?? 'normal',
+    no_history_behavior:        block.no_history_behavior      ?? 'normal',
+    max_consecutive_episodes:   block.max_consecutive_episodes ?? 0,
   }
 }

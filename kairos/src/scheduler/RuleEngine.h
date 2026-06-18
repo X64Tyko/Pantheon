@@ -33,12 +33,10 @@ struct ScheduledItem {
 
 class RuleEngine {
 public:
-    // Exposed for SimState JSON helpers in RuleEngine.cpp.
+    // Filler-only sim state — used by pickFillerSim() within a single project() call.
+    // Content cursor state (show positions, rerun selection) is now entirely in the DB.
     struct SimState {
-        std::unordered_map<std::string, int> show_pos;    // scope:scope_id:show_id → ep index
-        std::unordered_map<std::string, int> block_rr;    // block_id → content index (non-rerun RR)
-        std::unordered_map<std::string, int> rerun_sel;   // block_id → selected content position (rerun)
-        std::unordered_map<std::string, int> rerun_runs;  // block_id → runs_remaining
+        std::unordered_map<std::string, int> show_pos;    // fl_rr:block_id, fl_pos:list_id:block_id
     };
 
     explicit RuleEngine(Database& db);
@@ -47,22 +45,22 @@ public:
     std::optional<Block> resolveBlock(const std::string& channel_id, std::time_t t);
 
     // Next item from a block (peek only — does not advance cursor).
+    // before_time: only episodes with aired_at < before_time are valid rerun candidates.
     std::optional<ScheduledItem> nextItem(const std::string& channel_id,
-                                           const Block& block);
+                                           const Block& block,
+                                           std::time_t before_time);
 
     // Record playback completion: inserts play_history and advances cursor.
     void markPlayed(const std::string& channel_id, const std::string& block_id,
                     const std::string& item_type, const std::string& item_id,
                     int64_t duration_ms);
 
-    // Forward EPG projection — read-only, does not touch DB.
-    // initial_cursor_json: SimState snapshot from the last scheduled_program row;
-    // pass "{}" (or omit) to seed from DB (media_cursor / block_state).
-    // seed >= 0: deterministic mode — all cursor positions initialised from seed
-    //            instead of DB state, so the same seed always yields the same schedule.
+    // Forward EPG projection — writes play_history (is_scheduled=1) and advances
+    // DB cursors as it schedules each item. Must be called within a transaction or
+    // savepoint managed by the caller (EPGMaterializer::ensureScheduled).
+    // seed >= 0: randomise the starting cursor positions for each block's first entry.
     std::vector<ScheduledItem> project(const std::string& channel_id,
                                         std::time_t start, int horizon_hours,
-                                        const std::string& initial_cursor_json = "{}",
                                         int seed = -1);
 
     // Load all blocks for a channel with their content.
@@ -70,14 +68,17 @@ public:
 
 private:
     std::vector<Episode> getEpisodes(const std::string& show_id, std::optional<int> season);
+    // Only episodes with aired_at < before_time are returned (ensures true reruns).
     std::vector<Episode> getPlayedEpisodes(const std::string& show_id,
                                             const std::string& channel_id,
-                                            std::optional<int> season);
+                                            std::optional<int> season,
+                                            std::time_t before_time);
     // Like getPlayedEpisodes but excludes the most-recently-played smart_pct% of the pool.
     std::vector<Episode> getPlayedEpisodesWithCooldown(const std::string& show_id,
                                                         const std::string& channel_id,
                                                         std::optional<int> season,
-                                                        int smart_pct);
+                                                        int smart_pct,
+                                                        std::time_t before_time);
     std::optional<Movie>         getMovie(const std::string& movie_id);
     std::optional<ScheduledItem> episodeById(const std::string& episode_id);
     // Returns (item_type, item_id) pairs from a playlist or filler_list in order.
@@ -118,15 +119,16 @@ private:
     static std::string scopeStr(const Block& b);
     static std::string scopeId(const Block& b, const std::string& channel_id);
 
-    // Like nextItem but operates on a mutable SimState (for project()).
-    // seed >= 0: when initialising a cursor key not yet in state, use seed % size
-    //            instead of reading the DB cursor.
-    std::optional<ScheduledItem> nextItemSim(const std::string& channel_id,
-                                              const Block& block, SimState& state,
-                                              int seed = -1);
+    // Advance DB cursors after scheduling or confirming a play of one item from `block`.
+    // before_time: same semantics as getPlayedEpisodes — rerun pool filtered to aired_at < before_time.
+    void advanceCursors(const std::string& channel_id, const Block& block,
+                        std::time_t before_time);
 
     // Returns the IANA timezone name for a channel (e.g. "America/Denver"), or "UTC".
     std::string channelTimezone(const std::string& channel_id);
+
+    // Returns the advance mode for a channel: "scheduled" or "on_play".
+    std::string channelAdvanceMode(const std::string& channel_id);
 
     std::optional<Block> resolveFromList(const std::vector<Block>& blocks, std::time_t t,
                                          const std::string& tz = "UTC");

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <string>
 

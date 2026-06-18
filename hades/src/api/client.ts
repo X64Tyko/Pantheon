@@ -48,7 +48,7 @@ export const api = {
   // Channels
   getChannels:      ()                                                            => request<Channel[]>('GET',    '/channels'),
   createChannel:    (b: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection'>) => request<{channel_id: string}>('POST', '/channels', b),
-  updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection'>>) => request<void>('PATCH', `/channels/${id}`, b),
+  updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode'>>) => request<void>('PATCH', `/channels/${id}`, b),
   deleteChannel:    (id: string)                                                  => request<void>('DELETE', `/channels/${id}`),
 
   // Channel filler entries

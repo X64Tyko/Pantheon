@@ -240,6 +240,20 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             </div>
           </div>
         )}
+        {(d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart') && (
+          <div style={{ marginTop: 9 }}>
+            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>EPISODE LIMIT</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="number" min={0} step={1}
+                value={d.max_consecutive_episodes ?? 0}
+                onChange={e => store.setDraft('max_consecutive_episodes', Math.max(0, parseInt(e.target.value) || 0))}
+                style={{ ...inputStyle, width: 64 }} />
+              <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)' }}>
+                {(d.max_consecutive_episodes ?? 0) === 0 ? 'unlimited' : 'max before switching show'}
+              </span>
+            </div>
+          </div>
+        )}
       </AccordionSection>
 
       {/* ── CONTENT ── */}

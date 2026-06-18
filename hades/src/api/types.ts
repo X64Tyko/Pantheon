@@ -41,12 +41,15 @@ export interface Library {
   enabled:         boolean
 }
 
+export type AdvanceMode = 'scheduled' | 'on_play'
+
 export interface Channel {
   channel_id:               string
   name:                     string
   number:                   number
   timezone:                 string
   seed?:                    number
+  advance_mode?:            AdvanceMode     // default: 'scheduled'
   default_filler_entries:   FillerEntry[]
   default_filler_selection: FillerSelectionMode
 }
@@ -138,7 +141,7 @@ export interface PathMap {
 
 export type BlockType              = 'episode' | 'premier' | 'filler' | 'movie'
 export type Advancement            = 'sequential' | 'shuffle' | 'smart_shuffle' | 'rerun_shuffle' | 'rerun_smart'
-export type NoHistoryBehavior      = 'normal' | 'fallback_all' | 'exclude' | 'filler' | 'skip'
+export type NoHistoryBehavior      = 'normal' | 'fallback_all' | 'exclude' | 'skip'
 export type StartScope             = 'block' | 'episode'
 export type FillerAdvancement      = 'sequential' | 'shuffle'
 export type FillerEntryAdvancement = 'sequential' | 'shuffle' | 'sized'
@@ -187,8 +190,9 @@ export interface Block {
   inter_filler:        boolean          // insert filler between programs
   smart_pct:           number           // cooldown threshold % for smart_shuffle / rerun_smart
   start_scope:         StartScope       // 'block' = align/early/late on block entry; 'episode' = per-item
-  no_history_behavior: NoHistoryBehavior
-  content:             BlockContent[]
+  no_history_behavior:        NoHistoryBehavior
+  max_consecutive_episodes:   number           // 0 = unlimited; rerun modes only
+  content:                    BlockContent[]
 }
 
 export interface EpisodeGroupMember {

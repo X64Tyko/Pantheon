@@ -29,7 +29,6 @@ export const NO_HISTORY_OPTS: [NoHistoryBehavior, string, string][] = [
   ['normal',       'Normal',       'Shows without premiers play as a regular episode show'],
   ['fallback_all', 'Fallback All', 'Use the full episode catalog as the rerun pool'],
   ['exclude',      'Exclude',      'Skip shows with no play history during selection'],
-  ['filler',       'Filler',       'Fill the slot with filler content'],
   ['skip',         'Skip',         'Leave the slot empty'],
 ]
 
@@ -42,5 +41,6 @@ export const BLANK_DRAFT: BlockDraft = {
   filler_selection: 'round_robin',
   align_to_mins: 0, inter_filler: false,
   smart_pct: 30, start_scope: 'block',
-  no_history_behavior: 'normal',
+  no_history_behavior:        'normal',
+  max_consecutive_episodes:   0,
 }

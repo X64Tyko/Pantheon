@@ -202,14 +202,14 @@ TEST_F(RuleEngineTest, NextItem_EmptyBlockReturnsNullopt) {
     // no content added
     auto blocks = engine.loadBlocks("c1");
     ASSERT_FALSE(blocks.empty());
-    EXPECT_FALSE(engine.nextItem("c1", blocks[0]).has_value());
+    EXPECT_FALSE(engine.nextItem("c1", blocks[0], kMonNoon).has_value());
 }
 
 TEST_F(RuleEngineTest, NextItem_ShowReturnsFirstEpisodeAtCursorZero) {
     insertBlock("b1", "episode", "08:00");
     addContent("b1", "show", "s1");
     auto blocks = engine.loadBlocks("c1");
-    auto item = engine.nextItem("c1", blocks[0]);
+    auto item = engine.nextItem("c1", blocks[0], kMonNoon);
     ASSERT_TRUE(item.has_value());
     EXPECT_EQ(item->item_type,   "episode");
     EXPECT_EQ(item->item_id,     "e1");
@@ -224,8 +224,8 @@ TEST_F(RuleEngineTest, NextItem_IsPeekDoesNotAdvanceCursor) {
     insertBlock("b1", "episode", "08:00");
     addContent("b1", "show", "s1");
     auto blocks = engine.loadBlocks("c1");
-    auto item1  = engine.nextItem("c1", blocks[0]);
-    auto item2  = engine.nextItem("c1", blocks[0]);
+    auto item1  = engine.nextItem("c1", blocks[0], kMonNoon);
+    auto item2  = engine.nextItem("c1", blocks[0], kMonNoon);
     ASSERT_TRUE(item1.has_value());
     ASSERT_TRUE(item2.has_value());
     EXPECT_EQ(item1->item_id, item2->item_id) << "nextItem must be a pure peek";
@@ -235,7 +235,7 @@ TEST_F(RuleEngineTest, NextItem_MovieBlock) {
     insertBlock("b1", "movie", "08:00");
     addContent("b1", "movie", "m1");
     auto blocks = engine.loadBlocks("c1");
-    auto item = engine.nextItem("c1", blocks[0]);
+    auto item = engine.nextItem("c1", blocks[0], kMonNoon);
     ASSERT_TRUE(item.has_value());
     EXPECT_EQ(item->item_type,   "movie");
     EXPECT_EQ(item->item_id,     "m1");
@@ -247,7 +247,7 @@ TEST_F(RuleEngineTest, NextItem_DirectEpisodeContent) {
     insertBlock("b1", "episode", "08:00");
     addContent("b1", "episode", "e2"); // specific episode, not whole show
     auto blocks = engine.loadBlocks("c1");
-    auto item = engine.nextItem("c1", blocks[0]);
+    auto item = engine.nextItem("c1", blocks[0], kMonNoon);
     ASSERT_TRUE(item.has_value());
     EXPECT_EQ(item->item_id,  "e2");
     EXPECT_EQ(item->show_id,  "s1");
@@ -262,14 +262,16 @@ TEST_F(RuleEngineTest, NextItem_SeasonFilterLimitsEpisodes) {
     insertBlock("b1", "episode", "08:00");
     addContent("b1", "show", "s1", std::optional<int>(2)); // season_filter=2
     auto blocks = engine.loadBlocks("c1");
-    auto item = engine.nextItem("c1", blocks[0]);
+    auto item = engine.nextItem("c1", blocks[0], kMonNoon);
     ASSERT_TRUE(item.has_value());
     EXPECT_EQ(item->season, 2) << "season_filter should restrict to season 2 only";
 }
 
 // ---------------------------------------------------------------------------
-// markPlayed — advances cursors
+// markPlayed — cursor advancement depends on advance_mode
 // ---------------------------------------------------------------------------
+// In 'scheduled' mode (default), project() owns cursor advancement; markPlayed()
+// records history only. In 'on_play' mode, markPlayed() is the sole cursor advance.
 
 TEST_F(RuleEngineTest, MarkPlayed_InsertsPlayHistoryEntry) {
     insertBlock("b1", "episode", "08:00");
@@ -281,23 +283,40 @@ TEST_F(RuleEngineTest, MarkPlayed_InsertsPlayHistoryEntry) {
     EXPECT_EQ(q.getColumn(0).getInt(), 1);
 }
 
-TEST_F(RuleEngineTest, MarkPlayed_AdvancesShowCursorToNextEpisode) {
+TEST_F(RuleEngineTest, MarkPlayed_Scheduled_DoesNotAdvanceCursor) {
+    // 'scheduled' mode: project() drives cursors; markPlayed() must not double-advance.
     insertBlock("b1", "episode", "08:00");
     addContent("b1", "show", "s1");
 
-    auto blocks = engine.loadBlocks("c1");
-    auto first  = engine.nextItem("c1", blocks[0]);
+    auto first = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
     ASSERT_TRUE(first.has_value());
     EXPECT_EQ(first->item_id, "e1");
 
     engine.markPlayed("c1", "b1", "episode", "e1", 3600000);
 
-    auto second = engine.nextItem("c1", engine.loadBlocks("c1")[0]);
-    ASSERT_TRUE(second.has_value());
-    EXPECT_EQ(second->item_id, "e2") << "cursor should have advanced to e2";
+    auto still_first = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
+    ASSERT_TRUE(still_first.has_value());
+    EXPECT_EQ(still_first->item_id, "e1") << "scheduled mode: cursor must not advance on markPlayed";
 }
 
-TEST_F(RuleEngineTest, MarkPlayed_WrapsAroundToFirstEpisodeAfterLast) {
+TEST_F(RuleEngineTest, MarkPlayed_OnPlay_AdvancesShowCursorToNextEpisode) {
+    db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='c1'");
+    insertBlock("b1", "episode", "08:00");
+    addContent("b1", "show", "s1");
+
+    auto first = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->item_id, "e1");
+
+    engine.markPlayed("c1", "b1", "episode", "e1", 3600000);
+
+    auto second = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(second->item_id, "e2") << "on_play mode: cursor should have advanced to e2";
+}
+
+TEST_F(RuleEngineTest, MarkPlayed_OnPlay_WrapsAroundToFirstEpisodeAfterLast) {
+    db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='c1'");
     insertBlock("b1", "episode", "08:00");
     addContent("b1", "show", "s1");
 
@@ -305,7 +324,7 @@ TEST_F(RuleEngineTest, MarkPlayed_WrapsAroundToFirstEpisodeAfterLast) {
     engine.markPlayed("c1", "b1", "episode", "e2", 3600000);
     engine.markPlayed("c1", "b1", "episode", "e3", 3600000);
 
-    auto item = engine.nextItem("c1", engine.loadBlocks("c1")[0]);
+    auto item = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
     ASSERT_TRUE(item.has_value());
     EXPECT_EQ(item->item_id, "e1") << "should wrap back to first episode";
 }
@@ -321,26 +340,26 @@ TEST_F(RuleEngineTest, MarkPlayed_MultipleHistoryEntriesAccumulate) {
     EXPECT_EQ(q.getColumn(0).getInt(), 2);
 }
 
-TEST_F(RuleEngineTest, MarkPlayed_RoundRobinAdvancesThroughContentItems) {
+TEST_F(RuleEngineTest, MarkPlayed_OnPlay_RoundRobinAdvancesThroughContentItems) {
+    db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='c1'");
     insertBlock("b1", "episode", "08:00");
     addContent("b1", "show",  "s1");
     addContent("b1", "movie", "m1");
 
-    auto blocks = engine.loadBlocks("c1");
     // block_rr=0 → show → nextItem returns episode
-    auto item1 = engine.nextItem("c1", blocks[0]);
+    auto item1 = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
     ASSERT_TRUE(item1.has_value());
     EXPECT_EQ(item1->item_type, "episode");
 
     engine.markPlayed("c1", "b1", "episode", "e1", 3600000);
     // block_rr=1 → movie
-    auto item2 = engine.nextItem("c1", engine.loadBlocks("c1")[0]);
+    auto item2 = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
     ASSERT_TRUE(item2.has_value());
     EXPECT_EQ(item2->item_type, "movie");
 
     engine.markPlayed("c1", "b1", "movie", "m1", 7200000);
     // block_rr wraps to 0 → show again
-    auto item3 = engine.nextItem("c1", engine.loadBlocks("c1")[0]);
+    auto item3 = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
     ASSERT_TRUE(item3.has_value());
     EXPECT_EQ(item3->item_type, "episode");
 }
@@ -385,8 +404,8 @@ TEST_F(RuleEngineTest, Project_ItemsHaveCorrectChannelAndBlockIds) {
 TEST_F(RuleEngineTest, Project_DeterministicWithSameSeed) {
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    auto run1 = engine.project("c1", kMonNoon, 4, "{}", 7);
-    auto run2 = engine.project("c1", kMonNoon, 4, "{}", 7);
+    auto run1 = engine.project("c1", kMonNoon, 4, 7);
+    auto run2 = engine.project("c1", kMonNoon, 4, 7);
     ASSERT_EQ(run1.size(), run2.size());
     for (size_t i = 0; i < run1.size(); ++i) {
         EXPECT_EQ(run1[i].item_id,             run2[i].item_id);
@@ -395,30 +414,31 @@ TEST_F(RuleEngineTest, Project_DeterministicWithSameSeed) {
 }
 
 TEST_F(RuleEngineTest, Project_DifferentSeedsStartAtDifferentEpisodes) {
-    // 3 episodes, seeds 0/1/2 → start at ep index seed%3 (e1/e2/e3)
+    // Seeds 0/1/4 hash to positions 1/0/2 for block "b1" — all distinct.
+    // (Seeds 1 and 2 both hash to position 0, hence seed=4 is used instead of 2.)
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    auto s0 = engine.project("c1", kMonNoon, 1, "{}", 0);
-    auto s1 = engine.project("c1", kMonNoon, 1, "{}", 1);
-    auto s2 = engine.project("c1", kMonNoon, 1, "{}", 2);
+    auto s0 = engine.project("c1", kMonNoon, 1, 0);
+    auto s1 = engine.project("c1", kMonNoon, 1, 1);
+    auto s2 = engine.project("c1", kMonNoon, 1, 4);
     ASSERT_FALSE(s0.empty());
     ASSERT_FALSE(s1.empty());
     ASSERT_FALSE(s2.empty());
     EXPECT_NE(s0[0].item_id, s1[0].item_id) << "seed 0 and seed 1 should start at different episodes";
-    EXPECT_NE(s1[0].item_id, s2[0].item_id) << "seed 1 and seed 2 should start at different episodes";
+    EXPECT_NE(s1[0].item_id, s2[0].item_id) << "seed 1 and seed 4 should start at different episodes";
 }
 
 TEST_F(RuleEngineTest, Project_CursorJsonEnablesContinuousExtension) {
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
 
-    auto batch1 = engine.project("c1", kMonNoon, 1, "{}", 0);
+    // project() advances DB cursors as it schedules; a second call starting from
+    // the first batch's end automatically picks up from the advanced position.
+    auto batch1 = engine.project("c1", kMonNoon, 1, 0);
     ASSERT_FALSE(batch1.empty());
 
-    // Resume from the cursor snapshot left by the last item of batch1
-    std::string cursor    = batch1.back().cursor_json;
     std::time_t resume_at = batch1.back().wall_clock_end_ms / 1000;
-    auto batch2 = engine.project("c1", resume_at, 1, cursor, -1);
+    auto batch2 = engine.project("c1", resume_at, 1);
 
     if (!batch2.empty())
         EXPECT_GE(batch2[0].wall_clock_start_ms, batch1.back().wall_clock_end_ms)

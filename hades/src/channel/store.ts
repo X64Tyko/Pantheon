@@ -7,7 +7,7 @@ import { FIELD_DEFS } from '../components/PickerFilters'
 import type { FilterRule } from '../components/PickerFilters'
 import type { BlockDraft, LimitMode, PickerTab } from './types'
 import type {
-  Advancement, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
+  AdvanceMode, Advancement, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
   EpisodeSearchResult, EpgProgram, FillerEntry, FillerEntryAdvancement, FillerList, FillerSelectionMode,
   LibraryWithSource, Movie, NoHistoryBehavior, Playlist, Show,
 } from '../api/types'
@@ -73,29 +73,32 @@ export class ChannelDetailStore {
   epgItems:   EpgProgram[] = []
   epgLoading: boolean      = false
 
-  channelDraftName:     string  = ''
-  channelDraftNumber:   number  = 1
-  channelDraftTimezone: string  = 'UTC'
-  channelDraftSeed:     number  = 12345
-  channelDirty:         boolean = false
+  channelDraftName:        string      = ''
+  channelDraftNumber:      number      = 1
+  channelDraftTimezone:    string      = 'UTC'
+  channelDraftSeed:        number      = 12345
+  channelDraftAdvanceMode: AdvanceMode = 'scheduled'
+  channelDirty:            boolean     = false
   channelSaving:        boolean = false
   channelSaveErr:       string | null = null
 
   constructor() { makeAutoObservable(this) }
 
   initChannelDraft(channel: Channel) {
-    this.channelDraftName     = channel.name
-    this.channelDraftNumber   = channel.number
-    this.channelDraftTimezone = channel.timezone
-    this.channelDraftSeed     = channel.seed !== undefined ? channel.seed : 12345
-    this.channelDirty         = false
+    this.channelDraftName        = channel.name
+    this.channelDraftNumber      = channel.number
+    this.channelDraftTimezone    = channel.timezone
+    this.channelDraftSeed        = channel.seed !== undefined ? channel.seed : 12345
+    this.channelDraftAdvanceMode = channel.advance_mode ?? 'scheduled'
+    this.channelDirty            = false
   }
 
-  setChannelDraft(patch: Partial<{ name: string; number: number; timezone: string; seed: number }>) {
-    if (patch.name     !== undefined) this.channelDraftName     = patch.name
-    if (patch.number   !== undefined) this.channelDraftNumber   = patch.number
-    if (patch.timezone !== undefined) this.channelDraftTimezone = patch.timezone
-    if (patch.seed     !== undefined) this.channelDraftSeed     = patch.seed
+  setChannelDraft(patch: Partial<{ name: string; number: number; timezone: string; seed: number; advance_mode: AdvanceMode }>) {
+    if (patch.name         !== undefined) this.channelDraftName        = patch.name
+    if (patch.number       !== undefined) this.channelDraftNumber      = patch.number
+    if (patch.timezone     !== undefined) this.channelDraftTimezone    = patch.timezone
+    if (patch.seed         !== undefined) this.channelDraftSeed        = patch.seed
+    if (patch.advance_mode !== undefined) this.channelDraftAdvanceMode = patch.advance_mode
     this.channelDirty = true
   }
 
@@ -103,10 +106,11 @@ export class ChannelDetailStore {
     this.channelSaving = true; this.channelSaveErr = null
     try {
       await api.updateChannel(channelId, {
-        name:     this.channelDraftName,
-        number:   this.channelDraftNumber,
-        timezone: this.channelDraftTimezone,
-        seed:     this.channelDraftSeed,
+        name:         this.channelDraftName,
+        number:       this.channelDraftNumber,
+        timezone:     this.channelDraftTimezone,
+        seed:         this.channelDraftSeed,
+        advance_mode: this.channelDraftAdvanceMode,
       })
       await channelStore.fetchAll()
       runInAction(() => { this.channelSaving = false; this.channelDirty = false })

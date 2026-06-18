@@ -1,0 +1,5 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="kairos-1" tvg-name="Drama Central" tvg-logo="" group-title="Kairos" channel-number="1",Drama Central
+http://kairos.local:8080/channels/ch1/stream
+#EXTINF:-1 tvg-id="kairos-2" tvg-name="Movie Night" tvg-logo="" group-title="Kairos" channel-number="2",Movie Night
+http://kairos.local:8080/channels/ch2/stream
