@@ -21,7 +21,7 @@ services:
       # Uncomment to enable verbose EPG scheduling logs.
       # - KAIROS_DEBUG_EPG=1
     volumes:
-      - ./data/kairos:/data
+      - /mnt/user/appdata/kairos:/data
       - /mnt/user/Media:/media:ro   # <-- change to your media path
     restart: unless-stopped
 
@@ -32,7 +32,7 @@ services:
     environment:
       - KAIROS_URL=http://kairos:8080
     volumes:
-      - ./data/tunarr:/config/tunarr
+      - /mnt/user/appdata/tunarr:/config/tunarr
       - /mnt/user/Media:/media:ro   # <-- same path as above
     depends_on:
       - kairos
