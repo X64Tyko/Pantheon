@@ -672,7 +672,9 @@ void Router::registerChannelRoutes() {
     svr_.Get("/api/channels", [this](const Req&, Res& res) {
       try {
         SQLite::Statement q(db_.get(),
-            "SELECT channel_id, name, number, timezone, default_filler_selection, seed, advance_mode "
+            "SELECT channel_id, name, number, timezone, default_filler_selection, seed, advance_mode, "
+            "       offline_video_path, offline_image_path, offline_audio_id, offline_audio_type, "
+            "       offline_audio_title, logo_path "
             "FROM channel ORDER BY number");
         json result = json::array();
         while (q.executeStep()) {
@@ -685,6 +687,12 @@ void Router::registerChannelRoutes() {
                 {"default_filler_selection", q.getColumn(4).getString()},
                 {"seed",                     q.getColumn(5).getInt()},
                 {"advance_mode",             q.getColumn(6).getString()},
+                {"offline_video_path",        q.getColumn(7).getString()},
+                {"offline_image_path",        q.getColumn(8).getString()},
+                {"offline_audio_id",          q.getColumn(9).getString()},
+                {"offline_audio_type",        q.getColumn(10).getString()},
+                {"offline_audio_title",       q.getColumn(11).getString()},
+                {"logo_path",                 q.getColumn(12).getString()},
             };
             SQLite::Statement fq(db_.get(), R"(
                 SELECT cfe.id, cfe.filler_list_id, fl.title,
@@ -763,6 +771,12 @@ void Router::registerChannelRoutes() {
             }
             if (b.contains("default_filler_selection")) upd("default_filler_selection", b["default_filler_selection"]);
             if (b.contains("advance_mode"))             upd("advance_mode",             b["advance_mode"]);
+            if (b.contains("offline_video_path"))       upd("offline_video_path",       b["offline_video_path"]);
+            if (b.contains("offline_image_path"))       upd("offline_image_path",       b["offline_image_path"]);
+            if (b.contains("offline_audio_id"))          upd("offline_audio_id",          b["offline_audio_id"]);
+            if (b.contains("offline_audio_type"))        upd("offline_audio_type",        b["offline_audio_type"]);
+            if (b.contains("offline_audio_title"))       upd("offline_audio_title",       b["offline_audio_title"]);
+            if (b.contains("logo_path"))                upd("logo_path",                b["logo_path"]);
             if (b.contains("seed")) {
                 SQLite::Statement s(db_.get(), "UPDATE channel SET seed = ? WHERE channel_id = ?");
                 s.bind(1, b["seed"].get<int>()); s.bind(2, id); s.exec();
@@ -3138,41 +3152,123 @@ void Router::registerSchedulerRoutes() {
             }
         }
 
-        // No cache entry for the current time (filler gap or unscheduled period).
-        // Fall back to live block resolution.
+        // No cache entry for the current time — try live block resolution.
         auto block_opt = engine_.resolveBlock(channel_id, t);
-        if (!block_opt) { err(res, 404, "no active block at current time"); return; }
+        std::optional<ScheduledItem> item_opt;
+        if (block_opt)
+            item_opt = engine_.nextItem(channel_id, *block_opt, std::time(nullptr));
 
-        auto item_opt = engine_.nextItem(channel_id, *block_opt, std::time(nullptr));
-        if (!item_opt) { err(res, 404, "no playable content in active block"); return; }
-
-        const auto& item = *item_opt;
-        json j = {
-            {"item_type",            item.item_type},
-            {"item_id",              item.item_id},
-            {"file_path",            conf_.applyPathMap(item.file_path)},
-            {"duration_ms",          item.duration_ms},
-            {"title",                item.title},
-            {"block_id",             item.block_id},
-            {"wall_clock_start_ms",  static_cast<int64_t>(t) * 1000},
-        };
-        if (!item.show_title.empty()) {
-            j["show_title"]  = item.show_title;
-            j["show_id"]     = item.show_id;
-            j["season"]      = item.season;
-            j["episode_num"] = item.episode_num;
-        }
-        try {
-            SQLite::Statement sm(db_.get(),
-                "SELECT source_id, external_id FROM source_mapping "
-                "WHERE kairos_id = ? LIMIT 1");
-            sm.bind(1, item.item_id);
-            if (sm.executeStep()) {
-                j["source_id"]   = sm.getColumn(0).getString();
-                j["external_id"] = sm.getColumn(1).getString();
+        if (block_opt && item_opt) {
+            const auto& item = *item_opt;
+            json j = {
+                {"item_type",            item.item_type},
+                {"item_id",              item.item_id},
+                {"file_path",            conf_.applyPathMap(item.file_path)},
+                {"duration_ms",          item.duration_ms},
+                {"title",                item.title},
+                {"block_id",             item.block_id},
+                {"wall_clock_start_ms",  static_cast<int64_t>(t) * 1000},
+            };
+            if (!item.show_title.empty()) {
+                j["show_title"]  = item.show_title;
+                j["show_id"]     = item.show_id;
+                j["season"]      = item.season;
+                j["episode_num"] = item.episode_num;
             }
-        } catch (...) {}
-        ok(res, j.dump());
+            try {
+                SQLite::Statement sm(db_.get(),
+                    "SELECT source_id, external_id FROM source_mapping "
+                    "WHERE kairos_id = ? LIMIT 1");
+                sm.bind(1, item.item_id);
+                if (sm.executeStep()) {
+                    j["source_id"]   = sm.getColumn(0).getString();
+                    j["external_id"] = sm.getColumn(1).getString();
+                }
+            } catch (...) {}
+            ok(res, j.dump());
+            return;
+        }
+
+        // Fallback 1: random item from the channel's default filler lists.
+        {
+            SQLite::Statement fq(db_.get(), R"(
+                SELECT fi.item_type, fi.item_id,
+                       COALESCE(e.file_path, m.file_path, '') AS file_path,
+                       COALESCE(e.title,     m.title,     '') AS title,
+                       COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms
+                FROM channel_filler_entry cfe
+                JOIN filler_list_item fi ON fi.filler_list_id = cfe.filler_list_id
+                LEFT JOIN episode e ON fi.item_type='episode' AND fi.item_id=e.episode_id
+                LEFT JOIN movie   m ON fi.item_type='movie'   AND fi.item_id=m.movie_id
+                WHERE cfe.channel_id = ?
+                  AND (e.file_path IS NOT NULL OR m.file_path IS NOT NULL)
+                ORDER BY RANDOM()
+                LIMIT 1
+            )");
+            fq.bind(1, channel_id);
+            if (fq.executeStep()) {
+                json j = {
+                    {"item_type",           fq.getColumn(0).getString()},
+                    {"item_id",             fq.getColumn(1).getString()},
+                    {"file_path",           conf_.applyPathMap(fq.getColumn(2).getString())},
+                    {"title",               fq.getColumn(3).getString()},
+                    {"duration_ms",         fq.getColumn(4).getInt64()},
+                    {"block_id",            ""},
+                    {"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+                };
+                ok(res, j.dump());
+                return;
+            }
+        }
+
+        // Fallback 2: channel-configured offline screen (video or image+audio).
+        {
+            SQLite::Statement oq(db_.get(),
+                "SELECT offline_video_path, offline_image_path, "
+                "       offline_audio_id, offline_audio_type "
+                "FROM channel WHERE channel_id = ?");
+            oq.bind(1, channel_id);
+            if (oq.executeStep()) {
+                std::string vid_path  = oq.getColumn(0).getString();
+                std::string img_path  = oq.getColumn(1).getString();
+                std::string audio_id  = oq.getColumn(2).getString();
+                std::string audio_typ = oq.getColumn(3).getString();
+
+                if (!vid_path.empty()) {
+                    json j = {
+                        {"item_type",           "offline"},
+                        {"file_path",           conf_.applyPathMap(vid_path)},
+                        {"duration_ms",         0},
+                        {"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+                    };
+                    ok(res, j.dump());
+                    return;
+                }
+                if (!img_path.empty()) {
+                    json j = {
+                        {"item_type",           "offline"},
+                        {"offline_image_path",  conf_.applyPathMap(img_path)},
+                        {"duration_ms",         0},
+                        {"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+                    };
+                    if (!audio_id.empty() && !audio_typ.empty()) {
+                        const char* sql = (audio_typ == "episode")
+                            ? "SELECT file_path FROM episode WHERE episode_id = ?"
+                            : "SELECT file_path FROM movie   WHERE movie_id   = ?";
+                        SQLite::Statement aq(db_.get(), sql);
+                        aq.bind(1, audio_id);
+                        if (aq.executeStep()) {
+                            std::string ap = aq.getColumn(0).getString();
+                            if (!ap.empty()) j["offline_audio_path"] = conf_.applyPathMap(ap);
+                        }
+                    }
+                    ok(res, j.dump());
+                    return;
+                }
+            }
+        }
+
+        err(res, 404, "no content or fallback configured for this channel");
       } catch (const std::exception& e) {
         logErr("GET /api/channels/now", e); err(res, 500, e.what());
       }

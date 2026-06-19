@@ -739,6 +739,20 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE block_content ADD COLUMN episode_order   TEXT    NOT NULL DEFAULT 'season';
 )SQL", false }
 
+,
+
+// ── v26: per-channel offline fallback. When no content and no filler are
+//         available, Kairos can serve a looping video or a static image
+//         (optionally paired with an audio track from the library).
+{ 26, R"SQL(
+    ALTER TABLE channel ADD COLUMN offline_video_path  TEXT NOT NULL DEFAULT '';
+    ALTER TABLE channel ADD COLUMN offline_image_path  TEXT NOT NULL DEFAULT '';
+    ALTER TABLE channel ADD COLUMN offline_audio_id    TEXT NOT NULL DEFAULT '';
+    ALTER TABLE channel ADD COLUMN offline_audio_type  TEXT NOT NULL DEFAULT '';
+    ALTER TABLE channel ADD COLUMN offline_audio_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE channel ADD COLUMN logo_path           TEXT NOT NULL DEFAULT '';
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace

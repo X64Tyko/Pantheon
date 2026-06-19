@@ -80,11 +80,17 @@ export class ChannelDetailStore {
   epgItems:   EpgProgram[] = []
   epgLoading: boolean      = false
 
-  channelDraftName:        string      = ''
-  channelDraftNumber:      number      = 1
-  channelDraftTimezone:    string      = 'UTC'
-  channelDraftSeed:        number      = 12345
-  channelDraftAdvanceMode: AdvanceMode = 'scheduled'
+  channelDraftName:             string      = ''
+  channelDraftNumber:           number      = 1
+  channelDraftTimezone:         string      = 'UTC'
+  channelDraftSeed:             number      = 12345
+  channelDraftAdvanceMode:      AdvanceMode = 'scheduled'
+  channelDraftOfflineVideoPath: string      = ''
+  channelDraftOfflineImagePath: string      = ''
+  channelDraftOfflineAudioId:    string      = ''
+  channelDraftOfflineAudioType:  'episode' | 'movie' | '' = ''
+  channelDraftOfflineAudioTitle: string      = ''
+  channelDraftLogoPath:         string      = ''
   channelDirty:            boolean     = false
   channelSaving:        boolean = false
   channelSaveErr:       string | null = null
@@ -92,21 +98,33 @@ export class ChannelDetailStore {
   constructor() { makeAutoObservable(this) }
 
   initChannelDraft(channel: Channel) {
-    this.channelDraftName        = channel.name
-    this.channelDraftNumber      = channel.number
-    this.channelDraftTimezone    = channel.timezone
-    this.channelDraftSeed        = channel.seed !== undefined ? channel.seed : 12345
-    this.channelDraftAdvanceMode = channel.advance_mode ?? 'scheduled'
-    this.channelDirty            = false
-    this.epgDay                  = todayEpgDay(channel.timezone)
+    this.channelDraftName             = channel.name
+    this.channelDraftNumber           = channel.number
+    this.channelDraftTimezone         = channel.timezone
+    this.channelDraftSeed             = channel.seed !== undefined ? channel.seed : 12345
+    this.channelDraftAdvanceMode      = channel.advance_mode ?? 'scheduled'
+    this.channelDraftOfflineVideoPath = channel.offline_video_path ?? ''
+    this.channelDraftOfflineImagePath = channel.offline_image_path ?? ''
+    this.channelDraftOfflineAudioId    = channel.offline_audio_id    ?? ''
+    this.channelDraftOfflineAudioType  = channel.offline_audio_type  ?? ''
+    this.channelDraftOfflineAudioTitle = channel.offline_audio_title ?? ''
+    this.channelDraftLogoPath         = channel.logo_path          ?? ''
+    this.channelDirty                 = false
+    this.epgDay                       = todayEpgDay(channel.timezone)
   }
 
-  setChannelDraft(patch: Partial<{ name: string; number: number; timezone: string; seed: number; advance_mode: AdvanceMode }>) {
-    if (patch.name         !== undefined) this.channelDraftName        = patch.name
-    if (patch.number       !== undefined) this.channelDraftNumber      = patch.number
-    if (patch.timezone     !== undefined) this.channelDraftTimezone    = patch.timezone
-    if (patch.seed         !== undefined) this.channelDraftSeed        = patch.seed
-    if (patch.advance_mode !== undefined) this.channelDraftAdvanceMode = patch.advance_mode
+  setChannelDraft(patch: Partial<{ name: string; number: number; timezone: string; seed: number; advance_mode: AdvanceMode; offline_video_path: string; offline_image_path: string; offline_audio_id: string; offline_audio_type: 'episode' | 'movie' | ''; offline_audio_title: string; logo_path: string }>) {
+    if (patch.name                 !== undefined) this.channelDraftName              = patch.name
+    if (patch.number               !== undefined) this.channelDraftNumber            = patch.number
+    if (patch.timezone             !== undefined) this.channelDraftTimezone          = patch.timezone
+    if (patch.seed                 !== undefined) this.channelDraftSeed              = patch.seed
+    if (patch.advance_mode         !== undefined) this.channelDraftAdvanceMode       = patch.advance_mode
+    if (patch.offline_video_path   !== undefined) this.channelDraftOfflineVideoPath  = patch.offline_video_path
+    if (patch.offline_image_path   !== undefined) this.channelDraftOfflineImagePath  = patch.offline_image_path
+    if (patch.offline_audio_id     !== undefined) this.channelDraftOfflineAudioId    = patch.offline_audio_id
+    if (patch.offline_audio_type   !== undefined) this.channelDraftOfflineAudioType  = patch.offline_audio_type
+    if (patch.offline_audio_title  !== undefined) this.channelDraftOfflineAudioTitle = patch.offline_audio_title
+    if (patch.logo_path            !== undefined) this.channelDraftLogoPath          = patch.logo_path
     this.channelDirty = true
   }
 
@@ -114,11 +132,17 @@ export class ChannelDetailStore {
     this.channelSaving = true; this.channelSaveErr = null
     try {
       await api.updateChannel(channelId, {
-        name:         this.channelDraftName,
-        number:       this.channelDraftNumber,
-        timezone:     this.channelDraftTimezone,
-        seed:         this.channelDraftSeed,
-        advance_mode: this.channelDraftAdvanceMode,
+        name:                 this.channelDraftName,
+        number:               this.channelDraftNumber,
+        timezone:             this.channelDraftTimezone,
+        seed:                 this.channelDraftSeed,
+        advance_mode:         this.channelDraftAdvanceMode,
+        offline_video_path:   this.channelDraftOfflineVideoPath,
+        offline_image_path:   this.channelDraftOfflineImagePath,
+        offline_audio_id:     this.channelDraftOfflineAudioId,
+        offline_audio_type:   this.channelDraftOfflineAudioType,
+        offline_audio_title:  this.channelDraftOfflineAudioTitle,
+        logo_path:            this.channelDraftLogoPath,
       })
       await channelStore.fetchAll()
       runInAction(() => { this.channelSaving = false; this.channelDirty = false })

@@ -52,6 +52,12 @@ export interface Channel {
   advance_mode?:            AdvanceMode     // default: 'scheduled'
   default_filler_entries:   FillerEntry[]
   default_filler_selection: FillerSelectionMode
+  offline_video_path?:      string
+  offline_image_path?:      string
+  offline_audio_id?:        string
+  offline_audio_type?:      'episode' | 'movie' | ''
+  offline_audio_title?:     string
+  logo_path?:               string
 }
 
 // ── List-view types (minimal) ────────────────────────────────────────────────

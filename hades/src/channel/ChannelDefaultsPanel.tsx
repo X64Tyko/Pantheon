@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { observer } from 'mobx-react-lite'
 import type { AdvanceMode, Channel, FillerEntryAdvancement, FillerSelectionMode } from '../api/types'
 import { FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
@@ -6,6 +6,7 @@ import { inputStyle, filterInputStyle } from './styles'
 import { SectionLabel } from './SectionLabel'
 import { FillerEntryRow } from './FillerPanel'
 import type { ChannelDetailStore } from './store'
+import { api } from '../api/client'
 
 const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, channelId, store }: {
   channel:   Channel | undefined
@@ -114,6 +115,21 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
           {store.channelSaving ? 'Saving…' : 'Save Channel'}
         </button>
 
+        <SectionLabel>LOGO</SectionLabel>
+        <div style={{ marginBottom: 22 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>LOGO PATH</div>
+          <input
+            value={store.channelDraftLogoPath}
+            onChange={e => store.setChannelDraft({ logo_path: e.target.value })}
+            style={inputStyle}
+            placeholder="/path/to/logo.png or https://…"
+            spellCheck={false}
+          />
+          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+            Container path or URL to a PNG or JPG logo for this channel.
+          </div>
+        </div>
+
         <SectionLabel>DEFAULT FILLER</SectionLabel>
         <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 12, lineHeight: 1.55 }}>
           Used when a block has no filler lists of its own.
@@ -181,7 +197,123 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         {store.channelFillerErr && (
           <div style={{ marginTop: 8, fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{store.channelFillerErr}</div>
         )}
+
+        <SectionLabel style={{ marginTop: 24 }}>OFFLINE FALLBACK</SectionLabel>
+        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 12, lineHeight: 1.55 }}>
+          Served when no content is scheduled and no filler is available. Video takes precedence over image if both are set.
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>VIDEO (looping)</div>
+          <input
+            value={store.channelDraftOfflineVideoPath}
+            onChange={e => store.setChannelDraft({ offline_video_path: e.target.value })}
+            style={inputStyle}
+            placeholder="/path/to/offline.mp4"
+            spellCheck={false}
+          />
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>IMAGE</div>
+          <input
+            value={store.channelDraftOfflineImagePath}
+            onChange={e => store.setChannelDraft({ offline_image_path: e.target.value })}
+            style={inputStyle}
+            placeholder="/path/to/offline.png or https://…"
+            spellCheck={false}
+          />
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>AUDIO (with image)</div>
+          <AudioPicker
+            audioId={store.channelDraftOfflineAudioId}
+            audioTitle={store.channelDraftOfflineAudioTitle}
+            onSelect={(id, type, title) => store.setChannelDraft({ offline_audio_id: id, offline_audio_type: type, offline_audio_title: title })}
+            onClear={() => store.setChannelDraft({ offline_audio_id: '', offline_audio_type: '', offline_audio_title: '' })}
+          />
+        </div>
       </div>
+    </div>
+  )
+})
+
+type AudioPickerResult = { id: string; type: 'episode' | 'movie'; title: string }
+
+const AudioPicker = observer(function AudioPicker({ audioId, audioTitle, onSelect, onClear }: {
+  audioId:    string
+  audioTitle: string
+  onSelect:   (id: string, type: 'episode' | 'movie', title: string) => void
+  onClear:    () => void
+}) {
+  const [query,   setQuery]   = useState('')
+  const [results, setResults] = useState<AudioPickerResult[]>([])
+  const [open,    setOpen]    = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+
+  function search(q: string) {
+    clearTimeout(debounceRef.current)
+    setQuery(q)
+    if (!q.trim()) { setResults([]); setOpen(false); return }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const [eps, movies] = await Promise.all([
+          api.searchEpisodes({ q, limit: 10 }),
+          api.getMovies({ q, limit: 10 }),
+        ])
+        const out: AudioPickerResult[] = [
+          ...eps.items.map(e => ({ id: e.episode_id, type: 'episode' as const, title: `${e.show_title} — ${e.title}` })),
+          ...movies.items.map(m => ({ id: m.movie_id, type: 'movie' as const, title: m.title })),
+        ]
+        setResults(out)
+        setOpen(out.length > 0)
+      } catch {}
+    }, 250)
+  }
+
+  function pick(r: AudioPickerResult) {
+    onSelect(r.id, r.type, r.title)
+    setQuery('')
+    setResults([])
+    setOpen(false)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      {audioId && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+          <span style={{ fontSize: 11, color: 'var(--hds-txt-1)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {audioTitle || audioId}
+          </span>
+          <button onClick={onClear} style={{ padding: '2px 7px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', color: 'var(--hds-txt-3)', fontSize: 10, cursor: 'pointer' }}>✕</button>
+        </div>
+      )}
+      <input
+        value={query}
+        onChange={e => search(e.target.value)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onFocus={() => results.length > 0 && setOpen(true)}
+        style={filterInputStyle}
+        placeholder="Search episodes or movies…"
+        spellCheck={false}
+      />
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line)', borderRadius: 7, marginTop: 3, maxHeight: 200, overflow: 'auto' }} className="scrollbar-dark">
+          {results.map(r => (
+            <div
+              key={r.id}
+              onMouseDown={() => pick(r)}
+              style={{ padding: '6px 10px', fontSize: 11, cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ color: 'var(--hds-txt-3)', fontSize: 9.5, marginRight: 5 }}>{r.type}</span>
+              {r.title}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 })
