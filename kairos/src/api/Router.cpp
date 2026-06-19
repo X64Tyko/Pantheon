@@ -876,7 +876,8 @@ void Router::registerChannelRoutes() {
                            COALESCE(sw.imdb_id,''), COALESCE(sw.tvdb_id,''), COALESCE(sw.tmdb_id,''),
                            COALESCE(m.imdb_id,''),  COALESCE(m.tmdb_id,''),
                            e.season, e.episode,
-                           COALESCE(esw.imdb_id,''), COALESCE(esw.tvdb_id,''), COALESCE(esw.tmdb_id,'')
+                           COALESCE(esw.imdb_id,''), COALESCE(esw.tvdb_id,''), COALESCE(esw.tmdb_id,''),
+                           sw.year, m.year
                     FROM block_content bc
                     LEFT JOIN show        sw  ON bc.content_type = 'show'        AND bc.content_id = sw.show_id
                     LEFT JOIN movie       m   ON bc.content_type = 'movie'       AND bc.content_id = m.movie_id
@@ -897,6 +898,8 @@ void Router::registerChannelRoutes() {
                         {"title",        ccq.getColumn(4).getString()},
                     };
                     if (!ccq.getColumn(3).isNull()) item["season_filter"] = ccq.getColumn(3).getInt();
+                    if (ct == "show"  && !ccq.getColumn(15).isNull()) item["year"] = ccq.getColumn(15).getInt();
+                    if (ct == "movie" && !ccq.getColumn(16).isNull()) item["year"] = ccq.getColumn(16).getInt();
                     if (deep) {
                         if (ct == "show") {
                             item["imdb_id"] = ccq.getColumn(5).getString();
@@ -1051,11 +1054,23 @@ void Router::registerChannelRoutes() {
                             tryQuery("SELECT show_id FROM show WHERE tvdb_id = ? AND tvdb_id != '' LIMIT 1", item.value("tvdb_id",""));
                             tryQuery("SELECT show_id FROM show WHERE tmdb_id = ? AND tmdb_id != '' LIMIT 1", item.value("tmdb_id",""));
                         }
+                        if (!content_id.empty()); // skip title lookups if already resolved
+                        else if (item.contains("year") && !item["year"].is_null()) {
+                            SQLite::Statement q(db_.get(), "SELECT show_id FROM show WHERE title = ? AND year = ? LIMIT 1");
+                            q.bind(1, title); q.bind(2, item["year"].get<int>());
+                            if (q.executeStep()) content_id = q.getColumn(0).getString();
+                        }
                         tryQuery("SELECT show_id FROM show WHERE title = ? LIMIT 1", title);
                     } else if (ct == "movie") {
                         if (deep) {
                             tryQuery("SELECT movie_id FROM movie WHERE imdb_id = ? AND imdb_id != '' LIMIT 1", item.value("imdb_id",""));
                             tryQuery("SELECT movie_id FROM movie WHERE tmdb_id = ? AND tmdb_id != '' LIMIT 1", item.value("tmdb_id",""));
+                        }
+                        if (!content_id.empty()); // skip title lookups if already resolved
+                        else if (item.contains("year") && !item["year"].is_null()) {
+                            SQLite::Statement q(db_.get(), "SELECT movie_id FROM movie WHERE title = ? AND year = ? LIMIT 1");
+                            q.bind(1, title); q.bind(2, item["year"].get<int>());
+                            if (q.executeStep()) content_id = q.getColumn(0).getString();
                         }
                         tryQuery("SELECT movie_id FROM movie WHERE title = ? LIMIT 1", title);
                     } else if (ct == "episode" && deep) {
@@ -1866,10 +1881,12 @@ void Router::registerContentRoutes() {
         int  total = 0;
         json items = json::array();
         auto pushShow = [](json& arr, SQLite::Statement& q) {
-            arr.push_back({{"show_id",        q.getColumn(0).getString()},
-                           {"title",          q.getColumn(1).getString()},
-                           {"content_rating", q.getColumn(2).getString()},
-                           {"episode_count",  q.getColumn(3).getInt()}});
+            json entry = {{"show_id",        q.getColumn(0).getString()},
+                          {"title",          q.getColumn(1).getString()},
+                          {"content_rating", q.getColumn(2).getString()},
+                          {"episode_count",  q.getColumn(3).getInt()}};
+            if (!q.getColumn(4).isNull()) entry["year"] = q.getColumn(4).getInt();
+            arr.push_back(std::move(entry));
         };
 
         if (library_id.empty()) {
@@ -1879,7 +1896,7 @@ void Router::registerContentRoutes() {
 
             SQLite::Statement q(db_.get(), R"(
                 SELECT s.show_id, s.title, s.content_rating,
-                       COUNT(e.episode_id) AS episode_count
+                       COUNT(e.episode_id) AS episode_count, s.year
                 FROM show s LEFT JOIN episode e ON e.show_id = s.show_id
                 WHERE 1=1)" + extras + R"( GROUP BY s.show_id ORDER BY s.title LIMIT ? OFFSET ?)");
             p = 1; bindExtras(q, p);
@@ -1896,7 +1913,7 @@ void Router::registerContentRoutes() {
 
             SQLite::Statement q(db_.get(), R"(
                 SELECT s.show_id, s.title, s.content_rating,
-                       COUNT(e.episode_id) AS episode_count
+                       COUNT(e.episode_id) AS episode_count, s.year
                 FROM show s
                 JOIN source_mapping sm ON sm.kairos_id = s.show_id
                     AND sm.item_type = 'show' AND sm.library_id = ?
@@ -3406,7 +3423,8 @@ void Router::registerSchedulerRoutes() {
                    COALESCE(e.season,  0)          AS season,
                    COALESCE(e.episode, 0)          AS ep_num,
                    COALESCE(e.file_path, m.file_path, '') AS file_path,
-                   COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms
+                   COALESCE(e.duration_ms, m.duration_ms,
+                            (sp.wall_clock_end - sp.wall_clock_start) * 1000) AS duration_ms
             FROM scheduled_program sp
             LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
             LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id

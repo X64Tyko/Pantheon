@@ -1591,6 +1591,16 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         }
 
         auto item_opt = nextItem(channel_id, block, t);
+        bool is_fallback_filler = false;
+        if (!item_opt) {
+            const auto& filler_pool = block.filler_entries.empty() ? channel_filler
+                                                                    : block.filler_entries;
+            if (!filler_pool.empty())
+                if (auto fi = pickFillerSim(channel_id, block, filler_pool, 0, state, seed, t)) {
+                    item_opt           = std::move(fi);
+                    is_fallback_filler = true;
+                }
+        }
         if (!item_opt) {
             ++dbg_null_streak;
             if (epgDebug() && (dbg_null_streak == 1 || dbg_null_streak % 100 == 0))
@@ -1641,8 +1651,9 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         t += dur_ms / 1000;
         const std::time_t t_prog_end = t;
 
-        // Write to play_history (is_scheduled=1) and advance DB cursors so the
-        // next nextItem() call reads the updated position.
+        // Write to play_history (is_scheduled=1) for recency tracking.
+        // Only advance DB cursors for content items — fallback filler should not
+        // move the content cursor, leaving it in place for when content becomes available.
         {
             SQLite::Statement qph(db_.get(), R"(
                 INSERT INTO play_history
@@ -1656,9 +1667,9 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             qph.bind(5, static_cast<int64_t>(ph_aired_at));
             qph.exec();
         }
-        advanceCursors(channel_id, block, t);
+        if (!is_fallback_filler) advanceCursors(channel_id, block, t);
 
-        bool prog_limit_hit = (block.program_count > 0 &&
+        bool prog_limit_hit = !is_fallback_filler && (block.program_count > 0 &&
                                ++prog_counts[block.block_id] >= block.program_count);
 
         // ── Inter-filler injection ────────────────────────────────────────────
@@ -1669,7 +1680,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         // accepts any position within those windows.
         // Individual clips are collected and then collapsed into a single merged
         // "filler" item so the preview shows one block instead of every clip.
-        if (block.inter_filler && block.start_scope == "episode" && block.align_to_mins > 0) {
+        if (!is_fallback_filler && block.inter_filler && block.start_scope == "episode" && block.align_to_mins > 0) {
             const auto& pool = block.filler_entries.empty() ? channel_filler
                                                             : block.filler_entries;
             if (!pool.empty()) {
@@ -1751,8 +1762,8 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             }
         }
 
-        // Episode-scope: apply alignment + early/late window after every item.
-        if (block.start_scope == "episode" && block.align_to_mins > 0) {
+        // Episode-scope: apply alignment + early/late window after every content item.
+        if (!is_fallback_filler && block.start_scope == "episode" && block.align_to_mins > 0) {
             std::time_t step   = static_cast<std::time_t>(block.align_to_mins) * 60;
             std::time_t prev_b = (t / step) * step;        // last boundary at or before t
             std::time_t next_b = prev_b + step;            // next boundary

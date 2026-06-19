@@ -61,6 +61,7 @@ export interface Show {
   title:          string
   content_rating: string
   episode_count:  number
+  year?:          number
 }
 
 export interface Movie {

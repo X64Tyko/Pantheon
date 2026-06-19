@@ -130,7 +130,7 @@ const ShowPickerList = observer(function ShowPickerList({ store, channelId, quer
               <img src={`/api/shows/${show.show_id}/thumb`} loading="lazy" style={{ width: 30, height: 44, objectFit: 'cover', borderRadius: 3, flexShrink: 0, opacity: 0, transition: 'opacity .2s' }}
                 onLoad={e => { (e.target as HTMLImageElement).style.opacity = '1' }}
                 onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
-              <span style={{ flex: 1, fontSize: 12.5 }}>{show.title}</span>
+              <span style={{ flex: 1, fontSize: 12.5 }}>{show.title}{show.year ? <span style={{ color: 'var(--hds-txt-3)', fontSize: 10.5, marginLeft: 5 }}>({show.year})</span> : null}</span>
               <span style={{ color: 'var(--hds-txt-3)', fontSize: 11 }}>{expanded ? '▲' : '▼'}</span>
             </div>
             {expanded && (
