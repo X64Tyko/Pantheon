@@ -3204,7 +3204,17 @@ void Router::registerSchedulerRoutes() {
     svr_.Get(R"(/api/channels/([^/]+)/now)", [this](const Req& req, Res& res) {
       try {
         std::string channel_id = req.matches[1];
+        // Allow callers (e.g. Tunarr pre-generating HLS segments) to specify a
+        // virtual "now" in unix milliseconds via ?at=<ms>. Without it we fall
+        // back to the real wall clock.  Dividing by 1000 intentionally truncates
+        // to whole seconds, matching the resolution of scheduled_program.
         auto t = std::time(nullptr);
+        if (req.has_param("at")) {
+            try {
+                int64_t at_ms = std::stoll(req.get_param_value("at"));
+                t = static_cast<std::time_t>(at_ms / 1000);
+            } catch (...) {}
+        }
 
         // Ensure the EPG cache covers a window around the current time so that
         // mid-episode joins and channels that have been idle for days all get a
@@ -3224,7 +3234,9 @@ void Router::registerSchedulerRoutes() {
                        COALESCE(e.season, 0)              AS season,
                        COALESCE(e.episode,0)              AS ep_num,
                        COALESCE(e.file_path, m.file_path,'') AS file_path,
-                       COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms
+                       COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms,
+                       sp.wall_clock_end,
+                       sp.is_filler
                 FROM scheduled_program sp
                 LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
                 LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id =s.show_id
@@ -3251,6 +3263,8 @@ void Router::registerSchedulerRoutes() {
                 int         ep_num     = q.getColumn(8).getInt();
                 std::string file_path  = q.getColumn(9).getString();
                 int64_t     duration_ms= q.getColumn(10).getInt64();
+                int64_t     wall_end   = q.getColumn(11).getInt64();
+                bool        is_filler  = q.getColumn(12).getInt() != 0;
 
                 json j = {
                     {"item_type",           item_type},
@@ -3260,6 +3274,8 @@ void Router::registerSchedulerRoutes() {
                     {"title",               title},
                     {"block_id",            block_id},
                     {"wall_clock_start_ms", wall_start * 1000LL},
+                    {"wall_clock_end_ms",   wall_end   * 1000LL},
+                    {"is_filler",           is_filler},
                 };
                 if (!show_title.empty()) {
                     j["show_title"]  = show_title;
@@ -3298,6 +3314,8 @@ void Router::registerSchedulerRoutes() {
                 {"title",                item.title},
                 {"block_id",             item.block_id},
                 {"wall_clock_start_ms",  static_cast<int64_t>(t) * 1000},
+                {"wall_clock_end_ms",    static_cast<int64_t>(t) * 1000 + item.duration_ms},
+                {"is_filler",            item.is_filler},
             };
             if (!item.show_title.empty()) {
                 j["show_title"]  = item.show_title;
@@ -3337,14 +3355,17 @@ void Router::registerSchedulerRoutes() {
             )");
             fq.bind(1, channel_id);
             if (fq.executeStep()) {
+                int64_t dur = fq.getColumn(4).getInt64();
                 json j = {
                     {"item_type",           fq.getColumn(0).getString()},
                     {"item_id",             fq.getColumn(1).getString()},
                     {"file_path",           conf_.applyPathMap(fq.getColumn(2).getString())},
                     {"title",               fq.getColumn(3).getString()},
-                    {"duration_ms",         fq.getColumn(4).getInt64()},
+                    {"duration_ms",         dur},
                     {"block_id",            ""},
                     {"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+                    {"wall_clock_end_ms",   static_cast<int64_t>(t) * 1000 + dur},
+                    {"is_filler",           true},
                 };
                 ok(res, j.dump());
                 return;

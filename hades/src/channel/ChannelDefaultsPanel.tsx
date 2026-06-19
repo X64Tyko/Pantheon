@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
-import type { AdvanceMode, BumperContentType, BumperMode, Channel, ChannelBumper, FillerEntryAdvancement, FillerSelectionMode, Show, Playlist } from '../api/types'
+import type { AdvanceMode, BumperContentType, BumperMode, Channel, ChannelBumper, EpisodeSearchResult, FillerEntryAdvancement, FillerSelectionMode, Show, Playlist } from '../api/types'
 import { FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
 import { inputStyle, filterInputStyle } from './styles'
 import { SectionLabel } from './SectionLabel'
@@ -334,20 +334,22 @@ function BumperContentPicker({ contentType, onPick, currentId }: {
   onPick:      (id: string) => void
   currentId:   string
 }) {
-  const [q,       setQ]       = useState('')
-  const [shows,   setShows]   = useState<Show[]>([])
-  const [lists,   setLists]   = useState<Playlist[]>([])
-  const [open,    setOpen]    = useState(false)
+  const [q,         setQ]         = useState('')
+  const [seasonFlt, setSeasonFlt] = useState('')
+  const [shows,     setShows]     = useState<Show[]>([])
+  const [lists,     setLists]     = useState<Playlist[]>([])
+  const [eps,       setEps]       = useState<EpisodeSearchResult[]>([])
+  const [open,      setOpen]      = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   useEffect(() => {
-    setQ(''); setShows([]); setLists([]); setOpen(false)
+    setQ(''); setSeasonFlt(''); setShows([]); setLists([]); setEps([]); setOpen(false)
   }, [contentType])
 
-  function search(val: string) {
+  function search(val: string, slt = seasonFlt) {
     clearTimeout(debounceRef.current)
     setQ(val)
-    if (!val.trim() && contentType !== 'playlist') { setOpen(false); return }
+    if (!val.trim() && contentType === 'show') { setOpen(false); return }
     debounceRef.current = setTimeout(async () => {
       try {
         if (contentType === 'show') {
@@ -357,30 +359,47 @@ function BumperContentPicker({ contentType, onPick, currentId }: {
           const r = await api.getPlaylists()
           const filtered = r.filter(p => !val || p.title.toLowerCase().includes(val.toLowerCase()))
           setLists(filtered); setOpen(filtered.length > 0)
+        } else if (contentType === 'episode') {
+          const season = slt.trim() !== '' ? parseInt(slt, 10) : undefined
+          const r = await api.searchEpisodes({ q: val || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 })
+          setEps(r.items); setOpen(r.items.length > 0)
         }
       } catch {}
     }, 200)
   }
 
-  // Load playlists immediately on mount when type is playlist
+  function searchSeason(slt: string) {
+    setSeasonFlt(slt)
+    search(q, slt)
+  }
+
   useEffect(() => {
     if (contentType === 'playlist') search('')
+    if (contentType === 'episode') search('')
   }, [contentType])
 
   return (
     <div style={{ position: 'relative' }}>
-      <input
-        value={q}
-        onChange={e => search(e.target.value)}
-        onFocus={() => { if ((shows.length > 0 || lists.length > 0) && !currentId) setOpen(true) }}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        style={filterInputStyle}
-        placeholder={contentType === 'episode' ? 'Paste episode ID…' : `Search ${contentType}s…`}
-        spellCheck={false}
-      />
-      {contentType === 'episode' && q && (
-        <button onClick={() => { onPick(q); setQ('') }} style={{ marginTop: 5, padding: '4px 10px', border: 'none', borderRadius: 5, background: 'var(--hds-violet)', color: 'oklch(0.15 0.02 286)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>Use this ID</button>
-      )}
+      <div style={{ display: 'flex', gap: 5 }}>
+        <input
+          value={q}
+          onChange={e => search(e.target.value)}
+          onFocus={() => { if ((shows.length > 0 || lists.length > 0 || eps.length > 0) && !currentId) setOpen(true) }}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          style={{ ...filterInputStyle, flex: 1 }}
+          placeholder={`Search ${contentType}s…`}
+          spellCheck={false}
+        />
+        {contentType === 'episode' && (
+          <input
+            type="number" min={0} value={seasonFlt}
+            onChange={e => searchSeason(e.target.value)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            placeholder="S#" title="Filter by season (0 = specials)"
+            style={{ ...filterInputStyle, width: 48 }}
+          />
+        )}
+      </div>
       {open && (
         <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line)', borderRadius: 7, marginTop: 3, maxHeight: 180, overflow: 'auto' }} className="scrollbar-dark">
           {contentType === 'show' && shows.map(s => (
@@ -395,6 +414,14 @@ function BumperContentPicker({ contentType, onPick, currentId }: {
               onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
               {p.title}
+            </div>
+          ))}
+          {contentType === 'episode' && eps.map(ep => (
+            <div key={ep.episode_id} onMouseDown={() => { onPick(ep.episode_id); setOpen(false) }} style={{ padding: '6px 10px', fontSize: 11, cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+              <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)' }}>{ep.show_title} · </span>
+              S{String(ep.season).padStart(2,'0')}E{String(ep.episode).padStart(2,'0')} — {ep.title}
             </div>
           ))}
         </div>

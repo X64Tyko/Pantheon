@@ -581,13 +581,14 @@ function BumperSlot({ label, hint, contentType, contentId, onSet, onClear, child
   onClear:     () => void
   children?:   ReactNode
 }) {
-  const [open,   setOpen]   = useState(false)
-  const [tab,    setTab]    = useState<BumperTab>('show')
-  const [q,      setQ]      = useState('')
-  const [shows,  setShows]  = useState<Show[]>([])
-  const [lists,  setLists]  = useState<Playlist[]>([])
-  const [eps,    setEps]    = useState<EpisodeSearchResult[]>([])
-  const [loading, setLoading] = useState(false)
+  const [open,      setOpen]      = useState(false)
+  const [tab,       setTab]       = useState<BumperTab>('show')
+  const [q,         setQ]         = useState('')
+  const [seasonFlt, setSeasonFlt] = useState('')
+  const [shows,     setShows]     = useState<Show[]>([])
+  const [lists,     setLists]     = useState<Playlist[]>([])
+  const [eps,       setEps]       = useState<EpisodeSearchResult[]>([])
+  const [loading,   setLoading]   = useState(false)
 
   const hasContent = contentType !== '' && contentId !== ''
 
@@ -596,10 +597,13 @@ function BumperSlot({ label, hint, contentType, contentId, onSet, onClear, child
     setLoading(true)
     if (tab === 'show')     api.getShows({ limit: 80, q }).then(r => { setShows(r.items); setLoading(false) }).catch(() => setLoading(false))
     if (tab === 'playlist') api.getPlaylists().then(r => { setLists(r); setLoading(false) }).catch(() => setLoading(false))
-    if (tab === 'episode')  api.searchEpisodes({ q: q || undefined, limit: 40 }).then(r => { setEps(r.items); setLoading(false) }).catch(() => setLoading(false))
-  }, [open, tab, q])
+    if (tab === 'episode') {
+      const season = seasonFlt.trim() !== '' ? parseInt(seasonFlt, 10) : undefined
+      api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 }).then(r => { setEps(r.items); setLoading(false) }).catch(() => setLoading(false))
+    }
+  }, [open, tab, q, seasonFlt])
 
-  const pick = (ct: BumperTab, cid: string) => { onSet(ct, cid); setOpen(false); setQ('') }
+  const pick = (ct: BumperTab, cid: string) => { onSet(ct, cid); setOpen(false); setQ(''); setSeasonFlt('') }
 
   const tabBtn = (t: BumperTab, label: string) => (
     <button onClick={() => setTab(t)} style={{ padding: '3px 9px', border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, background: tab === t ? 'var(--hds-violet)' : 'transparent', color: tab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)' }}>
@@ -635,8 +639,15 @@ function BumperSlot({ label, hint, contentType, contentId, onSet, onClear, child
           <div style={{ display: 'flex', gap: 2, padding: '6px 8px', background: 'var(--hds-bg-3)', borderBottom: '1px solid var(--hds-line-s)' }}>
             {tabBtn('show', 'Show')} {tabBtn('playlist', 'Playlist')} {tabBtn('episode', 'Episode')}
           </div>
-          <div style={{ padding: '6px 8px' }}>
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, width: '100%', fontSize: 11, padding: '5px 8px', boxSizing: 'border-box' }} autoFocus />
+          <div style={{ padding: '6px 8px', display: 'flex', gap: 6 }}>
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, flex: 1, fontSize: 11, padding: '5px 8px' }} autoFocus />
+            {tab === 'episode' && (
+              <input
+                type="number" min={0} value={seasonFlt} onChange={e => setSeasonFlt(e.target.value)}
+                placeholder="S#" title="Filter by season (0 = specials)"
+                style={{ ...inputStyle, width: 48, fontSize: 11, padding: '5px 6px' }}
+              />
+            )}
           </div>
           <div style={{ maxHeight: 160, overflow: 'auto' }} className="scrollbar-dark">
             {loading ? (
