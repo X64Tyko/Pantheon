@@ -146,6 +146,28 @@ private:
     std::optional<Block> resolveFromList(const std::vector<Block>& blocks, std::time_t t,
                                          const std::string& tz = "UTC");
 
+    // Pick the next item from a show/episode/playlist content slot using a block-scoped
+    // cursor keyed on scope_id (e.g. block_id + ":intro"). Used for intro/outro/
+    // interstitial/channel-bumper injection.
+    std::optional<ScheduledItem> pickBumperItem(const std::string& channel_id,
+                                                const std::string& content_type,
+                                                const std::string& content_id,
+                                                const std::string& scope_id);
+    void advanceBumperCursor(const std::string& content_type,
+                             const std::string& content_id,
+                             const std::string& scope_id);
+
+    // Schedule one bumper item (intro/outro/interstitial/channel-bumper) into result,
+    // write play_history, advance t, and advance the bumper cursor. Returns true if an
+    // item was successfully scheduled.
+    bool scheduleBumperItem(const std::string& channel_id,
+                            const std::string& block_id,
+                            const std::string& content_type,
+                            const std::string& content_id,
+                            const std::string& scope_id,
+                            std::vector<ScheduledItem>& result,
+                            std::time_t& t);
+
     // Pick one filler clip from the effective pool, advancing SimState cursors.
     // max_ms > 0: "sized" advancement rejects clips longer than this and picks
     //             the least recently played clip that fits (recency from play_history).

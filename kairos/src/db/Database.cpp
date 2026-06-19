@@ -753,6 +753,54 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE channel ADD COLUMN logo_path           TEXT NOT NULL DEFAULT '';
 )SQL", false }
 
+,
+
+// ── v27: block intro/outro/interstitial content slots.
+//         intro  : plays once when the block starts (before first content item).
+//         outro  : plays once when program_count is hit (after last content item).
+//         interstitial: plays between show transitions at a configurable frequency.
+//         interstitial_every_n: fire interstitial after every N show transitions (0=disabled).
+{ 27, R"SQL(
+    ALTER TABLE block ADD COLUMN intro_content_type        TEXT NOT NULL DEFAULT '';
+    ALTER TABLE block ADD COLUMN intro_content_id          TEXT NOT NULL DEFAULT '';
+    ALTER TABLE block ADD COLUMN outro_content_type        TEXT NOT NULL DEFAULT '';
+    ALTER TABLE block ADD COLUMN outro_content_id          TEXT NOT NULL DEFAULT '';
+    ALTER TABLE block ADD COLUMN interstitial_content_type TEXT NOT NULL DEFAULT '';
+    ALTER TABLE block ADD COLUMN interstitial_content_id   TEXT NOT NULL DEFAULT '';
+    ALTER TABLE block ADD COLUMN interstitial_every_n      INTEGER NOT NULL DEFAULT 1;
+)SQL" }
+
+,
+
+// ── v28: channel_bumper — channel-wide content injected between programs.
+//         mode='between': fire after every N content programs (every_n).
+//         mode='filler' : weave bumper content into filler gap filling.
+{ 28, R"SQL(
+    CREATE TABLE IF NOT EXISTS channel_bumper (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id   TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        content_type TEXT    NOT NULL CHECK(content_type IN ('show','episode','playlist')),
+        content_id   TEXT    NOT NULL,
+        mode         TEXT    NOT NULL DEFAULT 'between'
+                             CHECK(mode IN ('between','filler')),
+        every_n      INTEGER NOT NULL DEFAULT 3,
+        position     INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_channel_bumper ON channel_bumper(channel_id, position);
+)SQL" }
+
+,
+
+// ── v29: add is_filler column to scheduled_program. Inter-filler clips are now
+//         stored individually with their real item_type/item_id and is_filler=1
+//         instead of a merged 'filler' sentinel with an empty file_path.
+//         Cache is cleared so it regenerates with the new layout.
+{ 29, R"SQL(
+    ALTER TABLE scheduled_program ADD COLUMN is_filler INTEGER NOT NULL DEFAULT 0;
+    DELETE FROM scheduled_program;
+    DELETE FROM play_history WHERE is_scheduled = 1;
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace

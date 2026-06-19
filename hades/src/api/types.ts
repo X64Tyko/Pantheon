@@ -251,6 +251,19 @@ export interface ImportResult {
   unresolved: { block_name: string; content_type: string; title: string; reason: string }[]
 }
 
+export type BumperMode = 'between' | 'filler'
+export type BumperContentType = 'show' | 'episode' | 'playlist'
+
+export interface ChannelBumper {
+  id:           number
+  channel_id:   string
+  content_type: BumperContentType
+  content_id:   string
+  mode:         BumperMode
+  every_n:      number
+  position:     number
+}
+
 export interface Block {
   block_id:            string
   channel_id:          string
@@ -275,6 +288,14 @@ export interface Block {
   no_history_behavior:        NoHistoryBehavior
   max_consecutive_episodes:   number           // 0 = unlimited; rerun modes only
   content:                    BlockContent[]
+  // Block intro/outro/interstitials
+  intro_content_type:         string
+  intro_content_id:           string
+  outro_content_type:         string
+  outro_content_id:           string
+  interstitial_content_type:  string
+  interstitial_content_id:    string
+  interstitial_every_n:       number
 }
 
 export interface EpisodeGroupMember {

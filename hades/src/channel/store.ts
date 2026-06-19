@@ -63,7 +63,7 @@ export class ChannelDetailStore {
   bulkSaving:      boolean       = false
   bulkErr:         string | null = null
 
-  openSections: Record<string, boolean> = { schedule: true, timing: true, playback: false, content: true, filler: false }
+  openSections: Record<string, boolean> = { schedule: true, timing: true, playback: false, content: true, filler: false, bumpers: false }
   modalOpen: boolean = false
 
   allFillerLists:   FillerList[] = []
@@ -316,7 +316,7 @@ export class ChannelDetailStore {
       const toRemoveContent = origContent.filter(c  => !draftContent.some(dc => dc.id === c.id))
       const toAddContent    = draftContent.filter(dc => dc.id < 0)
       for (const c  of toRemoveContent) await api.removeBlockContent(channelId, blockId, c.id)
-      for (const c  of toAddContent)    await api.addBlockContent(channelId, blockId, { content_type: c.content_type, content_id: c.content_id, season_filter: c.season_filter, weight: c.weight, run_count: c.run_count })
+      for (const c  of toAddContent)    await api.addBlockContent(channelId, blockId, { content_type: c.content_type, content_id: c.content_id, season_filter: c.season_filter, weight: c.weight, run_count: c.run_count, include_specials: c.include_specials, episode_order: c.episode_order })
 
       const toRemoveFiller = origFiller.filter(fe  => !draftFiller.some(dfe => dfe.id === fe.id))
       const toAddFiller    = draftFiller.filter(dfe => dfe.id < 0)
@@ -425,7 +425,7 @@ export class ChannelDetailStore {
     })
   }
 
-  addContent(channelId: string, item: { content_type: ContentType; content_id: string; season_filter?: number | null; title?: string }) {
+  addContent(channelId: string, item: { content_type: ContentType; content_id: string; season_filter?: number | null; title?: string; include_specials?: boolean }) {
     if (!this.editing && !this.isNewMode) return
     const pos = this.draftContent.length > 0 ? Math.max(...this.draftContent.map(c => c.position)) + 1 : 0
     this.draftContent = [...this.draftContent, {
@@ -438,7 +438,7 @@ export class ChannelDetailStore {
       title: item.title ?? item.content_id,
       weight: 1,
       run_count: 1,
-      include_specials: false,
+      include_specials: item.include_specials ?? false,
       episode_order: 'season',
     }]
     this.contentDirty = true

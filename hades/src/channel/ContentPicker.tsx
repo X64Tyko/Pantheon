@@ -139,8 +139,17 @@ const ShowPickerList = observer(function ShowPickerList({ store, channelId, quer
                   <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>Loading…</span>
                 ) : (
                   <>
-                    <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: null, title: show.title })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>All seasons</button>
-                    {store.expandedSeasons.map(s => (
+                    {/* "Add All" always includes specials */}
+                    <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: null, title: show.title, include_specials: true })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>Add All</button>
+                    {/* S00 button only when the show actually has specials */}
+                    {store.expandedSeasons.includes(0) && (
+                      <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: 0, title: `${show.title} S00`, include_specials: true })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid oklch(0.55 0.12 58)', background: 'transparent', color: 'oklch(0.75 0.12 58)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>S00</button>
+                    )}
+                    {/* "Add Non-Special" only shown when specials exist (otherwise Add All = Add Non-Special) */}
+                    {store.expandedSeasons.includes(0) && (
+                      <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: null, title: show.title, include_specials: false })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>Add Non-Special</button>
+                    )}
+                    {store.expandedSeasons.filter(s => s !== 0).map(s => (
                       <button key={s} onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: s, title: `${show.title} S${String(s).padStart(2, '0')}` })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>S{String(s).padStart(2, '0')}</button>
                     ))}
                   </>

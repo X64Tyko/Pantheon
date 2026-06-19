@@ -44,4 +44,11 @@ export const BLANK_DRAFT: BlockDraft = {
   smart_pct: 30, start_scope: 'block',
   no_history_behavior:        'normal',
   max_consecutive_episodes:   0,
+  intro_content_type:         '',
+  intro_content_id:           '',
+  outro_content_type:         '',
+  outro_content_id:           '',
+  interstitial_content_type:  '',
+  interstitial_content_id:    '',
+  interstitial_every_n:       1,
 }

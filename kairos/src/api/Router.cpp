@@ -1256,7 +1256,11 @@ void Router::registerBlockRoutes() {
                    program_count, priority, max_content_rating, advancement, cursor_scope,
                    late_start_mins, align_to_mins, inter_filler, early_start_secs,
                    filler_selection, smart_pct, start_scope, no_history_behavior,
-                   max_consecutive_episodes, name
+                   max_consecutive_episodes, name,
+                   intro_content_type, intro_content_id,
+                   outro_content_type, outro_content_id,
+                   interstitial_content_type, interstitial_content_id,
+                   interstitial_every_n
             FROM block WHERE channel_id = ?
             ORDER BY start_time, priority DESC
         )");
@@ -1266,26 +1270,33 @@ void Router::registerBlockRoutes() {
         while (q.executeStep()) {
             std::string bid = q.getColumn(0).getString();
             json block = {
-                {"block_id",           bid},
-                {"channel_id",         channel_id},
-                {"block_type",         q.getColumn(1).getString()},
-                {"day_mask",           q.getColumn(2).getInt()},
-                {"start_time",         q.getColumn(3).getString()},
-                {"program_count",      q.getColumn(5).getInt()},
-                {"priority",           q.getColumn(6).getInt()},
-                {"max_content_rating", q.getColumn(7).getString()},
-                {"advancement",        q.getColumn(8).getString()},
-                {"cursor_scope",       q.getColumn(9).getString()},
-                {"late_start_mins",    q.getColumn(10).getInt()},
-                {"align_to_mins",      q.getColumn(11).getInt()},
-                {"inter_filler",       q.getColumn(12).getInt() != 0},
-                {"early_start_secs",   q.getColumn(13).getInt()},
-                {"filler_selection",   q.getColumn(14).getString()},
+                {"block_id",                   bid},
+                {"channel_id",                 channel_id},
+                {"block_type",                 q.getColumn(1).getString()},
+                {"day_mask",                   q.getColumn(2).getInt()},
+                {"start_time",                 q.getColumn(3).getString()},
+                {"program_count",              q.getColumn(5).getInt()},
+                {"priority",                   q.getColumn(6).getInt()},
+                {"max_content_rating",         q.getColumn(7).getString()},
+                {"advancement",                q.getColumn(8).getString()},
+                {"cursor_scope",               q.getColumn(9).getString()},
+                {"late_start_mins",            q.getColumn(10).getInt()},
+                {"align_to_mins",              q.getColumn(11).getInt()},
+                {"inter_filler",               q.getColumn(12).getInt() != 0},
+                {"early_start_secs",           q.getColumn(13).getInt()},
+                {"filler_selection",           q.getColumn(14).getString()},
                 {"smart_pct",                  q.getColumn(15).getInt()},
                 {"start_scope",                q.getColumn(16).getString()},
                 {"no_history_behavior",        q.getColumn(17).getString()},
                 {"max_consecutive_episodes",   q.getColumn(18).getInt()},
                 {"name",                       q.getColumn(19).getString()},
+                {"intro_content_type",         q.getColumn(20).getString()},
+                {"intro_content_id",           q.getColumn(21).getString()},
+                {"outro_content_type",         q.getColumn(22).getString()},
+                {"outro_content_id",           q.getColumn(23).getString()},
+                {"interstitial_content_type",  q.getColumn(24).getString()},
+                {"interstitial_content_id",    q.getColumn(25).getString()},
+                {"interstitial_every_n",       q.getColumn(26).getInt()},
             };
             if (!q.getColumn(4).isNull()) block["end_time"] = q.getColumn(4).getString();
 
@@ -1390,6 +1401,13 @@ void Router::registerBlockRoutes() {
             std::string start_scope             = b.value("start_scope",             "block");
             std::string no_history_behavior     = b.value("no_history_behavior",     "normal");
             int         max_consecutive_episodes = b.value("max_consecutive_episodes", 0);
+            std::string intro_ct   = b.value("intro_content_type",          "");
+            std::string intro_cid  = b.value("intro_content_id",            "");
+            std::string outro_ct   = b.value("outro_content_type",          "");
+            std::string outro_cid  = b.value("outro_content_id",            "");
+            std::string inter_ct   = b.value("interstitial_content_type",   "");
+            std::string inter_cid  = b.value("interstitial_content_id",     "");
+            int         inter_n    = b.value("interstitial_every_n",        1);
 
             SQLite::Statement s(db_.get(), R"(
                 INSERT INTO block (block_id, channel_id, name, block_type, day_mask,
@@ -1398,8 +1416,12 @@ void Router::registerBlockRoutes() {
                                    late_start_mins, align_to_mins, inter_filler,
                                    early_start_secs, filler_selection, smart_pct,
                                    start_scope, no_history_behavior,
-                                   max_consecutive_episodes)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                   max_consecutive_episodes,
+                                   intro_content_type, intro_content_id,
+                                   outro_content_type, outro_content_id,
+                                   interstitial_content_type, interstitial_content_id,
+                                   interstitial_every_n)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             )");
             s.bind(1, block_id);       s.bind(2, channel_id);    s.bind(3, block_name);
             s.bind(4, block_type);     s.bind(5, day_mask);       s.bind(6, start_time);
@@ -1409,6 +1431,9 @@ void Router::registerBlockRoutes() {
             s.bind(14, align_to_mins); s.bind(15, inter_filler);  s.bind(16, early_start_secs);
             s.bind(17, filler_selection); s.bind(18, smart_pct);  s.bind(19, start_scope);
             s.bind(20, no_history_behavior); s.bind(21, max_consecutive_episodes);
+            s.bind(22, intro_ct);  s.bind(23, intro_cid);
+            s.bind(24, outro_ct);  s.bind(25, outro_cid);
+            s.bind(26, inter_ct);  s.bind(27, inter_cid);  s.bind(28, inter_n);
             s.exec();
 
             clearScheduleCache(channel_id);
@@ -1456,6 +1481,13 @@ void Router::registerBlockRoutes() {
             if (b.contains("start_scope"))                 upd("start_scope",                  b["start_scope"]);
             if (b.contains("no_history_behavior"))         upd("no_history_behavior",          b["no_history_behavior"]);
             if (b.contains("max_consecutive_episodes"))    updI("max_consecutive_episodes",    b["max_consecutive_episodes"]);
+            if (b.contains("intro_content_type"))          upd("intro_content_type",           b["intro_content_type"]);
+            if (b.contains("intro_content_id"))            upd("intro_content_id",             b["intro_content_id"]);
+            if (b.contains("outro_content_type"))          upd("outro_content_type",           b["outro_content_type"]);
+            if (b.contains("outro_content_id"))            upd("outro_content_id",             b["outro_content_id"]);
+            if (b.contains("interstitial_content_type"))   upd("interstitial_content_type",    b["interstitial_content_type"]);
+            if (b.contains("interstitial_content_id"))     upd("interstitial_content_id",      b["interstitial_content_id"]);
+            if (b.contains("interstitial_every_n"))        updI("interstitial_every_n",        b["interstitial_every_n"]);
             if (b.contains("end_time")) {
                 if (b["end_time"].is_null() || b["end_time"].get<std::string>().empty())
                     updNull("end_time");
@@ -1784,6 +1816,101 @@ void Router::registerBlockRoutes() {
         s.bind(1, eid); s.exec();
         clearScheduleCache(channel_id);
         ok(res, json{{"deleted", eid}}.dump());
+    });
+
+    // ── Channel bumpers ───────────────────────────────────────────────────────
+    // GET   /api/channels/:id/bumpers          → list all bumpers for channel
+    // POST  /api/channels/:id/bumpers          → create bumper
+    // PATCH /api/channels/:id/bumpers/:bid     → update bumper fields
+    // DELETE /api/channels/:id/bumpers/:bid    → delete bumper
+
+    svr_.Get("/api/channels/:id/bumpers", [this](const Req& req, Res& res) {
+        auto channel_id = req.path_params.at("id");
+        try {
+            SQLite::Statement q(db_.get(), R"(
+                SELECT id, content_type, content_id, mode, every_n, position
+                FROM channel_bumper WHERE channel_id = ? ORDER BY position
+            )");
+            q.bind(1, channel_id);
+            json result = json::array();
+            while (q.executeStep()) {
+                result.push_back({
+                    {"id",           q.getColumn(0).getInt()},
+                    {"channel_id",   channel_id},
+                    {"content_type", q.getColumn(1).getString()},
+                    {"content_id",   q.getColumn(2).getString()},
+                    {"mode",         q.getColumn(3).getString()},
+                    {"every_n",      q.getColumn(4).getInt()},
+                    {"position",     q.getColumn(5).getInt()},
+                });
+            }
+            ok(res, result.dump());
+        } catch (const std::exception& e) { logErr("GET /api/channels/:id/bumpers", e); err(res, 500, e.what()); }
+    });
+
+    svr_.Post("/api/channels/:id/bumpers", [this](const Req& req, Res& res) {
+        auto channel_id = req.path_params.at("id");
+        try {
+            auto b = json::parse(req.body);
+            std::string ct      = b.value("content_type", "show");
+            std::string cid     = b.value("content_id",   "");
+            std::string mode    = b.value("mode",         "between");
+            int         every_n = b.value("every_n",      3);
+            // position = next available slot
+            SQLite::Statement pq(db_.get(),
+                "SELECT COALESCE(MAX(position)+1,0) FROM channel_bumper WHERE channel_id=?");
+            pq.bind(1, channel_id);
+            pq.executeStep();
+            int position = pq.getColumn(0).getInt();
+
+            SQLite::Statement s(db_.get(), R"(
+                INSERT INTO channel_bumper (channel_id, content_type, content_id, mode, every_n, position)
+                VALUES (?,?,?,?,?,?)
+            )");
+            s.bind(1, channel_id); s.bind(2, ct); s.bind(3, cid);
+            s.bind(4, mode);       s.bind(5, every_n); s.bind(6, position);
+            s.exec();
+            int new_id = static_cast<int>(db_.get().getLastInsertRowid());
+            clearScheduleCache(channel_id);
+            res.status = 201;
+            ok(res, json{{"id", new_id}}.dump());
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
+    });
+
+    svr_.Patch("/api/channels/:id/bumpers/:bid", [this](const Req& req, Res& res) {
+        auto channel_id = req.path_params.at("id");
+        auto bumper_id  = std::stoi(req.path_params.at("bid"));
+        try {
+            auto b = json::parse(req.body);
+            auto upd = [&](const char* col, const std::string& val) {
+                SQLite::Statement s(db_.get(),
+                    std::string("UPDATE channel_bumper SET ") + col + " = ? WHERE id = ?");
+                s.bind(1, val); s.bind(2, bumper_id); s.exec();
+            };
+            auto updI = [&](const char* col, int val) {
+                SQLite::Statement s(db_.get(),
+                    std::string("UPDATE channel_bumper SET ") + col + " = ? WHERE id = ?");
+                s.bind(1, val); s.bind(2, bumper_id); s.exec();
+            };
+            if (b.contains("content_type")) upd("content_type", b["content_type"]);
+            if (b.contains("content_id"))   upd("content_id",   b["content_id"]);
+            if (b.contains("mode"))         upd("mode",         b["mode"]);
+            if (b.contains("every_n"))      updI("every_n",     b["every_n"]);
+            if (b.contains("position"))     updI("position",    b["position"]);
+            clearScheduleCache(channel_id);
+            ok(res, json{{"ok", true}}.dump());
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
+    });
+
+    svr_.Delete("/api/channels/:id/bumpers/:bid", [this](const Req& req, Res& res) {
+        auto channel_id = req.path_params.at("id");
+        auto bumper_id  = std::stoi(req.path_params.at("bid"));
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM channel_bumper WHERE id = ?");
+            s.bind(1, bumper_id); s.exec();
+            clearScheduleCache(channel_id);
+            ok(res, json{{"deleted", bumper_id}}.dump());
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
 }
 
@@ -3276,30 +3403,95 @@ void Router::registerSchedulerRoutes() {
 
     // ── What's playing next on a channel ─────────────────────────────────────
     svr_.Get(R"(/api/channels/([^/]+)/next)", [this](const Req& req, Res& res) {
+      try {
         std::string channel_id = req.matches[1];
         auto t = std::time(nullptr);
 
-        // Project forward; items[0] = current, items[1] = next.
-        auto items = engine_.project(channel_id, t, 4);
-        if (items.size() < 2) { err(res, 404, "no next item available"); return; }
+        materializer_.ensureScheduled(channel_id, t, 4);
 
-        const auto& item = items[1];
-        json j = {
-            {"item_type",            item.item_type},
-            {"item_id",              item.item_id},
-            {"file_path",            conf_.applyPathMap(item.file_path)},
-            {"duration_ms",          item.duration_ms},
-            {"title",                item.title},
-            {"block_id",             item.block_id},
-            {"wall_clock_start_ms",  item.wall_clock_start_ms},
-        };
-        if (!item.show_title.empty()) {
-            j["show_title"]  = item.show_title;
-            j["show_id"]     = item.show_id;
-            j["season"]      = item.season;
-            j["episode_num"] = item.episode_num;
+        // Find when the currently-airing item ends.
+        int64_t current_end = static_cast<int64_t>(t);
+        {
+            SQLite::Statement q(db_.get(), R"(
+                SELECT wall_clock_end FROM scheduled_program
+                WHERE channel_id = ? AND wall_clock_start <= ? AND wall_clock_end > ?
+                  AND status != 'skipped'
+                ORDER BY wall_clock_start DESC LIMIT 1
+            )");
+            q.bind(1, channel_id);
+            q.bind(2, static_cast<int64_t>(t));
+            q.bind(3, static_cast<int64_t>(t));
+            if (q.executeStep()) current_end = q.getColumn(0).getInt64();
         }
+
+        // Return the next non-filler scheduled item starting at or after current_end.
+        SQLite::Statement q(db_.get(), R"(
+            SELECT sp.item_type, sp.item_id, COALESCE(sp.block_id, ''),
+                   sp.wall_clock_start,
+                   COALESCE(e.title, m.title, '')    AS title,
+                   COALESCE(s.title, '')              AS show_title,
+                   COALESCE(e.show_id, '')            AS show_id,
+                   COALESCE(e.season,  0)             AS season,
+                   COALESCE(e.episode, 0)             AS ep_num,
+                   COALESCE(e.file_path, m.file_path, '') AS file_path,
+                   COALESCE(e.duration_ms, m.duration_ms,
+                            (sp.wall_clock_end - sp.wall_clock_start) * 1000) AS duration_ms
+            FROM scheduled_program sp
+            LEFT JOIN episode e ON sp.item_type = 'episode' AND sp.item_id = e.episode_id
+            LEFT JOIN show    s ON sp.item_type = 'episode' AND e.show_id  = s.show_id
+            LEFT JOIN movie   m ON sp.item_type = 'movie'   AND sp.item_id = m.movie_id
+            WHERE sp.channel_id = ?
+              AND sp.wall_clock_start >= ?
+              AND sp.is_filler = 0
+              AND sp.status != 'skipped'
+            ORDER BY sp.wall_clock_start
+            LIMIT 1
+        )");
+        q.bind(1, channel_id);
+        q.bind(2, current_end);
+
+        if (!q.executeStep()) { err(res, 404, "no next item available"); return; }
+
+        std::string item_type   = q.getColumn(0).getString();
+        std::string item_id     = q.getColumn(1).getString();
+        std::string block_id    = q.getColumn(2).getString();
+        int64_t     wall_start  = q.getColumn(3).getInt64();
+        std::string title       = q.getColumn(4).getString();
+        std::string show_title  = q.getColumn(5).getString();
+        std::string show_id     = q.getColumn(6).getString();
+        int         season      = q.getColumn(7).getInt();
+        int         ep_num      = q.getColumn(8).getInt();
+        std::string file_path   = q.getColumn(9).getString();
+        int64_t     duration_ms = q.getColumn(10).getInt64();
+
+        json j = {
+            {"item_type",           item_type},
+            {"item_id",             item_id},
+            {"file_path",           conf_.applyPathMap(file_path)},
+            {"duration_ms",         duration_ms},
+            {"title",               title},
+            {"block_id",            block_id},
+            {"wall_clock_start_ms", wall_start * 1000LL},
+        };
+        if (!show_title.empty()) {
+            j["show_title"]  = show_title;
+            j["show_id"]     = show_id;
+            j["season"]      = season;
+            j["episode_num"] = ep_num;
+        }
+        try {
+            SQLite::Statement sm(db_.get(),
+                "SELECT source_id, external_id FROM source_mapping WHERE kairos_id = ? LIMIT 1");
+            sm.bind(1, item_id);
+            if (sm.executeStep()) {
+                j["source_id"]   = sm.getColumn(0).getString();
+                j["external_id"] = sm.getColumn(1).getString();
+            }
+        } catch (...) {}
         ok(res, j.dump());
+      } catch (const std::exception& e) {
+        logErr("GET /api/channels/next", e); err(res, 500, e.what());
+      }
     });
 
     // ── Report playback completion ───────────────────────────────────────────

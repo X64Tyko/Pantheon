@@ -76,5 +76,12 @@ export function blockToDraft(block: Block): BlockDraft {
     smart_pct: block.smart_pct ?? 30, start_scope: block.start_scope ?? 'block',
     no_history_behavior:        block.no_history_behavior      ?? 'normal',
     max_consecutive_episodes:   block.max_consecutive_episodes ?? 0,
+    intro_content_type:         block.intro_content_type        ?? '',
+    intro_content_id:           block.intro_content_id          ?? '',
+    outro_content_type:         block.outro_content_type        ?? '',
+    outro_content_id:           block.outro_content_id          ?? '',
+    interstitial_content_type:  block.interstitial_content_type ?? '',
+    interstitial_content_id:    block.interstitial_content_id   ?? '',
+    interstitial_every_n:       block.interstitial_every_n      ?? 1,
   }
 }

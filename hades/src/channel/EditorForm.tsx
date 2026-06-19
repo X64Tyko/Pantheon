@@ -1,6 +1,7 @@
 import { observer } from 'mobx-react-lite'
+import { useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
-import type { Advancement, BlockType, CursorScope, EpisodeOrder, FillerSelectionMode, NoHistoryBehavior } from '../api/types'
+import type { Advancement, BlockType, CursorScope, EpisodeOrder, FillerSelectionMode, NoHistoryBehavior, Show, Playlist, EpisodeSearchResult } from '../api/types'
 import {
   ALIGN_OPTS, BLOCK_META, DAYS, DAY_BITS, DELAY_OPTS, EARLY_OPTS,
   FILLER_ADV_OPTS, FILLER_SEL_OPTS, NO_HISTORY_OPTS, RATINGS,
@@ -522,9 +523,156 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           </div>
         </div>
       </AccordionSection>
+
+      {/* ── BUMPERS ── */}
+      <AccordionSection title="BUMPERS" open={sec.bumpers} onToggle={() => tog('bumpers')}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <BumperSlot
+            label="Intro"
+            hint="Plays once at block start, before the first content item."
+            contentType={d.intro_content_type}
+            contentId={d.intro_content_id}
+            onSet={(ct, cid) => { store.setDraft('intro_content_type', ct as any); store.setDraft('intro_content_id', cid) }}
+            onClear={() => { store.setDraft('intro_content_type', '' as any); store.setDraft('intro_content_id', '') }}
+          />
+          <BumperSlot
+            label="Outro"
+            hint="Plays after the last content item when program_count is hit."
+            contentType={d.outro_content_type}
+            contentId={d.outro_content_id}
+            onSet={(ct, cid) => { store.setDraft('outro_content_type', ct as any); store.setDraft('outro_content_id', cid) }}
+            onClear={() => { store.setDraft('outro_content_type', '' as any); store.setDraft('outro_content_id', '') }}
+          />
+          <BumperSlot
+            label="Interstitial"
+            hint="Plays between show transitions."
+            contentType={d.interstitial_content_type}
+            contentId={d.interstitial_content_id}
+            onSet={(ct, cid) => { store.setDraft('interstitial_content_type', ct as any); store.setDraft('interstitial_content_id', cid) }}
+            onClear={() => { store.setDraft('interstitial_content_type', '' as any); store.setDraft('interstitial_content_id', '') }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <span style={{ fontSize: 10.5, color: 'var(--hds-txt-3)' }}>Fire every</span>
+              <input
+                type="number" min={1} value={d.interstitial_every_n}
+                onChange={e => store.setDraft('interstitial_every_n', Math.max(1, Number(e.target.value)))}
+                style={{ ...inputStyle, width: 56, padding: '4px 7px', fontSize: 11 }}
+              />
+              <span style={{ fontSize: 10.5, color: 'var(--hds-txt-3)' }}>show transition(s)</span>
+            </div>
+          </BumperSlot>
+        </div>
+      </AccordionSection>
+
     </div>
   )
 })
+
+// ─── Bumper slot picker ───────────────────────────────────────────────────────
+
+type BumperTab = 'show' | 'playlist' | 'episode'
+
+function BumperSlot({ label, hint, contentType, contentId, onSet, onClear, children }: {
+  label:       string
+  hint:        string
+  contentType: string
+  contentId:   string
+  onSet:       (ct: BumperTab, cid: string) => void
+  onClear:     () => void
+  children?:   ReactNode
+}) {
+  const [open,   setOpen]   = useState(false)
+  const [tab,    setTab]    = useState<BumperTab>('show')
+  const [q,      setQ]      = useState('')
+  const [shows,  setShows]  = useState<Show[]>([])
+  const [lists,  setLists]  = useState<Playlist[]>([])
+  const [eps,    setEps]    = useState<EpisodeSearchResult[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const hasContent = contentType !== '' && contentId !== ''
+
+  useEffect(() => {
+    if (!open) return
+    setLoading(true)
+    if (tab === 'show')     api.getShows({ limit: 80, q }).then(r => { setShows(r.items); setLoading(false) }).catch(() => setLoading(false))
+    if (tab === 'playlist') api.getPlaylists().then(r => { setLists(r); setLoading(false) }).catch(() => setLoading(false))
+    if (tab === 'episode')  api.searchEpisodes({ q: q || undefined, limit: 40 }).then(r => { setEps(r.items); setLoading(false) }).catch(() => setLoading(false))
+  }, [open, tab, q])
+
+  const pick = (ct: BumperTab, cid: string) => { onSet(ct, cid); setOpen(false); setQ('') }
+
+  const tabBtn = (t: BumperTab, label: string) => (
+    <button onClick={() => setTab(t)} style={{ padding: '3px 9px', border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, background: tab === t ? 'var(--hds-violet)' : 'transparent', color: tab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)' }}>
+      {label}
+    </button>
+  )
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--hds-txt-3)', width: 80, flexShrink: 0 }}>{label.toUpperCase()}</span>
+        {hasContent ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+            <span style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 3, background: 'var(--hds-bg)', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>{contentType}</span>
+            <span style={{ fontSize: 11, color: 'var(--hds-txt-2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contentId}</span>
+            <button onClick={onClear} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 12, padding: '0 2px' }}>✕</button>
+          </div>
+        ) : (
+          <button onClick={() => setOpen(!open)} style={{ background: 'transparent', border: '1px dashed var(--hds-line)', borderRadius: 5, cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 10.5, padding: '3px 10px', fontFamily: "'JetBrains Mono', monospace" }}>
+            {open ? '✕ Cancel' : '+ Set'}
+          </button>
+        )}
+        {hasContent && (
+          <button onClick={() => setOpen(!open)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--hds-violet)', fontSize: 10.5, padding: '2px 4px', fontFamily: "'JetBrains Mono', monospace" }}>
+            {open ? '✕' : 'Change'}
+          </button>
+        )}
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', lineHeight: 1.5, marginLeft: 88, marginBottom: children ? 0 : 0 }}>{hint}</div>
+      {children && <div style={{ marginLeft: 88 }}>{children}</div>}
+      {open && (
+        <div style={{ marginTop: 8, border: '1px solid var(--hds-line)', borderRadius: 8, background: 'oklch(0.16 0.016 286)', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', gap: 2, padding: '6px 8px', background: 'var(--hds-bg-3)', borderBottom: '1px solid var(--hds-line-s)' }}>
+            {tabBtn('show', 'Show')} {tabBtn('playlist', 'Playlist')} {tabBtn('episode', 'Episode')}
+          </div>
+          <div style={{ padding: '6px 8px' }}>
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, width: '100%', fontSize: 11, padding: '5px 8px', boxSizing: 'border-box' }} autoFocus />
+          </div>
+          <div style={{ maxHeight: 160, overflow: 'auto' }} className="scrollbar-dark">
+            {loading ? (
+              <div style={{ padding: 10, color: 'var(--hds-txt-3)', fontSize: 11 }}>Loading…</div>
+            ) : tab === 'show' ? (
+              shows.filter(s => !q || s.title.toLowerCase().includes(q.toLowerCase())).map(s => (
+                <div key={s.show_id} onClick={() => pick('show', s.show_id)} style={{ padding: '6px 12px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid var(--hds-line-s)' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--hds-bg-3)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = ''}>
+                  {s.title}{s.year ? <span style={{ color: 'var(--hds-txt-3)', fontSize: 10, marginLeft: 5 }}>({s.year})</span> : null}
+                </div>
+              ))
+            ) : tab === 'playlist' ? (
+              lists.filter(p => !q || p.title.toLowerCase().includes(q.toLowerCase())).map(p => (
+                <div key={p.playlist_id} onClick={() => pick('playlist', p.playlist_id)} style={{ padding: '6px 12px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid var(--hds-line-s)' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--hds-bg-3)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = ''}>
+                  {p.title}
+                </div>
+              ))
+            ) : (
+              eps.map(ep => (
+                <div key={ep.episode_id} onClick={() => pick('episode', ep.episode_id)} style={{ padding: '6px 12px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid var(--hds-line-s)' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--hds-bg-3)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = ''}>
+                  <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>{ep.show_title} · </span>
+                  S{String(ep.season).padStart(2,'0')}E{String(ep.episode).padStart(2,'0')} — {ep.title}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── Show ordering controls ───────────────────────────────────────────────────
 

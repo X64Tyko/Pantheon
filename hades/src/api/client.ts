@@ -1,5 +1,6 @@
 import type {
-  Block, BlockContent, ChannelExport, Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
+  Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
+  Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
   Episode, EpisodeGroup, EpisodeSearchResult, EpgProgram, ExportDepth, ImportResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
@@ -183,6 +184,14 @@ export const api = {
   updateShow:     (id: string, b: Partial<ShowDetail>)  => request<void>      ('PATCH', `/shows/${id}`, b),
   getMovie:       (id: string)                          => request<MovieDetail>('GET',  `/movies/${id}`),
   updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
+
+  // Channel bumpers
+  getBumpers:    (channelId: string)                                                           => request<ChannelBumper[]>('GET',    `/channels/${channelId}/bumpers`),
+  createBumper:  (channelId: string, b: { content_type: BumperContentType; content_id: string; mode: BumperMode; every_n: number }) =>
+                   request<{id: number}>                             ('POST',   `/channels/${channelId}/bumpers`, b),
+  updateBumper:  (channelId: string, bumperId: number, b: Partial<Pick<ChannelBumper, 'content_type'|'content_id'|'mode'|'every_n'|'position'>>) =>
+                   request<void>                                     ('PATCH',  `/channels/${channelId}/bumpers/${bumperId}`, b),
+  deleteBumper:  (channelId: string, bumperId: number)               => request<void>          ('DELETE', `/channels/${channelId}/bumpers/${bumperId}`),
 
   // Downloads
   getDownloadConfig:  ()                                              => request<{path: string}>('GET', '/config/download'),

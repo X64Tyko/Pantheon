@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
-import type { AdvanceMode, Channel, FillerEntryAdvancement, FillerSelectionMode } from '../api/types'
+import type { AdvanceMode, BumperContentType, BumperMode, Channel, ChannelBumper, FillerEntryAdvancement, FillerSelectionMode, Show, Playlist } from '../api/types'
 import { FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
 import { inputStyle, filterInputStyle } from './styles'
 import { SectionLabel } from './SectionLabel'
@@ -21,6 +21,35 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
   const selectionMode = channel?.default_filler_selection ?? 'round_robin'
   const entries       = channel?.default_filler_entries   ?? []
   const showWeight    = selectionMode === 'weighted'
+
+  // Channel bumpers
+  const [bumpers,     setBumpers]     = useState<ChannelBumper[]>([])
+  const [bumperErr,   setBumperErr]   = useState('')
+  const [addBumpOpen, setAddBumpOpen] = useState(false)
+  const [bCt,  setBCt]  = useState<BumperContentType>('show')
+  const [bCid, setBCid] = useState('')
+  const [bMode, setBMode] = useState<BumperMode>('between')
+  const [bN,   setBN]   = useState(3)
+
+  useEffect(() => {
+    api.getBumpers(channelId).then(setBumpers).catch(() => {})
+  }, [channelId])
+
+  async function addBumper() {
+    if (!bCid) return
+    try {
+      const { id } = await api.createBumper(channelId, { content_type: bCt, content_id: bCid, mode: bMode, every_n: bN })
+      setBumpers(prev => [...prev, { id, channel_id: channelId, content_type: bCt, content_id: bCid, mode: bMode, every_n: bN, position: prev.length }])
+      setBCid(''); setAddBumpOpen(false); setBumperErr('')
+    } catch (e: any) { setBumperErr(e.message) }
+  }
+
+  async function deleteBumper(id: number) {
+    try {
+      await api.deleteBumper(channelId, id)
+      setBumpers(prev => prev.filter(b => b.id !== id))
+    } catch (e: any) { setBumperErr(e.message) }
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -198,6 +227,65 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
           <div style={{ marginTop: 8, fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{store.channelFillerErr}</div>
         )}
 
+        <SectionLabel style={{ marginTop: 24 }}>CHANNEL BUMPERS</SectionLabel>
+        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 12, lineHeight: 1.55 }}>
+          Content injected channel-wide. <b>Between</b> mode fires every N non-filler programs. <b>Filler</b> mode weaves into filler gaps.
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 10 }}>
+          {bumpers.map(b => (
+            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line)', borderRadius: 7 }}>
+              <span style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 3, background: 'var(--hds-bg)', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em', flexShrink: 0 }}>{b.content_type}</span>
+              <span style={{ flex: 1, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--hds-txt-2)' }}>{b.content_id}</span>
+              <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', flexShrink: 0 }}>{b.mode} / {b.every_n}</span>
+              <button onClick={() => deleteBumper(b.id)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 12, padding: '0 2px', flexShrink: 0 }}>✕</button>
+            </div>
+          ))}
+        </div>
+
+        {bumpers.length === 0 && !addBumpOpen && (
+          <div style={{ textAlign: 'center', padding: '8px 6px', color: 'var(--hds-txt-3)', fontSize: 11, marginBottom: 8 }}>No channel bumpers configured</div>
+        )}
+
+        <button onClick={() => setAddBumpOpen(o => !o)} style={{ padding: '6px 12px', border: '1px solid var(--hds-line)', borderRadius: 7, background: 'transparent', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', marginBottom: addBumpOpen ? 10 : 0 }}>
+          {addBumpOpen ? '✕ Cancel' : '+ Add bumper'}
+        </button>
+
+        {addBumpOpen && (
+          <div style={{ padding: '11px 12px', background: 'oklch(0.16 0.016 286)', border: '1px solid var(--hds-line)', borderRadius: 9 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+              <select value={bCt} onChange={e => setBCt(e.target.value as BumperContentType)} style={{ ...filterInputStyle, width: 100 }}>
+                <option value="show">Show</option>
+                <option value="playlist">Playlist</option>
+                <option value="episode">Episode</option>
+              </select>
+              <select value={bMode} onChange={e => setBMode(e.target.value as BumperMode)} style={{ ...filterInputStyle, width: 110 }}>
+                <option value="between">Between</option>
+                <option value="filler">Filler</option>
+              </select>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>Every</span>
+                <input type="number" min={1} value={bN} onChange={e => setBN(Math.max(1, +e.target.value || 1))} style={{ ...filterInputStyle, width: 48 }} />
+                <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>progs</span>
+              </div>
+            </div>
+            <BumperContentPicker contentType={bCt} onPick={cid => setBCid(cid)} currentId={bCid} />
+            {bCid && (
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--hds-txt-2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bCid}</span>
+                <button onClick={() => setBCid('')} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 11 }}>✕</button>
+              </div>
+            )}
+            <button onClick={addBumper} disabled={!bCid} style={{ marginTop: 10, padding: '6px 14px', border: 'none', borderRadius: 6, background: 'var(--hds-violet)', color: 'oklch(0.15 0.02 286)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, cursor: bCid ? 'pointer' : 'default', opacity: bCid ? 1 : 0.4 }}>
+              Add
+            </button>
+          </div>
+        )}
+
+        {bumperErr && (
+          <div style={{ marginTop: 8, fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{bumperErr}</div>
+        )}
+
         <SectionLabel style={{ marginTop: 24 }}>OFFLINE FALLBACK</SectionLabel>
         <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 12, lineHeight: 1.55 }}>
           Served when no content is scheduled and no filler is available. Video takes precedence over image if both are set.
@@ -238,6 +326,82 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
     </div>
   )
 })
+
+// ─── BumperContentPicker ─────────────────────────────────────────────────────
+
+function BumperContentPicker({ contentType, onPick, currentId }: {
+  contentType: BumperContentType
+  onPick:      (id: string) => void
+  currentId:   string
+}) {
+  const [q,       setQ]       = useState('')
+  const [shows,   setShows]   = useState<Show[]>([])
+  const [lists,   setLists]   = useState<Playlist[]>([])
+  const [open,    setOpen]    = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    setQ(''); setShows([]); setLists([]); setOpen(false)
+  }, [contentType])
+
+  function search(val: string) {
+    clearTimeout(debounceRef.current)
+    setQ(val)
+    if (!val.trim() && contentType !== 'playlist') { setOpen(false); return }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        if (contentType === 'show') {
+          const r = await api.getShows({ limit: 40, q: val })
+          setShows(r.items); setOpen(r.items.length > 0)
+        } else if (contentType === 'playlist') {
+          const r = await api.getPlaylists()
+          const filtered = r.filter(p => !val || p.title.toLowerCase().includes(val.toLowerCase()))
+          setLists(filtered); setOpen(filtered.length > 0)
+        }
+      } catch {}
+    }, 200)
+  }
+
+  // Load playlists immediately on mount when type is playlist
+  useEffect(() => {
+    if (contentType === 'playlist') search('')
+  }, [contentType])
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        value={q}
+        onChange={e => search(e.target.value)}
+        onFocus={() => { if ((shows.length > 0 || lists.length > 0) && !currentId) setOpen(true) }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        style={filterInputStyle}
+        placeholder={contentType === 'episode' ? 'Paste episode ID…' : `Search ${contentType}s…`}
+        spellCheck={false}
+      />
+      {contentType === 'episode' && q && (
+        <button onClick={() => { onPick(q); setQ('') }} style={{ marginTop: 5, padding: '4px 10px', border: 'none', borderRadius: 5, background: 'var(--hds-violet)', color: 'oklch(0.15 0.02 286)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>Use this ID</button>
+      )}
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line)', borderRadius: 7, marginTop: 3, maxHeight: 180, overflow: 'auto' }} className="scrollbar-dark">
+          {contentType === 'show' && shows.map(s => (
+            <div key={s.show_id} onMouseDown={() => { onPick(s.show_id); setQ(s.title); setOpen(false) }} style={{ padding: '6px 10px', fontSize: 11, cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+              {s.title}{s.year ? <span style={{ color: 'var(--hds-txt-3)', fontSize: 9.5, marginLeft: 5 }}>({s.year})</span> : null}
+            </div>
+          ))}
+          {contentType === 'playlist' && lists.map(p => (
+            <div key={p.playlist_id} onMouseDown={() => { onPick(p.playlist_id); setQ(p.title); setOpen(false) }} style={{ padding: '6px 10px', fontSize: 11, cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+              {p.title}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 type AudioPickerResult = { id: string; type: 'episode' | 'movie'; title: string }
 

@@ -34,6 +34,16 @@ struct BlockContent {
     std::string        episode_order   = "season"; // "season" | "absolute" | "airdate"
 };
 
+struct ChannelBumper {
+    int         id           = 0;
+    std::string channel_id;
+    std::string content_type; // "show" | "episode" | "playlist"
+    std::string content_id;
+    std::string mode         = "between"; // "between" | "filler"
+    int         every_n      = 3;
+    int         position     = 0;
+};
+
 struct Block {
     std::string                block_id;
     std::string                channel_id;
@@ -55,6 +65,16 @@ struct Block {
     int                        max_consecutive_episodes   = 0;  // 0 = unlimited
     std::string                start_scope         = "block"; // "block" | "episode"
     NoHistoryBehavior          no_history_behavior = NoHistoryBehavior::Normal;
+    // Intro: plays once at block start (before first content item).
+    std::string                intro_content_type;
+    std::string                intro_content_id;
+    // Outro: plays once when program_count is hit (after last content item).
+    std::string                outro_content_type;
+    std::string                outro_content_id;
+    // Interstitial: plays between show transitions at configurable frequency (0=disabled).
+    std::string                interstitial_content_type;
+    std::string                interstitial_content_id;
+    int                        interstitial_every_n = 1;
     std::vector<BlockContent>  content;
     std::vector<BlockFillerEntry> filler_entries; // empty = inherit channel default
 };

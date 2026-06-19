@@ -90,8 +90,8 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             SQLite::Statement ins(db_.get(), R"(
                 INSERT OR IGNORE INTO scheduled_program
                     (channel_id, block_id, item_type, item_id,
-                     wall_clock_start, wall_clock_end, cursor_json, created_at)
-                VALUES (?,?,?,?,?,?,?,?)
+                     wall_clock_start, wall_clock_end, cursor_json, created_at, is_filler)
+                VALUES (?,?,?,?,?,?,?,?,?)
             )");
             for (const auto& item : items) {
                 ins.bind(1, channel_id);
@@ -102,6 +102,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                 ins.bind(6, item.wall_clock_end_ms   / 1000);
                 ins.bind(7, item.cursor_json);
                 ins.bind(8, now_ts);
+                ins.bind(9, item.is_filler ? 1 : 0);
                 ins.exec();
                 ins.reset();
             }
@@ -189,8 +190,8 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         SQLite::Statement ins(db_.get(), R"(
             INSERT OR IGNORE INTO scheduled_program
                 (channel_id, block_id, item_type, item_id,
-                 wall_clock_start, wall_clock_end, cursor_json, created_at)
-            VALUES (?,?,?,?,?,?,?,?)
+                 wall_clock_start, wall_clock_end, cursor_json, created_at, is_filler)
+            VALUES (?,?,?,?,?,?,?,?,?)
         )");
 
         bool any_new = false;
@@ -207,6 +208,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             ins.bind(6, item_end);
             ins.bind(7, item.cursor_json);
             ins.bind(8, now);
+            ins.bind(9, item.is_filler ? 1 : 0);
             ins.exec();
             if (db_.get().getChanges() > 0) { any_new = true; ++inserted; }
             else ++skipped_dup;
@@ -281,9 +283,9 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
     }
 
     for (const auto& ch : channels) {
-        // Filler items stored in scheduled_program are excluded from XMLTV output;
-        // instead, each content item's stop time is extended to the next content
-        // item's start time (absorbing the filler gap). LEAD() finds that next start.
+        // Filler items (is_filler=1) are excluded from XMLTV output; instead,
+        // each content item's stop time is extended to the next content item's
+        // start time (absorbing the filler gap). LEAD() finds that next start.
         // The +7200s cap prevents runaway expansion across long inter-block gaps.
         SQLite::Statement q(db_.get(), R"(
             WITH content AS (
@@ -295,7 +297,7 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
                        ) AS next_content_start
                 FROM scheduled_program sp
                 WHERE sp.channel_id = ?
-                  AND sp.item_type != 'filler'
+                  AND sp.is_filler = 0
                   AND sp.wall_clock_start >= ?
                   AND sp.wall_clock_start <  ?
                   AND sp.status != 'skipped'

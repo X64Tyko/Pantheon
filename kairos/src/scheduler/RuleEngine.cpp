@@ -158,7 +158,10 @@ std::vector<Block> RuleEngine::loadBlocks(const std::string& channel_id) {
                program_count, priority, max_content_rating, advancement, cursor_scope,
                late_start_mins, align_to_mins, inter_filler, early_start_secs,
                filler_selection, smart_pct, start_scope, no_history_behavior,
-               max_consecutive_episodes
+               max_consecutive_episodes,
+               intro_content_type, intro_content_id,
+               outro_content_type, outro_content_id,
+               interstitial_content_type, interstitial_content_id, interstitial_every_n
         FROM block WHERE channel_id = ?
         ORDER BY priority DESC
     )");
@@ -186,7 +189,14 @@ std::vector<Block> RuleEngine::loadBlocks(const std::string& channel_id) {
         b.smart_pct                = q.getColumn(15).getInt();
         b.start_scope              = q.getColumn(16).getString();
         b.no_history_behavior      = parseNoHistoryBehavior(q.getColumn(17).getString());
-        b.max_consecutive_episodes = q.getColumn(18).getInt();
+        b.max_consecutive_episodes      = q.getColumn(18).getInt();
+        b.intro_content_type            = q.getColumn(19).getString();
+        b.intro_content_id              = q.getColumn(20).getString();
+        b.outro_content_type            = q.getColumn(21).getString();
+        b.outro_content_id              = q.getColumn(22).getString();
+        b.interstitial_content_type     = q.getColumn(23).getString();
+        b.interstitial_content_id       = q.getColumn(24).getString();
+        b.interstitial_every_n          = q.getColumn(25).getInt();
 
         SQLite::Statement cq(db_.get(), R"(
             SELECT id, content_type, content_id, position, season_filter, weight, run_count,
@@ -1406,6 +1416,107 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     return item;
 }
 
+// ── Bumper / intro / outro / interstitial helpers ────────────────────────────
+
+std::optional<ScheduledItem> RuleEngine::pickBumperItem(
+    const std::string& channel_id,
+    const std::string& content_type,
+    const std::string& content_id,
+    const std::string& scope_id)
+{
+    if (content_type.empty() || content_id.empty()) return std::nullopt;
+
+    if (content_type == "episode") {
+        return episodeById(content_id);
+    }
+    if (content_type == "show") {
+        auto eps = getEpisodes(content_id, std::nullopt, true); // include specials
+        if (eps.empty()) return std::nullopt;
+        int pos = readCursorPos("show", content_id, "block", scope_id)
+                  % static_cast<int>(eps.size());
+        return itemFromShow(channel_id, "", eps, pos, showTitle(content_id));
+    }
+    if (content_type == "playlist") {
+        auto items = loadListItems("playlist", content_id);
+        if (items.empty()) return std::nullopt;
+        int pos = readCursorPos("playlist", content_id, "block", scope_id)
+                  % static_cast<int>(items.size());
+        const auto& [ptype, pid] = items[pos];
+        if (ptype == "episode") {
+            return episodeById(pid);
+        } else {
+            auto m = getMovie(pid);
+            if (!m) return std::nullopt;
+            return movieItem(*m);
+        }
+    }
+    return std::nullopt;
+}
+
+void RuleEngine::advanceBumperCursor(
+    const std::string& content_type,
+    const std::string& content_id,
+    const std::string& scope_id)
+{
+    if (content_type == "episode") return; // single-episode bumper — no cursor
+
+    if (content_type == "show") {
+        auto eps = getEpisodes(content_id, std::nullopt, true);
+        if (!eps.empty()) {
+            int pos  = readCursorPos("show", content_id, "block", scope_id);
+            int next = (pos + 1) % static_cast<int>(eps.size());
+            writeCursorPos("show", content_id, "block", scope_id,
+                           next, eps[next].episode_id);
+        }
+    } else if (content_type == "playlist") {
+        SQLite::Statement q(db_.get(),
+            "SELECT COUNT(*) FROM playlist_item WHERE playlist_id=?");
+        q.bind(1, content_id);
+        if (q.executeStep()) {
+            int n = q.getColumn(0).getInt();
+            if (n > 0) {
+                int pos  = readCursorPos("playlist", content_id, "block", scope_id);
+                writeCursorPos("playlist", content_id, "block", scope_id, (pos + 1) % n);
+            }
+        }
+    }
+}
+
+bool RuleEngine::scheduleBumperItem(
+    const std::string& channel_id,
+    const std::string& block_id,
+    const std::string& content_type,
+    const std::string& content_id,
+    const std::string& scope_id,
+    std::vector<ScheduledItem>& result,
+    std::time_t& t)
+{
+    auto item_opt = pickBumperItem(channel_id, content_type, content_id, scope_id);
+    if (!item_opt || item_opt->duration_ms <= 0) return false;
+
+    auto& item = *item_opt;
+    item.channel_id          = channel_id;
+    item.block_id            = block_id;
+    item.wall_clock_start_ms = static_cast<int64_t>(t) * 1000;
+    item.wall_clock_end_ms   = item.wall_clock_start_ms + item.duration_ms;
+    item.cursor_json         = "{}";
+
+    SQLite::Statement qph(db_.get(), R"(
+        INSERT INTO play_history (item_type, item_id, channel_id, block_id, aired_at, is_scheduled)
+        VALUES (?,?,?,?,?,1)
+    )");
+    qph.bind(1, item.item_type); qph.bind(2, item.item_id);
+    qph.bind(3, channel_id);
+    if (block_id.empty()) qph.bind(4); else qph.bind(4, block_id);
+    qph.bind(5, static_cast<int64_t>(t));
+    qph.exec();
+
+    t += item.duration_ms / 1000;
+    result.push_back(std::move(item));
+    advanceBumperCursor(content_type, content_id, scope_id);
+    return true;
+}
+
 // ── Forward projection ────────────────────────────────────────────────────────
 
 std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
@@ -1446,6 +1557,23 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
 
     const std::string tz = channelTimezone(channel_id);
 
+    // Load channel bumpers for "between" mode
+    struct BetweenBumper { int id; std::string ct, cid; int every_n; };
+    std::vector<BetweenBumper> between_bumpers;
+    {
+        SQLite::Statement bq(db_.get(),
+            "SELECT id, content_type, content_id, every_n "
+            "FROM channel_bumper WHERE channel_id = ? AND mode = 'between' "
+            "ORDER BY position");
+        bq.bind(1, channel_id);
+        while (bq.executeStep())
+            between_bumpers.push_back({bq.getColumn(0).getInt(),
+                                       bq.getColumn(1).getString(),
+                                       bq.getColumn(2).getString(),
+                                       bq.getColumn(3).getInt()});
+    }
+    int channel_prog_count = 0; // non-filler content items scheduled so far
+
     std::time_t t   = start;
     std::time_t end = start + static_cast<std::time_t>(horizon_hours) * 3600;
     const int MAX_ITEMS = std::max(2000, horizon_hours * 300); // ~12s clip floor per hour
@@ -1454,7 +1582,10 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
     std::unordered_set<std::string>      exhausted_blocks; // blocks that hit program_count this day
     int prev_day = -1;
     int dbg_null_streak = 0;
-    std::unordered_set<std::string> seed_inited; // blocks whose cursors have been seed-initialised
+    std::unordered_set<std::string> seed_inited;    // blocks whose cursors have been seed-initialised
+    std::unordered_set<std::string> intro_played;   // blocks whose intro fired this occurrence
+    std::string last_show_id;                        // show_id of last scheduled content item
+    std::unordered_map<std::string, int> transition_counts; // show transitions per block occurrence
 
     while (t < end && static_cast<int>(result.size()) < MAX_ITEMS) {
         // Clear exhausted_blocks when the calendar day rolls over (channel-local time).
@@ -1544,8 +1675,19 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             // Jump to effective start if alignment pushed us forward.
             if (effective_start > t) { t = effective_start; continue; }
         } else {
-            if (block.block_id != prev_block_id) prog_counts[block.block_id] = 0;
+            if (block.block_id != prev_block_id) {
+                prog_counts[block.block_id] = 0;
+                transition_counts[block.block_id] = 0;
+            }
             prev_block_id = block.block_id;
+        }
+
+        // Inject block intro on first entry to each block occurrence.
+        if (!intro_played.count(block.block_id) && !block.intro_content_id.empty()) {
+            intro_played.insert(block.block_id);
+            scheduleBumperItem(channel_id, block.block_id,
+                               block.intro_content_type, block.intro_content_id,
+                               block.block_id + ":intro", result, t);
         }
 
         // On first entry to each block, apply seed-derived starting positions.
@@ -1591,6 +1733,22 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         }
 
         auto item_opt = nextItem(channel_id, block, t);
+
+        // Interstitial: inject between show transitions.
+        if (item_opt && !block.interstitial_content_id.empty() &&
+            block.interstitial_every_n > 0 &&
+            !item_opt->show_id.empty() && !last_show_id.empty() &&
+            item_opt->show_id != last_show_id)
+        {
+            int& tc = transition_counts[block.block_id];
+            ++tc;
+            if (tc % block.interstitial_every_n == 0) {
+                scheduleBumperItem(channel_id, block.block_id,
+                                   block.interstitial_content_type, block.interstitial_content_id,
+                                   block.block_id + ":interstitial", result, t);
+            }
+        }
+
         bool is_fallback_filler = false;
         if (!item_opt) {
             const auto& filler_pool = block.filler_entries.empty() ? channel_filler
@@ -1647,6 +1805,9 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         const std::string ph_item_id   = item.item_id;
         const std::time_t ph_aired_at  = t;
 
+        // Track last show for interstitial detection.
+        if (!is_fallback_filler) last_show_id = item.show_id;
+
         result.push_back(std::move(item));
         t += dur_ms / 1000;
         const std::time_t t_prog_end = t;
@@ -1668,6 +1829,20 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             qph.exec();
         }
         if (!is_fallback_filler) advanceCursors(channel_id, block, t);
+
+        // Channel between-bumpers: inject after every N non-filler content programs.
+        if (!is_fallback_filler && !between_bumpers.empty()) {
+            ++channel_prog_count;
+            for (auto& bumper : between_bumpers) {
+                if (bumper.every_n > 0 && channel_prog_count % bumper.every_n == 0) {
+                    scheduleBumperItem(channel_id, block.block_id,
+                                       bumper.ct, bumper.cid,
+                                       channel_id + ":b" + std::to_string(bumper.id),
+                                       result, t);
+                    break; // one bumper per slot maximum
+                }
+            }
+        }
 
         bool prog_limit_hit = !is_fallback_filler && (block.program_count > 0 &&
                                ++prog_counts[block.block_id] >= block.program_count);
@@ -1695,8 +1870,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                 if (!in_early && !in_late) {
                     const std::time_t fill_target   = next_b;
                     const std::time_t late_boundary = next_b + static_cast<std::time_t>(block.late_start_mins) * 60;
-                    const std::size_t filler_start  = result.size();
-                    std::string       last_cursor    = simStateToJson(state).dump();
+                    std::string last_cursor = simStateToJson(state).dump();
 
                     while (t < fill_target && static_cast<int>(result.size()) < MAX_ITEMS) {
                         int64_t remaining_ms = (fill_target - t) * 1000;
@@ -1730,6 +1904,8 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                         fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;
                         last_cursor             = simStateToJson(state).dump();
                         fi->cursor_json         = last_cursor;
+                        fi->channel_id          = channel_id;
+                        fi->block_id            = block.block_id;
                         result.push_back(std::move(*fi));
                         t += fi->duration_ms / 1000;
 
@@ -1739,24 +1915,6 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                         bool now_early = (next_b2 - t) <= static_cast<std::time_t>(block.early_start_secs);
                         bool now_late  = (t - prev_b2) <= static_cast<std::time_t>(block.late_start_mins) * 60;
                         if (now_early || now_late) break;
-                    }
-
-                    // Merge all collected clips into a single "filler" block for the preview.
-                    if (result.size() > filler_start) {
-                        int64_t merged_start = result[filler_start].wall_clock_start_ms;
-                        int64_t merged_end   = result.back().wall_clock_end_ms;
-                        result.erase(result.begin() + static_cast<std::ptrdiff_t>(filler_start),
-                                     result.end());
-                        ScheduledItem merged;
-                        merged.item_type          = "filler";
-                        merged.channel_id         = channel_id;
-                        merged.block_id           = block.block_id;
-                        merged.wall_clock_start_ms = merged_start;
-                        merged.wall_clock_end_ms   = merged_end;
-                        merged.duration_ms         = merged_end - merged_start;
-                        merged.cursor_json         = last_cursor;
-                        merged.is_filler           = true;
-                        result.push_back(std::move(merged));
                     }
                 }
             }
@@ -1787,6 +1945,12 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         // from causing a full boundary jump (e.g. 19:00→19:30) that would leave
         // a 30-minute gap before the first episode of the underlying block.
         if (prog_limit_hit) {
+            // Outro: inject after the last content item of this block occurrence.
+            if (!block.outro_content_id.empty()) {
+                scheduleBumperItem(channel_id, block.block_id,
+                                   block.outro_content_type, block.outro_content_id,
+                                   block.block_id + ":outro", result, t);
+            }
             if (block.align_to_mins > 0) {
                 auto        tm_end   = toChannelTZ(t_prog_end, tz);
                 int         cur_sec  = tm_end.tm_hour * 3600 + tm_end.tm_min * 60 + tm_end.tm_sec;
@@ -1795,6 +1959,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                 t = midnight + ((static_cast<std::time_t>(cur_sec) + step - 1) / step) * step;
             }
             exhausted_blocks.insert(block.block_id);
+            intro_played.erase(block.block_id);
             prev_block_id.clear();
         }
     }
