@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -105,6 +106,18 @@ void DownloadManager::runJob(std::string id) {
         it->status = "running";
         url  = it->url;
         dest = it->dest_path;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(dest, ec);
+    if (ec) {
+        std::lock_guard lk(mu_);
+        auto it = findJob(id);
+        if (it != jobs_.end()) {
+            it->status = "error";
+            it->log.push_back("Failed to create directory: " + dest + " — " + ec.message());
+        }
+        return;
     }
 
     std::string cmd = "yt-dlp --newline --paths " + shellQuote(dest) +
