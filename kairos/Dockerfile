@@ -19,8 +19,12 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
     ffmpeg \
-    yt-dlp \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+       -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
 
 COPY --from=builder /src/build/kairos /usr/local/bin/kairos
 COPY --from=builder /src/ui-dist /app/ui-dist
