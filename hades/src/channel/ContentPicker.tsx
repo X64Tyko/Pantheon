@@ -33,8 +33,16 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
         <button onClick={() => store.closePicker()} style={{ color: 'var(--hds-txt-3)', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 12, padding: '0 3px', marginLeft: 'auto' }}>✕</button>
       </div>
       {store.pickerTab !== 'filler_lists' && store.pickerTab !== 'playlists' && (
-        <div style={{ padding: '7px 10px', borderBottom: showFilters ? 'none' : '1px solid var(--hds-line-s)' }}>
-          <input value={store.pickerQuery} onChange={e => store.setPickerQuery(e.target.value)} placeholder="Search…" style={{ width: '100%', ...inputStyle, fontSize: 11.5, padding: '6px 9px', boxSizing: 'border-box' }} autoFocus />
+        <div style={{ padding: '7px 10px', borderBottom: showFilters ? 'none' : '1px solid var(--hds-line-s)', display: 'flex', gap: 6 }}>
+          <input value={store.pickerQuery} onChange={e => store.setPickerQuery(e.target.value)} placeholder="Search…" style={{ flex: 1, ...inputStyle, fontSize: 11.5, padding: '6px 9px' }} autoFocus />
+          {store.pickerTab === 'episodes' && (
+            <input
+              type="number" min={0} value={store.pickerSeasonFilter}
+              onChange={e => store.setPickerSeasonFilter(e.target.value)}
+              placeholder="S#" title="Filter by season (0 = specials)"
+              style={{ ...inputStyle, width: 48, fontSize: 11, padding: '5px 6px' }}
+            />
+          )}
         </div>
       )}
       {showFilters && (

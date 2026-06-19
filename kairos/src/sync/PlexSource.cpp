@@ -209,10 +209,6 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
             const int season = item.value("parentIndex", 0);
             const std::string air_date = item.value("originallyAvailableAt", "");
 
-            // Season 0 (specials/unmatched) with no air date are stub entries —
-            // they have no scheduling value and pollute episode cursors.
-            if (season == 0 && air_date.empty()) continue;
-
             Episode ep;
             ep.episode_id  = item["ratingKey"].get<std::string>();
             ep.show_id     = item["grandparentRatingKey"].get<std::string>(); // resolved by SyncManager

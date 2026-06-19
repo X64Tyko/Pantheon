@@ -32,6 +32,7 @@ export class ChannelDetailStore {
 
   pickerOpen:        boolean               = false
   pickerQuery:       string                = ''
+  pickerSeasonFilter: string              = ''
   pickerTab:         PickerTab             = 'shows'
   pickerShows:       Show[]                = []
   pickerMovies:      Movie[]               = []
@@ -568,7 +569,7 @@ export class ChannelDetailStore {
 
   openPicker() {
     clearTimeout(_debounce)
-    this.pickerOpen      = true; this.pickerQuery = ''
+    this.pickerOpen      = true; this.pickerQuery = ''; this.pickerSeasonFilter = ''
     this.filterRules     = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.expandedShowId  = null; this.expandedSeasons = []
     this.pickerShows     = []; this.pickerMovies = []; this.pickerEpisodes = []
@@ -581,7 +582,7 @@ export class ChannelDetailStore {
 
   closePicker() {
     clearTimeout(_debounce)
-    this.pickerOpen  = false; this.pickerQuery = ''
+    this.pickerOpen  = false; this.pickerQuery = ''; this.pickerSeasonFilter = ''
     this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.expandedShowId = null
     this.pickerShows = []; this.pickerMovies = []; this.pickerEpisodes = []
@@ -589,13 +590,19 @@ export class ChannelDetailStore {
   }
 
   setPickerTab(t: PickerTab) {
-    this.pickerTab   = t; this.expandedShowId = null
+    this.pickerTab   = t; this.expandedShowId = null; this.pickerSeasonFilter = ''
     this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.searchPicker()
   }
 
   setPickerQuery(q: string) {
     this.pickerQuery = q; this.expandedShowId = null
+    clearTimeout(_debounce)
+    _debounce = setTimeout(() => this.searchPicker(), 250)
+  }
+
+  setPickerSeasonFilter(v: string) {
+    this.pickerSeasonFilter = v
     clearTimeout(_debounce)
     _debounce = setTimeout(() => this.searchPicker(), 250)
   }
@@ -609,11 +616,13 @@ export class ChannelDetailStore {
     const yearStr = isRules.find(r => r.field === 'year')?.value
     const year    = yearStr ? parseInt(yearStr) : undefined
     const rating  = isRules.find(r => r.field === 'content_rating')?.value || undefined
+    const seasonParsed = this.pickerSeasonFilter.trim() !== '' ? parseInt(this.pickerSeasonFilter, 10) : undefined
+    const season  = Number.isFinite(seasonParsed) ? seasonParsed : undefined
     try {
       switch (this.pickerTab) {
         case 'shows':        { const r = await api.getShows({ limit: 100, q, library_id: lib, genre, year, content_rating: rating }); runInAction(() => { this.pickerShows = r.items; this.pickerLoading = false }); break }
         case 'movies':       { const r = await api.getMovies({ limit: 100, q, library_id: lib, genre, year, content_rating: rating }); runInAction(() => { this.pickerMovies = r.items; this.pickerLoading = false }); break }
-        case 'episodes':     { const r = await api.searchEpisodes({ q, limit: 80 }); runInAction(() => { this.pickerEpisodes = r.items; this.pickerLoading = false }); break }
+        case 'episodes':     { const r = await api.searchEpisodes({ q, season, limit: 80 }); runInAction(() => { this.pickerEpisodes = r.items; this.pickerLoading = false }); break }
         case 'playlists':    { const r = await api.getPlaylists(); runInAction(() => { this.pickerPlaylists = r; this.pickerLoading = false }); break }
         case 'filler_lists': { const r = await api.getFillerLists(); runInAction(() => { this.pickerFillerLists = r; this.pickerLoading = false }); break }
       }
