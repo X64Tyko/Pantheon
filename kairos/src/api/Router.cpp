@@ -2106,17 +2106,18 @@ void Router::registerContentRoutes() {
     svr_.Get("/api/episodes", [this](const Req& req, Res& res) {
         int         limit   = 50;
         int         offset  = 0;
-        std::string show_id, search_q, season_p;
+        int         season_v = -1;
+        std::string show_id, search_q;
         if (req.has_param("limit"))   limit    = std::stoi(req.get_param_value("limit"));
         if (req.has_param("offset"))  offset   = std::stoi(req.get_param_value("offset"));
         if (req.has_param("show_id")) show_id  = req.get_param_value("show_id");
         if (req.has_param("q"))       search_q = req.get_param_value("q");
-        if (req.has_param("season"))  season_p = req.get_param_value("season");
+        if (req.has_param("season"))  season_v = std::stoi(req.get_param_value("season"));
 
         std::string where = " WHERE 1=1";
-        if (!show_id.empty())  where += " AND e.show_id = '" + show_id + "'";
-        if (!season_p.empty()) where += " AND e.season = " + season_p;
-        if (!search_q.empty()) where += " AND e.title LIKE '%' || ? || '%'";
+        if (!show_id.empty())  where += " AND e.show_id = ?";
+        if (season_v >= 0)     where += " AND e.season = ?";
+        if (!search_q.empty()) where += " AND (e.title LIKE '%' || ? || '%' OR s.title LIKE '%' || ? || '%')";
 
         SQLite::Statement q(db_.get(), R"(
             SELECT e.episode_id, e.season, e.episode, e.title, e.duration_ms,
@@ -2124,7 +2125,9 @@ void Router::registerContentRoutes() {
             FROM episode e JOIN show s ON s.show_id = e.show_id
         )" + where + " ORDER BY s.title, e.season, e.episode LIMIT ? OFFSET ?");
         int p = 1;
-        if (!search_q.empty()) q.bind(p++, search_q);
+        if (!show_id.empty())  q.bind(p++, show_id);
+        if (season_v >= 0)     q.bind(p++, season_v);
+        if (!search_q.empty()) { q.bind(p++, search_q); q.bind(p++, search_q); }
         q.bind(p++, limit); q.bind(p++, offset);
 
         json items = json::array();

@@ -1678,6 +1678,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             if (block.block_id != prev_block_id) {
                 prog_counts[block.block_id] = 0;
                 transition_counts[block.block_id] = 0;
+                last_show_id.clear(); // don't carry show context across block boundaries
             }
             prev_block_id = block.block_id;
         }
