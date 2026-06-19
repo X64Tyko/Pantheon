@@ -90,6 +90,10 @@ void ConfStore::parseLocked(const std::string& text) {
         if (eq == std::string::npos) continue;
         auto key = trim(line.substr(0, eq));
         auto val = trim(line.substr(eq + 1));
+        if (section == "_global") {
+            if (key == "download_path") download_path_ = val;
+            continue;
+        }
         if (key == "token")   entries_[section].token   = val;
         if (key == "user_id") entries_[section].user_id = val;
         if (key == "path_map") {
@@ -188,10 +192,27 @@ void ConfStore::removeSource(const std::string& source_id) {
     mtime_ = std::filesystem::last_write_time(path_, ec);
 }
 
+std::string ConfStore::getDownloadPath() const {
+    std::lock_guard lock(mu_);
+    return download_path_;
+}
+
+void ConfStore::setDownloadPath(const std::string& path) {
+    std::lock_guard lock(mu_);
+    download_path_ = path;
+    saveLocked();
+    std::error_code ec;
+    mtime_ = std::filesystem::last_write_time(path_, ec);
+}
+
 void ConfStore::saveLocked() const {
     std::ofstream f(path_);
     f << "# Kairos credentials — do not commit\n"
       << "# Managed by Hades UI\n\n";
+    if (!download_path_.empty()) {
+        f << "[_global]\n";
+        f << "download_path = " << download_path_ << "\n\n";
+    }
     for (const auto& [sid, e] : entries_) {
         f << "[" << sid << "]\n";
         if (!e.token.empty())   f << "token = "   << e.token   << "\n";

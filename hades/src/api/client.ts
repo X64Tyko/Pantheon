@@ -1,6 +1,6 @@
 import type {
-  Block, BlockContent, Channel, ContentType, CredentialStatus, Episode, EpisodeGroup,
-  EpisodeSearchResult, EpgProgram, StartScope,
+  Block, BlockContent, ChannelExport, Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
+  Episode, EpisodeGroup, EpisodeSearchResult, EpgProgram, ExportDepth, ImportResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
@@ -50,6 +50,8 @@ export const api = {
   createChannel:    (b: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection'>) => request<{channel_id: string}>('POST', '/channels', b),
   updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode'>>) => request<void>('PATCH', `/channels/${id}`, b),
   deleteChannel:    (id: string)                                                  => request<void>('DELETE', `/channels/${id}`),
+  exportChannel:    (id: string, depth: ExportDepth)                              => request<ChannelExport>('GET', `/channels/${id}/export?depth=${depth}`),
+  importChannel:    (data: ChannelExport)                                         => request<ImportResult>('POST', '/channels/import', data),
 
   // Channel filler entries
   addChannelFiller:    (channelId: string, b: { filler_list_id: string; advancement: FillerEntryAdvancement; weight?: number }) =>
@@ -95,9 +97,9 @@ export const api = {
                        request<{block_id: string}>('POST', `/channels/${channelId}/blocks`, b),
   updateBlock:       (channelId: string, blockId: string, b: Partial<Omit<Block, 'block_id'|'channel_id'|'content'|'filler_entries'>>) => request<void>('PATCH', `/channels/${channelId}/blocks/${blockId}`, b),
   deleteBlock:       (channelId: string, blockId: string)                         => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}`),
-  addBlockContent:   (channelId: string, blockId: string, b: { content_type: ContentType; content_id: string; season_filter?: number | null; weight?: number; run_count?: number }) =>
+  addBlockContent:   (channelId: string, blockId: string, b: { content_type: ContentType; content_id: string; season_filter?: number | null; weight?: number; run_count?: number; include_specials?: boolean; episode_order?: EpisodeOrder }) =>
                        request<{id: number, position: number}>('POST', `/channels/${channelId}/blocks/${blockId}/content`, b),
-  updateBlockContent:(channelId: string, blockId: string, cid: number, b: { season_filter?: number | null; position?: number; weight?: number; run_count?: number }) =>
+  updateBlockContent:(channelId: string, blockId: string, cid: number, b: { season_filter?: number | null; position?: number; weight?: number; run_count?: number; include_specials?: boolean; episode_order?: EpisodeOrder }) =>
                        request<void>('PATCH', `/channels/${channelId}/blocks/${blockId}/content/${cid}`, b),
   removeBlockContent:       (channelId: string, blockId: string, cid: number)     => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}/content/${cid}`),
   resetBlockContentCursor:  (channelId: string, blockId: string, cid: number)     => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}/content/${cid}/cursor`),
@@ -181,4 +183,10 @@ export const api = {
   updateShow:     (id: string, b: Partial<ShowDetail>)  => request<void>      ('PATCH', `/shows/${id}`, b),
   getMovie:       (id: string)                          => request<MovieDetail>('GET',  `/movies/${id}`),
   updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
+
+  // Downloads
+  getDownloadConfig:  ()                                              => request<{path: string}>('GET', '/config/download'),
+  setDownloadConfig:  (path: string)                                  => request<{ok: boolean}>('PUT', '/config/download', { path }),
+  startDownload:      (url: string, path?: string)                    => request<{job_id: string}>('POST', '/download/jobs', { url, path }),
+  getDownloadJobs:    ()                                              => request<DownloadJob[]>('GET', '/download/jobs'),
 }

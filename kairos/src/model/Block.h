@@ -22,14 +22,16 @@ struct BlockFillerEntry {
 };
 
 struct BlockContent {
-    int                id            = 0;
+    int                id              = 0;
     std::string        block_id;
-    std::string        content_type; // "show"|"movie"|"episode"|"playlist"|"filler_list"
+    std::string        content_type;   // "show"|"movie"|"episode"|"playlist"|"filler_list"
     std::string        content_id;
-    int                position      = 0;
+    int                position        = 0;
     std::optional<int> season_filter;
-    int                weight        = 1;  // weighted show selection (rerun modes)
-    int                run_count     = 1;  // sequential episodes per selection (rerun modes)
+    int                weight          = 1;    // weighted show selection (rerun modes)
+    int                run_count       = 1;    // sequential episodes per selection (rerun modes)
+    bool               include_specials = false; // include season 0 episodes
+    std::string        episode_order   = "season"; // "season" | "absolute" | "airdate"
 };
 
 struct Block {

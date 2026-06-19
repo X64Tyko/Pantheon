@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite'
 import type { ReactNode } from 'react'
-import type { Advancement, BlockType, CursorScope, FillerSelectionMode, NoHistoryBehavior } from '../api/types'
+import type { Advancement, BlockType, CursorScope, EpisodeOrder, FillerSelectionMode, NoHistoryBehavior } from '../api/types'
 import {
   ALIGN_OPTS, BLOCK_META, DAYS, DAY_BITS, DELAY_OPTS, EARLY_OPTS,
   FILLER_ADV_OPTS, FILLER_SEL_OPTS, NO_HISTORY_OPTS, RATINGS,
@@ -85,6 +85,15 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 12px 20px' }} className="scrollbar-dark">
+
+      {/* ── Block name ── */}
+      <input
+        type="text"
+        placeholder="Block name (optional)"
+        value={d.name ?? ''}
+        onChange={e => store.setDraft('name', e.target.value)}
+        style={{ ...inputStyle, width: '100%', marginBottom: 10 }}
+      />
 
       {/* ── SCHEDULE ── */}
       <AccordionSection title="SCHEDULE" open={sec.schedule} onToggle={() => tog('schedule')}>
@@ -310,10 +319,14 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           )}
         </div>
 
+        {store.pickerOpen && (store.editing || store.isNewMode) && (
+          <ContentPicker channelId={channelId} store={store} />
+        )}
+
         <div
           onDragOver={e => e.preventDefault()}
           onDrop={e => { e.preventDefault(); if (store.dragItem) { const sh = store.pickerShows.find(s => s.show_id === store.dragItem); store.addContent(channelId, { content_type: 'show', content_id: store.dragItem!, title: sh?.title }); store.dragItem = null } }}
-          style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40, padding: store.dragItem ? 8 : 0, border: store.dragItem ? '1px dashed var(--hds-violet)' : '1px solid transparent', borderRadius: 9, transition: '.12s' }}
+          style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40, padding: store.dragItem ? 8 : 0, border: store.dragItem ? '1px dashed var(--hds-violet)' : '1px solid transparent', borderRadius: 9, transition: '.12s', marginTop: store.pickerOpen ? 10 : 0 }}
         >
           {store.draftContent.map(item => {
             const dot       = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
@@ -327,11 +340,19 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             const playlist      = isPlaylist ? store.contentPlaylists.find(p => p.playlist_id === item.content_id) : undefined
             const playlistMode  = playlist?.mode ?? 'sequential'
             const isShowColl    = playlistMode === 'show_collection'
+            const thumbUrl = item.content_type === 'show' ? `/api/shows/${item.content_id}/thumb`
+                           : item.content_type === 'movie' ? `/api/movies/${item.content_id}/thumb`
+                           : null
             return (
               <div key={item.id} style={{ background: 'var(--hds-bg-3)', border: `1px solid ${item.id < 0 ? 'oklch(0.55 0.12 290 / 0.6)' : 'var(--hds-line-s)'}`, borderRadius: 7, overflow: 'hidden' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px' }}>
                   <span style={{ color: 'var(--hds-txt-3)', fontSize: 13 }}>⋮⋮</span>
                   <span style={{ width: 7, height: 7, borderRadius: 2, background: dot, flexShrink: 0 }} />
+                  {thumbUrl && (
+                    <img src={thumbUrl} loading="lazy" style={{ width: 30, height: 44, objectFit: 'cover', borderRadius: 3, flexShrink: 0, opacity: 0, transition: 'opacity .2s' }}
+                      onLoad={e => { (e.target as HTMLImageElement).style.opacity = '1' }}
+                      onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                  )}
                   <span style={{ flex: 1, fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title || item.content_id}</span>
                   {canReset && (
                     <button
@@ -389,6 +410,15 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                     </div>
                   </div>
                 )}
+                {item.content_type === 'show' && (
+                  <ShowOrderControls
+                    itemId={item.id}
+                    channelId={channelId}
+                    order={item.episode_order ?? 'season'}
+                    includeSpecials={item.include_specials ?? false}
+                    store={store}
+                  />
+                )}
               </div>
             )
           })}
@@ -417,9 +447,6 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           </div>
         )}
 
-        {store.pickerOpen && (store.editing || store.isNewMode) && (
-          <ContentPicker channelId={channelId} store={store} />
-        )}
       </AccordionSection>
 
       {/* ── FILLER ── */}
@@ -498,3 +525,54 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
     </div>
   )
 })
+
+// ─── Show ordering controls ───────────────────────────────────────────────────
+
+const ORDER_OPTS: { value: EpisodeOrder; label: string; hint: string }[] = [
+  { value: 'season',   label: 'Season',   hint: 'Standard season / episode numbering.' },
+  { value: 'absolute', label: 'Absolute', hint: 'TVDB absolute episode number — ignores seasons. Best for anime.' },
+  { value: 'airdate',  label: 'Air Date', hint: 'Chronological by original air date. Good for out-of-order shows.' },
+]
+
+function ShowOrderControls({ itemId, channelId, order, includeSpecials, store }: {
+  itemId:          number
+  channelId:       string
+  order:           EpisodeOrder
+  includeSpecials: boolean
+  store:           ChannelDetailStore
+}) {
+  const btnStyle = (active: boolean): React.CSSProperties => ({
+    padding: '3px 8px', border: 'none', borderRadius: 5,
+    fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
+    cursor: 'pointer',
+    background: active ? 'var(--hds-violet)' : 'var(--hds-bg)',
+    color:      active ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-3)',
+    transition: '.1s',
+  })
+  const hint = ORDER_OPTS.find(o => o.value === order)?.hint ?? ''
+
+  const setOrder = (v: EpisodeOrder) =>
+    store.updateContentField(channelId, itemId, 'episode_order', v)
+  const toggleSpecials = () =>
+    store.updateContentField(channelId, itemId, 'include_specials', !includeSpecials)
+
+  return (
+    <div style={{ borderTop: '1px solid var(--hds-line-s)', padding: '7px 10px 8px' }}>
+      <div style={{ fontSize: 9.5, letterSpacing: '0.12em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>EPISODE ORDER</div>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+        {ORDER_OPTS.map(o => (
+          <button key={o.value} onClick={() => setOrder(o.value)} style={btnStyle(order === o.value)}>
+            {o.label}
+          </button>
+        ))}
+        <div style={{ width: 1, height: 14, background: 'var(--hds-line-s)', margin: '0 3px', flexShrink: 0 }} />
+        <button onClick={toggleSpecials} style={btnStyle(includeSpecials)}>
+          S00
+        </button>
+      </div>
+      <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 5, lineHeight: 1.5 }}>
+        {hint}{includeSpecials ? ' · Season 00 included.' : ' · Season 00 excluded.'}
+      </div>
+    </div>
+  )
+}

@@ -158,21 +158,96 @@ export interface FillerEntry {
   position:       number                // round-robin order
 }
 
+export type EpisodeOrder = 'season' | 'absolute' | 'airdate'
+
 export interface BlockContent {
-  id:            number
-  block_id:      string
+  id:               number
+  block_id:         string
+  content_type:     ContentType
+  content_id:       string
+  position:         number
+  season_filter?:   number        // only for content_type='show'; absent = all seasons
+  weight:           number        // weighted selection probability (rerun modes)
+  run_count:        number        // sequential episodes per selection (rerun modes)
+  include_specials: boolean       // include season 0 episodes
+  episode_order:    EpisodeOrder  // 'season' | 'absolute' | 'airdate'
+  title:            string        // display-ready label (computed server-side)
+}
+
+export type ExportDepth = 'shallow' | 'deep'
+
+export interface ChannelExportFillerEntry {
+  title:       string
+  advancement: FillerEntryAdvancement
+  weight:      number
+}
+
+export interface ChannelExportContent {
   content_type:  ContentType
-  content_id:    string
-  position:      number
-  season_filter?: number   // only for content_type='show'; absent = all seasons
-  weight:        number    // weighted selection probability (rerun modes)
-  run_count:     number    // sequential episodes per selection (rerun modes)
-  title:         string    // display-ready label (computed server-side)
+  title:         string
+  weight:        number
+  run_count:     number
+  season_filter?: number
+  // deep only — shows
+  imdb_id?:      string
+  tvdb_id?:      string
+  tmdb_id?:      string
+  // deep only — episodes
+  season?:       number
+  episode?:      number
+  show_imdb_id?: string
+  show_tvdb_id?: string
+  show_tmdb_id?: string
+}
+
+export interface ChannelExportBlock {
+  name:                     string
+  block_type:               BlockType
+  day_mask:                 number
+  start_time:               string
+  end_time?:                string
+  program_count:            number
+  priority:                 number
+  advancement:              Advancement
+  cursor_scope:             CursorScope
+  max_content_rating:       string
+  late_start_mins:          number
+  early_start_secs:         number
+  align_to_mins:            number
+  inter_filler:             boolean
+  filler_selection:         FillerSelectionMode
+  smart_pct:                number
+  start_scope:              StartScope
+  no_history_behavior:      NoHistoryBehavior
+  max_consecutive_episodes: number
+  content:                  ChannelExportContent[]
+  filler_entries:           ChannelExportFillerEntry[]
+}
+
+export interface ChannelExport {
+  kairos_export: number
+  depth:         ExportDepth
+  channel: {
+    name:                     string
+    number:                   number
+    timezone:                 string
+    advance_mode?:            AdvanceMode
+    default_filler_selection: FillerSelectionMode
+    seed?:                    number
+    default_filler_entries:   ChannelExportFillerEntry[]
+  }
+  blocks: ChannelExportBlock[]
+}
+
+export interface ImportResult {
+  channel_id: string
+  unresolved: { block_name: string; content_type: string; title: string; reason: string }[]
 }
 
 export interface Block {
   block_id:            string
   channel_id:          string
+  name:                string
   block_type:          BlockType
   day_mask:            number   // Sun=1 Mon=2 Tue=4 Wed=8 Thu=16 Fri=32 Sat=64
   start_time:          string   // "HH:MM"
@@ -316,4 +391,16 @@ export interface PlexBrowseItem {
   season?:     number
   episode?:    number
   available:   boolean
+}
+
+// ── Downloads ─────────────────────────────────────────────────────────────────
+
+export interface DownloadJob {
+  id:         string
+  url:        string
+  dest_path:  string
+  status:     'queued' | 'running' | 'done' | 'error'
+  progress:   number   // 0–100
+  log:        string[]
+  started_at: string   // ISO-8601
 }

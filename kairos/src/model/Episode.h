@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <string>
 #include <cstdint>
 
@@ -11,7 +12,8 @@ struct Episode {
     std::string file_path;
     int64_t     duration_ms = 0;
 
-    std::string overview;
-    std::string air_date;   // "YYYY-MM-DD"
-    std::string thumb;
+    std::string      overview;
+    std::string      air_date;       // "YYYY-MM-DD"
+    std::string      thumb;
+    std::optional<int> absolute_index; // TVDB absolute episode number; null if not available
 };

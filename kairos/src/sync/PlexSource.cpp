@@ -1,4 +1,5 @@
 #include "PlexSource.h"
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <iostream>
 
@@ -178,7 +179,10 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
     client.set_connection_timeout(10);
     client.set_read_timeout(30);
 
-    auto res = client.Get("/library/metadata/" + external_show_id + "/allLeaves");
+    // Request season/episode order explicitly so the Plex server pre-sorts when it can.
+    const std::string path = "/library/metadata/" + external_show_id
+                           + "/allLeaves?sort=parentIndex%3Aasc%2Cindex%3Aasc";
+    auto res = client.Get(path);
     if (!res) {
         std::cerr << "[plex:" << source_id_ << "] /library/metadata/" << external_show_id
                   << "/allLeaves — " << httplib::to_string(res.error()) << '\n';
@@ -202,22 +206,37 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
             }
             if (file_path.empty()) continue;
 
+            const int season = item.value("parentIndex", 0);
+            const std::string air_date = item.value("originallyAvailableAt", "");
+
+            // Season 0 (specials/unmatched) with no air date are stub entries —
+            // they have no scheduling value and pollute episode cursors.
+            if (season == 0 && air_date.empty()) continue;
+
             Episode ep;
             ep.episode_id  = item["ratingKey"].get<std::string>();
             ep.show_id     = item["grandparentRatingKey"].get<std::string>(); // resolved by SyncManager
-            ep.season      = item.value("parentIndex", 0);
+            ep.season      = season;
             ep.episode     = item.value("index", 0);
             ep.title       = item.value("title", "");
             ep.file_path   = std::move(file_path);
             ep.duration_ms = item.value("duration", int64_t{0});
             ep.overview    = item.value("summary", "");
-            ep.air_date    = item.value("originallyAvailableAt", "");
+            ep.air_date    = air_date;
             ep.thumb       = item.value("thumb", "");
+            if (item.contains("absoluteIndex") && !item["absoluteIndex"].is_null())
+                ep.absolute_index = item["absoluteIndex"].get<int>();
             result.push_back(std::move(ep));
         }
     } catch (const json::exception& e) {
         std::cerr << "[plex:" << source_id_ << "] parse error (episodes): " << e.what() << '\n';
     }
+
+    // Sort client-side as a fallback in case the server ignores the sort param.
+    std::sort(result.begin(), result.end(), [](const Episode& a, const Episode& b) {
+        return a.season != b.season ? a.season < b.season : a.episode < b.episode;
+    });
+
     return result;
 }
 

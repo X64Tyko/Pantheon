@@ -33,6 +33,9 @@ public:
     bool hasUserId(const std::string& source_id) const;
     std::vector<std::string> allSources() const;
 
+    std::string getDownloadPath() const;
+    void        setDownloadPath(const std::string& path);
+
     // Rewrite a file path by applying the first matching path_map prefix across
     // all configured sources. Returns the path unchanged if no mapping matches.
     std::string applyPathMap(const std::string& path) const;
@@ -60,6 +63,7 @@ private:
     std::string                              path_;
     std::filesystem::file_time_type          mtime_{};
     std::unordered_map<std::string, Entry>   entries_;
+    std::string                              download_path_;
     mutable std::mutex                       mu_;
 
     // Throttle maybeReload() to at most once per 30 seconds.

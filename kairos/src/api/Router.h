@@ -3,6 +3,7 @@
 
 class ConfStore;
 class Database;
+class DownloadManager;
 class EPGMaterializer;
 class LogBuffer;
 class RuleEngine;
@@ -12,7 +13,8 @@ class Router {
 public:
     Router(httplib::Server& svr, Database& db, SyncManager& sync,
            ConfStore& conf, LogBuffer& logs,
-           RuleEngine& engine, EPGMaterializer& materializer);
+           RuleEngine& engine, EPGMaterializer& materializer,
+           DownloadManager& dl);
     void registerRoutes();
 
 private:
@@ -25,6 +27,7 @@ private:
     void registerFillerRoutes();
     void registerActivityRoutes();
     void registerSchedulerRoutes();
+    void registerDownloadRoutes();
 
     static void ok(httplib::Response& res, const std::string& json);
     static void err(httplib::Response& res, int status, const std::string& msg);
@@ -51,4 +54,5 @@ private:
     LogBuffer&        logs_;
     RuleEngine&       engine_;
     EPGMaterializer&  materializer_;
+    DownloadManager&  dl_;
 };

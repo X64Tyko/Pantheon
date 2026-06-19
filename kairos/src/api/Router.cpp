@@ -1,6 +1,7 @@
 #include "Router.h"
 #include "conf/ConfStore.h"
 #include "db/Database.h"
+#include "download/DownloadManager.h"
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
@@ -111,13 +112,20 @@ void Router::clearScheduleCache(const std::string& channel_id) {
 
 Router::Router(httplib::Server& svr, Database& db, SyncManager& sync,
                ConfStore& conf, LogBuffer& logs,
-               RuleEngine& engine, EPGMaterializer& materializer)
+               RuleEngine& engine, EPGMaterializer& materializer,
+               DownloadManager& dl)
     : svr_(svr), db_(db), sync_(sync), conf_(conf), logs_(logs),
-      engine_(engine), materializer_(materializer)
+      engine_(engine), materializer_(materializer), dl_(dl)
 {}
 
 static void logErr(const std::string& ctx, const std::exception& e) {
     std::cerr << "[error] " << ctx << ": " << e.what() << "\n";
+}
+
+static bool isValidTimezone(const std::string& tz) {
+    if (tz.empty()) return false;
+    try { std::chrono::locate_zone(tz); return true; }
+    catch (...) { return false; }
 }
 
 void Router::registerRoutes() {
@@ -147,6 +155,7 @@ void Router::registerRoutes() {
     registerPlaylistRoutes();
     registerFillerRoutes();
     registerActivityRoutes();
+    registerDownloadRoutes();
     registerSchedulerRoutes();
 
     // Sync status
@@ -715,6 +724,9 @@ void Router::registerChannelRoutes() {
             if (name.empty() || number == 0) {
                 err(res, 400, "name and number required"); return;
             }
+            if (!isValidTimezone(timezone)) {
+                err(res, 400, ("invalid timezone: " + timezone).c_str()); return;
+            }
             std::string channel_id = generateId();
             SQLite::Statement s(db_.get(),
                 "INSERT INTO channel (channel_id, name, number, timezone, advance_mode) VALUES (?,?,?,?,?)");
@@ -740,7 +752,11 @@ void Router::registerChannelRoutes() {
                 s.bind(1, val); s.bind(2, id); s.exec();
             };
             if (b.contains("name"))                     upd("name",                     b["name"]);
-            if (b.contains("timezone"))                 upd("timezone",                 b["timezone"]);
+            if (b.contains("timezone")) {
+                std::string tz = b["timezone"].get<std::string>();
+                if (!isValidTimezone(tz)) { err(res, 400, ("invalid timezone: " + tz).c_str()); return; }
+                upd("timezone", tz);
+            }
             if (b.contains("number")) {
                 SQLite::Statement s(db_.get(), "UPDATE channel SET number = ? WHERE channel_id = ?");
                 s.bind(1, b["number"].get<int>()); s.bind(2, id); s.exec();
@@ -766,6 +782,365 @@ void Router::registerChannelRoutes() {
             s.exec();
             ok(res, json{{"deleted", id}}.dump());
         } catch (const std::exception& e) { err(res, 500, e.what()); }
+    });
+
+    // ── Export / Import ───────────────────────────────────────────────────────
+
+    svr_.Get("/api/channels/:id/export", [this](const Req& req, Res& res) {
+        auto channel_id = req.path_params.at("id");
+        std::string depth = "shallow";
+        if (req.has_param("depth")) depth = req.get_param_value("depth");
+        bool deep = (depth == "deep");
+        try {
+            SQLite::Statement cq(db_.get(), R"(
+                SELECT name, number, timezone, advance_mode, default_filler_selection, seed
+                FROM channel WHERE channel_id = ?
+            )");
+            cq.bind(1, channel_id);
+            if (!cq.executeStep()) { err(res, 404, "channel not found"); return; }
+
+            json channel_j = {
+                {"name",                     cq.getColumn(0).getString()},
+                {"number",                   cq.getColumn(1).getInt()},
+                {"timezone",                 cq.getColumn(2).getString()},
+                {"advance_mode",             cq.getColumn(3).getString()},
+                {"default_filler_selection", cq.getColumn(4).getString()},
+            };
+            if (!cq.getColumn(5).isNull()) channel_j["seed"] = cq.getColumn(5).getInt();
+
+            SQLite::Statement cfq(db_.get(), R"(
+                SELECT fl.title, cfe.advancement, cfe.weight
+                FROM channel_filler_entry cfe
+                JOIN filler_list fl ON fl.filler_list_id = cfe.filler_list_id
+                WHERE cfe.channel_id = ? ORDER BY cfe.position
+            )");
+            cfq.bind(1, channel_id);
+            json ch_filler = json::array();
+            while (cfq.executeStep()) {
+                ch_filler.push_back({
+                    {"title",       cfq.getColumn(0).getString()},
+                    {"advancement", cfq.getColumn(1).getString()},
+                    {"weight",      cfq.getColumn(2).getInt()},
+                });
+            }
+            channel_j["default_filler_entries"] = ch_filler;
+
+            SQLite::Statement bq(db_.get(), R"(
+                SELECT block_id, name, block_type, day_mask, start_time, end_time,
+                       program_count, priority, max_content_rating, advancement, cursor_scope,
+                       late_start_mins, align_to_mins, inter_filler, early_start_secs,
+                       filler_selection, smart_pct, start_scope, no_history_behavior,
+                       max_consecutive_episodes
+                FROM block WHERE channel_id = ?
+                ORDER BY start_time, priority DESC
+            )");
+            bq.bind(1, channel_id);
+
+            json blocks = json::array();
+            while (bq.executeStep()) {
+                std::string bid = bq.getColumn(0).getString();
+                json block_j = {
+                    {"name",                     bq.getColumn(1).getString()},
+                    {"block_type",               bq.getColumn(2).getString()},
+                    {"day_mask",                 bq.getColumn(3).getInt()},
+                    {"start_time",               bq.getColumn(4).getString()},
+                    {"program_count",            bq.getColumn(6).getInt()},
+                    {"priority",                 bq.getColumn(7).getInt()},
+                    {"max_content_rating",       bq.getColumn(8).getString()},
+                    {"advancement",              bq.getColumn(9).getString()},
+                    {"cursor_scope",             bq.getColumn(10).getString()},
+                    {"late_start_mins",          bq.getColumn(11).getInt()},
+                    {"align_to_mins",            bq.getColumn(12).getInt()},
+                    {"inter_filler",             bq.getColumn(13).getInt() != 0},
+                    {"early_start_secs",         bq.getColumn(14).getInt()},
+                    {"filler_selection",         bq.getColumn(15).getString()},
+                    {"smart_pct",                bq.getColumn(16).getInt()},
+                    {"start_scope",              bq.getColumn(17).getString()},
+                    {"no_history_behavior",      bq.getColumn(18).getString()},
+                    {"max_consecutive_episodes", bq.getColumn(19).getInt()},
+                };
+                if (!bq.getColumn(5).isNull()) block_j["end_time"] = bq.getColumn(5).getString();
+
+                SQLite::Statement ccq(db_.get(), R"(
+                    SELECT bc.content_type, bc.weight, bc.run_count, bc.season_filter,
+                           CASE bc.content_type
+                               WHEN 'show'        THEN COALESCE(sw.title,'')
+                               WHEN 'movie'       THEN COALESCE(m.title,'')
+                               WHEN 'episode'     THEN COALESCE(esw.title,'') ||
+                                                       ' S' || PRINTF('%02d',e.season) ||
+                                                       'E' || PRINTF('%02d',e.episode)
+                               WHEN 'playlist'    THEN COALESCE(pl.title,'')
+                               WHEN 'filler_list' THEN COALESCE(fl.title,'')
+                               ELSE ''
+                           END AS title,
+                           COALESCE(sw.imdb_id,''), COALESCE(sw.tvdb_id,''), COALESCE(sw.tmdb_id,''),
+                           COALESCE(m.imdb_id,''),  COALESCE(m.tmdb_id,''),
+                           e.season, e.episode,
+                           COALESCE(esw.imdb_id,''), COALESCE(esw.tvdb_id,''), COALESCE(esw.tmdb_id,'')
+                    FROM block_content bc
+                    LEFT JOIN show        sw  ON bc.content_type = 'show'        AND bc.content_id = sw.show_id
+                    LEFT JOIN movie       m   ON bc.content_type = 'movie'       AND bc.content_id = m.movie_id
+                    LEFT JOIN episode     e   ON bc.content_type = 'episode'     AND bc.content_id = e.episode_id
+                    LEFT JOIN show        esw ON bc.content_type = 'episode'     AND e.show_id = esw.show_id
+                    LEFT JOIN playlist    pl  ON bc.content_type = 'playlist'    AND bc.content_id = pl.playlist_id
+                    LEFT JOIN filler_list fl  ON bc.content_type = 'filler_list' AND bc.content_id = fl.filler_list_id
+                    WHERE bc.block_id = ? ORDER BY bc.position
+                )");
+                ccq.bind(1, bid);
+                json content = json::array();
+                while (ccq.executeStep()) {
+                    std::string ct = ccq.getColumn(0).getString();
+                    json item = {
+                        {"content_type", ct},
+                        {"weight",       ccq.getColumn(1).getInt()},
+                        {"run_count",    ccq.getColumn(2).getInt()},
+                        {"title",        ccq.getColumn(4).getString()},
+                    };
+                    if (!ccq.getColumn(3).isNull()) item["season_filter"] = ccq.getColumn(3).getInt();
+                    if (deep) {
+                        if (ct == "show") {
+                            item["imdb_id"] = ccq.getColumn(5).getString();
+                            item["tvdb_id"] = ccq.getColumn(6).getString();
+                            item["tmdb_id"] = ccq.getColumn(7).getString();
+                        } else if (ct == "movie") {
+                            item["imdb_id"] = ccq.getColumn(8).getString();
+                            item["tmdb_id"] = ccq.getColumn(9).getString();
+                        } else if (ct == "episode") {
+                            if (!ccq.getColumn(10).isNull()) item["season"]  = ccq.getColumn(10).getInt();
+                            if (!ccq.getColumn(11).isNull()) item["episode"] = ccq.getColumn(11).getInt();
+                            item["show_imdb_id"] = ccq.getColumn(12).getString();
+                            item["show_tvdb_id"] = ccq.getColumn(13).getString();
+                            item["show_tmdb_id"] = ccq.getColumn(14).getString();
+                        }
+                    }
+                    content.push_back(item);
+                }
+                block_j["content"] = content;
+
+                SQLite::Statement bfq(db_.get(), R"(
+                    SELECT fl.title, bfe.advancement, bfe.weight
+                    FROM block_filler_entry bfe
+                    JOIN filler_list fl ON fl.filler_list_id = bfe.filler_list_id
+                    WHERE bfe.block_id = ? ORDER BY bfe.position
+                )");
+                bfq.bind(1, bid);
+                json bfiller = json::array();
+                while (bfq.executeStep()) {
+                    bfiller.push_back({
+                        {"title",       bfq.getColumn(0).getString()},
+                        {"advancement", bfq.getColumn(1).getString()},
+                        {"weight",      bfq.getColumn(2).getInt()},
+                    });
+                }
+                block_j["filler_entries"] = bfiller;
+                blocks.push_back(block_j);
+            }
+
+            ok(res, json{
+                {"kairos_export", 1},
+                {"depth",         depth},
+                {"channel",       channel_j},
+                {"blocks",        blocks},
+            }.dump(2));
+        } catch (const std::exception& e) {
+            logErr("GET /api/channels/:id/export", e); err(res, 500, e.what());
+        }
+    });
+
+    svr_.Post("/api/channels/import", [this](const Req& req, Res& res) {
+        try {
+            auto body  = json::parse(req.body);
+            auto ch    = body.at("channel");
+            bool deep  = (body.value("depth", "shallow") == "deep");
+
+            std::string channel_id = generateId();
+            {
+                SQLite::Statement s(db_.get(), R"(
+                    INSERT INTO channel (channel_id, name, number, timezone, advance_mode,
+                                        default_filler_selection)
+                    VALUES (?,?,?,?,?,?)
+                )");
+                std::string imp_tz = ch.value("timezone", "UTC");
+                if (!isValidTimezone(imp_tz)) imp_tz = "UTC";
+                s.bind(1, channel_id);
+                s.bind(2, ch.value("name", "Imported Channel"));
+                s.bind(3, ch.value("number", 1));
+                s.bind(4, imp_tz);
+                s.bind(5, ch.value("advance_mode", "scheduled"));
+                s.bind(6, ch.value("default_filler_selection", "round_robin"));
+                s.exec();
+            }
+            if (ch.contains("seed") && !ch["seed"].is_null()) {
+                SQLite::Statement s(db_.get(), "UPDATE channel SET seed = ? WHERE channel_id = ?");
+                s.bind(1, ch["seed"].get<int>()); s.bind(2, channel_id); s.exec();
+            }
+
+            // Channel filler entries — resolve by title
+            int cfpos = 0;
+            for (auto& fe : ch.value("default_filler_entries", json::array())) {
+                std::string ftitle = fe.value("title", "");
+                SQLite::Statement fq(db_.get(), "SELECT filler_list_id FROM filler_list WHERE title = ? LIMIT 1");
+                fq.bind(1, ftitle);
+                if (!fq.executeStep()) { cfpos++; continue; }
+                std::string fid = fq.getColumn(0).getString();
+                SQLite::Statement ins(db_.get(), R"(
+                    INSERT OR IGNORE INTO channel_filler_entry
+                        (channel_id, filler_list_id, advancement, weight, position)
+                    VALUES (?,?,?,?,?)
+                )");
+                ins.bind(1, channel_id); ins.bind(2, fid);
+                ins.bind(3, fe.value("advancement", "sized")); ins.bind(4, fe.value("weight", 1));
+                ins.bind(5, cfpos++); ins.exec();
+            }
+
+            json unresolved = json::array();
+
+            for (auto& blk : body.value("blocks", json::array())) {
+                std::string block_id = generateId();
+                std::string end_time = blk.value("end_time", "");
+                SQLite::Statement s(db_.get(), R"(
+                    INSERT INTO block (block_id, channel_id, name, block_type, day_mask,
+                                       start_time, end_time, program_count, priority,
+                                       max_content_rating, advancement, cursor_scope,
+                                       late_start_mins, align_to_mins, inter_filler,
+                                       early_start_secs, filler_selection, smart_pct,
+                                       start_scope, no_history_behavior,
+                                       max_consecutive_episodes)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                )");
+                s.bind(1, block_id); s.bind(2, channel_id);
+                s.bind(3, blk.value("name", ""));
+                s.bind(4, blk.value("block_type", "episode"));
+                s.bind(5, blk.value("day_mask", 127));
+                s.bind(6, blk.value("start_time", "00:00"));
+                if (end_time.empty()) s.bind(7); else s.bind(7, end_time);
+                s.bind(8,  blk.value("program_count",      0));
+                s.bind(9,  blk.value("priority",           0));
+                s.bind(10, blk.value("max_content_rating", ""));
+                s.bind(11, blk.value("advancement",        "sequential"));
+                s.bind(12, blk.value("cursor_scope",       "block"));
+                s.bind(13, blk.value("late_start_mins",    0));
+                s.bind(14, blk.value("align_to_mins",      0));
+                s.bind(15, blk.value("inter_filler", false) ? 1 : 0);
+                s.bind(16, blk.value("early_start_secs",         0));
+                s.bind(17, blk.value("filler_selection",   "round_robin"));
+                s.bind(18, blk.value("smart_pct",          30));
+                s.bind(19, blk.value("start_scope",        "block"));
+                s.bind(20, blk.value("no_history_behavior", "normal"));
+                s.bind(21, blk.value("max_consecutive_episodes", 0));
+                s.exec();
+
+                // Content items
+                int pos = 0;
+                std::string block_name = blk.value("name", "");
+                for (auto& item : blk.value("content", json::array())) {
+                    std::string ct    = item.value("content_type", "");
+                    std::string title = item.value("title", "");
+                    std::string content_id;
+
+                    auto tryQuery = [&](const char* sql, const std::string& val) {
+                        if (!content_id.empty() || val.empty()) return;
+                        SQLite::Statement q(db_.get(), sql);
+                        q.bind(1, val);
+                        if (q.executeStep()) content_id = q.getColumn(0).getString();
+                    };
+
+                    if (ct == "show") {
+                        if (deep) {
+                            tryQuery("SELECT show_id FROM show WHERE imdb_id = ? AND imdb_id != '' LIMIT 1", item.value("imdb_id",""));
+                            tryQuery("SELECT show_id FROM show WHERE tvdb_id = ? AND tvdb_id != '' LIMIT 1", item.value("tvdb_id",""));
+                            tryQuery("SELECT show_id FROM show WHERE tmdb_id = ? AND tmdb_id != '' LIMIT 1", item.value("tmdb_id",""));
+                        }
+                        tryQuery("SELECT show_id FROM show WHERE title = ? LIMIT 1", title);
+                    } else if (ct == "movie") {
+                        if (deep) {
+                            tryQuery("SELECT movie_id FROM movie WHERE imdb_id = ? AND imdb_id != '' LIMIT 1", item.value("imdb_id",""));
+                            tryQuery("SELECT movie_id FROM movie WHERE tmdb_id = ? AND tmdb_id != '' LIMIT 1", item.value("tmdb_id",""));
+                        }
+                        tryQuery("SELECT movie_id FROM movie WHERE title = ? LIMIT 1", title);
+                    } else if (ct == "episode" && deep) {
+                        std::string show_id;
+                        auto tryShow = [&](const char* col, const std::string& val) {
+                            if (!show_id.empty() || val.empty()) return;
+                            SQLite::Statement q(db_.get(),
+                                std::string("SELECT show_id FROM show WHERE ") + col + " = ? AND " + col + " != '' LIMIT 1");
+                            q.bind(1, val);
+                            if (q.executeStep()) show_id = q.getColumn(0).getString();
+                        };
+                        tryShow("imdb_id", item.value("show_imdb_id",""));
+                        tryShow("tvdb_id", item.value("show_tvdb_id",""));
+                        tryShow("tmdb_id", item.value("show_tmdb_id",""));
+                        if (!show_id.empty()) {
+                            SQLite::Statement q(db_.get(),
+                                "SELECT episode_id FROM episode WHERE show_id=? AND season=? AND episode=? LIMIT 1");
+                            q.bind(1, show_id);
+                            q.bind(2, item.value("season",  0));
+                            q.bind(3, item.value("episode", 0));
+                            if (q.executeStep()) content_id = q.getColumn(0).getString();
+                        }
+                    } else if (ct == "playlist") {
+                        tryQuery("SELECT playlist_id FROM playlist WHERE title = ? LIMIT 1", title);
+                    } else if (ct == "filler_list") {
+                        tryQuery("SELECT filler_list_id FROM filler_list WHERE title = ? LIMIT 1", title);
+                    }
+
+                    if (content_id.empty()) {
+                        unresolved.push_back({
+                            {"block_name",   block_name},
+                            {"content_type", ct},
+                            {"title",        title},
+                            {"reason",       "no match found"},
+                        });
+                        pos++; continue;
+                    }
+
+                    SQLite::Statement ins(db_.get(), R"(
+                        INSERT OR IGNORE INTO block_content
+                            (block_id, content_type, content_id, position, weight, run_count)
+                        VALUES (?,?,?,?,?,?)
+                    )");
+                    ins.bind(1, block_id); ins.bind(2, ct); ins.bind(3, content_id);
+                    ins.bind(4, pos);
+                    ins.bind(5, item.value("weight",    1));
+                    ins.bind(6, item.value("run_count", 1));
+                    ins.exec();
+
+                    if (item.contains("season_filter") && !item["season_filter"].is_null()) {
+                        SQLite::Statement upd(db_.get(), R"(
+                            UPDATE block_content SET season_filter = ?
+                            WHERE block_id = ? AND content_type = ? AND content_id = ?
+                        )");
+                        upd.bind(1, item["season_filter"].get<int>());
+                        upd.bind(2, block_id); upd.bind(3, ct); upd.bind(4, content_id);
+                        upd.exec();
+                    }
+                    pos++;
+                }
+
+                // Block filler entries
+                for (auto& fe : blk.value("filler_entries", json::array())) {
+                    std::string ftitle = fe.value("title", "");
+                    SQLite::Statement fq(db_.get(), "SELECT filler_list_id FROM filler_list WHERE title = ? LIMIT 1");
+                    fq.bind(1, ftitle);
+                    if (!fq.executeStep()) continue;
+                    std::string fid = fq.getColumn(0).getString();
+                    SQLite::Statement pq(db_.get(),
+                        "SELECT COALESCE(MAX(position),-1)+1 FROM block_filler_entry WHERE block_id = ?");
+                    pq.bind(1, block_id); pq.executeStep();
+                    SQLite::Statement ins(db_.get(), R"(
+                        INSERT OR IGNORE INTO block_filler_entry
+                            (block_id, filler_list_id, advancement, weight, position)
+                        VALUES (?,?,?,?,?)
+                    )");
+                    ins.bind(1, block_id); ins.bind(2, fid);
+                    ins.bind(3, fe.value("advancement", "sized")); ins.bind(4, fe.value("weight", 1));
+                    ins.bind(5, pq.getColumn(0).getInt()); ins.exec();
+                }
+            }
+
+            res.status = 201;
+            ok(res, json{{"channel_id", channel_id}, {"unresolved", unresolved}}.dump());
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
 
     // ── Channel filler entry CRUD ─────────────────────────────────────────────
@@ -852,7 +1227,7 @@ void Router::registerBlockRoutes() {
                    program_count, priority, max_content_rating, advancement, cursor_scope,
                    late_start_mins, align_to_mins, inter_filler, early_start_secs,
                    filler_selection, smart_pct, start_scope, no_history_behavior,
-                   max_consecutive_episodes
+                   max_consecutive_episodes, name
             FROM block WHERE channel_id = ?
             ORDER BY start_time, priority DESC
         )");
@@ -881,13 +1256,14 @@ void Router::registerBlockRoutes() {
                 {"start_scope",                q.getColumn(16).getString()},
                 {"no_history_behavior",        q.getColumn(17).getString()},
                 {"max_consecutive_episodes",   q.getColumn(18).getInt()},
+                {"name",                       q.getColumn(19).getString()},
             };
             if (!q.getColumn(4).isNull()) block["end_time"] = q.getColumn(4).getString();
 
             // Content items — multi-type title join
             SQLite::Statement cq(db_.get(), R"(
                 SELECT bc.id, bc.content_type, bc.content_id, bc.position, bc.season_filter,
-                       bc.weight, bc.run_count,
+                       bc.weight, bc.run_count, bc.include_specials, bc.episode_order,
                        CASE bc.content_type
                            WHEN 'show'        THEN COALESCE(sw.title,'') ||
                                                    CASE WHEN bc.season_filter IS NOT NULL
@@ -915,13 +1291,15 @@ void Router::registerBlockRoutes() {
             json content = json::array();
             while (cq.executeStep()) {
                 json item = {
-                    {"id",           cq.getColumn(0).getInt()},
-                    {"content_type", cq.getColumn(1).getString()},
-                    {"content_id",   cq.getColumn(2).getString()},
-                    {"position",     cq.getColumn(3).getInt()},
-                    {"weight",       cq.getColumn(5).getInt()},
-                    {"run_count",    cq.getColumn(6).getInt()},
-                    {"title",        cq.getColumn(7).getString()},
+                    {"id",               cq.getColumn(0).getInt()},
+                    {"content_type",     cq.getColumn(1).getString()},
+                    {"content_id",       cq.getColumn(2).getString()},
+                    {"position",         cq.getColumn(3).getInt()},
+                    {"weight",           cq.getColumn(5).getInt()},
+                    {"run_count",        cq.getColumn(6).getInt()},
+                    {"include_specials", cq.getColumn(7).getInt() != 0},
+                    {"episode_order",    cq.getColumn(8).getString()},
+                    {"title",            cq.getColumn(9).getString()},
                 };
                 if (!cq.getColumn(4).isNull()) item["season_filter"] = cq.getColumn(4).getInt();
                 content.push_back(item);
@@ -964,6 +1342,7 @@ void Router::registerBlockRoutes() {
         try {
             auto b = json::parse(req.body);
             std::string block_id         = generateId();
+            std::string block_name       = b.value("name",               "");
             std::string block_type       = b.value("block_type",         "episode");
             int         day_mask         = b.value("day_mask",           127);
             std::string start_time       = b.value("start_time",         "00:00");
@@ -984,23 +1363,23 @@ void Router::registerBlockRoutes() {
             int         max_consecutive_episodes = b.value("max_consecutive_episodes", 0);
 
             SQLite::Statement s(db_.get(), R"(
-                INSERT INTO block (block_id, channel_id, block_type, day_mask,
+                INSERT INTO block (block_id, channel_id, name, block_type, day_mask,
                                    start_time, end_time, program_count, priority,
                                    max_content_rating, advancement, cursor_scope,
                                    late_start_mins, align_to_mins, inter_filler,
                                    early_start_secs, filler_selection, smart_pct,
                                    start_scope, no_history_behavior,
                                    max_consecutive_episodes)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             )");
-            s.bind(1, block_id);       s.bind(2, channel_id);    s.bind(3, block_type);
-            s.bind(4, day_mask);       s.bind(5, start_time);
-            if (end_time.empty()) s.bind(6); else s.bind(6, end_time);
-            s.bind(7, program_count);  s.bind(8, priority);       s.bind(9, max_rating);
-            s.bind(10, advancement);   s.bind(11, cursor_scope);  s.bind(12, late_start_mins);
-            s.bind(13, align_to_mins); s.bind(14, inter_filler);  s.bind(15, early_start_secs);
-            s.bind(16, filler_selection); s.bind(17, smart_pct);  s.bind(18, start_scope);
-            s.bind(19, no_history_behavior); s.bind(20, max_consecutive_episodes);
+            s.bind(1, block_id);       s.bind(2, channel_id);    s.bind(3, block_name);
+            s.bind(4, block_type);     s.bind(5, day_mask);       s.bind(6, start_time);
+            if (end_time.empty()) s.bind(7); else s.bind(7, end_time);
+            s.bind(8, program_count);  s.bind(9, priority);       s.bind(10, max_rating);
+            s.bind(11, advancement);   s.bind(12, cursor_scope);  s.bind(13, late_start_mins);
+            s.bind(14, align_to_mins); s.bind(15, inter_filler);  s.bind(16, early_start_secs);
+            s.bind(17, filler_selection); s.bind(18, smart_pct);  s.bind(19, start_scope);
+            s.bind(20, no_history_behavior); s.bind(21, max_consecutive_episodes);
             s.exec();
 
             clearScheduleCache(channel_id);
@@ -1030,6 +1409,7 @@ void Router::registerBlockRoutes() {
                     std::string("UPDATE block SET ") + col + " = NULL WHERE block_id = ?");
                 s.bind(1, bid); s.exec();
             };
+            if (b.contains("name"))                upd("name",               b["name"]);
             if (b.contains("block_type"))         upd("block_type",         b["block_type"]);
             if (b.contains("day_mask"))            updI("day_mask",          b["day_mask"]);
             if (b.contains("start_time"))          upd("start_time",         b["start_time"]);
@@ -1089,10 +1469,14 @@ void Router::registerBlockRoutes() {
                 if (pq.executeStep()) position = pq.getColumn(0).getInt();
             }
 
+            bool include_specials = b.value("include_specials", false);
+            std::string episode_order = b.value("episode_order", std::string("season"));
+
             SQLite::Statement s(db_.get(), R"(
                 INSERT INTO block_content
-                    (block_id, content_type, content_id, position, season_filter, weight, run_count)
-                VALUES (?,?,?,?,?,?,?)
+                    (block_id, content_type, content_id, position, season_filter, weight, run_count,
+                     include_specials, episode_order)
+                VALUES (?,?,?,?,?,?,?,?,?)
             )");
             s.bind(1, bid); s.bind(2, content_type); s.bind(3, content_id); s.bind(4, position);
             if (b.contains("season_filter") && !b["season_filter"].is_null())
@@ -1100,6 +1484,7 @@ void Router::registerBlockRoutes() {
             else
                 s.bind(5);  // NULL
             s.bind(6, weight); s.bind(7, run_count);
+            s.bind(8, include_specials ? 1 : 0); s.bind(9, episode_order);
             s.exec();
 
             clearScheduleCache(channel_id);
@@ -1140,6 +1525,16 @@ void Router::registerBlockRoutes() {
                 SQLite::Statement s(db_.get(),
                     "UPDATE block_content SET run_count = ? WHERE id = ?");
                 s.bind(1, b["run_count"].get<int>()); s.bind(2, std::stoi(cid)); s.exec();
+            }
+            if (b.contains("include_specials")) {
+                SQLite::Statement s(db_.get(),
+                    "UPDATE block_content SET include_specials = ? WHERE id = ?");
+                s.bind(1, b["include_specials"].get<bool>() ? 1 : 0); s.bind(2, std::stoi(cid)); s.exec();
+            }
+            if (b.contains("episode_order")) {
+                SQLite::Statement s(db_.get(),
+                    "UPDATE block_content SET episode_order = ? WHERE id = ?");
+                s.bind(1, b["episode_order"].get<std::string>()); s.bind(2, std::stoi(cid)); s.exec();
             }
             clearScheduleCache(channel_id);
             ok(res, json{{"ok", true}}.dump());
@@ -2563,6 +2958,59 @@ void Router::registerActivityRoutes() {
                 }
                 return true;
             });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Downloads — yt-dlp job management
+// ---------------------------------------------------------------------------
+
+void Router::registerDownloadRoutes() {
+
+    svr_.Get("/api/config/download", [this](const Req&, Res& res) {
+        ok(res, json{{"path", conf_.getDownloadPath()}}.dump());
+    });
+
+    svr_.Put("/api/config/download", [this](const Req& req, Res& res) {
+        try {
+            auto b    = json::parse(req.body);
+            auto path = b.value("path", "");
+            conf_.setDownloadPath(path);
+            ok(res, json{{"ok", true}}.dump());
+        } catch (const json::exception& e) { err(res, 400, e.what()); }
+    });
+
+    svr_.Post("/api/download/jobs", [this](const Req& req, Res& res) {
+        try {
+            auto b    = json::parse(req.body);
+            auto url  = b.value("url", "");
+            auto path = b.contains("path") && b["path"].is_string() && !b["path"].get<std::string>().empty()
+                            ? b["path"].get<std::string>()
+                            : conf_.getDownloadPath();
+            if (url.empty())  { err(res, 400, "url required");                    return; }
+            if (path.empty()) { err(res, 400, "download path not configured");    return; }
+            auto id = dl_.startJob(url, path);
+            ok(res, json{{"job_id", id}}.dump());
+        } catch (const json::exception& e) { err(res, 400, e.what()); }
+    });
+
+    svr_.Get("/api/download/jobs", [this](const Req&, Res& res) {
+        auto jobs = dl_.getJobs();
+        json result = json::array();
+        for (const auto& j : jobs) {
+            json log = json::array();
+            for (const auto& line : j.log) log.push_back(line);
+            result.push_back({
+                {"id",         j.id},
+                {"url",        j.url},
+                {"dest_path",  j.dest_path},
+                {"status",     j.status},
+                {"progress",   j.progress},
+                {"log",        log},
+                {"started_at", j.started_at},
+            });
+        }
+        ok(res, result.dump());
     });
 }
 

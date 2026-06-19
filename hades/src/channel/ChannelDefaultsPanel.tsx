@@ -45,7 +45,31 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         </div>
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>TIMEZONE</div>
-          <input value={store.channelDraftTimezone} onChange={e => store.setChannelDraft({ timezone: e.target.value })} style={inputStyle} placeholder="UTC" />
+          <input
+            list="tz-suggestions"
+            value={store.channelDraftTimezone}
+            onChange={e => store.setChannelDraft({ timezone: e.target.value })}
+            style={inputStyle}
+            placeholder="America/Denver"
+            spellCheck={false}
+          />
+          <datalist id="tz-suggestions">
+            <option value="UTC" />
+            <option value="America/New_York" />
+            <option value="America/Chicago" />
+            <option value="America/Denver" />
+            <option value="America/Los_Angeles" />
+            <option value="America/Anchorage" />
+            <option value="Pacific/Honolulu" />
+            <option value="Europe/London" />
+            <option value="Europe/Paris" />
+            <option value="Europe/Berlin" />
+            <option value="Australia/Sydney" />
+            <option value="Asia/Tokyo" />
+          </datalist>
+          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+            IANA format — e.g. <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>America/Denver</span>
+          </div>
         </div>
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>EPG SEED</div>

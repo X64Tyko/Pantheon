@@ -36,7 +36,7 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
         const filter  = isTop ? 'none' : `brightness(${(0.82 - depth * 0.1).toFixed(2)}) saturate(0.85)`
         const shadow  = block.priority > 1 ? '0 8px 22px -8px rgba(0,0,0,0.65)' : 'none'
         const outline = bulkSelected ? '2px solid var(--hds-violet)' : sel ? '2px solid var(--hds-gold)' : 'none'
-        const firstName = block.content[0]?.title ?? m.name
+        const firstName = block.name || block.content[0]?.title || m.name
         const showMeta  = height > 62
         const metaLabel = m.name.toUpperCase() + ' · P' + block.priority + (limitM === 'programs' ? ` · ${block.program_count}×` : '') + (limitM === 'programs' ? ' · flex' : '')
 

@@ -3,8 +3,13 @@
 # Unraid Compose Manager URL:
 #   https://raw.githubusercontent.com/X64Tyko/Pantheon/master/docker-compose.yml
 #
-# Before first run, edit the two MEDIA_PATH lines below to point at wherever
-# your media library lives on the host (e.g. /mnt/user/Media on Unraid).
+# Before first run, edit the volume paths below to match your setup:
+#   MEDIA_PATH  — your media library root (e.g. /mnt/user/Media on Unraid)
+#   FILLER_PATH — where yt-dlp downloads land; set this same path as the
+#                 Default Download Path in the Hades Downloads page (/downloads
+#                 inside the container maps to wherever FILLER_PATH points).
+#                 Point it at a folder Plex already watches so filler shows up
+#                 automatically after a library scan.
 #
 # Kairos stores its database and kairos.conf in ./data/kairos.
 # On first start Kairos creates a blank kairos.conf there.  Open the Kairos
@@ -22,7 +27,8 @@ services:
       # - KAIROS_DEBUG_EPG=1
     volumes:
       - /mnt/user/appdata/kairos:/data
-      - /mnt/user/Media:/media:ro   # <-- change to your media path
+      - /mnt/user/Media:/media:ro          # <-- change to your media path (read-only)
+      - /mnt/user/Media/Filler:/downloads  # <-- change to your filler destination (writable)
     restart: unless-stopped
 
   tunarr:

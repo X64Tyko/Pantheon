@@ -1,6 +1,21 @@
 import type { Block, BlockType } from '../api/types'
 import type { BlockDraft, LimitMode, PickerTab } from './types'
 
+// Returns 0=Mon…6=Sun for the current moment in the given timezone.
+export function todayEpgDay(tz: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz || 'UTC', weekday: 'short',
+    }).formatToParts(new Date())
+    const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(
+      parts.find(p => p.type === 'weekday')?.value ?? 'Mon'
+    )
+    return (dow + 6) % 7
+  } catch {
+    return (new Date().getDay() + 6) % 7
+  }
+}
+
 export function t2m(t: string): number {
   if (!t) return 0
   const [h, m] = t.split(':').map(Number)
@@ -49,6 +64,7 @@ export function normalizeBlock(b: Block): Block {
 
 export function blockToDraft(block: Block): BlockDraft {
   return {
+    name: block.name ?? '',
     block_type: block.block_type, day_mask: block.day_mask,
     start_time: block.start_time, end_time: block.end_time ?? '',
     program_count: block.program_count,

@@ -67,20 +67,25 @@ public:
     std::vector<Block> loadBlocks(const std::string& channel_id);
 
 private:
-    std::vector<Episode> getEpisodes(const std::string& show_id, std::optional<int> season);
+    std::vector<Episode> getEpisodes(const std::string& show_id, std::optional<int> season,
+                                      bool include_specials = false,
+                                      const std::string& episode_order = "season");
     // Only episodes with aired_at < before_time are returned (ensures true reruns).
     std::vector<Episode> getPlayedEpisodes(const std::string& show_id,
                                             const std::string& channel_id,
                                             std::optional<int> season,
                                             std::time_t before_time,
-                                            bool global_scope = false);
+                                            bool global_scope = false,
+                                            bool include_specials = false,
+                                            const std::string& episode_order = "season");
     // Like getPlayedEpisodes but excludes the most-recently-played smart_pct% of the pool.
     std::vector<Episode> getPlayedEpisodesWithCooldown(const std::string& show_id,
                                                         const std::string& channel_id,
                                                         std::optional<int> season,
                                                         int smart_pct,
                                                         std::time_t before_time,
-                                                        bool global_scope = false);
+                                                        bool global_scope = false,
+                                                        bool include_specials = false);
     std::optional<Movie>         getMovie(const std::string& movie_id);
     std::optional<ScheduledItem> episodeById(const std::string& episode_id);
     // Returns (item_type, item_id) pairs from a playlist or filler_list in order.

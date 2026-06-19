@@ -727,6 +727,18 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE playlist ADD COLUMN mode TEXT NOT NULL DEFAULT 'sequential';
 )SQL", false }
 
+,
+
+{ 24, R"SQL(
+    ALTER TABLE block ADD COLUMN name TEXT NOT NULL DEFAULT '';
+)SQL", false },
+
+{ 25, R"SQL(
+    ALTER TABLE episode      ADD COLUMN absolute_index   INTEGER;
+    ALTER TABLE block_content ADD COLUMN include_specials INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE block_content ADD COLUMN episode_order   TEXT    NOT NULL DEFAULT 'season';
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace

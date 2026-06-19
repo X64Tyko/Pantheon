@@ -60,6 +60,7 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
             items={store.pickerMovies.filter(m => !store.pickerQuery || m.title.toLowerCase().includes(store.pickerQuery.toLowerCase()))}
             getId={m => m.movie_id} dot={BLOCK_META.movie.edge}
             onAdd={(id, title) => store.addContent(channelId, { content_type: 'movie', content_id: id, title })}
+            getThumbUrl={id => `/api/movies/${id}/thumb`}
           />
         ) : store.pickerTab === 'episodes' ? (
           <EpisodePickerList store={store} channelId={channelId} query={store.pickerQuery.toLowerCase()} />
@@ -81,19 +82,24 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
 
 // ─── Generic list ─────────────────────────────────────────────────────────────
 
-function SimplePickerList<T extends { title: string }>({ items, getId, dot, onAdd }: { items: T[]; getId: (i: T) => string; dot: string; onAdd: (id: string, title: string) => void }) {
+function SimplePickerList<T extends { title: string }>({ items, getId, dot, onAdd, getThumbUrl }: { items: T[]; getId: (i: T) => string; dot: string; onAdd: (id: string, title: string) => void; getThumbUrl?: (id: string) => string }) {
   if (items.length === 0) return <p style={{ color: 'var(--hds-txt-3)', fontSize: 12, padding: 12 }}>No results.</p>
   return (
     <>
       {items.map(item => {
         const id = getId(item)
         return (
-          <div key={id} draggable onClick={() => onAdd(id, item.title)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 13px', cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
+          <div key={id} draggable onClick={() => onAdd(id, item.title)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 13px', cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
             onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--hds-bg-3)'}
             onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = ''}
           >
             <span style={{ color: 'var(--hds-txt-3)', fontSize: 12 }}>⋮⋮</span>
             <span style={{ width: 7, height: 7, borderRadius: 2, background: dot, flexShrink: 0 }} />
+            {getThumbUrl && (
+              <img src={getThumbUrl(id)} loading="lazy" style={{ width: 30, height: 44, objectFit: 'cover', borderRadius: 3, flexShrink: 0, opacity: 0, transition: 'opacity .2s' }}
+                onLoad={e => { (e.target as HTMLImageElement).style.opacity = '1' }}
+                onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+            )}
             <span style={{ flex: 1, fontSize: 12.5 }}>{item.title}</span>
             <span style={{ color: 'var(--hds-violet)', fontSize: 11 }}>+</span>
           </div>
@@ -114,13 +120,16 @@ const ShowPickerList = observer(function ShowPickerList({ store, channelId, quer
         const expanded = store.expandedShowId === show.show_id
         return (
           <div key={show.show_id}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 13px', cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 13px', cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
               onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--hds-bg-3)'}
               onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = ''}
               onClick={() => store.expandShow(show.show_id)}
             >
               <span style={{ color: 'var(--hds-txt-3)', fontSize: 12 }}>⋮⋮</span>
               <span style={{ width: 7, height: 7, borderRadius: 2, background: BLOCK_META.episode.edge, flexShrink: 0 }} />
+              <img src={`/api/shows/${show.show_id}/thumb`} loading="lazy" style={{ width: 30, height: 44, objectFit: 'cover', borderRadius: 3, flexShrink: 0, opacity: 0, transition: 'opacity .2s' }}
+                onLoad={e => { (e.target as HTMLImageElement).style.opacity = '1' }}
+                onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
               <span style={{ flex: 1, fontSize: 12.5 }}>{show.title}</span>
               <span style={{ color: 'var(--hds-txt-3)', fontSize: 11 }}>{expanded ? '▲' : '▼'}</span>
             </div>

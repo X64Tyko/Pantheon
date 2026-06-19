@@ -4,6 +4,7 @@ import ActivityPage       from './pages/ActivityPage'
 import ChannelDetailPage  from './pages/ChannelDetailPage'
 import ChannelsPage       from './pages/ChannelsPage'
 import ContentPage        from './pages/ContentPage'
+import DownloadPage       from './pages/DownloadPage'
 import FillerPage         from './pages/FillerPage'
 import PlaylistPage       from './pages/PlaylistPage'
 import SourcesPage        from './pages/SourcesPage'
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="content"          element={<ContentPage />} />
         <Route path="playlists"        element={<PlaylistPage />} />
         <Route path="filler"           element={<FillerPage />} />
+        <Route path="downloads"        element={<DownloadPage />} />
         <Route path="activity"         element={<ActivityPage />} />
       </Route>
     </Routes>

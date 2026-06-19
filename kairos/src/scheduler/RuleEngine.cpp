@@ -189,21 +189,24 @@ std::vector<Block> RuleEngine::loadBlocks(const std::string& channel_id) {
         b.max_consecutive_episodes = q.getColumn(18).getInt();
 
         SQLite::Statement cq(db_.get(), R"(
-            SELECT id, content_type, content_id, position, season_filter, weight, run_count
+            SELECT id, content_type, content_id, position, season_filter, weight, run_count,
+                   include_specials, episode_order
             FROM block_content WHERE block_id = ? ORDER BY position
         )");
         cq.bind(1, b.block_id);
         while (cq.executeStep()) {
             BlockContent bc;
-            bc.id           = cq.getColumn(0).getInt();
-            bc.block_id     = b.block_id;
-            bc.content_type = cq.getColumn(1).getString();
-            bc.content_id   = cq.getColumn(2).getString();
-            bc.position     = cq.getColumn(3).getInt();
+            bc.id              = cq.getColumn(0).getInt();
+            bc.block_id        = b.block_id;
+            bc.content_type    = cq.getColumn(1).getString();
+            bc.content_id      = cq.getColumn(2).getString();
+            bc.position        = cq.getColumn(3).getInt();
             if (!cq.getColumn(4).isNull())
                 bc.season_filter = cq.getColumn(4).getInt();
-            bc.weight     = cq.getColumn(5).getInt();
-            bc.run_count  = cq.getColumn(6).getInt();
+            bc.weight           = cq.getColumn(5).getInt();
+            bc.run_count        = cq.getColumn(6).getInt();
+            bc.include_specials = cq.getColumn(7).getInt() != 0;
+            bc.episode_order    = cq.getColumn(8).getString();
             b.content.push_back(std::move(bc));
         }
 
@@ -226,23 +229,27 @@ std::vector<Block> RuleEngine::loadBlocks(const std::string& channel_id) {
 }
 
 std::vector<Episode> RuleEngine::getEpisodes(const std::string& show_id,
-                                              std::optional<int> season) {
-    std::vector<Episode> eps;
-    const char* sql_filtered = R"(
-        SELECT episode_id, show_id, season, episode, title, file_path, duration_ms,
-               overview, air_date, thumb
-        FROM episode WHERE show_id = ? AND season = ? ORDER BY season, episode
-    )";
-    const char* sql_all = R"(
-        SELECT episode_id, show_id, season, episode, title, file_path, duration_ms,
-               overview, air_date, thumb
-        FROM episode WHERE show_id = ? ORDER BY season, episode
-    )";
+                                              std::optional<int> season,
+                                              bool include_specials,
+                                              const std::string& episode_order) {
+    std::string sql =
+        "SELECT episode_id, show_id, season, episode, title, file_path, duration_ms,"
+        " overview, air_date, thumb"
+        " FROM episode WHERE show_id = ?";
+    if (season)                         sql += " AND season = ?";
+    if (!season && !include_specials)   sql += " AND season != 0";
+    if (episode_order == "absolute")
+        sql += " ORDER BY COALESCE(absolute_index, season * 10000 + episode)";
+    else if (episode_order == "airdate")
+        sql += " ORDER BY air_date, episode";
+    else
+        sql += " ORDER BY season, episode";
 
-    SQLite::Statement q(db_.get(), season ? sql_filtered : sql_all);
+    SQLite::Statement q(db_.get(), sql);
     q.bind(1, show_id);
     if (season) q.bind(2, *season);
 
+    std::vector<Episode> eps;
     while (q.executeStep()) {
         Episode e;
         e.episode_id  = q.getColumn(0).getString();
@@ -264,62 +271,34 @@ std::vector<Episode> RuleEngine::getPlayedEpisodes(const std::string& show_id,
                                                      const std::string& channel_id,
                                                      std::optional<int> season,
                                                      std::time_t before_time,
-                                                     bool global_scope) {
+                                                     bool global_scope,
+                                                     bool include_specials,
+                                                     const std::string& episode_order) {
+    std::string sql =
+        "SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,"
+        " e.duration_ms, e.overview, e.air_date, e.thumb"
+        " FROM episode e WHERE e.show_id = ?";
+    if (season)                       sql += " AND e.season = ?";
+    if (!season && !include_specials) sql += " AND e.season != 0";
+    sql += " AND EXISTS (SELECT 1 FROM play_history ph"
+           " WHERE ph.item_type='episode' AND ph.item_id=e.episode_id";
+    if (!global_scope) sql += " AND ph.channel_id=?";
+    sql += " AND ph.aired_at < ?)";
+    if (episode_order == "absolute")
+        sql += " ORDER BY COALESCE(e.absolute_index, e.season * 10000 + e.episode)";
+    else if (episode_order == "airdate")
+        sql += " ORDER BY e.air_date, e.episode";
+    else
+        sql += " ORDER BY e.season, e.episode";
+
+    SQLite::Statement q(db_.get(), sql);
+    int idx = 1;
+    q.bind(idx++, show_id);
+    if (season) q.bind(idx++, *season);
+    if (!global_scope) q.bind(idx++, channel_id);
+    q.bind(idx++, static_cast<int64_t>(before_time));
+
     std::vector<Episode> eps;
-    // Channel-scoped variants filter by channel_id; global variants pull from all channels.
-    const char* sql_ch_season = R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
-               e.duration_ms, e.overview, e.air_date, e.thumb
-        FROM episode e
-        WHERE e.show_id = ? AND e.season = ?
-          AND EXISTS (SELECT 1 FROM play_history ph
-                      WHERE ph.item_type='episode' AND ph.item_id=e.episode_id
-                        AND ph.channel_id=? AND ph.aired_at < ?)
-        ORDER BY e.season, e.episode
-    )";
-    const char* sql_ch_all = R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
-               e.duration_ms, e.overview, e.air_date, e.thumb
-        FROM episode e
-        WHERE e.show_id = ?
-          AND EXISTS (SELECT 1 FROM play_history ph
-                      WHERE ph.item_type='episode' AND ph.item_id=e.episode_id
-                        AND ph.channel_id=? AND ph.aired_at < ?)
-        ORDER BY e.season, e.episode
-    )";
-    const char* sql_gl_season = R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
-               e.duration_ms, e.overview, e.air_date, e.thumb
-        FROM episode e
-        WHERE e.show_id = ? AND e.season = ?
-          AND EXISTS (SELECT 1 FROM play_history ph
-                      WHERE ph.item_type='episode' AND ph.item_id=e.episode_id
-                        AND ph.aired_at < ?)
-        ORDER BY e.season, e.episode
-    )";
-    const char* sql_gl_all = R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
-               e.duration_ms, e.overview, e.air_date, e.thumb
-        FROM episode e
-        WHERE e.show_id = ?
-          AND EXISTS (SELECT 1 FROM play_history ph
-                      WHERE ph.item_type='episode' AND ph.item_id=e.episode_id
-                        AND ph.aired_at < ?)
-        ORDER BY e.season, e.episode
-    )";
-
-    SQLite::Statement q(db_.get(), global_scope
-        ? (season ? sql_gl_season : sql_gl_all)
-        : (season ? sql_ch_season : sql_ch_all));
-    q.bind(1, show_id);
-    if (global_scope) {
-        if (season) { q.bind(2, *season); q.bind(3, static_cast<int64_t>(before_time)); }
-        else         { q.bind(2, static_cast<int64_t>(before_time)); }
-    } else {
-        if (season) { q.bind(2, *season); q.bind(3, channel_id); q.bind(4, static_cast<int64_t>(before_time)); }
-        else         { q.bind(2, channel_id); q.bind(3, static_cast<int64_t>(before_time)); }
-    }
-
     while (q.executeStep()) {
         Episode e;
         e.episode_id  = q.getColumn(0).getString();
@@ -342,7 +321,8 @@ std::vector<Episode> RuleEngine::getPlayedEpisodesWithCooldown(const std::string
                                                                   std::optional<int> season,
                                                                   int smart_pct,
                                                                   std::time_t before_time,
-                                                                  bool global_scope) {
+                                                                  bool global_scope,
+                                                                  bool include_specials) {
     // Full played pool ordered oldest→newest.
     const char* sql_ch_season = R"(
         SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
@@ -402,6 +382,7 @@ std::vector<Episode> RuleEngine::getPlayedEpisodesWithCooldown(const std::string
 
     std::vector<Episode> all;
     while (q.executeStep()) {
+        if (!include_specials && !season && q.getColumn(2).getInt() == 0) continue;
         Episode e;
         e.episode_id  = q.getColumn(0).getString();
         e.show_id     = q.getColumn(1).getString();
@@ -851,13 +832,13 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
             // Rerun: content_position in block_state holds the selected show index.
             bool global = (block.cursor_scope == CursorScope::Global);
             auto eps = (block.advancement == Advancement::RerunSmart)
-                ? getPlayedEpisodesWithCooldown(bc.content_id, channel_id, bc.season_filter, block.smart_pct, before_time, global)
-                : getPlayedEpisodes(bc.content_id, channel_id, bc.season_filter, before_time, global);
+                ? getPlayedEpisodesWithCooldown(bc.content_id, channel_id, bc.season_filter, block.smart_pct, before_time, global, bc.include_specials)
+                : getPlayedEpisodes(bc.content_id, channel_id, bc.season_filter, before_time, global, bc.include_specials, bc.episode_order);
             if (eps.empty()) {
                 switch (block.no_history_behavior) {
                     case NoHistoryBehavior::Normal: {
                         // Play as a regular show: all episodes, sequential show cursor.
-                        auto all = getEpisodes(bc.content_id, bc.season_filter);
+                        auto all = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
                         if (all.empty()) return std::nullopt;
                         int pos = readCursorPos("show", bc.content_id,
                                                 scopeStr(block), scopeId(block, channel_id));
@@ -865,7 +846,7 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
                     }
                     case NoHistoryBehavior::FallbackAll:
                         // Treat full catalog as the rerun pool; fall through with all eps.
-                        eps = getEpisodes(bc.content_id, bc.season_filter);
+                        eps = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
                         if (eps.empty()) return std::nullopt;
                         break;
                     default:
@@ -879,7 +860,7 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
                                 perm[pos % static_cast<int>(perm.size())],
                                 showTitle(bc.content_id));
         }
-        auto eps = getEpisodes(bc.content_id, bc.season_filter);
+        auto eps = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
         if (eps.empty()) return std::nullopt;
         int pos = readCursorPos("show", bc.content_id, scopeStr(block), scopeId(block, channel_id));
         if (block.advancement == Advancement::Shuffle || block.advancement == Advancement::SmartShuffle) {
@@ -1001,15 +982,15 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
             std::string rr_scope    = scopeStr(b);
             std::string rr_scope_id = scopeId(b, channel_id);
             auto eps = (b.advancement == Advancement::RerunSmart)
-                ? getPlayedEpisodesWithCooldown(bc.content_id, channel_id, bc.season_filter, b.smart_pct, before_time, global)
-                : getPlayedEpisodes(bc.content_id, channel_id, bc.season_filter, before_time, global);
+                ? getPlayedEpisodesWithCooldown(bc.content_id, channel_id, bc.season_filter, b.smart_pct, before_time, global, bc.include_specials)
+                : getPlayedEpisodes(bc.content_id, channel_id, bc.season_filter, before_time, global, bc.include_specials, bc.episode_order);
             if (!eps.empty()) {
                 int pos      = readCursorPos("show_rerun", bc.content_id, rr_scope, rr_scope_id);
                 int next_pos = (pos + 1) % static_cast<int>(eps.size());
                 writeCursorPos("show_rerun", bc.content_id, rr_scope, rr_scope_id,
                                next_pos, eps[next_pos].episode_id);
             } else if (b.no_history_behavior == NoHistoryBehavior::Normal) {
-                auto all = getEpisodes(bc.content_id, bc.season_filter);
+                auto all = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
                 if (!all.empty()) {
                     std::string scope    = scopeStr(b);
                     std::string scope_id = scopeId(b, channel_id);
@@ -1019,7 +1000,7 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
                                    next_pos, all[next_pos].episode_id);
                 }
             } else if (b.no_history_behavior == NoHistoryBehavior::FallbackAll) {
-                auto all = getEpisodes(bc.content_id, bc.season_filter);
+                auto all = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
                 if (!all.empty()) {
                     int pos      = readCursorPos("show_rerun", bc.content_id, rr_scope, rr_scope_id);
                     int next_pos = (pos + 1) % static_cast<int>(all.size());
@@ -1042,8 +1023,8 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
                         const auto& cbc = b.content[i];
                         if (cbc.content_type == "show") {
                             auto ceps = (b.advancement == Advancement::RerunSmart)
-                                ? getPlayedEpisodesWithCooldown(cbc.content_id, channel_id, cbc.season_filter, b.smart_pct, before_time, global)
-                                : getPlayedEpisodes(cbc.content_id, channel_id, cbc.season_filter, before_time, global);
+                                ? getPlayedEpisodesWithCooldown(cbc.content_id, channel_id, cbc.season_filter, b.smart_pct, before_time, global, cbc.include_specials)
+                                : getPlayedEpisodes(cbc.content_id, channel_id, cbc.season_filter, before_time, global, cbc.include_specials, cbc.episode_order);
                             if (ceps.empty()) continue;
                         }
                         eligible.push_back(i);
@@ -1084,10 +1065,10 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
                     int         next_run = std::max(1, next_bc.run_count);
                     if (!same_show || limit_hit) {
                         auto next_eps = (b.advancement == Advancement::RerunSmart)
-                            ? getPlayedEpisodesWithCooldown(next_bc.content_id, channel_id, next_bc.season_filter, b.smart_pct, before_time, global)
-                            : getPlayedEpisodes(next_bc.content_id, channel_id, next_bc.season_filter, before_time, global);
+                            ? getPlayedEpisodesWithCooldown(next_bc.content_id, channel_id, next_bc.season_filter, b.smart_pct, before_time, global, next_bc.include_specials)
+                            : getPlayedEpisodes(next_bc.content_id, channel_id, next_bc.season_filter, before_time, global, next_bc.include_specials, next_bc.episode_order);
                         if (next_eps.empty() && b.no_history_behavior == NoHistoryBehavior::FallbackAll)
-                            next_eps = getEpisodes(next_bc.content_id, next_bc.season_filter);
+                            next_eps = getEpisodes(next_bc.content_id, next_bc.season_filter, next_bc.include_specials, next_bc.episode_order);
                         if (!next_eps.empty()) {
                             std::uniform_int_distribution<int> dist(0, static_cast<int>(next_eps.size()) - 1);
                             int start      = dist(rng);
@@ -1108,7 +1089,7 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
             done:;
         } else {
             // Advance the episode cursor within the current show.
-            auto eps = getEpisodes(bc.content_id, bc.season_filter);
+            auto eps = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
             if (!eps.empty()) {
                 std::string scope    = scopeStr(b);
                 std::string scope_id = scopeId(b, channel_id);
@@ -1580,10 +1561,10 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                 const auto& sel_bc = block.content[sel];
                 auto eps = (block.advancement == Advancement::RerunSmart)
                     ? getPlayedEpisodesWithCooldown(sel_bc.content_id, channel_id,
-                                                    sel_bc.season_filter, block.smart_pct, t, global)
-                    : getPlayedEpisodes(sel_bc.content_id, channel_id, sel_bc.season_filter, t, global);
+                                                    sel_bc.season_filter, block.smart_pct, t, global, sel_bc.include_specials)
+                    : getPlayedEpisodes(sel_bc.content_id, channel_id, sel_bc.season_filter, t, global, sel_bc.include_specials, sel_bc.episode_order);
                 if (eps.empty() && block.no_history_behavior == NoHistoryBehavior::FallbackAll)
-                    eps = getEpisodes(sel_bc.content_id, sel_bc.season_filter);
+                    eps = getEpisodes(sel_bc.content_id, sel_bc.season_filter, sel_bc.include_specials, sel_bc.episode_order);
                 if (!eps.empty()) {
                     std::uniform_int_distribution<int> dist(0, static_cast<int>(eps.size()) - 1);
                     int start = dist(rng);
@@ -1598,7 +1579,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             } else {
                 for (const auto& bc : block.content) {
                     if (bc.content_type != "show") continue;
-                    auto eps = getEpisodes(bc.content_id, bc.season_filter);
+                    auto eps = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
                     if (eps.empty()) continue;
                     int pos = static_cast<int>(rng() % static_cast<uint64_t>(eps.size()));
                     std::string scope    = scopeStr(block);

@@ -2,7 +2,7 @@ import { makeAutoObservable, runInAction } from 'mobx'
 import { api } from '../api/client'
 import { channelStore } from '../stores'
 import { BLANK_DRAFT, DAY_BITS } from './constants'
-import { defaultPickerTab, normalizeBlock, blockToDraft, m2t, t2m } from './utils'
+import { defaultPickerTab, normalizeBlock, blockToDraft, m2t, t2m, todayEpgDay } from './utils'
 import { FIELD_DEFS } from '../components/PickerFilters'
 import type { FilterRule } from '../components/PickerFilters'
 import type { BlockDraft, LimitMode, PickerTab } from './types'
@@ -25,7 +25,7 @@ export class ChannelDetailStore {
   draft:       BlockDraft    = { ...BLANK_DRAFT }
 
   pxPerHour:   number = 46
-  epgDay:      number = 4
+  epgDay:      number = todayEpgDay('UTC')
 
   painting:    boolean = false
   paintVal:    boolean = true
@@ -98,6 +98,7 @@ export class ChannelDetailStore {
     this.channelDraftSeed        = channel.seed !== undefined ? channel.seed : 12345
     this.channelDraftAdvanceMode = channel.advance_mode ?? 'scheduled'
     this.channelDirty            = false
+    this.epgDay                  = todayEpgDay(channel.timezone)
   }
 
   setChannelDraft(patch: Partial<{ name: string; number: number; timezone: string; seed: number; advance_mode: AdvanceMode }>) {
@@ -413,6 +414,8 @@ export class ChannelDetailStore {
       title: item.title ?? item.content_id,
       weight: 1,
       run_count: 1,
+      include_specials: false,
+      episode_order: 'season',
     }]
     this.contentDirty = true
   }
@@ -422,11 +425,11 @@ export class ChannelDetailStore {
     this.contentDirty = true
   }
 
-  updateContentField(channelId: string, cid: number, field: 'weight' | 'run_count', value: number) {
+  updateContentField(channelId: string, cid: number, field: 'weight' | 'run_count' | 'episode_order' | 'include_specials', value: number | string | boolean) {
     this.draftContent = this.draftContent.map(c => c.id === cid ? { ...c, [field]: value } : c)
     this.contentDirty = true
     if (cid > 0 && this.editing) {
-      api.updateBlockContent(channelId, this.editing.block_id, cid, { [field]: value }).catch(() => {})
+      api.updateBlockContent(channelId, this.editing.block_id, cid, { [field]: value } as any).catch(() => {})
     }
   }
 

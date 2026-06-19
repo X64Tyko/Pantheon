@@ -252,8 +252,8 @@ void SyncManager::syncShows(MediaSource& src,
 
             SQLite::Statement e(db_.get(), R"(
                 INSERT INTO episode (episode_id, show_id, season, episode, title, file_path,
-                                     duration_ms, overview, air_date, thumb)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                                     duration_ms, overview, air_date, thumb, absolute_index)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
             )");
             e.bind(1,  ep.episode_id);
             e.bind(2,  ep.show_id);
@@ -265,6 +265,8 @@ void SyncManager::syncShows(MediaSource& src,
             e.bind(8,  ep.overview);
             e.bind(9,  ep.air_date);
             e.bind(10, ep.thumb);
+            if (ep.absolute_index.has_value()) e.bind(11, ep.absolute_index.value());
+            else                               e.bind(11);
             e.exec();
 
             upsertMapping("episode", ep.episode_id, source_id, library_id, ext_ep_id);

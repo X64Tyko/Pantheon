@@ -18,6 +18,8 @@ FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
+    ffmpeg \
+    yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/kairos /usr/local/bin/kairos
