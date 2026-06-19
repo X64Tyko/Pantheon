@@ -85,7 +85,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             db_.get().exec("ROLLBACK TO SAVEPOINT onplay_gen_sp");
             db_.get().exec("RELEASE SAVEPOINT onplay_gen_sp");
 
-            // Commit only the scheduled_program entries.
+            // Commit only the scheduled_program entries (including filler blocks).
             db_.get().exec("SAVEPOINT sp_ens");
             SQLite::Statement ins(db_.get(), R"(
                 INSERT OR IGNORE INTO scheduled_program
@@ -94,7 +94,6 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                 VALUES (?,?,?,?,?,?,?,?)
             )");
             for (const auto& item : items) {
-                if (item.is_filler) continue;
                 ins.bind(1, channel_id);
                 if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
                 ins.bind(3, item.item_type);
@@ -195,9 +194,8 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         )");
 
         bool any_new = false;
-        int inserted = 0, skipped_dup = 0, skipped_horizon = 0, skipped_filler = 0;
+        int inserted = 0, skipped_dup = 0, skipped_horizon = 0;
         for (const auto& item : items) {
-            if (item.is_filler) { ++skipped_filler; continue; }
             std::time_t item_end = item.wall_clock_end_ms / 1000;
             if (item_end > horizon + 7200) { ++skipped_horizon; break; }
 
@@ -220,7 +218,6 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             std::cout << "[epg]   inserted=" << inserted
                       << " dup_skipped=" << skipped_dup
                       << " horizon_skipped=" << skipped_horizon
-                      << " filler_skipped=" << skipped_filler
                       << " any_new=" << any_new << '\n';
 
         if (!any_new) {
@@ -284,24 +281,42 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
     }
 
     for (const auto& ch : channels) {
-        // Join scheduled_program with episode/movie tables for metadata.
+        // Filler items stored in scheduled_program are excluded from XMLTV output;
+        // instead, each content item's stop time is extended to the next content
+        // item's start time (absorbing the filler gap). LEAD() finds that next start.
+        // The +7200s cap prevents runaway expansion across long inter-block gaps.
         SQLite::Statement q(db_.get(), R"(
-            SELECT sp.item_type,
-                   sp.wall_clock_start, sp.wall_clock_end,
-                   COALESCE(e.title,  m.title,  '') AS item_title,
-                   COALESCE(s.title,  '')            AS show_title,
-                   COALESCE(e.season, 0)             AS season,
-                   COALESCE(e.episode,0)             AS ep_num,
-                   COALESCE(e.overview, m.overview, '') AS description
-            FROM scheduled_program sp
-            LEFT JOIN episode e ON sp.item_type = 'episode' AND sp.item_id = e.episode_id
-            LEFT JOIN show    s ON sp.item_type = 'episode' AND e.show_id  = s.show_id
-            LEFT JOIN movie   m ON sp.item_type = 'movie'   AND sp.item_id = m.movie_id
-            WHERE sp.channel_id = ?
-              AND sp.wall_clock_start >= ?
-              AND sp.wall_clock_start <  ?
-              AND sp.status != 'skipped'
-            ORDER BY sp.wall_clock_start
+            WITH content AS (
+                SELECT sp.item_type, sp.item_id,
+                       sp.wall_clock_start,
+                       sp.wall_clock_end,
+                       LEAD(sp.wall_clock_start) OVER (
+                           PARTITION BY sp.channel_id ORDER BY sp.wall_clock_start
+                       ) AS next_content_start
+                FROM scheduled_program sp
+                WHERE sp.channel_id = ?
+                  AND sp.item_type != 'filler'
+                  AND sp.wall_clock_start >= ?
+                  AND sp.wall_clock_start <  ?
+                  AND sp.status != 'skipped'
+            )
+            SELECT c.item_type,
+                   c.wall_clock_start,
+                   CASE WHEN c.next_content_start IS NOT NULL
+                             AND c.next_content_start <= c.wall_clock_end + 7200
+                        THEN c.next_content_start
+                        ELSE c.wall_clock_end
+                   END AS stop_time,
+                   COALESCE(e.title,    m.title,    '')  AS item_title,
+                   COALESCE(s.title,    '')              AS show_title,
+                   COALESCE(e.season,   0)               AS season,
+                   COALESCE(e.episode,  0)               AS ep_num,
+                   COALESCE(e.overview, m.overview, '')  AS description
+            FROM content c
+            LEFT JOIN episode e ON c.item_type = 'episode' AND c.item_id = e.episode_id
+            LEFT JOIN show    s ON c.item_type = 'episode' AND e.show_id  = s.show_id
+            LEFT JOIN movie   m ON c.item_type = 'movie'   AND c.item_id = m.movie_id
+            ORDER BY c.wall_clock_start
         )");
         q.bind(1, ch.id);
         q.bind(2, static_cast<int64_t>(now));

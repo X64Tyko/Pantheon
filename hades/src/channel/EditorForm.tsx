@@ -76,6 +76,13 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
   const contentCount = store.draftContent.length
   const fillerCount  = store.draftFillerEntries.length
 
+  const isRerun = d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart'
+  const premierBlocks = store.blocks.filter(b => b.block_type === 'premier')
+  const newPremierCount = store.editing ? store.draftContent.filter(c =>
+    c.content_type === 'show' && c.id > 0 &&
+    !premierBlocks.some(pb => pb.content.some(pc => pc.content_type === 'show' && pc.content_id === c.content_id))
+  ).length : 0
+
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 12px 20px' }} className="scrollbar-dark">
 
@@ -311,12 +318,15 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           {store.draftContent.map(item => {
             const dot       = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
             const canReset  = item.id > 0 && item.content_type === 'show' && !!store.editing
-            const isRerun      = store.draft.advancement === 'rerun_shuffle' || store.draft.advancement === 'rerun_smart'
             const isShuffle    = store.draft.advancement === 'shuffle'       || store.draft.advancement === 'smart_shuffle'
             const isSequential = store.draft.advancement === 'sequential'
             const showWeightControl = (isRerun || isShuffle || isSequential) && item.content_type === 'show'
             const weightLabel  = isSequential ? 'COUNT' : 'WEIGHT'
             const miniInp: React.CSSProperties = { width: 36, padding: '2px 4px', background: 'var(--hds-bg)', border: '1px solid var(--hds-line)', borderRadius: 4, color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, textAlign: 'center' }
+            const isPlaylist    = item.content_type === 'playlist'
+            const playlist      = isPlaylist ? store.contentPlaylists.find(p => p.playlist_id === item.content_id) : undefined
+            const playlistMode  = playlist?.mode ?? 'sequential'
+            const isShowColl    = playlistMode === 'show_collection'
             return (
               <div key={item.id} style={{ background: 'var(--hds-bg-3)', border: `1px solid ${item.id < 0 ? 'oklch(0.55 0.12 290 / 0.6)' : 'var(--hds-line-s)'}`, borderRadius: 7, overflow: 'hidden' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px' }}>
@@ -359,6 +369,26 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                     </div>
                   </div>
                 )}
+                {isPlaylist && playlist && (
+                  <div style={{ borderTop: '1px solid var(--hds-line-s)', padding: '7px 10px 8px' }}>
+                    <div style={{ fontSize: 9.5, letterSpacing: '0.12em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>PLAYLIST MODE</div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        onClick={() => store.setPlaylistMode(item.content_id, 'sequential')}
+                        style={{ padding: '3px 9px', border: 'none', borderRadius: 5, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, cursor: 'pointer', background: !isShowColl ? 'var(--hds-violet)' : 'var(--hds-bg)', color: !isShowColl ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-3)', transition: '.1s' }}
+                      >In-Order</button>
+                      <button
+                        onClick={() => store.setPlaylistMode(item.content_id, 'show_collection')}
+                        style={{ padding: '3px 9px', border: 'none', borderRadius: 5, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, cursor: 'pointer', background: isShowColl ? 'var(--hds-violet)' : 'var(--hds-bg)', color: isShowColl ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-3)', transition: '.1s' }}
+                      >Show Collection</button>
+                    </div>
+                    <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 5, lineHeight: 1.5 }}>
+                      {!isShowColl
+                        ? 'In-Order: playlist items play sequentially as a single flat list, regardless of the block\'s advancement setting.'
+                        : 'Show Collection: the block\'s advancement setting (rerun, shuffle, etc.) applies across the distinct shows inside this playlist. Each show\'s episodes are tracked separately.'}
+                    </div>
+                  </div>
+                )}
               </div>
             )
           })}
@@ -366,6 +396,26 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <div style={{ textAlign: 'center', padding: 6, color: 'var(--hds-txt-3)', fontSize: 11 }}>Drag shows or movies here, or use + Add</div>
           )}
         </div>
+
+        {isRerun && newPremierCount > 0 && (
+          <div style={{ marginTop: 10, padding: '10px 12px', background: 'oklch(0.41 0.12 18 / 0.08)', border: '1px solid oklch(0.52 0.14 20 / 0.35)', borderRadius: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+              <span style={{ fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+                {newPremierCount} show{newPremierCount !== 1 ? 's' : ''} without a premier block
+              </span>
+              <button
+                onClick={() => store.createPremierBlocks(channelId)}
+                disabled={store.creatingPremiers}
+                style={{ padding: '4px 10px', border: '1px solid oklch(0.52 0.14 20 / 0.5)', borderRadius: 6, background: store.creatingPremiers ? 'transparent' : 'oklch(0.41 0.12 18 / 0.3)', color: store.creatingPremiers ? 'var(--hds-txt-3)' : 'oklch(0.76 0.17 24)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: store.creatingPremiers ? 'default' : 'pointer', transition: '.12s' }}
+              >
+                {store.creatingPremiers ? 'Creating…' : 'Create Premier Blocks'}
+              </button>
+            </div>
+            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 5, lineHeight: 1.5 }}>
+              Creates a sequential premier block for each show, matching this block's schedule and cursor scope.
+            </div>
+          </div>
+        )}
 
         {store.pickerOpen && (store.editing || store.isNewMode) && (
           <ContentPicker channelId={channelId} store={store} />

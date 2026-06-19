@@ -10,6 +10,7 @@ import EpgPreview, { EpgErrorBoundary } from '../channel/EpgPreview'
 import ChannelDefaultsPanel from '../channel/ChannelDefaultsPanel'
 import { BlockEditor, NewBlockEditor } from '../channel/BlockEditor'
 import BlockEditorModal from '../channel/BlockEditorModal'
+import { BulkEditPanel } from '../channel/BulkEditPanel'
 import type { Block } from '../api/types'
 
 export default observer(function ChannelDetailPage() {
@@ -94,6 +95,12 @@ export default observer(function ChannelDetailPage() {
         </div>
 
         <button
+          onClick={() => store.toggleBulkMode()}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 14px', border: `1px solid ${store.bulkMode ? 'var(--hds-violet)' : 'var(--hds-line)'}`, borderRadius: 9, background: store.bulkMode ? 'oklch(0.38 0.09 287 / 0.25)' : 'transparent', color: store.bulkMode ? 'var(--hds-txt)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, cursor: 'pointer', transition: '.12s' }}
+        >
+          ⊞ Multi
+        </button>
+        <button
           onClick={() => store.openNew()}
           style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', border: 'none', borderRadius: 9, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: '0 4px 16px -4px oklch(0.83 0.13 84 / 0.5)' }}
         >
@@ -159,7 +166,9 @@ export default observer(function ChannelDetailPage() {
 
         {/* Side panel */}
         <aside style={{ flexShrink: 0, width: 392, borderLeft: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          {store.selectedId !== null ? (
+          {store.bulkMode ? (
+            <BulkEditPanel channelId={id} store={store} />
+          ) : store.selectedId !== null ? (
             <BlockEditor channelId={id} store={store} />
           ) : store.isNewMode ? (
             <NewBlockEditor channelId={id} store={store} />

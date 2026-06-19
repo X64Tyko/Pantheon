@@ -486,6 +486,7 @@ std::vector<int> RuleEngine::groupedShufflePermutation(const std::string& seed_s
 }
 
 int RuleEngine::selectWeighted(const Block& block, std::mt19937_64& rng) {
+    if (block.content.empty()) return 0;
     int total = 0;
     for (const auto& bc : block.content) total += std::max(1, bc.weight);
     std::uniform_int_distribution<int> dist(0, total - 1);
@@ -593,6 +594,57 @@ RuleEngine::loadListItems(const std::string& content_type, const std::string& co
     while (q.executeStep())
         items.emplace_back(q.getColumn(0).getString(), q.getColumn(1).getString());
     return items;
+}
+
+std::string RuleEngine::getPlaylistMode(const std::string& playlist_id) {
+    SQLite::Statement q(db_.get(), "SELECT mode FROM playlist WHERE playlist_id=?");
+    q.bind(1, playlist_id);
+    if (q.executeStep()) return q.getColumn(0).getString();
+    return "sequential";
+}
+
+std::vector<std::string> RuleEngine::getPlaylistShows(const std::string& playlist_id) {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT e.show_id
+        FROM playlist_item pi
+        JOIN episode e ON pi.item_type = 'episode' AND pi.item_id = e.episode_id
+        WHERE pi.playlist_id = ?
+        GROUP BY e.show_id
+        ORDER BY MIN(pi.position)
+    )");
+    q.bind(1, playlist_id);
+    std::vector<std::string> shows;
+    while (q.executeStep()) shows.push_back(q.getColumn(0).getString());
+    return shows;
+}
+
+std::vector<Episode> RuleEngine::getPlaylistShowEpisodes(const std::string& playlist_id,
+                                                          const std::string& show_id) {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title,
+               e.file_path, e.duration_ms, e.overview, e.air_date, e.thumb
+        FROM playlist_item pi
+        JOIN episode e ON pi.item_type = 'episode' AND pi.item_id = e.episode_id
+        WHERE pi.playlist_id = ? AND e.show_id = ?
+        ORDER BY pi.position
+    )");
+    q.bind(1, playlist_id); q.bind(2, show_id);
+    std::vector<Episode> eps;
+    while (q.executeStep()) {
+        Episode e;
+        e.episode_id  = q.getColumn(0).getString();
+        e.show_id     = q.getColumn(1).getString();
+        e.season      = q.getColumn(2).getInt();
+        e.episode     = q.getColumn(3).getInt();
+        e.title       = q.getColumn(4).getString();
+        e.file_path   = q.getColumn(5).getString();
+        e.duration_ms = q.getColumn(6).getInt64();
+        e.overview    = q.getColumn(7).getString();
+        e.air_date    = q.getColumn(8).getString();
+        e.thumb       = q.getColumn(9).getString();
+        eps.push_back(std::move(e));
+    }
+    return eps;
 }
 
 std::optional<ScheduledItem> RuleEngine::episodeById(const std::string& episode_id) {
@@ -854,6 +906,58 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
         return item;
     }
     if (bc.content_type == "playlist" || bc.content_type == "filler_list") {
+        // show_collection: treat distinct shows inside the playlist as the show pool
+        if (bc.content_type == "playlist" && getPlaylistMode(bc.content_id) == "show_collection") {
+            auto shows = getPlaylistShows(bc.content_id);
+            if (shows.empty()) return std::nullopt;
+            int n_shows = static_cast<int>(shows.size());
+            std::string scope    = scopeStr(block);
+            std::string scope_id = scopeId(block, channel_id);
+            int show_idx = readCursorPos("playlist", bc.content_id, scope, scope_id) % n_shows;
+            const std::string& show_id = shows[show_idx];
+
+            if (isRerunMode(block.advancement)) {
+                bool global = (block.cursor_scope == CursorScope::Global);
+                auto eps = (block.advancement == Advancement::RerunSmart)
+                    ? getPlayedEpisodesWithCooldown(show_id, channel_id, std::nullopt, block.smart_pct, before_time, global)
+                    : getPlayedEpisodes(show_id, channel_id, std::nullopt, before_time, global);
+                if (eps.empty()) {
+                    switch (block.no_history_behavior) {
+                        case NoHistoryBehavior::Normal: {
+                            auto pl_eps = getPlaylistShowEpisodes(bc.content_id, show_id);
+                            if (pl_eps.empty()) return std::nullopt;
+                            int pos = readCursorPos("show", show_id, scope, scope_id);
+                            return itemFromShow(channel_id, block.block_id, pl_eps, pos, showTitle(show_id));
+                        }
+                        case NoHistoryBehavior::FallbackAll:
+                            eps = getEpisodes(show_id, std::nullopt);
+                            if (eps.empty()) return std::nullopt;
+                            break;
+                        default:
+                            return std::nullopt;
+                    }
+                }
+                int pos  = readCursorPos("show_rerun", show_id, scope, scope_id);
+                auto perm = groupedShufflePermutation(show_id + block.block_id, eps);
+                return itemFromShow(channel_id, block.block_id, eps,
+                                    perm[pos % static_cast<int>(perm.size())],
+                                    showTitle(show_id));
+            }
+            auto pl_eps = getPlaylistShowEpisodes(bc.content_id, show_id);
+            if (pl_eps.empty()) return std::nullopt;
+            int pos = readCursorPos("show", show_id, scope, scope_id);
+            if (block.advancement == Advancement::Shuffle ||
+                block.advancement == Advancement::SmartShuffle) {
+                int epoch = pos / static_cast<int>(pl_eps.size());
+                int idx   = pos % static_cast<int>(pl_eps.size());
+                auto perm = shufflePermutation(show_id + block.block_id + std::to_string(epoch),
+                                               static_cast<int>(pl_eps.size()));
+                return itemFromShow(channel_id, block.block_id, pl_eps, perm[idx], showTitle(show_id));
+            }
+            return itemFromShow(channel_id, block.block_id, pl_eps, pos, showTitle(show_id));
+        }
+
+        // sequential playlist / filler_list: play items in flat order
         auto items = loadListItems(bc.content_type, bc.content_id);
         if (items.empty()) return std::nullopt;
 
@@ -957,11 +1061,27 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
                     next_sel = selectWeighted(b, rng);
                 }
                 {
-                    const auto& next_bc    = b.content[next_sel];
-                    int         next_run   = std::max(1, next_bc.run_count);
-                    bool same_show  = (next_sel == rr);
-                    bool limit_hit  = (b.max_consecutive_episodes > 0 &&
-                                       consec >= b.max_consecutive_episodes);
+                    bool same_show = (next_sel == rr);
+                    bool limit_hit = (b.max_consecutive_episodes > 0 &&
+                                      consec >= b.max_consecutive_episodes);
+                    // Enforce the consecutive limit: re-select excluding the current show.
+                    if (same_show && limit_hit && n > 1) {
+                        int total_w = 0;
+                        for (int i = 0; i < n; ++i)
+                            if (i != rr) total_w += std::max(1, b.content[i].weight);
+                        if (total_w > 0) {
+                            std::uniform_int_distribution<int> dist(0, total_w - 1);
+                            int r = dist(rng);
+                            for (int i = 0; i < n; ++i) {
+                                if (i == rr) continue;
+                                r -= std::max(1, b.content[i].weight);
+                                if (r < 0) { next_sel = i; break; }
+                            }
+                            same_show = false;
+                        }
+                    }
+                    const auto& next_bc  = b.content[next_sel];
+                    int         next_run = std::max(1, next_bc.run_count);
                     if (!same_show || limit_hit) {
                         auto next_eps = (b.advancement == Advancement::RerunSmart)
                             ? getPlayedEpisodesWithCooldown(next_bc.content_id, channel_id, next_bc.season_filter, b.smart_pct, before_time, global)
@@ -1023,20 +1143,134 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
             return; // show selection handled; skip the global writeBlockRR below
         }
     } else if (bc.content_type == "playlist" || bc.content_type == "filler_list") {
-        bool is_fl = (bc.content_type == "filler_list");
-        const char* cnt_sql = is_fl
-            ? "SELECT COUNT(*) FROM filler_list_item WHERE filler_list_id=?"
-            : "SELECT COUNT(*) FROM playlist_item     WHERE playlist_id=?";
-        SQLite::Statement q(db_.get(), cnt_sql);
-        q.bind(1, bc.content_id);
-        if (q.executeStep()) {
-            int list_size = q.getColumn(0).getInt();
-            if (list_size > 0) {
+        if (bc.content_type == "playlist" && getPlaylistMode(bc.content_id) == "show_collection") {
+            auto shows = getPlaylistShows(bc.content_id);
+            if (!shows.empty()) {
+                int n_shows = static_cast<int>(shows.size());
                 std::string scope    = scopeStr(b);
                 std::string scope_id = scopeId(b, channel_id);
-                int pos      = readCursorPos(bc.content_type, bc.content_id, scope, scope_id);
-                int next_pos = (pos + 1) % list_size;
-                writeCursorPos(bc.content_type, bc.content_id, scope, scope_id, next_pos);
+                int show_idx = readCursorPos("playlist", bc.content_id, scope, scope_id) % n_shows;
+                const std::string& show_id = shows[show_idx];
+                bool global = (b.cursor_scope == CursorScope::Global);
+
+                if (isRerunMode(b.advancement)) {
+                    // Advance the episode cursor within the current show
+                    auto eps = (b.advancement == Advancement::RerunSmart)
+                        ? getPlayedEpisodesWithCooldown(show_id, channel_id, std::nullopt, b.smart_pct, before_time, global)
+                        : getPlayedEpisodes(show_id, channel_id, std::nullopt, before_time, global);
+                    if (eps.empty() && b.no_history_behavior == NoHistoryBehavior::FallbackAll)
+                        eps = getEpisodes(show_id, std::nullopt);
+                    if (eps.empty() && b.no_history_behavior == NoHistoryBehavior::Normal) {
+                        auto all = getEpisodes(show_id, std::nullopt);
+                        if (!all.empty()) {
+                            int pos      = readCursorPos("show", show_id, scope, scope_id);
+                            int next_pos = (pos + 1) % static_cast<int>(all.size());
+                            writeCursorPos("show", show_id, scope, scope_id,
+                                           next_pos, all[next_pos].episode_id);
+                        }
+                    } else if (!eps.empty()) {
+                        int pos      = readCursorPos("show_rerun", show_id, scope, scope_id);
+                        int next_pos = (pos + 1) % static_cast<int>(eps.size());
+                        writeCursorPos("show_rerun", show_id, scope, scope_id,
+                                       next_pos, eps[next_pos].episode_id);
+                    }
+
+                    int runs_rem = readRunsRemaining(b.block_id, channel_id);
+                    int consec   = readConsecutiveCount(b.block_id, channel_id) + 1;
+
+                    if (runs_rem <= 1) {
+                        std::mt19937_64 rng{std::random_device{}()};
+                        // Always pick a different show when possible; uniform over the other n-1 shows.
+                        int next_idx;
+                        if (n_shows == 1) {
+                            next_idx = 0;
+                        } else {
+                            std::uniform_int_distribution<int> dist(0, n_shows - 2);
+                            int r = dist(rng);
+                            next_idx = (r >= show_idx) ? r + 1 : r;
+                        }
+
+                        bool same_show = (next_idx == show_idx); // only true when n_shows == 1
+                        bool limit_hit = (b.max_consecutive_episodes > 0 &&
+                                          consec >= b.max_consecutive_episodes);
+
+                        int next_run = std::max(1, bc.run_count);
+                        if (!same_show || limit_hit) {
+                            const std::string& next_show = shows[next_idx];
+                            auto next_eps = (b.advancement == Advancement::RerunSmart)
+                                ? getPlayedEpisodesWithCooldown(next_show, channel_id, std::nullopt, b.smart_pct, before_time, global)
+                                : getPlayedEpisodes(next_show, channel_id, std::nullopt, before_time, global);
+                            if (next_eps.empty() && b.no_history_behavior == NoHistoryBehavior::FallbackAll)
+                                next_eps = getEpisodes(next_show, std::nullopt);
+                            if (!next_eps.empty()) {
+                                std::uniform_int_distribution<int> rdist(0, static_cast<int>(next_eps.size()) - 1);
+                                int start = rdist(rng);
+                                int snap  = snapToGroupStart(next_eps[start].episode_id, next_eps);
+                                int final_start = (snap >= 0) ? snap : start;
+                                writeCursorPos("show_rerun", next_show, scope, scope_id,
+                                               final_start, next_eps[final_start].episode_id);
+                            }
+                            writeCursorPos("playlist", bc.content_id, scope, scope_id, next_idx);
+                            writeRerunState(b.block_id, channel_id, rr, next_run, 0);
+                        } else {
+                            writeCursorPos("playlist", bc.content_id, scope, scope_id, next_idx);
+                            writeRerunState(b.block_id, channel_id, rr, next_run, consec);
+                        }
+                    } else {
+                        writeRerunState(b.block_id, channel_id, rr, runs_rem - 1, consec);
+                    }
+                } else {
+                    // Sequential / Shuffle: advance episode within current show
+                    auto pl_eps = getPlaylistShowEpisodes(bc.content_id, show_id);
+                    if (!pl_eps.empty()) {
+                        int pos      = readCursorPos("show", show_id, scope, scope_id);
+                        int next_pos;
+                        if (b.advancement == Advancement::Shuffle ||
+                            b.advancement == Advancement::SmartShuffle) {
+                            next_pos = pos + 1;
+                        } else {
+                            next_pos = (pos + 1) % static_cast<int>(pl_eps.size());
+                        }
+                        std::string ep_id = pl_eps[next_pos % static_cast<int>(pl_eps.size())].episode_id;
+                        writeCursorPos("show", show_id, scope, scope_id, next_pos, ep_id);
+                    }
+                    // Show rotation: shuffle = random pick; sequential = round-robin with bc.weight
+                    if (b.advancement == Advancement::Shuffle ||
+                        b.advancement == Advancement::SmartShuffle) {
+                        std::mt19937_64 rng{std::random_device{}()};
+                        std::uniform_int_distribution<int> dist(0, n_shows - 1);
+                        writeCursorPos("playlist", bc.content_id, scope, scope_id, dist(rng));
+                    } else {
+                        int runs_rem = readRunsRemaining(b.block_id, channel_id);
+                        if (runs_rem == 0) runs_rem = std::max(1, bc.weight);
+                        if (runs_rem <= 1) {
+                            int next_idx  = (show_idx + 1) % n_shows;
+                            int next_runs = std::max(1, bc.weight);
+                            writeCursorPos("playlist", bc.content_id, scope, scope_id, next_idx);
+                            writeRerunState(b.block_id, channel_id, rr, next_runs, 0);
+                        } else {
+                            writeRerunState(b.block_id, channel_id, rr, runs_rem - 1, 0);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Sequential flat playlist / filler_list
+            bool is_fl = (bc.content_type == "filler_list");
+            const char* cnt_sql = is_fl
+                ? "SELECT COUNT(*) FROM filler_list_item WHERE filler_list_id=?"
+                : "SELECT COUNT(*) FROM playlist_item     WHERE playlist_id=?";
+            SQLite::Statement q(db_.get(), cnt_sql);
+            q.bind(1, bc.content_id);
+            if (q.executeStep()) {
+                int list_size = q.getColumn(0).getInt();
+                if (list_size > 0) {
+                    std::string scope    = scopeStr(b);
+                    std::string scope_id = scopeId(b, channel_id);
+                    int pos      = readCursorPos(bc.content_type, bc.content_id, scope, scope_id);
+                    int next_pos = (pos + 1) % list_size;
+                    writeCursorPos(bc.content_type, bc.content_id, scope, scope_id, next_pos);
+                }
             }
         }
     }
@@ -1051,7 +1285,8 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     const std::vector<BlockFillerEntry>& pool,
     int64_t max_ms,
     SimState& state,
-    int seed)
+    int seed,
+    std::time_t before_time)
 {
     if (pool.empty()) return std::nullopt;
     int n = static_cast<int>(pool.size());
@@ -1108,15 +1343,49 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     std::string pos_key = "fl_pos:" + fe.filler_list_id + ":" + block.block_id;
 
     if (fe.advancement == "sized") {
-        // Pick the longest clip that fits within max_ms; bail if nothing fits.
-        int best = -1; int64_t best_dur = -1;
-        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-            if (items[i].dur <= max_ms && items[i].dur > best_dur)
-                { best = i; best_dur = items[i].dur; }
+        // Build eligible set: clips that fit within max_ms.
+        std::vector<int> eligible;
+        for (int i = 0; i < static_cast<int>(items.size()); ++i)
+            if (items[i].dur > 0 && items[i].dur <= max_ms)
+                eligible.push_back(i);
+        if (eligible.empty()) return std::nullopt;
+
+        // Query recency for all items in this filler list from play_history.
+        // Among eligible clips, prefer the least recently played (never-played first).
+        std::unordered_map<std::string, int64_t> last_played;
+        {
+            const char* sql = (before_time > 0)
+                ? R"(SELECT ph.item_id, MAX(ph.aired_at)
+                     FROM play_history ph
+                     JOIN filler_list_item fi ON fi.item_type = ph.item_type
+                                             AND fi.item_id   = ph.item_id
+                     WHERE fi.filler_list_id = ? AND ph.channel_id = ?
+                       AND ph.aired_at <= ?
+                     GROUP BY ph.item_id)"
+                : R"(SELECT ph.item_id, MAX(ph.aired_at)
+                     FROM play_history ph
+                     JOIN filler_list_item fi ON fi.item_type = ph.item_type
+                                             AND fi.item_id   = ph.item_id
+                     WHERE fi.filler_list_id = ? AND ph.channel_id = ?
+                     GROUP BY ph.item_id)";
+            SQLite::Statement q(db_.get(), sql);
+            q.bind(1, fe.filler_list_id); q.bind(2, channel_id);
+            if (before_time > 0) q.bind(3, static_cast<int64_t>(before_time));
+            while (q.executeStep())
+                last_played[q.getColumn(0).getString()] = q.getColumn(1).getInt64();
         }
-        if (best < 0) return std::nullopt;
-        item_idx = best;
-        // "sized" is stateless — best-fit pick each time, no cursor to advance.
+
+        // Pick the eligible clip with the oldest last-played time (-1 = never played).
+        item_idx = eligible[0];
+        int64_t oldest = last_played.count(items[eligible[0]].id)
+                       ? last_played.at(items[eligible[0]].id) : -1;
+        for (int i = 1; i < static_cast<int>(eligible.size()); ++i) {
+            int idx = eligible[i];
+            int64_t lat = last_played.count(items[idx].id)
+                        ? last_played.at(items[idx].id) : -1;
+            if (lat < oldest) { oldest = lat; item_idx = idx; }
+        }
+        // "sized" is stateless — no cursor to advance.
     } else if (fe.advancement == "shuffle") {
         if (!state.show_pos.count(pos_key))
             state.show_pos[pos_key] = seed >= 0 ? seed % static_cast<int>(items.size()) : 0;
@@ -1299,7 +1568,9 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         }
 
         // On first entry to each block, apply seed-derived starting positions.
-        if (seed >= 0 && !seed_inited.count(block.block_id)) {
+        // Premier blocks always start at S01E01 — never randomize their cursor.
+        if (seed >= 0 && !seed_inited.count(block.block_id) &&
+            block.block_type != BlockType::Premier) {
             seed_inited.insert(block.block_id);
             std::mt19937_64 rng(static_cast<uint64_t>(seed)
                                 ^ std::hash<std::string>{}(block.block_id));
@@ -1443,9 +1714,25 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                         // sequential/shuffle returned a clip slightly longer than the gap.
                         int64_t max_clip_ms  = (late_boundary - t) * 1000;
 
-                        auto fi = pickFillerSim(channel_id, block, pool, remaining_ms, state, -1);
+                        auto fi = pickFillerSim(channel_id, block, pool, remaining_ms, state, -1, t);
                         if (!fi || fi->duration_ms <= 0) break;
                         if (fi->duration_ms > max_clip_ms) break;
+
+                        // Record in play_history so recency queries in subsequent
+                        // pickFillerSim() calls within this projection see this clip.
+                        {
+                            SQLite::Statement qph_f(db_.get(), R"(
+                                INSERT INTO play_history
+                                    (item_type, item_id, channel_id, block_id, aired_at, is_scheduled)
+                                VALUES (?,?,?,?,?,1)
+                            )");
+                            qph_f.bind(1, fi->item_type);
+                            qph_f.bind(2, fi->item_id);
+                            qph_f.bind(3, channel_id);
+                            qph_f.bind(4, block.block_id);
+                            qph_f.bind(5, static_cast<int64_t>(t));
+                            qph_f.exec();
+                        }
 
                         fi->wall_clock_start_ms = static_cast<int64_t>(t) * 1000;
                         fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;

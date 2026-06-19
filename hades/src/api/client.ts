@@ -137,7 +137,7 @@ export const api = {
   getPlaylists:      ()                                       => request<Playlist[]>    ('GET',    '/playlists'),
   createPlaylist:    (b: { title: string })                   => request<{playlist_id: string}>('POST', '/playlists', b),
   getPlaylist:       (id: string)                             => request<PlaylistDetail>('GET',    `/playlists/${id}`),
-  updatePlaylist:    (id: string, b: { title: string })       => request<void>          ('PATCH',  `/playlists/${id}`, b),
+  updatePlaylist:    (id: string, b: { title?: string; mode?: string }) => request<void>('PATCH',  `/playlists/${id}`, b),
   deletePlaylist:    (id: string)                             => request<void>          ('DELETE', `/playlists/${id}`),
   addPlaylistItem:   (id: string, b: { item_type: 'episode'|'movie'; item_id: string }) =>
                        request<{id: number, position: number}>('POST',   `/playlists/${id}/items`, b),

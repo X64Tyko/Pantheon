@@ -652,6 +652,81 @@ constexpr Migration kMigrations[] = {
     UPDATE block SET no_history_behavior = 'skip' WHERE no_history_behavior = 'filler';
 )SQL" }
 
+,
+
+// ── v20: default filler advancement changes from 'sequential' to 'sized'
+//         (best-fit duration selection). Update existing entries that are
+//         still using the old default — users who explicitly chose 'sequential'
+//         will see their entries updated, but 'sized' is the correct default
+//         for dead-air gap filling.
+{ 20, R"SQL(
+    UPDATE block_filler_entry   SET advancement = 'sized' WHERE advancement = 'sequential';
+    UPDATE channel_filler_entry SET advancement = 'sized' WHERE advancement = 'sequential';
+)SQL" }
+
+,
+
+// ── v21: expand scheduled_program item_type to allow 'filler' so merged
+//         filler blocks are persisted alongside content items.
+//         Old cached rows are intentionally dropped — they lack filler entries
+//         and would show gaps in the preview until regenerated.
+{ 21, R"SQL(
+    CREATE TABLE scheduled_program_new (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id       TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        block_id         TEXT    REFERENCES block(block_id) ON DELETE SET NULL,
+        item_type        TEXT    NOT NULL CHECK(item_type IN ('episode','movie','filler')),
+        item_id          TEXT    NOT NULL,
+        wall_clock_start INTEGER NOT NULL,
+        wall_clock_end   INTEGER NOT NULL,
+        status           TEXT    NOT NULL DEFAULT 'scheduled'
+                         CHECK(status IN ('scheduled','aired','skipped')),
+        cursor_json      TEXT    NOT NULL DEFAULT '{}',
+        created_at       INTEGER NOT NULL,
+        UNIQUE(channel_id, wall_clock_start)
+    );
+    DROP TABLE scheduled_program;
+    ALTER TABLE scheduled_program_new RENAME TO scheduled_program;
+    CREATE INDEX IF NOT EXISTS idx_sched_channel_time
+        ON scheduled_program(channel_id, wall_clock_start);
+    CREATE INDEX IF NOT EXISTS idx_sched_channel_end
+        ON scheduled_program(channel_id, wall_clock_end DESC);
+)SQL", true /* requires_fk_off */ }
+
+,
+
+// ── v22: fix missing ON DELETE actions on play_history FKs.
+//         v2 created play_history without CASCADE/SET NULL, so any channel or
+//         block with history entries was undeletable (SQLite defaults to RESTRICT).
+//         channel_id → CASCADE, block_id → SET NULL (mirrors scheduled_program).
+{ 22, R"SQL(
+    CREATE TABLE play_history_v22 (
+        history_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_type    TEXT    NOT NULL DEFAULT 'episode' CHECK(item_type IN ('episode','movie')),
+        item_id      TEXT    NOT NULL,
+        channel_id   TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        block_id     TEXT             REFERENCES block(block_id)     ON DELETE SET NULL,
+        aired_at     INTEGER NOT NULL,
+        is_scheduled INTEGER NOT NULL DEFAULT 0
+    );
+
+    INSERT INTO play_history_v22
+        SELECT history_id, item_type, item_id, channel_id, block_id, aired_at, is_scheduled
+        FROM play_history;
+
+    DROP TABLE play_history;
+    ALTER TABLE play_history_v22 RENAME TO play_history;
+
+    CREATE INDEX IF NOT EXISTS idx_history_item
+        ON play_history(item_type, item_id, channel_id);
+    CREATE INDEX IF NOT EXISTS idx_history_channel
+        ON play_history(channel_id, aired_at DESC);
+)SQL", true /* requires_fk_off */ },
+
+{ 23, R"SQL(
+    ALTER TABLE playlist ADD COLUMN mode TEXT NOT NULL DEFAULT 'sequential';
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace

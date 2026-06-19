@@ -760,10 +760,12 @@ void Router::registerChannelRoutes() {
 
     svr_.Delete("/api/channels/:id", [this](const Req& req, Res& res) {
         auto id = req.path_params.at("id");
-        SQLite::Statement s(db_.get(), "DELETE FROM channel WHERE channel_id = ?");
-        s.bind(1, id);
-        s.exec();
-        ok(res, json{{"deleted", id}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM channel WHERE channel_id = ?");
+            s.bind(1, id);
+            s.exec();
+            ok(res, json{{"deleted", id}}.dump());
+        } catch (const std::exception& e) { err(res, 500, e.what()); }
     });
 
     // ── Channel filler entry CRUD ─────────────────────────────────────────────
@@ -1060,10 +1062,12 @@ void Router::registerBlockRoutes() {
     svr_.Delete("/api/channels/:id/blocks/:bid", [this](const Req& req, Res& res) {
         auto channel_id = req.path_params.at("id");
         auto bid        = req.path_params.at("bid");
-        SQLite::Statement s(db_.get(), "DELETE FROM block WHERE block_id = ?");
-        s.bind(1, bid); s.exec();
-        clearScheduleCache(channel_id);
-        ok(res, json{{"deleted", bid}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM block WHERE block_id = ?");
+            s.bind(1, bid); s.exec();
+            clearScheduleCache(channel_id);
+            ok(res, json{{"deleted", bid}}.dump());
+        } catch (const std::exception& e) { err(res, 500, e.what()); }
     });
 
     // Add content to block
@@ -2044,7 +2048,7 @@ void Router::registerPlaylistRoutes() {
 
     svr_.Get("/api/playlists", [this](const Req&, Res& res) {
         SQLite::Statement q(db_.get(), R"(
-            SELECT p.playlist_id, p.title,
+            SELECT p.playlist_id, p.title, p.mode,
                    COUNT(pi.id) AS item_count,
                    COALESCE(SUM(CASE pi.item_type
                        WHEN 'episode' THEN e.duration_ms
@@ -2062,16 +2066,17 @@ void Router::registerPlaylistRoutes() {
             json entry = {
                 {"playlist_id", q.getColumn(0).getString()},
                 {"title",       q.getColumn(1).getString()},
-                {"item_count",  q.getColumn(2).getInt()},
-                {"total_ms",    q.getColumn(3).getInt64()},
+                {"mode",        q.getColumn(2).getString()},
+                {"item_count",  q.getColumn(3).getInt()},
+                {"total_ms",    q.getColumn(4).getInt64()},
             };
-            if (!q.getColumn(4).isNull()) {
+            if (!q.getColumn(5).isNull()) {
                 entry["plex_link"] = {
-                    {"source_id",      q.getColumn(4).getString()},
-                    {"external_id",    q.getColumn(5).getString()},
-                    {"plex_type",      q.getColumn(6).getString()},
-                    {"last_synced_at", q.getColumn(7).isNull()
-                        ? json(nullptr) : json(q.getColumn(7).getInt64())},
+                    {"source_id",      q.getColumn(5).getString()},
+                    {"external_id",    q.getColumn(6).getString()},
+                    {"plex_type",      q.getColumn(7).getString()},
+                    {"last_synced_at", q.getColumn(8).isNull()
+                        ? json(nullptr) : json(q.getColumn(8).getInt64())},
                 };
             }
             result.push_back(entry);
@@ -2102,7 +2107,7 @@ void Router::registerPlaylistRoutes() {
 
     svr_.Get("/api/playlists/:id", [this](const Req& req, Res& res) {
         auto id = req.path_params.at("id");
-        SQLite::Statement ph(db_.get(), "SELECT playlist_id, title FROM playlist WHERE playlist_id = ?");
+        SQLite::Statement ph(db_.get(), "SELECT playlist_id, title, mode FROM playlist WHERE playlist_id = ?");
         ph.bind(1, id);
         if (!ph.executeStep()) { err(res, 404, "playlist not found"); return; }
 
@@ -2140,6 +2145,7 @@ void Router::registerPlaylistRoutes() {
         }
         ok(res, json{{"playlist_id", ph.getColumn(0).getString()},
                      {"title",       ph.getColumn(1).getString()},
+                     {"mode",        ph.getColumn(2).getString()},
                      {"items",       items}}.dump());
     });
 
@@ -2173,6 +2179,14 @@ void Router::registerPlaylistRoutes() {
             if (b.contains("title")) {
                 SQLite::Statement s(db_.get(), "UPDATE playlist SET title = ? WHERE playlist_id = ?");
                 s.bind(1, b["title"].get<std::string>()); s.bind(2, id); s.exec();
+            }
+            if (b.contains("mode")) {
+                std::string mode = b["mode"].get<std::string>();
+                if (mode != "sequential" && mode != "show_collection") {
+                    err(res, 400, "mode must be 'sequential' or 'show_collection'"); return;
+                }
+                SQLite::Statement s(db_.get(), "UPDATE playlist SET mode = ? WHERE playlist_id = ?");
+                s.bind(1, mode); s.bind(2, id); s.exec();
             }
             ok(res, json{{"ok", true}}.dump());
         } catch (const std::exception& e) { err(res, 400, e.what()); }
@@ -2796,7 +2810,8 @@ void Router::registerSchedulerRoutes() {
         json arr = json::array();
 
         if (has_cache) {
-            // Return cached schedule (same JOIN as the /epg endpoint, no writes).
+            // Return cached schedule. Filler items are now persisted in
+            // scheduled_program so they appear naturally alongside content items.
             SQLite::Statement q(db_.get(), R"(
                 SELECT sp.item_type, sp.item_id, sp.block_id,
                        sp.wall_clock_start, sp.wall_clock_end, sp.status,
@@ -2805,7 +2820,9 @@ void Router::registerSchedulerRoutes() {
                        COALESCE(e.show_id, '')         AS show_id,
                        COALESCE(e.season,  0)          AS season,
                        COALESCE(e.episode, 0)          AS ep_num,
-                       COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms
+                       COALESCE(e.duration_ms, m.duration_ms,
+                                (sp.wall_clock_end - sp.wall_clock_start) * 1000)
+                           AS duration_ms
                 FROM scheduled_program sp
                 LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
                 LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
@@ -2839,33 +2856,6 @@ void Router::registerSchedulerRoutes() {
                 }
                 arr.push_back(j);
             }
-
-            // Filler clips are never written to scheduled_program, so the cache
-            // has holes wherever filler would have played.  Synthesize a single
-            // "filler" entry to cover each gap so the preview looks contiguous.
-            if (arr.size() > 1) {
-                json filled = json::array();
-                for (size_t i = 0; i < arr.size(); ++i) {
-                    if (i > 0) {
-                        int64_t gap_start = arr[i - 1]["wall_clock_end_ms"].get<int64_t>();
-                        int64_t gap_end   = arr[i]["wall_clock_start_ms"].get<int64_t>();
-                        if (gap_end > gap_start) {
-                            filled.push_back({
-                                {"item_type",           "filler"},
-                                {"item_id",             ""},
-                                {"block_id",            arr[i]["block_id"]},
-                                {"wall_clock_start_ms", gap_start},
-                                {"wall_clock_end_ms",   gap_end},
-                                {"status",              "scheduled"},
-                                {"title",               ""},
-                                {"duration_ms",         gap_end - gap_start},
-                            });
-                        }
-                    }
-                    filled.push_back(arr[i]);
-                }
-                arr = std::move(filled);
-            }
         } else {
             // No persistent cache — run projection inside a SAVEPOINT so all
             // DB writes (play_history + scheduled_program) are rolled back after
@@ -2894,7 +2884,9 @@ void Router::registerSchedulerRoutes() {
                            COALESCE(e.show_id, '')         AS show_id,
                            COALESCE(e.season,  0)          AS season,
                            COALESCE(e.episode, 0)          AS ep_num,
-                           COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms
+                           COALESCE(e.duration_ms, m.duration_ms,
+                                    (sp.wall_clock_end - sp.wall_clock_start) * 1000)
+                               AS duration_ms
                     FROM scheduled_program sp
                     LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
                     LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id

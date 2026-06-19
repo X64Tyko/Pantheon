@@ -88,6 +88,12 @@ private:
         loadListItems(const std::string& content_type, const std::string& content_id);
     std::string          showTitle(const std::string& show_id);
 
+    // Playlist show_collection helpers.
+    std::string              getPlaylistMode(const std::string& playlist_id);
+    std::vector<std::string> getPlaylistShows(const std::string& playlist_id);
+    std::vector<Episode>     getPlaylistShowEpisodes(const std::string& playlist_id,
+                                                      const std::string& show_id);
+
     // Weighted random selection of a content-item index from a block's content list.
     static int selectWeighted(const Block& block, std::mt19937_64& rng);
 
@@ -136,13 +142,16 @@ private:
                                          const std::string& tz = "UTC");
 
     // Pick one filler clip from the effective pool, advancing SimState cursors.
-    // max_ms > 0: "sized" advancement will reject clips longer than this.
+    // max_ms > 0: "sized" advancement rejects clips longer than this and picks
+    //             the least recently played clip that fits (recency from play_history).
+    // before_time > 0: recency query includes only plays with aired_at <= before_time.
     std::optional<ScheduledItem> pickFillerSim(const std::string& channel_id,
                                                const Block& block,
                                                const std::vector<BlockFillerEntry>& pool,
                                                int64_t max_ms,
                                                SimState& state,
-                                               int seed);
+                                               int seed,
+                                               std::time_t before_time = 0);
 
     Database& db_;
 };

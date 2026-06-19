@@ -6,8 +6,8 @@ import type { LibraryWithSource } from '../api/types'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type FilterField =
-  | 'library' | 'genre' | 'year' | 'content_rating' | 'studio'
-  | 'director' | 'actor' | 'writer' | 'producer' | 'country'
+  | 'library' | 'title' | 'genre' | 'year' | 'content_rating' | 'studio'
+  | 'director' | 'actor' | 'writer' | 'country'
   | 'collection' | 'network' | 'label' | 'resolution' | 'decade'
   | 'critic_rating' | 'audience_rating' | 'duration' | 'added'
 
@@ -28,26 +28,42 @@ export const DECADES     = ['2020s', '2010s', '2000s', '1990s', '1980s', '1970s'
 
 export type FieldDef = { label: string; valueType: ValueType; ops: { id: FilterOp; label: string }[] }
 
+const TEXT_OPS: { id: FilterOp; label: string }[] = [
+  { id: 'is',              label: 'is' },
+  { id: 'is_not',          label: 'is not' },
+  { id: 'contains',        label: 'contains' },
+  { id: 'does_not_contain',label: 'does not contain' },
+]
+
+const FULL_TEXT_OPS: { id: FilterOp; label: string }[] = [
+  { id: 'contains',        label: 'contains' },
+  { id: 'does_not_contain',label: 'does not contain' },
+  { id: 'begins_with',     label: 'begins with' },
+  { id: 'ends_with',       label: 'ends with' },
+  { id: 'is',              label: 'is' },
+  { id: 'is_not',          label: 'is not' },
+]
+
 export const FIELD_DEFS: Record<FilterField, FieldDef> = {
-  library:         { label: 'Library',         valueType: 'library',    ops: [{ id: 'is',       label: 'is' }] },
-  genre:           { label: 'Genre',            valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  year:            { label: 'Year',             valueType: 'number',     ops: [{ id: 'is',       label: 'is' },           { id: 'lt',               label: 'is before' },    { id: 'gt',  label: 'is after' }] },
-  content_rating:  { label: 'Content Rating',   valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  studio:          { label: 'Studio',           valueType: 'text',       ops: [{ id: 'contains', label: 'contains' },     { id: 'does_not_contain', label: 'does not contain' }, { id: 'is', label: 'is' }, { id: 'is_not', label: 'is not' }] },
-  director:        { label: 'Director',         valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  actor:           { label: 'Actor',            valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  writer:          { label: 'Writer',           valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  producer:        { label: 'Producer',         valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  country:         { label: 'Country',          valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  collection:      { label: 'Collection',       valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  network:         { label: 'Network',          valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  label:           { label: 'Label',            valueType: 'text',       ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  resolution:      { label: 'Resolution',       valueType: 'resolution', ops: [{ id: 'is',       label: 'is' },           { id: 'is_not',           label: 'is not' }] },
-  decade:          { label: 'Decade',           valueType: 'decade',     ops: [{ id: 'is',       label: 'is' }] },
-  critic_rating:   { label: 'Critic Rating',    valueType: 'number',     ops: [{ id: 'gte',      label: 'is at least' },  { id: 'lte',              label: 'is at most' },   { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  audience_rating: { label: 'Audience Rating',  valueType: 'number',     ops: [{ id: 'gte',      label: 'is at least' },  { id: 'lte',              label: 'is at most' },   { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  duration:        { label: 'Duration (mins)',  valueType: 'number',     ops: [{ id: 'gte',      label: 'is at least' },  { id: 'lte',              label: 'is at most' },   { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  added:           { label: 'Date Added',       valueType: 'days',       ops: [{ id: 'in_last',  label: 'in the last' },  { id: 'before',           label: 'before' },       { id: 'after', label: 'after' }] },
+  library:         { label: 'Library',         valueType: 'library',    ops: [{ id: 'is',      label: 'is' }] },
+  title:           { label: 'Title',           valueType: 'text',       ops: FULL_TEXT_OPS },
+  genre:           { label: 'Genre',           valueType: 'text',       ops: TEXT_OPS },
+  year:            { label: 'Year',            valueType: 'number',     ops: [{ id: 'is', label: 'is' }, { id: 'lt', label: 'is before' }, { id: 'gt', label: 'is after' }] },
+  content_rating:  { label: 'Content Rating',  valueType: 'text',       ops: TEXT_OPS },
+  studio:          { label: 'Studio',          valueType: 'text',       ops: FULL_TEXT_OPS },
+  director:        { label: 'Director',        valueType: 'text',       ops: TEXT_OPS },
+  actor:           { label: 'Actor',           valueType: 'text',       ops: TEXT_OPS },
+  writer:          { label: 'Writer',          valueType: 'text',       ops: TEXT_OPS },
+  country:         { label: 'Country',         valueType: 'text',       ops: TEXT_OPS },
+  collection:      { label: 'Collection',      valueType: 'text',       ops: TEXT_OPS },
+  network:         { label: 'Network',         valueType: 'text',       ops: TEXT_OPS },
+  label:           { label: 'Label',           valueType: 'text',       ops: TEXT_OPS },
+  resolution:      { label: 'Resolution',      valueType: 'resolution', ops: [{ id: 'is', label: 'is' }, { id: 'is_not', label: 'is not' }] },
+  decade:          { label: 'Decade',          valueType: 'decade',     ops: [{ id: 'is', label: 'is' }] },
+  critic_rating:   { label: 'Critic Rating',   valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
+  audience_rating: { label: 'Audience Rating', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
+  duration:        { label: 'Duration (mins)', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
+  added:           { label: 'Date Added',      valueType: 'days',       ops: [{ id: 'in_last', label: 'in the last' }, { id: 'before', label: 'before' }, { id: 'after', label: 'after' }] },
 }
 
 // ─── FilterTagInput ───────────────────────────────────────────────────────────

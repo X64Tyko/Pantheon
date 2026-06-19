@@ -42,7 +42,7 @@ export function FillerEntryRow({ entry, showWeight, onAdvancement, onWeight, onR
 
 export const FillerAddPanel = observer(function FillerAddPanel({ channelId, store }: { channelId: string; store: ChannelDetailStore }) {
   const [listId, setListId] = useState('')
-  const [advancement, setAdvancement] = useState<FillerEntryAdvancement>('sequential')
+  const [advancement, setAdvancement] = useState<FillerEntryAdvancement>('sized')
   const [weight, setWeight] = useState(1)
   const showWeight = store.draft.filler_selection === 'weighted'
 

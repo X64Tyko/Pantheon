@@ -22,7 +22,7 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
 
   return (
     <div className="hds-in" style={{ marginTop: 10, border: '1px solid var(--hds-line)', borderRadius: 10, background: 'oklch(0.16 0.016 286)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 10px 7px', borderBottom: showFilters ? 'none' : '1px solid var(--hds-line-s)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 10px 7px', borderBottom: '1px solid var(--hds-line-s)' }}>
         <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 7, padding: 3 }}>
           {tabs.map(t => (
             <button key={t} onClick={() => store.setPickerTab(t)} style={{ padding: '4px 10px', border: 'none', borderRadius: 5, background: store.pickerTab === t ? 'var(--hds-violet)' : 'transparent', color: store.pickerTab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer' }}>
@@ -30,11 +30,13 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
             </button>
           ))}
         </div>
-        {store.pickerTab !== 'filler_lists' && store.pickerTab !== 'playlists' && (
-          <input value={store.pickerQuery} onChange={e => store.setPickerQuery(e.target.value)} placeholder="Search…" style={{ flex: 1, ...inputStyle, fontSize: 11.5, padding: '6px 9px' }} autoFocus />
-        )}
         <button onClick={() => store.closePicker()} style={{ color: 'var(--hds-txt-3)', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 12, padding: '0 3px', marginLeft: 'auto' }}>✕</button>
       </div>
+      {store.pickerTab !== 'filler_lists' && store.pickerTab !== 'playlists' && (
+        <div style={{ padding: '7px 10px', borderBottom: showFilters ? 'none' : '1px solid var(--hds-line-s)' }}>
+          <input value={store.pickerQuery} onChange={e => store.setPickerQuery(e.target.value)} placeholder="Search…" style={{ width: '100%', ...inputStyle, fontSize: 11.5, padding: '6px 9px', boxSizing: 'border-box' }} autoFocus />
+        </div>
+      )}
       {showFilters && (
         <FilterSection
           rulesOpen={store.filterRulesOpen}

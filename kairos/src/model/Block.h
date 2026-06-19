@@ -17,7 +17,7 @@ enum class NoHistoryBehavior {
 
 struct BlockFillerEntry {
     std::string filler_list_id;
-    std::string advancement = "sequential"; // "sequential" | "shuffle" | "sized"
+    std::string advancement = "sized"; // "sequential" | "shuffle" | "sized"
     int         weight      = 1;
 };
 

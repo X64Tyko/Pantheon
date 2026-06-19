@@ -222,9 +222,12 @@ export interface PlexLink {
 
 // ── Playlists ────────────────────────────────────────────────────────────────
 
+export type PlaylistMode = 'sequential' | 'show_collection'
+
 export interface Playlist {
   playlist_id: string
   title:       string
+  mode:        PlaylistMode
   item_count:  number
   total_ms:    number
   plex_link?:  PlexLink

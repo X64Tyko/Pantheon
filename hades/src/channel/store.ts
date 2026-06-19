@@ -9,7 +9,7 @@ import type { BlockDraft, LimitMode, PickerTab } from './types'
 import type {
   AdvanceMode, Advancement, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
   EpisodeSearchResult, EpgProgram, FillerEntry, FillerEntryAdvancement, FillerList, FillerSelectionMode,
-  LibraryWithSource, Movie, NoHistoryBehavior, Playlist, Show,
+  LibraryWithSource, Movie, NoHistoryBehavior, Playlist, PlaylistMode, Show,
 } from '../api/types'
 
 let _debounce: ReturnType<typeof setTimeout>
@@ -37,6 +37,7 @@ export class ChannelDetailStore {
   pickerMovies:      Movie[]               = []
   pickerEpisodes:    EpisodeSearchResult[] = []
   pickerPlaylists:   Playlist[]            = []
+  contentPlaylists:  Playlist[]            = []
   pickerFillerLists: FillerList[]          = []
   pickerLoading:     boolean               = false
   dragItem:          string | null         = null
@@ -53,8 +54,14 @@ export class ChannelDetailStore {
 
   isNewMode: boolean = false
 
-  saving:  boolean       = false
-  saveErr: string | null = null
+  saving:          boolean       = false
+  saveErr:         string | null = null
+  creatingPremiers: boolean      = false
+
+  bulkMode:        boolean       = false
+  bulkSelectedIds: string[]      = []
+  bulkSaving:      boolean       = false
+  bulkErr:         string | null = null
 
   openSections: Record<string, boolean> = { schedule: true, timing: true, playback: false, content: true, filler: false }
   modalOpen: boolean = false
@@ -158,6 +165,11 @@ export class ChannelDetailStore {
     this.saveErr            = null
     this.pickerOpen         = false
     this.fillerPickerOpen   = false
+    if (block.content.some(c => c.content_type === 'playlist')) {
+      api.getPlaylists().then(r => runInAction(() => { this.pickerPlaylists = r; this.contentPlaylists = r })).catch(() => {})
+    } else {
+      this.contentPlaylists = []
+    }
   }
 
   openNew() {
@@ -182,6 +194,40 @@ export class ChannelDetailStore {
     this.draftContent       = []
     this.draftFillerEntries = []
     this.contentDirty       = false
+  }
+
+  toggleBulkMode() {
+    this.bulkMode = !this.bulkMode
+    this.bulkSelectedIds = []
+    this.bulkErr = null
+    if (this.bulkMode) this.closeEditor()
+  }
+
+  toggleBulkBlock(id: string) {
+    if (this.bulkSelectedIds.includes(id))
+      this.bulkSelectedIds = this.bulkSelectedIds.filter(x => x !== id)
+    else
+      this.bulkSelectedIds = [...this.bulkSelectedIds, id]
+  }
+
+  selectAllBulk()           { this.bulkSelectedIds = this.blocks.map(b => b.block_id) }
+  clearBulkSelection()      { this.bulkSelectedIds = [] }
+  selectBulkByType(t: BlockType) {
+    const ids = this.blocks.filter(b => b.block_type === t).map(b => b.block_id)
+    this.bulkSelectedIds = [...new Set([...this.bulkSelectedIds, ...ids])]
+  }
+
+  async applyBulk(channelId: string, patch: Partial<BlockDraft>) {
+    if (!this.bulkSelectedIds.length) return
+    this.bulkSaving = true; this.bulkErr = null
+    try {
+      for (const id of this.bulkSelectedIds)
+        await api.updateBlock(channelId, id, patch as any)
+      await this.load(channelId)
+      runInAction(() => { this.bulkSaving = false; this.bulkSelectedIds = [] })
+    } catch (e: any) {
+      runInAction(() => { this.bulkErr = e.message; this.bulkSaving = false })
+    }
   }
 
   setDraft<K extends keyof BlockDraft>(k: K, v: BlockDraft[K]) {
@@ -309,6 +355,43 @@ export class ChannelDetailStore {
     }
   }
 
+  async createPremierBlocks(channelId: string) {
+    if (!this.editing) return
+    const isRerun = this.draft.advancement === 'rerun_shuffle' || this.draft.advancement === 'rerun_smart'
+    if (!isRerun) return
+    runInAction(() => { this.creatingPremiers = true })
+    const premierBlocks = this.blocks.filter(b => b.block_type === 'premier')
+    const showsToCreate = this.draftContent.filter(c =>
+      c.content_type === 'show' && c.id > 0 &&
+      !premierBlocks.some(pb => pb.content.some(pc => pc.content_type === 'show' && pc.content_id === c.content_id))
+    )
+    const rerunPriority = this.draft.priority
+    try {
+      for (const item of showsToCreate) {
+        const payload = {
+          ...BLANK_DRAFT,
+          block_type:       'premier'    as BlockType,
+          day_mask:         this.draft.day_mask,
+          start_time:       this.draft.start_time,
+          advancement:      'sequential' as Advancement,
+          cursor_scope:     this.draft.cursor_scope,
+          priority:         rerunPriority + 1,
+          program_count:    1,
+          late_start_mins:  5,
+          early_start_secs: 15,
+          end_time:         '',
+        }
+        const { block_id } = await api.createBlock(channelId, payload as any)
+        await api.addBlockContent(channelId, block_id, { content_type: 'show', content_id: item.content_id })
+      }
+      await this.load(channelId)
+    } catch (e: any) {
+      runInAction(() => { this.saveErr = e.message })
+    } finally {
+      runInAction(() => { this.creatingPremiers = false })
+    }
+  }
+
   async deleteBlock(channelId: string, blockId: string) {
     await api.deleteBlock(channelId, blockId)
     runInAction(() => {
@@ -345,6 +428,15 @@ export class ChannelDetailStore {
     if (cid > 0 && this.editing) {
       api.updateBlockContent(channelId, this.editing.block_id, cid, { [field]: value }).catch(() => {})
     }
+  }
+
+  async setPlaylistMode(playlistId: string, mode: 'sequential' | 'show_collection') {
+    await api.updatePlaylist(playlistId, { mode })
+    runInAction(() => {
+      const update = (list: Playlist[]) => list.map(p => p.playlist_id === playlistId ? { ...p, mode } : p)
+      this.pickerPlaylists  = update(this.pickerPlaylists)
+      this.contentPlaylists = update(this.contentPlaylists)
+    })
   }
 
   async addBlockFiller(channelId: string, body: { filler_list_id: string; advancement: FillerEntryAdvancement; weight: number }) {

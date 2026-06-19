@@ -4,7 +4,7 @@ import { useEffect } from 'react'
 import { api } from '../api/client'
 import type {
   EpisodeSearchResult, LibraryWithSource, Movie, Playlist, PlexBrowseItem, PlexBrowseList,
-  PlaylistDetail, PlaylistItem, Show, Source,
+  PlaylistDetail, PlaylistItem, PlaylistMode, Show, Source,
 } from '../api/types'
 import { FilterSection, FIELD_DEFS } from '../components/PickerFilters'
 import type { FilterField, FilterOp, FilterRule } from '../components/PickerFilters'
@@ -336,6 +336,17 @@ class PlaylistPageStore {
     }
   }
 
+  async setMode(id: string, mode: PlaylistMode) {
+    try {
+      await api.updatePlaylist(id, { mode })
+      runInAction(() => {
+        this.playlists = this.playlists.map(p => p.playlist_id === id ? { ...p, mode } : p)
+      })
+    } catch (e: any) {
+      runInAction(() => { this.error = e.message })
+    }
+  }
+
   async syncAllPlexLinks() {
     try {
       await api.plexSyncAllPlaylists()
@@ -470,6 +481,26 @@ const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Pl
             <p className="text-zinc-600 text-xs">Loading…</p>
           ) : (
             <>
+              {/* Mode toggle */}
+              <div className="flex flex-col gap-1.5 pb-1 border-b border-zinc-800/50">
+                <div className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">Scheduling Mode</div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => store.setMode(playlist.playlist_id, 'sequential')}
+                    className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${playlist.mode !== 'show_collection' ? 'bg-violet-700 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
+                  >In-Order</button>
+                  <button
+                    onClick={() => store.setMode(playlist.playlist_id, 'show_collection')}
+                    className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${playlist.mode === 'show_collection' ? 'bg-violet-700 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
+                  >Show Collection</button>
+                </div>
+                <div className="text-[10px] text-zinc-500 leading-relaxed">
+                  {playlist.mode !== 'show_collection'
+                    ? 'In-Order: items play sequentially as a flat list, ignoring the block\'s advancement setting.'
+                    : 'Show Collection: the block\'s advancement mode (rerun, shuffle, etc.) applies across the distinct shows inside this playlist. Each show\'s episode position is tracked independently.'}
+                </div>
+              </div>
+
               {store.importing && store.expanded === playlist.playlist_id ? (
                 <div className="text-xs text-violet-400 flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />

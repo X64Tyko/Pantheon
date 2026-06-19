@@ -35,7 +35,7 @@ export const NO_HISTORY_OPTS: [NoHistoryBehavior, string, string][] = [
 export const BLANK_DRAFT: BlockDraft = {
   block_type: 'episode', day_mask: 62,
   start_time: '20:00', end_time: '21:00',
-  program_count: 0, late_start_mins: 0, early_start_secs: 0,
+  program_count: 0, late_start_mins: 5, early_start_secs: 15,
   advancement: 'sequential', cursor_scope: 'block',
   priority: 1, max_content_rating: '',
   filler_selection: 'round_robin',
