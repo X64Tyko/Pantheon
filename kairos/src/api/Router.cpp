@@ -818,7 +818,9 @@ void Router::registerChannelRoutes() {
         bool deep = (depth == "deep");
         try {
             SQLite::Statement cq(db_.get(), R"(
-                SELECT name, number, timezone, advance_mode, default_filler_selection, seed
+                SELECT name, number, timezone, advance_mode, default_filler_selection, seed,
+                       offline_video_path, offline_image_path, offline_audio_type,
+                       offline_audio_title, logo_path
                 FROM channel WHERE channel_id = ?
             )");
             cq.bind(1, channel_id);
@@ -830,6 +832,11 @@ void Router::registerChannelRoutes() {
                 {"timezone",                 cq.getColumn(2).getString()},
                 {"advance_mode",             cq.getColumn(3).getString()},
                 {"default_filler_selection", cq.getColumn(4).getString()},
+                {"offline_video_path",       cq.getColumn(6).getString()},
+                {"offline_image_path",       cq.getColumn(7).getString()},
+                {"offline_audio_type",       cq.getColumn(8).getString()},
+                {"offline_audio_title",      cq.getColumn(9).getString()},
+                {"logo_path",                cq.getColumn(10).getString()},
             };
             if (!cq.getColumn(5).isNull()) channel_j["seed"] = cq.getColumn(5).getInt();
 
@@ -850,16 +857,123 @@ void Router::registerChannelRoutes() {
             }
             channel_j["default_filler_entries"] = ch_filler;
 
+            // Bumpers
+            SQLite::Statement bmpq(db_.get(), R"(
+                SELECT cb.content_type, cb.mode, cb.every_n,
+                       CASE cb.content_type
+                           WHEN 'show'     THEN COALESCE(sw.title,'')
+                           WHEN 'episode'  THEN COALESCE(esw.title,'') ||
+                                                ' S' || PRINTF('%02d',e.season) ||
+                                                'E' || PRINTF('%02d',e.episode)
+                           WHEN 'playlist' THEN COALESCE(pl.title,'')
+                           ELSE ''
+                       END AS title,
+                       COALESCE(sw.imdb_id,''), COALESCE(sw.tvdb_id,''), COALESCE(sw.tmdb_id,''),
+                       e.season, e.episode,
+                       COALESCE(esw.imdb_id,''), COALESCE(esw.tvdb_id,''), COALESCE(esw.tmdb_id,'')
+                FROM channel_bumper cb
+                LEFT JOIN show     sw  ON cb.content_type = 'show'    AND cb.content_id = sw.show_id
+                LEFT JOIN episode  e   ON cb.content_type = 'episode' AND cb.content_id = e.episode_id
+                LEFT JOIN show     esw ON cb.content_type = 'episode' AND e.show_id = esw.show_id
+                LEFT JOIN playlist pl  ON cb.content_type = 'playlist' AND cb.content_id = pl.playlist_id
+                WHERE cb.channel_id = ? ORDER BY cb.position
+            )");
+            bmpq.bind(1, channel_id);
+            json bumpers = json::array();
+            while (bmpq.executeStep()) {
+                std::string bct = bmpq.getColumn(0).getString();
+                json bmp = {
+                    {"content_type", bct},
+                    {"mode",         bmpq.getColumn(1).getString()},
+                    {"every_n",      bmpq.getColumn(2).getInt()},
+                    {"title",        bmpq.getColumn(3).getString()},
+                };
+                if (deep) {
+                    if (bct == "show") {
+                        bmp["imdb_id"] = bmpq.getColumn(4).getString();
+                        bmp["tvdb_id"] = bmpq.getColumn(5).getString();
+                        bmp["tmdb_id"] = bmpq.getColumn(6).getString();
+                    } else if (bct == "episode") {
+                        if (!bmpq.getColumn(7).isNull()) bmp["season"]       = bmpq.getColumn(7).getInt();
+                        if (!bmpq.getColumn(8).isNull()) bmp["episode"]      = bmpq.getColumn(8).getInt();
+                        bmp["show_imdb_id"] = bmpq.getColumn(9).getString();
+                        bmp["show_tvdb_id"] = bmpq.getColumn(10).getString();
+                        bmp["show_tmdb_id"] = bmpq.getColumn(11).getString();
+                    }
+                }
+                bumpers.push_back(bmp);
+            }
+            channel_j["bumpers"] = bumpers;
+
             SQLite::Statement bq(db_.get(), R"(
                 SELECT block_id, name, block_type, day_mask, start_time, end_time,
                        program_count, priority, max_content_rating, advancement, cursor_scope,
                        late_start_mins, align_to_mins, inter_filler, early_start_secs,
                        filler_selection, smart_pct, start_scope, no_history_behavior,
-                       max_consecutive_episodes
+                       max_consecutive_episodes,
+                       intro_content_type, intro_content_id,
+                       outro_content_type, outro_content_id,
+                       interstitial_content_type, interstitial_content_id,
+                       interstitial_every_n
                 FROM block WHERE channel_id = ?
                 ORDER BY start_time, priority DESC
             )");
             bq.bind(1, channel_id);
+
+            // Resolves a content_type + content_id pair to a portable JSON slot object.
+            auto resolveSlot = [&](const std::string& ct, const std::string& cid) -> json {
+                if (ct.empty() || cid.empty()) return nullptr;
+                json slot = {{"content_type", ct}};
+                if (ct == "show") {
+                    SQLite::Statement q(db_.get(),
+                        "SELECT title, imdb_id, tvdb_id, tmdb_id, year FROM show WHERE show_id=? LIMIT 1");
+                    q.bind(1, cid);
+                    if (!q.executeStep()) return nullptr;
+                    slot["title"] = q.getColumn(0).getString();
+                    if (!q.getColumn(4).isNull()) slot["year"] = q.getColumn(4).getInt();
+                    if (deep) { slot["imdb_id"]=q.getColumn(1).getString(); slot["tvdb_id"]=q.getColumn(2).getString(); slot["tmdb_id"]=q.getColumn(3).getString(); }
+                } else if (ct == "movie") {
+                    SQLite::Statement q(db_.get(),
+                        "SELECT title, imdb_id, tmdb_id, year FROM movie WHERE movie_id=? LIMIT 1");
+                    q.bind(1, cid);
+                    if (!q.executeStep()) return nullptr;
+                    slot["title"] = q.getColumn(0).getString();
+                    if (!q.getColumn(3).isNull()) slot["year"] = q.getColumn(3).getInt();
+                    if (deep) { slot["imdb_id"]=q.getColumn(1).getString(); slot["tmdb_id"]=q.getColumn(2).getString(); }
+                } else if (ct == "episode") {
+                    SQLite::Statement q(db_.get(), R"(
+                        SELECT esw.title, e.season, e.episode,
+                               esw.imdb_id, esw.tvdb_id, esw.tmdb_id
+                        FROM episode e JOIN show esw ON e.show_id=esw.show_id
+                        WHERE e.episode_id=? LIMIT 1
+                    )");
+                    q.bind(1, cid);
+                    if (!q.executeStep()) return nullptr;
+                    std::ostringstream oss;
+                    oss << q.getColumn(0).getString()
+                        << " S" << std::setw(2) << std::setfill('0') << q.getColumn(1).getInt()
+                        << "E"  << std::setw(2) << std::setfill('0') << q.getColumn(2).getInt();
+                    slot["title"] = oss.str();
+                    if (deep) {
+                        slot["season"]       = q.getColumn(1).getInt();
+                        slot["episode"]      = q.getColumn(2).getInt();
+                        slot["show_imdb_id"] = q.getColumn(3).getString();
+                        slot["show_tvdb_id"] = q.getColumn(4).getString();
+                        slot["show_tmdb_id"] = q.getColumn(5).getString();
+                    }
+                } else if (ct == "playlist") {
+                    SQLite::Statement q(db_.get(), "SELECT title FROM playlist WHERE playlist_id=? LIMIT 1");
+                    q.bind(1, cid);
+                    if (!q.executeStep()) return nullptr;
+                    slot["title"] = q.getColumn(0).getString();
+                } else if (ct == "filler_list") {
+                    SQLite::Statement q(db_.get(), "SELECT title FROM filler_list WHERE filler_list_id=? LIMIT 1");
+                    q.bind(1, cid);
+                    if (!q.executeStep()) return nullptr;
+                    slot["title"] = q.getColumn(0).getString();
+                }
+                return slot;
+            };
 
             json blocks = json::array();
             while (bq.executeStep()) {
@@ -883,8 +997,15 @@ void Router::registerChannelRoutes() {
                     {"start_scope",              bq.getColumn(17).getString()},
                     {"no_history_behavior",      bq.getColumn(18).getString()},
                     {"max_consecutive_episodes", bq.getColumn(19).getInt()},
+                    {"interstitial_every_n",     bq.getColumn(26).getInt()},
                 };
                 if (!bq.getColumn(5).isNull()) block_j["end_time"] = bq.getColumn(5).getString();
+                json intro = resolveSlot(bq.getColumn(20).getString(), bq.getColumn(21).getString());
+                json outro = resolveSlot(bq.getColumn(22).getString(), bq.getColumn(23).getString());
+                json inter = resolveSlot(bq.getColumn(24).getString(), bq.getColumn(25).getString());
+                if (!intro.is_null()) block_j["intro"]         = std::move(intro);
+                if (!outro.is_null()) block_j["outro"]         = std::move(outro);
+                if (!inter.is_null()) block_j["interstitial"]  = std::move(inter);
 
                 SQLite::Statement ccq(db_.get(), R"(
                     SELECT bc.content_type, bc.weight, bc.run_count, bc.season_filter,
@@ -985,8 +1106,9 @@ void Router::registerChannelRoutes() {
             {
                 SQLite::Statement s(db_.get(), R"(
                     INSERT INTO channel (channel_id, name, number, timezone, advance_mode,
-                                        default_filler_selection)
-                    VALUES (?,?,?,?,?,?)
+                                        default_filler_selection, offline_video_path,
+                                        offline_image_path, logo_path)
+                    VALUES (?,?,?,?,?,?,?,?,?)
                 )");
                 std::string imp_tz = ch.value("timezone", "UTC");
                 if (!isValidTimezone(imp_tz)) imp_tz = "UTC";
@@ -996,11 +1118,43 @@ void Router::registerChannelRoutes() {
                 s.bind(4, imp_tz);
                 s.bind(5, ch.value("advance_mode", "scheduled"));
                 s.bind(6, ch.value("default_filler_selection", "round_robin"));
+                s.bind(7, ch.value("offline_video_path", ""));
+                s.bind(8, ch.value("offline_image_path", ""));
+                s.bind(9, ch.value("logo_path", ""));
                 s.exec();
             }
             if (ch.contains("seed") && !ch["seed"].is_null()) {
                 SQLite::Statement s(db_.get(), "UPDATE channel SET seed = ? WHERE channel_id = ?");
                 s.bind(1, ch["seed"].get<int>()); s.bind(2, channel_id); s.exec();
+            }
+
+            // Offline audio — resolve by type + title
+            {
+                std::string oa_type  = ch.value("offline_audio_type",  "");
+                std::string oa_title = ch.value("offline_audio_title", "");
+                if (!oa_type.empty() && !oa_title.empty()) {
+                    std::string oa_id;
+                    if (oa_type == "movie") {
+                        SQLite::Statement q(db_.get(),
+                            "SELECT movie_id FROM movie WHERE title=? LIMIT 1");
+                        q.bind(1, oa_title);
+                        if (q.executeStep()) oa_id = q.getColumn(0).getString();
+                    } else if (oa_type == "episode") {
+                        SQLite::Statement q(db_.get(),
+                            "SELECT episode_id FROM episode WHERE title=? LIMIT 1");
+                        q.bind(1, oa_title);
+                        if (q.executeStep()) oa_id = q.getColumn(0).getString();
+                    }
+                    if (!oa_id.empty()) {
+                        SQLite::Statement u(db_.get(), R"(
+                            UPDATE channel
+                            SET offline_audio_id=?, offline_audio_type=?, offline_audio_title=?
+                            WHERE channel_id=?
+                        )");
+                        u.bind(1, oa_id); u.bind(2, oa_type); u.bind(3, oa_title);
+                        u.bind(4, channel_id); u.exec();
+                    }
+                }
             }
 
             // Channel filler entries — resolve by title
@@ -1021,7 +1175,129 @@ void Router::registerChannelRoutes() {
                 ins.bind(5, cfpos++); ins.exec();
             }
 
+            // Channel bumpers — resolve by title/identifiers
+            {
+                int bmppos = 0;
+                for (auto& bmp : ch.value("bumpers", json::array())) {
+                    std::string bct   = bmp.value("content_type", "");
+                    std::string title = bmp.value("title", "");
+                    std::string mode  = bmp.value("mode",  "between");
+                    int         every_n = bmp.value("every_n", 3);
+                    std::string bmp_cid;
+                    auto tryQ = [&](const char* sql, const std::string& val) {
+                        if (!bmp_cid.empty() || val.empty()) return;
+                        SQLite::Statement q(db_.get(), sql);
+                        q.bind(1, val);
+                        if (q.executeStep()) bmp_cid = q.getColumn(0).getString();
+                    };
+                    if (bct == "show") {
+                        if (deep) {
+                            tryQ("SELECT show_id FROM show WHERE imdb_id=? AND imdb_id!='' LIMIT 1", bmp.value("imdb_id",""));
+                            tryQ("SELECT show_id FROM show WHERE tvdb_id=? AND tvdb_id!='' LIMIT 1", bmp.value("tvdb_id",""));
+                            tryQ("SELECT show_id FROM show WHERE tmdb_id=? AND tmdb_id!='' LIMIT 1", bmp.value("tmdb_id",""));
+                        }
+                        tryQ("SELECT show_id FROM show WHERE title=? LIMIT 1", title);
+                    } else if (bct == "episode" && deep) {
+                        std::string show_id;
+                        auto tryShow = [&](const char* col, const std::string& val) {
+                            if (!show_id.empty() || val.empty()) return;
+                            SQLite::Statement q(db_.get(),
+                                std::string("SELECT show_id FROM show WHERE ") + col + "=? AND " + col + "!='' LIMIT 1");
+                            q.bind(1, val);
+                            if (q.executeStep()) show_id = q.getColumn(0).getString();
+                        };
+                        tryShow("imdb_id", bmp.value("show_imdb_id",""));
+                        tryShow("tvdb_id", bmp.value("show_tvdb_id",""));
+                        tryShow("tmdb_id", bmp.value("show_tmdb_id",""));
+                        if (!show_id.empty()) {
+                            SQLite::Statement q(db_.get(),
+                                "SELECT episode_id FROM episode WHERE show_id=? AND season=? AND episode=? LIMIT 1");
+                            q.bind(1, show_id);
+                            q.bind(2, bmp.value("season",  0));
+                            q.bind(3, bmp.value("episode", 0));
+                            if (q.executeStep()) bmp_cid = q.getColumn(0).getString();
+                        }
+                    } else if (bct == "playlist") {
+                        tryQ("SELECT playlist_id FROM playlist WHERE title=? LIMIT 1", title);
+                    }
+                    if (bmp_cid.empty()) { bmppos++; continue; }
+                    SQLite::Statement ins(db_.get(), R"(
+                        INSERT INTO channel_bumper
+                            (channel_id, content_type, content_id, mode, every_n, position)
+                        VALUES (?,?,?,?,?,?)
+                    )");
+                    ins.bind(1, channel_id); ins.bind(2, bct); ins.bind(3, bmp_cid);
+                    ins.bind(4, mode); ins.bind(5, every_n); ins.bind(6, bmppos++);
+                    ins.exec();
+                }
+            }
+
             json unresolved = json::array();
+
+            // Resolves a slot JSON object to a local content_id.
+            auto resolveImportSlot = [&](const json& slot) -> std::string {
+                if (!slot.is_object()) return "";
+                std::string ct    = slot.value("content_type", "");
+                std::string title = slot.value("title", "");
+                std::string cid;
+                auto tryQ = [&](const char* sql, const std::string& val) {
+                    if (!cid.empty() || val.empty()) return;
+                    SQLite::Statement q(db_.get(), sql);
+                    q.bind(1, val);
+                    if (q.executeStep()) cid = q.getColumn(0).getString();
+                };
+                if (ct == "show") {
+                    if (deep) {
+                        tryQ("SELECT show_id FROM show WHERE imdb_id=? AND imdb_id!='' LIMIT 1", slot.value("imdb_id",""));
+                        tryQ("SELECT show_id FROM show WHERE tvdb_id=? AND tvdb_id!='' LIMIT 1", slot.value("tvdb_id",""));
+                        tryQ("SELECT show_id FROM show WHERE tmdb_id=? AND tmdb_id!='' LIMIT 1", slot.value("tmdb_id",""));
+                    }
+                    if (cid.empty() && slot.contains("year") && !slot["year"].is_null()) {
+                        SQLite::Statement q(db_.get(),
+                            "SELECT show_id FROM show WHERE title=? AND year=? LIMIT 1");
+                        q.bind(1, title); q.bind(2, slot["year"].get<int>());
+                        if (q.executeStep()) cid = q.getColumn(0).getString();
+                    }
+                    tryQ("SELECT show_id FROM show WHERE title=? LIMIT 1", title);
+                } else if (ct == "movie") {
+                    if (deep) {
+                        tryQ("SELECT movie_id FROM movie WHERE imdb_id=? AND imdb_id!='' LIMIT 1", slot.value("imdb_id",""));
+                        tryQ("SELECT movie_id FROM movie WHERE tmdb_id=? AND tmdb_id!='' LIMIT 1", slot.value("tmdb_id",""));
+                    }
+                    if (cid.empty() && slot.contains("year") && !slot["year"].is_null()) {
+                        SQLite::Statement q(db_.get(),
+                            "SELECT movie_id FROM movie WHERE title=? AND year=? LIMIT 1");
+                        q.bind(1, title); q.bind(2, slot["year"].get<int>());
+                        if (q.executeStep()) cid = q.getColumn(0).getString();
+                    }
+                    tryQ("SELECT movie_id FROM movie WHERE title=? LIMIT 1", title);
+                } else if (ct == "episode" && deep) {
+                    std::string show_id;
+                    auto tryShow = [&](const char* col, const std::string& val) {
+                        if (!show_id.empty() || val.empty()) return;
+                        SQLite::Statement q(db_.get(),
+                            std::string("SELECT show_id FROM show WHERE ") + col + "=? AND " + col + "!='' LIMIT 1");
+                        q.bind(1, val);
+                        if (q.executeStep()) show_id = q.getColumn(0).getString();
+                    };
+                    tryShow("imdb_id", slot.value("show_imdb_id",""));
+                    tryShow("tvdb_id", slot.value("show_tvdb_id",""));
+                    tryShow("tmdb_id", slot.value("show_tmdb_id",""));
+                    if (!show_id.empty()) {
+                        SQLite::Statement q(db_.get(),
+                            "SELECT episode_id FROM episode WHERE show_id=? AND season=? AND episode=? LIMIT 1");
+                        q.bind(1, show_id);
+                        q.bind(2, slot.value("season",  0));
+                        q.bind(3, slot.value("episode", 0));
+                        if (q.executeStep()) cid = q.getColumn(0).getString();
+                    }
+                } else if (ct == "playlist") {
+                    tryQ("SELECT playlist_id FROM playlist WHERE title=? LIMIT 1", title);
+                } else if (ct == "filler_list") {
+                    tryQ("SELECT filler_list_id FROM filler_list WHERE title=? LIMIT 1", title);
+                }
+                return cid;
+            };
 
             for (auto& blk : body.value("blocks", json::array())) {
                 std::string block_id = generateId();
@@ -1033,8 +1309,8 @@ void Router::registerChannelRoutes() {
                                        late_start_mins, align_to_mins, inter_filler,
                                        early_start_secs, filler_selection, smart_pct,
                                        start_scope, no_history_behavior,
-                                       max_consecutive_episodes)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                       max_consecutive_episodes, interstitial_every_n)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 )");
                 s.bind(1, block_id); s.bind(2, channel_id);
                 s.bind(3, blk.value("name", ""));
@@ -1056,6 +1332,7 @@ void Router::registerChannelRoutes() {
                 s.bind(19, blk.value("start_scope",        "block"));
                 s.bind(20, blk.value("no_history_behavior", "normal"));
                 s.bind(21, blk.value("max_consecutive_episodes", 0));
+                s.bind(22, blk.value("interstitial_every_n",     1));
                 s.exec();
 
                 // Content items
@@ -1176,6 +1453,20 @@ void Router::registerChannelRoutes() {
                     ins.bind(3, fe.value("advancement", "sized")); ins.bind(4, fe.value("weight", 1));
                     ins.bind(5, pq.getColumn(0).getInt()); ins.exec();
                 }
+
+                // Intro/outro/interstitial slots
+                auto applySlot = [&](const char* type_col, const char* id_col, const json& slot) {
+                    if (!slot.is_object()) return;
+                    std::string ct  = slot.value("content_type", "");
+                    std::string cid = resolveImportSlot(slot);
+                    if (cid.empty()) return;
+                    SQLite::Statement u(db_.get(),
+                        std::string("UPDATE block SET ") + type_col + "=?, " + id_col + "=? WHERE block_id=?");
+                    u.bind(1, ct); u.bind(2, cid); u.bind(3, block_id); u.exec();
+                };
+                if (blk.contains("intro"))         applySlot("intro_content_type",         "intro_content_id",         blk["intro"]);
+                if (blk.contains("outro"))         applySlot("outro_content_type",         "outro_content_id",         blk["outro"]);
+                if (blk.contains("interstitial"))  applySlot("interstitial_content_type",  "interstitial_content_id",  blk["interstitial"]);
             }
 
             res.status = 201;
