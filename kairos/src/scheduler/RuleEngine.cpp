@@ -1621,6 +1621,17 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             int today_bit        = dayBit(tm_t);
             int tom_bit          = 1 << ((tm_t.tm_wday + 1) % 7);
 
+            // Compute tomorrow's midnight in channel-local time. Adding 86400 is wrong
+            // on DST spring-forward days (the day is only 23h), so we advance ~25h past
+            // today's midnight and re-derive local midnight from the resulting timestamp.
+            std::time_t tomorrow_midnight;
+            {
+                std::time_t approx_tomorrow = midnight + 90000; // 25h — always past midnight
+                auto   tm_tom  = toChannelTZ(approx_tomorrow, tz);
+                int    tom_sec = tm_tom.tm_hour * 3600 + tm_tom.tm_min * 60 + tm_tom.tm_sec;
+                tomorrow_midnight = approx_tomorrow - static_cast<std::time_t>(tom_sec);
+            }
+
             std::time_t jump = t + 1800; // fallback if no closer block found
             for (const auto& b : blocks) {
                 auto try_day = [&](int bit, std::time_t base_midnight) {
@@ -1630,7 +1641,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                     if (cand > t && cand < jump) jump = cand;
                 };
                 try_day(today_bit, midnight);
-                try_day(tom_bit,   midnight + 86400);
+                try_day(tom_bit,   tomorrow_midnight);
             }
             t = jump;
             prev_block_id.clear();

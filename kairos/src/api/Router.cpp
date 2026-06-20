@@ -3973,7 +3973,7 @@ void Router::registerSchedulerRoutes() {
                     LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
                     LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
                     WHERE sp.channel_id=?
-                      AND sp.wall_clock_start >= ?
+                      AND sp.wall_clock_end   >  ?
                       AND sp.wall_clock_start <  ?
                       AND sp.status != 'skipped'
                     ORDER BY sp.wall_clock_start
@@ -4046,7 +4046,7 @@ void Router::registerSchedulerRoutes() {
             LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
             LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
             WHERE sp.channel_id=?
-              AND sp.wall_clock_start >= ?
+              AND sp.wall_clock_end   >  ?
               AND sp.wall_clock_start <  ?
               AND sp.status != 'skipped'
             ORDER BY sp.wall_clock_start
