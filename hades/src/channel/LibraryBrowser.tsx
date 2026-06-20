@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { observer } from 'mobx-react-lite'
 import { runInAction } from 'mobx'
 import type { PickerTab } from './types'
@@ -145,8 +145,6 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
     gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))',
     gap: 10,
     padding: 14,
-    overflow: 'auto',
-    flex: 1,
     alignContent: 'start',
   }
 
@@ -154,17 +152,22 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
     const items = store.pickerShows
     if (items.length === 0) return <Empty />
     return (
-      <div style={gridStyle} className="scrollbar-dark">
-        {items.map(s => (
-          <Tile key={s.show_id}
-            imgUrl={`/api/shows/${s.show_id}/thumb`}
-            title={s.title}
-            sub={s.year ? String(s.year) : undefined}
-            onDragStart={e => startDrag(e, 'show', s.show_id, s.title)}
-            onDragEnd={endDrag}
-            onClick={() => onSelect({ kind: 'show', id: s.show_id, seed: s })}
-          />
-        ))}
+      <div style={{ overflow: 'auto', flex: 1 }} className="scrollbar-dark">
+        <div style={gridStyle}>
+          {items.map(s => (
+            <Tile key={s.show_id}
+              imgUrl={`/api/shows/${s.show_id}/thumb`}
+              title={s.title}
+              sub={s.year ? String(s.year) : undefined}
+              onDragStart={e => startDrag(e, 'show', s.show_id, s.title)}
+              onDragEnd={endDrag}
+              onClick={() => onSelect({ kind: 'show', id: s.show_id, seed: s })}
+            />
+          ))}
+        </div>
+        {items.length < store.pickerTotal && (
+          <LoadMoreSentinel loading={store.pickerLoadingMore} onVisible={() => store.loadMorePicker()} />
+        )}
       </div>
     )
   }
@@ -173,17 +176,22 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
     const items = store.pickerMovies
     if (items.length === 0) return <Empty />
     return (
-      <div style={gridStyle} className="scrollbar-dark">
-        {items.map(m => (
-          <Tile key={m.movie_id}
-            imgUrl={`/api/movies/${m.movie_id}/thumb`}
-            title={m.title}
-            sub={m.year ? String(m.year) : undefined}
-            onDragStart={e => startDrag(e, 'movie', m.movie_id, m.title)}
-            onDragEnd={endDrag}
-            onClick={() => onSelect({ kind: 'movie', id: m.movie_id, seed: m })}
-          />
-        ))}
+      <div style={{ overflow: 'auto', flex: 1 }} className="scrollbar-dark">
+        <div style={gridStyle}>
+          {items.map(m => (
+            <Tile key={m.movie_id}
+              imgUrl={`/api/movies/${m.movie_id}/thumb`}
+              title={m.title}
+              sub={m.year ? String(m.year) : undefined}
+              onDragStart={e => startDrag(e, 'movie', m.movie_id, m.title)}
+              onDragEnd={endDrag}
+              onClick={() => onSelect({ kind: 'movie', id: m.movie_id, seed: m })}
+            />
+          ))}
+        </div>
+        {items.length < store.pickerTotal && (
+          <LoadMoreSentinel loading={store.pickerLoadingMore} onVisible={() => store.loadMorePicker()} />
+        )}
       </div>
     )
   }
@@ -192,7 +200,7 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
     const items = store.pickerEpisodes
     if (items.length === 0) return <Empty hint="Type to search episodes." />
     return (
-      <div style={gridStyle} className="scrollbar-dark">
+      <div style={{ ...gridStyle, overflow: 'auto', flex: 1 }} className="scrollbar-dark">
         {items.map(ep => {
           const code  = `S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')}`
           const title = `${ep.show_title} ${code} — ${ep.title}`
@@ -215,7 +223,7 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
     const items = store.pickerPlaylists
     if (items.length === 0) return <Empty />
     return (
-      <div style={gridStyle} className="scrollbar-dark">
+      <div style={{ ...gridStyle, overflow: 'auto', flex: 1 }} className="scrollbar-dark">
         {items.map(p => (
           <Tile key={p.playlist_id}
             title={p.title}
@@ -245,6 +253,7 @@ function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick
   onClick:      () => void
 }) {
   const [imgReady, setImgReady] = useState(false)
+  const titleRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
     if (!imgUrl) return
@@ -256,6 +265,15 @@ function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick
     return () => ctrl.abort()
   }, [imgUrl])
 
+  const scrollTitleIn = () => {
+    if (!titleRef.current) return
+    const overflow = titleRef.current.scrollHeight - 30
+    if (overflow > 0) titleRef.current.style.transform = `translateY(-${overflow}px)`
+  }
+  const scrollTitleOut = () => {
+    if (titleRef.current) titleRef.current.style.transform = ''
+  }
+
   return (
     <div
       draggable
@@ -263,11 +281,10 @@ function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick
       onDragEnd={onDragEnd}
       onClick={onClick}
       style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', transition: 'border-color .1s' }}
-      onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-violet)'}
-      onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'}
+      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-violet)'; scrollTitleIn() }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'; scrollTitleOut() }}
     >
       <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg-3)', position: 'relative', overflow: 'hidden' }}>
-        {/* Image fades in once the queue slot has loaded it into the browser cache */}
         {imgUrl && (
           <img src={imgReady ? imgUrl : ''} alt=""
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: imgReady ? 1 : 0, transition: 'opacity .2s' }} />
@@ -279,7 +296,9 @@ function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick
         )}
       </div>
       <div style={{ padding: '5px 7px 7px' }}>
-        <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.35, height: 30, overflow: 'hidden' }}>{title}</div>
+        <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.35, height: 30, overflow: 'hidden' }}>
+          <span ref={titleRef} style={{ display: 'block', transition: 'transform 0.35s ease' }}>{title}</span>
+        </div>
         {sub && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2 }}>{sub}</div>}
       </div>
     </div>
@@ -490,6 +509,27 @@ function AddBtn({ onClick, gold, children }: { onClick: () => void; gold?: boole
     <button onClick={onClick} style={{ padding: '4px 10px', borderRadius: 5, border: `1px solid ${gold ? 'oklch(0.55 0.12 58)' : 'var(--hds-line)'}`, background: 'transparent', color: gold ? 'oklch(0.75 0.12 58)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer' }}>
       {children}
     </button>
+  )
+}
+
+function LoadMoreSentinel({ loading, onVisible }: { loading: boolean; onVisible: () => void }) {
+  const ref   = useRef<HTMLDivElement>(null)
+  const cbRef = useRef(onVisible)
+  useEffect(() => { cbRef.current = onVisible })
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) cbRef.current() },
+      { rootMargin: '120px' }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+  return (
+    <div ref={ref} style={{ padding: '10px 0 14px', textAlign: 'center', fontSize: 11, color: 'var(--hds-txt-3)' }}>
+      {loading ? 'Loading…' : ''}
+    </div>
   )
 }
 

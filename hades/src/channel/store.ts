@@ -54,6 +54,8 @@ export class ChannelDetailStore {
   contentPlaylists:  Playlist[]            = []
   pickerFillerLists: FillerList[]          = []
   pickerLoading:     boolean               = false
+  pickerTotal:       number                = 0
+  pickerLoadingMore: boolean               = false
   dragContent: { content_type: ContentType; content_id: string; title: string } | null = null
 
   allLibraries:      LibraryWithSource[]   = []
@@ -639,15 +641,38 @@ export class ChannelDetailStore {
     const season  = Number.isFinite(seasonParsed) ? seasonParsed : undefined
     try {
       switch (this.pickerTab) {
-        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, genre, year, content_rating: rating }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerLoading = false }); break }
-        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, genre, year, content_rating: rating }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerLoading = false }); break }
-        case 'episodes':     { const r = await raceAbort(api.searchEpisodes({ q, season, limit: 50 }), signal); runInAction(() => { this.pickerEpisodes = r.items; this.pickerLoading = false }); break }
-        case 'playlists':    { const r = await raceAbort(api.getPlaylists(), signal); runInAction(() => { this.pickerPlaylists = r; this.pickerLoading = false }); break }
-        case 'filler_lists': { const r = await raceAbort(api.getFillerLists(), signal); runInAction(() => { this.pickerFillerLists = r; this.pickerLoading = false }); break }
+        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, genre, year, content_rating: rating }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
+        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, genre, year, content_rating: rating }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
+        case 'episodes':     { const r = await raceAbort(api.searchEpisodes({ q, season, limit: 50 }), signal); runInAction(() => { this.pickerEpisodes = r.items; this.pickerTotal = 0; this.pickerLoading = false }); break }
+        case 'playlists':    { const r = await raceAbort(api.getPlaylists(), signal); runInAction(() => { this.pickerPlaylists = r; this.pickerTotal = 0; this.pickerLoading = false }); break }
+        case 'filler_lists': { const r = await raceAbort(api.getFillerLists(), signal); runInAction(() => { this.pickerFillerLists = r; this.pickerTotal = 0; this.pickerLoading = false }); break }
       }
     } catch (e) {
       if (signal.aborted) return  // superseded by a newer search — leave loading state to the new call
       runInAction(() => { this.pickerLoading = false })
+    }
+  }
+
+  async loadMorePicker() {
+    if (this.pickerLoadingMore) return
+    const q       = this.pickerQuery || undefined
+    const isRules = this.filterRules.filter(r => r.op === 'is' && r.value.trim())
+    const lib     = isRules.find(r => r.field === 'library')?.value        || undefined
+    const genre   = isRules.find(r => r.field === 'genre')?.value          || undefined
+    const yearStr = isRules.find(r => r.field === 'year')?.value
+    const year    = yearStr ? parseInt(yearStr) : undefined
+    const rating  = isRules.find(r => r.field === 'content_rating')?.value || undefined
+    this.pickerLoadingMore = true
+    try {
+      if (this.pickerTab === 'shows') {
+        const r = await api.getShows({ limit: 50, offset: this.pickerShows.length, q, library_id: lib, genre, year, content_rating: rating })
+        runInAction(() => { this.pickerShows = [...this.pickerShows, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
+      } else if (this.pickerTab === 'movies') {
+        const r = await api.getMovies({ limit: 50, offset: this.pickerMovies.length, q, library_id: lib, genre, year, content_rating: rating })
+        runInAction(() => { this.pickerMovies = [...this.pickerMovies, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
+      }
+    } catch {
+      runInAction(() => { this.pickerLoadingMore = false })
     }
   }
 
