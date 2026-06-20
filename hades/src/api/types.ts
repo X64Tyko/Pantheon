@@ -58,6 +58,12 @@ export interface Channel {
   offline_audio_type?:      'episode' | 'movie' | ''
   offline_audio_title?:     string
   logo_path?:               string
+  anchor_hashes?:           Record<string, number>
+}
+
+export interface EpgPreviewResponse {
+  programs: EpgProgram[]
+  anchors:  Record<string, number>
 }
 
 // ── List-view types (minimal) ────────────────────────────────────────────────

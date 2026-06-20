@@ -74,6 +74,70 @@ function msToTzMins(ms: number, tz: string): number {
   }
 }
 
+// Returns 'YYYY-MM-DD' for a timestamp in the given timezone.
+function localDateStr(ms: number, tz: string): string {
+  try {
+    const p = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date(ms))
+    const yr = p.find(x => x.type === 'year')?.value  ?? '2000'
+    const mo = p.find(x => x.type === 'month')?.value ?? '01'
+    const dy = p.find(x => x.type === 'day')?.value   ?? '01'
+    return `${yr}-${mo.padStart(2,'0')}-${dy.padStart(2,'0')}`
+  } catch {
+    return new Date(ms).toISOString().slice(0, 10)
+  }
+}
+
+// Merge consecutive filler items into a single visual segment.
+function mergeFiller(items: EpgProgram[]): EpgProgram[] {
+  const out: EpgProgram[] = []
+  for (const item of items) {
+    const last = out[out.length - 1]
+    if (item.item_type === 'filler' && last?.item_type === 'filler') {
+      out[out.length - 1] = { ...last, wall_clock_end_ms: item.wall_clock_end_ms }
+    } else {
+      out.push(item)
+    }
+  }
+  return out
+}
+
+function fmtLocal(ms: number, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).format(new Date(ms))
+  } catch {
+    return new Date(ms).toISOString()
+  }
+}
+
+function exportEpg(items: EpgProgram[], tz: string) {
+  const rows = items.map(item => ({
+    start_ms:    item.wall_clock_start_ms,
+    end_ms:      item.wall_clock_end_ms,
+    start_local: fmtLocal(item.wall_clock_start_ms, tz),
+    end_local:   fmtLocal(item.wall_clock_end_ms,   tz),
+    timezone:    tz,
+    block_id:    item.block_id,
+    item_type:   item.item_type,
+    status:      item.status,
+    title:       item.title,
+    show_title:  item.show_title,
+    season:      item.season,
+    episode_num: item.episode_num,
+  }))
+  const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `epg-export-${new Date().toISOString().slice(0, 16).replace('T', '_')}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function getDayInTZ(ms: number, tz: string): number {
   try {
     const d = new Date(ms)
@@ -123,12 +187,28 @@ export default function EpgPreview({ blocks, epgItems, epgLoading, epgDay, timez
   const tz = timezone || 'UTC'
 
   const [zoom, setZoom] = useState<number>(1)
+  const [epgWeek, setEpgWeek] = useState<0 | 1>(0)
   const zoomIdx    = EPG_ZOOM_LEVELS.indexOf(zoom as typeof EPG_ZOOM_LEVELS[number])
   const canZoomIn  = zoomIdx < EPG_ZOOM_LEVELS.length - 1
   const canZoomOut = zoomIdx > 0
 
-  const targetDOW = [1, 2, 3, 4, 5, 6, 0][epgDay]
-  const dayItems  = epgItems.filter(item => getDayInTZ(item.wall_clock_start_ms, tz) === targetDOW)
+  // Group unique dates from the data into weeks (up to 2).
+  const allDates = [...new Set(epgItems.map(i => localDateStr(i.wall_clock_start_ms, tz)))].sort()
+  const week0Dates = allDates.slice(0, 7)
+  const week1Dates = allDates.slice(7, 14)
+  const hasWeek2   = week1Dates.length > 0
+  const weekDates  = (epgWeek === 1 && hasWeek2) ? week1Dates : week0Dates
+
+  // Find the specific date in the selected week matching the current day-of-week tab.
+  // Use UTC noon to avoid DST ambiguity when mapping dates to DOW.
+  const targetDOW_js = [1, 2, 3, 4, 5, 6, 0][epgDay] // JS DOW: 0=Sun 1=Mon…6=Sat
+  const targetDate   = weekDates.find(d =>
+    getDayInTZ(Date.parse(d + 'T12:00:00Z'), tz) === targetDOW_js
+  ) ?? null
+
+  const dayItems  = targetDate
+    ? mergeFiller(epgItems.filter(i => localDateStr(i.wall_clock_start_ms, tz) === targetDate))
+    : []
   const hasEpg    = dayItems.length > 0
   const hasCached = hasEpg && dayItems.some(i => i.status === 'aired' || i.status === 'scheduled')
 
@@ -136,9 +216,10 @@ export default function EpgPreview({ blocks, epgItems, epgLoading, epgDay, timez
     ? dayItems.flatMap(item => {
         let startMins = msToTzMins(item.wall_clock_start_ms, tz)
         let endMins   = msToTzMins(item.wall_clock_end_ms,   tz)
-        if (endMins <= startMins && endMins < 60) endMins = 1440
+        // Items that cross midnight have endMins < startMins; cap them at the day boundary.
+        // The `< 60` guard was too narrow — it silently dropped items ending after 1 AM.
+        if (endMins <= startMins) endMins = 1440
         endMins = Math.min(endMins, 1440)
-        if (endMins <= startMins) return []
         const isFiller = item.item_type === 'filler'
         const block    = blocks.find(b => b.block_id === item.block_id)
         const meta     = isFiller ? BLOCK_META.filler : (block ? BLOCK_META[block.block_type] : BLOCK_META.episode)
@@ -160,11 +241,12 @@ export default function EpgPreview({ blocks, epgItems, epgLoading, epgDay, timez
       })
     : computeEpg(blocks, epgDay)
 
+  const dateLabel  = targetDate ? ` · ${targetDate.slice(5).replace('-', '/')}` : ''
   const statusText = epgLoading
     ? 'loading…'
     : hasEpg
-      ? `${hasCached ? 'live' : 'simulated'} · ${dayItems.length} programs`
-      : 'block coverage · no scheduled programs'
+      ? `${hasCached ? 'live' : 'simulated'} · ${dayItems.length} items${dateLabel}`
+      : `block coverage · no scheduled programs${dateLabel}`
 
   const btnBase: React.CSSProperties = { padding: '3px 7px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', color: 'var(--hds-txt-2)' }
 
@@ -183,11 +265,25 @@ export default function EpgPreview({ blocks, epgItems, epgLoading, epgDay, timez
         </div>
 
         <button onClick={onRefresh} title="Refresh EPG" style={{ ...btnBase, color: epgLoading ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)', cursor: epgLoading ? 'default' : 'pointer', opacity: epgLoading ? 0.5 : 1 }}>↺</button>
+        <button onClick={() => exportEpg(epgItems, tz)} disabled={epgItems.length === 0} title="Export EPG data as JSON" style={{ ...btnBase, opacity: epgItems.length === 0 ? 0.35 : 1, cursor: epgItems.length === 0 ? 'default' : 'pointer' }}>↓ JSON</button>
+
+        {hasWeek2 && (
+          <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 8, padding: 3, flexShrink: 0 }}>
+            {(['Wk 1', 'Wk 2'] as const).map((label, wi) => (
+              <button key={wi} onClick={() => setEpgWeek(wi as 0 | 1)} style={{ padding: '5px 8px', border: 'none', borderRadius: 6, background: epgWeek === wi ? 'oklch(0.38 0.09 287)' : 'transparent', color: epgWeek === wi ? 'var(--hds-txt)' : 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: '0.06em', cursor: 'pointer' }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 3, background: 'var(--hds-bg-3)', borderRadius: 8, padding: 3, flexShrink: 0 }}>
           {DAYS.map(([short], i) => {
-            const active = epgDay === i
+            const active  = epgDay === i
+            const dowJs   = [1, 2, 3, 4, 5, 6, 0][i]
+            const hasData = weekDates.some(d => getDayInTZ(Date.parse(d + 'T12:00:00Z'), tz) === dowJs)
             return (
-              <button key={short} onClick={() => onDay(i)} style={{ padding: '5px 9px', border: 'none', borderRadius: 6, background: active ? 'var(--hds-gold)' : 'transparent', color: active ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: '0.1em', cursor: 'pointer' }}>
+              <button key={short} onClick={() => onDay(i)} disabled={!hasData} style={{ padding: '5px 9px', border: 'none', borderRadius: 6, background: active ? 'var(--hds-gold)' : 'transparent', color: active ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: '0.1em', cursor: hasData ? 'pointer' : 'default', opacity: hasData ? 1 : 0.3 }}>
                 {short}
               </button>
             )

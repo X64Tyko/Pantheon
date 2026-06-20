@@ -1,7 +1,7 @@
 import type {
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
   Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
-  Episode, EpisodeGroup, EpisodeSearchResult, EpgProgram, ExportDepth, ImportResult, StartScope,
+  Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, ImportResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
@@ -49,7 +49,7 @@ export const api = {
   // Channels
   getChannels:      ()                                                            => request<Channel[]>('GET',    '/channels'),
   createChannel:    (b: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection'>) => request<{channel_id: string}>('POST', '/channels', b),
-  updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path'>>) => request<void>('PATCH', `/channels/${id}`, b),
+  updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes'>>) => request<void>('PATCH', `/channels/${id}`, b),
   deleteChannel:    (id: string)                                                  => request<void>('DELETE', `/channels/${id}`),
   exportChannel:    (id: string, depth: ExportDepth)                              => request<ChannelExport>('GET', `/channels/${id}/export?depth=${depth}`),
   importChannel:    (data: ChannelExport)                                         => request<ImportResult>('POST', '/channels/import', data),
@@ -124,12 +124,14 @@ export const api = {
   // Channel EPG — cache-backed (used by XMLTV/m3u generation)
   getChannelEpg: (channelId: string, hours?: number) =>
     request<EpgProgram[]>('GET', `/channels/${channelId}/epg${hours != null ? `?hours=${hours}` : ''}`),
-  // EPG preview — returns cached schedule if available, else in-memory projection (no DB writes)
-  // Pass force=true to bypass cache and always simulate from current cursor state.
-  previewChannelEpg: (channelId: string, hours?: number, seed?: number, force?: boolean) => {
-    const params = qs({ hours: hours ?? undefined, seed: seed ?? undefined, force: force ? 1 : undefined })
-    return request<EpgProgram[]>('GET', `/channels/${channelId}/epg/preview${params ? `?${params}` : ''}`)
-  },
+  // EPG preview — POST with optional seed, hours, and draft blocks.
+  // Returns { programs, anchors } where anchors maps week-anchor timestamps to mutated seeds.
+  previewChannelEpg: (channelId: string, hours?: number, seed?: number, blocks?: Block[]) =>
+    request<EpgPreviewResponse>('POST', `/channels/${channelId}/epg/preview`, {
+      ...(hours != null ? { hours } : {}),
+      ...(seed  != null ? { seed  } : {}),
+      ...(blocks        ? { blocks } : {}),
+    }),
 
   // Episode search
   getShowSeasons:    (showId: string)                                             => request<{seasons: number[]}>('GET', `/shows/${showId}/seasons`),

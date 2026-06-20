@@ -8,11 +8,13 @@ import type { FilterRule } from '../components/PickerFilters'
 import type { BlockDraft, LimitMode, PickerTab } from './types'
 import type {
   AdvanceMode, Advancement, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
-  EpisodeSearchResult, EpgProgram, FillerEntry, FillerEntryAdvancement, FillerList, FillerSelectionMode,
-  LibraryWithSource, Movie, NoHistoryBehavior, Playlist, PlaylistMode, Show,
+  EpisodeOrder, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, FillerEntry, FillerEntryAdvancement,
+  FillerList, FillerSelectionMode, LibraryWithSource, Movie, NoHistoryBehavior, Playlist,
+  PlaylistMode, Show, StartScope,
 } from '../api/types'
 
-let _debounce:    ReturnType<typeof setTimeout>
+let _debounce:  ReturnType<typeof setTimeout>
+let _epgTimer:  ReturnType<typeof setTimeout> | null = null
 let _ruleId = 0
 let _searchCtrl: AbortController | null = null
 
@@ -30,6 +32,8 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 
 export class ChannelDetailStore {
   blocks:      Block[]       = []
+  savedBlocks: Block[]       = []   // snapshot of last-committed state
+  blocksDirty: boolean       = false
   loading:     boolean       = false
   error:       string | null = null
 
@@ -93,8 +97,10 @@ export class ChannelDetailStore {
   draftFillerEntries: FillerEntry[]  = []
   contentDirty:       boolean        = false
 
-  epgItems:   EpgProgram[] = []
-  epgLoading: boolean      = false
+  epgItems:   EpgProgram[]            = []
+  epgLoading: boolean                 = false
+  confirmedAnchors: Record<string, number> = {}
+  previewAnchors:   Record<string, number> = {}
 
   channelDraftName:             string      = ''
   channelDraftNumber:           number      = 1
@@ -113,6 +119,17 @@ export class ChannelDetailStore {
 
   constructor() { makeAutoObservable(this) }
 
+  get isDirty(): boolean { return this.channelDirty || this.blocksDirty }
+
+  get scheduleChanged(): boolean {
+    const pa = this.previewAnchors
+    const ca = this.confirmedAnchors
+    const paKeys = Object.keys(pa)
+    const caKeys = Object.keys(ca)
+    if (paKeys.length !== caKeys.length) return true
+    return paKeys.some(k => pa[k] !== ca[k])
+  }
+
   initChannelDraft(channel: Channel) {
     this.channelDraftName             = channel.name
     this.channelDraftNumber           = channel.number
@@ -126,6 +143,8 @@ export class ChannelDetailStore {
     this.channelDraftOfflineAudioTitle = channel.offline_audio_title ?? ''
     this.channelDraftLogoPath         = channel.logo_path          ?? ''
     this.channelDirty                 = false
+    this.confirmedAnchors             = channel.anchor_hashes ?? {}
+    this.previewAnchors               = {}
     this.epgDay                       = todayEpgDay(channel.timezone)
   }
 
@@ -144,6 +163,8 @@ export class ChannelDetailStore {
     this.channelDirty = true
   }
 
+  // Commits all in-memory block changes + channel settings to the DB.
+  // After success, sets savedBlocks = blocks and confirms anchor hashes.
   async saveChannel(channelId: string) {
     this.channelSaving = true; this.channelSaveErr = null
     try {
@@ -160,12 +181,113 @@ export class ChannelDetailStore {
         offline_audio_title:  this.channelDraftOfflineAudioTitle,
         logo_path:            this.channelDraftLogoPath,
       })
+
+      const savedIds = new Set(this.savedBlocks.map(b => b.block_id))
+      const draftIds = new Set(this.blocks.map(b => b.block_id))
+
+      // Delete blocks removed in draft.
+      for (const b of this.savedBlocks) {
+        if (!draftIds.has(b.block_id)) {
+          await api.deleteBlock(channelId, b.block_id)
+        }
+      }
+
+      // Create new blocks and update existing ones.
+      const idMap: Record<string, string> = {} // tempId → real block_id
+      for (const b of this.blocks) {
+        const isNew = b.block_id.startsWith('tmp_') || !savedIds.has(b.block_id)
+        const payload = blockToDraft(b)
+
+        if (isNew) {
+          const res = await api.createBlock(channelId, payload as any)
+          const realId = res.block_id
+          idMap[b.block_id] = realId
+          for (const c of b.content) {
+            await api.addBlockContent(channelId, realId, {
+              content_type: c.content_type, content_id: c.content_id,
+              season_filter: c.season_filter, weight: c.weight, run_count: c.run_count,
+              include_specials: c.include_specials, episode_order: c.episode_order,
+            })
+          }
+          for (const fe of b.filler_entries) {
+            await api.addBlockFiller(channelId, realId, {
+              filler_list_id: fe.filler_list_id, advancement: fe.advancement, weight: fe.weight,
+            })
+          }
+        } else {
+          const realId = b.block_id
+          await api.updateBlock(channelId, realId, payload as any)
+          const savedBlock = this.savedBlocks.find(s => s.block_id === realId)
+          if (savedBlock) {
+            const toRemoveContent = savedBlock.content.filter(c => !b.content.some(dc => dc.id === c.id && dc.id > 0))
+            const toAddContent    = b.content.filter(c => c.id < 0)
+            const toUpdateContent = b.content.filter(c => {
+              if (c.id < 0) return false
+              const orig = savedBlock.content.find(o => o.id === c.id)
+              return orig && (
+                orig.weight !== c.weight || orig.run_count !== c.run_count ||
+                orig.include_specials !== c.include_specials ||
+                orig.episode_order !== c.episode_order ||
+                orig.season_filter !== c.season_filter
+              )
+            })
+            for (const c  of toRemoveContent) await api.removeBlockContent(channelId, realId, c.id)
+            for (const c  of toAddContent)    await api.addBlockContent(channelId, realId, { content_type: c.content_type, content_id: c.content_id, season_filter: c.season_filter, weight: c.weight, run_count: c.run_count, include_specials: c.include_specials, episode_order: c.episode_order })
+            for (const c  of toUpdateContent) await api.updateBlockContent(channelId, realId, c.id, { weight: c.weight, run_count: c.run_count, include_specials: c.include_specials, episode_order: c.episode_order, season_filter: c.season_filter })
+
+            const toRemoveFiller = savedBlock.filler_entries.filter(fe => !b.filler_entries.some(dfe => dfe.id === fe.id && dfe.id > 0))
+            const toAddFiller    = b.filler_entries.filter(fe => fe.id < 0)
+            const toUpdateFiller = b.filler_entries.filter(fe => {
+              if (fe.id < 0) return false
+              const orig = savedBlock.filler_entries.find(o => o.id === fe.id)
+              return orig && (orig.advancement !== fe.advancement || orig.weight !== fe.weight)
+            })
+            for (const fe of toRemoveFiller) await api.removeBlockFiller(channelId, realId, fe.id)
+            for (const fe of toAddFiller)    await api.addBlockFiller(channelId, realId, { filler_list_id: fe.filler_list_id, advancement: fe.advancement, weight: fe.weight })
+            for (const fe of toUpdateFiller) await api.updateBlockFiller(channelId, realId, fe.id, { advancement: fe.advancement, weight: fe.weight })
+          }
+        }
+      }
+
+      // Persist anchor seeds from the latest preview.
+      if (Object.keys(this.previewAnchors).length > 0) {
+        await api.updateChannel(channelId, { anchor_hashes: this.previewAnchors })
+      }
+
       await channelStore.fetchAll()
-      runInAction(() => { this.channelSaving = false; this.channelDirty = false })
-      this.loadEpg(channelId)
+      const blocks = await api.getBlocks(channelId)
+      const normalizedBlocks = blocks.map(normalizeBlock)
+
+      runInAction(() => {
+        this.blocks           = normalizedBlocks
+        this.savedBlocks      = normalizedBlocks
+        this.blocksDirty      = false
+        this.channelDirty     = false
+        this.confirmedAnchors = { ...this.previewAnchors }
+        this.channelSaving    = false
+        // Remap editor selection to real IDs (temp → real after creation).
+        if (this.selectedId) {
+          const realId = idMap[this.selectedId] ?? this.selectedId
+          const block  = this.blocks.find(b => b.block_id === realId) ?? null
+          this.selectedId         = realId
+          this.editing            = block
+          if (block) {
+            this.draftContent       = [...block.content]
+            this.draftFillerEntries = [...block.filler_entries]
+          }
+        }
+      })
     } catch (e: any) {
       runInAction(() => { this.channelSaveErr = e.message; this.channelSaving = false })
     }
+  }
+
+  discardChanges(channelId: string) {
+    this.blocks      = [...this.savedBlocks]
+    this.blocksDirty = false
+    this.channelDirty = false
+    this.closeEditor()
+    this.loadEpg(channelId)
   }
 
   async load(channelId: string) {
@@ -173,7 +295,10 @@ export class ChannelDetailStore {
     try {
       const [blocks, fillerLists] = await Promise.all([api.getBlocks(channelId), api.getFillerLists()])
       runInAction(() => {
-        this.blocks         = blocks.map(normalizeBlock)
+        const normalized    = blocks.map(normalizeBlock)
+        this.blocks         = normalized
+        this.savedBlocks    = normalized
+        this.blocksDirty    = false
         this.allFillerLists = fillerLists
         this.loading        = false
       })
@@ -183,14 +308,30 @@ export class ChannelDetailStore {
     }
   }
 
-  async loadEpg(channelId: string, force = false) {
+  async loadEpg(channelId: string) {
     this.epgLoading = true
     try {
-      const items = await api.previewChannelEpg(channelId, 168, this.channelDraftSeed, force)
-      runInAction(() => { this.epgItems = items; this.epgLoading = false })
+      // Only send draft blocks when they differ from DB — lets Kairos hit its live
+      // EPG cache for normal previews and only runs the SAVEPOINT swap for real diffs.
+      const draftBlocks = this.blocksDirty ? this.blocks : undefined
+      const result = await api.previewChannelEpg(channelId, 336, this.channelDraftSeed, draftBlocks)
+      runInAction(() => {
+        this.epgItems       = result.programs
+        this.previewAnchors = result.anchors
+        this.epgLoading     = false
+      })
     } catch {
       runInAction(() => { this.epgLoading = false })
     }
+  }
+
+  // Debounced EPG refresh — batches rapid block mutations into one preview call.
+  scheduleEpgRefresh(channelId: string, delay = 700) {
+    if (_epgTimer) clearTimeout(_epgTimer)
+    _epgTimer = setTimeout(() => {
+      _epgTimer = null
+      this.loadEpg(channelId)
+    }, delay)
   }
 
   select(blockId: string) {
@@ -258,17 +399,21 @@ export class ChannelDetailStore {
     this.bulkSelectedIds = [...new Set([...this.bulkSelectedIds, ...ids])]
   }
 
-  async applyBulk(channelId: string, patch: Partial<BlockDraft>) {
+  // Applies a bulk patch to all selected blocks in-memory (no immediate DB writes).
+  applyBulk(channelId: string, patch: Partial<BlockDraft>) {
     if (!this.bulkSelectedIds.length) return
     this.bulkSaving = true; this.bulkErr = null
     try {
-      for (const id of this.bulkSelectedIds)
-        await api.updateBlock(channelId, id, patch as any)
-      await this.load(channelId)
-      runInAction(() => { this.bulkSaving = false; this.bulkSelectedIds = [] })
+      this.blocks = this.blocks.map(b =>
+        this.bulkSelectedIds.includes(b.block_id) ? { ...b, ...(patch as any) } : b
+      )
+      this.blocksDirty     = true
+      this.bulkSaving      = false
+      this.bulkSelectedIds = []
     } catch (e: any) {
-      runInAction(() => { this.bulkErr = e.message; this.bulkSaving = false })
+      this.bulkErr = e.message; this.bulkSaving = false
     }
+    this.scheduleEpgRefresh(channelId)
   }
 
   setDraft<K extends keyof BlockDraft>(k: K, v: BlockDraft[K]) {
@@ -309,91 +454,79 @@ export class ChannelDetailStore {
     this.pxPerHour = Math.max(22, Math.min(96, Math.round(next)))
   }
 
-  async save(channelId: string) {
+  // Saves the current block editor state to the in-memory draft (no DB writes).
+  save(channelId: string) {
     this.saving = true; this.saveErr = null
-    // Always include end_time — empty string tells the backend's PATCH handler to NULL the column.
     const payload = { ...this.draft, end_time: this.draft.end_time ?? '' }
-
-    const origContent  = [...(this.editing?.content        ?? [])]
-    const origFiller   = [...(this.editing?.filler_entries ?? [])]
-    const draftContent = [...this.draftContent]
-    const draftFiller  = [...this.draftFillerEntries]
+    const { filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope } = this.draft
 
     try {
       let blockId: string
       if (this.editing) {
-        await api.updateBlock(channelId, this.editing.block_id, payload)
         blockId = this.editing.block_id
+        const idx = this.blocks.findIndex(b => b.block_id === blockId)
+        if (idx >= 0) {
+          const updated: Block = {
+            ...this.editing,
+            ...(payload as any),
+            content:        [...this.draftContent],
+            filler_entries: [...this.draftFillerEntries],
+          }
+          this.blocks = [...this.blocks.slice(0, idx), updated, ...this.blocks.slice(idx + 1)]
+        }
       } else {
-        const res = await api.createBlock(channelId, payload as any)
-        blockId = res.block_id
+        blockId = `tmp_${Date.now()}`
+        const newBlock: Block = {
+          block_id:   blockId,
+          channel_id: channelId,
+          ...(payload as any),
+          content:        [...this.draftContent],
+          filler_entries: [...this.draftFillerEntries],
+        }
+        this.blocks = [...this.blocks, newBlock]
       }
 
-      const toRemoveContent = origContent.filter(c  => !draftContent.some(dc => dc.id === c.id))
-      const toAddContent    = draftContent.filter(dc => dc.id < 0)
-      for (const c  of toRemoveContent) await api.removeBlockContent(channelId, blockId, c.id)
-      for (const c  of toAddContent)    await api.addBlockContent(channelId, blockId, { content_type: c.content_type, content_id: c.content_id, season_filter: c.season_filter, weight: c.weight, run_count: c.run_count, include_specials: c.include_specials, episode_order: c.episode_order })
-
-      const toRemoveFiller = origFiller.filter(fe  => !draftFiller.some(dfe => dfe.id === fe.id))
-      const toAddFiller    = draftFiller.filter(dfe => dfe.id < 0)
-      const toUpdateFiller = draftFiller.filter(dfe => {
-        if (dfe.id < 0) return false
-        const orig = origFiller.find(fe => fe.id === dfe.id)
-        return orig && (orig.advancement !== dfe.advancement || orig.weight !== dfe.weight)
-      })
-      for (const fe of toRemoveFiller) await api.removeBlockFiller(channelId, blockId, fe.id)
-      for (const fe of toAddFiller)    await api.addBlockFiller(channelId, blockId, { filler_list_id: fe.filler_list_id, advancement: fe.advancement, weight: fe.weight })
-      for (const fe of toUpdateFiller) await api.updateBlockFiller(channelId, blockId, fe.id, { advancement: fe.advancement, weight: fe.weight })
-
-      await this.load(channelId)
-      runInAction(() => {
-        const { filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope } = this.draft
-        const block = this.blocks.find(b => b.block_id === blockId) ?? null
-        this.saving       = false
-        this.isNewMode    = false
-        this.selectedId   = blockId
-        this.editing      = block
-        this.contentDirty = false
-        if (block) {
-          this.draft              = { ...blockToDraft(block), filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope }
-          this.draftContent       = [...block.content]
-          this.draftFillerEntries = [...block.filler_entries]
-        }
-      })
+      this.blocksDirty = true
+      const block      = this.blocks.find(b => b.block_id === blockId) ?? null
+      this.saving      = false
+      this.isNewMode   = false
+      this.selectedId  = blockId
+      this.editing     = block
+      this.contentDirty = false
+      if (block) {
+        this.draft              = { ...blockToDraft(block), filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope }
+        this.draftContent       = [...block.content]
+        this.draftFillerEntries = [...block.filler_entries]
+      }
     } catch (e: any) {
-      runInAction(() => { this.saveErr = e.message; this.saving = false })
+      this.saveErr = e.message; this.saving = false
     }
+    this.scheduleEpgRefresh(channelId)
   }
 
-  async duplicate(channelId: string) {
+  // Duplicates the current block into the in-memory draft.
+  duplicate(channelId: string) {
     if (!this.editing) return
     const src = this.editing
-    const payload = blockToDraft(src)
     const { filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope } = src
-    try {
-      const { block_id } = await api.createBlock(channelId, payload)
-      for (const c of src.content) {
-        await api.addBlockContent(channelId, block_id, { content_type: c.content_type, content_id: c.content_id, season_filter: c.season_filter })
-      }
-      for (const f of src.filler_entries) {
-        await api.addBlockFiller(channelId, block_id, { filler_list_id: f.filler_list_id, advancement: f.advancement, weight: f.weight })
-      }
-      await this.load(channelId)
-      runInAction(() => {
-        const block = this.blocks.find(b => b.block_id === block_id)
-        if (block) {
-          this.selectedId         = block_id
-          this.editing            = block
-          this.isNewMode          = false
-          this.draft              = { ...blockToDraft(block), filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope }
-          this.draftContent       = [...block.content]
-          this.draftFillerEntries = [...block.filler_entries]
-          this.contentDirty       = false
-        }
-      })
-    } catch (e: any) {
-      runInAction(() => { this.saveErr = (e as Error).message })
+    const newId    = `tmp_${Date.now()}`
+    const newBlock: Block = {
+      ...src,
+      block_id:       newId,
+      name:           src.name + ' (copy)',
+      content:        src.content.map(c => ({ ...c, id: -(Date.now() * 100 + Math.random() * 100 | 0), block_id: newId })),
+      filler_entries: src.filler_entries.map(fe => ({ ...fe, id: -(Date.now() * 100 + Math.random() * 100 | 0), block_id: newId })),
     }
+    this.blocks             = [...this.blocks, newBlock]
+    this.blocksDirty        = true
+    this.selectedId         = newId
+    this.editing            = newBlock
+    this.isNewMode          = false
+    this.draft              = { ...blockToDraft(newBlock), filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope }
+    this.draftContent       = [...newBlock.content]
+    this.draftFillerEntries = [...newBlock.filler_entries]
+    this.contentDirty       = false
+    this.scheduleEpgRefresh(channelId)
   }
 
   async createPremierBlocks(channelId: string) {
@@ -401,44 +534,76 @@ export class ChannelDetailStore {
     const isRerun = this.draft.advancement === 'rerun_shuffle' || this.draft.advancement === 'rerun_smart'
     if (!isRerun) return
     runInAction(() => { this.creatingPremiers = true })
-    const premierBlocks = this.blocks.filter(b => b.block_type === 'premier')
-    const showsToCreate = this.draftContent.filter(c =>
+    const premierBlocks  = this.blocks.filter(b => b.block_type === 'premier')
+    const showsToCreate  = this.draftContent.filter(c =>
       c.content_type === 'show' && c.id > 0 &&
       !premierBlocks.some(pb => pb.content.some(pc => pc.content_type === 'show' && pc.content_id === c.content_id))
     )
     const rerunPriority = this.draft.priority
     try {
-      for (const item of showsToCreate) {
-        const payload = {
-          ...BLANK_DRAFT,
-          block_type:       'premier'    as BlockType,
-          day_mask:         this.draft.day_mask,
-          start_time:       this.draft.start_time,
-          advancement:      'sequential' as Advancement,
-          cursor_scope:     this.draft.cursor_scope,
-          priority:         rerunPriority + 1,
-          program_count:    1,
-          late_start_mins:  5,
-          early_start_secs: 15,
-          end_time:         '',
+      const newBlocks: Block[] = showsToCreate.map((item, i) => {
+        const bid = `tmp_${Date.now()}_${i}`
+        return {
+          block_id:                   bid,
+          channel_id:                 channelId,
+          name:                       item.title,
+          block_type:                 'premier'    as BlockType,
+          day_mask:                   this.draft.day_mask,
+          start_time:                 this.draft.start_time,
+          end_time:                   '',
+          advancement:                'sequential' as Advancement,
+          cursor_scope:               this.draft.cursor_scope as CursorScope,
+          priority:                   rerunPriority + 1,
+          program_count:              1,
+          late_start_mins:            5,
+          early_start_secs:           15,
+          max_content_rating:         '',
+          filler_selection:           'round_robin' as FillerSelectionMode,
+          align_to_mins:              0,
+          inter_filler:               false,
+          smart_pct:                  30,
+          start_scope:                'block' as StartScope,
+          no_history_behavior:        'normal' as NoHistoryBehavior,
+          max_consecutive_episodes:   0,
+          interstitial_every_n:       1,
+          intro_content_type:         '',
+          intro_content_id:           '',
+          outro_content_type:         '',
+          outro_content_id:           '',
+          interstitial_content_type:  '',
+          interstitial_content_id:    '',
+          filler_entries:             [],
+          content: [{
+            id:               -(Date.now() * 100 + i),
+            block_id:         bid,
+            content_type:     'show' as ContentType,
+            content_id:       item.content_id,
+            position:         0,
+            title:            item.title,
+            weight:           1,
+            run_count:        1,
+            include_specials: false,
+            episode_order:    'season' as EpisodeOrder,
+          }],
         }
-        const { block_id } = await api.createBlock(channelId, payload as any)
-        await api.addBlockContent(channelId, block_id, { content_type: 'show', content_id: item.content_id })
-      }
-      await this.load(channelId)
+      })
+      runInAction(() => {
+        this.blocks          = [...this.blocks, ...newBlocks]
+        this.blocksDirty     = true
+        this.creatingPremiers = false
+      })
+      this.scheduleEpgRefresh(channelId)
     } catch (e: any) {
-      runInAction(() => { this.saveErr = e.message })
-    } finally {
-      runInAction(() => { this.creatingPremiers = false })
+      runInAction(() => { this.saveErr = e.message; this.creatingPremiers = false })
     }
   }
 
-  async deleteBlock(channelId: string, blockId: string) {
-    await api.deleteBlock(channelId, blockId)
-    runInAction(() => {
-      this.blocks = this.blocks.filter(b => b.block_id !== blockId)
-      this.closeEditor()
-    })
+  // Removes a block from the in-memory draft (no immediate DB write).
+  deleteBlock(channelId: string, blockId: string) {
+    this.blocks      = this.blocks.filter(b => b.block_id !== blockId)
+    this.blocksDirty = true
+    this.closeEditor()
+    this.scheduleEpgRefresh(channelId)
   }
 
   addContent(channelId: string, item: { content_type: ContentType; content_id: string; season_filter?: number | null; title?: string; include_specials?: boolean }) {
@@ -468,9 +633,6 @@ export class ChannelDetailStore {
   updateContentField(channelId: string, cid: number, field: 'weight' | 'run_count' | 'episode_order' | 'include_specials', value: number | string | boolean) {
     this.draftContent = this.draftContent.map(c => c.id === cid ? { ...c, [field]: value } : c)
     this.contentDirty = true
-    if (cid > 0 && this.editing) {
-      api.updateBlockContent(channelId, this.editing.block_id, cid, { [field]: value } as any).catch(() => {})
-    }
   }
 
   async setPlaylistMode(playlistId: string, mode: 'sequential' | 'show_collection') {
@@ -624,7 +786,6 @@ export class ChannelDetailStore {
   }
 
   async searchPicker() {
-    // Cancel any in-flight search and start fresh.
     _searchCtrl?.abort()
     _searchCtrl = new AbortController()
     const { signal } = _searchCtrl
@@ -648,7 +809,7 @@ export class ChannelDetailStore {
         case 'filler_lists': { const r = await raceAbort(api.getFillerLists(), signal); runInAction(() => { this.pickerFillerLists = r; this.pickerTotal = 0; this.pickerLoading = false }); break }
       }
     } catch (e) {
-      if (signal.aborted) return  // superseded by a newer search — leave loading state to the new call
+      if (signal.aborted) return
       runInAction(() => { this.pickerLoading = false })
     }
   }

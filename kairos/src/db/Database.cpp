@@ -801,6 +801,16 @@ constexpr Migration kMigrations[] = {
     DELETE FROM play_history WHERE is_scheduled = 1;
 )SQL", false }
 
+,
+
+// ── v30: anchor_hashes on channel — stores the mutated seed at each weekly
+//         anchor (Monday midnight UTC). Value = initial_seed + cumulative items
+//         scheduled through that anchor, encoded as JSON {ts_str: int}.
+//         Used by the EPG preview to detect meaningful schedule changes.
+{ 30, R"SQL(
+    ALTER TABLE channel ADD COLUMN anchor_hashes TEXT;
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace

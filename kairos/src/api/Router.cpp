@@ -106,6 +106,13 @@ void Router::clearScheduleCache(const std::string& channel_id) {
     d2.bind(1, channel_id);
     d2.bind(2, now);
     d2.exec();
+
+    // Discard the in-memory preview simulation cache so the next preview
+    // re-runs projection against the updated block configuration.
+    {
+        std::lock_guard<std::mutex> lk(preview_mu_);
+        preview_cache_.erase(channel_id);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -685,7 +692,7 @@ void Router::registerChannelRoutes() {
         SQLite::Statement q(db_.get(),
             "SELECT channel_id, name, number, timezone, default_filler_selection, seed, advance_mode, "
             "       offline_video_path, offline_image_path, offline_audio_id, offline_audio_type, "
-            "       offline_audio_title, logo_path "
+            "       offline_audio_title, logo_path, anchor_hashes "
             "FROM channel ORDER BY number");
         json result = json::array();
         while (q.executeStep()) {
@@ -705,6 +712,11 @@ void Router::registerChannelRoutes() {
                 {"offline_audio_title",       q.getColumn(11).getString()},
                 {"logo_path",                 q.getColumn(12).getString()},
             };
+            if (!q.getColumn(13).isNull()) {
+                try {
+                    channel["anchor_hashes"] = json::parse(q.getColumn(13).getString());
+                } catch (...) {}
+            }
             SQLite::Statement fq(db_.get(), R"(
                 SELECT cfe.id, cfe.filler_list_id, fl.title,
                        cfe.advancement, cfe.weight, cfe.position
@@ -791,6 +803,14 @@ void Router::registerChannelRoutes() {
             if (b.contains("seed")) {
                 SQLite::Statement s(db_.get(), "UPDATE channel SET seed = ? WHERE channel_id = ?");
                 s.bind(1, b["seed"].get<int>()); s.bind(2, id); s.exec();
+            }
+            if (b.contains("anchor_hashes")) {
+                std::string ah = b["anchor_hashes"].is_string()
+                    ? b["anchor_hashes"].get<std::string>()
+                    : b["anchor_hashes"].dump();
+                SQLite::Statement s(db_.get(),
+                    "UPDATE channel SET anchor_hashes = ? WHERE channel_id = ?");
+                s.bind(1, ah); s.bind(2, id); s.exec();
             }
             // These changes alter what gets scheduled.
             if (b.contains("timezone") || b.contains("seed") || b.contains("advance_mode"))
@@ -3851,29 +3871,53 @@ void Router::registerSchedulerRoutes() {
 
     // ── EPG preview — returns cached schedule if available, else in-memory projection ──
     // Never calls ensureScheduled(); only reads cache or simulates, no DB writes.
-    svr_.Get(R"(/api/channels/([^/]+)/epg/preview)", [this](const Req& req, Res& res) {
+    svr_.Post(R"(/api/channels/([^/]+)/epg/preview)", [this](const Req& req, Res& res) {
       try {
         std::string channel_id = req.matches[1];
-        int hours = 48;
-        if (req.has_param("hours")) {
-            try { hours = std::stoi(req.get_param_value("hours")); } catch (...) {}
+
+        json body = json::object();
+        if (!req.body.empty()) {
+            try { body = json::parse(req.body); } catch (...) {}
         }
-        hours = std::max(1, std::min(hours, 168));
+
+        int hours = 336;
+        if (body.contains("hours")) {
+            try { hours = body["hours"].get<int>(); } catch (...) {}
+        }
+        hours = std::max(1, std::min(hours, 672));
+
+        int  req_seed = -1;
+        bool has_seed = body.contains("seed") && !body["seed"].is_null();
+        if (has_seed) {
+            try { req_seed = body["seed"].get<int>(); } catch (...) {}
+        }
+
+        bool has_blocks = body.contains("blocks") && body["blocks"].is_array()
+                       && !body["blocks"].empty();
+        bool force      = has_seed || has_blocks;
 
         auto now     = std::time(nullptr);
         auto horizon = static_cast<int64_t>(now + hours * 3600LL);
 
-        // ?seed=N forces a fresh in-SAVEPOINT projection with that seed regardless of cache.
-        int  req_seed  = -1;
-        bool has_seed  = req.has_param("seed");
-        if (has_seed) {
-            try { req_seed = std::stoi(req.get_param_value("seed")); } catch (...) {}
+        // Monday midnight UTC for the current week.
+        // Jan 1 1970 was Thursday; (days + 3) % 7 maps Mon=0 … Sun=6.
+        std::time_t days_since_epoch = static_cast<std::time_t>(now / 86400);
+        std::time_t day_of_week_mon0 = (days_since_epoch + 3) % 7;
+        std::time_t week_anchor      = (days_since_epoch - day_of_week_mon0) * 86400;
+
+        // In-memory preview cache fast-path: only valid when seed is set and no
+        // draft blocks override the DB state (has_blocks implies we must re-project).
+        if (has_seed && !has_blocks) {
+            std::lock_guard<std::mutex> lk(preview_mu_);
+            auto it = preview_cache_.find(channel_id);
+            if (it != preview_cache_.end() &&
+                it->second.seed        == req_seed &&
+                it->second.week_anchor == week_anchor) {
+                ok(res, it->second.body);
+                return;
+            }
         }
 
-        // Check if the cache already has entries for this channel in the window.
-        // Use wall_clock_end > now so the currently-airing episode (started before
-        // now) is included — wall_clock_start >= now would miss it.
-        bool force = has_seed || (req.has_param("force") && req.get_param_value("force") == "1");
         bool has_cache = false;
         if (!force) {
             SQLite::Statement ck(db_.get(), R"(
@@ -3888,35 +3932,31 @@ void Router::registerSchedulerRoutes() {
             has_cache = ck.executeStep();
         }
 
+        const char* kSelectSql = R"(
+            SELECT sp.item_type, sp.item_id, sp.block_id,
+                   sp.wall_clock_start, sp.wall_clock_end, sp.status,
+                   COALESCE(e.title, m.title, '') AS item_title,
+                   COALESCE(s.title, '')           AS show_title,
+                   COALESCE(e.show_id, '')         AS show_id,
+                   COALESCE(e.season,  0)          AS season,
+                   COALESCE(e.episode, 0)          AS ep_num,
+                   COALESCE(e.duration_ms, m.duration_ms,
+                            (sp.wall_clock_end - sp.wall_clock_start) * 1000)
+                       AS duration_ms
+            FROM scheduled_program sp
+            LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
+            LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
+            LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
+            WHERE sp.channel_id=?
+              AND sp.wall_clock_end   >  ?
+              AND sp.wall_clock_start <  ?
+              AND sp.status != 'skipped'
+            ORDER BY sp.wall_clock_start
+        )";
+
         json arr = json::array();
 
-        if (has_cache) {
-            // Return cached schedule. Filler items are now persisted in
-            // scheduled_program so they appear naturally alongside content items.
-            SQLite::Statement q(db_.get(), R"(
-                SELECT sp.item_type, sp.item_id, sp.block_id,
-                       sp.wall_clock_start, sp.wall_clock_end, sp.status,
-                       COALESCE(e.title, m.title, '') AS item_title,
-                       COALESCE(s.title, '')           AS show_title,
-                       COALESCE(e.show_id, '')         AS show_id,
-                       COALESCE(e.season,  0)          AS season,
-                       COALESCE(e.episode, 0)          AS ep_num,
-                       COALESCE(e.duration_ms, m.duration_ms,
-                                (sp.wall_clock_end - sp.wall_clock_start) * 1000)
-                           AS duration_ms
-                FROM scheduled_program sp
-                LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
-                LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
-                LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
-                WHERE sp.channel_id=?
-                  AND sp.wall_clock_end > ?
-                  AND sp.wall_clock_start <  ?
-                  AND sp.status != 'skipped'
-                ORDER BY sp.wall_clock_start
-            )");
-            q.bind(1, channel_id);
-            q.bind(2, static_cast<int64_t>(now));
-            q.bind(3, horizon);
+        auto collectRows = [&](SQLite::Statement& q) {
             while (q.executeStep()) {
                 json j = {
                     {"item_type",           q.getColumn(0).getString()},
@@ -3937,70 +3977,133 @@ void Router::registerSchedulerRoutes() {
                 }
                 arr.push_back(j);
             }
+        };
+
+        if (has_cache) {
+            SQLite::Statement q(db_.get(), kSelectSql);
+            q.bind(1, channel_id);
+            q.bind(2, static_cast<int64_t>(now));
+            q.bind(3, horizon);
+            collectRows(q);
         } else {
-            // No persistent cache — run projection inside a SAVEPOINT so all
-            // DB writes (play_history + scheduled_program) are rolled back after
-            // we read the results, leaving live state untouched.
             db_.get().exec("SAVEPOINT preview_sp");
             try {
-                if (has_seed) {
-                    // Wipe the channel's cache within the SAVEPOINT so the seed
-                    // produces a fully fresh lineup rather than extending.
-                    SQLite::Statement del(db_.get(),
-                        "DELETE FROM scheduled_program WHERE channel_id=?");
-                    del.bind(1, channel_id);
-                    del.exec();
-                    SQLite::Statement del2(db_.get(),
-                        "DELETE FROM play_history WHERE channel_id=? AND is_scheduled=1");
-                    del2.bind(1, channel_id);
-                    del2.exec();
-                }
-                materializer_.ensureScheduled(channel_id, now, hours, req_seed);
+                // Wipe channel EPG state so the seed projects clean from the anchor.
+                SQLite::Statement del(db_.get(), "DELETE FROM scheduled_program WHERE channel_id=?");
+                del.bind(1, channel_id); del.exec();
+                SQLite::Statement del2(db_.get(), "DELETE FROM play_history WHERE channel_id=? AND is_scheduled=1");
+                del2.bind(1, channel_id); del2.exec();
+                SQLite::Statement del3(db_.get(), "DELETE FROM block_state WHERE channel_id=?");
+                del3.bind(1, channel_id); del3.exec();
 
-                SQLite::Statement q(db_.get(), R"(
-                    SELECT sp.item_type, sp.item_id, sp.block_id,
-                           sp.wall_clock_start, sp.wall_clock_end, sp.status,
-                           COALESCE(e.title, m.title, '') AS item_title,
-                           COALESCE(s.title, '')           AS show_title,
-                           COALESCE(e.show_id, '')         AS show_id,
-                           COALESCE(e.season,  0)          AS season,
-                           COALESCE(e.episode, 0)          AS ep_num,
-                           COALESCE(e.duration_ms, m.duration_ms,
-                                    (sp.wall_clock_end - sp.wall_clock_start) * 1000)
-                               AS duration_ms
-                    FROM scheduled_program sp
-                    LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
-                    LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
-                    LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
-                    WHERE sp.channel_id=?
-                      AND sp.wall_clock_end   >  ?
-                      AND sp.wall_clock_start <  ?
-                      AND sp.status != 'skipped'
-                    ORDER BY sp.wall_clock_start
-                )");
+                if (has_blocks) {
+                    // Replace persisted blocks with draft blocks for this projection.
+                    // content_id values come directly from the Hades Block objects
+                    // (no title-lookup needed — these are already resolved IDs).
+                    SQLite::Statement delbc(db_.get(),
+                        "DELETE FROM block_content WHERE block_id IN (SELECT block_id FROM block WHERE channel_id=?)");
+                    delbc.bind(1, channel_id); delbc.exec();
+                    SQLite::Statement delbfe(db_.get(),
+                        "DELETE FROM block_filler_entry WHERE block_id IN (SELECT block_id FROM block WHERE channel_id=?)");
+                    delbfe.bind(1, channel_id); delbfe.exec();
+                    SQLite::Statement delb(db_.get(), "DELETE FROM block WHERE channel_id=?");
+                    delb.bind(1, channel_id); delb.exec();
+
+                    for (auto& blk : body["blocks"]) {
+                        std::string block_id = blk.value("block_id", generateId());
+                        std::string end_time = blk.value("end_time", "");
+                        SQLite::Statement s(db_.get(), R"(
+                            INSERT INTO block (block_id, channel_id, name, block_type, day_mask,
+                                               start_time, end_time, program_count, priority,
+                                               max_content_rating, advancement, cursor_scope,
+                                               late_start_mins, align_to_mins, inter_filler,
+                                               early_start_secs, filler_selection, smart_pct,
+                                               start_scope, no_history_behavior,
+                                               max_consecutive_episodes, interstitial_every_n)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        )");
+                        s.bind(1, block_id); s.bind(2, channel_id);
+                        s.bind(3, blk.value("name", ""));
+                        s.bind(4, blk.value("block_type", "episode"));
+                        s.bind(5, blk.value("day_mask", 127));
+                        s.bind(6, blk.value("start_time", "00:00"));
+                        if (end_time.empty()) s.bind(7); else s.bind(7, end_time);
+                        s.bind(8,  blk.value("program_count",      0));
+                        s.bind(9,  blk.value("priority",           0));
+                        s.bind(10, blk.value("max_content_rating", ""));
+                        s.bind(11, blk.value("advancement",        "sequential"));
+                        s.bind(12, blk.value("cursor_scope",       "block"));
+                        s.bind(13, blk.value("late_start_mins",    0));
+                        s.bind(14, blk.value("align_to_mins",      0));
+                        s.bind(15, blk.value("inter_filler", false) ? 1 : 0);
+                        s.bind(16, blk.value("early_start_secs",         0));
+                        s.bind(17, blk.value("filler_selection",   "round_robin"));
+                        s.bind(18, blk.value("smart_pct",          30));
+                        s.bind(19, blk.value("start_scope",        "block"));
+                        s.bind(20, blk.value("no_history_behavior", "normal"));
+                        s.bind(21, blk.value("max_consecutive_episodes", 0));
+                        s.bind(22, blk.value("interstitial_every_n",     1));
+                        s.exec();
+
+                        int pos = 0;
+                        for (auto& item : blk.value("content", json::array())) {
+                            std::string content_id = item.value("content_id", "");
+                            std::string ct         = item.value("content_type", "");
+                            if (content_id.empty() || ct.empty()) { pos++; continue; }
+                            SQLite::Statement ins(db_.get(), R"(
+                                INSERT OR IGNORE INTO block_content
+                                    (block_id, content_type, content_id, position,
+                                     weight, run_count, include_specials, episode_order)
+                                VALUES (?,?,?,?,?,?,?,?)
+                            )");
+                            ins.bind(1, block_id); ins.bind(2, ct); ins.bind(3, content_id);
+                            ins.bind(4, pos);
+                            ins.bind(5, item.value("weight",           1));
+                            ins.bind(6, item.value("run_count",        1));
+                            ins.bind(7, item.value("include_specials", false) ? 1 : 0);
+                            ins.bind(8, item.value("episode_order",    "season"));
+                            ins.exec();
+                            if (item.contains("season_filter") && !item["season_filter"].is_null()) {
+                                SQLite::Statement upd(db_.get(), R"(
+                                    UPDATE block_content SET season_filter = ?
+                                    WHERE block_id = ? AND content_type = ? AND content_id = ?
+                                )");
+                                upd.bind(1, item["season_filter"].get<int>());
+                                upd.bind(2, block_id); upd.bind(3, ct); upd.bind(4, content_id);
+                                upd.exec();
+                            }
+                            pos++;
+                        }
+
+                        int fpos = 0;
+                        for (auto& fe : blk.value("filler_entries", json::array())) {
+                            std::string fid = fe.value("filler_list_id", "");
+                            if (fid.empty()) { fpos++; continue; }
+                            SQLite::Statement ins(db_.get(), R"(
+                                INSERT OR IGNORE INTO block_filler_entry
+                                    (block_id, filler_list_id, advancement, weight, position)
+                                VALUES (?,?,?,?,?)
+                            )");
+                            ins.bind(1, block_id); ins.bind(2, fid);
+                            ins.bind(3, fe.value("advancement", "sized"));
+                            ins.bind(4, fe.value("weight", 1));
+                            ins.bind(5, fpos); ins.exec();
+                            fpos++;
+                        }
+                    }
+                }
+
+                std::time_t from       = has_seed ? week_anchor : now;
+                int         total_hrs  = has_seed
+                    ? (static_cast<int>((horizon - week_anchor) / 3600) + 1)
+                    : hours;
+                materializer_.ensureScheduled(channel_id, from, total_hrs, req_seed);
+
+                SQLite::Statement q(db_.get(), kSelectSql);
                 q.bind(1, channel_id);
                 q.bind(2, static_cast<int64_t>(now));
                 q.bind(3, horizon);
-                while (q.executeStep()) {
-                    json j = {
-                        {"item_type",           q.getColumn(0).getString()},
-                        {"item_id",             q.getColumn(1).getString()},
-                        {"block_id",            q.getColumn(2).isNull() ? "" : q.getColumn(2).getString()},
-                        {"wall_clock_start_ms", q.getColumn(3).getInt64() * 1000},
-                        {"wall_clock_end_ms",   q.getColumn(4).getInt64() * 1000},
-                        {"status",              q.getColumn(5).getString()},
-                        {"title",               q.getColumn(6).getString()},
-                        {"duration_ms",         q.getColumn(11).getInt64()},
-                    };
-                    std::string show_title = q.getColumn(7).getString();
-                    if (!show_title.empty()) {
-                        j["show_title"]  = show_title;
-                        j["show_id"]     = q.getColumn(8).getString();
-                        j["season"]      = q.getColumn(9).getInt();
-                        j["episode_num"] = q.getColumn(10).getInt();
-                    }
-                    arr.push_back(j);
-                }
+                collectRows(q);
             } catch (...) {
                 db_.get().exec("ROLLBACK TO SAVEPOINT preview_sp");
                 db_.get().exec("RELEASE SAVEPOINT preview_sp");
@@ -4010,9 +4113,34 @@ void Router::registerSchedulerRoutes() {
             db_.get().exec("RELEASE SAVEPOINT preview_sp");
         }
 
-        ok(res, arr.dump());
+        // Compute cumulative anchor seeds: initial_seed + items_scheduled_through_anchor_N.
+        // The resulting value is what future weeks should use as their starting seed,
+        // allowing the schedule to propagate forward deterministically across week boundaries.
+        json anchors_j = json::object();
+        if (has_seed) {
+            std::map<std::time_t, int> anchor_counts;
+            for (auto& item : arr) {
+                std::time_t t    = static_cast<std::time_t>(item["wall_clock_start_ms"].get<int64_t>() / 1000);
+                std::time_t days = t / 86400;
+                std::time_t dow  = (days + 3) % 7;
+                std::time_t anch = (days - dow) * 86400;
+                anchor_counts[anch]++;
+            }
+            int cumulative = req_seed;
+            for (auto& [anch, cnt] : anchor_counts) {
+                cumulative += cnt;
+                anchors_j[std::to_string(anch)] = cumulative;
+            }
+        }
+
+        std::string resp_body = json{{"programs", arr}, {"anchors", anchors_j}}.dump();
+        if (has_seed && !has_blocks) {
+            std::lock_guard<std::mutex> lk(preview_mu_);
+            preview_cache_[channel_id] = { req_seed, week_anchor, resp_body };
+        }
+        ok(res, resp_body);
       } catch (const std::exception& e) {
-        logErr("GET /api/channels/epg/preview", e); err(res, 500, e.what());
+        logErr("POST /api/channels/epg/preview", e); err(res, 500, e.what());
       }
     });
 

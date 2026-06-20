@@ -100,6 +100,25 @@ export default observer(function ChannelDetailPage() {
         >
           ⊞ Multi
         </button>
+
+        {store.isDirty && (
+          <button
+            onClick={() => store.discardChanges(id)}
+            disabled={store.channelSaving}
+            style={{ padding: '9px 14px', border: '1px solid var(--hds-line)', borderRadius: 9, background: 'transparent', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, cursor: 'pointer', transition: '.12s' }}
+          >
+            Discard
+          </button>
+        )}
+
+        <button
+          onClick={() => store.saveChannel(id)}
+          disabled={store.channelSaving || !store.isDirty}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', border: 'none', borderRadius: 9, background: store.isDirty ? 'oklch(0.42 0.13 145)' : 'oklch(0.28 0.04 145)', color: store.isDirty ? 'oklch(0.95 0.03 145)' : 'oklch(0.5 0.04 145)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: store.isDirty ? 'pointer' : 'default', transition: '.15s', boxShadow: store.isDirty ? '0 4px 16px -4px oklch(0.42 0.13 145 / 0.5)' : 'none' }}
+        >
+          {store.channelSaving ? 'Saving…' : 'Save Channel'}
+        </button>
+
         <button
           onClick={() => store.openNew()}
           style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', border: 'none', borderRadius: 9, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: '0 4px 16px -4px oklch(0.83 0.13 84 / 0.5)' }}
@@ -111,6 +130,19 @@ export default observer(function ChannelDetailPage() {
       {store.error && (
         <div style={{ padding: '10px 24px', background: 'oklch(0.2 0.05 22 / 0.3)', borderBottom: '1px solid oklch(0.4 0.1 22 / 0.4)', color: 'oklch(0.72 0.16 22)', fontSize: 12, flexShrink: 0 }}>
           {store.error}
+        </div>
+      )}
+
+      {store.scheduleChanged && !store.channelSaving && (
+        <div style={{ padding: '9px 24px', background: 'oklch(0.22 0.07 76 / 0.4)', borderBottom: '1px solid oklch(0.45 0.1 76 / 0.5)', color: 'oklch(0.82 0.12 80)', fontSize: 11, letterSpacing: '0.03em', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ opacity: 0.7 }}>⚠</span>
+          Schedule has changed since last save — weekly anchor seeds differ from confirmed. Save Channel to lock in the new schedule.
+        </div>
+      )}
+
+      {store.channelSaveErr && (
+        <div style={{ padding: '9px 24px', background: 'oklch(0.2 0.05 22 / 0.3)', borderBottom: '1px solid oklch(0.4 0.1 22 / 0.4)', color: 'oklch(0.72 0.16 22)', fontSize: 11, flexShrink: 0 }}>
+          Save failed: {store.channelSaveErr}
         </div>
       )}
 

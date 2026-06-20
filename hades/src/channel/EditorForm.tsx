@@ -362,7 +362,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                     <button
                       onClick={() =>
                         api.resetBlockContentCursor(channelId, store.editing!.block_id, item.id)
-                          .then(() => store.loadEpg(channelId, true))
+                          .then(() => store.loadEpg(channelId))
                           .catch(e => alert(`Cursor reset failed: ${e?.message ?? e}`))
                       }
                       title="Reset cursor to beginning"

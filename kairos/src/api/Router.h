@@ -1,5 +1,9 @@
 #pragma once
 #include <httplib.h>
+#include <ctime>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 class ConfStore;
 class Database;
@@ -55,4 +59,15 @@ private:
     RuleEngine&       engine_;
     EPGMaterializer&  materializer_;
     DownloadManager&  dl_;
+
+    // Preview simulation cache: keyed by channel_id, valid for one (seed, week_anchor) pair.
+    // Populated by the POST /epg/preview endpoint when seed is set and no draft blocks are
+    // present; invalidated by clearScheduleCache whenever blocks or content change.
+    struct PreviewCacheEntry {
+        int         seed;
+        std::time_t week_anchor;
+        std::string body;
+    };
+    std::mutex                                         preview_mu_;
+    std::unordered_map<std::string, PreviewCacheEntry> preview_cache_;
 };
