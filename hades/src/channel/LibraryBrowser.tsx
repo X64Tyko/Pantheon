@@ -7,6 +7,7 @@ import { inputStyle } from './styles'
 import { FilterSection } from '../components/PickerFilters'
 import { api } from '../api/client'
 import { imageQueue } from './imageQueue'
+import { HelpTip } from './HelpTip'
 import type { ChannelDetailStore } from './store'
 import type { Show, Movie, ShowDetail, MovieDetail, EpisodeSearchResult, Playlist } from '../api/types'
 
@@ -77,13 +78,20 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
       {!infoItem && (
         <div style={{ flexShrink: 0, borderBottom: '1px solid var(--hds-line-s)' }}>
           <div style={{ padding: '10px 14px 8px' }}>
-            <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 7, padding: 3, marginBottom: 8 }}>
-              {tabs.map(t => (
-                <button key={t} onClick={() => store.setPickerTab(t)}
-                  style={{ padding: '4px 12px', border: 'none', borderRadius: 5, background: store.pickerTab === t ? 'var(--hds-violet)' : 'transparent', color: store.pickerTab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer' }}>
-                  {TAB_LABELS[t]}
-                </button>
-              ))}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 7, padding: 3 }}>
+                {tabs.map(t => (
+                  <button key={t} onClick={() => store.setPickerTab(t)}
+                    style={{ padding: '4px 12px', border: 'none', borderRadius: 5, background: store.pickerTab === t ? 'var(--hds-violet)' : 'transparent', color: store.pickerTab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer' }}>
+                    {TAB_LABELS[t]}
+                  </button>
+                ))}
+              </div>
+              <HelpTip down>
+                <div style={{ marginBottom: 7 }}><b style={{ color: 'var(--hds-txt)' }}>Drag</b> any tile onto the CONTENT list in the left panel to add it to the block.</div>
+                <div style={{ marginBottom: 7 }}><b style={{ color: 'var(--hds-txt)' }}>Click</b> a tile to open the info panel — shows synopsis, seasons, and add buttons for individual seasons or the whole show.</div>
+                <div><b style={{ color: 'var(--hds-txt)' }}>Filters</b> (below the search bar) narrow results by genre, year, rating, library, and more. Use <b style={{ color: 'var(--hds-txt)' }}>+ Add Rule</b> to combine rules with ALL or ANY matching.</div>
+              </HelpTip>
             </div>
             {store.pickerTab !== 'playlists' && (
               <div style={{ display: 'flex', gap: 6 }}>

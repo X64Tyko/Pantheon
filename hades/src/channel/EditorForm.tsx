@@ -10,6 +10,7 @@ import { getLimitMode } from './utils'
 import { inputStyle } from './styles'
 import { FillerEntryRow, FillerAddPanel } from './FillerPanel'
 import { ContentPicker } from './ContentPicker'
+import { HelpTip } from './HelpTip'
 import { api } from '../api/client'
 import type { ChannelDetailStore } from './store'
 import type { LimitMode } from './types'
@@ -99,7 +100,15 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
 
       {/* ── SCHEDULE ── */}
       <AccordionSection title="SCHEDULE" open={sec.schedule} onToggle={() => tog('schedule')}>
-        <div style={{ fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 7 }}>BLOCK TYPE</div>
+        <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 7 }}>
+          BLOCK TYPE
+          <HelpTip>
+            <div style={{ marginBottom: 6 }}><b style={{ color: 'var(--hds-txt)' }}>Episode</b> — plays TV show episodes from your content list. Advances based on the ORDER setting.</div>
+            <div style={{ marginBottom: 6 }}><b style={{ color: 'var(--hds-txt)' }}>Movie</b> — plays individual movies, one per selection.</div>
+            <div style={{ marginBottom: 6 }}><b style={{ color: 'var(--hds-txt)' }}>Premier</b> — first-run only. Only plays episodes that haven't aired on this channel yet. Pair with a Rerun block covering the same shows.</div>
+            <div><b style={{ color: 'var(--hds-txt)' }}>Filler</b> — fills dead air with short clips from the channel's filler pools. No content list needed.</div>
+          </HelpTip>
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6, marginBottom: 16 }}>
           {(['episode', 'movie', 'premier', 'filler'] as BlockType[]).map(t => {
             const tm = BLOCK_META[t]
@@ -145,7 +154,12 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <input type="time" value={d.start_time} onChange={e => store.setDraft('start_time', e.target.value)} style={inputStyle} />
           </div>
           <div>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>LATE START</div>
+            <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
+              LATE START
+              <HelpTip>
+                If a higher-priority block overruns into this block's scheduled start, this block will still fire — up to N minutes late — rather than being skipped entirely.
+              </HelpTip>
+            </div>
             <select value={String(d.late_start_mins)} onChange={e => store.setDraft('late_start_mins', +e.target.value)} style={inputStyle}>
               {DELAY_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
@@ -156,7 +170,12 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             )}
           </div>
           <div>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>EARLY START</div>
+            <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
+              EARLY START
+              <HelpTip>
+                If the previous block ends early and leaves dead air before this block's start time, this block can steal up to N seconds of that gap to start early.
+              </HelpTip>
+            </div>
             <select value={String(d.early_start_secs)} onChange={e => store.setDraft('early_start_secs', +e.target.value)} style={inputStyle}>
               {EARLY_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
@@ -188,7 +207,14 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
         <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 14, lineHeight: 1.55 }}>{limitHelp}</div>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)' }}>ALIGN START</div>
+          <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)' }}>
+            ALIGN START
+            <HelpTip>
+              Snaps the start time to the next clock boundary (e.g. :00, :15, :30, :45).<br />
+              <b style={{ color: 'var(--hds-txt)' }}>Block scope</b> — snaps the first program of the block once at start.<br />
+              <b style={{ color: 'var(--hds-txt)' }}>Episode scope</b> — snaps each episode individually. Early/Late Start define how much flex is allowed.
+            </HelpTip>
+          </div>
           {d.align_to_mins > 0 && (
             <div style={{ display: 'flex', border: '1px solid var(--hds-line)', borderRadius: 6, overflow: 'hidden' }}>
               {(['block', 'episode'] as const).map(scope => {
@@ -217,7 +243,12 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
       <AccordionSection title="PLAYBACK" open={sec.playback} onToggle={() => tog('playback')}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginBottom: 14 }}>
           <div>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>PRIORITY</div>
+            <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
+              PRIORITY
+              <HelpTip>
+                When two blocks overlap on the same time slot, the higher-priority block wins. The lower-priority block is cut short or skipped entirely. Use Late Start to allow a lower-priority block to still fire if its slot gets partially stolen.
+              </HelpTip>
+            </div>
             <input type="number" min={1} value={d.priority} onChange={e => store.setDraft('priority', Math.max(1, +e.target.value || 1))} style={inputStyle} />
             <div style={{ fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 4 }}>higher wins conflicts</div>
           </div>
@@ -247,7 +278,15 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             </div>
           </div>
           <div>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>CURSOR</div>
+            <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
+              CURSOR
+              <HelpTip>
+                Controls how episode positions are tracked across blocks.<br />
+                <b style={{ color: 'var(--hds-txt)' }}>Per block</b> — each block has its own cursor per show; the same show in two blocks plays independently.<br />
+                <b style={{ color: 'var(--hds-txt)' }}>Per channel</b> — all blocks on this channel share episode positions for the same show.<br />
+                <b style={{ color: 'var(--hds-txt)' }}>Global</b> — positions shared across all channels.
+              </HelpTip>
+            </div>
             <select value={d.cursor_scope} onChange={e => store.setDraft('cursor_scope', e.target.value as CursorScope)} style={inputStyle}>
               <option value="block">Per block</option>
               <option value="channel">Per channel</option>
