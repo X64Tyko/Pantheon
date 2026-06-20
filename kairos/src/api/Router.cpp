@@ -3871,12 +3871,14 @@ void Router::registerSchedulerRoutes() {
         }
 
         // Check if the cache already has entries for this channel in the window.
+        // Use wall_clock_end > now so the currently-airing episode (started before
+        // now) is included — wall_clock_start >= now would miss it.
         bool force = has_seed || (req.has_param("force") && req.get_param_value("force") == "1");
         bool has_cache = false;
         if (!force) {
             SQLite::Statement ck(db_.get(), R"(
                 SELECT 1 FROM scheduled_program
-                WHERE channel_id=? AND wall_clock_start >= ? AND wall_clock_start < ?
+                WHERE channel_id=? AND wall_clock_end > ? AND wall_clock_start < ?
                   AND status != 'skipped'
                 LIMIT 1
             )");
@@ -3907,7 +3909,7 @@ void Router::registerSchedulerRoutes() {
                 LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
                 LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
                 WHERE sp.channel_id=?
-                  AND sp.wall_clock_start >= ?
+                  AND sp.wall_clock_end > ?
                   AND sp.wall_clock_start <  ?
                   AND sp.status != 'skipped'
                 ORDER BY sp.wall_clock_start
