@@ -12,8 +12,21 @@ import type {
   LibraryWithSource, Movie, NoHistoryBehavior, Playlist, PlaylistMode, Show,
 } from '../api/types'
 
-let _debounce: ReturnType<typeof setTimeout>
+let _debounce:    ReturnType<typeof setTimeout>
 let _ruleId = 0
+let _searchCtrl: AbortController | null = null
+
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+    if (signal.aborted) { onAbort(); return }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      v => { signal.removeEventListener('abort', onAbort); resolve(v) },
+      e => { signal.removeEventListener('abort', onAbort); reject(e) },
+    )
+  })
+}
 
 export class ChannelDetailStore {
   blocks:      Block[]       = []
@@ -41,7 +54,7 @@ export class ChannelDetailStore {
   contentPlaylists:  Playlist[]            = []
   pickerFillerLists: FillerList[]          = []
   pickerLoading:     boolean               = false
-  dragItem:          string | null         = null
+  dragContent: { content_type: ContentType; content_id: string; title: string } | null = null
 
   allLibraries:      LibraryWithSource[]   = []
 
@@ -590,6 +603,7 @@ export class ChannelDetailStore {
   }
 
   setPickerTab(t: PickerTab) {
+    clearTimeout(_debounce)
     this.pickerTab   = t; this.expandedShowId = null; this.pickerSeasonFilter = ''
     this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.searchPicker()
@@ -608,6 +622,11 @@ export class ChannelDetailStore {
   }
 
   async searchPicker() {
+    // Cancel any in-flight search and start fresh.
+    _searchCtrl?.abort()
+    _searchCtrl = new AbortController()
+    const { signal } = _searchCtrl
+
     this.pickerLoading = true
     const q       = this.pickerQuery || undefined
     const isRules = this.filterRules.filter(r => r.op === 'is' && r.value.trim())
@@ -620,13 +639,16 @@ export class ChannelDetailStore {
     const season  = Number.isFinite(seasonParsed) ? seasonParsed : undefined
     try {
       switch (this.pickerTab) {
-        case 'shows':        { const r = await api.getShows({ limit: 100, q, library_id: lib, genre, year, content_rating: rating }); runInAction(() => { this.pickerShows = r.items; this.pickerLoading = false }); break }
-        case 'movies':       { const r = await api.getMovies({ limit: 100, q, library_id: lib, genre, year, content_rating: rating }); runInAction(() => { this.pickerMovies = r.items; this.pickerLoading = false }); break }
-        case 'episodes':     { const r = await api.searchEpisodes({ q, season, limit: 80 }); runInAction(() => { this.pickerEpisodes = r.items; this.pickerLoading = false }); break }
-        case 'playlists':    { const r = await api.getPlaylists(); runInAction(() => { this.pickerPlaylists = r; this.pickerLoading = false }); break }
-        case 'filler_lists': { const r = await api.getFillerLists(); runInAction(() => { this.pickerFillerLists = r; this.pickerLoading = false }); break }
+        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, genre, year, content_rating: rating }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerLoading = false }); break }
+        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, genre, year, content_rating: rating }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerLoading = false }); break }
+        case 'episodes':     { const r = await raceAbort(api.searchEpisodes({ q, season, limit: 50 }), signal); runInAction(() => { this.pickerEpisodes = r.items; this.pickerLoading = false }); break }
+        case 'playlists':    { const r = await raceAbort(api.getPlaylists(), signal); runInAction(() => { this.pickerPlaylists = r; this.pickerLoading = false }); break }
+        case 'filler_lists': { const r = await raceAbort(api.getFillerLists(), signal); runInAction(() => { this.pickerFillerLists = r; this.pickerLoading = false }); break }
       }
-    } catch { runInAction(() => { this.pickerLoading = false }) }
+    } catch (e) {
+      if (signal.aborted) return  // superseded by a newer search — leave loading state to the new call
+      runInAction(() => { this.pickerLoading = false })
+    }
   }
 
   async expandShow(showId: string) {

@@ -131,7 +131,12 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
             movie.title          = item["title"].get<std::string>();
             movie.content_rating = item.value("contentRating", "");
             movie.file_path      = std::move(file_path);
-            movie.duration_ms    = item.value("duration", int64_t{0});
+            {
+                int64_t dur = item.value("duration", int64_t{0});
+                if (dur <= 0 && item.contains("Media") && !item["Media"].empty())
+                    dur = item["Media"][0].value("duration", int64_t{0});
+                movie.duration_ms = dur;
+            }
             if (item.contains("year") && !item["year"].is_null())
                 movie.year = item["year"].get<int>();
             movie.overview  = item.value("summary", "");
@@ -217,6 +222,10 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
             ep.title       = item.value("title", "");
             ep.file_path   = std::move(file_path);
             ep.duration_ms = item.value("duration", int64_t{0});
+            // Plex sometimes omits top-level duration for episodes; fall back to
+            // the Media-level value the way fetchMovies already does.
+            if (ep.duration_ms <= 0 && item.contains("Media") && !item["Media"].empty())
+                ep.duration_ms = item["Media"][0].value("duration", int64_t{0});
             ep.overview    = item.value("summary", "");
             ep.air_date    = air_date;
             ep.thumb       = item.value("thumb", "");

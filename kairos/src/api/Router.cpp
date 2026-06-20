@@ -559,6 +559,17 @@ void Router::registerSourceRoutes() {
 
 void Router::registerConfigRoutes() {
 
+    // Runtime settings readable by the frontend (sync thread count, etc.)
+    svr_.Get("/api/config/settings", [](const Req&, Res& res) {
+        constexpr int kDefault = 6;
+        int sync_threads = kDefault;
+        if (const char* env = std::getenv("KAIROS_SYNC_THREADS")) {
+            try { int n = std::stoi(env); if (n > 0) sync_threads = n; }
+            catch (...) {}
+        }
+        ok(res, json{{"sync_threads", sync_threads}}.dump());
+    });
+
     // Credential status for all configured sources
     svr_.Get("/api/config/credentials", [this](const Req&, Res& res) {
         SQLite::Statement q(db_.get(),

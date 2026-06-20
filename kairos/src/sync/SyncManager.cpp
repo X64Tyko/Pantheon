@@ -2,6 +2,7 @@
 #include "EmbySource.h"
 #include "JellyfinSource.h"
 #include "LocalSource.h"
+#include "MediaProbe.h"
 #include "PlexSource.h"
 #include "conf/ConfStore.h"
 #include "db/Database.h"
@@ -220,10 +221,12 @@ void SyncManager::syncShows(MediaSource& src,
         for (int w = 0; w < worker_count; ++w) {
             workers.emplace_back([&]() {
                 for (size_t i = next.fetch_add(1); i < shows.size(); i = next.fetch_add(1)) {
-                    episodes_by_show[i] = src.fetchEpisodes(ext_show_ids[i]);
+                    auto& eps = episodes_by_show[i] = src.fetchEpisodes(ext_show_ids[i]);
+                    for (auto& ep : eps)
+                        ep.duration_ms = validateDurationMs(ep.duration_ms, conf_.applyPathMap(ep.file_path));
                     std::lock_guard lock(s_log_mu);
                     std::cout << "[sync]     \"" << shows[i].title << "\": "
-                              << episodes_by_show[i].size() << " episode(s)" << std::endl;
+                              << eps.size() << " episode(s)" << std::endl;
                 }
             });
         }
@@ -330,7 +333,8 @@ void SyncManager::syncMovies(MediaSource& src,
 
     for (auto& movie : movies) {
         const std::string ext_movie_id = movie.movie_id;
-        movie.movie_id = resolveId("movie", source_id, ext_movie_id);
+        movie.movie_id    = resolveId("movie", source_id, ext_movie_id);
+        movie.duration_ms = validateDurationMs(movie.duration_ms, conf_.applyPathMap(movie.file_path));
         live_movie_ids.insert(movie.movie_id);
 
         SQLite::Statement s(db_.get(), R"(

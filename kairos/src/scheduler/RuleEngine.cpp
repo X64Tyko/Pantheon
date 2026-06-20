@@ -1265,7 +1265,12 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
             }
         }
     }
-    writeBlockRR(b.block_id, channel_id, (rr + 1) % n);
+    if (b.advancement == Advancement::Shuffle || b.advancement == Advancement::SmartShuffle) {
+        std::mt19937_64 rng{std::random_device{}()};
+        writeBlockRR(b.block_id, channel_id, selectWeighted(b, rng));
+    } else {
+        writeBlockRR(b.block_id, channel_id, (rr + 1) % n);
+    }
 }
 
 // ── Inter-filler clip picker ──────────────────────────────────────────────────
@@ -1780,9 +1785,11 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
 
         auto item = std::move(*item_opt);
         if (item.duration_ms <= 0) {
-            if (epgDebug())
-                std::cout << "[epg]   t=" << t << " item duration_ms=0 id="
-                          << item.item_id << " — skipping\n";
+            std::cout << "[epg] WARNING: item duration_ms=0 id=" << item.item_id
+                      << " type=" << item.item_type
+                      << " block=" << block.block_id << " — skipping and advancing cursor\n";
+            // Advance cursors so we don't spin forever on the same zero-duration item.
+            if (!is_fallback_filler) advanceCursors(channel_id, block, t);
             t += 60;
             continue;
         }

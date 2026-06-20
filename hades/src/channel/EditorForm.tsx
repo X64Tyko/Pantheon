@@ -44,10 +44,11 @@ export function AccordionSection({ title, badge, open, onToggle, children }: {
 
 // ─── Editor form ──────────────────────────────────────────────────────────────
 
-export const EditorForm = observer(function EditorForm({ channelId, store, limitMode }: {
-  channelId: string
-  store:     ChannelDetailStore
-  limitMode: LimitMode
+export const EditorForm = observer(function EditorForm({ channelId, store, limitMode, hidePicker }: {
+  channelId:   string
+  store:       ChannelDetailStore
+  limitMode:   LimitMode
+  hidePicker?: boolean
 }) {
   const d   = store.draft
   const m   = BLOCK_META[d.block_type]
@@ -313,21 +314,23 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
         onToggle={() => tog('content')}
         badge={contentCount > 0 ? <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.04em' }}>{contentCount}</span> : undefined}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
-          <span />
-          {(store.editing || store.isNewMode) && (
-            <button onClick={() => store.openPicker()} style={{ color: 'var(--hds-violet)', background: 'transparent', border: 'none', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', padding: '2px 4px' }}>+ Add</button>
-          )}
-        </div>
+        {!hidePicker && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
+            <span />
+            {(store.editing || store.isNewMode) && (
+              <button onClick={() => store.openPicker()} style={{ color: 'var(--hds-violet)', background: 'transparent', border: 'none', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', padding: '2px 4px' }}>+ Add</button>
+            )}
+          </div>
+        )}
 
-        {store.pickerOpen && (store.editing || store.isNewMode) && (
+        {!hidePicker && store.pickerOpen && (store.editing || store.isNewMode) && (
           <ContentPicker channelId={channelId} store={store} />
         )}
 
         <div
           onDragOver={e => e.preventDefault()}
-          onDrop={e => { e.preventDefault(); if (store.dragItem) { const sh = store.pickerShows.find(s => s.show_id === store.dragItem); store.addContent(channelId, { content_type: 'show', content_id: store.dragItem!, title: sh?.title }); store.dragItem = null } }}
-          style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40, padding: store.dragItem ? 8 : 0, border: store.dragItem ? '1px dashed var(--hds-violet)' : '1px solid transparent', borderRadius: 9, transition: '.12s', marginTop: store.pickerOpen ? 10 : 0 }}
+          onDrop={e => { e.preventDefault(); if (store.dragContent) { store.addContent(channelId, store.dragContent); store.dragContent = null } }}
+          style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40, padding: store.dragContent ? 8 : 0, border: store.dragContent ? '1px dashed var(--hds-violet)' : '1px solid transparent', borderRadius: 9, transition: '.12s', marginTop: !hidePicker && store.pickerOpen ? 10 : 0 }}
         >
           {store.draftContent.map(item => {
             const dot       = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
@@ -423,8 +426,10 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
               </div>
             )
           })}
-          {(store.editing || store.isNewMode) && store.draftContent.length === 0 && !store.pickerOpen && (
-            <div style={{ textAlign: 'center', padding: 6, color: 'var(--hds-txt-3)', fontSize: 11 }}>Drag shows or movies here, or use + Add</div>
+          {(store.editing || store.isNewMode) && store.draftContent.length === 0 && (hidePicker || !store.pickerOpen) && (
+            <div style={{ textAlign: 'center', padding: 6, color: 'var(--hds-txt-3)', fontSize: 11 }}>
+              {hidePicker ? 'Drag items from the library panel or click to add' : 'Drag shows or movies here, or use + Add'}
+            </div>
           )}
         </div>
 

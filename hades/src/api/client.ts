@@ -193,6 +193,9 @@ export const api = {
                    request<void>                                     ('PATCH',  `/channels/${channelId}/bumpers/${bumperId}`, b),
   deleteBumper:  (channelId: string, bumperId: number)               => request<void>          ('DELETE', `/channels/${channelId}/bumpers/${bumperId}`),
 
+  // Runtime settings (mirrors server-side env vars)
+  getSettings: () => request<{ sync_threads: number }>('GET', '/config/settings'),
+
   // Downloads
   getDownloadConfig:  ()                                              => request<{path: string}>('GET', '/config/download'),
   setDownloadConfig:  (path: string)                                  => request<{ok: boolean}>('PUT', '/config/download', { path }),
