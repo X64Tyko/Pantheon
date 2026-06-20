@@ -298,7 +298,7 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
                 FROM scheduled_program sp
                 WHERE sp.channel_id = ?
                   AND sp.is_filler = 0
-                  AND sp.wall_clock_start >= ?
+                  AND sp.wall_clock_end   >  ?
                   AND sp.wall_clock_start <  ?
                   AND sp.status != 'skipped'
             )
