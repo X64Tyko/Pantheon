@@ -7,7 +7,7 @@ import { inputStyle } from './styles'
 import { FilterSection } from '../components/PickerFilters'
 import { api } from '../api/client'
 import { imageQueue } from './imageQueue'
-import { HelpTip } from './HelpTip'
+import { HelpTip, HelpSection, GifSlot } from './HelpTip'
 import type { ChannelDetailStore } from './store'
 import type { Show, Movie, ShowDetail, MovieDetail, EpisodeSearchResult, Playlist } from '../api/types'
 
@@ -87,10 +87,19 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
                   </button>
                 ))}
               </div>
-              <HelpTip down>
-                <div style={{ marginBottom: 7 }}><b style={{ color: 'var(--hds-txt)' }}>Drag</b> any tile onto the CONTENT list in the left panel to add it to the block.</div>
-                <div style={{ marginBottom: 7 }}><b style={{ color: 'var(--hds-txt)' }}>Click</b> a tile to open the info panel — shows synopsis, seasons, and add buttons for individual seasons or the whole show.</div>
-                <div><b style={{ color: 'var(--hds-txt)' }}>Filters</b> (below the search bar) narrow results by genre, year, rating, library, and more. Use <b style={{ color: 'var(--hds-txt)' }}>+ Add Rule</b> to combine rules with ALL or ANY matching.</div>
+              <HelpTip title="Using the Library Browser" tip="Drag, click, and filter your library" down>
+                <HelpSection title="Drag to Add">
+                  Grab any tile and drop it onto the CONTENT list in the left panel. A dashed violet drop zone appears when you hover over a valid target. Shows, movies, individual episodes, and playlists can all be dragged in.
+                  <GifSlot label="Dragging a show tile onto the Content list" />
+                </HelpSection>
+                <HelpSection title="Click to Inspect">
+                  Clicking a tile opens the info panel with the full synopsis, season list, runtime, and content rating. From there you can add the entire show, individual seasons, or just Season 00 (specials only).
+                  <GifSlot label="Clicking a tile to open the info panel and add a specific season" />
+                </HelpSection>
+                <HelpSection title="Filters">
+                  The Filters toggle (below the search bar) opens a rule builder. Add rules to filter by genre, year, content rating, network, library, and more. Rules combine with <b style={{ color: 'var(--hds-txt)' }}>ALL</b> (every rule must match) or <b style={{ color: 'var(--hds-txt)' }}>ANY</b> (at least one must match). Active rules are shown in violet on the Filters toggle.
+                  <GifSlot label="Building filter rules to narrow the library by genre and year" />
+                </HelpSection>
               </HelpTip>
             </div>
             {store.pickerTab !== 'playlists' && (

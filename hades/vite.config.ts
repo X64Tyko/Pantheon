@@ -17,5 +17,13 @@ export default defineConfig({
   build: {
     outDir: '../kairos/ui-dist',   // built output lands where Kairos can serve it
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          state:  ['mobx', 'mobx-react-lite'],
+        },
+      },
+    },
   }
 })

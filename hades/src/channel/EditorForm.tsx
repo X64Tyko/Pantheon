@@ -10,7 +10,7 @@ import { getLimitMode } from './utils'
 import { inputStyle } from './styles'
 import { FillerEntryRow, FillerAddPanel } from './FillerPanel'
 import { ContentPicker } from './ContentPicker'
-import { HelpTip } from './HelpTip'
+import { HelpTip, HelpSection, GifSlot } from './HelpTip'
 import { api } from '../api/client'
 import type { ChannelDetailStore } from './store'
 import type { LimitMode } from './types'
@@ -102,11 +102,21 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
       <AccordionSection title="SCHEDULE" open={sec.schedule} onToggle={() => tog('schedule')}>
         <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 7 }}>
           BLOCK TYPE
-          <HelpTip>
-            <div style={{ marginBottom: 6 }}><b style={{ color: 'var(--hds-txt)' }}>Episode</b> — plays TV show episodes from your content list. Advances based on the ORDER setting.</div>
-            <div style={{ marginBottom: 6 }}><b style={{ color: 'var(--hds-txt)' }}>Movie</b> — plays individual movies, one per selection.</div>
-            <div style={{ marginBottom: 6 }}><b style={{ color: 'var(--hds-txt)' }}>Premier</b> — first-run only. Only plays episodes that haven't aired on this channel yet. Pair with a Rerun block covering the same shows.</div>
-            <div><b style={{ color: 'var(--hds-txt)' }}>Filler</b> — fills dead air with short clips from the channel's filler pools. No content list needed.</div>
+          <HelpTip title="Block Types" tip="What each block type does">
+            <HelpSection title="Episode">
+              Plays TV show episodes from your content list. The <b style={{ color: 'var(--hds-txt)' }}>ORDER</b> setting controls how the engine cycles through shows — sequential rotation, weighted random, or rerun modes that draw from play history.
+            </HelpSection>
+            <HelpSection title="Movie">
+              Plays individual movies, one per selection. The block advances through your movie list according to the ORDER setting.
+            </HelpSection>
+            <HelpSection title="Premier">
+              <p style={{ margin: '0 0 10px' }}>First-run only — only plays episodes that have never aired on this channel. Before scheduling, the engine checks play history; only unseen episodes are eligible.</p>
+              <p style={{ margin: '0 0 10px' }}>Pair a Premier block with a Rerun block (<b style={{ color: 'var(--hds-txt)' }}>rerun_shuffle</b> or <b style={{ color: 'var(--hds-txt)' }}>rerun_smart</b>) covering the same shows. Once an episode premieres it automatically enters the rerun pool — no manual maintenance needed.</p>
+              <GifSlot label="Premier block paired with Rerun block — new episodes premiere once, then feed into the rerun rotation" />
+            </HelpSection>
+            <HelpSection title="Filler">
+              Fills dead air with short clips (commercials, bumpers) from a filler pool. Filler blocks draw from filler lists attached to any block's FILLER section, or the channel default if none are set. No main content list is needed.
+            </HelpSection>
           </HelpTip>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6, marginBottom: 16 }}>
@@ -156,8 +166,11 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           <div>
             <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
               LATE START
-              <HelpTip>
-                If a higher-priority block overruns into this block's scheduled start, this block will still fire — up to N minutes late — rather than being skipped entirely.
+              <HelpTip title="Late Start" tip="Allow this block to fire late if its slot is taken">
+                <p style={{ margin: '0 0 12px' }}>A higher-priority block overrunning into this block's scheduled start will normally cause this block to be skipped for that day.</p>
+                <p style={{ margin: '0 0 12px' }}>With Late Start set to N minutes, the block will still fire — up to N minutes after its scheduled start — instead of being dropped. It still ends at its normal time or program count, so a late start means fewer programs play that run.</p>
+                <p style={{ margin: '0 0 4px' }}><b style={{ color: 'var(--hds-txt)' }}>Example:</b> a movie block (priority 5) runs until 22:15, pushing into a 22:00 news block (priority 3). Without Late Start the news block is skipped. With Late Start = 20 min, news fires at 22:15.</p>
+                <GifSlot label="Higher-priority block overruns; lower-priority block fires late within tolerance" />
               </HelpTip>
             </div>
             <select value={String(d.late_start_mins)} onChange={e => store.setDraft('late_start_mins', +e.target.value)} style={inputStyle}>
@@ -172,8 +185,11 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           <div>
             <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
               EARLY START
-              <HelpTip>
-                If the previous block ends early and leaves dead air before this block's start time, this block can steal up to N seconds of that gap to start early.
+              <HelpTip title="Early Start" tip="Steal dead air before this block's scheduled start">
+                <p style={{ margin: '0 0 12px' }}>If the block before this one ends early and leaves unscheduled time, Early Start lets this block claim that gap.</p>
+                <p style={{ margin: '0 0 12px' }}>With Early Start set to N seconds, the block may begin up to N seconds before its scheduled start time. The first program plays normally — it just begins sooner.</p>
+                <p style={{ margin: '0 0 4px' }}><b style={{ color: 'var(--hds-txt)' }}>Example:</b> a filler block ends at 21:58:30, leaving 90 seconds before a 22:00 episode block. With Early Start = 120s, the episode block begins at 21:58:30 instead of waiting for 22:00.</p>
+                <GifSlot label="Previous block ends early; this block claims the dead air gap" />
               </HelpTip>
             </div>
             <select value={String(d.early_start_secs)} onChange={e => store.setDraft('early_start_secs', +e.target.value)} style={inputStyle}>
@@ -209,10 +225,14 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
           <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)' }}>
             ALIGN START
-            <HelpTip>
-              Snaps the start time to the next clock boundary (e.g. :00, :15, :30, :45).<br />
-              <b style={{ color: 'var(--hds-txt)' }}>Block scope</b> — snaps the first program of the block once at start.<br />
-              <b style={{ color: 'var(--hds-txt)' }}>Episode scope</b> — snaps each episode individually. Early/Late Start define how much flex is allowed.
+            <HelpTip title="Align Start" tip="Snap this block's start to a clock boundary">
+              <HelpSection title="Block Scope">
+                Snaps the first program of the block to the next upcoming boundary — :00, :15, :30, or :45. If a conflict delays the block to 20:07, it waits until 20:15 rather than starting mid-interval. Only fires once at block start.
+              </HelpSection>
+              <HelpSection title="Episode Scope">
+                <p style={{ margin: '0 0 10px' }}>Snaps each individual episode to the next boundary, creating a grid-locked schedule where every program starts on a clean time mark.</p>
+                <p style={{ margin: 0 }}>Early Start and Late Start define the tolerance window around each snap point. If the tolerance is not enough to reach the next boundary, the episode may be skipped.</p>
+              </HelpSection>
             </HelpTip>
           </div>
           {d.align_to_mins > 0 && (
@@ -245,8 +265,12 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           <div>
             <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
               PRIORITY
-              <HelpTip>
-                When two blocks overlap on the same time slot, the higher-priority block wins. The lower-priority block is cut short or skipped entirely. Use Late Start to allow a lower-priority block to still fire if its slot gets partially stolen.
+              <HelpTip title="Block Priority" tip="How overlapping blocks are resolved">
+                <p style={{ margin: '0 0 12px' }}>When two blocks overlap on the same time slot, the higher-priority block wins the contested minutes. The lower-priority block is cut short at the conflict point.</p>
+                <p style={{ margin: '0 0 12px' }}>A lower-priority block that loses its entire start window is skipped for that day unless it has a <b style={{ color: 'var(--hds-txt)' }}>Late Start</b> tolerance set.</p>
+                <p style={{ margin: '0 0 12px' }}>Priority only matters where blocks overlap. Non-overlapping blocks play independently of their priority values.</p>
+                <p style={{ margin: '0 0 4px' }}><b style={{ color: 'var(--hds-txt)' }}>Tip:</b> use a low-priority 24/7 filler block as a catch-all that anything else can override, or set a high priority on a special event block to punch through a normal scheduled lineup.</p>
+                <GifSlot label="Two overlapping blocks — higher priority wins the contested window; lower priority is cut short" />
               </HelpTip>
             </div>
             <input type="number" min={1} value={d.priority} onChange={e => store.setDraft('priority', Math.max(1, +e.target.value || 1))} style={inputStyle} />
@@ -280,11 +304,16 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           <div>
             <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
               CURSOR
-              <HelpTip>
-                Controls how episode positions are tracked across blocks.<br />
-                <b style={{ color: 'var(--hds-txt)' }}>Per block</b> — each block has its own cursor per show; the same show in two blocks plays independently.<br />
-                <b style={{ color: 'var(--hds-txt)' }}>Per channel</b> — all blocks on this channel share episode positions for the same show.<br />
-                <b style={{ color: 'var(--hds-txt)' }}>Global</b> — positions shared across all channels.
+              <HelpTip title="Cursor Scope" tip="How episode positions are shared between blocks">
+                <HelpSection title="Per Block (default)">
+                  Each block has its own episode position per show. The same show in two blocks plays completely independently — Morning could be on S01E03 while Evening is on S02E01. Blocks never interfere with each other. Safe default for most setups.
+                </HelpSection>
+                <HelpSection title="Per Channel">
+                  All blocks on this channel share episode positions for the same show. If Morning plays Kim Possible S01E03 tonight, Evening picks up at S01E04 tomorrow. Use this to build a continuous channel where every block contributes to a single run through the library.
+                </HelpSection>
+                <HelpSection title="Global">
+                  Positions are shared across all channels system-wide. A show played on Channel 1 advances the same cursor used by Channel 2. Use this for a cross-channel rerun pool where episode state follows the content, not the channel.
+                </HelpSection>
               </HelpTip>
             </div>
             <select value={d.cursor_scope} onChange={e => store.setDraft('cursor_scope', e.target.value as CursorScope)} style={inputStyle}>
