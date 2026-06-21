@@ -3905,9 +3905,10 @@ void Router::registerSchedulerRoutes() {
         std::time_t day_of_week_mon0 = (days_since_epoch + 3) % 7;
         std::time_t week_anchor      = (days_since_epoch - day_of_week_mon0) * 86400;
 
-        // In-memory preview cache fast-path: only valid when seed is set and no
-        // draft blocks override the DB state (has_blocks implies we must re-project).
-        if (has_seed && !has_blocks) {
+        // In-memory preview cache fast-path: valid for any no-draft preview so that
+        // repeated loads of the same week don't re-project. has_blocks always bypasses
+        // the cache since draft state can change between calls.
+        if (!has_blocks) {
             std::lock_guard<std::mutex> lk(preview_mu_);
             auto it = preview_cache_.find(channel_id);
             if (it != preview_cache_.end() &&
@@ -4094,15 +4095,19 @@ void Router::registerSchedulerRoutes() {
                     }
                 }
 
-                std::time_t from       = has_seed ? week_anchor : now;
-                int         total_hrs  = has_seed
+                // For real-block previews always start from the week anchor so the
+                // simulated schedule matches the production EPG exactly, making the
+                // preview stable across saves that don't change content.
+                // For draft-block previews start from now to show the immediate impact.
+                std::time_t from       = !has_blocks ? week_anchor : now;
+                int         total_hrs  = !has_blocks
                     ? (static_cast<int>((horizon - week_anchor) / 3600) + 1)
                     : hours;
 
-                // For seeded preview, restore the cursor + block_state snapshot from the
-                // stored week anchor so the projection is identical to the real EPG.
-                // This runs inside the SAVEPOINT so the restores are rolled back with it.
-                if (has_seed) {
+                // For real-block previews, restore cursor + block_state from the stored
+                // week anchor so the projection is identical to the real EPG.
+                // Runs inside the SAVEPOINT — restores are automatically rolled back.
+                if (!has_blocks) {
                     SQLite::Statement qa(db_.get(),
                         "SELECT anchor_hashes FROM channel WHERE channel_id=?");
                     qa.bind(1, channel_id);
@@ -4165,11 +4170,9 @@ void Router::registerSchedulerRoutes() {
                 q.bind(3, horizon);
                 collectRows(q);
 
-                // Count items from week_anchor (not from `now`) so anchor hashes
-                // are deterministic regardless of when the page loads.
-                // Must run inside the SAVEPOINT — after rollback the projected
-                // scheduled_program rows are gone.
-                if (has_seed) {
+                // Count items from week_anchor for draft-mode anchor comparison.
+                // Must run inside the SAVEPOINT — rows are gone after rollback.
+                if (has_blocks) {
                     SQLite::Statement aq(db_.get(), R"(
                         SELECT wall_clock_start FROM scheduled_program
                         WHERE channel_id=? AND is_filler=0
@@ -4202,26 +4205,24 @@ void Router::registerSchedulerRoutes() {
         //   has_blocks  → compute fresh from SAVEPOINT item counts so the draft-mode
         //                  scheduleChanged banner reflects the actual impact of block edits.
         json anchors_j = json::object();
-        if (has_seed) {
-            if (!has_blocks) {
-                SQLite::Statement ach(db_.get(),
-                    "SELECT anchor_hashes FROM channel WHERE channel_id=?");
-                ach.bind(1, channel_id);
-                if (ach.executeStep() && !ach.getColumn(0).isNull()) {
-                    try { anchors_j = json::parse(ach.getColumn(0).getString()); }
-                    catch (...) {}
-                }
-            } else {
-                int cumulative = req_seed;
-                for (auto& [anch, cnt] : anchor_counts) {
-                    cumulative += cnt;
-                    anchors_j[std::to_string(anch)] = cumulative;
-                }
+        if (!has_blocks) {
+            SQLite::Statement ach(db_.get(),
+                "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+            ach.bind(1, channel_id);
+            if (ach.executeStep() && !ach.getColumn(0).isNull()) {
+                try { anchors_j = json::parse(ach.getColumn(0).getString()); }
+                catch (...) {}
+            }
+        } else {
+            int cumulative = req_seed;
+            for (auto& [anch, cnt] : anchor_counts) {
+                cumulative += cnt;
+                anchors_j[std::to_string(anch)] = cumulative;
             }
         }
 
         std::string resp_body = json{{"programs", arr}, {"anchors", anchors_j}}.dump();
-        if (has_seed && !has_blocks) {
+        if (!has_blocks) {
             std::lock_guard<std::mutex> lk(preview_mu_);
             preview_cache_[channel_id] = { req_seed, week_anchor, resp_body };
         }

@@ -141,8 +141,23 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
     const std::time_t from_dow         = (from_days + 3) % 7;  // 0 = Mon
     const std::time_t from_week_monday = (from_days - from_dow) * 86400;
 
-    // Try to restore RNG from the stored anchor for this week; fall back to channel seed.
+    // Check whether the schedule is empty (first run, or post-clearScheduleCache).
+    bool schedule_empty = false;
+    {
+        SQLite::Statement qe(db_.get(),
+            "SELECT 1 FROM scheduled_program WHERE channel_id=? LIMIT 1");
+        qe.bind(1, channel_id);
+        schedule_empty = !qe.executeStep();
+    }
+
     Xoshiro256 rng(init_seed >= 0 ? static_cast<uint64_t>(init_seed) : 0ULL);
+    // When rebuilding from scratch, always replay from Monday midnight so both the
+    // production path and the SAVEPOINT preview start from the same position and
+    // produce the same episode order at the same wall-clock times.
+    std::time_t rebuild_from = schedule_empty ? from_week_monday : from;
+
+    // Restore RNG + (when rebuilding) cursor/block_state from the stored week anchor.
+    bool has_week_anchor = false;
     {
         using json = nlohmann::json;
         SQLite::Statement qa(db_.get(),
@@ -152,13 +167,86 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             try {
                 auto aj  = json::parse(qa.getColumn(0).getString());
                 auto key = std::to_string(from_week_monday);
-                if (aj.contains(key) && aj[key].is_object() && aj[key].contains("rng"))
-                    rng = Xoshiro256::deserialize(aj[key]["rng"].get<std::string>());
+                if (aj.contains(key) && aj[key].is_object()) {
+                    const auto& snap = aj[key];
+                    has_week_anchor  = true;
+                    if (snap.contains("rng"))
+                        rng = Xoshiro256::deserialize(snap["rng"].get<std::string>());
+
+                    if (schedule_empty) {
+                        if (snap.contains("cursors")) {
+                            SQLite::Statement dc(db_.get(),
+                                "DELETE FROM media_cursor"
+                                " WHERE cursor_scope='channel' AND scope_id=?");
+                            dc.bind(1, channel_id); dc.exec();
+                            for (const auto& c : snap["cursors"]) {
+                                SQLite::Statement ic(db_.get(), R"(
+                                    INSERT OR REPLACE INTO media_cursor
+                                        (content_type, content_id, cursor_scope, scope_id,
+                                         position, episode_id, updated_at)
+                                    VALUES (?,?,?,?,?,?,strftime('%s','now'))
+                                )");
+                                ic.bind(1, c["content_type"].get<std::string>());
+                                ic.bind(2, c["content_id"].get<std::string>());
+                                ic.bind(3, c["cursor_scope"].get<std::string>());
+                                ic.bind(4, c["scope_id"].get<std::string>());
+                                ic.bind(5, c["position"].get<int>());
+                                std::string eid = c.value("episode_id", "");
+                                if (eid.empty()) ic.bind(6); else ic.bind(6, eid);
+                                ic.exec();
+                            }
+                        }
+
+                        if (snap.contains("block_states")) {
+                            SQLite::Statement dbs(db_.get(),
+                                "DELETE FROM block_state WHERE channel_id=?");
+                            dbs.bind(1, channel_id); dbs.exec();
+                            for (const auto& bs : snap["block_states"]) {
+                                SQLite::Statement ibs(db_.get(), R"(
+                                    INSERT OR IGNORE INTO block_state
+                                        (block_id, channel_id, content_position,
+                                         runs_remaining, consecutive_count)
+                                    VALUES (?,?,?,?,?)
+                                )");
+                                ibs.bind(1, bs["block_id"].get<std::string>());
+                                ibs.bind(2, channel_id);
+                                ibs.bind(3, bs["content_position"].get<int>());
+                                ibs.bind(4, bs["runs_remaining"].get<int>());
+                                ibs.bind(5, bs["consecutive_count"].get<int>());
+                                ibs.exec();
+                            }
+                        }
+                    }
+                }
             } catch (...) {}
         }
     }
 
     std::map<std::time_t, std::string> new_anchors;
+
+    // No anchor yet for this week: clear stale cursor/block_state rows (left over from a
+    // previous projection that started from an arbitrary `from`) so the project() init
+    // guard fires fresh and re-seeds the cursor deterministically from the RNG.
+    // Then bootstrap the Monday midnight anchor from the current RNG state so any
+    // future rebuild — production or SAVEPOINT preview — restores the same starting point.
+    if (schedule_empty && !has_week_anchor) {
+        {
+            SQLite::Statement dc(db_.get(),
+                "DELETE FROM media_cursor WHERE cursor_scope='channel' AND scope_id=?");
+            dc.bind(1, channel_id); dc.exec();
+        }
+        {
+            SQLite::Statement dbs(db_.get(),
+                "DELETE FROM block_state WHERE channel_id=?");
+            dbs.bind(1, channel_id); dbs.exec();
+        }
+        using json = nlohmann::json;
+        new_anchors[from_week_monday] = json{
+            {"rng",          rng.serialize()},
+            {"cursors",      json::array()},
+            {"block_states", json::array()}
+        }.dump();
+    }
 
     // Loop until the cache fully covers the horizon. project() is capped at
     // MAX_ITEMS per call; for channels with short clips this loop re-extends
@@ -186,7 +274,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             return;
         }
 
-        std::time_t extend_from = (last_end > from) ? last_end : from;
+        std::time_t extend_from = (last_end > rebuild_from) ? last_end : rebuild_from;
         int extend_hours = static_cast<int>((horizon - extend_from) / 3600) + 2;
 
         if (epgDebug())
