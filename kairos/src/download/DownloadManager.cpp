@@ -1,4 +1,5 @@
 #include "DownloadManager.h"
+#include "../scheduler/Rng.h"
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -12,10 +13,9 @@
 namespace {
 
 std::string generateId() {
-    thread_local std::mt19937_64 rng{std::random_device{}()};
-    std::uniform_int_distribution<uint64_t> dist;
+    thread_local Xoshiro256 rng(static_cast<uint64_t>(std::random_device{}()));
     std::ostringstream ss;
-    ss << std::hex << std::setfill('0') << std::setw(16) << dist(rng);
+    ss << std::hex << std::setfill('0') << std::setw(16) << rng();
     return ss.str();
 }
 

@@ -116,6 +116,7 @@ export class ChannelDetailStore {
   channelDirty:            boolean     = false
   channelSaving:        boolean = false
   channelSaveErr:       string | null = null
+  epgClearing:          boolean = false
 
   constructor() { makeAutoObservable(this) }
 
@@ -288,6 +289,16 @@ export class ChannelDetailStore {
     this.channelDirty = false
     this.closeEditor()
     this.loadEpg(channelId)
+  }
+
+  async clearEpgCache(channelId: string) {
+    this.epgClearing = true
+    try {
+      await api.clearChannelEpgCache(channelId)
+      await this.loadEpg(channelId)
+    } finally {
+      runInAction(() => { this.epgClearing = false })
+    }
   }
 
   async load(channelId: string) {

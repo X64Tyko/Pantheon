@@ -378,13 +378,15 @@ TEST_F(RuleEngineTest, MarkPlayed_OnPlay_RoundRobinAdvancesThroughContentItems) 
 // ---------------------------------------------------------------------------
 
 TEST_F(RuleEngineTest, Project_EmptyWhenNoBlocks) {
-    EXPECT_TRUE(engine.project("c1", kMonNoon, 2).empty());
+    Xoshiro256 rng(0);
+    EXPECT_TRUE(engine.project("c1", kMonNoon, 2, rng).empty());
 }
 
 TEST_F(RuleEngineTest, Project_ProducesItemsInChronologicalOrder) {
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    auto items = engine.project("c1", kMonNoon, 2);
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 2, rng);
     ASSERT_FALSE(items.empty());
     for (size_t i = 1; i < items.size(); ++i)
         EXPECT_GE(items[i].wall_clock_start_ms, items[i-1].wall_clock_end_ms)
@@ -394,7 +396,8 @@ TEST_F(RuleEngineTest, Project_ProducesItemsInChronologicalOrder) {
 TEST_F(RuleEngineTest, Project_FirstItemStartsAtRequestedTime) {
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    auto items = engine.project("c1", kMonNoon, 1);
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 1, rng);
     ASSERT_FALSE(items.empty());
     EXPECT_EQ(items[0].wall_clock_start_ms, static_cast<int64_t>(kMonNoon) * 1000);
 }
@@ -402,7 +405,8 @@ TEST_F(RuleEngineTest, Project_FirstItemStartsAtRequestedTime) {
 TEST_F(RuleEngineTest, Project_ItemsHaveCorrectChannelAndBlockIds) {
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    auto items = engine.project("c1", kMonNoon, 1);
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 1, rng);
     ASSERT_FALSE(items.empty());
     for (const auto& item : items) {
         EXPECT_EQ(item.channel_id, "c1");
@@ -413,8 +417,17 @@ TEST_F(RuleEngineTest, Project_ItemsHaveCorrectChannelAndBlockIds) {
 TEST_F(RuleEngineTest, Project_DeterministicWithSameSeed) {
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    auto run1 = engine.project("c1", kMonNoon, 4, 7);
-    auto run2 = engine.project("c1", kMonNoon, 4, 7);
+    Xoshiro256 rng1(7);
+    auto run1 = engine.project("c1", kMonNoon, 4, rng1);
+
+    // In production, the anchor system restores cursor/block_state rows before
+    // each projection call. Simulate that here by clearing the state run1 wrote.
+    db.get().exec("DELETE FROM block_state   WHERE channel_id='c1'");
+    db.get().exec("DELETE FROM media_cursor  WHERE scope_id='c1'");
+    db.get().exec("DELETE FROM play_history  WHERE channel_id='c1'");
+
+    Xoshiro256 rng2(7);
+    auto run2 = engine.project("c1", kMonNoon, 4, rng2);
     ASSERT_EQ(run1.size(), run2.size());
     for (size_t i = 0; i < run1.size(); ++i) {
         EXPECT_EQ(run1[i].item_id,             run2[i].item_id);
@@ -427,9 +440,10 @@ TEST_F(RuleEngineTest, Project_DifferentSeedsStartAtDifferentEpisodes) {
     // (Seeds 1 and 2 both hash to position 0, hence seed=4 is used instead of 2.)
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    auto s0 = engine.project("c1", kMonNoon, 1, 0);
-    auto s1 = engine.project("c1", kMonNoon, 1, 1);
-    auto s2 = engine.project("c1", kMonNoon, 1, 4);
+    Xoshiro256 rng0(0), rng1(1), rng4(4);
+    auto s0 = engine.project("c1", kMonNoon, 1, rng0);
+    auto s1 = engine.project("c1", kMonNoon, 1, rng1);
+    auto s2 = engine.project("c1", kMonNoon, 1, rng4);
     ASSERT_FALSE(s0.empty());
     ASSERT_FALSE(s1.empty());
     ASSERT_FALSE(s2.empty());
@@ -443,11 +457,12 @@ TEST_F(RuleEngineTest, Project_CursorJsonEnablesContinuousExtension) {
 
     // project() advances DB cursors as it schedules; a second call starting from
     // the first batch's end automatically picks up from the advanced position.
-    auto batch1 = engine.project("c1", kMonNoon, 1, 0);
+    Xoshiro256 rng(0);
+    auto batch1 = engine.project("c1", kMonNoon, 1, rng);
     ASSERT_FALSE(batch1.empty());
 
     std::time_t resume_at = batch1.back().wall_clock_end_ms / 1000;
-    auto batch2 = engine.project("c1", resume_at, 1);
+    auto batch2 = engine.project("c1", resume_at, 1, rng);
 
     if (!batch2.empty())
         EXPECT_GE(batch2[0].wall_clock_start_ms, batch1.back().wall_clock_end_ms)
@@ -458,7 +473,8 @@ TEST_F(RuleEngineTest, Project_RespectsHorizonLimit) {
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
     // 1-hour horizon with 1-hour episodes → at most 1 item
-    auto items = engine.project("c1", kMonNoon, 1);
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 1, rng);
     // Each episode is 3600s; horizon is 3600s → exactly 1 episode fits
     EXPECT_LE(items.size(), 1u);
 }
@@ -468,7 +484,8 @@ TEST_F(RuleEngineTest, Project_NoItemsWhenBlockInactive) {
     insertBlock("b1", "episode", "14:00", std::string("16:00"));
     addContent("b1", "show", "s1");
     // 1-hour projection at 12:00 → block not yet active → no items
-    auto items = engine.project("c1", kMonNoon, 1);
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 1, rng);
     EXPECT_TRUE(items.empty());
 }
 
@@ -490,7 +507,8 @@ TEST_F(RuleEngineTest, Sequential_WeightRunCount_PlaysNEpisodesPerShowBeforeSwit
     addContentWeighted("b1", "show", "s2", 1);
 
     // Project 3 episodes (3-hour window, each ep = 1 hr).
-    auto items = engine.project("c1", kMonNoon, 3);
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 3, rng);
     ASSERT_GE(items.size(), 3u);
 
     const std::set<std::string> s1_eps = {"e1", "e2", "e3"};
@@ -512,7 +530,8 @@ TEST_F(RuleEngineTest, Shuffle_WeightedShowSelection_SchedulesWithoutError) {
     addContentWeighted("b1", "show", "s1", 3);
     addContentWeighted("b1", "show", "s2", 1);
 
-    auto items = engine.project("c1", kMonNoon, 4);
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 4, rng);
     EXPECT_FALSE(items.empty()) << "weighted shuffle should still schedule items";
 }
 
@@ -535,12 +554,14 @@ TEST_F(RuleEngineTest, GlobalScope_RerunBlockSchedulesEpisodesPlayedOnOtherChann
              " no_history_behavior='skip' WHERE block_id='b1'");
 
     // Channel-scoped: c1 has no play history → rerun pool empty → skip → no items.
-    auto ch_items = engine.project("c1", kMonNoon, 1);
+    Xoshiro256 rng0(0);
+    auto ch_items = engine.project("c1", kMonNoon, 1, rng0);
     EXPECT_TRUE(ch_items.empty()) << "channel-scoped rerun should find no c1 play history";
 
     // Switch to global scope: pool includes c2's play of e1 → items scheduled.
     raw.exec("UPDATE block SET cursor_scope='global' WHERE block_id='b1'");
-    auto gl_items = engine.project("c1", kMonNoon, 1);
+    Xoshiro256 rng1(0);
+    auto gl_items = engine.project("c1", kMonNoon, 1, rng1);
     EXPECT_FALSE(gl_items.empty()) << "global-scoped rerun should see c2's play of e1";
     if (!gl_items.empty())
         EXPECT_EQ(gl_items[0].item_id, "e1");
@@ -557,7 +578,8 @@ TEST_F(RuleEngineTest, ChannelScope_RerunCursorUsesChannelScopedKey) {
     addContent("b1", "show", "s1");
     raw.exec("UPDATE block SET advancement='rerun_shuffle', cursor_scope='channel' WHERE block_id='b1'");
 
-    engine.project("c1", kMonNoon, 1);
+    Xoshiro256 rng(0);
+    engine.project("c1", kMonNoon, 1, rng);
 
     // The rerun cursor should be stored with cursor_scope='channel', scope_id='c1'.
     SQLite::Statement q(raw,

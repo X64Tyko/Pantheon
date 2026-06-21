@@ -809,6 +809,13 @@ constexpr Migration kMigrations[] = {
 //         Used by the EPG preview to detect meaningful schedule changes.
 { 30, R"SQL(
     ALTER TABLE channel ADD COLUMN anchor_hashes TEXT;
+)SQL", false },
+
+// ── v31: anchor_hashes format change — now stores full RNG + cursor snapshot
+//         per week: {ts_str: {rng: "s0 s1 s2 s3", cursors: [...], block_states: [...]}}.
+//         Old cumulative-int format is incompatible; clear to force fresh generation.
+{ 31, R"SQL(
+    UPDATE channel SET anchor_hashes = NULL WHERE anchor_hashes IS NOT NULL;
 )SQL", false }
 
 }; // kMigrations

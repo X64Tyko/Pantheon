@@ -124,6 +124,8 @@ export const api = {
   // Channel EPG — cache-backed (used by XMLTV/m3u generation)
   getChannelEpg: (channelId: string, hours?: number) =>
     request<EpgProgram[]>('GET', `/channels/${channelId}/epg${hours != null ? `?hours=${hours}` : ''}`),
+  clearChannelEpgCache: (channelId: string) =>
+    request<{ ok: boolean }>('POST', `/channels/${channelId}/epg/clear`),
   // EPG preview — POST with optional seed, hours, and draft blocks.
   // Returns { programs, anchors } where anchors maps week-anchor timestamps to mutated seeds.
   previewChannelEpg: (channelId: string, hours?: number, seed?: number, blocks?: Block[]) =>

@@ -7,7 +7,7 @@
 
 // Bump this when a new migration is added. Every test that cares about the
 // total count reads from here — no other number to update.
-static constexpr int kMigrationCount = 23;
+static constexpr int kMigrationCount = 31;
 
 // ---------------------------------------------------------------------------
 // Helpers

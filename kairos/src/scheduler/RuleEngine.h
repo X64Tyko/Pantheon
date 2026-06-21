@@ -1,13 +1,14 @@
 #pragma once
 #include <ctime>
+#include <map>
 #include <optional>
-#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include "../model/Block.h"
 #include "../model/Episode.h"
 #include "../model/Movie.h"
+#include "Rng.h"
 
 class Database;
 
@@ -58,10 +59,16 @@ public:
     // Forward EPG projection — writes play_history (is_scheduled=1) and advances
     // DB cursors as it schedules each item. Must be called within a transaction or
     // savepoint managed by the caller (EPGMaterializer::ensureScheduled).
-    // seed >= 0: randomise the starting cursor positions for each block's first entry.
+    // rng: caller-owned Xoshiro256. Passing the same instance across successive
+    //      project() calls preserves RNG continuity across the ensureScheduled loop.
+    // anchors_out: if non-null, receives {week_monday_ts -> JSON snapshot string} for
+    //      each Monday midnight boundary crossed during projection. The JSON contains
+    //      the RNG state and channel cursor/block_state snapshot at that boundary,
+    //      enough to deterministically rebuild that week from scratch.
     std::vector<ScheduledItem> project(const std::string& channel_id,
                                         std::time_t start, int horizon_hours,
-                                        int seed = -1);
+                                        Xoshiro256& rng,
+                                        std::map<std::time_t, std::string>* anchors_out = nullptr);
 
     // Load all blocks for a channel with their content.
     std::vector<Block> loadBlocks(const std::string& channel_id);
@@ -100,7 +107,7 @@ private:
                                                       const std::string& show_id);
 
     // Weighted random selection of a content-item index from a block's content list.
-    static int selectWeighted(const Block& block, std::mt19937_64& rng);
+    static int selectWeighted(const Block& block, Xoshiro256& rng);
 
     // Given an episode index in eps, snap back to Part 1 of its multipart group (if any).
     int snapToGroupStart(const std::string& episode_id,
@@ -134,8 +141,10 @@ private:
 
     // Advance DB cursors after scheduling or confirming a play of one item from `block`.
     // before_time: same semantics as getPlayedEpisodes — rerun pool filtered to aired_at < before_time.
+    // rng: caller-owned RNG; must be the channel's scheduling RNG so all random decisions
+    //      (show selection, episode start) are part of the same deterministic sequence.
     void advanceCursors(const std::string& channel_id, const Block& block,
-                        std::time_t before_time);
+                        std::time_t before_time, Xoshiro256& rng);
 
     // Returns the IANA timezone name for a channel (e.g. "America/Denver"), or "UTC".
     std::string channelTimezone(const std::string& channel_id);
@@ -177,7 +186,7 @@ private:
                                                const std::vector<BlockFillerEntry>& pool,
                                                int64_t max_ms,
                                                SimState& state,
-                                               int seed,
+                                               Xoshiro256& rng,
                                                std::time_t before_time = 0);
 
     Database& db_;

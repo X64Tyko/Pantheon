@@ -330,14 +330,16 @@ TEST_F(EPGOutputTest, M3U_EmptyWhenNoChannels) {
 TEST_F(EPGOutputTest, RoundTrip_XmltvProgramCountMatchesProjectedItems) {
     constexpr int HOURS = 6;
 
-    // Count items the engine projects for channel 1
-    std::time_t now   = std::time(nullptr);
-    auto        items = engine.project("ch1", now, HOURS);
+    // Capture now before calling generateXMLTV() so our DB filter matches the
+    // same window that generateXMLTV() uses internally.
+    std::time_t now_ts     = std::time(nullptr);
+    std::time_t horizon_ts = now_ts + HOURS * 3600;
 
-    // Generate XMLTV (which internally calls ensureScheduled + queries DB)
+    // Run the full production pipeline: generateXMLTV() calls ensureScheduled()
+    // which writes to scheduled_program, then renders XML from that table.
     std::string xml = materializer.generateXMLTV(HOURS);
 
-    // Count <programme> blocks for channel 1 in the XML
+    // Count <programme channel="kairos-1"> entries in the XMLTV output.
     size_t xml_prog_count = 0;
     size_t pos = 0;
     while ((pos = xml.find("channel=\"kairos-1\"", pos)) != std::string::npos) {
@@ -345,10 +347,24 @@ TEST_F(EPGOutputTest, RoundTrip_XmltvProgramCountMatchesProjectedItems) {
         pos += 18;
     }
 
-    // The number of <programme channel="kairos-1"> entries should match or
-    // closely follow what the engine projected (XMLTV may trim at exact boundaries).
-    EXPECT_GT(xml_prog_count, 0u)
-        << "XMLTV must contain programmes for channel 1";
-    EXPECT_LE(xml_prog_count, items.size() + 1)
-        << "XMLTV should not contain more programmes than the engine projected";
+    // Count scheduled_program rows using the same filters that generateXMLTV()
+    // applies: non-filler, non-skipped, and within the [now, horizon) window.
+    // ensureScheduled() may write a few overshoot rows past the horizon —
+    // the window filter excludes those the same way the XML query does.
+    SQLite::Statement q(db.get(), R"(
+        SELECT COUNT(*) FROM scheduled_program
+        WHERE channel_id='ch1'
+          AND is_filler = 0
+          AND status != 'skipped'
+          AND wall_clock_end   > ?
+          AND wall_clock_start < ?
+    )");
+    q.bind(1, static_cast<int64_t>(now_ts));
+    q.bind(2, static_cast<int64_t>(horizon_ts));
+    q.executeStep();
+    size_t db_prog_count = static_cast<size_t>(q.getColumn(0).getInt());
+
+    EXPECT_GT(xml_prog_count, 0u) << "XMLTV must contain programmes for channel 1";
+    EXPECT_EQ(xml_prog_count, db_prog_count)
+        << "XMLTV programme count must match filtered scheduled_program rows for ch1";
 }

@@ -120,6 +120,15 @@ export default observer(function ChannelDetailPage() {
         </button>
 
         <button
+          onClick={() => store.clearEpgCache(id)}
+          disabled={store.epgClearing}
+          title="Delete the committed EPG cache and regenerate from the current cursor position"
+          style={{ padding: '9px 14px', border: '1px solid var(--hds-line)', borderRadius: 9, background: 'transparent', color: store.epgClearing ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, cursor: store.epgClearing ? 'default' : 'pointer', transition: '.12s' }}
+        >
+          {store.epgClearing ? 'Clearing…' : 'Regen EPG'}
+        </button>
+
+        <button
           onClick={() => store.openNew()}
           style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', border: 'none', borderRadius: 9, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: '0 4px 16px -4px oklch(0.83 0.13 84 / 0.5)' }}
         >

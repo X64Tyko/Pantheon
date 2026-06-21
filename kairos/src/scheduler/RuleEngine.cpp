@@ -7,7 +7,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
+#include <map>
 #include <numeric>
+#include <random>
 #include <unordered_set>
 
 static bool epgDebug() {
@@ -422,7 +424,7 @@ std::vector<Episode> RuleEngine::getPlayedEpisodesWithCooldown(const std::string
 std::vector<int> RuleEngine::shufflePermutation(const std::string& seed_str, int n) {
     std::vector<int> order(static_cast<size_t>(n));
     std::iota(order.begin(), order.end(), 0);
-    std::mt19937_64 rng(std::hash<std::string>{}(seed_str));
+    Xoshiro256 rng(std::hash<std::string>{}(seed_str));
     std::shuffle(order.begin(), order.end(), rng);
     return order;
 }
@@ -466,7 +468,7 @@ std::vector<int> RuleEngine::groupedShufflePermutation(const std::string& seed_s
     }
 
     // Shuffle the chunks as atomic units then flatten.
-    std::mt19937_64 rng(std::hash<std::string>{}(seed_str));
+    Xoshiro256 rng(std::hash<std::string>{}(seed_str));
     std::shuffle(chunks.begin(), chunks.end(), rng);
 
     std::vector<int> perm;
@@ -476,7 +478,7 @@ std::vector<int> RuleEngine::groupedShufflePermutation(const std::string& seed_s
     return perm;
 }
 
-int RuleEngine::selectWeighted(const Block& block, std::mt19937_64& rng) {
+int RuleEngine::selectWeighted(const Block& block, Xoshiro256& rng) {
     if (block.content.empty()) return 0;
     int total = 0;
     for (const auto& bc : block.content) total += std::max(1, bc.weight);
@@ -979,7 +981,7 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
 // caller (project()) avoids reloading all blocks for every scheduled item.
 
 void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
-                                 std::time_t before_time) {
+                                 std::time_t before_time, Xoshiro256& rng) {
     if (b.content.empty()) return;
 
     int n  = static_cast<int>(b.content.size());
@@ -1023,7 +1025,6 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
             int consec   = readConsecutiveCount(b.block_id, channel_id) + 1;
 
             if (runs_rem <= 1) {
-                std::mt19937_64 rng{std::random_device{}()};
                 int next_sel;
                 if (b.no_history_behavior == NoHistoryBehavior::Exclude) {
                     int cnt = static_cast<int>(b.content.size());
@@ -1117,7 +1118,6 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
             // Weighted show selection for the next slot.
             if (b.advancement == Advancement::Shuffle ||
                 b.advancement == Advancement::SmartShuffle) {
-                std::mt19937_64 rng{std::random_device{}()};
                 writeBlockRR(b.block_id, channel_id, selectWeighted(b, rng));
             } else {
                 // Sequential: bc.weight = consecutive episodes per show before switching.
@@ -1170,7 +1170,6 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
                     int consec   = readConsecutiveCount(b.block_id, channel_id) + 1;
 
                     if (runs_rem <= 1) {
-                        std::mt19937_64 rng{std::random_device{}()};
                         // Always pick a different show when possible; uniform over the other n-1 shows.
                         int next_idx;
                         if (n_shows == 1) {
@@ -1228,7 +1227,6 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
                     // Show rotation: shuffle = random pick; sequential = round-robin with bc.weight
                     if (b.advancement == Advancement::Shuffle ||
                         b.advancement == Advancement::SmartShuffle) {
-                        std::mt19937_64 rng{std::random_device{}()};
                         std::uniform_int_distribution<int> dist(0, n_shows - 1);
                         writeCursorPos("playlist", bc.content_id, scope, scope_id, dist(rng));
                     } else {
@@ -1266,7 +1264,6 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
         }
     }
     if (b.advancement == Advancement::Shuffle || b.advancement == Advancement::SmartShuffle) {
-        std::mt19937_64 rng{std::random_device{}()};
         writeBlockRR(b.block_id, channel_id, selectWeighted(b, rng));
     } else {
         writeBlockRR(b.block_id, channel_id, (rr + 1) % n);
@@ -1281,7 +1278,7 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     const std::vector<BlockFillerEntry>& pool,
     int64_t max_ms,
     SimState& state,
-    int seed,
+    Xoshiro256& rng,
     std::time_t before_time)
 {
     if (pool.empty()) return std::nullopt;
@@ -1295,9 +1292,6 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
         entry_idx = rr % n;
         rr        = (rr + 1) % n;
     } else {
-        std::mt19937_64 rng(static_cast<uint64_t>(seed >= 0 ? seed : 0)
-                            ^ std::hash<std::string>{}(block.block_id)
-                            ^ static_cast<uint64_t>(state.show_pos.size()));
         if (block.filler_selection == "weighted") {
             int total = 0;
             for (const auto& e : pool) total += std::max(1, e.weight);
@@ -1384,7 +1378,7 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
         // "sized" is stateless — no cursor to advance.
     } else if (fe.advancement == "shuffle") {
         if (!state.show_pos.count(pos_key))
-            state.show_pos[pos_key] = seed >= 0 ? seed % static_cast<int>(items.size()) : 0;
+            state.show_pos[pos_key] = static_cast<int>(rng() % static_cast<uint64_t>(items.size()));
         int& pos   = state.show_pos[pos_key];
         int  epoch = pos / static_cast<int>(items.size());
         int  idx   = pos % static_cast<int>(items.size());
@@ -1395,7 +1389,7 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
         ++pos;
     } else { // sequential
         if (!state.show_pos.count(pos_key))
-            state.show_pos[pos_key] = seed >= 0 ? seed % static_cast<int>(items.size()) : 0;
+            state.show_pos[pos_key] = static_cast<int>(rng() % static_cast<uint64_t>(items.size()));
         int& pos = state.show_pos[pos_key];
         item_idx = pos % static_cast<int>(items.size());
         pos      = (pos + 1) % static_cast<int>(items.size());
@@ -1526,7 +1520,8 @@ bool RuleEngine::scheduleBumperItem(
 
 std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                                                 std::time_t start, int horizon_hours,
-                                                int seed) {
+                                                Xoshiro256& rng,
+                                                std::map<std::time_t, std::string>* anchors_out) {
     std::vector<ScheduledItem> result;
     auto blocks = loadBlocks(channel_id);
 
@@ -1592,7 +1587,101 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
     std::string last_show_id;                        // show_id of last scheduled content item
     std::unordered_map<std::string, int> transition_counts; // show transitions per block occurrence
 
+    // Pre-populate exhausted_blocks from today's is_scheduled=1 play_history so that
+    // when ensureScheduled's guard loop calls project() a second time starting mid-block
+    // (e.g. right after a movie ends), blocks that already hit program_count for today
+    // are seen as exhausted from the first iteration rather than re-scheduling content.
+    {
+        auto tm_s  = toChannelTZ(start, tz);
+        int  s_sec = tm_s.tm_hour * 3600 + tm_s.tm_min * 60 + tm_s.tm_sec;
+        std::time_t today_midnight = start - static_cast<std::time_t>(s_sec);
+        // Compute tomorrow midnight safely to handle DST.
+        std::time_t tomorrow_midnight;
+        {
+            std::time_t approx_tom = today_midnight + 90000; // 25h — always past midnight
+            auto tm_tom  = toChannelTZ(approx_tom, tz);
+            int  tom_sec = tm_tom.tm_hour * 3600 + tm_tom.tm_min * 60 + tm_tom.tm_sec;
+            tomorrow_midnight = approx_tom - static_cast<std::time_t>(tom_sec);
+        }
+        prev_day = tm_s.tm_year * 1000 + tm_s.tm_yday;
+        for (const auto& b : blocks) {
+            if (b.program_count <= 0) continue;
+            SQLite::Statement qpc(db_.get(), R"(
+                SELECT COUNT(*) FROM play_history
+                WHERE channel_id=? AND block_id=? AND is_scheduled=1
+                  AND aired_at >= ? AND aired_at < ?
+            )");
+            qpc.bind(1, channel_id);
+            qpc.bind(2, b.block_id);
+            qpc.bind(3, static_cast<int64_t>(today_midnight));
+            qpc.bind(4, static_cast<int64_t>(tomorrow_midnight));
+            if (qpc.executeStep() && qpc.getColumn(0).getInt() >= b.program_count)
+                exhausted_blocks.insert(b.block_id);
+        }
+    }
+
+    // Next Monday midnight UTC after `start` — used to capture anchor snapshots.
+    std::time_t anchor_next_monday = [&]() -> std::time_t {
+        std::time_t d   = start / 86400;
+        std::time_t dow = (d + 3) % 7;           // 0 = Mon
+        return (d - dow + 7) * 86400;             // always the coming Monday, never start itself
+    }();
+
     while (t < end && static_cast<int>(result.size()) < MAX_ITEMS) {
+        // At each Monday midnight boundary, capture the RNG state + cursor snapshot
+        // so future projections can restore to this exact point deterministically.
+        if (anchors_out && t >= anchor_next_monday) {
+            using json = nlohmann::json;
+            json snap;
+            snap["rng"] = rng.serialize();
+
+            json cursors = json::array();
+            {
+                SQLite::Statement qc(db_.get(), R"(
+                    SELECT content_type, content_id, cursor_scope, scope_id, position,
+                           COALESCE(episode_id, '')
+                    FROM media_cursor
+                    WHERE (cursor_scope = 'channel' AND scope_id = ?)
+                       OR (cursor_scope = 'block'
+                           AND scope_id IN (SELECT block_id FROM block WHERE channel_id = ?))
+                )");
+                qc.bind(1, channel_id);
+                qc.bind(2, channel_id);
+                while (qc.executeStep()) {
+                    cursors.push_back({
+                        {"content_type",  qc.getColumn(0).getString()},
+                        {"content_id",    qc.getColumn(1).getString()},
+                        {"cursor_scope",  qc.getColumn(2).getString()},
+                        {"scope_id",      qc.getColumn(3).getString()},
+                        {"position",      qc.getColumn(4).getInt()},
+                        {"episode_id",    qc.getColumn(5).getString()}
+                    });
+                }
+            }
+            snap["cursors"] = cursors;
+
+            json block_states = json::array();
+            {
+                SQLite::Statement qbs(db_.get(), R"(
+                    SELECT block_id, content_position, runs_remaining, consecutive_count
+                    FROM block_state WHERE channel_id = ?
+                )");
+                qbs.bind(1, channel_id);
+                while (qbs.executeStep()) {
+                    block_states.push_back({
+                        {"block_id",          qbs.getColumn(0).getString()},
+                        {"content_position",  qbs.getColumn(1).getInt()},
+                        {"runs_remaining",    qbs.getColumn(2).getInt()},
+                        {"consecutive_count", qbs.getColumn(3).getInt()}
+                    });
+                }
+            }
+            snap["block_states"] = block_states;
+
+            (*anchors_out)[anchor_next_monday] = snap.dump();
+            anchor_next_monday += 7 * 86400;
+        }
+
         // Clear exhausted_blocks when the calendar day rolls over (channel-local time).
         {
             auto tm_chk  = toChannelTZ(t, tz);
@@ -1711,7 +1800,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         // Premier blocks always start at S01E01 — never randomize their cursor.
         // Skip if block_state already exists: the channel has prior playback history
         // and re-seeding would clobber the current position on every cache clear.
-        if (seed >= 0 && !seed_inited.count(block.block_id) &&
+        if (!seed_inited.count(block.block_id) &&
             block.block_type != BlockType::Premier) {
             seed_inited.insert(block.block_id);
             bool block_has_state = false;
@@ -1723,8 +1812,6 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                 block_has_state = qbs.executeStep();
             }
             if (!block_has_state) {
-                std::mt19937_64 rng(static_cast<uint64_t>(seed)
-                                    ^ std::hash<std::string>{}(block.block_id));
                 if (isRerunMode(block.advancement)) {
                     bool global = (block.cursor_scope == CursorScope::Global);
                     int sel = selectWeighted(block, rng);
@@ -1783,7 +1870,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             const auto& filler_pool = block.filler_entries.empty() ? channel_filler
                                                                     : block.filler_entries;
             if (!filler_pool.empty())
-                if (auto fi = pickFillerSim(channel_id, block, filler_pool, 0, state, seed, t)) {
+                if (auto fi = pickFillerSim(channel_id, block, filler_pool, 0, state, rng, t)) {
                     item_opt           = std::move(fi);
                     is_fallback_filler = true;
                 }
@@ -1812,7 +1899,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                       << " type=" << item.item_type
                       << " block=" << block.block_id << " — skipping and advancing cursor\n";
             // Advance cursors so we don't spin forever on the same zero-duration item.
-            if (!is_fallback_filler) advanceCursors(channel_id, block, t);
+            if (!is_fallback_filler) advanceCursors(channel_id, block, t, rng);
             t += 60;
             continue;
         }
@@ -1859,7 +1946,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             qph.bind(5, static_cast<int64_t>(ph_aired_at));
             qph.exec();
         }
-        if (!is_fallback_filler) advanceCursors(channel_id, block, t);
+        if (!is_fallback_filler) advanceCursors(channel_id, block, t, rng);
 
         // Channel between-bumpers: inject after every N non-filler content programs.
         if (!is_fallback_filler && !between_bumpers.empty()) {
@@ -1911,7 +1998,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                         // sequential/shuffle returned a clip slightly longer than the gap.
                         int64_t max_clip_ms  = (late_boundary - t) * 1000;
 
-                        auto fi = pickFillerSim(channel_id, block, pool, remaining_ms, state, -1, t);
+                        auto fi = pickFillerSim(channel_id, block, pool, remaining_ms, state, rng, t);
                         if (!fi || fi->duration_ms <= 0) break;
                         if (fi->duration_ms > max_clip_ms) break;
 
@@ -2026,7 +2113,11 @@ void RuleEngine::markPlayed(const std::string& channel_id, const std::string& bl
         auto blocks = loadBlocks(channel_id);
         for (const auto& b : blocks) {
             if (b.block_id != block_id) continue;
-            advanceCursors(channel_id, b, std::time(nullptr));
+            // markPlayed is real-time; seed from channel+block hash for variety,
+            // reproducibility is not required here.
+            Xoshiro256 rng(std::hash<std::string>{}(channel_id + block_id)
+                           ^ static_cast<uint64_t>(std::time(nullptr)));
+            advanceCursors(channel_id, b, std::time(nullptr), rng);
             break;
         }
     }

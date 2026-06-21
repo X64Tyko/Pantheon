@@ -5,6 +5,7 @@
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
+#include "scheduler/Rng.h"
 #include "sync/SyncManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -28,10 +29,9 @@ using Res  = httplib::Response;
 namespace {
 
 std::string generateId() {
-    thread_local std::mt19937_64 rng{std::random_device{}()};
-    std::uniform_int_distribution<uint64_t> dist;
+    thread_local Xoshiro256 rng(static_cast<uint64_t>(std::random_device{}()));
     std::ostringstream ss;
-    ss << std::hex << std::setfill('0') << std::setw(16) << dist(rng);
+    ss << std::hex << std::setfill('0') << std::setw(16) << rng();
     return ss.str();
 }
 
@@ -3955,6 +3955,7 @@ void Router::registerSchedulerRoutes() {
         )";
 
         json arr = json::array();
+        std::map<std::time_t, int> anchor_counts; // populated inside SAVEPOINT, used after rollback
 
         auto collectRows = [&](SQLite::Statement& q) {
             while (q.executeStep()) {
@@ -4097,6 +4098,65 @@ void Router::registerSchedulerRoutes() {
                 int         total_hrs  = has_seed
                     ? (static_cast<int>((horizon - week_anchor) / 3600) + 1)
                     : hours;
+
+                // For seeded preview, restore the cursor + block_state snapshot from the
+                // stored week anchor so the projection is identical to the real EPG.
+                // This runs inside the SAVEPOINT so the restores are rolled back with it.
+                if (has_seed) {
+                    SQLite::Statement qa(db_.get(),
+                        "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+                    qa.bind(1, channel_id);
+                    if (qa.executeStep() && !qa.getColumn(0).isNull()) {
+                        try {
+                            auto aj  = json::parse(qa.getColumn(0).getString());
+                            auto key = std::to_string(week_anchor);
+                            if (aj.contains(key) && aj[key].is_object()) {
+                                const auto& snap = aj[key];
+                                if (snap.contains("cursors")) {
+                                    // Replace channel/block-scoped cursor rows.
+                                    db_.get().exec(
+                                        "DELETE FROM media_cursor WHERE cursor_scope='channel' AND scope_id='"
+                                        + channel_id + "'");
+                                    for (const auto& c : snap["cursors"]) {
+                                        SQLite::Statement ic(db_.get(), R"(
+                                            INSERT OR REPLACE INTO media_cursor
+                                                (content_type, content_id, cursor_scope, scope_id,
+                                                 position, episode_id, updated_at)
+                                            VALUES (?,?,?,?,?,?,strftime('%s','now'))
+                                        )");
+                                        ic.bind(1, c["content_type"].get<std::string>());
+                                        ic.bind(2, c["content_id"].get<std::string>());
+                                        ic.bind(3, c["cursor_scope"].get<std::string>());
+                                        ic.bind(4, c["scope_id"].get<std::string>());
+                                        ic.bind(5, c["position"].get<int>());
+                                        std::string eid = c.value("episode_id", "");
+                                        if (eid.empty()) ic.bind(6); else ic.bind(6, eid);
+                                        ic.exec();
+                                    }
+                                }
+                                // block_state already cleared by the preview setup above;
+                                // re-insert from snapshot so project() sees the right position.
+                                if (snap.contains("block_states")) {
+                                    for (const auto& bs : snap["block_states"]) {
+                                        SQLite::Statement ibs(db_.get(), R"(
+                                            INSERT OR IGNORE INTO block_state
+                                                (block_id, channel_id, content_position,
+                                                 runs_remaining, consecutive_count)
+                                            VALUES (?,?,?,?,?)
+                                        )");
+                                        ibs.bind(1, bs["block_id"].get<std::string>());
+                                        ibs.bind(2, channel_id);
+                                        ibs.bind(3, bs["content_position"].get<int>());
+                                        ibs.bind(4, bs["runs_remaining"].get<int>());
+                                        ibs.bind(5, bs["consecutive_count"].get<int>());
+                                        ibs.exec();
+                                    }
+                                }
+                            }
+                        } catch (...) {}
+                    }
+                }
+
                 materializer_.ensureScheduled(channel_id, from, total_hrs, req_seed);
 
                 SQLite::Statement q(db_.get(), kSelectSql);
@@ -4104,6 +4164,29 @@ void Router::registerSchedulerRoutes() {
                 q.bind(2, static_cast<int64_t>(now));
                 q.bind(3, horizon);
                 collectRows(q);
+
+                // Count items from week_anchor (not from `now`) so anchor hashes
+                // are deterministic regardless of when the page loads.
+                // Must run inside the SAVEPOINT — after rollback the projected
+                // scheduled_program rows are gone.
+                if (has_seed) {
+                    SQLite::Statement aq(db_.get(), R"(
+                        SELECT wall_clock_start FROM scheduled_program
+                        WHERE channel_id=? AND is_filler=0
+                          AND wall_clock_start >= ? AND wall_clock_start < ?
+                          AND status != 'skipped'
+                    )");
+                    aq.bind(1, channel_id);
+                    aq.bind(2, static_cast<int64_t>(week_anchor));
+                    aq.bind(3, horizon);
+                    while (aq.executeStep()) {
+                        std::time_t ts   = static_cast<std::time_t>(aq.getColumn(0).getInt64());
+                        std::time_t days = ts / 86400;
+                        std::time_t dow  = (days + 3) % 7;
+                        std::time_t anch = (days - dow) * 86400;
+                        anchor_counts[anch]++;
+                    }
+                }
             } catch (...) {
                 db_.get().exec("ROLLBACK TO SAVEPOINT preview_sp");
                 db_.get().exec("RELEASE SAVEPOINT preview_sp");
@@ -4113,23 +4196,27 @@ void Router::registerSchedulerRoutes() {
             db_.get().exec("RELEASE SAVEPOINT preview_sp");
         }
 
-        // Compute cumulative anchor seeds: initial_seed + items_scheduled_through_anchor_N.
-        // The resulting value is what future weeks should use as their starting seed,
-        // allowing the schedule to propagate forward deterministically across week boundaries.
+        // Return anchors:
+        //   !has_blocks → read stored anchor_hashes from channel table so that
+        //                  previewAnchors == confirmedAnchors on every reload (stable).
+        //   has_blocks  → compute fresh from SAVEPOINT item counts so the draft-mode
+        //                  scheduleChanged banner reflects the actual impact of block edits.
         json anchors_j = json::object();
         if (has_seed) {
-            std::map<std::time_t, int> anchor_counts;
-            for (auto& item : arr) {
-                std::time_t t    = static_cast<std::time_t>(item["wall_clock_start_ms"].get<int64_t>() / 1000);
-                std::time_t days = t / 86400;
-                std::time_t dow  = (days + 3) % 7;
-                std::time_t anch = (days - dow) * 86400;
-                anchor_counts[anch]++;
-            }
-            int cumulative = req_seed;
-            for (auto& [anch, cnt] : anchor_counts) {
-                cumulative += cnt;
-                anchors_j[std::to_string(anch)] = cumulative;
+            if (!has_blocks) {
+                SQLite::Statement ach(db_.get(),
+                    "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+                ach.bind(1, channel_id);
+                if (ach.executeStep() && !ach.getColumn(0).isNull()) {
+                    try { anchors_j = json::parse(ach.getColumn(0).getString()); }
+                    catch (...) {}
+                }
+            } else {
+                int cumulative = req_seed;
+                for (auto& [anch, cnt] : anchor_counts) {
+                    cumulative += cnt;
+                    anchors_j[std::to_string(anch)] = cumulative;
+                }
             }
         }
 
@@ -4141,6 +4228,20 @@ void Router::registerSchedulerRoutes() {
         ok(res, resp_body);
       } catch (const std::exception& e) {
         logErr("POST /api/channels/epg/preview", e); err(res, 500, e.what());
+      }
+    });
+
+    // ── Clear the EPG cache for a channel ────────────────────────────────────
+    // Deletes all scheduled_program entries and future is_scheduled=1 play_history
+    // entries for the channel. The next ensureScheduled call will re-project from
+    // the current cursor position.
+    svr_.Post(R"(/api/channels/([^/]+)/epg/clear)", [this](const Req& req, Res& res) {
+      try {
+        std::string channel_id = req.matches[1];
+        clearScheduleCache(channel_id);
+        ok(res, json{{"ok", true}}.dump());
+      } catch (const std::exception& e) {
+        logErr("POST /api/channels/epg/clear", e); err(res, 500, e.what());
       }
     });
 

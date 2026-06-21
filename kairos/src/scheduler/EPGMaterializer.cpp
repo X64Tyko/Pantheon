@@ -1,9 +1,12 @@
 #include "EPGMaterializer.h"
+#include "Rng.h"
 #include "../db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <nlohmann/json.hpp>
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
+#include <map>
 #include <sstream>
 
 static bool epgDebug() {
@@ -81,7 +84,8 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
             // Generate items with project() inside a SAVEPOINT — cursor advances
             // and play_history writes are rolled back; items stay in memory.
             db_.get().exec("SAVEPOINT onplay_gen_sp");
-            auto items = engine_.project(channel_id, from, horizon_hours, -1);
+            Xoshiro256 onplay_rng(seed >= 0 ? static_cast<uint64_t>(seed) : 0);
+            auto items = engine_.project(channel_id, from, horizon_hours, onplay_rng);
             db_.get().exec("ROLLBACK TO SAVEPOINT onplay_gen_sp");
             db_.get().exec("RELEASE SAVEPOINT onplay_gen_sp");
 
@@ -123,6 +127,39 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         std::cout << "[epg] ensureScheduled channel=" << channel_id
                   << " from=" << from << " horizon_hours=" << horizon_hours << '\n';
 
+    // Resolve seed (explicit arg wins; otherwise read from channel table).
+    int init_seed = seed;
+    if (init_seed < 0) {
+        SQLite::Statement qs(db_.get(),
+            "SELECT seed FROM channel WHERE channel_id=?");
+        qs.bind(1, channel_id);
+        if (qs.executeStep()) init_seed = qs.getColumn(0).getInt();
+    }
+
+    // Monday midnight UTC for the week that contains `from`.
+    const std::time_t from_days        = from / 86400;
+    const std::time_t from_dow         = (from_days + 3) % 7;  // 0 = Mon
+    const std::time_t from_week_monday = (from_days - from_dow) * 86400;
+
+    // Try to restore RNG from the stored anchor for this week; fall back to channel seed.
+    Xoshiro256 rng(init_seed >= 0 ? static_cast<uint64_t>(init_seed) : 0ULL);
+    {
+        using json = nlohmann::json;
+        SQLite::Statement qa(db_.get(),
+            "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+        qa.bind(1, channel_id);
+        if (qa.executeStep() && !qa.getColumn(0).isNull()) {
+            try {
+                auto aj  = json::parse(qa.getColumn(0).getString());
+                auto key = std::to_string(from_week_monday);
+                if (aj.contains(key) && aj[key].is_object() && aj[key].contains("rng"))
+                    rng = Xoshiro256::deserialize(aj[key]["rng"].get<std::string>());
+            } catch (...) {}
+        }
+    }
+
+    std::map<std::time_t, std::string> new_anchors;
+
     // Loop until the cache fully covers the horizon. project() is capped at
     // MAX_ITEMS per call; for channels with short clips this loop re-extends
     // from the tail on each pass rather than leaving a gap.
@@ -152,30 +189,13 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         std::time_t extend_from = (last_end > from) ? last_end : from;
         int extend_hours = static_cast<int>((horizon - extend_from) / 3600) + 2;
 
-        // Determine seed for this pass:
-        // - guard 0 with no cache: apply seed (explicit or read from channel table)
-        // - guard 0 with existing cache (extending forward): no seed
-        // - guard > 0: always no seed (DB cursors drive continuation)
-        int pass_seed = -1;
-        if (guard == 0) {
-            if (seed >= 0) {
-                pass_seed = seed;
-            } else if (last_end == 0) {
-                SQLite::Statement qs(db_.get(),
-                    "SELECT seed FROM channel WHERE channel_id=?");
-                qs.bind(1, channel_id);
-                if (qs.executeStep()) pass_seed = qs.getColumn(0).getInt();
-            }
-        }
-
         if (epgDebug())
             std::cout << "[epg]   calling project() extend_from=" << extend_from
-                      << " extend_hours=" << extend_hours
-                      << " seed=" << pass_seed << '\n';
+                      << " extend_hours=" << extend_hours << '\n';
 
         // project() writes play_history (is_scheduled=1) and advances DB cursors
         // as it schedules each item; DB state is the authoritative resume point.
-        auto items = engine_.project(channel_id, extend_from, extend_hours, pass_seed);
+        auto items = engine_.project(channel_id, extend_from, extend_hours, rng, &new_anchors);
 
         if (epgDebug())
             std::cout << "[epg]   project() returned " << items.size() << " items\n";
@@ -227,6 +247,30 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                 std::cout << "[epg]   all items already cached — done\n";
             return;
         }
+    }
+
+    // Persist any week-boundary anchor snapshots captured during projection.
+    // In the preview SAVEPOINT path this UPDATE is rolled back automatically —
+    // no special flag needed; correct behaviour falls out of the SAVEPOINT.
+    if (!new_anchors.empty()) {
+        using json = nlohmann::json;
+        json existing = json::object();
+        {
+            SQLite::Statement qa(db_.get(),
+                "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+            qa.bind(1, channel_id);
+            if (qa.executeStep() && !qa.getColumn(0).isNull()) {
+                try { existing = json::parse(qa.getColumn(0).getString()); } catch (...) {}
+            }
+        }
+        for (auto& [ts, snap_str] : new_anchors) {
+            try { existing[std::to_string(ts)] = json::parse(snap_str); } catch (...) {}
+        }
+        SQLite::Statement upd(db_.get(),
+            "UPDATE channel SET anchor_hashes=? WHERE channel_id=?");
+        upd.bind(1, existing.dump());
+        upd.bind(2, channel_id);
+        upd.exec();
     }
 }
 
