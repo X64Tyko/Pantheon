@@ -22,6 +22,10 @@ export const BlockEditor = observer(function BlockEditor({ channelId, store }: {
           {m.name} Block
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button
+            onClick={() => store.toggleHints()}
+            style={{ padding: '3px 8px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', color: store.showHints ? 'var(--hds-violet)' : 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer', letterSpacing: '0.06em' }}
+          >{store.showHints ? '— hints' : '+ hints'}</button>
           <button onClick={() => { store.modalOpen = true }} title="Open in modal" style={{ width: 28, height: 28, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 14 }}>⊞</button>
           <button onClick={() => store.closeEditor()} style={{ width: 28, height: 28, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 15 }}>×</button>
         </div>
@@ -61,6 +65,10 @@ export const NewBlockEditor = observer(function NewBlockEditor({ channelId, stor
           {m.name} Block
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button
+            onClick={() => store.toggleHints()}
+            style={{ padding: '3px 8px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', color: store.showHints ? 'var(--hds-violet)' : 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer', letterSpacing: '0.06em' }}
+          >{store.showHints ? '— hints' : '+ hints'}</button>
           <button onClick={() => { store.modalOpen = true }} title="Open in modal" style={{ width: 28, height: 28, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 14 }}>⊞</button>
           <button onClick={() => store.closeEditor()} style={{ width: 28, height: 28, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 15 }}>×</button>
         </div>

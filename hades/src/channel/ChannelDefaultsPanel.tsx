@@ -3,7 +3,7 @@ import { observer } from 'mobx-react-lite'
 import type { AdvanceMode, BumperContentType, BumperMode, Channel, ChannelBumper, EpisodeSearchResult, FillerEntryAdvancement, FillerSelectionMode, Show, Playlist } from '../api/types'
 import { FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
 import { inputStyle, filterInputStyle } from './styles'
-import { SectionLabel } from './SectionLabel'
+import { CardSection } from './EditorForm'
 import { FillerEntryRow } from './FillerPanel'
 import type { ChannelDetailStore } from './store'
 import { api } from '../api/client'
@@ -57,12 +57,12 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 15, letterSpacing: '0.04em' }}>Channel Settings</span>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: 20 }} className="scrollbar-dark">
-        <div style={{ fontSize: 12.5, color: 'var(--hds-txt-2)', lineHeight: 1.6, marginBottom: 22 }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '14px 16px 20px' }} className="scrollbar-dark">
+        <div style={{ fontSize: 11.5, color: 'var(--hds-txt-3)', lineHeight: 1.6, marginBottom: 16, fontFamily: "'JetBrains Mono', monospace" }}>
           Select a block to edit it, or press <span style={{ color: 'var(--hds-gold)' }}>Add Block</span> to create one.
         </div>
 
-        <SectionLabel>CHANNEL</SectionLabel>
+        <CardSection title="CHANNEL">
         <div style={{ display: 'flex', gap: 7, marginBottom: 8 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>NAME</div>
@@ -143,9 +143,10 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         >
           {store.channelSaving ? 'Saving…' : 'Save Channel'}
         </button>
+        </CardSection>
 
-        <SectionLabel>LOGO</SectionLabel>
-        <div style={{ marginBottom: 22 }}>
+        <CardSection title="LOGO">
+        <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>LOGO PATH</div>
           <input
             value={store.channelDraftLogoPath}
@@ -158,11 +159,10 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
             Container path or URL to a PNG or JPG logo for this channel.
           </div>
         </div>
+        </CardSection>
 
-        <SectionLabel>DEFAULT FILLER</SectionLabel>
-        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 12, lineHeight: 1.55 }}>
-          Used when a block has no filler lists of its own.
-        </div>
+        <CardSection title="DEFAULT FILLER" summary="Used when a block has no filler lists of its own">
+
 
         {entries.length > 1 && (
           <div style={{ marginBottom: 12 }}>
@@ -226,11 +226,10 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         {store.channelFillerErr && (
           <div style={{ marginTop: 8, fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{store.channelFillerErr}</div>
         )}
+        </CardSection>
 
-        <SectionLabel style={{ marginTop: 24 }}>CHANNEL BUMPERS</SectionLabel>
-        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 12, lineHeight: 1.55 }}>
-          Content injected channel-wide. <b>Between</b> mode fires every N non-filler programs. <b>Filler</b> mode weaves into filler gaps.
-        </div>
+        <CardSection title="CHANNEL BUMPERS" summary="Between / filler mode injection">
+
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 10 }}>
           {bumpers.map(b => (
@@ -285,11 +284,10 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         {bumperErr && (
           <div style={{ marginTop: 8, fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{bumperErr}</div>
         )}
+        </CardSection>
 
-        <SectionLabel style={{ marginTop: 24 }}>OFFLINE FALLBACK</SectionLabel>
-        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 12, lineHeight: 1.55 }}>
-          Served when no content is scheduled and no filler is available. Video takes precedence over image if both are set.
-        </div>
+        <CardSection title="OFFLINE FALLBACK" summary="Served when no content is scheduled">
+
 
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>VIDEO (looping)</div>
@@ -322,6 +320,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
             onClear={() => store.setChannelDraft({ offline_audio_id: '', offline_audio_type: '', offline_audio_title: '' })}
           />
         </div>
+        </CardSection>
       </div>
     </div>
   )

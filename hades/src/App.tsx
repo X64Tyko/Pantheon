@@ -7,6 +7,7 @@ import ContentPage        from './pages/ContentPage'
 import DownloadPage       from './pages/DownloadPage'
 import FillerPage         from './pages/FillerPage'
 import PlaylistPage       from './pages/PlaylistPage'
+import SettingsPage       from './pages/SettingsPage'
 import SourcesPage        from './pages/SourcesPage'
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="filler"           element={<FillerPage />} />
         <Route path="downloads"        element={<DownloadPage />} />
         <Route path="activity"         element={<ActivityPage />} />
+        <Route path="settings"         element={<SettingsPage />} />
       </Route>
     </Routes>
   )

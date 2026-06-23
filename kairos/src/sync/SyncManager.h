@@ -27,6 +27,9 @@ public:
     std::vector<std::string> sourceIds()                              const;
     MediaSource*             findSource(const std::string& source_id) const;
 
+    int  getThreadCount() const;
+    void setThreadCount(int n);
+
 private:
     // ID resolution: looks up existing kairos_id in source_mapping, or generates one
     std::string resolveId(const std::string& item_type,
@@ -60,4 +63,5 @@ private:
     std::vector<std::unique_ptr<MediaSource>> sources_;
     std::atomic<bool>                         sync_running_{false};
     std::atomic<bool>                         plex_sync_running_{false};
+    std::atomic<int>                          override_thread_count_{0};
 };

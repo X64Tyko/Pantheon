@@ -6,6 +6,7 @@
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
 #include "scheduler/Rng.h"
+#include "scheduler/RuntimeFlags.h"
 #include "sync/SyncManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -566,15 +567,41 @@ void Router::registerSourceRoutes() {
 
 void Router::registerConfigRoutes() {
 
-    // Runtime settings readable by the frontend (sync thread count, etc.)
-    svr_.Get("/api/config/settings", [](const Req&, Res& res) {
-        constexpr int kDefault = 6;
-        int sync_threads = kDefault;
-        if (const char* env = std::getenv("KAIROS_SYNC_THREADS")) {
-            try { int n = std::stoi(env); if (n > 0) sync_threads = n; }
-            catch (...) {}
+    // Runtime settings — GET returns current values, PATCH updates mutable ones.
+    svr_.Get("/api/config/settings", [this](const Req&, Res& res) {
+        ok(res, json{
+            {"epg_debug",    g_epg_debug.load()},
+            {"sync_threads", sync_.getThreadCount()},
+        }.dump());
+    });
+
+    svr_.Patch("/api/config/settings", [this](const Req& req, Res& res) {
+        try {
+            auto b = json::parse(req.body);
+            if (b.contains("epg_debug") && b["epg_debug"].is_boolean())
+                g_epg_debug.store(b["epg_debug"].get<bool>());
+            if (b.contains("sync_threads") && b["sync_threads"].is_number_integer()) {
+                int n = b["sync_threads"].get<int>();
+                if (n >= 1 && n <= 32) sync_.setThreadCount(n);
+            }
+            ok(res, json{
+                {"epg_debug",    g_epg_debug.load()},
+                {"sync_threads", sync_.getThreadCount()},
+            }.dump());
+        } catch (const std::exception& e) {
+            err(res, 400, e.what());
         }
-        ok(res, json{{"sync_threads", sync_threads}}.dump());
+    });
+
+    // Clear all scheduled EPG rows across every channel so the next request regenerates.
+    svr_.Post("/api/config/epg/clear-all", [this](const Req&, Res& res) {
+        try {
+            SQLite::Statement q(db_.get(), "DELETE FROM scheduled_program");
+            int affected = q.exec();
+            ok(res, json{{"cleared", affected}}.dump());
+        } catch (const std::exception& e) {
+            err(res, 500, e.what());
+        }
     });
 
     // Credential status for all configured sources

@@ -84,7 +84,10 @@ export class ChannelDetailStore {
   bulkErr:         string | null = null
 
   openSections: Record<string, boolean> = { schedule: true, timing: true, playback: false, content: true, filler: false, bumpers: false }
-  modalOpen: boolean = false
+  modalOpen:          boolean = false
+  showHints:          boolean = true
+  fillerOverlayOpen:  boolean = false
+  bumperOverlayOpen:  boolean = false
 
   allFillerLists:   FillerList[] = []
   fillerPickerOpen: boolean      = false
@@ -754,6 +757,8 @@ export class ChannelDetailStore {
   toggleSection(s: string) {
     this.openSections = { ...this.openSections, [s]: !this.openSections[s] }
   }
+
+  toggleHints() { this.showHints = !this.showHints }
 
   openPicker() {
     clearTimeout(_debounce)

@@ -9,13 +9,7 @@
 #include <map>
 #include <sstream>
 
-static bool epgDebug() {
-    static const bool v = [] {
-        const char* e = std::getenv("KAIROS_DEBUG_EPG");
-        return e && std::string(e) == "1";
-    }();
-    return v;
-}
+#include "RuntimeFlags.h"
 
 EPGMaterializer::EPGMaterializer(Database& db, RuleEngine& engine)
     : db_(db), engine_(engine) {}
@@ -224,6 +218,30 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
 
     std::map<std::time_t, std::string> new_anchors;
 
+    // Merge new_anchors into the channel's anchor_hashes column and persist.
+    // Called before every early return so anchors are never silently discarded.
+    auto persistAnchors = [&]() {
+        if (new_anchors.empty()) return;
+        using json = nlohmann::json;
+        json existing = json::object();
+        {
+            SQLite::Statement qa(db_.get(),
+                "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+            qa.bind(1, channel_id);
+            if (qa.executeStep() && !qa.getColumn(0).isNull()) {
+                try { existing = json::parse(qa.getColumn(0).getString()); } catch (...) {}
+            }
+        }
+        for (auto& [ts, snap_str] : new_anchors) {
+            try { existing[std::to_string(ts)] = json::parse(snap_str); } catch (...) {}
+        }
+        SQLite::Statement upd(db_.get(),
+            "UPDATE channel SET anchor_hashes=? WHERE channel_id=?");
+        upd.bind(1, existing.dump());
+        upd.bind(2, channel_id);
+        upd.exec();
+    };
+
     // No anchor yet for this week: clear stale cursor/block_state rows (left over from a
     // previous projection that started from an arbitrary `from`) so the project() init
     // guard fires fresh and re-seeds the cursor deterministically from the RNG.
@@ -271,6 +289,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
 
         if (last_end >= horizon) {
             if (epgDebug()) std::cout << "[epg]   cache fully covers horizon — done\n";
+            persistAnchors();
             return;
         }
 
@@ -291,6 +310,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         if (items.empty()) {
             std::cout << "[epg] WARNING: project() returned 0 items for channel="
                       << channel_id << " — EPG will be empty\n";
+            persistAnchors();
             return;
         }
 
@@ -333,33 +353,13 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         if (!any_new) {
             if (epgDebug())
                 std::cout << "[epg]   all items already cached — done\n";
+            persistAnchors();
             return;
         }
     }
 
-    // Persist any week-boundary anchor snapshots captured during projection.
-    // In the preview SAVEPOINT path this UPDATE is rolled back automatically —
-    // no special flag needed; correct behaviour falls out of the SAVEPOINT.
-    if (!new_anchors.empty()) {
-        using json = nlohmann::json;
-        json existing = json::object();
-        {
-            SQLite::Statement qa(db_.get(),
-                "SELECT anchor_hashes FROM channel WHERE channel_id=?");
-            qa.bind(1, channel_id);
-            if (qa.executeStep() && !qa.getColumn(0).isNull()) {
-                try { existing = json::parse(qa.getColumn(0).getString()); } catch (...) {}
-            }
-        }
-        for (auto& [ts, snap_str] : new_anchors) {
-            try { existing[std::to_string(ts)] = json::parse(snap_str); } catch (...) {}
-        }
-        SQLite::Statement upd(db_.get(),
-            "UPDATE channel SET anchor_hashes=? WHERE channel_id=?");
-        upd.bind(1, existing.dump());
-        upd.bind(2, channel_id);
-        upd.exec();
-    }
+    // Fallback: 200 guard iterations completed without fully covering horizon.
+    persistAnchors();
 }
 
 void EPGMaterializer::notifyPlayed(const std::string& channel_id,

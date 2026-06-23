@@ -121,12 +121,7 @@ void SyncManager::syncSource(const std::string& source_id) {
 namespace {
 constexpr int kEpisodeFetchConcurrency = 8;
 
-// Worker count for the episode-fetch pool. KAIROS_SYNC_THREADS overrides the
-// default for container deployments where the assigned cgroup quota is known
-// up front; otherwise this defaults to the local core count, capped at
-// kEpisodeFetchConcurrency so a high-core host doesn't flood the media server
-// with simultaneous requests.
-int syncThreadCount() {
+int defaultSyncThreadCount() {
     if (const char* env = std::getenv("KAIROS_SYNC_THREADS")) {
         try {
             int n = std::stoi(env);
@@ -138,6 +133,15 @@ int syncThreadCount() {
     return std::min<int>(kEpisodeFetchConcurrency, hw > 0 ? static_cast<int>(hw) : kEpisodeFetchConcurrency);
 }
 } // namespace
+
+int SyncManager::getThreadCount() const {
+    int ov = override_thread_count_.load(std::memory_order_relaxed);
+    return ov > 0 ? ov : defaultSyncThreadCount();
+}
+
+void SyncManager::setThreadCount(int n) {
+    override_thread_count_.store(n > 0 ? n : 0, std::memory_order_relaxed);
+}
 
 void SyncManager::syncShows(MediaSource& src,
                              const std::string& source_id,
@@ -214,7 +218,7 @@ void SyncManager::syncShows(MediaSource& src,
     std::vector<std::vector<Episode>> episodes_by_show(shows.size());
     {
         std::atomic<size_t> next{0};
-        const int worker_count = std::min<int>(syncThreadCount(),
+        const int worker_count = std::min<int>(getThreadCount(),
                                                 static_cast<int>(shows.size()));
         std::vector<std::thread> workers;
         workers.reserve(static_cast<size_t>(worker_count));

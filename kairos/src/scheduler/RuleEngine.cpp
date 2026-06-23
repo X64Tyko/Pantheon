@@ -12,13 +12,7 @@
 #include <random>
 #include <unordered_set>
 
-static bool epgDebug() {
-    static const bool v = [] {
-        const char* e = std::getenv("KAIROS_DEBUG_EPG");
-        return e && std::string(e) == "1";
-    }();
-    return v;
-}
+#include "RuntimeFlags.h"
 
 using json = nlohmann::json;
 
@@ -58,6 +52,9 @@ static std::tm toChannelTZ(std::time_t t, const std::string& tz_name) {
         int epoch_day = static_cast<int>(dp.time_since_epoch().count());
         int wday = ((epoch_day % 7) + 4 + 7) % 7;
 
+        year_month_day jan1{ymd.year(), month{1}, day{1}};
+        int yday = static_cast<int>((sys_days{ymd} - sys_days{jan1}).count());
+
         std::tm tm{};
         tm.tm_year = int(ymd.year()) - 1900;
         tm.tm_mon  = unsigned(ymd.month()) - 1;
@@ -66,6 +63,7 @@ static std::tm toChannelTZ(std::time_t t, const std::string& tz_name) {
         tm.tm_min  = min;
         tm.tm_sec  = sec;
         tm.tm_wday = wday;
+        tm.tm_yday = yday;
         return tm;
     } catch (...) {
         return toUTC(t);
@@ -1587,13 +1585,16 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
     std::string last_show_id;                        // show_id of last scheduled content item
     std::unordered_map<std::string, int> transition_counts; // show transitions per block occurrence
 
-    // Pre-populate exhausted_blocks from today's is_scheduled=1 play_history so that
-    // when ensureScheduled's guard loop calls project() a second time starting mid-block
-    // (e.g. right after a movie ends), blocks that already hit program_count for today
-    // are seen as exhausted from the first iteration rather than re-scheduling content.
+    // Pre-populate exhausted_blocks from scheduled_program so that when the
+    // ensureScheduled guard loop calls project() a second time (extending forward),
+    // blocks that already hit program_count in the prior call are seen as exhausted.
+    // Querying scheduled_program (not play_history) keeps exhaustion scoped to the
+    // current scheduling session: a fresh rebuild from a past anchor starts with an
+    // empty scheduled_program, so no blocks are pre-exhausted regardless of history.
     {
         auto tm_s  = toChannelTZ(start, tz);
         int  s_sec = tm_s.tm_hour * 3600 + tm_s.tm_min * 60 + tm_s.tm_sec;
+        prev_day = tm_s.tm_year * 1000 + tm_s.tm_yday;
         std::time_t today_midnight = start - static_cast<std::time_t>(s_sec);
         // Compute tomorrow midnight safely to handle DST.
         std::time_t tomorrow_midnight;
@@ -1603,20 +1604,22 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             int  tom_sec = tm_tom.tm_hour * 3600 + tm_tom.tm_min * 60 + tm_tom.tm_sec;
             tomorrow_midnight = approx_tom - static_cast<std::time_t>(tom_sec);
         }
-        prev_day = tm_s.tm_year * 1000 + tm_s.tm_yday;
         for (const auto& b : blocks) {
             if (b.program_count <= 0) continue;
             SQLite::Statement qpc(db_.get(), R"(
-                SELECT COUNT(*) FROM play_history
-                WHERE channel_id=? AND block_id=? AND is_scheduled=1
-                  AND aired_at >= ? AND aired_at < ?
+                SELECT COUNT(*) FROM scheduled_program
+                WHERE channel_id=? AND block_id=?
+                  AND wall_clock_start >= ? AND wall_clock_start < ?
             )");
             qpc.bind(1, channel_id);
             qpc.bind(2, b.block_id);
             qpc.bind(3, static_cast<int64_t>(today_midnight));
             qpc.bind(4, static_cast<int64_t>(tomorrow_midnight));
-            if (qpc.executeStep() && qpc.getColumn(0).getInt() >= b.program_count)
+            if (qpc.executeStep() && qpc.getColumn(0).getInt() >= b.program_count) {
                 exhausted_blocks.insert(b.block_id);
+                if (epgDebug())
+                    std::cout << "[epg] pre-pop exhausted block=" << b.block_id.substr(0,8) << '\n';
+            }
         }
     }
 
@@ -1686,7 +1689,17 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         {
             auto tm_chk  = toChannelTZ(t, tz);
             int  cur_day = tm_chk.tm_year * 1000 + tm_chk.tm_yday;
-            if (cur_day != prev_day) { exhausted_blocks.clear(); prev_day = cur_day; }
+            if (cur_day != prev_day) {
+                if (epgDebug()) {
+                    std::cout << "[epg] day rollover t=" << t
+                              << " prev=" << prev_day << "→" << cur_day
+                              << " exhausted_count=" << exhausted_blocks.size();
+                    for (auto& id : exhausted_blocks) std::cout << ' ' << id.substr(0,8);
+                    std::cout << '\n';
+                }
+                exhausted_blocks.clear();
+                prev_day = cur_day;
+            }
         }
 
         auto block_opt = resolveFromList(blocks, t, tz);
@@ -1694,6 +1707,9 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
         // against the remaining blocks so a lower-priority active block takes over
         // instead of falling through to the no-block (future-start-only) handler.
         if (block_opt && exhausted_blocks.count(block_opt->block_id)) {
+            if (epgDebug())
+                std::cout << "[epg] exhausted fallback t=" << t
+                          << " block=" << block_opt->block_id.substr(0,8) << '\n';
             std::vector<Block> active;
             active.reserve(blocks.size());
             for (const auto& b : blocks)
@@ -1915,6 +1931,48 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             dur_ms = std::min(dur_ms, rem);
         }
 
+        // If this item would run past a higher-priority block's nominal start time,
+        // snap t to that start and skip scheduling the item entirely. This keeps t
+        // on the alignment grid so the late-start check passes next iteration.
+        // (Capping to late_window_end left t mid-grid, causing alignment to push
+        // effective_start past late_window_end, silently skipping the block.)
+        {
+            auto        tm_t2       = toChannelTZ(t, tz);
+            int         cur_sec2    = tm_t2.tm_hour * 3600 + tm_t2.tm_min * 60 + tm_t2.tm_sec;
+            std::time_t today_mid2  = t - static_cast<std::time_t>(cur_sec2);
+            std::time_t item_end    = t + dur_ms / 1000;
+            int         day_bit_now = dayBit(tm_t2);
+            std::time_t tomorrow_mid2;
+            {
+                std::time_t approx_tom = today_mid2 + 90000;
+                auto tm_tom = toChannelTZ(approx_tom, tz);
+                int tom_sec = tm_tom.tm_hour * 3600 + tm_tom.tm_min * 60 + tm_tom.tm_sec;
+                tomorrow_mid2 = approx_tom - static_cast<std::time_t>(tom_sec);
+            }
+            int         tom_bit    = 1 << ((tm_t2.tm_wday + 1) % 7);
+            std::time_t preempt_to = 0;
+
+            for (const auto& b : blocks) {
+                if (b.block_id == block.block_id) break;
+                if (b.late_start_mins <= 0) continue;
+
+                auto snap_day = [&](int bit, std::time_t base_mid) {
+                    if (!(b.day_mask & bit)) return;
+                    std::time_t b_start = base_mid
+                        + static_cast<std::time_t>(parseTimeMins(b.start_time)) * 60;
+                    if (b_start <= t) return;
+                    if (item_end > b_start)
+                        if (preempt_to == 0 || b_start < preempt_to) preempt_to = b_start;
+                };
+                snap_day(day_bit_now, today_mid2);
+                snap_day(tom_bit,     tomorrow_mid2);
+            }
+            if (preempt_to > 0) {
+                t = preempt_to;
+                continue;
+            }
+        }
+
         item.wall_clock_start_ms = static_cast<int64_t>(t) * 1000;
         item.wall_clock_end_ms   = item.wall_clock_start_ms + item.duration_ms;
         item.cursor_json         = "{}";
@@ -2076,6 +2134,10 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                 std::time_t step     = static_cast<std::time_t>(block.align_to_mins) * 60;
                 t = midnight + ((static_cast<std::time_t>(cur_sec) + step - 1) / step) * step;
             }
+            if (epgDebug())
+                std::cout << "[epg] exhausted t=" << t
+                          << " block=" << block.block_id.substr(0,8)
+                          << " prog_counts=" << prog_counts[block.block_id] << '\n';
             exhausted_blocks.insert(block.block_id);
             intro_played.erase(block.block_id);
             prev_block_id.clear();

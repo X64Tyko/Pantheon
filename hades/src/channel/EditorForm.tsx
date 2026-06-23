@@ -17,13 +17,28 @@ import type { LimitMode } from './types'
 
 // ─── Accordion section ────────────────────────────────────────────────────────
 
-export function AccordionSection({ title, badge, open, onToggle, children }: {
-  title:    string
-  badge?:   ReactNode
-  open:     boolean
-  onToggle: () => void
-  children: ReactNode
+export function AccordionSection({ title, badge, open, onToggle, children, forceOpen }: {
+  title:      string
+  badge?:     ReactNode
+  open:       boolean
+  onToggle:   () => void
+  children:   ReactNode
+  forceOpen?: boolean
 }) {
+  if (forceOpen) {
+    return (
+      <div style={{ borderRadius: 9, border: '1px solid var(--hds-line)', marginBottom: 8, overflow: 'hidden', background: 'oklch(0.21 0.022 288 / 0.5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 13px' }}>
+          <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--hds-gold)', flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 10, letterSpacing: '0.2em', color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace" }}>{title}</span>
+          {badge}
+        </div>
+        <div style={{ padding: '4px 14px 16px', borderTop: '1px solid var(--hds-line-s)' }}>
+          {children}
+        </div>
+      </div>
+    )
+  }
   return (
     <div style={{ borderRadius: 9, border: '1px solid var(--hds-line-s)', marginBottom: 8, overflow: 'hidden' }}>
       <button
@@ -43,18 +58,66 @@ export function AccordionSection({ title, badge, open, onToggle, children }: {
   )
 }
 
+// ─── Card section (always-open, for compact/modal layout) ─────────────────────
+
+export function CardSection({ title, summary, children }: {
+  title:    string
+  summary?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <div style={{ borderRadius: 9, border: '1px solid var(--hds-line)', marginBottom: 8, overflow: 'hidden', background: 'oklch(0.21 0.022 288 / 0.5)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 13px' }}>
+        <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--hds-gold)', flexShrink: 0 }} />
+        <span style={{ flex: 1, fontSize: 10, letterSpacing: '0.2em', color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace" }}>{title}</span>
+        {summary && <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>{summary}</span>}
+      </div>
+      <div style={{ padding: '4px 14px 16px', borderTop: '1px solid var(--hds-line-s)' }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// ─── Launcher row (compact mode — opens filler/bumper overlay) ─────────────────
+
+function LauncherRow({ icon, title, summary, onClick }: {
+  icon:    ReactNode
+  title:   string
+  summary: string
+  onClick: () => void
+}) {
+  return (
+    <div
+      onClick={onClick}
+      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 13px', marginBottom: 9, borderRadius: 11, cursor: 'pointer', border: '1px solid var(--hds-line-s)', background: 'oklch(0.19 0.018 288 / 0.45)', transition: 'border-color .12s, background .12s' }}
+      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line)'; (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.24 0.025 290 / 0.5)' }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'; (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.19 0.018 288 / 0.45)' }}
+    >
+      <span style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px solid var(--hds-line-s)', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 16 }}>{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 11, letterSpacing: '0.18em', color: 'var(--hds-txt)' }}>{title}</div>
+        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summary}</div>
+      </div>
+      <span style={{ fontSize: 13, color: 'var(--hds-violet)', flexShrink: 0 }}>›</span>
+    </div>
+  )
+}
+
 // ─── Editor form ──────────────────────────────────────────────────────────────
 
-export const EditorForm = observer(function EditorForm({ channelId, store, limitMode, hidePicker }: {
+export const EditorForm = observer(function EditorForm({ channelId, store, limitMode, hidePicker, compact }: {
   channelId:   string
   store:       ChannelDetailStore
   limitMode:   LimitMode
   hidePicker?: boolean
+  compact?:    boolean
 }) {
   const d   = store.draft
   const m   = BLOCK_META[d.block_type]
   const sec = store.openSections
   const tog = (s: string) => store.toggleSection(s)
+  const sh  = store.showHints
 
   const limitHelp = limitMode === 'programs'
     ? 'Plays this many programs then yields. End time flexes with real runtime.'
@@ -86,20 +149,42 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
     !premierBlocks.some(pb => pb.content.some(pc => pc.content_type === 'show' && pc.content_id === c.content_id))
   ).length : 0
 
+  // Compact-mode summaries for launcher rows
+  const fillerSummary = fillerCount > 0
+    ? `${fillerCount} list${fillerCount !== 1 ? 's' : ''} · ${d.filler_selection}`
+    : 'Channel default will be used'
+  const bumperSlotsOn = [d.intro_content_id, d.outro_content_id, d.interstitial_content_id].filter(Boolean).length
+  const bumperSummary = bumperSlotsOn > 0
+    ? `${bumperSlotsOn} slot${bumperSlotsOn !== 1 ? 's' : ''} configured`
+    : 'None configured'
+
+  // Days summary for compact card header
+  const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+  const DBITS     = [0x02,0x04,0x08,0x10,0x20,0x40,0x01]
+  const daysOn    = DAY_NAMES.filter((_,i) => (d.day_mask & DBITS[i]) !== 0)
+  const daysStr   = daysOn.length === 7 ? 'Every day'
+    : daysOn.length === 5 && (d.day_mask & 0x3e) === 0x3e ? 'Weekdays'
+    : daysOn.length === 2 && (d.day_mask & 0x41) === 0x41 ? 'Weekends'
+    : daysOn.join('·') || 'No days'
+  const stopStr   = limitMode === 'programs' ? `${d.program_count}p` : limitMode === 'end' ? (d.end_time ?? 'open') : 'fill day'
+  const timingStr = `${d.start_time || '—'} · ${stopStr}`
+
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 12px 20px' }} className="scrollbar-dark">
 
-      {/* ── Block name ── */}
-      <input
-        type="text"
-        placeholder="Block name (optional)"
-        value={d.name ?? ''}
-        onChange={e => store.setDraft('name', e.target.value)}
-        style={{ ...inputStyle, width: '100%', marginBottom: 10 }}
-      />
+      {/* ── Block name (sidebar mode only — modal puts it in header) ── */}
+      {!compact && (
+        <input
+          type="text"
+          placeholder="Block name (optional)"
+          value={d.name ?? ''}
+          onChange={e => store.setDraft('name', e.target.value)}
+          style={{ ...inputStyle, width: '100%', marginBottom: 10 }}
+        />
+      )}
 
       {/* ── SCHEDULE ── */}
-      <AccordionSection title="SCHEDULE" open={sec.schedule} onToggle={() => tog('schedule')}>
+      <AccordionSection title="SCHEDULE" open={sec.schedule} onToggle={() => tog('schedule')} forceOpen={compact} badge={compact ? <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>{daysStr}</span> : undefined}>
         <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 7 }}>
           BLOCK TYPE
           <HelpTip title="Block Types" tip="What each block type does">
@@ -157,7 +242,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
       </AccordionSection>
 
       {/* ── TIMING ── */}
-      <AccordionSection title="TIMING" open={sec.timing} onToggle={() => tog('timing')}>
+      <AccordionSection title="TIMING" open={sec.timing} onToggle={() => tog('timing')} forceOpen={compact} badge={compact ? <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>{timingStr}</span> : undefined}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 9, marginBottom: 16 }}>
           <div>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>START TIME</div>
@@ -176,7 +261,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <select value={String(d.late_start_mins)} onChange={e => store.setDraft('late_start_mins', +e.target.value)} style={inputStyle}>
               {DELAY_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            {d.late_start_mins > 0 && (
+            {sh && d.late_start_mins > 0 && (
               <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
                 Block may start up to {d.late_start_mins} min late if preempted by a higher-priority block.
               </div>
@@ -195,7 +280,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <select value={String(d.early_start_secs)} onChange={e => store.setDraft('early_start_secs', +e.target.value)} style={inputStyle}>
               {EARLY_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            {d.early_start_secs > 0 && (
+            {sh && d.early_start_secs > 0 && (
               <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
                 Block may steal up to {d.early_start_secs}s of trailing dead air from the previous block.
               </div>
@@ -220,7 +305,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
         {limitMode === 'end' && (
           <input type="time" value={d.end_time ?? ''} onChange={e => store.setDraft('end_time', e.target.value)} style={{ ...inputStyle, width: '100%', marginBottom: 7 }} />
         )}
-        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 14, lineHeight: 1.55 }}>{limitHelp}</div>
+        {sh && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 14, lineHeight: 1.55 }}>{limitHelp}</div>}
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
           <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)' }}>
@@ -252,11 +337,11 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
         <select value={String(d.align_to_mins)} onChange={e => store.setDraft('align_to_mins', +e.target.value)} style={{ ...inputStyle, width: '100%', marginBottom: 6 }}>
           {ALIGN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
-        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', lineHeight: 1.55 }}>
+        {sh && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', lineHeight: 1.55 }}>
           {(d.start_scope ?? 'block') === 'episode'
             ? 'Snaps each episode to the next time boundary. Early/late start define the tolerance window.'
             : 'Snaps the first program of the block to the next time boundary.'}
-        </div>
+        </div>}
       </AccordionSection>
 
       {/* ── PLAYBACK ── */}
@@ -274,7 +359,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
               </HelpTip>
             </div>
             <input type="number" min={1} value={d.priority} onChange={e => store.setDraft('priority', Math.max(1, +e.target.value || 1))} style={inputStyle} />
-            <div style={{ fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 4 }}>higher wins conflicts</div>
+            {sh && <div style={{ fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 4 }}>higher wins conflicts</div>}
           </div>
           <div>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>MAX RATING</div>
@@ -297,9 +382,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                 <option value="rerun_smart">Rerun Smart</option>
               </optgroup>
             </select>
-            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+            {sh && <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
               {orderHint[d.advancement]}
-            </div>
+            </div>}
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
@@ -321,9 +406,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
               <option value="channel">Per channel</option>
               <option value="global">Global</option>
             </select>
-            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+            {sh && <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
               {cursorHint[d.cursor_scope]}
-            </div>
+            </div>}
           </div>
         </div>
         {(d.advancement === 'smart_shuffle' || d.advancement === 'rerun_smart') && (
@@ -336,9 +421,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                 style={{ flex: 1 }} />
               <span style={{ fontSize: 11, color: 'var(--hds-txt-2)', minWidth: 36 }}>{d.smart_pct ?? 30}%</span>
             </div>
-            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 3 }}>
+            {sh && <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 3 }}>
               Episodes won't repeat until {d.smart_pct ?? 30}% of the pool has played since last air
-            </div>
+            </div>}
           </div>
         )}
         {(d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart') && (
@@ -351,9 +436,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             >
               {NO_HISTORY_OPTS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
-            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 3 }}>
+            {sh && <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 3 }}>
               {NO_HISTORY_OPTS.find(([v]) => v === (d.no_history_behavior ?? 'normal'))?.[2]}
-            </div>
+            </div>}
           </div>
         )}
         {(d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart') && (
@@ -368,13 +453,32 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                 {(d.max_consecutive_episodes ?? 0) === 0 ? 'no limit' : 'max consecutive from the same show'}
               </span>
             </div>
-            <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+            {sh && <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
               When the limit is hit the engine re-rolls show selection, forcing a switch even if the same show wins.
-            </div>
+            </div>}
           </div>
         )}
       </AccordionSection>
 
+      {/* ── Compact launchers (modal mode only) ── */}
+      {compact && (
+        <>
+          <LauncherRow
+            icon={<span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--hds-violet)', display: 'inline-block' }} />}
+            title="FILLER & FALLBACK"
+            summary={fillerSummary}
+            onClick={() => { store.fillerOverlayOpen = true }}
+          />
+          <LauncherRow
+            icon={<span style={{ width: 7, height: 7, borderRadius: 2, background: 'oklch(0.65 0.12 320)', display: 'inline-block' }} />}
+            title="BUMPERS"
+            summary={bumperSummary}
+            onClick={() => { store.bumperOverlayOpen = true }}
+          />
+        </>
+      )}
+
+      {!compact && (<>
       {/* ── CONTENT ── */}
       <AccordionSection
         title="CONTENT"
@@ -455,11 +559,11 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                         </label>
                       )}
                     </div>
-                    <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', padding: '0 10px 7px', lineHeight: 1.5 }}>
+                    {sh && <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', padding: '0 10px 7px', lineHeight: 1.5 }}>
                       {isSequential && 'Episodes before switching shows. 1 = strict rotation.'}
                       {isShuffle && 'Selection probability relative to other shows in the block.'}
                       {isRerun && 'WEIGHT: pick probability. RUN: consecutive episodes per selection before re-rolling.'}
-                    </div>
+                    </div>}
                   </div>
                 )}
                 {isPlaylist && playlist && (
@@ -475,11 +579,11 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
                         style={{ padding: '3px 9px', border: 'none', borderRadius: 5, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, cursor: 'pointer', background: isShowColl ? 'var(--hds-violet)' : 'var(--hds-bg)', color: isShowColl ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-3)', transition: '.1s' }}
                       >Show Collection</button>
                     </div>
-                    <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 5, lineHeight: 1.5 }}>
+                    {sh && <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 5, lineHeight: 1.5 }}>
                       {!isShowColl
                         ? 'In-Order: playlist items play sequentially as a single flat list, regardless of the block\'s advancement setting.'
                         : 'Show Collection: the block\'s advancement setting (rerun, shuffle, etc.) applies across the distinct shows inside this playlist. Each show\'s episodes are tracked separately.'}
-                    </div>
+                    </div>}
                   </div>
                 )}
                 {item.content_type === 'show' && (
@@ -591,9 +695,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <span style={{ fontSize: 11, color: 'var(--hds-txt-2)' }}>Filler between programs</span>
             <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: d.inter_filler ? 'var(--hds-gold)' : 'var(--hds-txt-3)' }}>{d.inter_filler ? 'ON' : 'OFF'}</span>
           </button>
-          <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 6, lineHeight: 1.55 }}>
+          {sh && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 6, lineHeight: 1.55 }}>
             When off, filler only fills leftover time at end of block. When on, also fills between programs.
-          </div>
+          </div>}
         </div>
       </AccordionSection>
 
@@ -636,6 +740,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           </BumperSlot>
         </div>
       </AccordionSection>
+      </>)}
 
     </div>
   )

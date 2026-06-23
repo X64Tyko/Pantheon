@@ -197,8 +197,10 @@ export const api = {
                    request<void>                                     ('PATCH',  `/channels/${channelId}/bumpers/${bumperId}`, b),
   deleteBumper:  (channelId: string, bumperId: number)               => request<void>          ('DELETE', `/channels/${channelId}/bumpers/${bumperId}`),
 
-  // Runtime settings (mirrors server-side env vars)
-  getSettings: () => request<{ sync_threads: number }>('GET', '/config/settings'),
+  // Runtime settings
+  getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_threads: number }>('GET',   '/config/settings'),
+  updateSettings: (b: Partial<{ epg_debug: boolean; sync_threads: number }>) => request<{ epg_debug: boolean; sync_threads: number }>('PATCH', '/config/settings', b),
+  clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
 
   // Downloads
   getDownloadConfig:  ()                                              => request<{path: string}>('GET', '/config/download'),
