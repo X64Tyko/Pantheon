@@ -109,6 +109,18 @@ private:
     // Weighted random selection of a content-item index from a block's content list.
     static int selectWeighted(const Block& block, Xoshiro256& rng);
 
+    // Like selectWeighted but for SmartShuffle movie blocks: excludes recently-played
+    // movies (last n*smart_pct/100 of the pool) from the weighted draw.
+    int selectWeightedSmartCooldown(const Block& block, const std::string& channel_id,
+                                    int smart_pct, std::time_t before_time, Xoshiro256& rng);
+
+    // For SmartShuffle show blocks: filters `all` to exclude the most recently played
+    // smart_pct% of episodes. Falls back to `all` if every episode is hot.
+    std::vector<Episode> smartShufflePool(const std::vector<Episode>& all,
+                                          const std::string& show_id,
+                                          const std::string& channel_id,
+                                          int smart_pct, std::time_t before_time);
+
     // Given an episode index in eps, snap back to Part 1 of its multipart group (if any).
     int snapToGroupStart(const std::string& episode_id,
                          const std::vector<Episode>& eps) const;

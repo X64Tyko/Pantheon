@@ -493,6 +493,91 @@ int RuleEngine::selectWeighted(const Block& block, Xoshiro256& rng) {
     return static_cast<int>(block.content.size()) - 1;
 }
 
+int RuleEngine::selectWeightedSmartCooldown(
+    const Block& block, const std::string& channel_id,
+    int smart_pct, std::time_t before_time, Xoshiro256& rng)
+{
+    int n = static_cast<int>(block.content.size());
+    if (n <= 1 || smart_pct <= 0) return selectWeighted(block, rng);
+
+    // Only apply movie-level cooldown when all content entries are movies.
+    for (const auto& bc : block.content)
+        if (bc.content_type != "movie") return selectWeighted(block, rng);
+
+    int hot_count = std::max(0, n * smart_pct / 100);
+    if (hot_count == 0) return selectWeighted(block, rng);
+
+    // Most recently played movies for this channel (ordered most-recent first).
+    std::unordered_set<std::string> hot_ids;
+    {
+        SQLite::Statement q(db_.get(), R"(
+            SELECT item_id FROM (
+                SELECT item_id, MAX(aired_at) AS last_aired
+                FROM play_history
+                WHERE item_type='movie' AND channel_id=? AND aired_at<?
+                GROUP BY item_id
+            ) ORDER BY last_aired DESC LIMIT ?
+        )");
+        q.bind(1, channel_id);
+        q.bind(2, static_cast<int64_t>(before_time));
+        q.bind(3, hot_count);
+        while (q.executeStep()) hot_ids.insert(q.getColumn(0).getString());
+    }
+    if (hot_ids.empty()) return selectWeighted(block, rng);
+
+    int total = 0;
+    for (const auto& bc : block.content)
+        if (!hot_ids.count(bc.content_id)) total += std::max(1, bc.weight);
+    if (total <= 0) return selectWeighted(block, rng); // all hot — fall back
+
+    std::uniform_int_distribution<int> dist(0, total - 1);
+    int r = dist(rng);
+    for (int i = 0; i < n; ++i) {
+        if (hot_ids.count(block.content[i].content_id)) continue;
+        r -= std::max(1, block.content[i].weight);
+        if (r < 0) return i;
+    }
+    return selectWeighted(block, rng);
+}
+
+std::vector<Episode> RuleEngine::smartShufflePool(
+    const std::vector<Episode>& all,
+    const std::string& show_id,
+    const std::string& channel_id,
+    int smart_pct,
+    std::time_t before_time)
+{
+    int n = static_cast<int>(all.size());
+    int hot_count = std::max(0, n * smart_pct / 100);
+    if (hot_count == 0 || all.empty()) return all;
+
+    std::unordered_set<std::string> hot_ids;
+    {
+        SQLite::Statement q(db_.get(), R"(
+            SELECT ph.item_id FROM (
+                SELECT ph.item_id, MAX(ph.aired_at) AS last_aired
+                FROM play_history ph
+                JOIN episode e ON e.episode_id = ph.item_id
+                WHERE ph.item_type='episode' AND ph.channel_id=? AND ph.aired_at<? AND e.show_id=?
+                GROUP BY ph.item_id
+            ) ORDER BY last_aired DESC LIMIT ?
+        )");
+        q.bind(1, channel_id);
+        q.bind(2, static_cast<int64_t>(before_time));
+        q.bind(3, show_id);
+        q.bind(4, hot_count);
+        while (q.executeStep()) hot_ids.insert(q.getColumn(0).getString());
+    }
+    if (hot_ids.empty()) return all;
+
+    std::vector<Episode> filtered;
+    filtered.reserve(all.size());
+    for (const auto& e : all)
+        if (!hot_ids.count(e.episode_id)) filtered.push_back(e);
+
+    return filtered.empty() ? all : filtered;
+}
+
 int RuleEngine::snapToGroupStart(const std::string& episode_id,
                                   const std::vector<Episode>& eps) const {
     // Find if this episode belongs to a multipart group with part_num > 1.
@@ -879,16 +964,22 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
                                 perm[pos % static_cast<int>(perm.size())],
                                 showTitle(bc.content_id));
         }
-        auto eps = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
-        if (eps.empty()) return std::nullopt;
+        auto all_eps = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
+        if (all_eps.empty()) return std::nullopt;
         int pos = readCursorPos("show", bc.content_id, scopeStr(block), scopeId(block, channel_id));
-        if (block.advancement == Advancement::Shuffle || block.advancement == Advancement::SmartShuffle) {
-            int epoch = pos / static_cast<int>(eps.size());
-            int idx   = pos % static_cast<int>(eps.size());
-            auto perm = shufflePermutation(bc.content_id + std::to_string(epoch), static_cast<int>(eps.size()));
-            return itemFromShow(channel_id, block.block_id, eps, perm[idx], showTitle(bc.content_id));
+        if (block.advancement == Advancement::SmartShuffle && block.smart_pct > 0) {
+            auto eps = smartShufflePool(all_eps, bc.content_id, channel_id, block.smart_pct, before_time);
+            auto perm = shufflePermutation(bc.content_id, static_cast<int>(eps.size()));
+            return itemFromShow(channel_id, block.block_id, eps,
+                                perm[pos % static_cast<int>(perm.size())], showTitle(bc.content_id));
         }
-        return itemFromShow(channel_id, block.block_id, eps, pos, showTitle(bc.content_id));
+        if (block.advancement == Advancement::Shuffle) {
+            int epoch = pos / static_cast<int>(all_eps.size());
+            int idx   = pos % static_cast<int>(all_eps.size());
+            auto perm = shufflePermutation(bc.content_id + std::to_string(epoch), static_cast<int>(all_eps.size()));
+            return itemFromShow(channel_id, block.block_id, all_eps, perm[idx], showTitle(bc.content_id));
+        }
+        return itemFromShow(channel_id, block.block_id, all_eps, pos, showTitle(bc.content_id));
     }
     if (bc.content_type == "movie") {
         auto m = getMovie(bc.content_id);
@@ -946,8 +1037,13 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
             auto pl_eps = getPlaylistShowEpisodes(bc.content_id, show_id);
             if (pl_eps.empty()) return std::nullopt;
             int pos = readCursorPos("show", show_id, scope, scope_id);
-            if (block.advancement == Advancement::Shuffle ||
-                block.advancement == Advancement::SmartShuffle) {
+            if (block.advancement == Advancement::SmartShuffle && block.smart_pct > 0) {
+                auto eps = smartShufflePool(pl_eps, show_id, channel_id, block.smart_pct, before_time);
+                auto perm = shufflePermutation(show_id + block.block_id, static_cast<int>(eps.size()));
+                return itemFromShow(channel_id, block.block_id, eps,
+                                    perm[pos % static_cast<int>(perm.size())], showTitle(show_id));
+            }
+            if (block.advancement == Advancement::Shuffle) {
                 int epoch = pos / static_cast<int>(pl_eps.size());
                 int idx   = pos % static_cast<int>(pl_eps.size());
                 auto perm = shufflePermutation(show_id + block.block_id + std::to_string(epoch),
@@ -1336,7 +1432,17 @@ void RuleEngine::advanceCursors(const std::string& channel_id, const Block& b,
         }
     }
     if (b.advancement == Advancement::Shuffle || b.advancement == Advancement::SmartShuffle) {
-        writeBlockRR(b.block_id, channel_id, selectWeighted(b, rng));
+        int next_rr = (b.advancement == Advancement::SmartShuffle && b.smart_pct > 0)
+            ? selectWeightedSmartCooldown(b, channel_id, b.smart_pct, before_time, rng)
+            : selectWeighted(b, rng);
+        writeBlockRR(b.block_id, channel_id, next_rr);
+    } else if (b.advancement == Advancement::RerunSmart && b.smart_pct > 0) {
+        // For RerunSmart movie blocks: apply cooldown to prevent recently-played movies
+        // from being re-selected. selectWeightedSmartCooldown falls back to selectWeighted
+        // if the block is not all-movie content, so show-based RerunSmart (which returned
+        // early above) is not affected here.
+        writeBlockRR(b.block_id, channel_id,
+            selectWeightedSmartCooldown(b, channel_id, b.smart_pct, before_time, rng));
     } else {
         writeBlockRR(b.block_id, channel_id, (rr + 1) % n);
     }
