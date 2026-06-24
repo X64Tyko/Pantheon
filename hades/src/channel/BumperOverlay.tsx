@@ -4,15 +4,16 @@ import { api } from '../api/client'
 import { inputStyle } from './styles'
 import type { ChannelDetailStore } from './store'
 import type { Show, EpisodeSearchResult, Playlist } from '../api/types'
+import { MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty } from './BrowserTiles'
+import type { InfoItem, AddContentParams } from './BrowserTiles'
 
 type BumperSlotKey = 'intro' | 'outro' | 'interstitial'
 type BumperPickerTab = 'shows' | 'playlists' | 'episodes'
-type ArmedItem = { content_type: 'show' | 'playlist' | 'episode'; content_id: string; title: string }
 
 const SLOT_META: Record<BumperSlotKey, { label: string; hint: string }> = {
-  intro:         { label: 'INTRO',         hint: 'Plays once before the first content item.' },
-  outro:         { label: 'OUTRO',         hint: 'Plays after the last content item when the program count is hit.' },
-  interstitial:  { label: 'INTERSTITIAL',  hint: 'Plays between show transitions.' },
+  intro:        { label: 'INTRO',        hint: 'Plays once before the first content item.' },
+  outro:        { label: 'OUTRO',        hint: 'Plays after the last content item when the program count is hit.' },
+  interstitial: { label: 'INTERSTITIAL', hint: 'Plays between show transitions.' },
 }
 
 function slotContentType(store: ChannelDetailStore, slot: BumperSlotKey): string {
@@ -47,8 +48,10 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
   const [lists,   setLists]   = useState<Playlist[]>([])
   const [eps,     setEps]     = useState<EpisodeSearchResult[]>([])
   const [loading, setLoading] = useState(false)
-  const [armed,   setArmed]   = useState<ArmedItem | null>(null)
-  const [dragItem,setDragItem]= useState<ArmedItem | null>(null)
+  const [dragItem,setDragItem]= useState<AddContentParams | null>(null)
+  const [armed,   setArmed]   = useState<AddContentParams | null>(null)
+
+  const { infoItem, setInfoItem, infoDetail, infoSeasons, detailLoading } = useDetailPanel()
 
   useEffect(() => {
     setLoading(true)
@@ -60,64 +63,42 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
     p.catch(() => setLoading(false))
   }, [tab, q, sFilter])
 
-  const assignToSlot = (slot: BumperSlotKey, item: ArmedItem) => {
+  const assignToSlot = (slot: BumperSlotKey, item: AddContentParams) => {
     setSlot(store, slot, item.content_type, item.content_id)
     setArmed(null)
+    setInfoItem(null)
   }
 
-  const armedHint = armed ? `Click a slot to assign "${armed.title}"` : 'Click a tile, then a slot to assign'
-
-  const tileBase: React.CSSProperties = {
-    display: 'flex', flexDirection: 'column', gap: 6, cursor: 'pointer',
-    borderRadius: 9, overflow: 'hidden', border: '1px solid var(--hds-line-s)',
-    background: 'var(--hds-bg-2)', transition: 'border-color .1s',
+  const armItem = (params: AddContentParams) => {
+    setArmed(a => a?.content_id === params.content_id && a?.content_type === params.content_type ? null : params)
   }
 
-  const renderTile = (item: ArmedItem) => {
-    const isArmed = armed?.content_type === item.content_type && armed?.content_id === item.content_id
+  const renderSlotAssign = (_item: InfoItem, _seasons: number[], _onAdd: (p: AddContentParams) => void) => {
+    const source = infoItem
+    if (!source) return null
+    const ct  = source.kind === 'show' ? 'show' : source.kind === 'movie' ? 'movie' : source.kind === 'episode' ? 'episode' : 'playlist'
+    const cid = source.kind === 'show' ? source.id : source.kind === 'movie' ? source.id : source.kind === 'episode' ? source.ep.episode_id : source.pl.playlist_id
+    const title = source.kind === 'show' ? source.seed.title : source.kind === 'movie' ? source.seed.title : source.kind === 'episode' ? source.ep.title : source.pl.title
+    const item: AddContentParams = { content_type: ct as any, content_id: cid, title }
     return (
-      <div
-        key={item.content_id}
-        draggable
-        onDragStart={() => setDragItem(item)}
-        onDragEnd={() => setDragItem(null)}
-        onClick={() => setArmed(isArmed ? null : item)}
-        style={{
-          ...tileBase,
-          borderColor: isArmed ? 'var(--hds-violet)' : 'var(--hds-line-s)',
-          boxShadow: isArmed ? '0 0 0 1px var(--hds-violet)' : 'none',
-        }}
-        onMouseEnter={e => { if (!isArmed) (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-violet)' }}
-        onMouseLeave={e => { if (!isArmed) (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)' }}
-      >
-        <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg-3)', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {item.content_type === 'show' && (
-            <img
-              src={`/api/shows/${item.content_id}/thumb`} alt=""
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-              onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-            />
-          )}
-          <span style={{ fontSize: 22, opacity: 0.3, position: 'relative' }}>
-            {item.content_type === 'playlist' ? '☰' : item.content_type === 'episode' ? '▶' : '◍'}
-          </span>
-          {isArmed && (
-            <div style={{ position: 'absolute', inset: 0, background: 'oklch(0.55 0.14 292 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: 11, color: 'oklch(0.9 0.1 292)', fontFamily: "'JetBrains Mono', monospace" }}>armed</span>
-            </div>
-          )}
-        </div>
-        <div style={{ padding: '5px 7px 7px' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-            {item.title}
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }}>
-            {item.content_type}
-          </div>
-        </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+        {(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).map(slot => (
+          <button key={slot} onClick={() => assignToSlot(slot, item)}
+            style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer', textTransform: 'capitalize' }}>
+            {slot}
+          </button>
+        ))}
       </div>
     )
   }
+
+  const gridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))',
+    gap: 10, padding: 14, alignContent: 'start',
+  }
+
+  const configuredCount = (['intro', 'outro', 'interstitial'] as BumperSlotKey[]).filter(s => slotContentId(store, s) !== '').length
 
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 82, display: 'flex', flexDirection: 'column', background: 'linear-gradient(168deg, oklch(0.18 0.024 290 / 0.96), oklch(0.13 0.018 288 / 0.98))', backdropFilter: 'blur(26px)' }}>
@@ -126,63 +107,105 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
       {/* Header */}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, padding: '16px 22px 14px', borderBottom: '1px solid var(--hds-line-s)' }}>
         <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: '0.04em' }}>Bumpers</span>
-        <span style={{ fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>drag a tile into a slot · or click it, then a slot</span>
+        <span style={{ fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>click a tile to inspect · assign to slot from detail panel or via arm + click</span>
         <div style={{ flex: 1 }} />
-        <div style={{ display: 'flex', gap: 3, background: 'var(--hds-bg-3)', borderRadius: 9, padding: 3 }}>
-          {(['shows', 'playlists', 'episodes'] as BumperPickerTab[]).map(t => (
-            <button key={t} onClick={() => { setTab(t); setQ('') }}
-              style={{ padding: '5px 12px', border: 'none', borderRadius: 6, background: tab === t ? 'var(--hds-violet)' : 'transparent', color: tab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer', textTransform: 'capitalize' }}>
-              {t}
-            </button>
-          ))}
-        </div>
-        <input value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} placeholder="Search…"
-          style={{ ...inputStyle, width: 210, fontSize: 13 }} />
-        {tab === 'episodes' && (
-          <input type="number" min={0} value={sFilter} onChange={e => setSFilter(e.target.value)} placeholder="S#"
-            style={{ ...inputStyle, width: 52, fontSize: 11 }} />
-        )}
         <button onClick={() => { store.bumperOverlayOpen = false }}
           style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: '1px solid var(--hds-line-s)', background: 'transparent', color: 'var(--hds-txt-2)', fontSize: 18, cursor: 'pointer' }}>×</button>
       </div>
 
       {/* Body */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        {/* Tile grid */}
-        <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: '18px 22px' }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 14, fontFamily: "'JetBrains Mono', monospace" }}>
-            {tab === 'shows' ? 'SHOWS' : tab === 'playlists' ? 'PLAYLISTS' : 'EPISODES'}
-          </div>
-          {loading ? (
-            <div style={{ color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
+
+        {/* Left: tile browser */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {infoItem ? (
+            <MediaInfoPanel
+              item={infoItem}
+              detail={infoDetail}
+              seasons={infoSeasons}
+              detailLoading={detailLoading}
+              addLabel="ASSIGN TO SLOT"
+              onAdd={armItem}
+              onBack={() => setInfoItem(null)}
+              renderAdd={renderSlotAssign}
+            />
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 14, alignContent: 'start' }}>
-              {tab === 'shows' && shows.filter(s => !q || s.title.toLowerCase().includes(q.toLowerCase())).map(s =>
-                renderTile({ content_type: 'show', content_id: s.show_id, title: s.title })
-              )}
-              {tab === 'playlists' && lists.filter(p => !q || p.title.toLowerCase().includes(q.toLowerCase())).map(p =>
-                renderTile({ content_type: 'playlist', content_id: p.playlist_id, title: p.title })
-              )}
-              {tab === 'episodes' && eps.map(ep =>
-                renderTile({
-                  content_type: 'episode',
-                  content_id: ep.episode_id,
-                  title: `${ep.show_title} S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`,
-                })
-              )}
-            </div>
+            <>
+              <div style={{ flexShrink: 0, padding: '10px 14px 0', borderBottom: '1px solid var(--hds-line-s)' }}>
+                <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 7, padding: 3, width: 'fit-content', marginBottom: 8 }}>
+                  {(['shows', 'playlists', 'episodes'] as BumperPickerTab[]).map(t => (
+                    <button key={t} onClick={() => { setTab(t); setQ(''); setSFilter('') }}
+                      style={{ padding: '4px 12px', border: 'none', borderRadius: 5, background: tab === t ? 'var(--hds-violet)' : 'transparent', color: tab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer', textTransform: 'capitalize' }}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…"
+                    style={{ ...inputStyle, flex: 1, fontSize: 11.5, padding: '6px 9px' }} />
+                  {tab === 'episodes' && (
+                    <input type="number" min={0} value={sFilter} onChange={e => setSFilter(e.target.value)} placeholder="S#"
+                      style={{ ...inputStyle, width: 48, fontSize: 11 }} />
+                  )}
+                </div>
+              </div>
+
+              <div style={{ flex: 1, overflow: 'auto' }} className="scrollbar-dark">
+                {loading ? (
+                  <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
+                ) : tab === 'shows' ? (
+                  shows.length === 0 ? <BrowserEmpty /> : (
+                    <div style={gridStyle}>
+                      {shows.map(s => (
+                        <MediaTile key={s.show_id}
+                          imgUrl={`/api/shows/${s.show_id}/thumb`}
+                          title={s.title}
+                          sub={s.year ? String(s.year) : undefined}
+                          badge={(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).some(slot => slotContentType(store, slot) === 'show' && slotContentId(store, slot) === s.show_id)}
+                          onClick={() => setInfoItem({ kind: 'show', id: s.show_id, seed: s })}
+                        />
+                      ))}
+                    </div>
+                  )
+                ) : tab === 'playlists' ? (
+                  lists.length === 0 ? <BrowserEmpty hint="No playlists." /> : (
+                    <div style={gridStyle}>
+                      {lists.map(p => (
+                        <MediaTile key={p.playlist_id}
+                          title={p.title} sub={`${p.item_count} items`} placeholder="☰"
+                          badge={(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).some(slot => slotContentType(store, slot) === 'playlist' && slotContentId(store, slot) === p.playlist_id)}
+                          onClick={() => setInfoItem({ kind: 'playlist', pl: p })}
+                        />
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  eps.length === 0 ? <BrowserEmpty hint="Type to search episodes." /> : (
+                    <div style={gridStyle}>
+                      {eps.map(ep => (
+                        <MediaTile key={ep.episode_id}
+                          imgUrl={`/api/shows/${ep.show_id}/thumb`}
+                          title={`S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`}
+                          sub={ep.show_title}
+                          badge={(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).some(slot => slotContentType(store, slot) === 'episode' && slotContentId(store, slot) === ep.episode_id)}
+                          onClick={() => setInfoItem({ kind: 'episode', ep })}
+                        />
+                      ))}
+                    </div>
+                  )
+                )}
+              </div>
+            </>
           )}
-          {!loading && tab === 'shows'     && shows.length === 0    && <div style={{ color: 'var(--hds-txt-3)', fontSize: 12 }}>No results.</div>}
-          {!loading && tab === 'playlists' && lists.length === 0     && <div style={{ color: 'var(--hds-txt-3)', fontSize: 12 }}>No playlists.</div>}
-          {!loading && tab === 'episodes'  && eps.length === 0       && <div style={{ color: 'var(--hds-txt-3)', fontSize: 12 }}>Type to search episodes.</div>}
         </div>
 
-        {/* Slots panel */}
-        <div style={{ flexShrink: 0, width: 380, borderLeft: '1px solid var(--hds-line-s)', display: 'flex', flexDirection: 'column', background: 'oklch(0.15 0.018 288 / 0.55)', overflow: 'auto', padding: 18 }}>
+        {/* Right: slots */}
+        <div style={{ flexShrink: 0, width: 380, borderLeft: '1px solid var(--hds-line-s)', display: 'flex', flexDirection: 'column', background: 'oklch(0.15 0.018 288 / 0.55)', overflow: 'auto', padding: 18 }} className="scrollbar-dark">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 15 }}>
             <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: '0.14em', color: 'var(--hds-gold)' }}>SLOTS</span>
-            <div style={{ flex: 1 }} />
-            <span style={{ fontSize: 10, color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace" }}>{armedHint}</span>
+            {armed && (
+              <span style={{ fontSize: 10, color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", marginLeft: 'auto' }}>← click a slot to assign</span>
+            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
@@ -192,16 +215,14 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
               const cid   = slotContentId(store, slot)
               const hasCt = ct !== '' && cid !== ''
 
-              const onDragOver = (e: React.DragEvent) => { e.preventDefault(); (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-violet)' }
+              const onDragOver  = (e: React.DragEvent) => { e.preventDefault(); (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-violet)' }
               const onDragLeave = (e: React.DragEvent) => { (e.currentTarget as HTMLDivElement).style.borderColor = hasCt ? 'var(--hds-line)' : 'var(--hds-line-s)' }
-              const onDrop = (e: React.DragEvent) => {
+              const onDrop      = (e: React.DragEvent) => {
                 e.preventDefault()
                 if (dragItem) { assignToSlot(slot, dragItem); setDragItem(null) }
                 ;(e.currentTarget as HTMLDivElement).style.borderColor = ''
               }
-              const onClick = () => {
-                if (armed) assignToSlot(slot, armed)
-              }
+              const onClick = () => { if (armed) assignToSlot(slot, armed) }
 
               return (
                 <div key={slot}>
@@ -223,7 +244,7 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
                   >
                     {hasCt ? (
                       <>
-                        <span style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 3, background: 'var(--hds-bg)', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace', letterSpacing: '0.06em'", flexShrink: 0 }}>{ct}</span>
+                        <span style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 3, background: 'var(--hds-bg)', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{ct}</span>
                         <span style={{ flex: 1, fontSize: 12, color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cid}</span>
                         <button
                           onClick={e => { e.stopPropagation(); clearSlot(store, slot) }}
@@ -257,12 +278,10 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
       {/* Footer */}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 11, padding: '14px 22px', borderTop: '1px solid var(--hds-line-s)' }}>
         <span style={{ flex: 1, fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
-          {(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).filter(s => slotContentId(store, s) !== '').length} slot{(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).filter(s => slotContentId(store, s) !== '').length !== 1 ? 's' : ''} configured
+          {configuredCount} slot{configuredCount !== 1 ? 's' : ''} configured
         </span>
-        <button
-          onClick={() => { store.bumperOverlayOpen = false }}
-          style={{ padding: '11px 26px', borderRadius: 10, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em', border: 'none', cursor: 'pointer' }}
-        >Done</button>
+        <button onClick={() => { store.bumperOverlayOpen = false }}
+          style={{ padding: '11px 26px', borderRadius: 10, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em', border: 'none', cursor: 'pointer' }}>Done</button>
       </div>
     </div>
   )

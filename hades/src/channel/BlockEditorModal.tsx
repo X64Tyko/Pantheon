@@ -192,8 +192,61 @@ const BlockEditorModal = observer(function BlockEditorModal({ channelId, store }
                   style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: '1px solid var(--hds-line-s)', background: 'transparent', color: 'var(--hds-txt-2)', fontSize: 18, cursor: 'pointer' }}
                 >×</button>
               </div>
-              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                <LibraryBrowser channelId={channelId} store={store} />
+              <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+                {/* Left: tile browser */}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  <LibraryBrowser channelId={channelId} store={store} />
+                </div>
+                {/* Right: content list */}
+                <div style={{ flexShrink: 0, width: 360, borderLeft: '1px solid var(--hds-line-s)', display: 'flex', flexDirection: 'column', background: 'oklch(0.15 0.018 288 / 0.55)', overflow: 'hidden' }}>
+                  <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px 10px', borderBottom: '1px solid var(--hds-line-s)' }}>
+                    <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: '0.14em', color: 'var(--hds-gold)' }}>CONTENT</span>
+                    {store.draftContent.length > 0 && <span style={{ fontSize: 11, color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace" }}>{store.draftContent.length}</span>}
+                  </div>
+                  <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px 16px' }} className="scrollbar-dark">
+                    {store.draftContent.length === 0 ? (
+                      <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
+                        Nothing added yet
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 8, alignContent: 'start' }}>
+                        {store.draftContent.map(item => {
+                          const dot      = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
+                          const thumbUrl = item.content_type === 'show'  ? `/api/shows/${item.content_id}/thumb`
+                                         : item.content_type === 'movie' ? `/api/movies/${item.content_id}/thumb`
+                                         : null
+                          return (
+                            <div key={item.id} style={{ display: 'flex', flexDirection: 'column', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-3)' }}>
+                              <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                                {thumbUrl ? (
+                                  <img src={thumbUrl} loading="lazy"
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0, transition: 'opacity .2s' }}
+                                    onLoad={e  => { (e.target as HTMLImageElement).style.opacity = '1' }}
+                                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                                ) : (
+                                  <span style={{ fontSize: 18, opacity: 0.2 }}>·</span>
+                                )}
+                              </div>
+                              <div style={{ padding: '4px 6px 3px', flex: 1 }}>
+                                <div style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                                  {item.title || item.content_id}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
+                                  <span style={{ width: 5, height: 5, borderRadius: 1, background: dot, flexShrink: 0 }} />
+                                  <span style={{ fontSize: 9, color: 'var(--hds-txt-3)' }}>{item.content_type}</span>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => store.removeContent(channelId, item.id)}
+                                style={{ margin: '2px 5px 5px', padding: '2px 0', border: 'none', borderRadius: 4, background: 'oklch(0.45 0.1 18 / 0.15)', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 10 }}
+                              >remove</button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
