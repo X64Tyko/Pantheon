@@ -554,7 +554,7 @@ std::vector<Episode> RuleEngine::smartShufflePool(
     std::unordered_set<std::string> hot_ids;
     {
         SQLite::Statement q(db_.get(), R"(
-            SELECT ph.item_id FROM (
+            SELECT item_id FROM (
                 SELECT ph.item_id, MAX(ph.aired_at) AS last_aired
                 FROM play_history ph
                 JOIN episode e ON e.episode_id = ph.item_id
