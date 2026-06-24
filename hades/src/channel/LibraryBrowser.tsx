@@ -11,9 +11,10 @@ import { HelpTip, HelpSection, GifSlot } from './HelpTip'
 import type { ChannelDetailStore } from './store'
 import type { Show, Movie, ShowDetail, MovieDetail, EpisodeSearchResult, Playlist } from '../api/types'
 
+const MAX_HOVER_SEASONS = 5
+
 const TAB_LABELS: Record<PickerTab, string> = {
-  shows: 'Shows', movies: 'Movies', episodes: 'Episodes',
-  playlists: 'Playlists', filler_lists: 'Filler Lists',
+  shows: 'Shows', movies: 'Movies', episodes: 'Episodes', playlists: 'Playlists',
 }
 
 // Seed = minimal data already in the store from the picker query (no extra fetch needed).
@@ -31,7 +32,7 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
   const [infoSeasons, setInfoSeasons] = useState<number[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
 
-  const tabs = availablePickerTabs(store.draft.block_type).filter(t => t !== 'filler_lists')
+  const tabs = availablePickerTabs(store.draft.block_type)
 
   // Async-load rich detail after snapping to DB data immediately.
   useEffect(() => {
@@ -172,13 +173,13 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
       <div style={{ overflow: 'auto', flex: 1 }} className="scrollbar-dark">
         <div style={gridStyle}>
           {items.map(s => (
-            <Tile key={s.show_id}
-              imgUrl={`/api/shows/${s.show_id}/thumb`}
-              title={s.title}
-              sub={s.year ? String(s.year) : undefined}
+            <ShowTile key={s.show_id}
+              show={s}
+              store={store}
+              channelId={channelId}
               onDragStart={e => startDrag(e, 'show', s.show_id, s.title)}
               onDragEnd={endDrag}
-              onClick={() => onSelect({ kind: 'show', id: s.show_id, seed: s })}
+              onInfoOpen={() => onSelect({ kind: 'show', id: s.show_id, seed: s })}
             />
           ))}
         </div>
@@ -195,16 +196,20 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
     return (
       <div style={{ overflow: 'auto', flex: 1 }} className="scrollbar-dark">
         <div style={gridStyle}>
-          {items.map(m => (
-            <Tile key={m.movie_id}
-              imgUrl={`/api/movies/${m.movie_id}/thumb`}
-              title={m.title}
-              sub={m.year ? String(m.year) : undefined}
-              onDragStart={e => startDrag(e, 'movie', m.movie_id, m.title)}
-              onDragEnd={endDrag}
-              onClick={() => onSelect({ kind: 'movie', id: m.movie_id, seed: m })}
-            />
-          ))}
+          {items.map(m => {
+            const alreadyAdded = store.draftContent.some(c => c.content_type === 'movie' && c.content_id === m.movie_id)
+            return (
+              <Tile key={m.movie_id}
+                imgUrl={`/api/movies/${m.movie_id}/thumb`}
+                title={m.title}
+                sub={m.year ? String(m.year) : undefined}
+                badge={alreadyAdded}
+                onDragStart={e => startDrag(e, 'movie', m.movie_id, m.title)}
+                onDragEnd={endDrag}
+                onClick={() => onSelect({ kind: 'movie', id: m.movie_id, seed: m })}
+              />
+            )
+          })}
         </div>
         {items.length < store.pickerTotal && (
           <LoadMoreSentinel loading={store.pickerLoadingMore} onVisible={() => store.loadMorePicker()} />
@@ -241,16 +246,20 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
     if (items.length === 0) return <Empty />
     return (
       <div style={{ ...gridStyle, overflow: 'auto', flex: 1 }} className="scrollbar-dark">
-        {items.map(p => (
-          <Tile key={p.playlist_id}
-            title={p.title}
-            sub={`${p.item_count} items`}
-            placeholder="☰"
-            onDragStart={e => startDrag(e, 'playlist', p.playlist_id, p.title)}
-            onDragEnd={endDrag}
-            onClick={() => onSelect({ kind: 'playlist', pl: p })}
-          />
-        ))}
+        {items.map(p => {
+          const alreadyAdded = store.draftContent.some(c => c.content_type === 'playlist' && c.content_id === p.playlist_id)
+          return (
+            <Tile key={p.playlist_id}
+              title={p.title}
+              sub={`${p.item_count} items`}
+              placeholder="☰"
+              badge={alreadyAdded}
+              onDragStart={e => startDrag(e, 'playlist', p.playlist_id, p.title)}
+              onDragEnd={endDrag}
+              onClick={() => onSelect({ kind: 'playlist', pl: p })}
+            />
+          )
+        })}
       </div>
     )
   }
@@ -260,11 +269,12 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
 
 // ─── Tile card ────────────────────────────────────────────────────────────────
 
-function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick }: {
+function Tile({ imgUrl, title, sub, placeholder, badge, onDragStart, onDragEnd, onClick }: {
   imgUrl?:      string
   title:        string
   sub?:         string
   placeholder?: string
+  badge?:       boolean
   onDragStart:  (e: React.DragEvent) => void
   onDragEnd:    () => void
   onClick:      () => void
@@ -276,20 +286,12 @@ function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick
     if (!imgUrl) return
     setImgReady(false)
     const ctrl = new AbortController()
-    imageQueue.load(imgUrl, ctrl.signal)
-      .then(() => setImgReady(true))
-      .catch(() => {})
+    imageQueue.load(imgUrl, ctrl.signal).then(() => setImgReady(true)).catch(() => {})
     return () => ctrl.abort()
   }, [imgUrl])
 
-  const scrollTitleIn = () => {
-    if (!titleRef.current) return
-    const overflow = titleRef.current.scrollHeight - 30
-    if (overflow > 0) titleRef.current.style.transform = `translateY(-${overflow}px)`
-  }
-  const scrollTitleOut = () => {
-    if (titleRef.current) titleRef.current.style.transform = ''
-  }
+  const scrollIn  = () => { if (titleRef.current) { const ov = titleRef.current.scrollHeight - 30; if (ov > 0) titleRef.current.style.transform = `translateY(-${ov}px)` } }
+  const scrollOut = () => { if (titleRef.current) titleRef.current.style.transform = '' }
 
   return (
     <div
@@ -298,8 +300,8 @@ function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick
       onDragEnd={onDragEnd}
       onClick={onClick}
       style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', transition: 'border-color .1s' }}
-      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-violet)'; scrollTitleIn() }}
-      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'; scrollTitleOut() }}
+      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-violet)'; scrollIn() }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'; scrollOut() }}
     >
       <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg-3)', position: 'relative', overflow: 'hidden' }}>
         {imgUrl && (
@@ -307,9 +309,10 @@ function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: imgReady ? 1 : 0, transition: 'opacity .2s' }} />
         )}
         {placeholder && !imgUrl && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, opacity: 0.3 }}>
-            {placeholder}
-          </div>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, opacity: 0.3 }}>{placeholder}</div>
+        )}
+        {badge && (
+          <div style={{ position: 'absolute', top: 5, right: 5, width: 18, height: 18, borderRadius: '50%', background: 'var(--hds-violet)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', fontWeight: 700 }}>✓</div>
         )}
       </div>
       <div style={{ padding: '5px 7px 7px' }}>
@@ -319,6 +322,120 @@ function Tile({ imgUrl, title, sub, placeholder, onDragStart, onDragEnd, onClick
         {sub && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2 }}>{sub}</div>}
       </div>
     </div>
+  )
+}
+
+// ─── Show tile with hover season overlay ─────────────────────────────────────
+
+function ShowTile({ show, store, channelId, onDragStart, onDragEnd, onInfoOpen }: {
+  show:        Show
+  store:       ChannelDetailStore
+  channelId:   string
+  onDragStart: (e: React.DragEvent) => void
+  onDragEnd:   () => void
+  onInfoOpen:  () => void
+}) {
+  const [imgReady,        setImgReady]        = useState(false)
+  const [hovering,        setHovering]        = useState(false)
+  const [seasons,         setSeasons]         = useState<number[] | null>(null)
+  const [seasonsLoading,  setSeasonsLoading]  = useState(false)
+  const titleRef = useRef<HTMLSpanElement>(null)
+  const imgUrl   = `/api/shows/${show.show_id}/thumb`
+
+  const alreadyAdded = store.draftContent.some(c => c.content_type === 'show' && c.content_id === show.show_id)
+
+  useEffect(() => {
+    setImgReady(false)
+    const ctrl = new AbortController()
+    imageQueue.load(imgUrl, ctrl.signal).then(() => setImgReady(true)).catch(() => {})
+    return () => ctrl.abort()
+  }, [imgUrl])
+
+  const onMouseEnter = () => {
+    setHovering(true)
+    if (titleRef.current) { const ov = titleRef.current.scrollHeight - 30; if (ov > 0) titleRef.current.style.transform = `translateY(-${ov}px)` }
+    if (seasons === null && !seasonsLoading) {
+      setSeasonsLoading(true)
+      api.getShowSeasons(show.show_id)
+        .then(({ seasons: s }) => setSeasons(s))
+        .catch(() => setSeasons([]))
+        .finally(() => setSeasonsLoading(false))
+    }
+  }
+  const onMouseLeave = () => {
+    setHovering(false)
+    if (titleRef.current) titleRef.current.style.transform = ''
+  }
+
+  const add = (e: React.MouseEvent, season_filter: number | null, title: string, include_specials = false) => {
+    e.stopPropagation()
+    store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter, title, include_specials: include_specials || season_filter === null || season_filter === 0 })
+  }
+
+  const nonSpecial = (seasons ?? []).filter(s => s !== 0)
+  const hasSpecials = (seasons ?? []).includes(0)
+  const visible     = nonSpecial.slice(0, MAX_HOVER_SEASONS)
+  const hasMore     = nonSpecial.length > MAX_HOVER_SEASONS
+
+  return (
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onClick={onInfoOpen}
+      style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: `1px solid ${hovering ? 'var(--hds-violet)' : 'var(--hds-line-s)'}`, background: 'var(--hds-bg-2)', transition: 'border-color .1s', position: 'relative' }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg-3)', position: 'relative', overflow: 'hidden' }}>
+        <img src={imgReady ? imgUrl : ''} alt=""
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: imgReady ? 1 : 0, transition: 'opacity .2s' }} />
+
+        {alreadyAdded && !hovering && (
+          <div style={{ position: 'absolute', top: 5, right: 5, width: 18, height: 18, borderRadius: '50%', background: 'var(--hds-violet)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', fontWeight: 700 }}>✓</div>
+        )}
+
+        {hovering && (
+          <div
+            style={{ position: 'absolute', inset: 0, background: 'oklch(0.1 0.02 286 / 0.9)', backdropFilter: 'blur(3px)', display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 3, padding: '8px 6px' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {seasonsLoading ? (
+              <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', textAlign: 'center', fontFamily: "'JetBrains Mono', monospace" }}>loading…</span>
+            ) : seasons !== null ? (
+              <>
+                <SeasonBtn onClick={e => add(e, null, show.title, true)}>All</SeasonBtn>
+                {hasSpecials && <SeasonBtn gold onClick={e => add(e, 0, `${show.title} S00`, true)}>S00</SeasonBtn>}
+                {visible.map(s => (
+                  <SeasonBtn key={s} onClick={e => add(e, s, `${show.title} S${String(s).padStart(2,'0')}`)}>S{String(s).padStart(2,'0')}</SeasonBtn>
+                ))}
+                {hasMore && (
+                  <button
+                    onClick={e => { e.stopPropagation(); onInfoOpen() }}
+                    style={{ padding: '2px 4px', border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, cursor: 'pointer', textAlign: 'center' }}
+                  >view all →</button>
+                )}
+              </>
+            ) : null}
+          </div>
+        )}
+      </div>
+      <div style={{ padding: '5px 7px 7px' }}>
+        <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.35, height: 30, overflow: 'hidden' }}>
+          <span ref={titleRef} style={{ display: 'block', transition: 'transform 0.35s ease' }}>{show.title}</span>
+        </div>
+        {show.year && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2 }}>{show.year}</div>}
+      </div>
+    </div>
+  )
+}
+
+function SeasonBtn({ onClick, gold, children }: { onClick: (e: React.MouseEvent) => void; gold?: boolean; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{ padding: '2px 4px', border: `1px solid ${gold ? 'oklch(0.55 0.12 58)' : 'var(--hds-line)'}`, borderRadius: 4, background: 'transparent', color: gold ? 'oklch(0.75 0.12 58)' : 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer', textAlign: 'center', width: '100%' }}
+    >{children}</button>
   )
 }
 

@@ -1,10 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
-import type { AdvanceMode, BumperContentType, BumperMode, Channel, ChannelBumper, EpisodeSearchResult, FillerEntryAdvancement, FillerSelectionMode, Show, Playlist } from '../api/types'
-import { FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
+import type { AdvanceMode, Channel, EpisodeSearchResult } from '../api/types'
 import { inputStyle, filterInputStyle } from './styles'
 import { CardSection } from './EditorForm'
-import { FillerEntryRow } from './FillerPanel'
 import type { ChannelDetailStore } from './store'
 import { api } from '../api/client'
 
@@ -13,43 +11,8 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
   channelId: string
   store:     ChannelDetailStore
 }) {
-  const [addOpen, setAddOpen]     = useState(false)
-  const [addListId, setAddListId] = useState('')
-  const [addAdv, setAddAdv]       = useState<FillerEntryAdvancement>('sequential')
-  const [addWeight, setAddWeight] = useState(1)
-
-  const selectionMode = channel?.default_filler_selection ?? 'round_robin'
-  const entries       = channel?.default_filler_entries   ?? []
-  const showWeight    = selectionMode === 'weighted'
-
-  // Channel bumpers
-  const [bumpers,     setBumpers]     = useState<ChannelBumper[]>([])
-  const [bumperErr,   setBumperErr]   = useState('')
-  const [addBumpOpen, setAddBumpOpen] = useState(false)
-  const [bCt,  setBCt]  = useState<BumperContentType>('show')
-  const [bCid, setBCid] = useState('')
-  const [bMode, setBMode] = useState<BumperMode>('between')
-  const [bN,   setBN]   = useState(3)
-
-  useEffect(() => {
-    api.getBumpers(channelId).then(setBumpers).catch(() => {})
-  }, [channelId])
-
-  async function addBumper() {
-    if (!bCid) return
-    try {
-      const { id } = await api.createBumper(channelId, { content_type: bCt, content_id: bCid, mode: bMode, every_n: bN })
-      setBumpers(prev => [...prev, { id, channel_id: channelId, content_type: bCt, content_id: bCid, mode: bMode, every_n: bN, position: prev.length }])
-      setBCid(''); setAddBumpOpen(false); setBumperErr('')
-    } catch (e: any) { setBumperErr(e.message) }
-  }
-
-  async function deleteBumper(id: number) {
-    try {
-      await api.deleteBumper(channelId, id)
-      setBumpers(prev => prev.filter(b => b.id !== id))
-    } catch (e: any) { setBumperErr(e.message) }
-  }
+  const entries        = channel?.default_filler_entries ?? []
+  const selectionMode  = channel?.default_filler_selection ?? 'round_robin'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -162,133 +125,24 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         </CardSection>
 
         <CardSection title="DEFAULT FILLER" summary="Used when a block has no filler lists of its own">
-
-
-        {entries.length > 1 && (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>SELECT BY</div>
-            <select value={selectionMode} onChange={e => store.saveChannelFiller(channelId, { default_filler_selection: e.target.value as FillerSelectionMode })} style={inputStyle}>
-              {FILLER_SEL_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 10 }}>
-          {entries.map(entry => (
-            <FillerEntryRow
-              key={entry.id}
-              entry={entry}
-              showWeight={showWeight}
-              onAdvancement={adv => store.updateChannelFiller(channelId, entry.id, { advancement: adv })}
-              onWeight={w   => store.updateChannelFiller(channelId, entry.id, { weight: w })}
-              onRemove={()  => store.removeChannelFiller(channelId, entry.id)}
-            />
-          ))}
-        </div>
-
-        {entries.length === 0 && !addOpen && (
-          <div style={{ textAlign: 'center', padding: '10px 6px', color: 'var(--hds-txt-3)', fontSize: 11 }}>
-            No default filler lists configured
-          </div>
-        )}
-
-        <button
-          onClick={() => setAddOpen(o => !o)}
-          style={{ padding: '6px 12px', border: '1px solid var(--hds-line)', borderRadius: 7, background: 'transparent', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', marginBottom: addOpen ? 8 : 0 }}
-        >
-          {addOpen ? '✕ Cancel' : '+ Add filler list'}
-        </button>
-
-        {addOpen && (
-          <div style={{ padding: '11px 12px', background: 'oklch(0.16 0.016 286)', border: '1px solid var(--hds-line)', borderRadius: 9 }}>
-            <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
-              <select value={addListId} onChange={e => setAddListId(e.target.value)} style={{ ...filterInputStyle, flex: '1 1 140px' }}>
-                <option value="">Select filler list…</option>
-                {store.allFillerLists.map(f => <option key={f.filler_list_id} value={f.filler_list_id}>{f.title}</option>)}
-              </select>
-              <select value={addAdv} onChange={e => setAddAdv(e.target.value as FillerEntryAdvancement)} style={{ ...filterInputStyle, width: 96 }}>
-                {FILLER_ADV_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-              {showWeight && (
-                <input type="number" min={1} value={addWeight} onChange={e => setAddWeight(Math.max(1, +e.target.value || 1))} style={{ ...filterInputStyle, width: 48 }} placeholder="Wt" />
-              )}
-              <button
-                onClick={() => { if (addListId) { store.addChannelFiller(channelId, { filler_list_id: addListId, advancement: addAdv, weight: addWeight }); setAddListId(''); setAddOpen(false) } }}
-                disabled={!addListId}
-                style={{ padding: '5px 12px', border: 'none', borderRadius: 6, background: 'var(--hds-violet)', color: 'oklch(0.15 0.02 286)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, cursor: addListId ? 'pointer' : 'default', opacity: addListId ? 1 : 0.4 }}
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        )}
-
-        {store.channelFillerErr && (
-          <div style={{ marginTop: 8, fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{store.channelFillerErr}</div>
-        )}
+        <LauncherRow
+          icon="◈"
+          title="MANAGE FILLER"
+          summary={entries.length > 0 ? `${entries.length} source${entries.length !== 1 ? 's' : ''} · ${selectionMode}` : 'No default filler configured'}
+          onClick={() => { store.channelFillerOverlayOpen = true }}
+        />
         </CardSection>
 
         <CardSection title="CHANNEL BUMPERS" summary="Between / filler mode injection">
-
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 10 }}>
-          {bumpers.map(b => (
-            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line)', borderRadius: 7 }}>
-              <span style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 3, background: 'var(--hds-bg)', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em', flexShrink: 0 }}>{b.content_type}</span>
-              <span style={{ flex: 1, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--hds-txt-2)' }}>{b.content_id}</span>
-              <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', flexShrink: 0 }}>{b.mode} / {b.every_n}</span>
-              <button onClick={() => deleteBumper(b.id)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 12, padding: '0 2px', flexShrink: 0 }}>✕</button>
-            </div>
-          ))}
-        </div>
-
-        {bumpers.length === 0 && !addBumpOpen && (
-          <div style={{ textAlign: 'center', padding: '8px 6px', color: 'var(--hds-txt-3)', fontSize: 11, marginBottom: 8 }}>No channel bumpers configured</div>
-        )}
-
-        <button onClick={() => setAddBumpOpen(o => !o)} style={{ padding: '6px 12px', border: '1px solid var(--hds-line)', borderRadius: 7, background: 'transparent', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', marginBottom: addBumpOpen ? 10 : 0 }}>
-          {addBumpOpen ? '✕ Cancel' : '+ Add bumper'}
-        </button>
-
-        {addBumpOpen && (
-          <div style={{ padding: '11px 12px', background: 'oklch(0.16 0.016 286)', border: '1px solid var(--hds-line)', borderRadius: 9 }}>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-              <select value={bCt} onChange={e => setBCt(e.target.value as BumperContentType)} style={{ ...filterInputStyle, width: 100 }}>
-                <option value="show">Show</option>
-                <option value="playlist">Playlist</option>
-                <option value="episode">Episode</option>
-              </select>
-              <select value={bMode} onChange={e => setBMode(e.target.value as BumperMode)} style={{ ...filterInputStyle, width: 110 }}>
-                <option value="between">Between</option>
-                <option value="filler">Filler</option>
-              </select>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>Every</span>
-                <input type="number" min={1} value={bN} onChange={e => setBN(Math.max(1, +e.target.value || 1))} style={{ ...filterInputStyle, width: 48 }} />
-                <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>progs</span>
-              </div>
-            </div>
-            <BumperContentPicker contentType={bCt} onPick={cid => setBCid(cid)} currentId={bCid} />
-            {bCid && (
-              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 11, color: 'var(--hds-txt-2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bCid}</span>
-                <button onClick={() => setBCid('')} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 11 }}>✕</button>
-              </div>
-            )}
-            <button onClick={addBumper} disabled={!bCid} style={{ marginTop: 10, padding: '6px 14px', border: 'none', borderRadius: 6, background: 'var(--hds-violet)', color: 'oklch(0.15 0.02 286)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, cursor: bCid ? 'pointer' : 'default', opacity: bCid ? 1 : 0.4 }}>
-              Add
-            </button>
-          </div>
-        )}
-
-        {bumperErr && (
-          <div style={{ marginTop: 8, fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{bumperErr}</div>
-        )}
+        <LauncherRow
+          icon="⊕"
+          title="MANAGE BUMPERS"
+          summary="Configure bumper content injected during playback"
+          onClick={() => { store.channelBumperOverlayOpen = true }}
+        />
         </CardSection>
 
         <CardSection title="OFFLINE FALLBACK" summary="Served when no content is scheduled">
-
-
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>VIDEO (looping)</div>
           <input
@@ -322,112 +176,37 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         </div>
         </CardSection>
       </div>
+
     </div>
   )
 })
 
-// ─── BumperContentPicker ─────────────────────────────────────────────────────
+// ─── Launcher row ─────────────────────────────────────────────────────────────
 
-function BumperContentPicker({ contentType, onPick, currentId }: {
-  contentType: BumperContentType
-  onPick:      (id: string) => void
-  currentId:   string
+function LauncherRow({ icon, title, summary, onClick }: {
+  icon:    string
+  title:   string
+  summary: string
+  onClick: () => void
 }) {
-  const [q,         setQ]         = useState('')
-  const [seasonFlt, setSeasonFlt] = useState('')
-  const [shows,     setShows]     = useState<Show[]>([])
-  const [lists,     setLists]     = useState<Playlist[]>([])
-  const [eps,       setEps]       = useState<EpisodeSearchResult[]>([])
-  const [open,      setOpen]      = useState(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
-
-  useEffect(() => {
-    setQ(''); setSeasonFlt(''); setShows([]); setLists([]); setEps([]); setOpen(false)
-  }, [contentType])
-
-  function search(val: string, slt = seasonFlt) {
-    clearTimeout(debounceRef.current)
-    setQ(val)
-    if (!val.trim() && contentType === 'show') { setOpen(false); return }
-    debounceRef.current = setTimeout(async () => {
-      try {
-        if (contentType === 'show') {
-          const r = await api.getShows({ limit: 40, q: val })
-          setShows(r.items); setOpen(r.items.length > 0)
-        } else if (contentType === 'playlist') {
-          const r = await api.getPlaylists()
-          const filtered = r.filter(p => !val || p.title.toLowerCase().includes(val.toLowerCase()))
-          setLists(filtered); setOpen(filtered.length > 0)
-        } else if (contentType === 'episode') {
-          const season = slt.trim() !== '' ? parseInt(slt, 10) : undefined
-          const r = await api.searchEpisodes({ q: val || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 })
-          setEps(r.items); setOpen(r.items.length > 0)
-        }
-      } catch {}
-    }, 200)
-  }
-
-  function searchSeason(slt: string) {
-    setSeasonFlt(slt)
-    search(q, slt)
-  }
-
-  useEffect(() => {
-    if (contentType === 'playlist') search('')
-    if (contentType === 'episode') search('')
-  }, [contentType])
-
   return (
-    <div style={{ position: 'relative' }}>
-      <div style={{ display: 'flex', gap: 5 }}>
-        <input
-          value={q}
-          onChange={e => search(e.target.value)}
-          onFocus={() => { if ((shows.length > 0 || lists.length > 0 || eps.length > 0) && !currentId) setOpen(true) }}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          style={{ ...filterInputStyle, flex: 1 }}
-          placeholder={`Search ${contentType}s…`}
-          spellCheck={false}
-        />
-        {contentType === 'episode' && (
-          <input
-            type="number" min={0} value={seasonFlt}
-            onChange={e => searchSeason(e.target.value)}
-            onBlur={() => setTimeout(() => setOpen(false), 150)}
-            placeholder="S#" title="Filter by season (0 = specials)"
-            style={{ ...filterInputStyle, width: 48 }}
-          />
-        )}
+    <div
+      onClick={onClick}
+      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 13px', marginBottom: 9, borderRadius: 11, cursor: 'pointer', border: '1px solid var(--hds-line-s)', background: 'oklch(0.19 0.018 288 / 0.45)', transition: 'border-color .12s, background .12s' }}
+      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line)'; (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.24 0.025 290 / 0.5)' }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'; (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.19 0.018 288 / 0.45)' }}
+    >
+      <span style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px solid var(--hds-line-s)', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 16 }}>{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 11, letterSpacing: '0.18em', color: 'var(--hds-txt)' }}>{title}</div>
+        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summary}</div>
       </div>
-      {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line)', borderRadius: 7, marginTop: 3, maxHeight: 180, overflow: 'auto' }} className="scrollbar-dark">
-          {contentType === 'show' && shows.map(s => (
-            <div key={s.show_id} onMouseDown={() => { onPick(s.show_id); setQ(s.title); setOpen(false) }} style={{ padding: '6px 10px', fontSize: 11, cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-              {s.title}{s.year ? <span style={{ color: 'var(--hds-txt-3)', fontSize: 9.5, marginLeft: 5 }}>({s.year})</span> : null}
-            </div>
-          ))}
-          {contentType === 'playlist' && lists.map(p => (
-            <div key={p.playlist_id} onMouseDown={() => { onPick(p.playlist_id); setQ(p.title); setOpen(false) }} style={{ padding: '6px 10px', fontSize: 11, cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-              {p.title}
-            </div>
-          ))}
-          {contentType === 'episode' && eps.map(ep => (
-            <div key={ep.episode_id} onMouseDown={() => { onPick(ep.episode_id); setOpen(false) }} style={{ padding: '6px 10px', fontSize: 11, cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-              <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)' }}>{ep.show_title} · </span>
-              S{String(ep.season).padStart(2,'0')}E{String(ep.episode).padStart(2,'0')} — {ep.title}
-            </div>
-          ))}
-        </div>
-      )}
+      <span style={{ fontSize: 13, color: 'var(--hds-violet)', flexShrink: 0 }}>›</span>
     </div>
   )
 }
+
+// ─── Audio picker ─────────────────────────────────────────────────────────────
 
 type AudioPickerResult = { id: string; type: 'episode' | 'movie'; title: string }
 

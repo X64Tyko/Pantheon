@@ -21,4 +21,8 @@ struct Movie {
     std::string    imdb_id;
     std::string    tmdb_id;
     std::optional<float> audience_rating;
+    std::string    labels;       // JSON array: ["tag", ...]
+    std::string    actors;       // JSON array of names
+    std::string    countries;    // JSON array: ["United States", ...]
+    std::string    collections;  // JSON array: ["Marvel", ...]
 };

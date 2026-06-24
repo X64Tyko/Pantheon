@@ -40,13 +40,11 @@ export function getLimitMode(d: BlockDraft): LimitMode {
 }
 
 export function defaultPickerTab(t: BlockType): PickerTab {
-  if (t === 'filler') return 'filler_lists'
   if (t === 'movie') return 'movies'
   return 'shows'
 }
 
 export function availablePickerTabs(t: BlockType): PickerTab[] {
-  if (t === 'filler') return ['filler_lists']
   if (t === 'movie') return ['movies', 'playlists']
   return ['shows', 'episodes', 'movies', 'playlists']
 }
@@ -76,6 +74,7 @@ export function blockToDraft(block: Block): BlockDraft {
     smart_pct: block.smart_pct ?? 30, start_scope: block.start_scope ?? 'block',
     no_history_behavior:        block.no_history_behavior      ?? 'normal',
     max_consecutive_episodes:   block.max_consecutive_episodes ?? 0,
+    snap_to_group_start:        block.snap_to_group_start      ?? true,
     intro_content_type:         block.intro_content_type        ?? '',
     intro_content_id:           block.intro_content_id          ?? '',
     outro_content_type:         block.outro_content_type        ?? '',

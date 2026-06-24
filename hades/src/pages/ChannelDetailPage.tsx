@@ -11,6 +11,8 @@ import ChannelDefaultsPanel from '../channel/ChannelDefaultsPanel'
 import { BlockEditor, NewBlockEditor } from '../channel/BlockEditor'
 import BlockEditorModal from '../channel/BlockEditorModal'
 import { BulkEditPanel } from '../channel/BulkEditPanel'
+import ChannelFillerOverlay from '../channel/ChannelFillerOverlay'
+import ChannelBumperOverlay from '../channel/ChannelBumperOverlay'
 import type { Block } from '../api/types'
 
 export default observer(function ChannelDetailPage() {
@@ -221,6 +223,12 @@ export default observer(function ChannelDetailPage() {
 
       {store.modalOpen && (
         <BlockEditorModal channelId={id} store={store} />
+      )}
+      {store.channelFillerOverlayOpen && channel && (
+        <ChannelFillerOverlay channelId={id} channel={channel} store={store} />
+      )}
+      {store.channelBumperOverlayOpen && (
+        <ChannelBumperOverlay channelId={id} store={store} />
       )}
     </div>
   )

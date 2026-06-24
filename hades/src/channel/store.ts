@@ -9,7 +9,7 @@ import type { BlockDraft, LimitMode, PickerTab } from './types'
 import type {
   AdvanceMode, Advancement, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
   EpisodeOrder, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, FillerEntry, FillerEntryAdvancement,
-  FillerList, FillerSelectionMode, LibraryWithSource, Movie, NoHistoryBehavior, Playlist,
+  FillerSelectionMode, LibraryWithSource, Movie, NoHistoryBehavior, Playlist,
   PlaylistMode, Show, StartScope,
 } from '../api/types'
 
@@ -56,7 +56,6 @@ export class ChannelDetailStore {
   pickerEpisodes:    EpisodeSearchResult[] = []
   pickerPlaylists:   Playlist[]            = []
   contentPlaylists:  Playlist[]            = []
-  pickerFillerLists: FillerList[]          = []
   pickerLoading:     boolean               = false
   pickerTotal:       number                = 0
   pickerLoadingMore: boolean               = false
@@ -86,10 +85,11 @@ export class ChannelDetailStore {
   openSections: Record<string, boolean> = { schedule: true, timing: true, playback: false, content: true, filler: false, bumpers: false }
   modalOpen:          boolean = false
   showHints:          boolean = true
-  fillerOverlayOpen:  boolean = false
-  bumperOverlayOpen:  boolean = false
+  fillerOverlayOpen:         boolean = false
+  bumperOverlayOpen:         boolean = false
+  channelFillerOverlayOpen:  boolean = false
+  channelBumperOverlayOpen:  boolean = false
 
-  allFillerLists:   FillerList[] = []
   fillerPickerOpen: boolean      = false
   fillerSaving:     boolean      = false
 
@@ -215,7 +215,8 @@ export class ChannelDetailStore {
           }
           for (const fe of b.filler_entries) {
             await api.addBlockFiller(channelId, realId, {
-              filler_list_id: fe.filler_list_id, advancement: fe.advancement, weight: fe.weight,
+              content_type: fe.content_type, content_id: fe.content_id,
+              advancement: fe.advancement, weight: fe.weight,
             })
           }
         } else {
@@ -247,7 +248,7 @@ export class ChannelDetailStore {
               return orig && (orig.advancement !== fe.advancement || orig.weight !== fe.weight)
             })
             for (const fe of toRemoveFiller) await api.removeBlockFiller(channelId, realId, fe.id)
-            for (const fe of toAddFiller)    await api.addBlockFiller(channelId, realId, { filler_list_id: fe.filler_list_id, advancement: fe.advancement, weight: fe.weight })
+            for (const fe of toAddFiller)    await api.addBlockFiller(channelId, realId, { content_type: fe.content_type, content_id: fe.content_id, advancement: fe.advancement, weight: fe.weight, season_filter: fe.season_filter })
             for (const fe of toUpdateFiller) await api.updateBlockFiller(channelId, realId, fe.id, { advancement: fe.advancement, weight: fe.weight })
           }
         }
@@ -307,14 +308,13 @@ export class ChannelDetailStore {
   async load(channelId: string) {
     this.loading = true; this.error = null
     try {
-      const [blocks, fillerLists] = await Promise.all([api.getBlocks(channelId), api.getFillerLists()])
+      const blocks = await api.getBlocks(channelId)
       runInAction(() => {
-        const normalized    = blocks.map(normalizeBlock)
-        this.blocks         = normalized
-        this.savedBlocks    = normalized
-        this.blocksDirty    = false
-        this.allFillerLists = fillerLists
-        this.loading        = false
+        const normalized = blocks.map(normalizeBlock)
+        this.blocks      = normalized
+        this.savedBlocks = normalized
+        this.blocksDirty = false
+        this.loading     = false
       })
       this.loadEpg(channelId)
     } catch (e: any) {
@@ -579,6 +579,7 @@ export class ChannelDetailStore {
           start_scope:                'block' as StartScope,
           no_history_behavior:        'normal' as NoHistoryBehavior,
           max_consecutive_episodes:   0,
+          snap_to_group_start:        true,
           interstitial_every_n:       1,
           intro_content_type:         '',
           intro_content_id:           '',
@@ -658,16 +659,17 @@ export class ChannelDetailStore {
     })
   }
 
-  async addBlockFiller(channelId: string, body: { filler_list_id: string; advancement: FillerEntryAdvancement; weight: number }) {
+  async addBlockFiller(channelId: string, body: { content_type: string; content_id: string; title: string; advancement: FillerEntryAdvancement; weight: number; season_filter?: number }) {
     if (!this.editing && !this.isNewMode) return
-    const title = this.allFillerLists.find(f => f.filler_list_id === body.filler_list_id)?.title ?? body.filler_list_id
     const entry: FillerEntry = {
-      id: -(Date.now() * 100 + this.draftFillerEntries.length),
-      filler_list_id: body.filler_list_id,
-      title,
-      advancement: body.advancement,
-      weight: body.weight,
-      position: this.draftFillerEntries.length,
+      id:            -(Date.now() * 100 + this.draftFillerEntries.length),
+      content_type:  body.content_type as FillerEntry['content_type'],
+      content_id:    body.content_id,
+      title:         body.title,
+      advancement:   body.advancement,
+      weight:        body.weight,
+      position:      this.draftFillerEntries.length,
+      season_filter: body.season_filter,
     }
     runInAction(() => {
       this.draftFillerEntries = [...this.draftFillerEntries, entry]
@@ -687,42 +689,97 @@ export class ChannelDetailStore {
   }
 
   async saveChannelFiller(channelId: string, patch: { default_filler_selection?: FillerSelectionMode }) {
-    this.channelFillerSaving = true
+    const ch    = channelStore.channels.find(c => c.channel_id === channelId)
+    const origSel = ch?.default_filler_selection
+    runInAction(() => {
+      if (ch && patch.default_filler_selection) ch.default_filler_selection = patch.default_filler_selection
+      this.channelFillerSaving = true
+    })
     try {
       await api.updateChannel(channelId, patch)
-      await channelStore.fetchAll()
       runInAction(() => { this.channelFillerSaving = false })
+      channelStore.fetchAll()
     } catch (e: any) {
-      runInAction(() => { this.channelFillerSaving = false; this.channelFillerErr = e.message })
+      runInAction(() => {
+        if (ch && origSel) ch.default_filler_selection = origSel
+        this.channelFillerSaving = false
+        this.channelFillerErr = e.message
+      })
     }
   }
 
-  async addChannelFiller(channelId: string, body: { filler_list_id: string; advancement: FillerEntryAdvancement; weight: number }) {
-    this.channelFillerSaving = true
+  async addChannelFiller(channelId: string, body: { content_type: string; content_id: string; title?: string; advancement: FillerEntryAdvancement; weight: number; season_filter?: number }) {
+    const ch     = channelStore.channels.find(c => c.channel_id === channelId)
+    const tempId = -(Date.now() * 100 + (ch?.default_filler_entries.length ?? 0))
+    const optimistic: FillerEntry = {
+      id:            tempId,
+      content_type:  body.content_type as FillerEntry['content_type'],
+      content_id:    body.content_id,
+      title:         body.title ?? body.content_id,
+      advancement:   body.advancement,
+      weight:        body.weight,
+      position:      ch?.default_filler_entries.length ?? 0,
+      season_filter: body.season_filter,
+    }
+    runInAction(() => {
+      if (ch) ch.default_filler_entries.push(optimistic)
+      this.channelFillerSaving = true
+    })
     try {
       await api.addChannelFiller(channelId, body)
-      await channelStore.fetchAll()
       runInAction(() => { this.channelFillerSaving = false })
+      channelStore.fetchAll()  // background reconcile — replaces temp ID with real one
     } catch (e: any) {
-      runInAction(() => { this.channelFillerSaving = false; this.channelFillerErr = e.message })
+      runInAction(() => {
+        if (ch) ch.default_filler_entries = ch.default_filler_entries.filter(e => e.id !== tempId)
+        this.channelFillerSaving = false
+        this.channelFillerErr = e.message
+      })
     }
   }
 
   async updateChannelFiller(channelId: string, entryId: number, patch: { advancement?: FillerEntryAdvancement; weight?: number }) {
+    const ch   = channelStore.channels.find(c => c.channel_id === channelId)
+    const orig = ch?.default_filler_entries.find(e => e.id === entryId)
+    runInAction(() => {
+      if (ch) {
+        const idx = ch.default_filler_entries.findIndex(e => e.id === entryId)
+        if (idx !== -1) ch.default_filler_entries[idx] = { ...ch.default_filler_entries[idx], ...patch }
+      }
+    })
     try {
       await api.updateChannelFiller(channelId, entryId, patch)
-      await channelStore.fetchAll()
+      channelStore.fetchAll()
     } catch (e: any) {
-      runInAction(() => { this.channelFillerErr = e.message })
+      runInAction(() => {
+        if (ch && orig) {
+          const idx = ch.default_filler_entries.findIndex(e => e.id === entryId)
+          if (idx !== -1) ch.default_filler_entries[idx] = orig
+        }
+        this.channelFillerErr = e.message
+      })
     }
   }
 
   async removeChannelFiller(channelId: string, entryId: number) {
+    const ch      = channelStore.channels.find(c => c.channel_id === channelId)
+    const orig    = ch?.default_filler_entries.find(e => e.id === entryId)
+    const origIdx = ch?.default_filler_entries.findIndex(e => e.id === entryId) ?? -1
+    runInAction(() => {
+      if (ch) ch.default_filler_entries = ch.default_filler_entries.filter(e => e.id !== entryId)
+    })
     try {
       await api.removeChannelFiller(channelId, entryId)
-      await channelStore.fetchAll()
+      channelStore.fetchAll()
     } catch (e: any) {
-      runInAction(() => { this.channelFillerErr = e.message })
+      runInAction(() => {
+        if (ch && orig && origIdx !== -1) {
+          const arr = [...ch.default_filler_entries]
+          arr.splice(origIdx, 0, orig)
+          ch.default_filler_entries = arr
+        }
+        this.channelFillerErr = e.message
+      })
     }
   }
 
@@ -766,7 +823,7 @@ export class ChannelDetailStore {
     this.filterRules     = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.expandedShowId  = null; this.expandedSeasons = []
     this.pickerShows     = []; this.pickerMovies = []; this.pickerEpisodes = []
-    this.pickerPlaylists = []; this.pickerFillerLists = []
+    this.pickerPlaylists = []
     this.pickerTab       = defaultPickerTab(this.draft.block_type)
     if (this.allLibraries.length === 0)
       api.getAllLibraries().then(libs => runInAction(() => { this.allLibraries = libs }))
@@ -779,7 +836,7 @@ export class ChannelDetailStore {
     this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.expandedShowId = null
     this.pickerShows = []; this.pickerMovies = []; this.pickerEpisodes = []
-    this.pickerPlaylists = []; this.pickerFillerLists = []
+    this.pickerPlaylists = []
   }
 
   setPickerTab(t: PickerTab) {
@@ -814,15 +871,17 @@ export class ChannelDetailStore {
     const yearStr = isRules.find(r => r.field === 'year')?.value
     const year    = yearStr ? parseInt(yearStr) : undefined
     const rating  = isRules.find(r => r.field === 'content_rating')?.value || undefined
+    const label   = isRules.find(r => r.field === 'label')?.value          || undefined
+    const network = isRules.find(r => r.field === 'network')?.value        || undefined
+    const actor   = isRules.find(r => r.field === 'actor')?.value          || undefined
     const seasonParsed = this.pickerSeasonFilter.trim() !== '' ? parseInt(this.pickerSeasonFilter, 10) : undefined
     const season  = Number.isFinite(seasonParsed) ? seasonParsed : undefined
     try {
       switch (this.pickerTab) {
-        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, genre, year, content_rating: rating }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
-        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, genre, year, content_rating: rating }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
+        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, genre, year, content_rating: rating, label, network, actor }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
+        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, genre, year, content_rating: rating, label, actor }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
         case 'episodes':     { const r = await raceAbort(api.searchEpisodes({ q, season, limit: 50 }), signal); runInAction(() => { this.pickerEpisodes = r.items; this.pickerTotal = 0; this.pickerLoading = false }); break }
         case 'playlists':    { const r = await raceAbort(api.getPlaylists(), signal); runInAction(() => { this.pickerPlaylists = r; this.pickerTotal = 0; this.pickerLoading = false }); break }
-        case 'filler_lists': { const r = await raceAbort(api.getFillerLists(), signal); runInAction(() => { this.pickerFillerLists = r; this.pickerTotal = 0; this.pickerLoading = false }); break }
       }
     } catch (e) {
       if (signal.aborted) return
@@ -839,13 +898,16 @@ export class ChannelDetailStore {
     const yearStr = isRules.find(r => r.field === 'year')?.value
     const year    = yearStr ? parseInt(yearStr) : undefined
     const rating  = isRules.find(r => r.field === 'content_rating')?.value || undefined
+    const label   = isRules.find(r => r.field === 'label')?.value          || undefined
+    const network = isRules.find(r => r.field === 'network')?.value        || undefined
+    const actor   = isRules.find(r => r.field === 'actor')?.value          || undefined
     this.pickerLoadingMore = true
     try {
       if (this.pickerTab === 'shows') {
-        const r = await api.getShows({ limit: 50, offset: this.pickerShows.length, q, library_id: lib, genre, year, content_rating: rating })
+        const r = await api.getShows({ limit: 50, offset: this.pickerShows.length, q, library_id: lib, genre, year, content_rating: rating, label, network, actor })
         runInAction(() => { this.pickerShows = [...this.pickerShows, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
       } else if (this.pickerTab === 'movies') {
-        const r = await api.getMovies({ limit: 50, offset: this.pickerMovies.length, q, library_id: lib, genre, year, content_rating: rating })
+        const r = await api.getMovies({ limit: 50, offset: this.pickerMovies.length, q, library_id: lib, genre, year, content_rating: rating, label, actor })
         runInAction(() => { this.pickerMovies = [...this.pickerMovies, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
       }
     } catch {

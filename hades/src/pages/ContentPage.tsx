@@ -2,7 +2,82 @@ import { observer } from 'mobx-react-lite'
 import { makeAutoObservable, runInAction } from 'mobx'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
-import type { Episode, LibraryWithSource, Movie, MovieDetail, Show, ShowDetail } from '../api/types'
+import type { Episode, EpisodeGroup, GroupingCandidate, LibraryWithSource, Movie, MovieDetail, Show, ShowDetail } from '../api/types'
+
+// ─── SmartInput ───────────────────────────────────────────────────────────────
+// Single-value combobox with server-side suggestions (filter-values API).
+
+function SmartInput({ field, type, value, onChange, placeholder, className }: {
+  field:       string
+  type:        'show' | 'movie'
+  value:       string
+  onChange:    (v: string) => void
+  placeholder: string
+  className:   string
+}) {
+  const [options, setOptions] = useState<string[]>([])
+  const [open,    setOpen]    = useState(false)
+  const [hiIdx,   setHiIdx]   = useState(0)
+  const wrapRef  = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    api.getFilterValues(field, { type }).then(setOptions).catch(() => {})
+  }, [field, type])
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  const filtered = value === ''
+    ? options
+    : options.filter(o => o.toLowerCase().includes(value.toLowerCase()))
+
+  const pick = (v: string) => { onChange(v); setOpen(false); setHiIdx(0) }
+
+  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!open || filtered.length === 0) return
+    if      (e.key === 'ArrowDown')  { e.preventDefault(); setHiIdx(i => Math.min(i + 1, filtered.length - 1)) }
+    else if (e.key === 'ArrowUp')    { e.preventDefault(); setHiIdx(i => Math.max(i - 1, 0)) }
+    else if (e.key === 'Enter')      { e.preventDefault(); pick(filtered[hiIdx] ?? filtered[0]) }
+    else if (e.key === 'Escape')     { setOpen(false) }
+  }
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); setHiIdx(0) }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={handleKey}
+        placeholder={placeholder}
+        className={className}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 top-full left-0 right-0 mt-0.5 max-h-52 overflow-y-auto
+                        bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl text-xs">
+          {filtered.map((opt, i) => (
+            <li
+              key={opt}
+              onMouseDown={e => { e.preventDefault(); pick(opt) }}
+              onMouseEnter={() => setHiIdx(i)}
+              className={`px-3 py-1.5 cursor-pointer truncate ${
+                i === hiIdx ? 'bg-violet-700 text-white' : 'text-zinc-300 hover:bg-zinc-800'
+              }`}
+            >{opt}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
@@ -20,6 +95,12 @@ class ContentStore {
   total:   number  = 0
   page:    number  = 1
 
+  // Filters
+  query:          string = ''
+  filterGenre:    string = ''
+  filterYear:     string = ''
+  filterRating:   string = ''
+
   loading: boolean       = false
   error:   string | null = null
 
@@ -27,7 +108,12 @@ class ContentStore {
   detailItem:     DetailItem | null = null
   detailLoading:  boolean = false
   detailTab:      string  = 'overview'
-  episodes:       Episode[] = []
+  episodes:           Episode[] = []
+  groupingCandidates: GroupingCandidate[] = []
+  groupingLoading:    boolean = false
+  confirmedGroups:    EpisodeGroup[] = []
+  groupsLoading:      boolean = false
+  groupsSaving:       boolean = false
 
   // Edit
   editDraft:  Partial<DetailItem> = {}
@@ -81,6 +167,39 @@ class ContentStore {
     this.fetch()
   }
 
+  setQuery(q: string) {
+    this.query = q
+    this.page  = 1
+    this.fetch()
+  }
+
+  setFilterGenre(g: string) {
+    this.filterGenre = g
+    this.page = 1
+    this.fetch()
+  }
+
+  setFilterYear(y: string) {
+    this.filterYear = y
+    this.page = 1
+    this.fetch()
+  }
+
+  setFilterRating(r: string) {
+    this.filterRating = r
+    this.page = 1
+    this.fetch()
+  }
+
+  clearFilters() {
+    this.query       = ''
+    this.filterGenre = ''
+    this.filterYear  = ''
+    this.filterRating = ''
+    this.page = 1
+    this.fetch()
+  }
+
   async openDetail(item: Show | Movie) {
     this.detailItem    = null
     this.detailLoading = true
@@ -119,7 +238,50 @@ class ContentStore {
     this.episodes   = []
   }
 
-  setDetailTab(t: string) { this.detailTab = t }
+  setDetailTab(t: string) {
+    this.detailTab = t
+    if (t === 'grouping' && this.detailItem && 'show_id' in this.detailItem) {
+      this.loadGroupingTab((this.detailItem as ShowDetail).show_id)
+    }
+  }
+
+  loadGroupingTab(showId: string) {
+    this.groupingLoading = true
+    this.groupsLoading   = true
+    this.groupingCandidates = []
+    this.confirmedGroups    = []
+    Promise.all([
+      api.getGroupingCandidates(showId),
+      api.getEpisodeGroups(showId),
+    ]).then(([cands, groups]) => runInAction(() => {
+      this.groupingCandidates = cands.candidates
+      this.confirmedGroups    = groups
+      this.groupingLoading    = false
+      this.groupsLoading      = false
+    })).catch(() => runInAction(() => {
+      this.groupingLoading = false
+      this.groupsLoading   = false
+    }))
+  }
+
+  async confirmGroup(showId: string, candidate: GroupingCandidate) {
+    this.groupsSaving = true
+    try {
+      const { group_id } = await api.createEpisodeGroup(showId, { name: candidate.base_title, group_type: 'multipart' })
+      await Promise.all(candidate.parts.map(p => api.addGroupMember(showId, group_id, { episode_id: p.episode_id, part_num: p.part_num })))
+    } catch {}
+    runInAction(() => { this.groupsSaving = false })
+    this.loadGroupingTab(showId)
+  }
+
+  async deleteGroup(showId: string, groupId: string) {
+    this.groupsSaving = true
+    try {
+      await api.deleteEpisodeGroup(showId, groupId)
+    } catch {}
+    runInAction(() => { this.groupsSaving = false })
+    this.loadGroupingTab(showId)
+  }
 
   patchEdit(field: string, value: unknown) {
     this.editDraft = { ...this.editDraft, [field]: value }
@@ -155,7 +317,15 @@ class ContentStore {
   async fetch() {
     this.loading = true
     this.error   = null
-    const params = { limit: PAGE_SIZE, offset: this.offset, library_id: this.selectedLib ?? undefined }
+    const params = {
+      limit:          PAGE_SIZE,
+      offset:         this.offset,
+      library_id:     this.selectedLib ?? undefined,
+      q:              this.query       || undefined,
+      genre:          this.filterGenre || undefined,
+      year:           this.filterYear  ? Number(this.filterYear) : undefined,
+      content_rating: this.filterRating || undefined,
+    }
     try {
       if (this.tab === 'shows') {
         const r = await api.getShows(params)
@@ -266,6 +436,46 @@ export default observer(function ContentPage() {
 
         {/* Content area */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 gap-3">
+          {/* Search + filter bar */}
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="search"
+              value={store.query}
+              onChange={e => store.setQuery(e.target.value)}
+              placeholder="Search by title…"
+              className="flex-1 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-violet-700/60"
+            />
+            <SmartInput
+              field="genre"
+              type={store.tab === 'movies' ? 'movie' : 'show'}
+              value={store.filterGenre}
+              onChange={v => store.setFilterGenre(v)}
+              placeholder="Genre"
+              className="w-28 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-violet-700/60"
+            />
+            <input
+              type="number"
+              value={store.filterYear}
+              onChange={e => store.setFilterYear(e.target.value)}
+              placeholder="Year"
+              className="w-20 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-violet-700/60"
+            />
+            <SmartInput
+              field="content_rating"
+              type={store.tab === 'movies' ? 'movie' : 'show'}
+              value={store.filterRating}
+              onChange={v => store.setFilterRating(v)}
+              placeholder="Rating"
+              className="w-20 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-violet-700/60"
+            />
+            {(store.query || store.filterGenre || store.filterYear || store.filterRating) && (
+              <button
+                onClick={() => store.clearFilters()}
+                className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors whitespace-nowrap"
+              >✕ Clear</button>
+            )}
+          </div>
+
           <div className="flex gap-1 border-b border-zinc-800/80 shrink-0">
             {store.visibleTabs.map(t => (
               <button
@@ -435,7 +645,7 @@ const DetailOverlay = observer(function DetailOverlay({ store }: { store: Conten
   const itemType = isShow ? 'shows' : 'movies'
 
   const tabs = isShow
-    ? ['overview', 'episodes', 'details', 'edit'] as const
+    ? ['overview', 'episodes', 'grouping', 'details', 'edit'] as const
     : ['overview', 'details', 'edit'] as const
 
   return (
@@ -560,6 +770,16 @@ const DetailOverlay = observer(function DetailOverlay({ store }: { store: Conten
               )}
               {store.detailTab === 'episodes' && isShow && (
                 <EpisodesTab episodes={store.episodes} showId={show!.show_id} />
+              )}
+              {store.detailTab === 'grouping' && isShow && (
+                <GroupingTab
+                  candidates={store.groupingCandidates}
+                  confirmedGroups={store.confirmedGroups}
+                  loading={store.groupingLoading || store.groupsLoading}
+                  saving={store.groupsSaving}
+                  onConfirm={c => store.confirmGroup(show!.show_id, c)}
+                  onDelete={gid => store.deleteGroup(show!.show_id, gid)}
+                />
               )}
               {store.detailTab === 'details' && (
                 <DetailsTab item={item} isShow={isShow} show={show} movie={movie} />
@@ -704,6 +924,116 @@ function EpisodeRow({ ep, showId, season }: { ep: Episode; showId: string; seaso
           <p className="text-xs text-zinc-500 leading-relaxed pl-[4.5rem]">{ep.overview}</p>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Tab: Groups (confirmed + candidates) ────────────────────────────────────
+
+function GroupingTab({
+  candidates, confirmedGroups, loading, saving,
+  onConfirm, onDelete,
+}: {
+  candidates:     GroupingCandidate[]
+  confirmedGroups: EpisodeGroup[]
+  loading:  boolean
+  saving:   boolean
+  onConfirm: (c: GroupingCandidate) => void
+  onDelete:  (groupId: string)      => void
+}) {
+  if (loading) return <div className="p-6 text-xs text-zinc-500">Loading groups…</div>
+
+  const unconfirmedCandidates = candidates.filter(c => !c.already_grouped)
+
+  return (
+    <div className="p-4 space-y-5">
+
+      {/* ── Confirmed groups ── */}
+      <section>
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-violet-500/60 mb-2">
+          Confirmed Groups
+        </div>
+        {confirmedGroups.length === 0 ? (
+          <p className="text-xs text-zinc-600">No confirmed groups yet. Confirm a candidate below to create one.</p>
+        ) : (
+          <div className="space-y-2">
+            {confirmedGroups.map(g => (
+              <div key={g.group_id}
+                className="rounded-lg border border-emerald-900/40 bg-emerald-950/10 p-3 space-y-1.5"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-zinc-200 flex-1 truncate">{g.name}</span>
+                  <span className="text-[10px] text-emerald-400">{g.members.length} parts</span>
+                  <button
+                    disabled={saving}
+                    onClick={() => onDelete(g.group_id)}
+                    className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-40"
+                  >Delete</button>
+                </div>
+                <div className="space-y-0.5">
+                  {g.members.map(m => (
+                    <div key={m.id} className="flex items-center gap-2 text-[11px] text-zinc-400">
+                      <span className="w-12 shrink-0 text-zinc-600">Part {m.part_num}</span>
+                      <span className="text-zinc-500 w-14 shrink-0">S{String(m.season).padStart(2,'0')}E{String(m.episode).padStart(2,'0')}</span>
+                      <span className="truncate">{m.title}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── Candidates ── */}
+      <section>
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-violet-500/60 mb-2">
+          Detected Candidates
+        </div>
+        {unconfirmedCandidates.length === 0 ? (
+          <p className="text-xs text-zinc-600">
+            {candidates.length === 0
+              ? 'No multi-part patterns detected. Patterns checked: "(N)", ", Part N", ": Part N", " Part N", and word numbers.'
+              : 'All detected candidates are already confirmed.'}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {unconfirmedCandidates.sort((a, b) => b.confidence - a.confidence).map((c, i) => (
+              <div key={i}
+                className="rounded-lg border p-3 space-y-1.5"
+                style={{ borderColor: c.confidence >= 80 ? 'oklch(0.6 0.18 260 / 0.4)' : 'oklch(0.4 0.05 260 / 0.25)' }}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-zinc-200 flex-1 truncate">{c.base_title}</span>
+                  <span
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                    style={{
+                      background: c.confidence >= 80 ? 'oklch(0.55 0.18 260 / 0.25)' : 'oklch(0.4 0.08 260 / 0.15)',
+                      color:      c.confidence >= 80 ? 'oklch(0.75 0.18 260)'         : 'oklch(0.6 0.08 260)',
+                    }}
+                  >{c.confidence}%</span>
+                  {!c.adjacent && <span className="text-[10px] text-amber-400">non-adjacent</span>}
+                  <button
+                    disabled={saving}
+                    onClick={() => onConfirm(c)}
+                    className="text-[10px] px-2 py-0.5 rounded border border-violet-700/50 text-violet-400
+                               hover:border-violet-500 hover:text-violet-300 transition-colors disabled:opacity-40"
+                  >Confirm</button>
+                </div>
+                <div className="space-y-0.5">
+                  {c.parts.map(p => (
+                    <div key={p.episode_id} className="flex items-center gap-2 text-[11px] text-zinc-400">
+                      <span className="w-12 shrink-0 text-zinc-600">Part {p.part_num}</span>
+                      <span className="text-zinc-500 w-14 shrink-0">S{String(p.season).padStart(2,'0')}E{String(p.episode).padStart(2,'0')}</span>
+                      <span className="truncate">{p.title}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }

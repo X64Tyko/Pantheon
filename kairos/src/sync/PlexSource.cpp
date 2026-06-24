@@ -91,6 +91,38 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
                     genres.push_back(g.value("tag", ""));
             show.genres = genres.dump();
 
+            // Labels
+            json labels = json::array();
+            if (item.contains("Label"))
+                for (const auto& l : item["Label"])
+                    labels.push_back(l.value("tag", ""));
+            show.labels = labels.dump();
+
+            // Network (Plex exposes it as an array)
+            if (item.contains("Network") && !item["Network"].empty())
+                show.network = item["Network"][0].value("tag", "");
+
+            // Actors (Role array)
+            json actors = json::array();
+            if (item.contains("Role"))
+                for (const auto& r : item["Role"])
+                    actors.push_back(r.value("tag", ""));
+            show.actors = actors.dump();
+
+            // Countries
+            json countries = json::array();
+            if (item.contains("Country"))
+                for (const auto& c : item["Country"])
+                    countries.push_back(c.value("tag", ""));
+            show.countries = countries.dump();
+
+            // Collections
+            json collections = json::array();
+            if (item.contains("Collection"))
+                for (const auto& c : item["Collection"])
+                    collections.push_back(c.value("tag", ""));
+            show.collections = collections.dump();
+
             // External IDs: [{"id":"imdb://tt..."}, {"id":"tvdb://..."}, ...]
             if (item.contains("Guid")) {
                 for (const auto& g : item["Guid"]) {
@@ -157,6 +189,34 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
                 for (const auto& g : item["Genre"])
                     genres.push_back(g.value("tag", ""));
             movie.genres = genres.dump();
+
+            // Labels
+            json labels = json::array();
+            if (item.contains("Label"))
+                for (const auto& l : item["Label"])
+                    labels.push_back(l.value("tag", ""));
+            movie.labels = labels.dump();
+
+            // Actors (Role array)
+            json actors = json::array();
+            if (item.contains("Role"))
+                for (const auto& r : item["Role"])
+                    actors.push_back(r.value("tag", ""));
+            movie.actors = actors.dump();
+
+            // Countries
+            json countries = json::array();
+            if (item.contains("Country"))
+                for (const auto& c : item["Country"])
+                    countries.push_back(c.value("tag", ""));
+            movie.countries = countries.dump();
+
+            // Collections
+            json collections = json::array();
+            if (item.contains("Collection"))
+                for (const auto& c : item["Collection"])
+                    collections.push_back(c.value("tag", ""));
+            movie.collections = collections.dump();
 
             // External IDs
             if (item.contains("Guid")) {

@@ -458,6 +458,22 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             </div>}
           </div>
         )}
+        {(d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart') && (
+          <div style={{ marginTop: 9 }}>
+            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>GROUP SNAP</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox"
+                checked={d.snap_to_group_start ?? true}
+                onChange={e => store.setDraft('snap_to_group_start', e.target.checked)} />
+              <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)' }}>Snap to Part 1 when a multi-part episode is selected</span>
+            </label>
+            {sh && (d.snap_to_group_start ?? true) && (
+              <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+                When a mid-group episode (Part 2+) is randomly selected, the run starts from Part 1. For shows without a premier block, this creates a lead-in rerun before an upcoming premiere.
+              </div>
+            )}
+          </div>
+        )}
       </AccordionSection>
 
       {/* ── Compact launchers (modal mode only) ── */}
@@ -467,42 +483,42 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             icon={<span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--hds-violet)', display: 'inline-block' }} />}
             title="FILLER & FALLBACK"
             summary={fillerSummary}
-            onClick={() => { store.fillerOverlayOpen = true }}
+            onClick={() => { store.fillerOverlayOpen = true; store.bumperOverlayOpen = false }}
           />
           <LauncherRow
             icon={<span style={{ width: 7, height: 7, borderRadius: 2, background: 'oklch(0.65 0.12 320)', display: 'inline-block' }} />}
             title="BUMPERS"
             summary={bumperSummary}
-            onClick={() => { store.bumperOverlayOpen = true }}
+            onClick={() => { store.bumperOverlayOpen = true; store.fillerOverlayOpen = false }}
           />
         </>
       )}
 
       {!compact && (<>
-      {/* ── CONTENT ── */}
+
+      {/* ── CONTENT (sidebar accordion: list + controls inline, add via modal) ── */}
       <AccordionSection
         title="CONTENT"
         open={sec.content}
         onToggle={() => tog('content')}
         badge={contentCount > 0 ? <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.04em' }}>{contentCount}</span> : undefined}
       >
-        {!hidePicker && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
-            <span />
-            {(store.editing || store.isNewMode) && (
-              <button onClick={() => store.openPicker()} style={{ color: 'var(--hds-violet)', background: 'transparent', border: 'none', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', padding: '2px 4px' }}>+ Add</button>
-            )}
+        {(store.editing || store.isNewMode) && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 9 }}>
+            <button
+              onClick={() => store.modalOpen = true}
+              style={{ color: 'var(--hds-violet)', background: 'transparent', border: '1px solid var(--hds-line)', borderRadius: 5, fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer', padding: '3px 8px', display: 'flex', alignItems: 'center', gap: 4 }}
+            >
+              <svg width="10" height="10" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M1 4V1h3M10 1H7m3 0v3M1 7v3h3M10 10H7m3 0V7" /></svg>
+              Browse Library
+            </button>
           </div>
-        )}
-
-        {!hidePicker && store.pickerOpen && (store.editing || store.isNewMode) && (
-          <ContentPicker channelId={channelId} store={store} />
         )}
 
         <div
           onDragOver={e => e.preventDefault()}
           onDrop={e => { e.preventDefault(); if (store.dragContent) { store.addContent(channelId, store.dragContent); store.dragContent = null } }}
-          style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40, padding: store.dragContent ? 8 : 0, border: store.dragContent ? '1px dashed var(--hds-violet)' : '1px solid transparent', borderRadius: 9, transition: '.12s', marginTop: !hidePicker && store.pickerOpen ? 10 : 0 }}
+          style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40, padding: store.dragContent ? 8 : 0, border: store.dragContent ? '1px dashed var(--hds-violet)' : '1px solid transparent', borderRadius: 9, transition: '.12s' }}
         >
           {store.draftContent.map(item => {
             const dot       = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
@@ -598,9 +614,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
               </div>
             )
           })}
-          {(store.editing || store.isNewMode) && store.draftContent.length === 0 && (hidePicker || !store.pickerOpen) && (
+          {(store.editing || store.isNewMode) && store.draftContent.length === 0 && (
             <div style={{ textAlign: 'center', padding: 6, color: 'var(--hds-txt-3)', fontSize: 11 }}>
-              {hidePicker ? 'Drag items from the library panel or click to add' : 'Drag shows or movies here, or use + Add'}
+              {hidePicker ? 'Drag items from the library panel or click to add' : 'No content — use Browse Library to add'}
             </div>
           )}
         </div>
@@ -627,119 +643,22 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
 
       </AccordionSection>
 
-      {/* ── FILLER ── */}
-      <AccordionSection
-        title="FILLER"
-        open={sec.filler}
-        onToggle={() => tog('filler')}
-        badge={fillerCount > 0 ? <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.04em' }}>{fillerCount}</span> : undefined}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
-          <span />
-          {(store.editing || store.isNewMode) && (
-            <button
-              onClick={() => { store.fillerPickerOpen = !store.fillerPickerOpen }}
-              style={{ color: 'var(--hds-violet)', background: 'transparent', border: 'none', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', padding: '2px 4px' }}
-            >
-              {store.fillerPickerOpen ? '✕ Close' : '+ Add list'}
-            </button>
-          )}
-        </div>
+      {/* ── FILLER launcher ── */}
+      <LauncherRow
+        icon={<span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--hds-violet)', display: 'inline-block' }} />}
+        title="FILLER & FALLBACK"
+        summary={fillerSummary}
+        onClick={() => { store.modalOpen = true; store.fillerOverlayOpen = true; store.bumperOverlayOpen = false }}
+      />
 
-        {store.draftFillerEntries.length > 0 && (
-          <>
-            {store.draftFillerEntries.length > 1 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>SELECT BY</div>
-                <select value={d.filler_selection} onChange={e => store.setDraft('filler_selection', e.target.value as FillerSelectionMode)} style={inputStyle}>
-                  {FILLER_SEL_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </div>
-            )}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-              {store.draftFillerEntries.map(entry => (
-                <FillerEntryRow
-                  key={entry.id}
-                  entry={entry}
-                  showWeight={d.filler_selection === 'weighted'}
-                  onAdvancement={adv => store.updateBlockFiller(channelId, store.editing?.block_id ?? '', entry.id, { advancement: adv })}
-                  onWeight={w   => store.updateBlockFiller(channelId, store.editing?.block_id ?? '', entry.id, { weight: w })}
-                  onRemove={()  => store.removeBlockFiller(channelId, store.editing?.block_id ?? '', entry.id)}
-                />
-              ))}
-            </div>
-          </>
-        )}
+      {/* ── BUMPERS launcher ── */}
+      <LauncherRow
+        icon={<span style={{ width: 7, height: 7, borderRadius: 2, background: 'oklch(0.65 0.12 320)', display: 'inline-block' }} />}
+        title="BUMPERS"
+        summary={bumperSummary}
+        onClick={() => { store.modalOpen = true; store.bumperOverlayOpen = true; store.fillerOverlayOpen = false }}
+      />
 
-        {(store.editing || store.isNewMode) && store.draftFillerEntries.length === 0 && !store.fillerPickerOpen && (
-          <div style={{ textAlign: 'center', padding: '6px 0', color: 'var(--hds-txt-3)', fontSize: 11 }}>
-            No filler lists — channel default will be used
-          </div>
-        )}
-
-        {store.fillerPickerOpen && (store.editing || store.isNewMode) && (
-          <FillerAddPanel channelId={channelId} store={store} />
-        )}
-
-        <div style={{ marginTop: 12 }}>
-          <button
-            onClick={() => store.setDraft('inter_filler', !d.inter_filler)}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              width: '100%', padding: '8px 10px',
-              border: `1px solid ${d.inter_filler ? 'oklch(0.7 0.12 84 / 0.5)' : 'var(--hds-line)'}`,
-              borderRadius: 7, background: d.inter_filler ? 'oklch(0.55 0.1 84 / 0.12)' : 'var(--hds-bg-3)',
-              cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            <span style={{ fontSize: 11, color: 'var(--hds-txt-2)' }}>Filler between programs</span>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: d.inter_filler ? 'var(--hds-gold)' : 'var(--hds-txt-3)' }}>{d.inter_filler ? 'ON' : 'OFF'}</span>
-          </button>
-          {sh && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 6, lineHeight: 1.55 }}>
-            When off, filler only fills leftover time at end of block. When on, also fills between programs.
-          </div>}
-        </div>
-      </AccordionSection>
-
-      {/* ── BUMPERS ── */}
-      <AccordionSection title="BUMPERS" open={sec.bumpers} onToggle={() => tog('bumpers')}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <BumperSlot
-            label="Intro"
-            hint="Plays once at block start, before the first content item."
-            contentType={d.intro_content_type}
-            contentId={d.intro_content_id}
-            onSet={(ct, cid) => { store.setDraft('intro_content_type', ct as any); store.setDraft('intro_content_id', cid) }}
-            onClear={() => { store.setDraft('intro_content_type', '' as any); store.setDraft('intro_content_id', '') }}
-          />
-          <BumperSlot
-            label="Outro"
-            hint="Plays after the last content item when program_count is hit."
-            contentType={d.outro_content_type}
-            contentId={d.outro_content_id}
-            onSet={(ct, cid) => { store.setDraft('outro_content_type', ct as any); store.setDraft('outro_content_id', cid) }}
-            onClear={() => { store.setDraft('outro_content_type', '' as any); store.setDraft('outro_content_id', '') }}
-          />
-          <BumperSlot
-            label="Interstitial"
-            hint="Plays between show transitions."
-            contentType={d.interstitial_content_type}
-            contentId={d.interstitial_content_id}
-            onSet={(ct, cid) => { store.setDraft('interstitial_content_type', ct as any); store.setDraft('interstitial_content_id', cid) }}
-            onClear={() => { store.setDraft('interstitial_content_type', '' as any); store.setDraft('interstitial_content_id', '') }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-              <span style={{ fontSize: 10.5, color: 'var(--hds-txt-3)' }}>Fire every</span>
-              <input
-                type="number" min={1} value={d.interstitial_every_n}
-                onChange={e => store.setDraft('interstitial_every_n', Math.max(1, Number(e.target.value)))}
-                style={{ ...inputStyle, width: 56, padding: '4px 7px', fontSize: 11 }}
-              />
-              <span style={{ fontSize: 10.5, color: 'var(--hds-txt-3)' }}>show transition(s)</span>
-            </div>
-          </BumperSlot>
-        </div>
-      </AccordionSection>
       </>)}
 
     </div>

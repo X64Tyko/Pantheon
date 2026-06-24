@@ -745,23 +745,30 @@ void Router::registerChannelRoutes() {
                 } catch (...) {}
             }
             SQLite::Statement fq(db_.get(), R"(
-                SELECT cfe.id, cfe.filler_list_id, fl.title,
-                       cfe.advancement, cfe.weight, cfe.position
+                SELECT cfe.id, cfe.content_type, cfe.content_id,
+                       COALESCE(fl.title, pl.title, sh.title, mv.title, cfe.content_id),
+                       cfe.advancement, cfe.weight, cfe.position, cfe.season_filter
                 FROM channel_filler_entry cfe
-                JOIN filler_list fl ON fl.filler_list_id = cfe.filler_list_id
+                LEFT JOIN filler_list fl ON cfe.content_type='filler_list' AND fl.filler_list_id=cfe.content_id
+                LEFT JOIN playlist    pl ON cfe.content_type='playlist'    AND pl.playlist_id=cfe.content_id
+                LEFT JOIN show        sh ON cfe.content_type='show'        AND sh.show_id=cfe.content_id
+                LEFT JOIN movie       mv ON cfe.content_type='movie'       AND mv.movie_id=cfe.content_id
                 WHERE cfe.channel_id = ? ORDER BY cfe.position
             )");
             fq.bind(1, cid);
             json filler_entries = json::array();
             while (fq.executeStep()) {
-                filler_entries.push_back({
-                    {"id",             fq.getColumn(0).getInt()},
-                    {"filler_list_id", fq.getColumn(1).getString()},
-                    {"title",          fq.getColumn(2).getString()},
-                    {"advancement",    fq.getColumn(3).getString()},
-                    {"weight",         fq.getColumn(4).getInt()},
-                    {"position",       fq.getColumn(5).getInt()},
-                });
+                json fe = {
+                    {"id",           fq.getColumn(0).getInt()},
+                    {"content_type", fq.getColumn(1).getString()},
+                    {"content_id",   fq.getColumn(2).getString()},
+                    {"title",        fq.getColumn(3).getString()},
+                    {"advancement",  fq.getColumn(4).getString()},
+                    {"weight",       fq.getColumn(5).getInt()},
+                    {"position",     fq.getColumn(6).getInt()},
+                };
+                if (!fq.getColumn(7).isNull()) fe["season_filter"] = fq.getColumn(7).getInt();
+                filler_entries.push_back(fe);
             }
             channel["default_filler_entries"] = filler_entries;
             result.push_back(channel);
@@ -888,9 +895,13 @@ void Router::registerChannelRoutes() {
             if (!cq.getColumn(5).isNull()) channel_j["seed"] = cq.getColumn(5).getInt();
 
             SQLite::Statement cfq(db_.get(), R"(
-                SELECT fl.title, cfe.advancement, cfe.weight
+                SELECT COALESCE(fl.title, pl.title, sh.title, mv.title, cfe.content_id),
+                       cfe.advancement, cfe.weight
                 FROM channel_filler_entry cfe
-                JOIN filler_list fl ON fl.filler_list_id = cfe.filler_list_id
+                LEFT JOIN filler_list fl ON cfe.content_type='filler_list' AND fl.filler_list_id=cfe.content_id
+                LEFT JOIN playlist    pl ON cfe.content_type='playlist'    AND pl.playlist_id=cfe.content_id
+                LEFT JOIN show        sh ON cfe.content_type='show'        AND sh.show_id=cfe.content_id
+                LEFT JOIN movie       mv ON cfe.content_type='movie'       AND mv.movie_id=cfe.content_id
                 WHERE cfe.channel_id = ? ORDER BY cfe.position
             )");
             cfq.bind(1, channel_id);
@@ -961,7 +972,7 @@ void Router::registerChannelRoutes() {
                        intro_content_type, intro_content_id,
                        outro_content_type, outro_content_id,
                        interstitial_content_type, interstitial_content_id,
-                       interstitial_every_n
+                       interstitial_every_n, snap_to_group_start
                 FROM block WHERE channel_id = ?
                 ORDER BY start_time, priority DESC
             )");
@@ -1045,6 +1056,7 @@ void Router::registerChannelRoutes() {
                     {"no_history_behavior",      bq.getColumn(18).getString()},
                     {"max_consecutive_episodes", bq.getColumn(19).getInt()},
                     {"interstitial_every_n",     bq.getColumn(26).getInt()},
+                    {"snap_to_group_start",      bq.getColumn(27).getInt() != 0},
                 };
                 if (!bq.getColumn(5).isNull()) block_j["end_time"] = bq.getColumn(5).getString();
                 json intro = resolveSlot(bq.getColumn(20).getString(), bq.getColumn(21).getString());
@@ -1114,19 +1126,30 @@ void Router::registerChannelRoutes() {
                 block_j["content"] = content;
 
                 SQLite::Statement bfq(db_.get(), R"(
-                    SELECT fl.title, bfe.advancement, bfe.weight
+                    SELECT bfe.id, bfe.content_type, bfe.content_id,
+                           COALESCE(fl.title, pl.title, sh.title, mv.title, bfe.content_id),
+                           bfe.advancement, bfe.weight, bfe.position, bfe.season_filter
                     FROM block_filler_entry bfe
-                    JOIN filler_list fl ON fl.filler_list_id = bfe.filler_list_id
+                    LEFT JOIN filler_list fl ON bfe.content_type='filler_list' AND fl.filler_list_id=bfe.content_id
+                    LEFT JOIN playlist    pl ON bfe.content_type='playlist'    AND pl.playlist_id=bfe.content_id
+                    LEFT JOIN show        sh ON bfe.content_type='show'        AND sh.show_id=bfe.content_id
+                    LEFT JOIN movie       mv ON bfe.content_type='movie'       AND mv.movie_id=bfe.content_id
                     WHERE bfe.block_id = ? ORDER BY bfe.position
                 )");
                 bfq.bind(1, bid);
                 json bfiller = json::array();
                 while (bfq.executeStep()) {
-                    bfiller.push_back({
-                        {"title",       bfq.getColumn(0).getString()},
-                        {"advancement", bfq.getColumn(1).getString()},
-                        {"weight",      bfq.getColumn(2).getInt()},
-                    });
+                    json bfe = {
+                        {"id",           bfq.getColumn(0).getInt()},
+                        {"content_type", bfq.getColumn(1).getString()},
+                        {"content_id",   bfq.getColumn(2).getString()},
+                        {"title",        bfq.getColumn(3).getString()},
+                        {"advancement",  bfq.getColumn(4).getString()},
+                        {"weight",       bfq.getColumn(5).getInt()},
+                        {"position",     bfq.getColumn(6).getInt()},
+                    };
+                    if (!bfq.getColumn(7).isNull()) bfe["season_filter"] = bfq.getColumn(7).getInt();
+                    bfiller.push_back(bfe);
                 }
                 block_j["filler_entries"] = bfiller;
                 blocks.push_back(block_j);
@@ -1204,7 +1227,7 @@ void Router::registerChannelRoutes() {
                 }
             }
 
-            // Channel filler entries — resolve by title
+            // Channel filler entries — resolve by title (imports always use filler_list for compat)
             int cfpos = 0;
             for (auto& fe : ch.value("default_filler_entries", json::array())) {
                 std::string ftitle = fe.value("title", "");
@@ -1214,12 +1237,12 @@ void Router::registerChannelRoutes() {
                 std::string fid = fq.getColumn(0).getString();
                 SQLite::Statement ins(db_.get(), R"(
                     INSERT OR IGNORE INTO channel_filler_entry
-                        (channel_id, filler_list_id, advancement, weight, position)
-                    VALUES (?,?,?,?,?)
+                        (channel_id, content_type, content_id, advancement, weight, position)
+                    VALUES (?,?,?,?,?,?)
                 )");
-                ins.bind(1, channel_id); ins.bind(2, fid);
-                ins.bind(3, fe.value("advancement", "sized")); ins.bind(4, fe.value("weight", 1));
-                ins.bind(5, cfpos++); ins.exec();
+                ins.bind(1, channel_id); ins.bind(2, std::string("filler_list")); ins.bind(3, fid);
+                ins.bind(4, fe.value("advancement", "sized")); ins.bind(5, fe.value("weight", 1));
+                ins.bind(6, cfpos++); ins.exec();
             }
 
             // Channel bumpers — resolve by title/identifiers
@@ -1356,8 +1379,9 @@ void Router::registerChannelRoutes() {
                                        late_start_mins, align_to_mins, inter_filler,
                                        early_start_secs, filler_selection, smart_pct,
                                        start_scope, no_history_behavior,
-                                       max_consecutive_episodes, interstitial_every_n)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                       max_consecutive_episodes, interstitial_every_n,
+                                       snap_to_group_start)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 )");
                 s.bind(1, block_id); s.bind(2, channel_id);
                 s.bind(3, blk.value("name", ""));
@@ -1380,6 +1404,7 @@ void Router::registerChannelRoutes() {
                 s.bind(20, blk.value("no_history_behavior", "normal"));
                 s.bind(21, blk.value("max_consecutive_episodes", 0));
                 s.bind(22, blk.value("interstitial_every_n",     1));
+                s.bind(23, blk.value("snap_to_group_start", true) ? 1 : 0);
                 s.exec();
 
                 // Content items
@@ -1481,7 +1506,7 @@ void Router::registerChannelRoutes() {
                     pos++;
                 }
 
-                // Block filler entries
+                // Block filler entries (imports resolve by title, always filler_list for compat)
                 for (auto& fe : blk.value("filler_entries", json::array())) {
                     std::string ftitle = fe.value("title", "");
                     SQLite::Statement fq(db_.get(), "SELECT filler_list_id FROM filler_list WHERE title = ? LIMIT 1");
@@ -1493,12 +1518,12 @@ void Router::registerChannelRoutes() {
                     pq.bind(1, block_id); pq.executeStep();
                     SQLite::Statement ins(db_.get(), R"(
                         INSERT OR IGNORE INTO block_filler_entry
-                            (block_id, filler_list_id, advancement, weight, position)
-                        VALUES (?,?,?,?,?)
+                            (block_id, content_type, content_id, advancement, weight, position)
+                        VALUES (?,?,?,?,?,?)
                     )");
-                    ins.bind(1, block_id); ins.bind(2, fid);
-                    ins.bind(3, fe.value("advancement", "sized")); ins.bind(4, fe.value("weight", 1));
-                    ins.bind(5, pq.getColumn(0).getInt()); ins.exec();
+                    ins.bind(1, block_id); ins.bind(2, std::string("filler_list")); ins.bind(3, fid);
+                    ins.bind(4, fe.value("advancement", "sized")); ins.bind(5, fe.value("weight", 1));
+                    ins.bind(6, pq.getColumn(0).getInt()); ins.exec();
                 }
 
                 // Intro/outro/interstitial slots
@@ -1527,10 +1552,11 @@ void Router::registerChannelRoutes() {
         auto channel_id = req.path_params.at("id");
         try {
             auto b = json::parse(req.body);
-            std::string filler_list_id = b.value("filler_list_id", "");
-            std::string advancement    = b.value("advancement",    "sequential");
-            int         weight         = b.value("weight",         1);
-            if (filler_list_id.empty()) { err(res, 400, "filler_list_id required"); return; }
+            std::string content_type = b.value("content_type", "filler_list");
+            std::string content_id   = b.value("content_id",   "");
+            std::string advancement  = b.value("advancement",  "sequential");
+            int         weight       = b.value("weight",       1);
+            if (content_id.empty()) { err(res, 400, "content_id required"); return; }
 
             int position = 0;
             {
@@ -1541,24 +1567,34 @@ void Router::registerChannelRoutes() {
             }
             std::string title;
             {
-                SQLite::Statement tq(db_.get(),
-                    "SELECT title FROM filler_list WHERE filler_list_id = ?");
-                tq.bind(1, filler_list_id);
+                const char* tsql =
+                    content_type == "playlist" ? "SELECT title FROM playlist    WHERE playlist_id=?"   :
+                    content_type == "show"     ? "SELECT title FROM show        WHERE show_id=?"       :
+                    content_type == "movie"    ? "SELECT title FROM movie       WHERE movie_id=?"      :
+                    /* filler_list */             "SELECT title FROM filler_list WHERE filler_list_id=?";
+                SQLite::Statement tq(db_.get(), tsql);
+                tq.bind(1, content_id);
                 if (tq.executeStep()) title = tq.getColumn(0).getString();
             }
+            std::optional<int> season_filter;
+            if (b.contains("season_filter") && !b["season_filter"].is_null())
+                season_filter = b["season_filter"].get<int>();
             SQLite::Statement s(db_.get(), R"(
                 INSERT INTO channel_filler_entry
-                    (channel_id, filler_list_id, advancement, weight, position)
-                VALUES (?,?,?,?,?)
+                    (channel_id, content_type, content_id, advancement, weight, position, season_filter)
+                VALUES (?,?,?,?,?,?,?)
             )");
-            s.bind(1, channel_id); s.bind(2, filler_list_id); s.bind(3, advancement);
-            s.bind(4, weight);     s.bind(5, position);
+            s.bind(1, channel_id); s.bind(2, content_type); s.bind(3, content_id);
+            s.bind(4, advancement); s.bind(5, weight); s.bind(6, position);
+            if (season_filter.has_value()) s.bind(7, season_filter.value()); else s.bind(7);
             s.exec();
             int64_t new_id = db_.get().getLastInsertRowid();
-            res.status = 201;
-            ok(res, json{{"id", new_id}, {"filler_list_id", filler_list_id},
+            json resp = {{"id", new_id}, {"content_type", content_type}, {"content_id", content_id},
                          {"title", title}, {"advancement", advancement},
-                         {"weight", weight}, {"position", position}}.dump());
+                         {"weight", weight}, {"position", position}};
+            if (season_filter.has_value()) resp["season_filter"] = season_filter.value();
+            res.status = 201;
+            ok(res, resp.dump());
         } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
           catch (const std::exception& e)    { err(res, 400, e.what()); }
     });
@@ -1609,7 +1645,7 @@ void Router::registerBlockRoutes() {
                    intro_content_type, intro_content_id,
                    outro_content_type, outro_content_id,
                    interstitial_content_type, interstitial_content_id,
-                   interstitial_every_n
+                   interstitial_every_n, snap_to_group_start
             FROM block WHERE channel_id = ?
             ORDER BY start_time, priority DESC
         )");
@@ -1638,6 +1674,7 @@ void Router::registerBlockRoutes() {
                 {"start_scope",                q.getColumn(16).getString()},
                 {"no_history_behavior",        q.getColumn(17).getString()},
                 {"max_consecutive_episodes",   q.getColumn(18).getInt()},
+                {"snap_to_group_start",        q.getColumn(27).getInt() != 0},
                 {"name",                       q.getColumn(19).getString()},
                 {"intro_content_type",         q.getColumn(20).getString()},
                 {"intro_content_id",           q.getColumn(21).getString()},
@@ -1697,22 +1734,27 @@ void Router::registerBlockRoutes() {
 
             // Filler entries for this block
             SQLite::Statement fq(db_.get(), R"(
-                SELECT bfe.id, bfe.filler_list_id, fl.title,
+                SELECT bfe.id, bfe.content_type, bfe.content_id,
+                       COALESCE(fl.title, pl.title, sh.title, mv.title, bfe.content_id),
                        bfe.advancement, bfe.weight, bfe.position
                 FROM block_filler_entry bfe
-                JOIN filler_list fl ON fl.filler_list_id = bfe.filler_list_id
+                LEFT JOIN filler_list fl ON bfe.content_type='filler_list' AND fl.filler_list_id=bfe.content_id
+                LEFT JOIN playlist    pl ON bfe.content_type='playlist'    AND pl.playlist_id=bfe.content_id
+                LEFT JOIN show        sh ON bfe.content_type='show'        AND sh.show_id=bfe.content_id
+                LEFT JOIN movie       mv ON bfe.content_type='movie'       AND mv.movie_id=bfe.content_id
                 WHERE bfe.block_id = ? ORDER BY bfe.position
             )");
             fq.bind(1, bid);
             json filler_entries = json::array();
             while (fq.executeStep()) {
                 filler_entries.push_back({
-                    {"id",             fq.getColumn(0).getInt()},
-                    {"filler_list_id", fq.getColumn(1).getString()},
-                    {"title",          fq.getColumn(2).getString()},
-                    {"advancement",    fq.getColumn(3).getString()},
-                    {"weight",         fq.getColumn(4).getInt()},
-                    {"position",       fq.getColumn(5).getInt()},
+                    {"id",           fq.getColumn(0).getInt()},
+                    {"content_type", fq.getColumn(1).getString()},
+                    {"content_id",   fq.getColumn(2).getString()},
+                    {"title",        fq.getColumn(3).getString()},
+                    {"advancement",  fq.getColumn(4).getString()},
+                    {"weight",       fq.getColumn(5).getInt()},
+                    {"position",     fq.getColumn(6).getInt()},
                 });
             }
             block["filler_entries"] = filler_entries;
@@ -1757,6 +1799,7 @@ void Router::registerBlockRoutes() {
             std::string inter_ct   = b.value("interstitial_content_type",   "");
             std::string inter_cid  = b.value("interstitial_content_id",     "");
             int         inter_n    = b.value("interstitial_every_n",        1);
+            int         snap_grp   = b.value("snap_to_group_start",        true) ? 1 : 0;
 
             SQLite::Statement s(db_.get(), R"(
                 INSERT INTO block (block_id, channel_id, name, block_type, day_mask,
@@ -1769,8 +1812,8 @@ void Router::registerBlockRoutes() {
                                    intro_content_type, intro_content_id,
                                    outro_content_type, outro_content_id,
                                    interstitial_content_type, interstitial_content_id,
-                                   interstitial_every_n)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                   interstitial_every_n, snap_to_group_start)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             )");
             s.bind(1, block_id);       s.bind(2, channel_id);    s.bind(3, block_name);
             s.bind(4, block_type);     s.bind(5, day_mask);       s.bind(6, start_time);
@@ -1783,6 +1826,7 @@ void Router::registerBlockRoutes() {
             s.bind(22, intro_ct);  s.bind(23, intro_cid);
             s.bind(24, outro_ct);  s.bind(25, outro_cid);
             s.bind(26, inter_ct);  s.bind(27, inter_cid);  s.bind(28, inter_n);
+            s.bind(29, snap_grp);
             s.exec();
 
             clearScheduleCache(channel_id);
@@ -1830,6 +1874,7 @@ void Router::registerBlockRoutes() {
             if (b.contains("start_scope"))                 upd("start_scope",                  b["start_scope"]);
             if (b.contains("no_history_behavior"))         upd("no_history_behavior",          b["no_history_behavior"]);
             if (b.contains("max_consecutive_episodes"))    updI("max_consecutive_episodes",    b["max_consecutive_episodes"]);
+            if (b.contains("snap_to_group_start"))         updI("snap_to_group_start",         b["snap_to_group_start"].is_boolean() ? (b["snap_to_group_start"].get<bool>() ? 1 : 0) : b["snap_to_group_start"].get<int>());
             if (b.contains("intro_content_type"))          upd("intro_content_type",           b["intro_content_type"]);
             if (b.contains("intro_content_id"))            upd("intro_content_id",             b["intro_content_id"]);
             if (b.contains("outro_content_type"))          upd("outro_content_type",           b["outro_content_type"]);
@@ -2094,6 +2139,299 @@ void Router::registerBlockRoutes() {
         ok(res, json{{"deleted", std::stoi(mid)}}.dump());
     });
 
+    // Automatic grouping detection — scans episode titles for multi-part patterns
+    // and returns candidate groups with a confidence score (0-100).
+    // Patterns detected: "(N)", ", Part N", ": Part N", " Part N", word numbers.
+    // Already-confirmed groups (in episode_group) are flagged separately.
+    svr_.Get("/api/shows/:id/grouping-candidates", [this](const Req& req, Res& res) {
+      try {
+        auto show_id = req.path_params.at("id");
+
+        // Fetch episodes ordered by season+episode for adjacency checking.
+        struct EpRow { std::string ep_id; int season; int ep_num; std::string title; };
+        std::vector<EpRow> eps;
+        {
+            SQLite::Statement q(db_.get(),
+                "SELECT episode_id, season, episode, title FROM episode "
+                "WHERE show_id=? ORDER BY season, episode");
+            q.bind(1, show_id);
+            while (q.executeStep())
+                eps.push_back({q.getColumn(0).getString(), q.getColumn(1).getInt(),
+                               q.getColumn(2).getInt(), q.getColumn(3).getString()});
+        }
+
+        // Build set of episode_ids already in an episode_group.
+        std::unordered_set<std::string> confirmed_ids;
+        {
+            SQLite::Statement q(db_.get(),
+                "SELECT egm.episode_id FROM episode_group_member egm "
+                "JOIN episode_group eg ON eg.group_id = egm.group_id "
+                "WHERE eg.show_id = ?");
+            q.bind(1, show_id);
+            while (q.executeStep()) confirmed_ids.insert(q.getColumn(0).getString());
+        }
+
+        // Pattern matchers: return {base_title, part_num} or nullopt.
+        auto tryMatch = [](const std::string& title)
+            -> std::optional<std::pair<std::string, int>>
+        {
+            // " (N)" at end
+            if (title.size() >= 4 && title.back() == ')') {
+                auto op = title.rfind('(');
+                if (op != std::string::npos && op > 0 && title[op-1] == ' ') {
+                    std::string num = title.substr(op+1, title.size()-op-2);
+                    bool all_dig = !num.empty() && std::all_of(num.begin(), num.end(), ::isdigit);
+                    if (all_dig) {
+                        int n = std::stoi(num);
+                        if (n >= 1 && n <= 20)
+                            return std::make_pair(title.substr(0, op-1), n);
+                    }
+                }
+            }
+            // ", Part N" / ": Part N" / " Part N" (case-insensitive) — optional word numbers
+            static const std::vector<std::pair<std::string,int>> word_nums = {
+                {"one",1},{"two",2},{"three",3},{"four",4},{"five",5},
+                {"six",6},{"seven",7},{"eight",8},{"nine",9},{"ten",10}
+            };
+            static const std::vector<std::string> seps = {", part ", ": part ", " part "};
+            std::string low = title;
+            std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+            for (const auto& sep : seps) {
+                auto pos = low.rfind(sep);
+                if (pos == std::string::npos) continue;
+                std::string after = low.substr(pos + sep.size());
+                // Numeric
+                if (!after.empty() && std::all_of(after.begin(), after.end(), ::isdigit)) {
+                    int n = std::stoi(after);
+                    if (n >= 1 && n <= 20)
+                        return std::make_pair(title.substr(0, pos), n);
+                }
+                // Word number
+                for (const auto& [word, num] : word_nums) {
+                    if (after == word)
+                        return std::make_pair(title.substr(0, pos), num);
+                }
+            }
+            return std::nullopt;
+        };
+
+        // Collect candidates grouped by base_title.
+        struct Part { std::string ep_id; int part_num; int ep_idx; };
+        std::map<std::string, std::vector<Part>> by_base;
+        for (int i = 0; i < (int)eps.size(); ++i) {
+            auto m = tryMatch(eps[i].title);
+            if (m) by_base[m->first].push_back({eps[i].ep_id, m->second, i});
+        }
+
+        json candidates = json::array();
+        for (auto& [base, parts] : by_base) {
+            if (parts.size() < 2) continue;
+            // Sort by part_num.
+            std::sort(parts.begin(), parts.end(),
+                      [](const Part& a, const Part& b){ return a.part_num < b.part_num; });
+
+            // Confidence scoring.
+            int score = 0;
+            // Starts at 1 and is consecutive (1,2,3,...).
+            bool starts_at_one = (parts.front().part_num == 1);
+            bool consecutive_parts = true;
+            for (int i = 1; i < (int)parts.size(); ++i)
+                if (parts[i].part_num != parts[i-1].part_num + 1) { consecutive_parts = false; break; }
+            if (starts_at_one)   score += 25;
+            if (consecutive_parts) score += 25;
+            // Episodes are adjacent in the catalog.
+            bool adjacent = true;
+            for (int i = 1; i < (int)parts.size(); ++i)
+                if (parts[i].ep_idx != parts[i-1].ep_idx + 1) { adjacent = false; break; }
+            if (adjacent) score += 30;
+            // More parts = stronger signal.
+            if ((int)parts.size() >= 3) score += 10;
+            // Already partially confirmed.
+            bool any_confirmed = false;
+            for (auto& p : parts) if (confirmed_ids.count(p.ep_id)) { any_confirmed = true; break; }
+            if (any_confirmed) score += 10;
+
+            json group = {
+                {"base_title",    base},
+                {"confidence",    std::min(score, 100)},
+                {"adjacent",      adjacent},
+                {"already_grouped", any_confirmed},
+                {"parts",         json::array()}
+            };
+            for (auto& p : parts) {
+                group["parts"].push_back({
+                    {"episode_id", p.ep_id},
+                    {"title",      eps[p.ep_idx].title},
+                    {"season",     eps[p.ep_idx].season},
+                    {"episode",    eps[p.ep_idx].ep_num},
+                    {"part_num",   p.part_num},
+                    {"confirmed",  confirmed_ids.count(p.ep_id) > 0}
+                });
+            }
+            candidates.push_back(std::move(group));
+        }
+
+        // Sort by confidence descending, then base title.
+        std::sort(candidates.begin(), candidates.end(), [](const json& a, const json& b) {
+            int ca = a["confidence"].get<int>(), cb = b["confidence"].get<int>();
+            if (ca != cb) return ca > cb;
+            return a["base_title"].get<std::string>() < b["base_title"].get<std::string>();
+        });
+
+        ok(res, json{{"show_id", show_id}, {"candidates", candidates}}.dump());
+      } catch (const std::exception& e) { err(res, 500, e.what()); }
+    });
+
+    // All-shows grouping candidates — same detection logic, loops every show.
+    // Returns only shows with at least one unconfirmed candidate.
+    svr_.Get("/api/grouping-candidates", [this](const Req& req, Res& res) {
+      try {
+        // Shared pattern matcher.
+        auto tryMatch = [](const std::string& title)
+            -> std::optional<std::pair<std::string, int>>
+        {
+            if (title.size() >= 4 && title.back() == ')') {
+                auto op = title.rfind('(');
+                if (op != std::string::npos && op > 0 && title[op-1] == ' ') {
+                    std::string num = title.substr(op+1, title.size()-op-2);
+                    bool all_dig = !num.empty() && std::all_of(num.begin(), num.end(), ::isdigit);
+                    if (all_dig) {
+                        int n = std::stoi(num);
+                        if (n >= 1 && n <= 20)
+                            return std::make_pair(title.substr(0, op-1), n);
+                    }
+                }
+            }
+            static const std::vector<std::pair<std::string,int>> word_nums = {
+                {"one",1},{"two",2},{"three",3},{"four",4},{"five",5},
+                {"six",6},{"seven",7},{"eight",8},{"nine",9},{"ten",10}
+            };
+            static const std::vector<std::string> seps = {", part ", ": part ", " part "};
+            std::string low = title;
+            std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+            for (const auto& sep : seps) {
+                auto pos = low.rfind(sep);
+                if (pos == std::string::npos) continue;
+                std::string after = low.substr(pos + sep.size());
+                if (!after.empty() && std::all_of(after.begin(), after.end(), ::isdigit)) {
+                    int n = std::stoi(after);
+                    if (n >= 1 && n <= 20)
+                        return std::make_pair(title.substr(0, pos), n);
+                }
+                for (const auto& [word, num] : word_nums) {
+                    if (after == word)
+                        return std::make_pair(title.substr(0, pos), num);
+                }
+            }
+            return std::nullopt;
+        };
+
+        // Fetch all shows.
+        struct ShowRow { std::string show_id; std::string title; };
+        std::vector<ShowRow> shows;
+        {
+            SQLite::Statement q(db_.get(), "SELECT show_id, title FROM show ORDER BY title");
+            while (q.executeStep())
+                shows.push_back({q.getColumn(0).getString(), q.getColumn(1).getString()});
+        }
+
+        json result = json::array();
+        for (const auto& show : shows) {
+            struct EpRow { std::string ep_id; int season; int ep_num; std::string title; };
+            std::vector<EpRow> eps;
+            {
+                SQLite::Statement q(db_.get(),
+                    "SELECT episode_id, season, episode, title FROM episode "
+                    "WHERE show_id=? ORDER BY season, episode");
+                q.bind(1, show.show_id);
+                while (q.executeStep())
+                    eps.push_back({q.getColumn(0).getString(), q.getColumn(1).getInt(),
+                                   q.getColumn(2).getInt(), q.getColumn(3).getString()});
+            }
+            if (eps.empty()) continue;
+
+            std::unordered_set<std::string> confirmed_ids;
+            {
+                SQLite::Statement q(db_.get(),
+                    "SELECT egm.episode_id FROM episode_group_member egm "
+                    "JOIN episode_group eg ON eg.group_id = egm.group_id "
+                    "WHERE eg.show_id = ?");
+                q.bind(1, show.show_id);
+                while (q.executeStep()) confirmed_ids.insert(q.getColumn(0).getString());
+            }
+
+            struct Part { std::string ep_id; int part_num; int ep_idx; };
+            std::map<std::string, std::vector<Part>> by_base;
+            for (int i = 0; i < (int)eps.size(); ++i) {
+                auto m = tryMatch(eps[i].title);
+                if (m) by_base[m->first].push_back({eps[i].ep_id, m->second, i});
+            }
+
+            json candidates = json::array();
+            for (auto& [base, parts] : by_base) {
+                if (parts.size() < 2) continue;
+                std::sort(parts.begin(), parts.end(),
+                          [](const Part& a, const Part& b){ return a.part_num < b.part_num; });
+
+                int score = 0;
+                bool starts_at_one = (parts.front().part_num == 1);
+                bool consecutive_parts = true;
+                for (int i = 1; i < (int)parts.size(); ++i)
+                    if (parts[i].part_num != parts[i-1].part_num + 1) { consecutive_parts = false; break; }
+                if (starts_at_one)     score += 25;
+                if (consecutive_parts) score += 25;
+                bool adjacent = true;
+                for (int i = 1; i < (int)parts.size(); ++i)
+                    if (parts[i].ep_idx != parts[i-1].ep_idx + 1) { adjacent = false; break; }
+                if (adjacent) score += 30;
+                if ((int)parts.size() >= 3) score += 10;
+                bool any_confirmed = false;
+                for (auto& p : parts) if (confirmed_ids.count(p.ep_id)) { any_confirmed = true; break; }
+                if (any_confirmed) score += 10;
+
+                json group = {
+                    {"base_title",      base},
+                    {"confidence",      std::min(score, 100)},
+                    {"adjacent",        adjacent},
+                    {"already_grouped", any_confirmed},
+                    {"parts",           json::array()}
+                };
+                for (auto& p : parts) {
+                    group["parts"].push_back({
+                        {"episode_id", p.ep_id},
+                        {"title",      eps[p.ep_idx].title},
+                        {"season",     eps[p.ep_idx].season},
+                        {"episode",    eps[p.ep_idx].ep_num},
+                        {"part_num",   p.part_num},
+                        {"confirmed",  confirmed_ids.count(p.ep_id) > 0}
+                    });
+                }
+                candidates.push_back(std::move(group));
+            }
+
+            // Skip shows with no candidates or where all are already grouped.
+            bool has_unconfirmed = false;
+            for (const auto& c : candidates)
+                if (!c["already_grouped"].get<bool>()) { has_unconfirmed = true; break; }
+            if (!has_unconfirmed) continue;
+
+            std::sort(candidates.begin(), candidates.end(), [](const json& a, const json& b) {
+                int ca = a["confidence"].get<int>(), cb = b["confidence"].get<int>();
+                if (ca != cb) return ca > cb;
+                return a["base_title"].get<std::string>() < b["base_title"].get<std::string>();
+            });
+
+            result.push_back({
+                {"show_id",    show.show_id},
+                {"show_title", show.title},
+                {"candidates", candidates}
+            });
+        }
+
+        ok(res, result.dump());
+      } catch (const std::exception& e) { err(res, 500, e.what()); }
+    });
+
     // ── Block filler entry CRUD ───────────────────────────────────────────────
 
     svr_.Post("/api/channels/:id/blocks/:bid/filler", [this](const Req& req, Res& res) {
@@ -2101,10 +2439,11 @@ void Router::registerBlockRoutes() {
         auto block_id   = req.path_params.at("bid");
         try {
             auto b = json::parse(req.body);
-            std::string filler_list_id = b.value("filler_list_id", "");
-            std::string advancement    = b.value("advancement",    "sequential");
-            int         weight         = b.value("weight",         1);
-            if (filler_list_id.empty()) { err(res, 400, "filler_list_id required"); return; }
+            std::string content_type = b.value("content_type", "filler_list");
+            std::string content_id   = b.value("content_id",   "");
+            std::string advancement  = b.value("advancement",  "sequential");
+            int         weight       = b.value("weight",       1);
+            if (content_id.empty()) { err(res, 400, "content_id required"); return; }
 
             int position = 0;
             {
@@ -2115,25 +2454,35 @@ void Router::registerBlockRoutes() {
             }
             std::string title;
             {
-                SQLite::Statement tq(db_.get(),
-                    "SELECT title FROM filler_list WHERE filler_list_id = ?");
-                tq.bind(1, filler_list_id);
+                const char* tsql =
+                    content_type == "playlist"    ? "SELECT title FROM playlist    WHERE playlist_id=?"   :
+                    content_type == "show"        ? "SELECT title FROM show        WHERE show_id=?"       :
+                    content_type == "movie"       ? "SELECT title FROM movie       WHERE movie_id=?"      :
+                    /* filler_list default */       "SELECT title FROM filler_list WHERE filler_list_id=?";
+                SQLite::Statement tq(db_.get(), tsql);
+                tq.bind(1, content_id);
                 if (tq.executeStep()) title = tq.getColumn(0).getString();
             }
+            std::optional<int> sf_block;
+            if (b.contains("season_filter") && !b["season_filter"].is_null())
+                sf_block = b["season_filter"].get<int>();
             SQLite::Statement s(db_.get(), R"(
                 INSERT INTO block_filler_entry
-                    (block_id, filler_list_id, advancement, weight, position)
-                VALUES (?,?,?,?,?)
+                    (block_id, content_type, content_id, advancement, weight, position, season_filter)
+                VALUES (?,?,?,?,?,?,?)
             )");
-            s.bind(1, block_id); s.bind(2, filler_list_id); s.bind(3, advancement);
-            s.bind(4, weight);   s.bind(5, position);
+            s.bind(1, block_id); s.bind(2, content_type); s.bind(3, content_id);
+            s.bind(4, advancement); s.bind(5, weight); s.bind(6, position);
+            if (sf_block.has_value()) s.bind(7, sf_block.value()); else s.bind(7);
             s.exec();
             int64_t new_id = db_.get().getLastInsertRowid();
             clearScheduleCache(channel_id);
+            json bfresp = {{"id", new_id}, {"content_type", content_type}, {"content_id", content_id},
+                           {"title", title}, {"advancement", advancement},
+                           {"weight", weight}, {"position", position}};
+            if (sf_block.has_value()) bfresp["season_filter"] = sf_block.value();
             res.status = 201;
-            ok(res, json{{"id", new_id}, {"filler_list_id", filler_list_id},
-                         {"title", title}, {"advancement", advancement},
-                         {"weight", weight}, {"position", position}}.dump());
+            ok(res, bfresp.dump());
         } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
           catch (const std::exception& e)    { err(res, 400, e.what()); }
     });
@@ -2177,13 +2526,20 @@ void Router::registerBlockRoutes() {
         auto channel_id = req.path_params.at("id");
         try {
             SQLite::Statement q(db_.get(), R"(
-                SELECT id, content_type, content_id, mode, every_n, position
+                SELECT id, content_type, content_id, mode, every_n, position,
+                       CASE content_type
+                         WHEN 'show'     THEN (SELECT title FROM show     WHERE show_id     = content_id)
+                         WHEN 'playlist' THEN (SELECT title FROM playlist WHERE playlist_id = content_id)
+                         WHEN 'episode'  THEN (SELECT title FROM episode  WHERE episode_id  = content_id)
+                         ELSE content_id
+                       END AS title,
+                       season_filter
                 FROM channel_bumper WHERE channel_id = ? ORDER BY position
             )");
             q.bind(1, channel_id);
             json result = json::array();
             while (q.executeStep()) {
-                result.push_back({
+                json bumper = {
                     {"id",           q.getColumn(0).getInt()},
                     {"channel_id",   channel_id},
                     {"content_type", q.getColumn(1).getString()},
@@ -2191,7 +2547,10 @@ void Router::registerBlockRoutes() {
                     {"mode",         q.getColumn(3).getString()},
                     {"every_n",      q.getColumn(4).getInt()},
                     {"position",     q.getColumn(5).getInt()},
-                });
+                    {"title",        q.getColumn(6).isNull() ? q.getColumn(2).getString() : q.getColumn(6).getString()},
+                };
+                if (!q.getColumn(7).isNull()) bumper["season_filter"] = q.getColumn(7).getInt();
+                result.push_back(bumper);
             }
             ok(res, result.dump());
         } catch (const std::exception& e) { logErr("GET /api/channels/:id/bumpers", e); err(res, 500, e.what()); }
@@ -2205,6 +2564,9 @@ void Router::registerBlockRoutes() {
             std::string cid     = b.value("content_id",   "");
             std::string mode    = b.value("mode",         "between");
             int         every_n = b.value("every_n",      3);
+            std::optional<int> bmp_sf;
+            if (b.contains("season_filter") && !b["season_filter"].is_null())
+                bmp_sf = b["season_filter"].get<int>();
             // position = next available slot
             SQLite::Statement pq(db_.get(),
                 "SELECT COALESCE(MAX(position)+1,0) FROM channel_bumper WHERE channel_id=?");
@@ -2213,16 +2575,36 @@ void Router::registerBlockRoutes() {
             int position = pq.getColumn(0).getInt();
 
             SQLite::Statement s(db_.get(), R"(
-                INSERT INTO channel_bumper (channel_id, content_type, content_id, mode, every_n, position)
-                VALUES (?,?,?,?,?,?)
+                INSERT INTO channel_bumper (channel_id, content_type, content_id, mode, every_n, position, season_filter)
+                VALUES (?,?,?,?,?,?,?)
             )");
             s.bind(1, channel_id); s.bind(2, ct); s.bind(3, cid);
             s.bind(4, mode);       s.bind(5, every_n); s.bind(6, position);
+            if (bmp_sf.has_value()) s.bind(7, bmp_sf.value()); else s.bind(7);
             s.exec();
             int new_id = static_cast<int>(db_.get().getLastInsertRowid());
+
+            // Resolve title for the response.
+            std::string title = cid;
+            {
+                const char* tsql =
+                    ct == "show"     ? "SELECT title FROM show     WHERE show_id     = ? LIMIT 1" :
+                    ct == "playlist" ? "SELECT title FROM playlist WHERE playlist_id = ? LIMIT 1" :
+                    ct == "episode"  ? "SELECT title FROM episode  WHERE episode_id  = ? LIMIT 1" : nullptr;
+                if (tsql) {
+                    SQLite::Statement tq(db_.get(), tsql);
+                    tq.bind(1, cid);
+                    if (tq.executeStep()) title = tq.getColumn(0).getString();
+                }
+            }
+
             clearScheduleCache(channel_id);
+            json bmpResp = {{"id", new_id}, {"channel_id", channel_id}, {"content_type", ct},
+                            {"content_id", cid}, {"mode", mode}, {"every_n", every_n},
+                            {"position", position}, {"title", title}};
+            if (bmp_sf.has_value()) bmpResp["season_filter"] = bmp_sf.value();
             res.status = 201;
-            ok(res, json{{"id", new_id}}.dump());
+            ok(res, bmpResp.dump());
         } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
 
@@ -2335,8 +2717,22 @@ void Router::registerContentRoutes() {
             } else if (field == "content_rating") {
                 if (type != "movie") collect("SELECT DISTINCT content_rating FROM show s WHERE content_rating != ''"  + show_lib  + " ORDER BY content_rating", lib);
                 if (type != "show")  collect("SELECT DISTINCT content_rating FROM movie m WHERE content_rating != ''" + movie_lib + " ORDER BY content_rating", lib);
+            } else if (field == "label") {
+                if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.labels) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+                if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.labels) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+            } else if (field == "network") {
+                if (type != "movie") collect("SELECT DISTINCT network FROM show s WHERE network != ''" + show_lib + " ORDER BY network", lib);
+            } else if (field == "actor") {
+                if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.actors) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+                if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.actors) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+            } else if (field == "country") {
+                if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.countries) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+                if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.countries) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+            } else if (field == "collection") {
+                if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.collections) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+                if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.collections) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
             }
-            // Fields absent from DB (actor, network, label, etc.) return empty array
+            // Fields not in DB (writer, resolution, etc.) return empty array
 
             std::sort(values.begin(), values.end(), [](const json& a, const json& b) {
                 return a.get<std::string>() < b.get<std::string>();
@@ -2355,14 +2751,33 @@ void Router::registerContentRoutes() {
         if (req.has_param("genre"))          genre      = req.get_param_value("genre");
         if (req.has_param("year"))           year_p     = req.get_param_value("year");
         if (req.has_param("content_rating")) rating     = req.get_param_value("content_rating");
+        std::string label_p, network_p, actor_p, country_p, collection_p, studio_p;
+        if (req.has_param("label"))      label_p      = req.get_param_value("label");
+        if (req.has_param("network"))    network_p    = req.get_param_value("network");
+        if (req.has_param("actor"))      actor_p      = req.get_param_value("actor");
+        if (req.has_param("country"))    country_p    = req.get_param_value("country");
+        if (req.has_param("collection")) collection_p = req.get_param_value("collection");
+        if (req.has_param("studio"))     studio_p     = req.get_param_value("studio");
 
         // Build extra WHERE conditions (AND-prefixed; works with "WHERE 1=1" base)
         std::string extras;
         std::vector<std::string> extra_vals;
-        if (!search_q.empty()) { extras += " AND s.title LIKE '%' || ? || '%'"; extra_vals.push_back(search_q); }
+        if (!search_q.empty()) {
+            extras += " AND (s.title LIKE '%'||?||'%' OR s.network LIKE '%'||?||'%' OR s.studio LIKE '%'||?||'%'"
+                      " OR EXISTS (SELECT 1 FROM json_each(s.labels)  je WHERE je.value LIKE '%'||?||'%')"
+                      " OR EXISTS (SELECT 1 FROM json_each(s.genres)  je WHERE je.value LIKE '%'||?||'%')"
+                      " OR EXISTS (SELECT 1 FROM json_each(s.actors)  je WHERE je.value LIKE '%'||?||'%'))";
+            for (int i = 0; i < 6; ++i) extra_vals.push_back(search_q);
+        }
         if (!genre.empty())    appendJsonInClause("s", "genres",       genre,  extras, extra_vals);
         if (!year_p.empty())   { extras += " AND s.year = CAST(? AS INTEGER)"; extra_vals.push_back(year_p); }
         if (!rating.empty())   appendInClause("s.content_rating",      rating, extras, extra_vals);
+        if (!label_p.empty())      appendJsonInClause("s", "labels",      label_p,      extras, extra_vals);
+        if (!network_p.empty())    { extras += " AND s.network LIKE '%' || ? || '%'"; extra_vals.push_back(network_p); }
+        if (!actor_p.empty())      appendJsonInClause("s", "actors",      actor_p,      extras, extra_vals);
+        if (!country_p.empty())    appendJsonInClause("s", "countries",   country_p,    extras, extra_vals);
+        if (!collection_p.empty()) appendJsonInClause("s", "collections", collection_p, extras, extra_vals);
+        if (!studio_p.empty())     { extras += " AND s.studio LIKE '%' || ? || '%'"; extra_vals.push_back(studio_p); }
 
         auto bindExtras = [&](SQLite::Statement& q, int& p) {
             for (const auto& v : extra_vals) q.bind(p++, v);
@@ -2504,13 +2919,30 @@ void Router::registerContentRoutes() {
         if (req.has_param("genre"))          genre      = req.get_param_value("genre");
         if (req.has_param("year"))           year_p     = req.get_param_value("year");
         if (req.has_param("content_rating")) rating     = req.get_param_value("content_rating");
+        std::string label_p, actor_p, country_p, collection_p, studio_p;
+        if (req.has_param("label"))      label_p      = req.get_param_value("label");
+        if (req.has_param("actor"))      actor_p      = req.get_param_value("actor");
+        if (req.has_param("country"))    country_p    = req.get_param_value("country");
+        if (req.has_param("collection")) collection_p = req.get_param_value("collection");
+        if (req.has_param("studio"))     studio_p     = req.get_param_value("studio");
 
         std::string extras;
         std::vector<std::string> extra_vals;
-        if (!search_q.empty()) { extras += " AND m.title LIKE '%' || ? || '%'"; extra_vals.push_back(search_q); }
+        if (!search_q.empty()) {
+            extras += " AND (m.title LIKE '%'||?||'%' OR m.studio LIKE '%'||?||'%'"
+                      " OR EXISTS (SELECT 1 FROM json_each(m.labels)  je WHERE je.value LIKE '%'||?||'%')"
+                      " OR EXISTS (SELECT 1 FROM json_each(m.genres)  je WHERE je.value LIKE '%'||?||'%')"
+                      " OR EXISTS (SELECT 1 FROM json_each(m.actors)  je WHERE je.value LIKE '%'||?||'%'))";
+            for (int i = 0; i < 5; ++i) extra_vals.push_back(search_q);
+        }
         if (!genre.empty())    appendJsonInClause("m", "genres",       genre,  extras, extra_vals);
         if (!year_p.empty())   { extras += " AND m.year = CAST(? AS INTEGER)"; extra_vals.push_back(year_p); }
         if (!rating.empty())   appendInClause("m.content_rating",      rating, extras, extra_vals);
+        if (!label_p.empty())      appendJsonInClause("m", "labels",      label_p,      extras, extra_vals);
+        if (!actor_p.empty())      appendJsonInClause("m", "actors",      actor_p,      extras, extra_vals);
+        if (!country_p.empty())    appendJsonInClause("m", "countries",   country_p,    extras, extra_vals);
+        if (!collection_p.empty()) appendJsonInClause("m", "collections", collection_p, extras, extra_vals);
+        if (!studio_p.empty())     { extras += " AND m.studio LIKE '%' || ? || '%'"; extra_vals.push_back(studio_p); }
 
         auto bindExtras = [&](SQLite::Statement& q, int& p) {
             for (const auto& v : extra_vals) q.bind(p++, v);
@@ -2568,7 +3000,8 @@ void Router::registerContentRoutes() {
             SELECT s.show_id, s.title, s.content_rating, s.overview, s.studio, s.status,
                    s.genres, s.thumb, s.art, s.imdb_id, s.tvdb_id, s.tmdb_id,
                    s.originally_available_at, s.year, s.audience_rating, s.locked,
-                   COUNT(e.episode_id) AS episode_count
+                   COUNT(e.episode_id) AS episode_count,
+                   s.labels, s.network, s.actors, s.countries, s.collections
             FROM show s
             LEFT JOIN episode e ON e.show_id = s.show_id
             WHERE s.show_id = ?
@@ -2611,6 +3044,11 @@ void Router::registerContentRoutes() {
         if (!q.getColumn(14).isNull()) show["audience_rating"] = q.getColumn(14).getDouble();
         show["locked"]                   = q.getColumn(15).getInt() != 0;
         show["episode_count"]            = q.getColumn(16).getInt();
+        try { show["labels"]      = json::parse(q.getColumn(17).getString()); } catch (...) { show["labels"] = json::array(); }
+        show["network"]           = q.getColumn(18).getString();
+        try { show["actors"]      = json::parse(q.getColumn(19).getString()); } catch (...) { show["actors"] = json::array(); }
+        try { show["countries"]   = json::parse(q.getColumn(20).getString()); } catch (...) { show["countries"] = json::array(); }
+        try { show["collections"] = json::parse(q.getColumn(21).getString()); } catch (...) { show["collections"] = json::array(); }
         show["external_id"]              = external_id;
         show["source_id"]                = source_id;
         show["source_base_url"]          = source_base_url;
@@ -2643,7 +3081,12 @@ void Router::registerContentRoutes() {
             if (b.contains("thumb"))                   upd("thumb",                   b["thumb"].get<std::string>());
             if (b.contains("art"))                     upd("art",                     b["art"].get<std::string>());
             if (b.contains("year"))                    updN("year",                   b["year"].get<int>());
-            if (b.contains("genres"))                  upd("genres",                  b["genres"].is_array() ? b["genres"].dump() : b["genres"].get<std::string>());
+            if (b.contains("genres"))                  upd("genres",                  b["genres"].is_array()      ? b["genres"].dump()      : b["genres"].get<std::string>());
+            if (b.contains("labels"))                  upd("labels",                  b["labels"].is_array()      ? b["labels"].dump()      : b["labels"].get<std::string>());
+            if (b.contains("network"))                 upd("network",                 b["network"].get<std::string>());
+            if (b.contains("actors"))                  upd("actors",                  b["actors"].is_array()      ? b["actors"].dump()      : b["actors"].get<std::string>());
+            if (b.contains("countries"))               upd("countries",               b["countries"].is_array()   ? b["countries"].dump()   : b["countries"].get<std::string>());
+            if (b.contains("collections"))             upd("collections",             b["collections"].is_array() ? b["collections"].dump() : b["collections"].get<std::string>());
             // Always lock after a manual edit so sync won't overwrite
             SQLite::Statement lk(db_.get(), "UPDATE show SET locked = 1 WHERE show_id = ?");
             lk.bind(1, id); lk.exec();
@@ -2706,7 +3149,8 @@ void Router::registerContentRoutes() {
         SQLite::Statement q(db_.get(), R"(
             SELECT movie_id, title, content_rating, duration_ms, year,
                    overview, tagline, studio, director, genres, thumb, art,
-                   imdb_id, tmdb_id, audience_rating, locked
+                   imdb_id, tmdb_id, audience_rating, locked,
+                   labels, actors, countries, collections
             FROM movie WHERE movie_id = ?
         )");
         q.bind(1, id);
@@ -2745,6 +3189,10 @@ void Router::registerContentRoutes() {
         movie["tmdb_id"]        = q.getColumn(13).getString();
         if (!q.getColumn(14).isNull()) movie["audience_rating"] = q.getColumn(14).getDouble();
         movie["locked"]         = q.getColumn(15).getInt() != 0;
+        try { movie["labels"]      = json::parse(q.getColumn(16).getString()); } catch (...) { movie["labels"] = json::array(); }
+        try { movie["actors"]      = json::parse(q.getColumn(17).getString()); } catch (...) { movie["actors"] = json::array(); }
+        try { movie["countries"]   = json::parse(q.getColumn(18).getString()); } catch (...) { movie["countries"] = json::array(); }
+        try { movie["collections"] = json::parse(q.getColumn(19).getString()); } catch (...) { movie["collections"] = json::array(); }
         movie["external_id"]    = external_id;
         movie["source_id"]      = source_id;
         movie["source_base_url"] = source_base_url;
@@ -2776,7 +3224,11 @@ void Router::registerContentRoutes() {
             if (b.contains("thumb"))          upd("thumb",          b["thumb"].get<std::string>());
             if (b.contains("art"))            upd("art",            b["art"].get<std::string>());
             if (b.contains("year"))           updN("year",          b["year"].get<int>());
-            if (b.contains("genres"))         upd("genres",         b["genres"].is_array() ? b["genres"].dump() : b["genres"].get<std::string>());
+            if (b.contains("genres"))         upd("genres",         b["genres"].is_array()      ? b["genres"].dump()      : b["genres"].get<std::string>());
+            if (b.contains("labels"))         upd("labels",         b["labels"].is_array()      ? b["labels"].dump()      : b["labels"].get<std::string>());
+            if (b.contains("actors"))         upd("actors",         b["actors"].is_array()      ? b["actors"].dump()      : b["actors"].get<std::string>());
+            if (b.contains("countries"))      upd("countries",      b["countries"].is_array()   ? b["countries"].dump()   : b["countries"].get<std::string>());
+            if (b.contains("collections"))    upd("collections",    b["collections"].is_array() ? b["collections"].dump() : b["collections"].get<std::string>());
             SQLite::Statement lk(db_.get(), "UPDATE movie SET locked = 1 WHERE movie_id = ?");
             lk.bind(1, id); lk.exec();
             ok(res, json{{"ok", true}}.dump());
@@ -4106,17 +4558,18 @@ void Router::registerSchedulerRoutes() {
 
                         int fpos = 0;
                         for (auto& fe : blk.value("filler_entries", json::array())) {
-                            std::string fid = fe.value("filler_list_id", "");
-                            if (fid.empty()) { fpos++; continue; }
+                            std::string ct  = fe.value("content_type", "filler_list");
+                            std::string cid = fe.value("content_id",   fe.value("filler_list_id", ""));
+                            if (cid.empty()) { fpos++; continue; }
                             SQLite::Statement ins(db_.get(), R"(
                                 INSERT OR IGNORE INTO block_filler_entry
-                                    (block_id, filler_list_id, advancement, weight, position)
-                                VALUES (?,?,?,?,?)
+                                    (block_id, content_type, content_id, advancement, weight, position)
+                                VALUES (?,?,?,?,?,?)
                             )");
-                            ins.bind(1, block_id); ins.bind(2, fid);
-                            ins.bind(3, fe.value("advancement", "sized"));
-                            ins.bind(4, fe.value("weight", 1));
-                            ins.bind(5, fpos); ins.exec();
+                            ins.bind(1, block_id); ins.bind(2, ct); ins.bind(3, cid);
+                            ins.bind(4, fe.value("advancement", "sized"));
+                            ins.bind(5, fe.value("weight", 1));
+                            ins.bind(6, fpos); ins.exec();
                             fpos++;
                         }
                     }

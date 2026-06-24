@@ -18,4 +18,9 @@ struct Show {
     std::string originally_available_at;
     std::optional<int>   year;
     std::optional<float> audience_rating;
+    std::string labels;       // JSON array: ["tag", ...]
+    std::string network;      // e.g. "HBO"
+    std::string actors;       // JSON array of names
+    std::string countries;    // JSON array: ["United States", ...]
+    std::string collections;  // JSON array: ["Marvel", ...]
 };

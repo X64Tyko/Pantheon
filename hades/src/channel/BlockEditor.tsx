@@ -18,15 +18,21 @@ export const BlockEditor = observer(function BlockEditor({ channelId, store }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 20px 14px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 15, letterSpacing: '0.04em' }}>
-          {m.name} Block
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={() => { store.modalOpen = true }} title="Expand block editor"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', border: '1px solid var(--hds-violet)', borderRadius: 7, background: 'oklch(0.55 0.14 292 / 0.1)', color: 'var(--hds-violet)', cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, letterSpacing: '0.06em', flexShrink: 0 }}>
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M1 4V1h3M10 1H7m3 0v3M1 7v3h3M10 10H7m3 0V7" /></svg>
+            EXPAND
+          </button>
+          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 15, letterSpacing: '0.04em' }}>
+            {m.name} Block
+          </span>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button
             onClick={() => store.toggleHints()}
             style={{ padding: '3px 8px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', color: store.showHints ? 'var(--hds-violet)' : 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer', letterSpacing: '0.06em' }}
           >{store.showHints ? '— hints' : '+ hints'}</button>
-          <button onClick={() => { store.modalOpen = true }} title="Open in modal" style={{ width: 28, height: 28, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 14 }}>⊞</button>
           <button onClick={() => store.closeEditor()} style={{ width: 28, height: 28, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 15 }}>×</button>
         </div>
       </div>
@@ -61,15 +67,21 @@ export const NewBlockEditor = observer(function NewBlockEditor({ channelId, stor
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 20px 14px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 15, letterSpacing: '0.04em' }}>
-          {m.name} Block
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={() => { store.modalOpen = true }} title="Expand block editor"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', border: '1px solid var(--hds-violet)', borderRadius: 7, background: 'oklch(0.55 0.14 292 / 0.1)', color: 'var(--hds-violet)', cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, letterSpacing: '0.06em', flexShrink: 0 }}>
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M1 4V1h3M10 1H7m3 0v3M1 7v3h3M10 10H7m3 0V7" /></svg>
+            EXPAND
+          </button>
+          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 15, letterSpacing: '0.04em' }}>
+            {m.name} Block
+          </span>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button
             onClick={() => store.toggleHints()}
             style={{ padding: '3px 8px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', color: store.showHints ? 'var(--hds-violet)' : 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer', letterSpacing: '0.06em' }}
           >{store.showHints ? '— hints' : '+ hints'}</button>
-          <button onClick={() => { store.modalOpen = true }} title="Open in modal" style={{ width: 28, height: 28, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 14 }}>⊞</button>
           <button onClick={() => store.closeEditor()} style={{ width: 28, height: 28, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 15 }}>×</button>
         </div>
       </div>

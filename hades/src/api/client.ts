@@ -1,7 +1,7 @@
 import type {
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
   Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
-  Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, ImportResult, StartScope,
+  Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportResult, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
@@ -55,7 +55,7 @@ export const api = {
   importChannel:    (data: ChannelExport)                                         => request<ImportResult>('POST', '/channels/import', data),
 
   // Channel filler entries
-  addChannelFiller:    (channelId: string, b: { filler_list_id: string; advancement: FillerEntryAdvancement; weight?: number }) =>
+  addChannelFiller:    (channelId: string, b: { content_type: string; content_id: string; advancement: FillerEntryAdvancement; weight?: number; season_filter?: number }) =>
                          request<FillerEntry>('POST',   `/channels/${channelId}/filler`, b),
   updateChannelFiller: (channelId: string, entryId: number, b: { advancement?: FillerEntryAdvancement; weight?: number }) =>
                          request<void>       ('PATCH',  `/channels/${channelId}/filler/${entryId}`, b),
@@ -86,10 +86,10 @@ export const api = {
   getAllLibraries: ()                                    => request<LibraryWithSource[]>('GET', '/libraries'),
   getFilterValues: (field: string, params: { type?: 'movie' | 'show'; library_id?: string } = {}) =>
     request<{ values: string[] }>('GET', `/metadata/values?${qs({ field, ...params })}`).then(r => r.values),
-  getShows:       (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string } = {}) =>
+  getShows:       (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; network?: string; actor?: string } = {}) =>
                     request<PagedResult<Show>>('GET', `/shows?${qs(p)}`),
   getEpisodes:    (showId: string, season?: number)     => request<Episode[]>('GET', `/shows/${showId}/episodes${season != null ? '?season=' + season : ''}`),
-  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string } = {}) =>
+  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; actor?: string } = {}) =>
                     request<PagedResult<Movie>>('GET', `/movies?${qs(p)}`),
 
   // Blocks
@@ -112,9 +112,11 @@ export const api = {
   addGroupMember:         (showId: string, groupId: string, b: { episode_id: string; part_num: number }) =>
                             request<{id: number, part_num: number}>('POST',   `/shows/${showId}/groups/${groupId}/members`, b),
   removeGroupMember:      (showId: string, groupId: string, memberId: number)      => request<void>('DELETE', `/shows/${showId}/groups/${groupId}/members/${memberId}`),
+  getGroupingCandidates:       (showId: string) => request<GroupingCandidatesResult>('GET', `/shows/${showId}/grouping-candidates`),
+  getAllGroupingCandidates:    ()               => request<ShowGroupingResult[]>('GET', '/grouping-candidates'),
 
   // Block filler entries
-  addBlockFiller:    (channelId: string, blockId: string, b: { filler_list_id: string; advancement: FillerEntryAdvancement; weight?: number }) =>
+  addBlockFiller:    (channelId: string, blockId: string, b: { content_type: string; content_id: string; advancement: FillerEntryAdvancement; weight?: number; season_filter?: number }) =>
                        request<FillerEntry>('POST',   `/channels/${channelId}/blocks/${blockId}/filler`, b),
   updateBlockFiller: (channelId: string, blockId: string, entryId: number, b: { advancement?: FillerEntryAdvancement; weight?: number }) =>
                        request<void>       ('PATCH',  `/channels/${channelId}/blocks/${blockId}/filler/${entryId}`, b),
@@ -191,8 +193,8 @@ export const api = {
 
   // Channel bumpers
   getBumpers:    (channelId: string)                                                           => request<ChannelBumper[]>('GET',    `/channels/${channelId}/bumpers`),
-  createBumper:  (channelId: string, b: { content_type: BumperContentType; content_id: string; mode: BumperMode; every_n: number }) =>
-                   request<{id: number}>                             ('POST',   `/channels/${channelId}/bumpers`, b),
+  createBumper:  (channelId: string, b: { content_type: BumperContentType; content_id: string; mode: BumperMode; every_n: number; season_filter?: number }) =>
+                   request<ChannelBumper>                            ('POST',   `/channels/${channelId}/bumpers`, b),
   updateBumper:  (channelId: string, bumperId: number, b: Partial<Pick<ChannelBumper, 'content_type'|'content_id'|'mode'|'every_n'|'position'>>) =>
                    request<void>                                     ('PATCH',  `/channels/${channelId}/bumpers/${bumperId}`, b),
   deleteBumper:  (channelId: string, bumperId: number)               => request<void>          ('DELETE', `/channels/${channelId}/bumpers/${bumperId}`),

@@ -16,9 +16,11 @@ enum class NoHistoryBehavior {
 };
 
 struct BlockFillerEntry {
-    std::string filler_list_id;
-    std::string advancement = "sized"; // "sequential" | "shuffle" | "sized"
-    int         weight      = 1;
+    std::string        content_type; // "filler_list" | "playlist" | "show" | "movie"
+    std::string        content_id;
+    std::string        advancement   = "sized"; // "sequential" | "shuffle" | "sized"
+    int                weight        = 1;
+    std::optional<int> season_filter;           // null = all seasons; N = season N only
 };
 
 struct BlockContent {
@@ -65,6 +67,7 @@ struct Block {
     int                        max_consecutive_episodes   = 0;  // 0 = unlimited
     std::string                start_scope         = "block"; // "block" | "episode"
     NoHistoryBehavior          no_history_behavior = NoHistoryBehavior::Normal;
+    bool                       snap_to_group_start = true; // snap mid-group random picks to Part 1
     // Intro: plays once at block start (before first content item).
     std::string                intro_content_type;
     std::string                intro_content_id;

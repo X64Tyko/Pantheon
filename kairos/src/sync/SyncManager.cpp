@@ -169,8 +169,9 @@ void SyncManager::syncShows(MediaSource& src,
             SQLite::Statement s(db_.get(), R"(
                 INSERT INTO show (show_id, title, content_rating, overview, studio, status,
                                   genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
-                                  originally_available_at, year, audience_rating)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                  originally_available_at, year, audience_rating,
+                                  labels, network, actors, countries, collections)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(show_id) DO UPDATE SET
                     title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
                     content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
@@ -185,7 +186,12 @@ void SyncManager::syncShows(MediaSource& src,
                     tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE excluded.tmdb_id                 END,
                     originally_available_at = CASE WHEN locked THEN originally_available_at ELSE excluded.originally_available_at END,
                     year                    = CASE WHEN locked THEN year                    ELSE excluded.year                    END,
-                    audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END
+                    audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END,
+                    labels                  = CASE WHEN locked THEN labels                  ELSE excluded.labels                  END,
+                    network                 = CASE WHEN locked THEN network                 ELSE excluded.network                 END,
+                    actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
+                    countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
+                    collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END
             )");
             s.bind(1,  show.show_id);
             s.bind(2,  show.title);
@@ -204,6 +210,11 @@ void SyncManager::syncShows(MediaSource& src,
             else                                  s.bind(14);
             if (show.audience_rating.has_value()) s.bind(15, show.audience_rating.value());
             else                                  s.bind(15);
+            s.bind(16, show.labels);
+            s.bind(17, show.network);
+            s.bind(18, show.actors);
+            s.bind(19, show.countries);
+            s.bind(20, show.collections);
             s.exec();
 
             upsertMapping("show", kairos_id, source_id, library_id, ext_show_id);
@@ -344,8 +355,9 @@ void SyncManager::syncMovies(MediaSource& src,
         SQLite::Statement s(db_.get(), R"(
             INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
                                overview, tagline, studio, director, genres, thumb, art,
-                               imdb_id, tmdb_id, audience_rating)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                               imdb_id, tmdb_id, audience_rating,
+                               labels, actors, countries, collections)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(movie_id) DO UPDATE SET
                 title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
                 content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
@@ -361,7 +373,11 @@ void SyncManager::syncMovies(MediaSource& src,
                 art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
                 imdb_id         = CASE WHEN locked THEN imdb_id         ELSE excluded.imdb_id         END,
                 tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE excluded.tmdb_id         END,
-                audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END
+                audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END,
+                labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
+                actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
+                countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
+                collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
         )");
         s.bind(1,  movie.movie_id);
         s.bind(2,  movie.title);
@@ -381,6 +397,10 @@ void SyncManager::syncMovies(MediaSource& src,
         s.bind(15, movie.tmdb_id);
         if (movie.audience_rating.has_value()) s.bind(16, movie.audience_rating.value());
         else                                   s.bind(16);
+        s.bind(17, movie.labels);
+        s.bind(18, movie.actors);
+        s.bind(19, movie.countries);
+        s.bind(20, movie.collections);
         s.exec();
 
         upsertMapping("movie", movie.movie_id, source_id, library_id, ext_movie_id);

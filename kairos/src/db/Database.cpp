@@ -816,6 +816,93 @@ constexpr Migration kMigrations[] = {
 //         Old cumulative-int format is incompatible; clear to force fresh generation.
 { 31, R"SQL(
     UPDATE channel SET anchor_hashes = NULL WHERE anchor_hashes IS NOT NULL;
+)SQL", false },
+
+// ── v32: snap_to_group_start on block — controls whether rerun mode snaps a
+//         random mid-group pick back to Part 1. Defaults to true (1).
+//         Premier blocks are unaffected (they never enter snap code paths).
+{ 32, R"SQL(
+    ALTER TABLE block ADD COLUMN snap_to_group_start INTEGER NOT NULL DEFAULT 1;
+)SQL", false },
+
+// ── v33: replace filler_list_id with content_type + content_id in filler
+//         entry tables, enabling shows, movies, and playlists as filler.
+{ 33, R"SQL(
+    ALTER TABLE block_filler_entry    ADD COLUMN content_type TEXT NOT NULL DEFAULT 'filler_list';
+    ALTER TABLE block_filler_entry    ADD COLUMN content_id   TEXT;
+    UPDATE block_filler_entry    SET content_id = filler_list_id;
+    ALTER TABLE channel_filler_entry  ADD COLUMN content_type TEXT NOT NULL DEFAULT 'filler_list';
+    ALTER TABLE channel_filler_entry  ADD COLUMN content_id   TEXT;
+    UPDATE channel_filler_entry  SET content_id = filler_list_id;
+)SQL", false },
+
+// ── v34: add extended metadata columns for labels, network, actors, countries, collections
+{ 34, R"SQL(
+    ALTER TABLE show  ADD COLUMN labels      TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE show  ADD COLUMN network     TEXT NOT NULL DEFAULT '';
+    ALTER TABLE show  ADD COLUMN actors      TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE show  ADD COLUMN countries   TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE show  ADD COLUMN collections TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE movie ADD COLUMN labels      TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE movie ADD COLUMN actors      TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE movie ADD COLUMN countries   TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE movie ADD COLUMN collections TEXT NOT NULL DEFAULT '[]';
+)SQL", false },
+
+// ── v35: drop legacy NOT NULL filler_list_id from channel_filler_entry so
+//         shows, movies, and playlists can be added as channel default filler.
+//         Also normalise the uniqueness constraint to (channel_id, content_type, content_id).
+{ 35, R"SQL(
+    CREATE TABLE channel_filler_entry_new (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id     TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        filler_list_id TEXT    REFERENCES filler_list(filler_list_id) ON DELETE CASCADE,
+        advancement    TEXT    NOT NULL DEFAULT 'sequential'
+                               CHECK(advancement IN ('sequential','shuffle','sized')),
+        weight         INTEGER NOT NULL DEFAULT 1,
+        position       INTEGER NOT NULL DEFAULT 0,
+        content_type   TEXT    NOT NULL DEFAULT 'filler_list',
+        content_id     TEXT,
+        UNIQUE (channel_id, content_type, content_id)
+    );
+    INSERT INTO channel_filler_entry_new
+        SELECT id, channel_id, filler_list_id, advancement, weight, position, content_type, content_id
+        FROM channel_filler_entry;
+    DROP TABLE channel_filler_entry;
+    ALTER TABLE channel_filler_entry_new RENAME TO channel_filler_entry;
+    CREATE INDEX IF NOT EXISTS idx_channel_filler_entry ON channel_filler_entry(channel_id, position);
+)SQL", false },
+
+// ── v36: drop legacy NOT NULL filler_list_id from block_filler_entry so
+//         shows, movies, and playlists can be added as block-level filler.
+//         Normalises the uniqueness constraint to (block_id, content_type, content_id).
+{ 36, R"SQL(
+    CREATE TABLE block_filler_entry_new (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        block_id       TEXT    NOT NULL REFERENCES block(block_id) ON DELETE CASCADE,
+        filler_list_id TEXT,
+        advancement    TEXT    NOT NULL DEFAULT 'sequential'
+                               CHECK(advancement IN ('sequential','shuffle','sized')),
+        weight         INTEGER NOT NULL DEFAULT 1,
+        position       INTEGER NOT NULL DEFAULT 0,
+        content_type   TEXT    NOT NULL DEFAULT 'filler_list',
+        content_id     TEXT,
+        UNIQUE (block_id, content_type, content_id)
+    );
+    INSERT INTO block_filler_entry_new
+        SELECT id, block_id, filler_list_id, advancement, weight, position, content_type, content_id
+        FROM block_filler_entry;
+    DROP TABLE block_filler_entry;
+    ALTER TABLE block_filler_entry_new RENAME TO block_filler_entry;
+    CREATE INDEX IF NOT EXISTS idx_block_filler_entry ON block_filler_entry(block_id, position);
+)SQL", false },
+
+// ── v37: add season_filter to filler entries and bumpers so specific seasons
+//         can be targeted (NULL = all seasons, N = season N only).
+{ 37, R"SQL(
+    ALTER TABLE channel_filler_entry ADD COLUMN season_filter INTEGER;
+    ALTER TABLE block_filler_entry   ADD COLUMN season_filter INTEGER;
+    ALTER TABLE channel_bumper       ADD COLUMN season_filter INTEGER;
 )SQL", false }
 
 }; // kMigrations

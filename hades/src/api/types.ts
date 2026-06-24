@@ -163,12 +163,14 @@ export type CursorScope            = 'global' | 'channel' | 'block'
 export type ContentType            = 'show' | 'movie' | 'episode' | 'playlist' | 'filler_list'
 
 export interface FillerEntry {
-  id:             number
-  filler_list_id: string
-  title:          string                // display name, populated server-side
-  advancement:    FillerEntryAdvancement
-  weight:         number                // for 'weighted' selection; default 1
-  position:       number                // round-robin order
+  id:            number
+  content_type:  'show' | 'movie' | 'playlist' | 'filler_list'
+  content_id:    string
+  title:         string                // display name, populated server-side
+  advancement:   FillerEntryAdvancement
+  weight:        number                // for 'weighted' selection; default 1
+  position:      number                // round-robin order
+  season_filter?: number               // show only: null = all seasons, N = season N
 }
 
 export type EpisodeOrder = 'season' | 'absolute' | 'airdate'
@@ -261,13 +263,15 @@ export type BumperMode = 'between' | 'filler'
 export type BumperContentType = 'show' | 'episode' | 'playlist'
 
 export interface ChannelBumper {
-  id:           number
-  channel_id:   string
-  content_type: BumperContentType
-  content_id:   string
-  mode:         BumperMode
-  every_n:      number
-  position:     number
+  id:            number
+  channel_id:    string
+  content_type:  BumperContentType
+  content_id:    string
+  mode:          BumperMode
+  every_n:       number
+  position:      number
+  title?:        string
+  season_filter?: number
 }
 
 export interface Block {
@@ -293,6 +297,7 @@ export interface Block {
   start_scope:         StartScope       // 'block' = align/early/late on block entry; 'episode' = per-item
   no_history_behavior:        NoHistoryBehavior
   max_consecutive_episodes:   number           // 0 = unlimited; rerun modes only
+  snap_to_group_start:        boolean          // snap mid-group random pick to Part 1 (rerun modes)
   content:                    BlockContent[]
   // Block intro/outro/interstitials
   intro_content_type:         string
@@ -318,6 +323,34 @@ export interface EpisodeGroup {
   name:       string
   group_type: 'multipart'
   members:    EpisodeGroupMember[]
+}
+
+export interface GroupingCandidatePart {
+  episode_id: string
+  title:      string
+  season:     number
+  episode:    number
+  part_num:   number
+  confirmed:  boolean
+}
+
+export interface GroupingCandidate {
+  base_title:     string
+  confidence:     number   // 0-100
+  adjacent:       boolean
+  already_grouped: boolean
+  parts:          GroupingCandidatePart[]
+}
+
+export interface GroupingCandidatesResult {
+  show_id:    string
+  candidates: GroupingCandidate[]
+}
+
+export interface ShowGroupingResult {
+  show_id:    string
+  show_title: string
+  candidates: GroupingCandidate[]
 }
 
 // ── Plex link metadata ────────────────────────────────────────────────────────

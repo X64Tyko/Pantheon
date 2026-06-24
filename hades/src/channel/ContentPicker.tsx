@@ -8,8 +8,7 @@ import { FilterSection } from '../components/PickerFilters'
 import type { ChannelDetailStore } from './store'
 
 const TAB_LABELS: Record<PickerTab, string> = {
-  shows: 'Shows', movies: 'Movies', episodes: 'Episodes',
-  playlists: 'Playlists', filler_lists: 'Filler Lists',
+  shows: 'Shows', movies: 'Movies', episodes: 'Episodes', playlists: 'Playlists',
 }
 
 // ─── Main picker ──────────────────────────────────────────────────────────────
@@ -32,7 +31,7 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
         </div>
         <button onClick={() => store.closePicker()} style={{ color: 'var(--hds-txt-3)', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 12, padding: '0 3px', marginLeft: 'auto' }}>✕</button>
       </div>
-      {store.pickerTab !== 'filler_lists' && store.pickerTab !== 'playlists' && (
+      {store.pickerTab !== 'playlists' && (
         <div style={{ padding: '7px 10px', borderBottom: showFilters ? 'none' : '1px solid var(--hds-line-s)', display: 'flex', gap: 6 }}>
           <input value={store.pickerQuery} onChange={e => store.setPickerQuery(e.target.value)} placeholder="Search…" style={{ flex: 1, ...inputStyle, fontSize: 11.5, padding: '6px 9px' }} autoFocus />
           {store.pickerTab === 'episodes' && (
@@ -72,15 +71,10 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
           />
         ) : store.pickerTab === 'episodes' ? (
           <EpisodePickerList store={store} channelId={channelId} query={store.pickerQuery.toLowerCase()} />
-        ) : store.pickerTab === 'playlists' ? (
+        ) : (
           <SimplePickerList
             items={store.pickerPlaylists} getId={p => p.playlist_id} dot={BLOCK_META.episode.edge}
             onAdd={(id, title) => store.addContent(channelId, { content_type: 'playlist', content_id: id, title })}
-          />
-        ) : (
-          <SimplePickerList
-            items={store.pickerFillerLists} getId={f => f.filler_list_id} dot={BLOCK_META.filler.edge}
-            onAdd={(id, title) => store.addContent(channelId, { content_type: 'filler_list', content_id: id, title })}
           />
         )}
       </div>
