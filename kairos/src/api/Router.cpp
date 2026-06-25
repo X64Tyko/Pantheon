@@ -236,9 +236,13 @@ void Router::registerSourceRoutes() {
             res.status = 201;
             ok(res, json{{"source_id", source_id}}.dump());
         } catch (const SQLite::Exception& e) {
-            err(res, 409, e.what()); // likely UNIQUE constraint
+            logErr("POST /api/sources", e);
+            err(res, 409, e.what());
         } catch (const json::exception& e) {
             err(res, 400, e.what());
+        } catch (const std::exception& e) {
+            logErr("POST /api/sources", e);
+            err(res, 500, e.what());
         }
     });
 
@@ -365,9 +369,13 @@ void Router::registerSourceRoutes() {
             res.status = 201;
             ok(res, json{{"library_id", library_id}}.dump());
         } catch (const SQLite::Exception& e) {
+            logErr("POST /api/sources/:id/libraries", e);
             err(res, 409, e.what());
         } catch (const json::exception& e) {
             err(res, 400, e.what());
+        } catch (const std::exception& e) {
+            logErr("POST /api/sources/:id/libraries", e);
+            err(res, 500, e.what());
         }
     });
 
@@ -619,6 +627,7 @@ void Router::registerConfigRoutes() {
             int affected = q.exec();
             ok(res, json{{"cleared", affected}}.dump());
         } catch (const std::exception& e) {
+            logErr("POST /api/config/epg/clear-all", e);
             err(res, 500, e.what());
         }
     });
@@ -658,14 +667,22 @@ void Router::registerConfigRoutes() {
             ok(res, json{{"ok", true}}.dump());
         } catch (const json::exception& e) {
             err(res, 400, e.what());
+        } catch (const std::exception& e) {
+            logErr("PUT /api/config/credentials/:source_id", e);
+            err(res, 500, e.what());
         }
     });
 
     svr_.Delete("/api/config/credentials/:source_id", [this](const Req& req, Res& res) {
         auto sid = req.path_params.at("source_id");
-        conf_.removeSource(sid);
-        sync_.loadSources();
-        ok(res, json{{"ok", true}}.dump());
+        try {
+            conf_.removeSource(sid);
+            sync_.loadSources();
+            ok(res, json{{"ok", true}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/config/credentials/" + sid, e);
+            err(res, 500, e.what());
+        }
     });
 
     svr_.Get("/api/config/path-maps/:source_id", [this](const Req& req, Res& res) {
@@ -692,6 +709,7 @@ void Router::registerConfigRoutes() {
             conf_.setPathMaps(sid, maps);
             ok(res, json{{"ok", true}}.dump());
         } catch (const json::exception& e) { err(res, 400, e.what()); }
+          catch (const std::exception& e) { logErr("PUT /api/config/path-maps/:source_id", e); err(res, 500, e.what()); }
     });
 
     // Arr integrations — Sonarr / Radarr config + add endpoint
@@ -723,7 +741,7 @@ void Router::registerConfigRoutes() {
             if (b.contains("radarr_url"))     setVal("radarr_url",     b["radarr_url"]);
             if (b.contains("radarr_api_key")) setVal("radarr_api_key", b["radarr_api_key"]);
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/config/arr", e); err(res, 400, e.what()); }
     });
 
     // POST /api/arr/add — proxy request to Sonarr (shows) or Radarr (movies)
@@ -840,7 +858,7 @@ void Router::registerConfigRoutes() {
             } else {
                 err(res, 400, "type must be 'show' or 'movie'");
             }
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/arr/add", e); err(res, 400, e.what()); }
     });
 
     // Return one raw (pre-mapping) file path from this source so the user can
@@ -969,9 +987,13 @@ void Router::registerChannelRoutes() {
             res.status = 201;
             ok(res, json{{"channel_id", channel_id}}.dump());
         } catch (const SQLite::Exception& e) {
+            logErr("POST /api/channels", e);
             err(res, 409, e.what());
         } catch (const json::exception& e) {
             err(res, 400, e.what());
+        } catch (const std::exception& e) {
+            logErr("POST /api/channels", e);
+            err(res, 500, e.what());
         }
     });
 
@@ -1018,7 +1040,7 @@ void Router::registerChannelRoutes() {
             if (b.contains("timezone") || b.contains("seed") || b.contains("advance_mode"))
                 clearScheduleCache(id);
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/channels/" + id, e); err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/channels/:id", [this](const Req& req, Res& res) {
@@ -1027,8 +1049,9 @@ void Router::registerChannelRoutes() {
             SQLite::Statement s(db_.get(), "DELETE FROM channel WHERE channel_id = ?");
             s.bind(1, id);
             s.exec();
+            std::cout << "[api] deleted channel: " << id << "\n";
             ok(res, json{{"deleted", id}}.dump());
-        } catch (const std::exception& e) { err(res, 500, e.what()); }
+        } catch (const std::exception& e) { logErr("DELETE /api/channels/" + id, e); err(res, 500, e.what()); }
     });
 
     // ── Export / Import ───────────────────────────────────────────────────────
@@ -1419,7 +1442,7 @@ void Router::registerChannelRoutes() {
             }
 
             ok(res, json{{"blocks", preview_blocks}, {"unresolved_count", unresolved_count}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/channels/import/preview", e); err(res, 400, e.what()); }
     });
 
     svr_.Post("/api/channels/import", [this](const Req& req, Res& res) {
@@ -1798,8 +1821,9 @@ void Router::registerChannelRoutes() {
             }
 
             res.status = 201;
+            std::cout << "[api] imported channel: " << channel_id << "\n";
             ok(res, json{{"channel_id", channel_id}, {"unresolved", unresolved}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/channels/import", e); err(res, 400, e.what()); }
     });
 
     // ── Channel filler entry CRUD ─────────────────────────────────────────────
@@ -1851,8 +1875,8 @@ void Router::registerChannelRoutes() {
             if (season_filter.has_value()) resp["season_filter"] = season_filter.value();
             res.status = 201;
             ok(res, resp.dump());
-        } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
-          catch (const std::exception& e)    { err(res, 400, e.what()); }
+        } catch (const SQLite::Exception& e) { logErr("POST /api/channels/:id/filler", e); err(res, 409, e.what()); }
+          catch (const std::exception& e)    { logErr("POST /api/channels/:id/filler", e); err(res, 400, e.what()); }
     });
 
     svr_.Patch("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res) {
@@ -1870,14 +1894,19 @@ void Router::registerChannelRoutes() {
                 s.bind(1, b["weight"].get<int>()); s.bind(2, eid); s.exec();
             }
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/channels/:id/filler/:eid", e); err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res) {
         auto eid = std::stoi(req.path_params.at("eid"));
-        SQLite::Statement s(db_.get(), "DELETE FROM channel_filler_entry WHERE id = ?");
-        s.bind(1, eid); s.exec();
-        ok(res, json{{"deleted", eid}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM channel_filler_entry WHERE id = ?");
+            s.bind(1, eid); s.exec();
+            ok(res, json{{"deleted", eid}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/channels/:id/filler/" + std::to_string(eid), e);
+            err(res, 500, e.what());
+        }
     });
 }
 
@@ -2087,8 +2116,9 @@ void Router::registerBlockRoutes() {
 
             clearScheduleCache(channel_id);
             res.status = 201;
+            std::cout << "[api] created block: " << block_id << " (channel: " << channel_id << ")\n";
             ok(res, json{{"block_id", block_id}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/channels/:id/blocks", e); err(res, 400, e.what()); }
     });
 
     // Update block properties
@@ -2146,7 +2176,7 @@ void Router::registerBlockRoutes() {
             }
             clearScheduleCache(channel_id);
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/channels/:id/blocks/" + bid, e); err(res, 400, e.what()); }
     });
 
     // Delete block (cascade deletes content via FK)
@@ -2157,8 +2187,9 @@ void Router::registerBlockRoutes() {
             SQLite::Statement s(db_.get(), "DELETE FROM block WHERE block_id = ?");
             s.bind(1, bid); s.exec();
             clearScheduleCache(channel_id);
+            std::cout << "[api] deleted block: " << bid << " (channel: " << channel_id << ")\n";
             ok(res, json{{"deleted", bid}}.dump());
-        } catch (const std::exception& e) { err(res, 500, e.what()); }
+        } catch (const std::exception& e) { logErr("DELETE /api/channels/:id/blocks/" + bid, e); err(res, 500, e.what()); }
     });
 
     // Add content to block
@@ -2201,8 +2232,8 @@ void Router::registerBlockRoutes() {
             clearScheduleCache(channel_id);
             res.status = 201;
             ok(res, json{{"id", db_.get().getLastInsertRowid()}, {"position", position}}.dump());
-        } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
-          catch (const std::exception& e)    { err(res, 400, e.what()); }
+        } catch (const SQLite::Exception& e) { logErr("POST /api/channels/:id/blocks/:bid/content", e); err(res, 409, e.what()); }
+          catch (const std::exception& e)    { logErr("POST /api/channels/:id/blocks/:bid/content", e); err(res, 400, e.what()); }
     });
 
     // Update content item (season_filter or reorder)
@@ -2249,17 +2280,22 @@ void Router::registerBlockRoutes() {
             }
             clearScheduleCache(channel_id);
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/channels/:id/blocks/:bid/content/" + cid, e); err(res, 400, e.what()); }
     });
 
     // Remove content item
     svr_.Delete("/api/channels/:id/blocks/:bid/content/:cid", [this](const Req& req, Res& res) {
         auto channel_id = req.path_params.at("id");
         auto cid        = req.path_params.at("cid");
-        SQLite::Statement s(db_.get(), "DELETE FROM block_content WHERE id = ?");
-        s.bind(1, std::stoi(cid)); s.exec();
-        clearScheduleCache(channel_id);
-        ok(res, json{{"deleted", std::stoi(cid)}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM block_content WHERE id = ?");
+            s.bind(1, std::stoi(cid)); s.exec();
+            clearScheduleCache(channel_id);
+            ok(res, json{{"deleted", std::stoi(cid)}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/channels/:id/blocks/:bid/content/" + cid, e);
+            err(res, 500, e.what());
+        }
     });
 
     // Reset cursor for a show content item
@@ -2267,51 +2303,55 @@ void Router::registerBlockRoutes() {
         auto channel_id = req.path_params.at("id");
         auto block_id   = req.path_params.at("bid");
         int  cid        = std::stoi(req.path_params.at("cid"));
+        try {
+            std::string content_type, content_id;
+            {
+                SQLite::Statement q(db_.get(),
+                    "SELECT content_type, content_id FROM block_content WHERE id = ?");
+                q.bind(1, cid);
+                if (!q.executeStep()) { err(res, 404, "content item not found"); return; }
+                content_type = q.getColumn(0).getString();
+                content_id   = q.getColumn(1).getString();
+            }
+            if (content_type != "show") { err(res, 400, "cursor reset only applies to show content"); return; }
 
-        std::string content_type, content_id;
-        {
-            SQLite::Statement q(db_.get(),
-                "SELECT content_type, content_id FROM block_content WHERE id = ?");
-            q.bind(1, cid);
-            if (!q.executeStep()) { err(res, 404, "content item not found"); return; }
-            content_type = q.getColumn(0).getString();
-            content_id   = q.getColumn(1).getString();
+            std::string advancement, cursor_scope;
+            {
+                SQLite::Statement q(db_.get(),
+                    "SELECT advancement, cursor_scope FROM block WHERE block_id = ?");
+                q.bind(1, block_id);
+                if (!q.executeStep()) { err(res, 404, "block not found"); return; }
+                advancement  = q.getColumn(0).getString();
+                cursor_scope = q.getColumn(1).getString();
+            }
+
+            if (advancement == "rerun_shuffle" || advancement == "rerun_smart") {
+                // Rerun episode cursors are block-scoped show_rerun rows keyed by content_id.
+                // Only delete this show's episode position; leave block_state (show selection) intact.
+                SQLite::Statement s(db_.get(), R"(
+                    DELETE FROM media_cursor
+                    WHERE content_type='show_rerun' AND content_id=? AND cursor_scope='block' AND scope_id=?
+                )");
+                s.bind(1, content_id); s.bind(2, block_id); s.exec();
+            } else {
+                std::string scope_id;
+                if      (cursor_scope == "global")  scope_id = "";
+                else if (cursor_scope == "channel") scope_id = channel_id;
+                else                                scope_id = block_id;
+
+                SQLite::Statement s(db_.get(), R"(
+                    DELETE FROM media_cursor
+                    WHERE content_type='show' AND content_id=? AND cursor_scope=? AND scope_id=?
+                )");
+                s.bind(1, content_id); s.bind(2, cursor_scope); s.bind(3, scope_id); s.exec();
+            }
+
+            clearScheduleCache(channel_id);
+            ok(res, json{{"ok", true}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/channels/:id/blocks/:bid/content/:cid/cursor", e);
+            err(res, 500, e.what());
         }
-        if (content_type != "show") { err(res, 400, "cursor reset only applies to show content"); return; }
-
-        std::string advancement, cursor_scope;
-        {
-            SQLite::Statement q(db_.get(),
-                "SELECT advancement, cursor_scope FROM block WHERE block_id = ?");
-            q.bind(1, block_id);
-            if (!q.executeStep()) { err(res, 404, "block not found"); return; }
-            advancement  = q.getColumn(0).getString();
-            cursor_scope = q.getColumn(1).getString();
-        }
-
-        if (advancement == "rerun_shuffle" || advancement == "rerun_smart") {
-            // Rerun episode cursors are block-scoped show_rerun rows keyed by content_id.
-            // Only delete this show's episode position; leave block_state (show selection) intact.
-            SQLite::Statement s(db_.get(), R"(
-                DELETE FROM media_cursor
-                WHERE content_type='show_rerun' AND content_id=? AND cursor_scope='block' AND scope_id=?
-            )");
-            s.bind(1, content_id); s.bind(2, block_id); s.exec();
-        } else {
-            std::string scope_id;
-            if      (cursor_scope == "global")  scope_id = "";
-            else if (cursor_scope == "channel") scope_id = channel_id;
-            else                                scope_id = block_id;
-
-            SQLite::Statement s(db_.get(), R"(
-                DELETE FROM media_cursor
-                WHERE content_type='show' AND content_id=? AND cursor_scope=? AND scope_id=?
-            )");
-            s.bind(1, content_id); s.bind(2, cursor_scope); s.bind(3, scope_id); s.exec();
-        }
-
-        clearScheduleCache(channel_id);
-        ok(res, json{{"ok", true}}.dump());
     });
 
     // Create Kairos (+ optionally Plex) playlist from block content
@@ -2466,7 +2506,7 @@ void Router::registerBlockRoutes() {
 
             res.status = 201;
             ok(res, result.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/channels/:id/blocks/:bid/playlist", e); err(res, 400, e.what()); }
     });
 
     // ── Episode groups (multipart markup) ────────────────────────────────────
@@ -2514,15 +2554,20 @@ void Router::registerBlockRoutes() {
             s.exec();
             res.status = 201;
             ok(res, json{{"group_id", group_id}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/shows/:id/groups", e); err(res, 400, e.what()); }
     });
 
     // Delete group
     svr_.Delete("/api/shows/:id/groups/:gid", [this](const Req& req, Res& res) {
         auto gid = req.path_params.at("gid");
-        SQLite::Statement s(db_.get(), "DELETE FROM episode_group WHERE group_id=?");
-        s.bind(1, gid); s.exec();
-        ok(res, json{{"deleted", gid}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM episode_group WHERE group_id=?");
+            s.bind(1, gid); s.exec();
+            ok(res, json{{"deleted", gid}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/shows/:id/groups/" + gid, e);
+            err(res, 500, e.what());
+        }
     });
 
     // Add member to group
@@ -2538,16 +2583,21 @@ void Router::registerBlockRoutes() {
             s.bind(1, gid); s.bind(2, episode_id); s.bind(3, part_num); s.exec();
             res.status = 201;
             ok(res, json{{"id", db_.get().getLastInsertRowid()}, {"part_num", part_num}}.dump());
-        } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
-          catch (const std::exception& e)    { err(res, 400, e.what()); }
+        } catch (const SQLite::Exception& e) { logErr("POST /api/shows/:id/groups/:gid/members", e); err(res, 409, e.what()); }
+          catch (const std::exception& e)    { logErr("POST /api/shows/:id/groups/:gid/members", e); err(res, 400, e.what()); }
     });
 
     // Remove member
     svr_.Delete("/api/shows/:id/groups/:gid/members/:mid", [this](const Req& req, Res& res) {
         auto mid = req.path_params.at("mid");
-        SQLite::Statement s(db_.get(), "DELETE FROM episode_group_member WHERE id=?");
-        s.bind(1, std::stoi(mid)); s.exec();
-        ok(res, json{{"deleted", std::stoi(mid)}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM episode_group_member WHERE id=?");
+            s.bind(1, std::stoi(mid)); s.exec();
+            ok(res, json{{"deleted", std::stoi(mid)}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/shows/:id/groups/:gid/members/" + mid, e);
+            err(res, 500, e.what());
+        }
     });
 
     // Automatic grouping detection — scans episode titles for multi-part patterns
@@ -2894,8 +2944,8 @@ void Router::registerBlockRoutes() {
             if (sf_block.has_value()) bfresp["season_filter"] = sf_block.value();
             res.status = 201;
             ok(res, bfresp.dump());
-        } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
-          catch (const std::exception& e)    { err(res, 400, e.what()); }
+        } catch (const SQLite::Exception& e) { logErr("POST /api/channels/:id/blocks/:bid/filler", e); err(res, 409, e.what()); }
+          catch (const std::exception& e)    { logErr("POST /api/channels/:id/blocks/:bid/filler", e); err(res, 400, e.what()); }
     });
 
     svr_.Patch("/api/channels/:id/blocks/:bid/filler/:eid", [this](const Req& req, Res& res) {
@@ -2915,16 +2965,21 @@ void Router::registerBlockRoutes() {
             }
             clearScheduleCache(channel_id);
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/channels/:id/blocks/:bid/filler/:eid", e); err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/channels/:id/blocks/:bid/filler/:eid", [this](const Req& req, Res& res) {
         auto channel_id = req.path_params.at("id");
         auto eid        = std::stoi(req.path_params.at("eid"));
-        SQLite::Statement s(db_.get(), "DELETE FROM block_filler_entry WHERE id = ?");
-        s.bind(1, eid); s.exec();
-        clearScheduleCache(channel_id);
-        ok(res, json{{"deleted", eid}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM block_filler_entry WHERE id = ?");
+            s.bind(1, eid); s.exec();
+            clearScheduleCache(channel_id);
+            ok(res, json{{"deleted", eid}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/channels/:id/blocks/:bid/filler/" + std::to_string(eid), e);
+            err(res, 500, e.what());
+        }
     });
 
     // ── Channel bumpers ───────────────────────────────────────────────────────
@@ -3016,7 +3071,7 @@ void Router::registerBlockRoutes() {
             if (bmp_sf.has_value()) bmpResp["season_filter"] = bmp_sf.value();
             res.status = 201;
             ok(res, bmpResp.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/channels/:id/bumpers", e); err(res, 400, e.what()); }
     });
 
     svr_.Patch("/api/channels/:id/bumpers/:bid", [this](const Req& req, Res& res) {
@@ -3041,7 +3096,7 @@ void Router::registerBlockRoutes() {
             if (b.contains("position"))     updI("position",    b["position"]);
             clearScheduleCache(channel_id);
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/channels/:id/bumpers/:bid", e); err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/channels/:id/bumpers/:bid", [this](const Req& req, Res& res) {
@@ -3052,7 +3107,7 @@ void Router::registerBlockRoutes() {
             s.bind(1, bumper_id); s.exec();
             clearScheduleCache(channel_id);
             ok(res, json{{"deleted", bumper_id}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("DELETE /api/channels/:id/bumpers/" + std::to_string(bumper_id), e); err(res, 500, e.what()); }
     });
 }
 
@@ -3502,7 +3557,7 @@ void Router::registerContentRoutes() {
             SQLite::Statement lk(db_.get(), "UPDATE show SET locked = 1 WHERE show_id = ?");
             lk.bind(1, id); lk.exec();
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/shows/" + id, e); err(res, 400, e.what()); }
     });
 
     svr_.Get("/api/shows/:id/thumb", [this](const Req& req, Res& res) {
@@ -3643,7 +3698,7 @@ void Router::registerContentRoutes() {
             SQLite::Statement lk(db_.get(), "UPDATE movie SET locked = 1 WHERE movie_id = ?");
             lk.bind(1, id); lk.exec();
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/movies/" + id, e); err(res, 400, e.what()); }
     });
 
     svr_.Get("/api/movies/:id/thumb", [this](const Req& req, Res& res) {
@@ -3870,7 +3925,7 @@ void Router::registerPlaylistRoutes() {
             s.bind(1, playlist_id); s.bind(2, title); s.exec();
             res.status = 201;
             ok(res, json{{"playlist_id", playlist_id}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/playlists", e); err(res, 400, e.what()); }
     });
 
     svr_.Get("/api/playlists/:id", [this](const Req& req, Res& res) {
@@ -3934,10 +3989,15 @@ void Router::registerPlaylistRoutes() {
     // Remove the Plex link from a playlist (makes it custom again; items are kept)
     svr_.Delete("/api/playlists/:id/plex-link", [this](const Req& req, Res& res) {
         auto id = req.path_params.at("id");
-        SQLite::Statement s(db_.get(),
-            "DELETE FROM plex_list_link WHERE list_type = 'playlist' AND list_id = ?");
-        s.bind(1, id); s.exec();
-        res.status = 204; res.set_content("", "application/json");
+        try {
+            SQLite::Statement s(db_.get(),
+                "DELETE FROM plex_list_link WHERE list_type = 'playlist' AND list_id = ?");
+            s.bind(1, id); s.exec();
+            res.status = 204; res.set_content("", "application/json");
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/playlists/:id/plex-link", e);
+            err(res, 500, e.what());
+        }
     });
 
     svr_.Patch("/api/playlists/:id", [this](const Req& req, Res& res) {
@@ -3957,14 +4017,20 @@ void Router::registerPlaylistRoutes() {
                 s.bind(1, mode); s.bind(2, id); s.exec();
             }
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/playlists/" + id, e); err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/playlists/:id", [this](const Req& req, Res& res) {
         auto id = req.path_params.at("id");
-        SQLite::Statement s(db_.get(), "DELETE FROM playlist WHERE playlist_id = ?");
-        s.bind(1, id); s.exec();
-        ok(res, json{{"deleted", id}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM playlist WHERE playlist_id = ?");
+            s.bind(1, id); s.exec();
+            std::cout << "[api] deleted playlist: " << id << "\n";
+            ok(res, json{{"deleted", id}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/playlists/" + id, e);
+            err(res, 500, e.what());
+        }
     });
 
     svr_.Post("/api/playlists/:id/items", [this](const Req& req, Res& res) {
@@ -3988,8 +4054,8 @@ void Router::registerPlaylistRoutes() {
             s.exec();
             res.status = 201;
             ok(res, json{{"id", db_.get().getLastInsertRowid()}, {"position", position}}.dump());
-        } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
-          catch (const std::exception& e)    { err(res, 400, e.what()); }
+        } catch (const SQLite::Exception& e) { logErr("POST /api/playlists/:id/items", e); err(res, 409, e.what()); }
+          catch (const std::exception& e)    { logErr("POST /api/playlists/:id/items", e); err(res, 400, e.what()); }
     });
 
     // Bulk-add items — single transaction; skips duplicates
@@ -4020,26 +4086,31 @@ void Router::registerPlaylistRoutes() {
                 tx.commit();
             }
             ok(res, json{{"added", added}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/playlists/:id/items/bulk", e); err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/playlists/:id/items/:iid", [this](const Req& req, Res& res) {
         auto playlist_id = req.path_params.at("id");
         auto iid         = std::stoi(req.path_params.at("iid"));
-        int  pos         = -1;
-        {
-            SQLite::Statement q(db_.get(),
-                "SELECT position FROM playlist_item WHERE id = ? AND playlist_id = ?");
-            q.bind(1, iid); q.bind(2, playlist_id);
-            if (!q.executeStep()) { err(res, 404, "item not found"); return; }
-            pos = q.getColumn(0).getInt();
+        try {
+            int  pos         = -1;
+            {
+                SQLite::Statement q(db_.get(),
+                    "SELECT position FROM playlist_item WHERE id = ? AND playlist_id = ?");
+                q.bind(1, iid); q.bind(2, playlist_id);
+                if (!q.executeStep()) { err(res, 404, "item not found"); return; }
+                pos = q.getColumn(0).getInt();
+            }
+            SQLite::Statement del(db_.get(), "DELETE FROM playlist_item WHERE id = ?");
+            del.bind(1, iid); del.exec();
+            SQLite::Statement ren(db_.get(),
+                "UPDATE playlist_item SET position = position - 1 WHERE playlist_id = ? AND position > ?");
+            ren.bind(1, playlist_id); ren.bind(2, pos); ren.exec();
+            ok(res, json{{"deleted", iid}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/playlists/:id/items/" + std::to_string(iid), e);
+            err(res, 500, e.what());
         }
-        SQLite::Statement del(db_.get(), "DELETE FROM playlist_item WHERE id = ?");
-        del.bind(1, iid); del.exec();
-        SQLite::Statement ren(db_.get(),
-            "UPDATE playlist_item SET position = position - 1 WHERE playlist_id = ? AND position > ?");
-        ren.bind(1, playlist_id); ren.bind(2, pos); ren.exec();
-        ok(res, json{{"deleted", iid}}.dump());
     });
 
     svr_.Patch("/api/playlists/:id/items/:iid", [this](const Req& req, Res& res) {
@@ -4054,7 +4125,7 @@ void Router::registerPlaylistRoutes() {
                 s.bind(1, new_pos); s.bind(2, iid); s.bind(3, playlist_id); s.exec();
             }
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/playlists/:id/items/" + std::to_string(iid), e); err(res, 400, e.what()); }
     });
 }
 
@@ -4121,7 +4192,7 @@ void Router::registerFillerRoutes() {
             s.bind(1, fid); s.bind(2, title); s.bind(3, advancement); s.exec();
             res.status = 201;
             ok(res, json{{"filler_list_id", fid}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/filler-lists", e); err(res, 400, e.what()); }
     });
 
     svr_.Get("/api/filler-lists/:id", [this](const Req& req, Res& res) {
@@ -4183,10 +4254,15 @@ void Router::registerFillerRoutes() {
     // Remove the Plex link from a filler list
     svr_.Delete("/api/filler-lists/:id/plex-link", [this](const Req& req, Res& res) {
         auto id = req.path_params.at("id");
-        SQLite::Statement s(db_.get(),
-            "DELETE FROM plex_list_link WHERE list_type = 'filler_list' AND list_id = ?");
-        s.bind(1, id); s.exec();
-        res.status = 204; res.set_content("", "application/json");
+        try {
+            SQLite::Statement s(db_.get(),
+                "DELETE FROM plex_list_link WHERE list_type = 'filler_list' AND list_id = ?");
+            s.bind(1, id); s.exec();
+            res.status = 204; res.set_content("", "application/json");
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/filler-lists/:id/plex-link", e);
+            err(res, 500, e.what());
+        }
     });
 
     svr_.Patch("/api/filler-lists/:id", [this](const Req& req, Res& res) {
@@ -4204,14 +4280,20 @@ void Router::registerFillerRoutes() {
                 s.bind(1, b["advancement"].get<std::string>()); s.bind(2, id); s.exec();
             }
             ok(res, json{{"ok", true}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("PATCH /api/filler-lists/" + id, e); err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/filler-lists/:id", [this](const Req& req, Res& res) {
         auto id = req.path_params.at("id");
-        SQLite::Statement s(db_.get(), "DELETE FROM filler_list WHERE filler_list_id = ?");
-        s.bind(1, id); s.exec();
-        ok(res, json{{"deleted", id}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM filler_list WHERE filler_list_id = ?");
+            s.bind(1, id); s.exec();
+            std::cout << "[api] deleted filler list: " << id << "\n";
+            ok(res, json{{"deleted", id}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/filler-lists/" + id, e);
+            err(res, 500, e.what());
+        }
     });
 
     svr_.Post("/api/filler-lists/:id/items", [this](const Req& req, Res& res) {
@@ -4237,15 +4319,20 @@ void Router::registerFillerRoutes() {
             s.exec();
             res.status = 201;
             ok(res, json{{"id", db_.get().getLastInsertRowid()}, {"position", position}}.dump());
-        } catch (const SQLite::Exception& e) { err(res, 409, e.what()); }
-          catch (const std::exception& e)    { err(res, 400, e.what()); }
+        } catch (const SQLite::Exception& e) { logErr("POST /api/filler-lists/:id/items", e); err(res, 409, e.what()); }
+          catch (const std::exception& e)    { logErr("POST /api/filler-lists/:id/items", e); err(res, 400, e.what()); }
     });
 
     svr_.Delete("/api/filler-lists/:id/items/:iid", [this](const Req& req, Res& res) {
         auto iid = std::stoi(req.path_params.at("iid"));
-        SQLite::Statement s(db_.get(), "DELETE FROM filler_list_item WHERE id = ?");
-        s.bind(1, iid); s.exec();
-        ok(res, json{{"deleted", iid}}.dump());
+        try {
+            SQLite::Statement s(db_.get(), "DELETE FROM filler_list_item WHERE id = ?");
+            s.bind(1, iid); s.exec();
+            ok(res, json{{"deleted", iid}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/filler-lists/:id/items/" + std::to_string(iid), e);
+            err(res, 500, e.what());
+        }
     });
 
     // Bulk-add items — single transaction; skips duplicates
@@ -4277,7 +4364,7 @@ void Router::registerFillerRoutes() {
                 tx.commit();
             }
             ok(res, json{{"added", added}}.dump());
-        } catch (const std::exception& e) { err(res, 400, e.what()); }
+        } catch (const std::exception& e) { logErr("POST /api/filler-lists/:id/items/bulk", e); err(res, 400, e.what()); }
     });
 }
 
@@ -4755,6 +4842,7 @@ void Router::registerSchedulerRoutes() {
             }
             ok(res, json{{"ok", true}}.dump());
         } catch (const std::exception& e) {
+            logErr("POST /api/channels/played", e);
             err(res, 400, e.what());
         }
     });

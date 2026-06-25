@@ -28,16 +28,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SQLiteCpp)
 
-# GCC doesn't transitively pull in <cstdint> the way MSVC does, so patch the
-# two SQLiteCpp headers that use uint32_t etc. without including it.
-foreach(_hdr Statement.h Column.h)
-    set(_path "${sqlitecpp_SOURCE_DIR}/include/SQLiteCpp/${_hdr}")
-    file(READ "${_path}" _src)
-    if(NOT _src MATCHES "#include <cstdint>")
-        string(REPLACE "#include <memory>" "#include <memory>\n#include <cstdint>" _src "${_src}")
-        file(WRITE "${_path}" "${_src}")
-    endif()
-endforeach()
+# GCC doesn't pull <cstdint> in implicitly the way MSVC does; force-include it
+# when compiling SQLiteCpp so uint32_t etc. are visible without touching sources.
+target_compile_options(SQLiteCpp PRIVATE -include cstdint)
 
 # ── cpp-httplib (header-only) ─────────────────────────────────────────────────
 FetchContent_Declare(
