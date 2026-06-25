@@ -164,7 +164,7 @@ export type ContentType            = 'show' | 'movie' | 'episode' | 'playlist' |
 
 export interface FillerEntry {
   id:            number
-  content_type:  'show' | 'movie' | 'playlist' | 'filler_list'
+  content_type:  'show' | 'movie' | 'episode' | 'playlist' | 'filler_list'
   content_id:    string
   title:         string                // display name, populated server-side
   advancement:   FillerEntryAdvancement

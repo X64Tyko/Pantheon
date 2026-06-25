@@ -344,10 +344,11 @@ const BlockEditorModal = observer(function BlockEditorModal({ channelId, store }
                         onClick={doExport}
                         disabled={!exportTitle.trim() || exportSaving}
                         style={goldBtnStyle}
+                        className="hds-btn-gold"
                       >
                         {exportSaving ? 'Creating…' : 'Create Playlist'}
                       </button>
-                      <button onClick={() => setExportOpen(false)} style={ghostBtnStyle}>Cancel</button>
+                      <button onClick={() => setExportOpen(false)} style={ghostBtnStyle} className="hds-btn-ghost">Cancel</button>
                     </div>
                   </>
                 )}
@@ -360,20 +361,20 @@ const BlockEditorModal = observer(function BlockEditorModal({ channelId, store }
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
           {store.editing ? (
             <>
-              <button onClick={() => store.save(channelId)} disabled={store.saving || d.day_mask === 0} style={goldBtnStyle}>
+              <button onClick={() => store.save(channelId)} disabled={store.saving || d.day_mask === 0} style={goldBtnStyle} className="hds-btn-gold">
                 {store.saving ? 'Saving…' : 'Save Changes'}
               </button>
-              <button onClick={() => store.duplicate(channelId)} style={ghostBtnStyle}>⧉ Duplicate</button>
-              <button onClick={openExport} style={ghostBtnStyle}>+ Playlist</button>
+              <button onClick={() => store.duplicate(channelId)} style={ghostBtnStyle} className="hds-btn-ghost">⧉ Duplicate</button>
+              <button onClick={openExport} style={ghostBtnStyle} className="hds-btn-ghost">+ Playlist</button>
               <div style={{ flex: 1 }} />
-              <button onClick={() => store.deleteBlock(channelId, store.editing!.block_id)} style={dangerBtnStyle}>Delete</button>
+              <button onClick={() => store.deleteBlock(channelId, store.editing!.block_id)} style={dangerBtnStyle} className="hds-btn-danger">Delete</button>
             </>
           ) : (
             <>
-              <button onClick={() => store.save(channelId)} disabled={store.saving || d.day_mask === 0} style={goldBtnStyle}>
+              <button onClick={() => store.save(channelId)} disabled={store.saving || d.day_mask === 0} style={goldBtnStyle} className="hds-btn-gold">
                 {store.saving ? 'Saving…' : 'Create Block'}
               </button>
-              <button onClick={() => { store.closeEditor(); store.modalOpen = false }} style={ghostBtnStyle}>Cancel</button>
+              <button onClick={() => { store.closeEditor(); store.modalOpen = false }} style={ghostBtnStyle} className="hds-btn-ghost">Cancel</button>
             </>
           )}
         </div>

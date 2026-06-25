@@ -3,22 +3,32 @@ import { observer } from 'mobx-react-lite'
 import { BLOCK_META, FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
 import { inputStyle, filterInputStyle } from './styles'
 import { api } from '../api/client'
-import type { FillerEntryAdvancement, FillerSelectionMode, Show, Movie, Playlist } from '../api/types'
+import type { FillerEntryAdvancement, FillerSelectionMode, Show, Movie, Playlist, EpisodeSearchResult } from '../api/types'
 import type { ChannelDetailStore } from './store'
-import { ShowMediaTile, MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty } from './BrowserTiles'
+import { ShowMediaTile, MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty, LoadMoreSentinel } from './BrowserTiles'
 import type { InfoItem } from './BrowserTiles'
 
-type FillerTab = 'shows' | 'movies' | 'playlists'
+type FillerTab = 'shows' | 'movies' | 'episodes' | 'playlists'
 
 const FillerOverlay = observer(function FillerOverlay({ channelId, store }: { channelId: string; store: ChannelDetailStore }) {
-  const [tab,      setTab]      = useState<FillerTab>('shows')
-  const [query,    setQuery]    = useState('')
+  const [tab,         setTab]         = useState<FillerTab>('shows')
+  const [query,       setQuery]       = useState('')
+  const [maxDur,      setMaxDur]      = useState('')
+  const [sFilter,     setSFilter]     = useState('')
 
-  const [shows,          setShows]          = useState<Show[]>([])
-  const [showsLoading,   setShowsLoading]   = useState(false)
-  const [movies,         setMovies]         = useState<Movie[]>([])
-  const [moviesLoading,  setMoviesLoading]  = useState(false)
-  const [playlists,      setPlaylists]      = useState<Playlist[]>([])
+  const [shows,            setShows]            = useState<Show[]>([])
+  const [showsLoading,     setShowsLoading]     = useState(false)
+  const [showsTotal,       setShowsTotal]       = useState(0)
+  const [showsLoadingMore, setShowsLoadingMore] = useState(false)
+  const [movies,           setMovies]           = useState<Movie[]>([])
+  const [moviesLoading,    setMoviesLoading]    = useState(false)
+  const [moviesTotal,      setMoviesTotal]      = useState(0)
+  const [moviesLoadingMore,setMoviesLoadingMore]= useState(false)
+  const [eps,              setEps]              = useState<EpisodeSearchResult[]>([])
+  const [epsLoading,       setEpsLoading]       = useState(false)
+  const [epsHasMore,       setEpsHasMore]       = useState(false)
+  const [epsLoadingMore,   setEpsLoadingMore]   = useState(false)
+  const [playlists,        setPlaylists]        = useState<Playlist[]>([])
   const [playlistsLoading, setPlaylistsLoading] = useState(false)
 
   const { infoItem, setInfoItem, infoDetail, infoSeasons, detailLoading } = useDetailPanel()
@@ -30,17 +40,24 @@ const FillerOverlay = observer(function FillerOverlay({ channelId, store }: { ch
   useEffect(() => {
     const ctrl = new AbortController()
     if (tab === 'shows') {
-      setShowsLoading(true)
-      api.getShows({ limit: 100, q: query || undefined })
-        .then(r => { if (!ctrl.signal.aborted) setShows(r.items) })
+      setShowsLoading(true); setShowsTotal(0)
+      api.getShows({ limit: 80, q: query || undefined })
+        .then(r => { if (!ctrl.signal.aborted) { setShows(r.items); setShowsTotal(r.total) } })
         .catch(() => {})
         .finally(() => { if (!ctrl.signal.aborted) setShowsLoading(false) })
     } else if (tab === 'movies') {
-      setMoviesLoading(true)
-      api.getMovies({ limit: 100, q: query || undefined })
-        .then(r => { if (!ctrl.signal.aborted) setMovies(r.items) })
+      setMoviesLoading(true); setMoviesTotal(0)
+      api.getMovies({ limit: 80, q: query || undefined })
+        .then(r => { if (!ctrl.signal.aborted) { setMovies(r.items); setMoviesTotal(r.total) } })
         .catch(() => {})
         .finally(() => { if (!ctrl.signal.aborted) setMoviesLoading(false) })
+    } else if (tab === 'episodes') {
+      setEpsLoading(true); setEpsHasMore(false)
+      const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
+      api.searchEpisodes({ q: query || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 })
+        .then(r => { if (!ctrl.signal.aborted) { setEps(r.items); setEpsHasMore(r.items.length >= 40) } })
+        .catch(() => {})
+        .finally(() => { if (!ctrl.signal.aborted) setEpsLoading(false) })
     } else {
       setPlaylistsLoading(true)
       api.getPlaylists()
@@ -49,7 +66,35 @@ const FillerOverlay = observer(function FillerOverlay({ channelId, store }: { ch
         .finally(() => { if (!ctrl.signal.aborted) setPlaylistsLoading(false) })
     }
     return () => ctrl.abort()
-  }, [tab, query])
+  }, [tab, query, sFilter])
+
+  const loadMoreShows = () => {
+    if (showsLoadingMore || shows.length >= showsTotal) return
+    setShowsLoadingMore(true)
+    api.getShows({ limit: 80, offset: shows.length, q: query || undefined })
+      .then(r => { setShows(s => [...s, ...r.items]); setShowsTotal(r.total) })
+      .catch(() => {})
+      .finally(() => setShowsLoadingMore(false))
+  }
+
+  const loadMoreMovies = () => {
+    if (moviesLoadingMore || movies.length >= moviesTotal) return
+    setMoviesLoadingMore(true)
+    api.getMovies({ limit: 80, offset: movies.length, q: query || undefined })
+      .then(r => { setMovies(m => [...m, ...r.items]); setMoviesTotal(r.total) })
+      .catch(() => {})
+      .finally(() => setMoviesLoadingMore(false))
+  }
+
+  const loadMoreEps = () => {
+    if (epsLoadingMore || !epsHasMore) return
+    setEpsLoadingMore(true)
+    const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
+    api.searchEpisodes({ q: query || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40, offset: eps.length })
+      .then(r => { setEps(e => [...e, ...r.items]); setEpsHasMore(r.items.length >= 40) })
+      .catch(() => {})
+      .finally(() => setEpsLoadingMore(false))
+  }
 
   const isAdded = (ct: string, cid: string, sf?: number) =>
     entries.some(e => e.content_type === ct && e.content_id === cid &&
@@ -108,54 +153,98 @@ const FillerOverlay = observer(function FillerOverlay({ channelId, store }: { ch
             <>
               <div style={{ flexShrink: 0, padding: '10px 14px 0', borderBottom: '1px solid var(--hds-line-s)' }}>
                 <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 7, padding: 3, width: 'fit-content', marginBottom: 8 }}>
-                  {(['shows', 'movies', 'playlists'] as FillerTab[]).map(t => (
-                    <button key={t} onClick={() => { setTab(t); setQuery(''); setInfoItem(null) }}
+                  {(['shows', 'movies', 'episodes', 'playlists'] as FillerTab[]).map(t => (
+                    <button key={t} onClick={() => { setTab(t); setQuery(''); setSFilter(''); setInfoItem(null) }}
                       style={{ padding: '4px 12px', border: 'none', borderRadius: 5, background: tab === t ? 'var(--hds-violet)' : 'transparent', color: tab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer', textTransform: 'capitalize' }}>
                       {t}
                     </button>
                   ))}
                 </div>
-                {tab !== 'playlists' && (
-                  <div style={{ marginBottom: 10 }}>
+                <div style={{ marginBottom: 10, display: 'flex', gap: 6 }}>
+                  {tab !== 'playlists' && (
                     <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search…"
-                      style={{ ...inputStyle, width: '100%', fontSize: 11.5, padding: '6px 9px', boxSizing: 'border-box' }} />
-                  </div>
-                )}
+                      style={{ ...inputStyle, flex: 1, fontSize: 11.5, padding: '6px 9px' }} />
+                  )}
+                  {tab === 'playlists' && <div style={{ flex: 1 }} />}
+                  {tab === 'episodes' && (
+                    <input type="number" min={0} value={sFilter} onChange={e => setSFilter(e.target.value)}
+                      placeholder="S#" title="Filter by season"
+                      style={{ ...inputStyle, width: 52, fontSize: 11, padding: '6px 9px' }} />
+                  )}
+                  {(tab === 'movies' || tab === 'episodes' || tab === 'playlists') && (
+                    <input type="number" min={1} value={maxDur} onChange={e => setMaxDur(e.target.value)}
+                      placeholder="≤m" title="Max duration in minutes"
+                      style={{ ...inputStyle, width: 60, fontSize: 11, padding: '6px 9px' }} />
+                  )}
+                </div>
               </div>
               <div style={{ flex: 1, overflow: 'auto' }} className="scrollbar-dark">
                 {isLoading ? (
                   <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
                 ) : tab === 'shows' ? (
                   shows.length === 0 ? <BrowserEmpty /> : (
-                    <div style={gridStyle}>
-                      {shows.map(s => (
-                        <ShowMediaTile key={s.show_id}
-                          show={s}
-                          isAdded={isAdded('show', s.show_id)}
-                          onAdd={addFiller}
-                          onInfoOpen={() => setInfoItem({ kind: 'show', id: s.show_id, seed: s })}
-                        />
-                      ))}
-                    </div>
+                    <>
+                      <div style={gridStyle}>
+                        {shows.map(s => (
+                          <ShowMediaTile key={s.show_id}
+                            show={s}
+                            isAdded={isAdded('show', s.show_id)}
+                            onAdd={addFiller}
+                            onInfoOpen={() => setInfoItem({ kind: 'show', id: s.show_id, seed: s })}
+                          />
+                        ))}
+                      </div>
+                      {shows.length < showsTotal && <LoadMoreSentinel loading={showsLoadingMore} onVisible={loadMoreShows} />}
+                    </>
                   )
-                ) : tab === 'movies' ? (
-                  movies.length === 0 ? <BrowserEmpty /> : (
-                    <div style={gridStyle}>
-                      {movies.map(m => (
-                        <MediaTile key={m.movie_id}
-                          imgUrl={`/api/movies/${m.movie_id}/thumb`}
-                          title={m.title}
-                          sub={m.year ? String(m.year) : undefined}
-                          badge={isAdded('movie', m.movie_id)}
-                          onClick={() => setInfoItem({ kind: 'movie', id: m.movie_id, seed: m })}
-                        />
-                      ))}
-                    </div>
+                ) : tab === 'movies' ? (() => {
+                  const maxMs = maxDur.trim() !== '' ? parseInt(maxDur) * 60_000 : undefined
+                  const filtered = maxMs !== undefined ? movies.filter(m => m.duration_ms === 0 || m.duration_ms <= maxMs) : movies
+                  return filtered.length === 0 ? <BrowserEmpty hint={movies.length === 0 ? undefined : 'No movies match the duration filter.'} /> : (
+                    <>
+                      <div style={gridStyle}>
+                        {filtered.map(m => (
+                          <MediaTile key={m.movie_id}
+                            imgUrl={`/api/movies/${m.movie_id}/thumb`}
+                            title={m.title}
+                            sub={m.year ? String(m.year) : undefined}
+                            badge={isAdded('movie', m.movie_id)}
+                            onClick={() => setInfoItem({ kind: 'movie', id: m.movie_id, seed: m })}
+                          />
+                        ))}
+                      </div>
+                      {movies.length < moviesTotal && <LoadMoreSentinel loading={moviesLoadingMore} onVisible={loadMoreMovies} />}
+                    </>
                   )
-                ) : (
-                  playlists.length === 0 ? <BrowserEmpty hint="No playlists found." /> : (
+                })() : tab === 'episodes' ? (() => {
+                  const maxMs = maxDur.trim() !== '' ? parseInt(maxDur) * 60_000 : undefined
+                  const filtered = eps.filter(ep => maxMs === undefined || ep.duration_ms === 0 || ep.duration_ms <= maxMs)
+                  return filtered.length === 0 ? <BrowserEmpty hint={eps.length === 0 ? 'Type to search episodes.' : 'No episodes match the filter.'} /> : (
+                    <>
+                      <div style={gridStyle}>
+                        {filtered.map(ep => (
+                          <MediaTile key={ep.episode_id}
+                            imgUrl={`/api/shows/${ep.show_id}/thumb`}
+                            title={`S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`}
+                            sub={ep.show_title}
+                            badge={isAdded('episode', ep.episode_id)}
+                            onClick={() => addFiller({
+                              content_type: 'episode',
+                              content_id: ep.episode_id,
+                              title: `${ep.show_title} S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`,
+                            })}
+                          />
+                        ))}
+                      </div>
+                      {epsHasMore && <LoadMoreSentinel loading={epsLoadingMore} onVisible={loadMoreEps} />}
+                    </>
+                  )
+                })() : (() => {
+                  const maxMs = maxDur.trim() !== '' ? parseInt(maxDur) * 60_000 : undefined
+                  const filtered = maxMs !== undefined ? playlists.filter(p => p.total_ms === 0 || p.total_ms <= maxMs) : playlists
+                  return filtered.length === 0 ? <BrowserEmpty hint={playlists.length === 0 ? 'No playlists found.' : 'No playlists match the duration filter.'} /> : (
                     <div style={gridStyle}>
-                      {playlists.map(p => (
+                      {filtered.map(p => (
                         <MediaTile key={p.playlist_id}
                           title={p.title}
                           sub={`${p.item_count} items`}
@@ -166,7 +255,7 @@ const FillerOverlay = observer(function FillerOverlay({ channelId, store }: { ch
                       ))}
                     </div>
                   )
-                )}
+                })()}
               </div>
             </>
           )}
@@ -249,6 +338,7 @@ const FillerOverlay = observer(function FillerOverlay({ channelId, store }: { ch
         <button
           onClick={() => { store.fillerOverlayOpen = false }}
           style={{ padding: '11px 26px', borderRadius: 10, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em', border: 'none', cursor: 'pointer' }}
+          className="hds-btn-gold"
         >Done</button>
       </div>
     </div>

@@ -50,6 +50,7 @@ export class ChannelDetailStore {
   pickerOpen:        boolean               = false
   pickerQuery:       string                = ''
   pickerSeasonFilter: string              = ''
+  pickerDurationMax:  string              = ''
   pickerTab:         PickerTab             = 'shows'
   pickerShows:       Show[]                = []
   pickerMovies:      Movie[]               = []
@@ -58,6 +59,7 @@ export class ChannelDetailStore {
   contentPlaylists:  Playlist[]            = []
   pickerLoading:     boolean               = false
   pickerTotal:       number                = 0
+  pickerEpsHasMore:  boolean               = false
   pickerLoadingMore: boolean               = false
   dragContent: { content_type: ContentType; content_id: string; title: string } | null = null
 
@@ -841,7 +843,7 @@ export class ChannelDetailStore {
 
   setPickerTab(t: PickerTab) {
     clearTimeout(_debounce)
-    this.pickerTab   = t; this.expandedShowId = null; this.pickerSeasonFilter = ''
+    this.pickerTab   = t; this.expandedShowId = null; this.pickerSeasonFilter = ''; this.pickerDurationMax = ''
     this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.searchPicker()
   }
@@ -856,6 +858,10 @@ export class ChannelDetailStore {
     this.pickerSeasonFilter = v
     clearTimeout(_debounce)
     _debounce = setTimeout(() => this.searchPicker(), 250)
+  }
+
+  setPickerDurationMax(v: string) {
+    this.pickerDurationMax = v
   }
 
   async searchPicker() {
@@ -880,7 +886,7 @@ export class ChannelDetailStore {
       switch (this.pickerTab) {
         case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, genre, year, content_rating: rating, label, network, actor }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
         case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, genre, year, content_rating: rating, label, actor }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
-        case 'episodes':     { const r = await raceAbort(api.searchEpisodes({ q, season, limit: 50 }), signal); runInAction(() => { this.pickerEpisodes = r.items; this.pickerTotal = 0; this.pickerLoading = false }); break }
+        case 'episodes':     { const r = await raceAbort(api.searchEpisodes({ q, season, limit: 50 }), signal); runInAction(() => { this.pickerEpisodes = r.items; this.pickerTotal = 0; this.pickerEpsHasMore = r.items.length >= 50; this.pickerLoading = false }); break }
         case 'playlists':    { const r = await raceAbort(api.getPlaylists(), signal); runInAction(() => { this.pickerPlaylists = r; this.pickerTotal = 0; this.pickerLoading = false }); break }
       }
     } catch (e) {
@@ -909,6 +915,11 @@ export class ChannelDetailStore {
       } else if (this.pickerTab === 'movies') {
         const r = await api.getMovies({ limit: 50, offset: this.pickerMovies.length, q, library_id: lib, genre, year, content_rating: rating, label, actor })
         runInAction(() => { this.pickerMovies = [...this.pickerMovies, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
+      } else if (this.pickerTab === 'episodes') {
+        const seasonParsed = this.pickerSeasonFilter.trim() !== '' ? parseInt(this.pickerSeasonFilter, 10) : undefined
+        const season = Number.isFinite(seasonParsed) ? seasonParsed : undefined
+        const r = await api.searchEpisodes({ q, season, limit: 50, offset: this.pickerEpisodes.length })
+        runInAction(() => { this.pickerEpisodes = [...this.pickerEpisodes, ...r.items]; this.pickerEpsHasMore = r.items.length >= 50; this.pickerLoadingMore = false })
       }
     } catch {
       runInAction(() => { this.pickerLoadingMore = false })

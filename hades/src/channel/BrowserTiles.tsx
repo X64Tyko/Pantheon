@@ -186,6 +186,7 @@ function HoverSeasonBtn({ onClick, gold, children }: { onClick: (e: React.MouseE
   return (
     <button
       onClick={onClick}
+      className="hds-season-btn"
       style={{ padding: '2px 4px', border: `1px solid ${gold ? 'oklch(0.55 0.12 58)' : 'var(--hds-line)'}`, borderRadius: 4, background: 'transparent', color: gold ? 'oklch(0.75 0.12 58)' : 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer', textAlign: 'center', width: '100%' }}
     >{children}</button>
   )
@@ -389,7 +390,7 @@ export function useDetailPanel() {
 
 export function AddBtn({ onClick, gold, children }: { onClick: () => void; gold?: boolean; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} style={{ padding: '4px 10px', borderRadius: 5, border: `1px solid ${gold ? 'oklch(0.55 0.12 58)' : 'var(--hds-line)'}`, background: 'transparent', color: gold ? 'oklch(0.75 0.12 58)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer' }}>
+    <button onClick={onClick} className="hds-season-btn" style={{ padding: '4px 10px', borderRadius: 5, border: `1px solid ${gold ? 'oklch(0.55 0.12 58)' : 'var(--hds-line)'}`, background: 'transparent', color: gold ? 'oklch(0.75 0.12 58)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer' }}>
       {children}
     </button>
   )

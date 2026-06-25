@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { inputStyle, filterInputStyle } from './styles'
 import type { BumperContentType, BumperMode, ChannelBumper, EpisodeSearchResult, Playlist, Show } from '../api/types'
 import type { ChannelDetailStore } from './store'
-import { MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty } from './BrowserTiles'
+import { MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty, LoadMoreSentinel } from './BrowserTiles'
 import type { InfoItem, AddContentParams } from './BrowserTiles'
 
 type BumperTab = 'shows' | 'playlists' | 'episodes'
@@ -13,13 +13,18 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
   channelId: string
   store:     ChannelDetailStore
 }) {
-  const [tab,      setTab]      = useState<BumperTab>('shows')
-  const [q,        setQ]        = useState('')
-  const [sFilter,  setSFilter]  = useState('')
-  const [shows,    setShows]    = useState<Show[]>([])
-  const [lists,    setLists]    = useState<Playlist[]>([])
-  const [eps,      setEps]      = useState<EpisodeSearchResult[]>([])
-  const [loading,  setLoading]  = useState(false)
+  const [tab,          setTab]          = useState<BumperTab>('shows')
+  const [q,            setQ]            = useState('')
+  const [sFilter,      setSFilter]      = useState('')
+  const [epsDurMax,    setEpsDurMax]    = useState('')
+  const [shows,        setShows]        = useState<Show[]>([])
+  const [showsTotal,   setShowsTotal]   = useState(0)
+  const [showsLoadMore,setShowsLoadMore]= useState(false)
+  const [lists,        setLists]        = useState<Playlist[]>([])
+  const [eps,          setEps]          = useState<EpisodeSearchResult[]>([])
+  const [epsHasMore,   setEpsHasMore]   = useState(false)
+  const [epsLoadMore,  setEpsLoadMore]  = useState(false)
+  const [loading,      setLoading]      = useState(false)
 
   const [bumpers,   setBumpers]   = useState<ChannelBumper[]>([])
   const [bumperErr, setBumperErr] = useState('')
@@ -39,13 +44,38 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
     const ctrl = new AbortController()
     setLoading(true)
     const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
-    const p =
-      tab === 'shows'     ? api.getShows({ limit: 80, q: q || undefined }).then(r => { if (!ctrl.signal.aborted) { setShows(r.items); setLoading(false) } }) :
-      tab === 'playlists' ? api.getPlaylists().then(r => { if (!ctrl.signal.aborted) { setLists(r); setLoading(false) } }) :
-      api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 }).then(r => { if (!ctrl.signal.aborted) { setEps(r.items); setLoading(false) } })
+    let p: Promise<void>
+    if (tab === 'shows') {
+      setShowsTotal(0)
+      p = api.getShows({ limit: 80, q: q || undefined }).then(r => { if (!ctrl.signal.aborted) { setShows(r.items); setShowsTotal(r.total); setLoading(false) } })
+    } else if (tab === 'playlists') {
+      p = api.getPlaylists().then(r => { if (!ctrl.signal.aborted) { setLists(r); setLoading(false) } })
+    } else {
+      setEpsHasMore(false)
+      p = api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 }).then(r => { if (!ctrl.signal.aborted) { setEps(r.items); setEpsHasMore(r.items.length >= 40); setLoading(false) } })
+    }
     p.catch(() => { if (!ctrl.signal.aborted) setLoading(false) })
     return () => ctrl.abort()
   }, [tab, q, sFilter, infoItem])
+
+  const loadMoreShows = () => {
+    if (showsLoadMore || shows.length >= showsTotal) return
+    setShowsLoadMore(true)
+    api.getShows({ limit: 80, offset: shows.length, q: q || undefined })
+      .then(r => { setShows(s => [...s, ...r.items]); setShowsTotal(r.total) })
+      .catch(() => {})
+      .finally(() => setShowsLoadMore(false))
+  }
+
+  const loadMoreEps = () => {
+    if (epsLoadMore || !epsHasMore) return
+    setEpsLoadMore(true)
+    const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
+    api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40, offset: eps.length })
+      .then(r => { setEps(e => [...e, ...r.items]); setEpsHasMore(r.items.length >= 40) })
+      .catch(() => {})
+      .finally(() => setEpsLoadMore(false))
+  }
 
   async function addBumper(item: AddContentParams) {
     setSaving(true); setBumperErr('')
@@ -149,6 +179,11 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
                     <input type="number" min={0} value={sFilter} onChange={e => setSFilter(e.target.value)} placeholder="S#"
                       style={{ ...inputStyle, width: 52, fontSize: 11 }} />
                   )}
+                  {tab === 'episodes' && (
+                    <input type="number" min={1} value={epsDurMax} onChange={e => setEpsDurMax(e.target.value)} placeholder="≤m"
+                      title="Max duration in minutes"
+                      style={{ ...inputStyle, width: 60, fontSize: 11, padding: '6px 9px' }} />
+                  )}
                 </div>
               </div>
 
@@ -157,17 +192,20 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
                   <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
                 ) : tab === 'shows' ? (
                   shows.length === 0 ? <BrowserEmpty /> : (
-                    <div style={gridStyle}>
-                      {shows.map(s => (
-                        <MediaTile key={s.show_id}
-                          imgUrl={`/api/shows/${s.show_id}/thumb`}
-                          title={s.title}
-                          sub={s.year ? String(s.year) : undefined}
-                          badge={bumpers.some(b => b.content_type === 'show' && b.content_id === s.show_id)}
-                          onClick={() => setInfoItem({ kind: 'show', id: s.show_id, seed: s })}
-                        />
-                      ))}
-                    </div>
+                    <>
+                      <div style={gridStyle}>
+                        {shows.map(s => (
+                          <MediaTile key={s.show_id}
+                            imgUrl={`/api/shows/${s.show_id}/thumb`}
+                            title={s.title}
+                            sub={s.year ? String(s.year) : undefined}
+                            badge={bumpers.some(b => b.content_type === 'show' && b.content_id === s.show_id)}
+                            onClick={() => setInfoItem({ kind: 'show', id: s.show_id, seed: s })}
+                          />
+                        ))}
+                      </div>
+                      {shows.length < showsTotal && <LoadMoreSentinel loading={showsLoadMore} onVisible={loadMoreShows} />}
+                    </>
                   )
                 ) : tab === 'playlists' ? (
                   lists.length === 0 ? <BrowserEmpty hint="No playlists." /> : (
@@ -181,21 +219,26 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
                       ))}
                     </div>
                   )
-                ) : (
-                  eps.length === 0 ? <BrowserEmpty hint="Type to search episodes." /> : (
-                    <div style={gridStyle}>
-                      {eps.map(ep => (
-                        <MediaTile key={ep.episode_id}
-                          imgUrl={`/api/shows/${ep.show_id}/thumb`}
-                          title={`S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`}
-                          sub={ep.show_title}
-                          badge={bumpers.some(b => b.content_type === 'episode' && b.content_id === ep.episode_id)}
-                          onClick={() => setInfoItem({ kind: 'episode', ep })}
-                        />
-                      ))}
-                    </div>
+                ) : (() => {
+                  const maxMs = epsDurMax.trim() !== '' ? parseInt(epsDurMax) * 60_000 : undefined
+                  const filtered = eps.filter(ep => maxMs === undefined || ep.duration_ms === 0 || ep.duration_ms <= maxMs)
+                  return filtered.length === 0 ? <BrowserEmpty hint={eps.length === 0 ? 'Type to search episodes.' : 'No episodes match the duration filter.'} /> : (
+                    <>
+                      <div style={gridStyle}>
+                        {filtered.map(ep => (
+                          <MediaTile key={ep.episode_id}
+                            imgUrl={`/api/shows/${ep.show_id}/thumb`}
+                            title={`S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`}
+                            sub={ep.show_title}
+                            badge={bumpers.some(b => b.content_type === 'episode' && b.content_id === ep.episode_id)}
+                            onClick={() => setInfoItem({ kind: 'episode', ep })}
+                          />
+                        ))}
+                      </div>
+                      {epsHasMore && <LoadMoreSentinel loading={epsLoadMore} onVisible={loadMoreEps} />}
+                    </>
                   )
-                )}
+                })()}
               </div>
             </>
           )}
@@ -238,7 +281,8 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
           <span style={{ fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{bumperErr}</span>
         )}
         <button onClick={() => { store.channelBumperOverlayOpen = false }}
-          style={{ padding: '11px 26px', borderRadius: 10, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em', border: 'none', cursor: 'pointer' }}>Done</button>
+          style={{ padding: '11px 26px', borderRadius: 10, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em', border: 'none', cursor: 'pointer' }}
+          className="hds-btn-gold">Done</button>
       </div>
     </div>
     </div>

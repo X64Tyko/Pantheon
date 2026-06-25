@@ -40,12 +40,12 @@ export const BlockEditor = observer(function BlockEditor({ channelId, store }: {
       <EditorForm channelId={channelId} store={store} limitMode={limitMode} />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderTop: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <button onClick={() => store.save(channelId)} disabled={store.saving || d.day_mask === 0} style={goldBtnStyle}>
+        <button onClick={() => store.save(channelId)} disabled={store.saving || d.day_mask === 0} style={goldBtnStyle} className="hds-btn-gold">
           {store.saving ? 'Saving…' : 'Save Changes'}
         </button>
-        <button onClick={() => store.duplicate(channelId)} style={ghostBtnStyle}>⧉ Duplicate</button>
+        <button onClick={() => store.duplicate(channelId)} style={ghostBtnStyle} className="hds-btn-ghost">⧉ Duplicate</button>
         <div style={{ flex: 1 }} />
-        <button onClick={() => store.deleteBlock(channelId, block.block_id)} style={dangerBtnStyle}>Delete</button>
+        <button onClick={() => store.deleteBlock(channelId, block.block_id)} style={dangerBtnStyle} className="hds-btn-danger">Delete</button>
       </div>
 
       {store.saveErr && (
@@ -89,10 +89,10 @@ export const NewBlockEditor = observer(function NewBlockEditor({ channelId, stor
       <EditorForm channelId={channelId} store={store} limitMode={limitMode} />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderTop: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <button onClick={() => store.save(channelId)} disabled={store.saving || d.day_mask === 0} style={goldBtnStyle}>
+        <button onClick={() => store.save(channelId)} disabled={store.saving || d.day_mask === 0} style={goldBtnStyle} className="hds-btn-gold">
           {store.saving ? 'Saving…' : 'Create Block'}
         </button>
-        <button onClick={() => store.closeEditor()} style={ghostBtnStyle}>Cancel</button>
+        <button onClick={() => store.closeEditor()} style={ghostBtnStyle} className="hds-btn-ghost">Cancel</button>
       </div>
 
       {store.saveErr && (

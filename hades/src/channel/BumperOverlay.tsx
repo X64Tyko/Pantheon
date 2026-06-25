@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { inputStyle } from './styles'
 import type { ChannelDetailStore } from './store'
 import type { Show, EpisodeSearchResult, Playlist } from '../api/types'
-import { MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty } from './BrowserTiles'
+import { MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty, LoadMoreSentinel } from './BrowserTiles'
 import type { InfoItem, AddContentParams } from './BrowserTiles'
 
 type BumperSlotKey = 'intro' | 'outro' | 'interstitial'
@@ -44,24 +44,56 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
   const [tab,     setTab]     = useState<BumperPickerTab>('shows')
   const [q,       setQ]       = useState('')
   const [sFilter, setSFilter] = useState('')
-  const [shows,   setShows]   = useState<Show[]>([])
-  const [lists,   setLists]   = useState<Playlist[]>([])
-  const [eps,     setEps]     = useState<EpisodeSearchResult[]>([])
-  const [loading, setLoading] = useState(false)
-  const [dragItem,setDragItem]= useState<AddContentParams | null>(null)
-  const [armed,   setArmed]   = useState<AddContentParams | null>(null)
+  const [shows,          setShows]          = useState<Show[]>([])
+  const [showsTotal,     setShowsTotal]     = useState(0)
+  const [showsLoadMore,  setShowsLoadMore]  = useState(false)
+  const [lists,          setLists]          = useState<Playlist[]>([])
+  const [eps,            setEps]            = useState<EpisodeSearchResult[]>([])
+  const [epsHasMore,     setEpsHasMore]     = useState(false)
+  const [epsLoadingMore, setEpsLoadingMore] = useState(false)
+  const [loading,        setLoading]        = useState(false)
+  const [epsDurationMax, setEpsDurationMax] = useState('')
+  const [dragItem,       setDragItem]       = useState<AddContentParams | null>(null)
+  const [armed,          setArmed]          = useState<AddContentParams | null>(null)
 
   const { infoItem, setInfoItem, infoDetail, infoSeasons, detailLoading } = useDetailPanel()
 
   useEffect(() => {
     setLoading(true)
     const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
-    const p =
-      tab === 'shows'     ? api.getShows({ limit: 80, q: q || undefined }).then(r => { setShows(r.items); setLoading(false) }) :
-      tab === 'playlists' ? api.getPlaylists().then(r => { setLists(r); setLoading(false) }) :
-      api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 }).then(r => { setEps(r.items); setLoading(false) })
-    p.catch(() => setLoading(false))
+    if (tab === 'shows') {
+      setShowsTotal(0)
+      api.getShows({ limit: 80, q: q || undefined })
+        .then(r => { setShows(r.items); setShowsTotal(r.total); setLoading(false) })
+        .catch(() => setLoading(false))
+    } else if (tab === 'playlists') {
+      api.getPlaylists().then(r => { setLists(r); setLoading(false) }).catch(() => setLoading(false))
+    } else {
+      setEpsHasMore(false)
+      api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 })
+        .then(r => { setEps(r.items); setEpsHasMore(r.items.length >= 40); setLoading(false) })
+        .catch(() => setLoading(false))
+    }
   }, [tab, q, sFilter])
+
+  const loadMoreShows = () => {
+    if (showsLoadMore || shows.length >= showsTotal) return
+    setShowsLoadMore(true)
+    api.getShows({ limit: 80, offset: shows.length, q: q || undefined })
+      .then(r => { setShows(s => [...s, ...r.items]); setShowsTotal(r.total) })
+      .catch(() => {})
+      .finally(() => setShowsLoadMore(false))
+  }
+
+  const loadMoreEps = () => {
+    if (epsLoadingMore || !epsHasMore) return
+    setEpsLoadingMore(true)
+    const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
+    api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40, offset: eps.length })
+      .then(r => { setEps(e => [...e, ...r.items]); setEpsHasMore(r.items.length >= 40) })
+      .catch(() => {})
+      .finally(() => setEpsLoadingMore(false))
+  }
 
   const assignToSlot = (slot: BumperSlotKey, item: AddContentParams) => {
     setSlot(store, slot, item.content_type, item.content_id)
@@ -144,8 +176,13 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…"
                     style={{ ...inputStyle, flex: 1, fontSize: 11.5, padding: '6px 9px' }} />
                   {tab === 'episodes' && (
-                    <input type="number" min={0} value={sFilter} onChange={e => setSFilter(e.target.value)} placeholder="S#"
-                      style={{ ...inputStyle, width: 48, fontSize: 11 }} />
+                    <>
+                      <input type="number" min={0} value={sFilter} onChange={e => setSFilter(e.target.value)} placeholder="S#"
+                        style={{ ...inputStyle, width: 48, fontSize: 11 }} />
+                      <input type="number" min={1} value={epsDurationMax} onChange={e => setEpsDurationMax(e.target.value)} placeholder="≤m"
+                        title="Max duration in minutes"
+                        style={{ ...inputStyle, width: 52, fontSize: 11 }} />
+                    </>
                   )}
                 </div>
               </div>
@@ -155,17 +192,20 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
                   <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
                 ) : tab === 'shows' ? (
                   shows.length === 0 ? <BrowserEmpty /> : (
-                    <div style={gridStyle}>
-                      {shows.map(s => (
-                        <MediaTile key={s.show_id}
-                          imgUrl={`/api/shows/${s.show_id}/thumb`}
-                          title={s.title}
-                          sub={s.year ? String(s.year) : undefined}
-                          badge={(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).some(slot => slotContentType(store, slot) === 'show' && slotContentId(store, slot) === s.show_id)}
-                          onClick={() => setInfoItem({ kind: 'show', id: s.show_id, seed: s })}
-                        />
-                      ))}
-                    </div>
+                    <>
+                      <div style={gridStyle}>
+                        {shows.map(s => (
+                          <MediaTile key={s.show_id}
+                            imgUrl={`/api/shows/${s.show_id}/thumb`}
+                            title={s.title}
+                            sub={s.year ? String(s.year) : undefined}
+                            badge={(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).some(slot => slotContentType(store, slot) === 'show' && slotContentId(store, slot) === s.show_id)}
+                            onClick={() => setInfoItem({ kind: 'show', id: s.show_id, seed: s })}
+                          />
+                        ))}
+                      </div>
+                      {shows.length < showsTotal && <LoadMoreSentinel loading={showsLoadMore} onVisible={loadMoreShows} />}
+                    </>
                   )
                 ) : tab === 'playlists' ? (
                   lists.length === 0 ? <BrowserEmpty hint="No playlists." /> : (
@@ -179,21 +219,26 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
                       ))}
                     </div>
                   )
-                ) : (
-                  eps.length === 0 ? <BrowserEmpty hint="Type to search episodes." /> : (
-                    <div style={gridStyle}>
-                      {eps.map(ep => (
-                        <MediaTile key={ep.episode_id}
-                          imgUrl={`/api/shows/${ep.show_id}/thumb`}
-                          title={`S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`}
-                          sub={ep.show_title}
-                          badge={(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).some(slot => slotContentType(store, slot) === 'episode' && slotContentId(store, slot) === ep.episode_id)}
-                          onClick={() => setInfoItem({ kind: 'episode', ep })}
-                        />
-                      ))}
-                    </div>
+                ) : (() => {
+                  const maxMs = epsDurationMax.trim() !== '' ? parseInt(epsDurationMax) * 60_000 : undefined
+                  const filteredEps = eps.filter(ep => maxMs === undefined || ep.duration_ms === 0 || ep.duration_ms <= maxMs)
+                  return filteredEps.length === 0 ? <BrowserEmpty hint={eps.length === 0 ? 'Type to search episodes.' : 'No episodes match the duration filter.'} /> : (
+                    <>
+                      <div style={gridStyle}>
+                        {filteredEps.map(ep => (
+                          <MediaTile key={ep.episode_id}
+                            imgUrl={`/api/shows/${ep.show_id}/thumb`}
+                            title={`S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`}
+                            sub={ep.show_title}
+                            badge={(['intro', 'outro', 'interstitial'] as BumperSlotKey[]).some(slot => slotContentType(store, slot) === 'episode' && slotContentId(store, slot) === ep.episode_id)}
+                            onClick={() => setInfoItem({ kind: 'episode', ep })}
+                          />
+                        ))}
+                      </div>
+                      {epsHasMore && <LoadMoreSentinel loading={epsLoadingMore} onVisible={loadMoreEps} />}
+                    </>
                   )
-                )}
+                })()}
               </div>
             </>
           )}
@@ -281,7 +326,8 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
           {configuredCount} slot{configuredCount !== 1 ? 's' : ''} configured
         </span>
         <button onClick={() => { store.bumperOverlayOpen = false }}
-          style={{ padding: '11px 26px', borderRadius: 10, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em', border: 'none', cursor: 'pointer' }}>Done</button>
+          style={{ padding: '11px 26px', borderRadius: 10, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em', border: 'none', cursor: 'pointer' }}
+          className="hds-btn-gold">Done</button>
       </div>
     </div>
   )

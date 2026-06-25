@@ -5,6 +5,7 @@ import { BLOCK_META } from './constants'
 import { availablePickerTabs } from './utils'
 import { inputStyle } from './styles'
 import { FilterSection } from '../components/PickerFilters'
+import { LoadMoreSentinel } from './BrowserTiles'
 import type { ChannelDetailStore } from './store'
 
 const TAB_LABELS: Record<PickerTab, string> = {
@@ -15,7 +16,11 @@ const TAB_LABELS: Record<PickerTab, string> = {
 
 export const ContentPicker = observer(function ContentPicker({ channelId, store }: { channelId: string; store: ChannelDetailStore }) {
   const tabs        = availablePickerTabs(store.draft.block_type)
-  const showFilters = store.pickerTab === 'shows' || store.pickerTab === 'movies'
+  const showFilters    = store.pickerTab === 'shows' || store.pickerTab === 'movies'
+  const canLoadMore    = store.pickerTab === 'episodes'
+                         ? store.pickerEpsHasMore
+                         : (store.pickerTab === 'shows' || store.pickerTab === 'movies') &&
+                           (store.pickerTab === 'shows' ? store.pickerShows.length : store.pickerMovies.length) < store.pickerTotal
   const libType     = store.pickerTab === 'movies' ? 'movie' : 'show'
   const filteredLibs = store.allLibraries.filter(l => l.library_type === libType || l.library_type === 'mixed')
 
@@ -35,12 +40,20 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
         <div style={{ padding: '7px 10px', borderBottom: showFilters ? 'none' : '1px solid var(--hds-line-s)', display: 'flex', gap: 6 }}>
           <input value={store.pickerQuery} onChange={e => store.setPickerQuery(e.target.value)} placeholder="Search…" style={{ flex: 1, ...inputStyle, fontSize: 11.5, padding: '6px 9px' }} autoFocus />
           {store.pickerTab === 'episodes' && (
-            <input
-              type="number" min={0} value={store.pickerSeasonFilter}
-              onChange={e => store.setPickerSeasonFilter(e.target.value)}
-              placeholder="S#" title="Filter by season (0 = specials)"
-              style={{ ...inputStyle, width: 48, fontSize: 11, padding: '5px 6px' }}
-            />
+            <>
+              <input
+                type="number" min={0} value={store.pickerSeasonFilter}
+                onChange={e => store.setPickerSeasonFilter(e.target.value)}
+                placeholder="S#" title="Filter by season (0 = specials)"
+                style={{ ...inputStyle, width: 48, fontSize: 11, padding: '5px 6px' }}
+              />
+              <input
+                type="number" min={1} value={store.pickerDurationMax}
+                onChange={e => store.setPickerDurationMax(e.target.value)}
+                placeholder="≤m" title="Max duration in minutes"
+                style={{ ...inputStyle, width: 52, fontSize: 11, padding: '5px 6px' }}
+              />
+            </>
           )}
         </div>
       )}
@@ -61,16 +74,25 @@ export const ContentPicker = observer(function ContentPicker({ channelId, store 
         {store.pickerLoading ? (
           <div style={{ padding: 12, color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
         ) : store.pickerTab === 'shows' ? (
-          <ShowPickerList store={store} channelId={channelId} query={store.pickerQuery.toLowerCase()} />
+          <>
+            <ShowPickerList store={store} channelId={channelId} query={store.pickerQuery.toLowerCase()} />
+            {canLoadMore && <LoadMoreSentinel loading={store.pickerLoadingMore} onVisible={() => store.loadMorePicker()} />}
+          </>
         ) : store.pickerTab === 'movies' ? (
-          <SimplePickerList
-            items={store.pickerMovies.filter(m => !store.pickerQuery || m.title.toLowerCase().includes(store.pickerQuery.toLowerCase()))}
-            getId={m => m.movie_id} dot={BLOCK_META.movie.edge}
-            onAdd={(id, title) => store.addContent(channelId, { content_type: 'movie', content_id: id, title })}
-            getThumbUrl={id => `/api/movies/${id}/thumb`}
-          />
+          <>
+            <SimplePickerList
+              items={store.pickerMovies.filter(m => !store.pickerQuery || m.title.toLowerCase().includes(store.pickerQuery.toLowerCase()))}
+              getId={m => m.movie_id} dot={BLOCK_META.movie.edge}
+              onAdd={(id, title) => store.addContent(channelId, { content_type: 'movie', content_id: id, title })}
+              getThumbUrl={id => `/api/movies/${id}/thumb`}
+            />
+            {canLoadMore && <LoadMoreSentinel loading={store.pickerLoadingMore} onVisible={() => store.loadMorePicker()} />}
+          </>
         ) : store.pickerTab === 'episodes' ? (
-          <EpisodePickerList store={store} channelId={channelId} query={store.pickerQuery.toLowerCase()} />
+          <>
+            <EpisodePickerList store={store} channelId={channelId} query={store.pickerQuery.toLowerCase()} durationMax={store.pickerDurationMax} />
+            {canLoadMore && <LoadMoreSentinel loading={store.pickerLoadingMore} onVisible={() => store.loadMorePicker()} />}
+          </>
         ) : (
           <SimplePickerList
             items={store.pickerPlaylists} getId={p => p.playlist_id} dot={BLOCK_META.episode.edge}
@@ -142,17 +164,17 @@ const ShowPickerList = observer(function ShowPickerList({ store, channelId, quer
                 ) : (
                   <>
                     {/* "Add All" always includes specials */}
-                    <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: null, title: show.title, include_specials: true })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>Add All</button>
+                    <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: null, title: show.title, include_specials: true })} className="hds-season-btn" style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>Add All</button>
                     {/* S00 button only when the show actually has specials */}
                     {store.expandedSeasons.includes(0) && (
-                      <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: 0, title: `${show.title} S00`, include_specials: true })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid oklch(0.55 0.12 58)', background: 'transparent', color: 'oklch(0.75 0.12 58)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>S00</button>
+                      <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: 0, title: `${show.title} S00`, include_specials: true })} className="hds-season-btn" style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid oklch(0.55 0.12 58)', background: 'transparent', color: 'oklch(0.75 0.12 58)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>S00</button>
                     )}
                     {/* "Add Non-Special" only shown when specials exist (otherwise Add All = Add Non-Special) */}
                     {store.expandedSeasons.includes(0) && (
-                      <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: null, title: show.title, include_specials: false })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>Add Non-Special</button>
+                      <button onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: null, title: show.title, include_specials: false })} className="hds-season-btn" style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>No S00</button>
                     )}
                     {store.expandedSeasons.filter(s => s !== 0).map(s => (
-                      <button key={s} onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: s, title: `${show.title} S${String(s).padStart(2, '0')}` })} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>S{String(s).padStart(2, '0')}</button>
+                      <button key={s} onClick={() => store.addContent(channelId, { content_type: 'show', content_id: show.show_id, season_filter: s, title: `${show.title} S${String(s).padStart(2, '0')}` })} className="hds-season-btn" style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer' }}>S{String(s).padStart(2, '0')}</button>
                     ))}
                   </>
                 )}
@@ -167,8 +189,12 @@ const ShowPickerList = observer(function ShowPickerList({ store, channelId, quer
 
 // ─── Episode list ─────────────────────────────────────────────────────────────
 
-function EpisodePickerList({ store, channelId, query }: { store: ChannelDetailStore; channelId: string; query: string }) {
-  const eps = store.pickerEpisodes.filter(e => !query || e.title.toLowerCase().includes(query) || e.show_title.toLowerCase().includes(query))
+function EpisodePickerList({ store, channelId, query, durationMax }: { store: ChannelDetailStore; channelId: string; query: string; durationMax: string }) {
+  const maxMs = durationMax.trim() !== '' ? parseInt(durationMax) * 60_000 : undefined
+  const eps = store.pickerEpisodes.filter(e =>
+    (!query || e.title.toLowerCase().includes(query) || e.show_title.toLowerCase().includes(query)) &&
+    (maxMs === undefined || e.duration_ms === 0 || e.duration_ms <= maxMs)
+  )
   if (eps.length === 0) return <p style={{ color: 'var(--hds-txt-3)', fontSize: 12, padding: 12 }}>No results. Type to search episodes.</p>
   return (
     <>
@@ -183,6 +209,7 @@ function EpisodePickerList({ store, channelId, query }: { store: ChannelDetailSt
             <div style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>{ep.show_title}</div>
             <div style={{ fontSize: 12.5 }}>S{String(ep.season).padStart(2,'0')}E{String(ep.episode).padStart(2,'0')} — {ep.title}</div>
           </div>
+          {ep.duration_ms > 0 && <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{Math.round(ep.duration_ms / 60000)}m</span>}
         </div>
       ))}
     </>

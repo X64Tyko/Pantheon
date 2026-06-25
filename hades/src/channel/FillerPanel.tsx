@@ -154,14 +154,14 @@ function SeasonPicker({ showId, selected, onSelect }: {
 
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-      <button style={btnStyle(selected === undefined)} onClick={() => onSelect(undefined)}>All</button>
+      <button className="hds-season-btn" style={btnStyle(selected === undefined)} onClick={() => onSelect(undefined)}>All</button>
       {seasons.filter(s => s !== 0).map(s => (
-        <button key={s} style={btnStyle(selected === s)} onClick={() => onSelect(s)}>
+        <button key={s} className="hds-season-btn" style={btnStyle(selected === s)} onClick={() => onSelect(s)}>
           S{String(s).padStart(2, '0')}
         </button>
       ))}
       {seasons.includes(0) && (
-        <button style={btnStyle(selected === 0)} onClick={() => onSelect(0)}>S00</button>
+        <button className="hds-season-btn" style={btnStyle(selected === 0)} onClick={() => onSelect(0)}>S00</button>
       )}
     </div>
   )

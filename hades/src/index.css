@@ -113,6 +113,77 @@ body {
          text-red-400 text-xs rounded border border-red-900/30 transition-colors;
 }
 
+/* ─── Channel module interactive button states ─────────────────────────────── */
+
+@keyframes hds-gold-pulse {
+  0%, 100% { box-shadow: 0 4px 14px -4px oklch(0.83 0.13 84 / 0.4), 0 0 0 0 oklch(0.83 0.13 84 / 0); }
+  50%       { box-shadow: 0 4px 14px -4px oklch(0.83 0.13 84 / 0.5), 0 0 8px 2px oklch(0.83 0.13 84 / 0.18); }
+}
+
+.hds-btn-gold {
+  animation: hds-gold-pulse 2.4s ease-in-out infinite;
+  transition: filter .15s, transform .12s;
+  outline: none;
+}
+.hds-btn-gold:not(:disabled):hover {
+  filter: brightness(1.25) saturate(1.1);
+  transform: translateY(-2px);
+  animation-play-state: paused;
+  box-shadow: 0 10px 28px -6px oklch(0.83 0.13 84 / 0.7), 0 0 12px 2px oklch(0.83 0.13 84 / 0.25) !important;
+}
+.hds-btn-gold:not(:disabled):active {
+  filter: brightness(0.9);
+  transform: translateY(2px) scale(0.97);
+  box-shadow: 0 2px 6px -2px oklch(0.83 0.13 84 / 0.4) !important;
+}
+.hds-btn-gold:disabled {
+  opacity: 0.45;
+  animation: none;
+}
+
+.hds-btn-ghost {
+  transition: background .15s, border-color .15s, color .15s, transform .1s;
+}
+.hds-btn-ghost:hover {
+  background: oklch(0.3 0.025 286 / 0.8) !important;
+  border-color: oklch(0.42 0.028 286) !important;
+  color: oklch(0.9 0.01 286) !important;
+  transform: translateY(-1px);
+}
+.hds-btn-ghost:active {
+  background: oklch(0.22 0.018 286 / 0.8) !important;
+  transform: translateY(1px) !important;
+}
+
+.hds-btn-danger {
+  transition: background .15s, border-color .15s, color .15s, transform .1s;
+}
+.hds-btn-danger:hover {
+  background: oklch(0.24 0.09 22 / 0.4) !important;
+  border-color: oklch(0.62 0.18 22 / 0.7) !important;
+  color: oklch(0.82 0.18 22) !important;
+  transform: translateY(-1px);
+}
+.hds-btn-danger:active {
+  background: oklch(0.18 0.07 22 / 0.5) !important;
+  transform: translateY(1px) !important;
+}
+
+.hds-season-btn {
+  transition: background .12s, border-color .12s, color .12s, transform .1s, box-shadow .12s;
+}
+.hds-season-btn:hover {
+  border-color: var(--hds-violet) !important;
+  color: var(--hds-violet) !important;
+  background: oklch(0.55 0.14 292 / 0.18) !important;
+  box-shadow: 0 0 6px 1px oklch(0.7 0.13 287 / 0.25);
+  transform: translateY(-1px);
+}
+.hds-season-btn:active {
+  transform: scale(0.87) translateY(0) !important;
+  box-shadow: none !important;
+}
+
 /* ─── Animations ───────────────────────────────────────────────────────────── */
 
 @keyframes spin {

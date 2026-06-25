@@ -149,7 +149,7 @@ export const api = {
 
   // Episode search
   getShowSeasons:    (showId: string)                                             => request<{seasons: number[]}>('GET', `/shows/${showId}/seasons`),
-  searchEpisodes:    (p: { q?: string; show_id?: string; season?: number; limit?: number } = {}) =>
+  searchEpisodes:    (p: { q?: string; show_id?: string; season?: number; limit?: number; offset?: number } = {}) =>
                        request<{items: EpisodeSearchResult[]}>('GET', `/episodes?${qs(p)}`),
 
   // Playlists
