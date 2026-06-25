@@ -1,5 +1,5 @@
 import { makeAutoObservable, runInAction } from 'mobx'
-import { api } from '../api/client'
+import { api, TOKEN_KEY } from '../api/client'
 
 export interface LogEntry {
   id:      number
@@ -66,7 +66,9 @@ export class SystemStore {
   }
 
   private _openSSE() {
-    const es = new EventSource('/api/logs/stream')
+    const token = localStorage.getItem(TOKEN_KEY)
+    const url   = token ? `/api/logs/stream?token=${encodeURIComponent(token)}` : '/api/logs/stream'
+    const es = new EventSource(url)
     this._es = es
     runInAction(() => { this.liveStatus = 'connecting' })
 

@@ -1,20 +1,33 @@
 import type {
   ArrConfig,
+  AuthResponse,
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
   Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
   Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
-  Playlist, PlaylistDetail, Show, ShowDetail, Source, SourceType,
+  Playlist, PlaylistDetail, Show, ShowDetail, Source, SourceType, User,
 } from './types'
 
+export const TOKEN_KEY = 'kairos_token'
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (body != null) headers['Content-Type'] = 'application/json'
+  const token = localStorage.getItem(TOKEN_KEY)
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
   const res = await fetch(`/api${path}`, {
     method,
-    headers: body != null ? { 'Content-Type': 'application/json' } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body:    body != null ? JSON.stringify(body) : undefined,
   })
+
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent('kairos:unauthorized'))
+  }
+
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error((payload as any).error ?? res.statusText)
@@ -32,6 +45,18 @@ function qs(params: Record<string, string | number | undefined>): string {
 }
 
 export const api = {
+  // Auth
+  checkSetup:  ()                                            => request<{ setup_required: boolean }>('GET',    '/auth/setup'),
+  setup:       (username: string, password: string)          => request<AuthResponse>('POST', '/auth/setup', { username, password }),
+  login:       (username: string, password: string)          => request<AuthResponse>('POST', '/auth/login', { username, password }),
+  logout:      ()                                            => request<void>('POST', '/auth/logout'),
+  getMe:       ()                                            => request<User>('GET',  '/auth/me'),
+  // User management (admin only)
+  getUsers:    ()                                            => request<User[]>('GET',    '/users'),
+  createUser:  (username: string, password: string, role: string) => request<void>('POST', '/users', { username, password, role }),
+  updateUser:  (id: string, patch: { password?: string; role?: string }) => request<void>('PATCH', `/users/${id}`, patch),
+  deleteUser:  (id: string)                                 => request<void>('DELETE', `/users/${id}`),
+
   // Sources
   getSources:       ()                                  => request<Source[]>    ('GET',    '/sources'),
   getSourceTypes:   ()                                  => request<SourceType[]>('GET',    '/sources/types'),

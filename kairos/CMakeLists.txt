@@ -57,7 +57,21 @@ target_link_libraries(kairos_core
 )
 
 if(UNIX)
-    target_link_libraries(kairos_core PUBLIC pthread dl)
+    target_link_libraries(kairos_core PUBLIC pthread dl crypt)
+endif()
+
+# KAIROS_DEV: enable CORS wildcard and other dev-only behaviour.
+# Set automatically for Debug builds; override with -DKAIROS_DEV=ON/OFF.
+if(NOT DEFINED KAIROS_DEV)
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type_upper)
+    if(_build_type_upper STREQUAL "DEBUG")
+        set(KAIROS_DEV ON)
+    else()
+        set(KAIROS_DEV OFF)
+    endif()
+endif()
+if(KAIROS_DEV)
+    target_compile_definitions(kairos_core PUBLIC KAIROS_DEV)
 endif()
 
 # ── kairos executable ─────────────────────────────────────────────────────────

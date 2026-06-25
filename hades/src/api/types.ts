@@ -1,3 +1,14 @@
+export interface User {
+  user_id:  string
+  username: string
+  role:     'admin' | 'viewer'
+}
+
+export interface AuthResponse {
+  token: string
+  user:  User
+}
+
 export interface Source {
   source_id:    string
   source_type:  'plex' | 'jellyfin' | 'emby' | 'local'

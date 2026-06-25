@@ -928,6 +928,30 @@ constexpr Migration kMigrations[] = {
     );
 )SQL", false }
 
+,
+
+// ── v40: user accounts and sessions for API authentication.
+{ 40, R"SQL(
+    CREATE TABLE user (
+        user_id       TEXT    PRIMARY KEY,
+        username      TEXT    NOT NULL UNIQUE,
+        password_hash TEXT    NOT NULL,
+        role          TEXT    NOT NULL DEFAULT 'viewer'
+                              CHECK(role IN ('admin','viewer')),
+        created_at    INTEGER NOT NULL
+    );
+
+    CREATE TABLE session (
+        token         TEXT    PRIMARY KEY,
+        user_id       TEXT    NOT NULL REFERENCES user(user_id) ON DELETE CASCADE,
+        created_at    INTEGER NOT NULL,
+        expires_at    INTEGER NOT NULL,
+        last_seen     INTEGER NOT NULL
+    );
+
+    CREATE INDEX idx_session_user ON session(user_id);
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace

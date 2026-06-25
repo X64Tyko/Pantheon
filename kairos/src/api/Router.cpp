@@ -1,4 +1,5 @@
 #include "Router.h"
+#include "auth/AuthStore.h"
 #include "conf/ConfStore.h"
 #include "db/Database.h"
 #include "download/DownloadManager.h"
@@ -118,12 +119,25 @@ void Router::clearScheduleCache(const std::string& channel_id) {
 
 // ---------------------------------------------------------------------------
 
+// Per-request authenticated user, set by pre-routing handler.
+static thread_local std::optional<AuthUser> tl_current_user;
+
+// Paths that bypass bearer token auth.
+static bool isPublicPath(const std::string& path) {
+    if (!path.starts_with("/api/")) return true;    // SPA, /health, /playlist.m3u, /epg.xml
+    if (path == "/api/auth/setup") return true;
+    if (path == "/api/auth/login") return true;
+    if (path.ends_with("/now") || path.ends_with("/next") || path.ends_with("/epg"))
+        return true;
+    return false;
+}
+
 Router::Router(httplib::Server& svr, Database& db, SyncManager& sync,
                ConfStore& conf, LogBuffer& logs,
                RuleEngine& engine, EPGMaterializer& materializer,
-               DownloadManager& dl)
+               DownloadManager& dl, AuthStore& auth)
     : svr_(svr), db_(db), sync_(sync), conf_(conf), logs_(logs),
-      engine_(engine), materializer_(materializer), dl_(dl)
+      engine_(engine), materializer_(materializer), dl_(dl), auth_(auth)
 {}
 
 static void logErr(const std::string& ctx, const std::exception& e) {
@@ -137,24 +151,45 @@ static bool isValidTimezone(const std::string& tz) {
 }
 
 void Router::registerRoutes() {
-    // CORS preflight — allows curl/Postman during dev without the Vite proxy
+#ifdef KAIROS_DEV
     svr_.Options(".*", [](const Req&, Res& res) {
         res.set_header("Access-Control-Allow-Origin",  "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
         res.status = 204;
     });
-
     svr_.set_post_routing_handler([](const Req&, Res& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
     });
+#endif
 
-    // Hot-reload kairos.conf on every request so UI credential changes take effect immediately
-    svr_.set_pre_routing_handler([this](const Req&, Res&) -> httplib::Server::HandlerResponse {
+    svr_.set_pre_routing_handler([this](const Req& req, Res& res) -> httplib::Server::HandlerResponse {
         conf_.maybeReload();
+        tl_current_user = std::nullopt;
+
+        if (isPublicPath(req.path)) return httplib::Server::HandlerResponse::Unhandled;
+
+        // Extract token from Authorization header, or ?token= query param (SSE fallback).
+        std::string token;
+        if (req.has_header("Authorization")) {
+            const std::string& hdr = req.get_header_value("Authorization");
+            if (hdr.starts_with("Bearer ")) token = hdr.substr(7);
+        } else {
+            auto it = req.params.find("token");
+            if (it != req.params.end()) token = it->second;
+        }
+
+        auto user = auth_.validate(token);
+        if (!user) {
+            res.status = 401;
+            res.set_content(R"({"error":"Unauthorized"})", "application/json");
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        tl_current_user = user;
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
+    registerAuthRoutes();
     registerSourceRoutes();
     registerConfigRoutes();
     registerChannelRoutes();
@@ -178,6 +213,106 @@ void Router::registerRoutes() {
         if (!ifs) { res.status = 404; return; }
         std::string html((std::istreambuf_iterator<char>(ifs)), {});
         res.set_content(html, "text/html; charset=utf-8");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+void Router::registerAuthRoutes() {
+    // GET /api/auth/setup — returns whether first-time setup is needed.
+    svr_.Get("/api/auth/setup", [this](const Req&, Res& res) {
+        ok(res, json{{"setup_required", !auth_.hasAnyUser()}}.dump());
+    });
+
+    // POST /api/auth/setup — create the first admin account (only works when no users exist).
+    svr_.Post("/api/auth/setup", [this](const Req& req, Res& res) {
+        if (auth_.hasAnyUser()) {
+            err(res, 409, "Setup already complete");
+            return;
+        }
+        json body;
+        try { body = json::parse(req.body); } catch (...) { err(res, 400, "Invalid JSON"); return; }
+        const std::string username = body.value("username", "");
+        const std::string password = body.value("password", "");
+        if (username.empty() || password.empty()) { err(res, 400, "username and password required"); return; }
+        if (!auth_.createUser(username, password, "admin")) {
+            err(res, 500, "Failed to create user");
+            return;
+        }
+        const std::string token = auth_.login(username, password);
+        auto user = auth_.validate(token);
+        ok(res, json{{"token", token}, {"user", {{"user_id", user->user_id}, {"username", user->username}, {"role", user->role}}}}.dump());
+    });
+
+    // POST /api/auth/login
+    svr_.Post("/api/auth/login", [this](const Req& req, Res& res) {
+        json body;
+        try { body = json::parse(req.body); } catch (...) { err(res, 400, "Invalid JSON"); return; }
+        const std::string username = body.value("username", "");
+        const std::string password = body.value("password", "");
+        if (username.empty() || password.empty()) { err(res, 400, "username and password required"); return; }
+        const std::string token = auth_.login(username, password);
+        if (token.empty()) { err(res, 401, "Invalid credentials"); return; }
+        auto user = auth_.validate(token);
+        ok(res, json{{"token", token}, {"user", {{"user_id", user->user_id}, {"username", user->username}, {"role", user->role}}}}.dump());
+    });
+
+    // POST /api/auth/logout — requires valid session (caught by pre-routing).
+    svr_.Post("/api/auth/logout", [this](const Req& req, Res& res) {
+        if (req.has_header("Authorization")) {
+            const std::string& hdr = req.get_header_value("Authorization");
+            if (hdr.starts_with("Bearer ")) auth_.logout(hdr.substr(7));
+        }
+        ok(res, json{{"ok", true}}.dump());
+    });
+
+    // GET /api/auth/me
+    svr_.Get("/api/auth/me", [](const Req&, Res& res) {
+        if (!tl_current_user) { err(res, 401, "Unauthorized"); return; }
+        const auto& u = *tl_current_user;
+        ok(res, json{{"user_id", u.user_id}, {"username", u.username}, {"role", u.role}}.dump());
+    });
+
+    // ── Admin user management (admin role required) ──────────────────────────
+
+    svr_.Get("/api/users", [this](const Req&, Res& res) {
+        if (!tl_current_user || tl_current_user->role != "admin") { err(res, 403, "Forbidden"); return; }
+        json arr = json::array();
+        for (const auto& u : auth_.listUsers())
+            arr.push_back({{"user_id", u.user_id}, {"username", u.username}, {"role", u.role}});
+        ok(res, arr.dump());
+    });
+
+    svr_.Post("/api/users", [this](const Req& req, Res& res) {
+        if (!tl_current_user || tl_current_user->role != "admin") { err(res, 403, "Forbidden"); return; }
+        json body;
+        try { body = json::parse(req.body); } catch (...) { err(res, 400, "Invalid JSON"); return; }
+        const std::string username = body.value("username", "");
+        const std::string password = body.value("password", "");
+        const std::string role     = body.value("role", "viewer");
+        if (!auth_.createUser(username, password, role)) { err(res, 409, "Username taken or invalid input"); return; }
+        ok(res, json{{"ok", true}}.dump());
+    });
+
+    svr_.Patch("/api/users/:id", [this](const Req& req, Res& res) {
+        if (!tl_current_user || tl_current_user->role != "admin") { err(res, 403, "Forbidden"); return; }
+        json body;
+        try { body = json::parse(req.body); } catch (...) { err(res, 400, "Invalid JSON"); return; }
+        const std::string password = body.value("password", "");
+        const std::string role     = body.value("role", "");
+        if (!auth_.updateUser(req.path_params.at("id"), password, role)) { err(res, 400, "Invalid role"); return; }
+        ok(res, json{{"ok", true}}.dump());
+    });
+
+    svr_.Delete("/api/users/:id", [this](const Req& req, Res& res) {
+        if (!tl_current_user || tl_current_user->role != "admin") { err(res, 403, "Forbidden"); return; }
+        if (!auth_.deleteUser(req.path_params.at("id"), tl_current_user->user_id)) {
+            err(res, 409, "Cannot delete self or last admin");
+            return;
+        }
+        ok(res, json{{"ok", true}}.dump());
     });
 }
 
