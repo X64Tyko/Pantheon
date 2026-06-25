@@ -2048,6 +2048,28 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                     }
                     writeRerunState(block.block_id, channel_id, sel,
                                     std::max(1, block.content[sel].run_count), 0);
+                    // Randomize the first-run sequential start for every history-less
+                    // show in the block so they don't always begin at E01.
+                    // Shows with history skip this — their rerun cursor is already set above.
+                    {
+                        std::string scope    = scopeStr(block);
+                        std::string scope_id = scopeId(block, channel_id);
+                        for (const auto& bc : block.content) {
+                            if (bc.content_type != "show") continue;
+                            auto played = (block.advancement == Advancement::RerunSmart)
+                                ? getPlayedEpisodesWithCooldown(bc.content_id, channel_id, bc.season_filter, block.smart_pct, t, global, bc.include_specials)
+                                : getPlayedEpisodes(bc.content_id, channel_id, bc.season_filter, t, global, bc.include_specials, bc.episode_order);
+                            if (!played.empty()) continue;
+                            auto all = getEpisodes(bc.content_id, bc.season_filter, bc.include_specials, bc.episode_order);
+                            if (all.empty()) continue;
+                            int pos = static_cast<int>(rng() % static_cast<uint64_t>(all.size()));
+                            int snap = block.snap_to_group_start
+                                ? snapToGroupStart(all[pos].episode_id, all) : -1;
+                            int final_pos = (snap >= 0) ? snap : pos;
+                            writeCursorPos("show", bc.content_id, scope, scope_id,
+                                           final_pos, all[final_pos].episode_id);
+                        }
+                    }
                 } else {
                     for (const auto& bc : block.content) {
                         if (bc.content_type != "show") continue;
@@ -2203,7 +2225,12 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
             qph.bind(5, static_cast<int64_t>(ph_aired_at));
             qph.exec();
         }
-        if (!is_fallback_filler) advanceCursors(channel_id, block, t, rng);
+        // Use ph_aired_at (episode start) not t (episode end) so that advanceCursors'
+        // getPlayedEpisodes query uses the same before_time boundary as nextItem did.
+        // The just-inserted play_history entry has aired_at=ph_aired_at; passing t_end
+        // would find it and incorrectly flip a fresh show into rerun mode after one play,
+        // trapping it at E01 because the 1-episode rerun pool never cycles.
+        if (!is_fallback_filler) advanceCursors(channel_id, block, ph_aired_at, rng);
 
         // Channel between-bumpers: inject after every N non-filler content programs.
         if (!is_fallback_filler && !between_bumpers.empty()) {
