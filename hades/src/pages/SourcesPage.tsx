@@ -63,6 +63,11 @@ export default observer(function SourcesPage() {
   const [editingCreds, setEditingCreds] = useState(false)
   const [credToken, setCredToken]       = useState('')
 
+  // ── Confirm-remove state ───────────────────────────────────────────────────
+  const [confirmSrc, setConfirmSrc]   = useState<string | null>(null)  // source_id pending removal
+  const [confirmLib, setConfirmLib]   = useState<string | null>(null)  // library_id pending removal
+  const [confirmPm,  setConfirmPm]    = useState<number  | null>(null) // path-map index pending removal
+
   // ── Path maps ──────────────────────────────────────────────────────────────
   const [pathMaps, setPathMaps]   = useState<PathMap[]>([])
   const [samplePath, setSample]   = useState<string | null>(null)
@@ -222,12 +227,26 @@ export default observer(function SourcesPage() {
                 >
                   {store.syncing ? 'Syncing…' : 'Sync'}
                 </button>
-                <button
-                  onClick={e => { e.stopPropagation(); store.removeSource(src.source_id) }}
-                  className="btn-danger"
-                >
-                  Remove
-                </button>
+                {confirmSrc === src.source_id ? (
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="text-red-400">Remove source + all libraries?</span>
+                    <button
+                      onClick={e => { e.stopPropagation(); store.removeSource(src.source_id); setConfirmSrc(null) }}
+                      className="px-2 py-0.5 rounded bg-red-900/60 border border-red-700/50 text-red-300 hover:bg-red-800/60 transition-colors"
+                    >Yes</button>
+                    <button
+                      onClick={e => { e.stopPropagation(); setConfirmSrc(null) }}
+                      className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+                    >No</button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={e => { e.stopPropagation(); setConfirmSrc(src.source_id) }}
+                    className="btn-danger"
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -327,12 +346,25 @@ export default observer(function SourcesPage() {
                   <span className="text-zinc-300 truncate flex-1">{pm.from}</span>
                   <span className="text-zinc-600 shrink-0">→</span>
                   <span className="text-zinc-300 truncate flex-1">{pm.to}</span>
-                  <button
-                    onClick={() => removePathMap(idx)}
-                    className="btn-danger shrink-0"
-                  >
-                    ✕
-                  </button>
+                  {confirmPm === idx ? (
+                    <span className="flex items-center gap-1 text-xs shrink-0">
+                      <button
+                        onClick={() => { removePathMap(idx); setConfirmPm(null) }}
+                        className="px-1.5 py-0.5 rounded bg-red-900/60 border border-red-700/50 text-red-300 hover:bg-red-800/60 transition-colors"
+                      >✓</button>
+                      <button
+                        onClick={() => setConfirmPm(null)}
+                        className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+                      >✕</button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmPm(idx)}
+                      className="btn-danger shrink-0"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
               ))}
 
@@ -384,21 +416,35 @@ export default observer(function SourcesPage() {
 
               {showAddLib && (
                 <div className="card p-3 space-y-2">
-                  <select
-                    value={libForm.external_lib_id}
-                    onChange={e => {
-                      const lib = store.available.find(l => l.external_lib_id === e.target.value)
-                      setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any })
-                    }}
-                    className="input w-full"
-                  >
-                    <option value="">— select from server —</option>
-                    {store.available.map(l => (
-                      <option key={l.external_lib_id} value={l.external_lib_id}>
-                        {l.name} ({l.type})
-                      </option>
-                    ))}
-                  </select>
+                  {store.available.length > 0 ? (
+                    <select
+                      value={libForm.external_lib_id}
+                      onChange={e => {
+                        const lib = store.available.find(l => l.external_lib_id === e.target.value)
+                        setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any })
+                      }}
+                      className="input w-full"
+                    >
+                      <option value="">— select from server —</option>
+                      {store.available.map(l => (
+                        <option key={l.external_lib_id} value={l.external_lib_id}>
+                          {l.name} ({l.type})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="space-y-1">
+                      <input
+                        placeholder="Library ID (e.g. 1, 2, 3 — from your media server)"
+                        value={libForm.external_lib_id}
+                        onChange={e => setLibForm({ ...libForm, external_lib_id: e.target.value })}
+                        className="input w-full font-mono"
+                      />
+                      <p className="text-[10px] text-zinc-600">
+                        Server unavailable — enter the library ID manually. For Plex this is a section number like 1 or 2.
+                      </p>
+                    </div>
+                  )}
                   <input
                     placeholder="Display name"
                     value={libForm.display_name}
@@ -415,7 +461,11 @@ export default observer(function SourcesPage() {
                     <option value="mixed">Mixed</option>
                   </select>
                   <div className="flex gap-2">
-                    <button onClick={addLib} className="btn-primary">Save</button>
+                    <button
+                      onClick={addLib}
+                      disabled={!libForm.external_lib_id || !libForm.display_name}
+                      className="btn-primary disabled:opacity-40"
+                    >Save</button>
                     <button onClick={() => setShowAddLib(false)} className="btn-ghost">Cancel</button>
                   </div>
                 </div>
@@ -433,12 +483,26 @@ export default observer(function SourcesPage() {
                       {lib.library_type} · id: {lib.external_lib_id}
                     </div>
                   </div>
-                  <button
-                    onClick={() => store.removeLibrary(store.selectedId!, lib.library_id)}
-                    className="btn-danger"
-                  >
-                    Remove
-                  </button>
+                  {confirmLib === lib.library_id ? (
+                    <span className="flex items-center gap-1.5 text-xs">
+                      <span className="text-red-400 shrink-0">Sure?</span>
+                      <button
+                        onClick={() => { store.removeLibrary(store.selectedId!, lib.library_id); setConfirmLib(null) }}
+                        className="px-2 py-0.5 rounded bg-red-900/60 border border-red-700/50 text-red-300 hover:bg-red-800/60 transition-colors"
+                      >Yes</button>
+                      <button
+                        onClick={() => setConfirmLib(null)}
+                        className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+                      >No</button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmLib(lib.library_id)}
+                      className="btn-danger"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

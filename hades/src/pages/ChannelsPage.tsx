@@ -20,6 +20,7 @@ export default observer(function ChannelsPage() {
   const store = channelStore
   const [showAdd, setShowAdd]           = useState(false)
   const [form, setForm]                 = useState({ name: '', number: '', timezone: 'UTC' })
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
   const [importError, setImportError]   = useState<string | null>(null)
   const [importResult, setImportResult] = useState<{ channel_id: string; unresolved: any[] } | null>(null)
   const [importPending, setImportPending] = useState<{
@@ -210,9 +211,23 @@ export default observer(function ChannelsPage() {
                   Edit Schedule
                 </Link>
                 <ExportButton channel={ch} onExport={handleExport} />
-                <button onClick={() => store.remove(ch.channel_id)} className="btn-danger">
-                  Remove
-                </button>
+                {confirmRemove === ch.channel_id ? (
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="text-red-400">Delete channel?</span>
+                    <button
+                      onClick={() => { store.remove(ch.channel_id); setConfirmRemove(null) }}
+                      className="px-2 py-0.5 rounded bg-red-900/60 border border-red-700/50 text-red-300 hover:bg-red-800/60 transition-colors"
+                    >Yes</button>
+                    <button
+                      onClick={() => setConfirmRemove(null)}
+                      className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+                    >No</button>
+                  </span>
+                ) : (
+                  <button onClick={() => setConfirmRemove(ch.channel_id)} className="btn-danger">
+                    Remove
+                  </button>
+                )}
               </div>
             </div>
             <ChannelGuideStrip channelId={ch.channel_id} timezone={ch.timezone} />
