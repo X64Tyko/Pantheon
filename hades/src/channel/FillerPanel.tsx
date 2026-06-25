@@ -131,7 +131,7 @@ function SeasonPicker({ showId, selected, onSelect }: {
   selected: number | undefined
   onSelect: (sf: number | undefined) => void
 }) {
-  const [seasons,  setSeasons]  = useState<number[]>([])
+  const [seasons,  setSeasons]  = useState<{number: number; name: string}[]>([])
   const [loading,  setLoading]  = useState(true)
 
   useEffect(() => {
@@ -155,12 +155,12 @@ function SeasonPicker({ showId, selected, onSelect }: {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
       <button className="hds-season-btn" style={btnStyle(selected === undefined)} onClick={() => onSelect(undefined)}>All</button>
-      {seasons.filter(s => s !== 0).map(s => (
-        <button key={s} className="hds-season-btn" style={btnStyle(selected === s)} onClick={() => onSelect(s)}>
-          S{String(s).padStart(2, '0')}
+      {seasons.filter(s => s.number !== 0).map(s => (
+        <button key={s.number} className="hds-season-btn" style={btnStyle(selected === s.number)} onClick={() => onSelect(s.number)}>
+          {s.name || `S${String(s.number).padStart(2, '0')}`}
         </button>
       ))}
-      {seasons.includes(0) && (
+      {seasons.some(s => s.number === 0) && (
         <button className="hds-season-btn" style={btnStyle(selected === 0)} onClick={() => onSelect(0)}>S00</button>
       )}
     </div>

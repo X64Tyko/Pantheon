@@ -5,6 +5,9 @@ import type { Show, Movie, ShowDetail, MovieDetail, EpisodeSearchResult, Playlis
 
 const MAX_HOVER_SEASONS = 5
 
+const seasonLabel = (s: {number: number; name: string}) =>
+  s.name || `S${String(s.number).padStart(2, '0')}`
+
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
 export type AddContentParams = {
@@ -91,7 +94,7 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
 }) {
   const [imgReady,       setImgReady]       = useState(false)
   const [hovering,       setHovering]       = useState(false)
-  const [seasons,        setSeasons]        = useState<number[] | null>(null)
+  const [seasons,        setSeasons]        = useState<{number: number; name: string}[] | null>(null)
   const [seasonsLoading, setSeasonsLoading] = useState(false)
   const titleRef = useRef<HTMLSpanElement>(null)
   const imgUrl   = `/api/shows/${show.show_id}/thumb`
@@ -124,8 +127,8 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
     onAdd({ content_type: 'show', content_id: show.show_id, season_filter, title, include_specials: include_specials || season_filter === null || season_filter === 0 })
   }
 
-  const nonSpecial = (seasons ?? []).filter(s => s !== 0)
-  const hasSpecials = (seasons ?? []).includes(0)
+  const nonSpecial = (seasons ?? []).filter(s => s.number !== 0)
+  const hasSpecials = (seasons ?? []).some(s => s.number === 0)
   const visible    = nonSpecial.slice(0, MAX_HOVER_SEASONS)
   const hasMore    = nonSpecial.length > MAX_HOVER_SEASONS
 
@@ -159,7 +162,9 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
                 <HoverSeasonBtn onClick={e => add(e, null, show.title, true)}>All</HoverSeasonBtn>
                 {hasSpecials && <HoverSeasonBtn gold onClick={e => add(e, 0, `${show.title} S00`, true)}>S00</HoverSeasonBtn>}
                 {visible.map(s => (
-                  <HoverSeasonBtn key={s} onClick={e => add(e, s, `${show.title} S${String(s).padStart(2,'0')}`)}>S{String(s).padStart(2,'0')}</HoverSeasonBtn>
+                  <HoverSeasonBtn key={s.number} onClick={e => add(e, s.number, `${show.title} ${seasonLabel(s)}`)}>
+                    {seasonLabel(s)}
+                  </HoverSeasonBtn>
                 ))}
                 {hasMore && (
                   <button
@@ -197,12 +202,12 @@ function HoverSeasonBtn({ onClick, gold, children }: { onClick: (e: React.MouseE
 export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, onBack, addLabel = 'ADD TO BLOCK', renderAdd }: {
   item:          InfoItem
   detail:        ShowDetail | MovieDetail | null
-  seasons:       number[]
+  seasons:       {number: number; name: string}[]
   detailLoading: boolean
   onAdd:         (params: AddContentParams) => void
   onBack:        () => void
   addLabel?:     string
-  renderAdd?:    (item: InfoItem, seasons: number[], onAdd: (params: AddContentParams) => void) => React.ReactNode
+  renderAdd?:    (item: InfoItem, seasons: {number: number; name: string}[], onAdd: (params: AddContentParams) => void) => React.ReactNode
 }) {
   const add = (params: AddContentParams) => { onAdd(params); onBack() }
 
@@ -250,13 +255,13 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
                 {renderAdd ? renderAdd(item, seasons, add) : (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                     <AddBtn onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: null, title: s.title, include_specials: true })}>Add All</AddBtn>
-                    {seasons.includes(0) && <>
+                    {seasons.some(sn => sn.number === 0) && <>
                       <AddBtn onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: null, title: s.title, include_specials: false })}>No S00</AddBtn>
                       <AddBtn gold onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: 0, title: `${s.title} S00`, include_specials: true })}>S00</AddBtn>
                     </>}
-                    {seasons.filter(n => n !== 0).map(n => (
-                      <AddBtn key={n} onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: n, title: `${s.title} S${String(n).padStart(2,'0')}` })}>
-                        S{String(n).padStart(2,'0')}
+                    {seasons.filter(sn => sn.number !== 0).map(sn => (
+                      <AddBtn key={sn.number} onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: sn.number, title: `${s.title} ${seasonLabel(sn)}` })}>
+                        {seasonLabel(sn)}
                       </AddBtn>
                     ))}
                     {detailLoading && seasons.length === 0 && (
@@ -354,7 +359,7 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
 export function useDetailPanel() {
   const [infoItem,     setInfoItem]     = useState<InfoItem | null>(null)
   const [infoDetail,   setInfoDetail]   = useState<ShowDetail | MovieDetail | null>(null)
-  const [infoSeasons,  setInfoSeasons]  = useState<number[]>([])
+  const [infoSeasons,  setInfoSeasons]  = useState<{number: number; name: string}[]>([])
   const [detailLoading,setDetailLoading]= useState(false)
 
   useEffect(() => {
@@ -367,11 +372,11 @@ export function useDetailPanel() {
     setDetailLoading(true)
     const ctrl = new AbortController()
     if (infoItem.kind === 'show') {
-      Promise.all([api.getShow(infoItem.id), api.getShowSeasons(infoItem.id)])
-        .then(([detail, { seasons }]) => {
+      api.getShow(infoItem.id)
+        .then(detail => {
           if (ctrl.signal.aborted) return
           setInfoDetail(detail)
-          setInfoSeasons(seasons)
+          setInfoSeasons(detail.seasons)
           setDetailLoading(false)
         })
         .catch(() => { if (!ctrl.signal.aborted) setDetailLoading(false) })

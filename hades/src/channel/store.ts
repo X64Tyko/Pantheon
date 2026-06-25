@@ -70,7 +70,7 @@ export class ChannelDetailStore {
   filterRules:      FilterRule[]         = []
 
   expandedShowId:         string | null = null
-  expandedSeasons:        number[]      = []
+  expandedSeasons:        {number: number; name: string}[] = []
   expandedSeasonsLoading: boolean       = false
 
   isNewMode: boolean = false

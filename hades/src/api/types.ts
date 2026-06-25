@@ -104,6 +104,7 @@ export interface ShowDetail {
   audience_rating?:        number
   locked:                  boolean
   episode_count:           number
+  seasons:                 { number: number; name: string }[]
   external_id:             string
   source_id:               string
   source_base_url:         string

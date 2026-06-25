@@ -94,7 +94,7 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
     } catch (e: any) { setBumperErr(e.message) }
   }
 
-  const renderBumperAdd = (item: InfoItem, _seasons: number[], _onAdd: (p: AddContentParams) => void) => {
+  const renderBumperAdd = (item: InfoItem, _seasons: {number: number; name: string}[], _onAdd: (p: AddContentParams) => void) => {
     const ct    = item.kind === 'show' ? 'show' : item.kind === 'movie' ? 'movie' : item.kind === 'episode' ? 'episode' : 'playlist'
     const cid   = item.kind === 'show' ? item.id : item.kind === 'movie' ? item.id : item.kind === 'episode' ? item.ep.episode_id : item.pl.playlist_id
     const title = item.kind === 'show' ? item.seed.title : item.kind === 'movie' ? item.seed.title : item.kind === 'episode' ? item.ep.title : item.pl.title

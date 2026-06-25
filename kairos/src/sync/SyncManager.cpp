@@ -16,6 +16,7 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -263,6 +264,7 @@ void SyncManager::syncShows(MediaSource& src,
         { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id=?");
           d.bind(1, show.show_id); d.exec(); }
 
+        std::unordered_map<int, std::string> season_names;
         for (auto& ep : episodes) {
             const std::string ext_ep_id = ep.episode_id;
             ep.episode_id = resolveId("episode", source_id, ext_ep_id);
@@ -288,6 +290,20 @@ void SyncManager::syncShows(MediaSource& src,
             e.exec();
 
             upsertMapping("episode", ep.episode_id, source_id, library_id, ext_ep_id);
+
+            if (!ep.season_name.empty() && !season_names.count(ep.season))
+                season_names[ep.season] = ep.season_name;
+        }
+
+        { SQLite::Statement d(db_.get(), "DELETE FROM show_season WHERE show_id = ?");
+          d.bind(1, show.show_id); d.exec(); }
+        for (const auto& [season, name] : season_names) {
+            SQLite::Statement ins(db_.get(),
+                "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
+            ins.bind(1, show.show_id);
+            ins.bind(2, season);
+            ins.bind(3, name);
+            ins.exec();
         }
     }
 

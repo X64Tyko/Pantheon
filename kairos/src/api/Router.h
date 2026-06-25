@@ -1,6 +1,5 @@
 #pragma once
 #include <httplib.h>
-#include <ctime>
 #include <mutex>
 #include <string>
 #include <unordered_map>

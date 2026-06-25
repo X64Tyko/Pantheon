@@ -15,5 +15,6 @@ struct Episode {
     std::string      overview;
     std::string      air_date;       // "YYYY-MM-DD"
     std::string      thumb;
+    std::string      season_name;    // e.g. "Season 1", "Specials"; empty if unknown
     std::optional<int> absolute_index; // TVDB absolute episode number; null if not available
 };

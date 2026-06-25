@@ -272,12 +272,14 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
             if (file_path.empty()) continue;
 
             const int season = item.value("parentIndex", 0);
+            const std::string season_name = item.value("parentTitle", "");
             const std::string air_date = item.value("originallyAvailableAt", "");
 
             Episode ep;
             ep.episode_id  = item["ratingKey"].get<std::string>();
             ep.show_id     = item["grandparentRatingKey"].get<std::string>(); // resolved by SyncManager
             ep.season      = season;
+            ep.season_name = season_name;
             ep.episode     = item.value("index", 0);
             ep.title       = item.value("title", "");
             ep.file_path   = std::move(file_path);

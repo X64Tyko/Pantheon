@@ -105,7 +105,7 @@ const BumperOverlay = observer(function BumperOverlay({ store }: { store: Channe
     setArmed(a => a?.content_id === params.content_id && a?.content_type === params.content_type ? null : params)
   }
 
-  const renderSlotAssign = (_item: InfoItem, _seasons: number[], _onAdd: (p: AddContentParams) => void) => {
+  const renderSlotAssign = (_item: InfoItem, _seasons: {number: number; name: string}[], _onAdd: (p: AddContentParams) => void) => {
     const source = infoItem
     if (!source) return null
     const ct  = source.kind === 'show' ? 'show' : source.kind === 'movie' ? 'movie' : source.kind === 'episode' ? 'episode' : 'playlist'

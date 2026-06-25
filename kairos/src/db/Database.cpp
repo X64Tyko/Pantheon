@@ -915,6 +915,19 @@ constexpr Migration kMigrations[] = {
     );
 )SQL", false }
 
+,
+
+// ── v39: named seasons — stores the season title from the media server
+//         (e.g. "Specials", "Season 1", or custom Plex names).
+{ 39, R"SQL(
+    CREATE TABLE show_season (
+        show_id     TEXT    NOT NULL REFERENCES show(show_id) ON DELETE CASCADE,
+        season      INTEGER NOT NULL,
+        season_name TEXT    NOT NULL DEFAULT '',
+        PRIMARY KEY (show_id, season)
+    );
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace

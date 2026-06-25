@@ -43,7 +43,7 @@ class FillerPageStore {
   pickerShows:        Show[]        = []
   pickerShowsLoading: boolean       = false
   expandedShowId:     string | null = null
-  expandedSeasons:    number[]      = []
+  expandedSeasons:    {number: number; name: string}[] = []
   seasonsLoading:     boolean       = false
   importing:          boolean       = false
   importLabel:        string        = ''
@@ -693,8 +693,8 @@ const ShowList = observer(function ShowList({ listId }: { listId: string }) {
                   <>
                     <SeasonBtn label="All episodes" onClick={() => store.importShowEpisodes(listId, show.show_id)} />
                     {store.expandedSeasons.map(s => (
-                      <SeasonBtn key={s} label={`S${String(s).padStart(2,'0')}`}
-                        onClick={() => store.importShowEpisodes(listId, show.show_id, s)} />
+                      <SeasonBtn key={s.number} label={s.name || `S${String(s.number).padStart(2,'0')}`}
+                        onClick={() => store.importShowEpisodes(listId, show.show_id, s.number)} />
                     ))}
                   </>
                 )}

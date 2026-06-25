@@ -215,6 +215,7 @@ void Router::registerSourceRoutes() {
         ok(res, result.dump());
     });
 
+	// commit source
     svr_.Post("/api/sources", [this](const Req& req, Res& res) {
         try {
             auto b = json::parse(req.body);
@@ -3326,10 +3327,15 @@ void Router::registerContentRoutes() {
     svr_.Get("/api/shows/:id/seasons", [this](const Req& req, Res& res) {
         auto id = req.path_params.at("id");
         SQLite::Statement q(db_.get(),
-            "SELECT DISTINCT season FROM episode WHERE show_id = ? ORDER BY season");
+            "SELECT DISTINCT e.season, COALESCE(ss.season_name, '') "
+            "FROM episode e "
+            "LEFT JOIN show_season ss ON ss.show_id = e.show_id AND ss.season = e.season "
+            "WHERE e.show_id = ? ORDER BY e.season");
         q.bind(1, id);
         json seasons = json::array();
-        while (q.executeStep()) seasons.push_back(q.getColumn(0).getInt());
+        while (q.executeStep())
+            seasons.push_back({{"number", q.getColumn(0).getInt()},
+                               {"name",   q.getColumn(1).getString()}});
         ok(res, json{{"seasons", seasons}}.dump());
     });
 
@@ -3518,6 +3524,21 @@ void Router::registerContentRoutes() {
         show["external_id"]              = external_id;
         show["source_id"]                = source_id;
         show["source_base_url"]          = source_base_url;
+
+        {
+            SQLite::Statement sq(db_.get(),
+                "SELECT DISTINCT e.season, COALESCE(ss.season_name, '') "
+                "FROM episode e "
+                "LEFT JOIN show_season ss ON ss.show_id = e.show_id AND ss.season = e.season "
+                "WHERE e.show_id = ? ORDER BY e.season");
+            sq.bind(1, id);
+            json seasons = json::array();
+            while (sq.executeStep())
+                seasons.push_back({{"number", sq.getColumn(0).getInt()},
+                                   {"name",   sq.getColumn(1).getString()}});
+            show["seasons"] = std::move(seasons);
+        }
+
         ok(res, show.dump());
     });
 
