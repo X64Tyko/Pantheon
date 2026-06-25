@@ -313,3 +313,92 @@ std::vector<Playlist> PlexSource::fetchPlaylists(const std::string& /*external_l
     // TODO: GET /playlists?type=15, then GET /playlists/{id}/items per playlist
     return {};
 }
+
+// ---------------------------------------------------------------------------
+// Browse — live queries, not synced data
+// ---------------------------------------------------------------------------
+
+// Shared parser for playlist/collection item responses.
+// Returns BrowseContentItems with external_id populated; kairos_id resolution
+// is left to the Router (DB lookup against source_mapping).
+static std::vector<BrowseContentItem> parseBrowseItems(const std::string& body) {
+    std::vector<BrowseContentItem> result;
+    try {
+        auto j = json::parse(body);
+        const auto& md = j["MediaContainer"];
+        if (!md.contains("Metadata")) return result;
+        for (const auto& item : md["Metadata"]) {
+            std::string plex_type = item.value("type", "");
+            BrowseContentItem entry;
+            entry.external_id  = item["ratingKey"].get<std::string>();
+            entry.item_type    = (plex_type == "movie") ? "movie" : "episode";
+            entry.title        = item.value("title", "");
+            entry.duration_ms  = item.value("duration", int64_t{0});
+            if (plex_type == "episode") {
+                entry.show_title = item.value("grandparentTitle", "");
+                if (item.contains("parentIndex") && !item["parentIndex"].is_null())
+                    entry.season  = item["parentIndex"].get<int>();
+                if (item.contains("index") && !item["index"].is_null())
+                    entry.episode = item["index"].get<int>();
+            }
+            result.push_back(std::move(entry));
+        }
+    } catch (...) {}
+    return result;
+}
+
+std::vector<BrowseListItem> PlexSource::browsePlaylists() {
+    auto res = get("/playlists?playlistType=video");
+    if (!res || res->status != 200) return {};
+    std::vector<BrowseListItem> result;
+    try {
+        auto j = json::parse(res->body);
+        const auto& md = j["MediaContainer"];
+        if (md.contains("Metadata")) {
+            for (const auto& pl : md["Metadata"]) {
+                result.push_back({
+                    pl["ratingKey"].get<std::string>(),
+                    pl.value("title", ""),
+                    pl.value("leafCount", 0),
+                });
+            }
+        }
+    } catch (const json::exception& e) {
+        std::cerr << "[plex:" << source_id_ << "] parse error (browse playlists): " << e.what() << '\n';
+    }
+    return result;
+}
+
+std::vector<BrowseContentItem> PlexSource::browsePlaylistItems(const std::string& id) {
+    auto res = get("/playlists/" + id + "/items");
+    if (!res || res->status != 200) return {};
+    return parseBrowseItems(res->body);
+}
+
+std::vector<BrowseListItem> PlexSource::browseCollections(const std::string& ext_lib_id) {
+    auto res = get("/library/sections/" + ext_lib_id + "/collections");
+    if (!res || res->status != 200) return {};
+    std::vector<BrowseListItem> result;
+    try {
+        auto j = json::parse(res->body);
+        const auto& md = j["MediaContainer"];
+        if (md.contains("Metadata")) {
+            for (const auto& col : md["Metadata"]) {
+                result.push_back({
+                    col["ratingKey"].get<std::string>(),
+                    col.value("title", ""),
+                    col.value("childCount", 0),
+                });
+            }
+        }
+    } catch (const json::exception& e) {
+        std::cerr << "[plex:" << source_id_ << "] parse error (browse collections): " << e.what() << '\n';
+    }
+    return result;
+}
+
+std::vector<BrowseContentItem> PlexSource::browseCollectionItems(const std::string& id) {
+    auto res = get("/library/metadata/" + id + "/children");
+    if (!res || res->status != 200) return {};
+    return parseBrowseItems(res->body);
+}

@@ -8,7 +8,7 @@
 #include "scheduler/RuleEngine.h"
 #include "scheduler/Rng.h"
 #include "scheduler/RuntimeFlags.h"
-#include "sync/SyncManager.h"
+#include "source/SyncManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -540,31 +540,9 @@ void Router::registerSourceRoutes() {
         ok(res, json{{"status","started"}, {"source_id", id}}.dump());
     });
 
-    // ── Plex browse: playlists / collections ──────────────────────────────────
-    // These call the Plex server live — they do not use synced data.
+    // ── Browse: playlists / collections (live queries via IMediaSource) ─────────
 
-    // Helper: build a temporary Plex httplib client for the given source.
-    // Returns empty string in base_url if source is not found or not plex.
-    auto makePlexClient = [this](const std::string& source_id,
-                                  std::string& base_url_out,
-                                  std::unique_ptr<httplib::Client>& client_out) -> bool {
-        std::string source_type;
-        SQLite::Statement sq(db_.get(),
-            "SELECT base_url, source_type FROM media_source WHERE source_id = ?");
-        sq.bind(1, source_id);
-        if (!sq.executeStep()) return false;
-        base_url_out = sq.getColumn(0).getString();
-        source_type  = sq.getColumn(1).getString();
-        if (source_type != "plex" || base_url_out.empty()) return false;
-        std::string token = conf_.token(source_id);
-        client_out = std::make_unique<httplib::Client>(base_url_out);
-        client_out->set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
-        client_out->set_connection_timeout(10);
-        client_out->set_read_timeout(30);
-        return true;
-    };
-
-    // Helper: resolve a Plex ratingKey to an internal kairos_id.
+    // Resolves a source-native external_id to a kairos_id via source_mapping.
     auto resolveKairosId = [this](const std::string& source_id,
                                    const std::string& external_id,
                                    const std::string& item_type) -> std::string {
@@ -575,82 +553,56 @@ void Router::registerSourceRoutes() {
         return lk.executeStep() ? lk.getColumn(0).getString() : "";
     };
 
-    // GET /api/sources/:id/browse/playlists — all Plex playlists on the server
-    svr_.Get("/api/sources/:id/browse/playlists", [this, makePlexClient](const Req& req, Res& res) {
-        auto source_id = req.path_params.at("id");
-        std::string base_url;
-        std::unique_ptr<httplib::Client> client;
-        if (!makePlexClient(source_id, base_url, client)) {
-            err(res, 400, "source not found or not a Plex source"); return;
-        }
-        auto r = client->Get("/playlists?playlistType=video");
-        if (!r || r->status != 200) { err(res, 502, "failed to fetch playlists from Plex"); return; }
+    auto serializeBrowseItems = [resolveKairosId](
+            const std::string& source_id,
+            const std::vector<BrowseContentItem>& items) -> json {
         json result = json::array();
-        try {
-            auto j = json::parse(r->body);
-            const auto& md = j["MediaContainer"];
-            if (md.contains("Metadata")) {
-                for (const auto& pl : md["Metadata"]) {
-                    result.push_back({
-                        {"id",         pl["ratingKey"].get<std::string>()},
-                        {"title",      pl.value("title", "")},
-                        {"item_count", pl.value("leafCount", 0)},
-                    });
-                }
+        for (const auto& item : items) {
+            std::string kairos_id = resolveKairosId(source_id, item.external_id, item.item_type);
+            json entry = {
+                {"item_type",   item.item_type},
+                {"kairos_id",   kairos_id},
+                {"title",       item.title},
+                {"duration_ms", item.duration_ms},
+                {"available",   !kairos_id.empty()},
+            };
+            if (item.item_type == "episode") {
+                entry["show_title"] = item.show_title;
+                if (item.season  >= 0) entry["season"]  = item.season;
+                if (item.episode >= 0) entry["episode"] = item.episode;
             }
-        } catch (...) { err(res, 502, "failed to parse Plex playlist response"); return; }
+            result.push_back(std::move(entry));
+        }
+        return result;
+    };
+
+    // GET /api/sources/:id/browse/playlists
+    svr_.Get("/api/sources/:id/browse/playlists", [this](const Req& req, Res& res) {
+        auto src = sync_.findSource(req.path_params.at("id"));
+        if (!src) { err(res, 404, "source not found"); return; }
+        auto items = src->browsePlaylists();
+        json result = json::array();
+        for (const auto& item : items)
+            result.push_back({{"id", item.id}, {"title", item.title}, {"item_count", item.item_count}});
         ok(res, result.dump());
     });
 
     // GET /api/sources/:id/browse/playlists/:plid/items
     svr_.Get("/api/sources/:id/browse/playlists/:plid/items",
-             [this, makePlexClient, resolveKairosId](const Req& req, Res& res) {
+             [this, serializeBrowseItems](const Req& req, Res& res) {
         auto source_id = req.path_params.at("id");
-        auto plid      = req.path_params.at("plid");
-        std::string base_url;
-        std::unique_ptr<httplib::Client> client;
-        if (!makePlexClient(source_id, base_url, client)) {
-            err(res, 400, "source not found or not a Plex source"); return;
-        }
-        auto r = client->Get("/playlists/" + plid + "/items");
-        if (!r || r->status != 200) { err(res, 502, "failed to fetch playlist items from Plex"); return; }
-        json result = json::array();
-        try {
-            auto j = json::parse(r->body);
-            const auto& md = j["MediaContainer"];
-            if (md.contains("Metadata")) {
-                for (const auto& item : md["Metadata"]) {
-                    std::string plex_type  = item.value("type", "");
-                    std::string item_type  = (plex_type == "movie") ? "movie" : "episode";
-                    std::string rating_key = item["ratingKey"].get<std::string>();
-                    std::string kairos_id  = resolveKairosId(source_id, rating_key, item_type);
-                    json entry = {
-                        {"item_type",   item_type},
-                        {"kairos_id",   kairos_id},
-                        {"title",       item.value("title", "")},
-                        {"duration_ms", item.value("duration", int64_t{0})},
-                        {"available",   !kairos_id.empty()},
-                    };
-                    if (plex_type == "episode") {
-                        entry["show_title"] = item.value("grandparentTitle", "");
-                        if (item.contains("parentIndex")) entry["season"]  = item["parentIndex"].get<int>();
-                        if (item.contains("index"))       entry["episode"] = item["index"].get<int>();
-                    }
-                    result.push_back(std::move(entry));
-                }
-            }
-        } catch (...) { err(res, 502, "failed to parse Plex playlist items response"); return; }
-        ok(res, result.dump());
+        auto src = sync_.findSource(source_id);
+        if (!src) { err(res, 404, "source not found"); return; }
+        ok(res, serializeBrowseItems(source_id, src->browsePlaylistItems(req.path_params.at("plid"))).dump());
     });
 
     // GET /api/sources/:id/browse/collections?library_id=<kairos library_id>
     svr_.Get("/api/sources/:id/browse/collections",
-             [this, makePlexClient](const Req& req, Res& res) {
+             [this](const Req& req, Res& res) {
         auto source_id = req.path_params.at("id");
         std::string library_id = req.has_param("library_id") ? req.get_param_value("library_id") : "";
         if (library_id.empty()) { err(res, 400, "library_id required"); return; }
 
-        // Look up the external_lib_id for this kairos library_id
         std::string ext_lib_id;
         SQLite::Statement lq(db_.get(),
             "SELECT external_lib_id FROM media_library WHERE library_id = ? AND source_id = ?");
@@ -658,69 +610,22 @@ void Router::registerSourceRoutes() {
         if (!lq.executeStep()) { err(res, 404, "library not found for this source"); return; }
         ext_lib_id = lq.getColumn(0).getString();
 
-        std::string base_url;
-        std::unique_ptr<httplib::Client> client;
-        if (!makePlexClient(source_id, base_url, client)) {
-            err(res, 400, "source not found or not a Plex source"); return;
-        }
-        auto r = client->Get("/library/sections/" + ext_lib_id + "/collections");
-        if (!r || r->status != 200) { err(res, 502, "failed to fetch collections from Plex"); return; }
+        auto src = sync_.findSource(source_id);
+        if (!src) { err(res, 404, "source not found"); return; }
+        auto items = src->browseCollections(ext_lib_id);
         json result = json::array();
-        try {
-            auto j = json::parse(r->body);
-            const auto& md = j["MediaContainer"];
-            if (md.contains("Metadata")) {
-                for (const auto& col : md["Metadata"]) {
-                    result.push_back({
-                        {"id",         col["ratingKey"].get<std::string>()},
-                        {"title",      col.value("title", "")},
-                        {"item_count", col.value("childCount", 0)},
-                    });
-                }
-            }
-        } catch (...) { err(res, 502, "failed to parse Plex collections response"); return; }
+        for (const auto& item : items)
+            result.push_back({{"id", item.id}, {"title", item.title}, {"item_count", item.item_count}});
         ok(res, result.dump());
     });
 
     // GET /api/sources/:id/browse/collections/:cid/items
     svr_.Get("/api/sources/:id/browse/collections/:cid/items",
-             [this, makePlexClient, resolveKairosId](const Req& req, Res& res) {
+             [this, serializeBrowseItems](const Req& req, Res& res) {
         auto source_id = req.path_params.at("id");
-        auto cid       = req.path_params.at("cid");
-        std::string base_url;
-        std::unique_ptr<httplib::Client> client;
-        if (!makePlexClient(source_id, base_url, client)) {
-            err(res, 400, "source not found or not a Plex source"); return;
-        }
-        auto r = client->Get("/library/metadata/" + cid + "/children");
-        if (!r || r->status != 200) { err(res, 502, "failed to fetch collection items from Plex"); return; }
-        json result = json::array();
-        try {
-            auto j = json::parse(r->body);
-            const auto& md = j["MediaContainer"];
-            if (md.contains("Metadata")) {
-                for (const auto& item : md["Metadata"]) {
-                    std::string plex_type  = item.value("type", "");
-                    std::string item_type  = (plex_type == "movie") ? "movie" : "episode";
-                    std::string rating_key = item["ratingKey"].get<std::string>();
-                    std::string kairos_id  = resolveKairosId(source_id, rating_key, item_type);
-                    json entry = {
-                        {"item_type",   item_type},
-                        {"kairos_id",   kairos_id},
-                        {"title",       item.value("title", "")},
-                        {"duration_ms", item.value("duration", int64_t{0})},
-                        {"available",   !kairos_id.empty()},
-                    };
-                    if (plex_type == "episode") {
-                        entry["show_title"] = item.value("grandparentTitle", "");
-                        if (item.contains("parentIndex")) entry["season"]  = item["parentIndex"].get<int>();
-                        if (item.contains("index"))       entry["episode"] = item["index"].get<int>();
-                    }
-                    result.push_back(std::move(entry));
-                }
-            }
-        } catch (...) { err(res, 502, "failed to parse Plex collection items response"); return; }
-        ok(res, result.dump());
+        auto src = sync_.findSource(source_id);
+        if (!src) { err(res, 404, "source not found"); return; }
+        ok(res, serializeBrowseItems(source_id, src->browseCollectionItems(req.path_params.at("cid"))).dump());
     });
 }
 

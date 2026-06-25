@@ -90,7 +90,7 @@ void SyncManager::syncAll() {
 }
 
 void SyncManager::syncSource(const std::string& source_id) {
-    MediaSource* src = findSource(source_id);
+    IMediaSource* src = findSource(source_id);
     if (!src || !src->isSupported()) return;
 
     std::cout << "[sync] syncing source: " << source_id << std::endl;
@@ -144,7 +144,7 @@ void SyncManager::setThreadCount(int n) {
     override_thread_count_.store(n > 0 ? n : 0, std::memory_order_relaxed);
 }
 
-void SyncManager::syncShows(MediaSource& src,
+void SyncManager::syncShows(IMediaSource& src,
                              const std::string& source_id,
                              const std::string& library_id,
                              const std::string& external_lib_id) {
@@ -351,7 +351,7 @@ void SyncManager::syncShows(MediaSource& src,
 // Movie sync
 // ---------------------------------------------------------------------------
 
-void SyncManager::syncMovies(MediaSource& src,
+void SyncManager::syncMovies(IMediaSource& src,
                               const std::string& source_id,
                               const std::string& library_id,
                               const std::string& external_lib_id) {
@@ -618,13 +618,13 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
 
 // ---------------------------------------------------------------------------
 
-MediaSource* SyncManager::findSource(const std::string& source_id) const {
+IMediaSource* SyncManager::findSource(const std::string& source_id) const {
     for (const auto& s : sources_)
         if (s->sourceId() == source_id) return s.get();
     return nullptr;
 }
 
-std::unique_ptr<MediaSource> SyncManager::buildSource(const std::string& source_id,
+std::unique_ptr<IMediaSource> SyncManager::buildSource(const std::string& source_id,
                                                        const std::string& source_type,
                                                        const std::string& base_url) const {
     // Conf file takes precedence; env vars are the fallback for manual setups

@@ -9,7 +9,7 @@
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
-#include "sync/SyncManager.h"
+#include "source/SyncManager.h"
 
 int main(int argc, char* argv[]) {
     // Intercept cout/cerr before anything else so startup messages are captured.

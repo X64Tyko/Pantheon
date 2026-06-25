@@ -1,5 +1,5 @@
 #pragma once
-#include "MediaSource.h"
+#include "IMediaSource.h"
 #include <atomic>
 #include <memory>
 #include <string>
@@ -25,7 +25,7 @@ public:
     bool isPlexLinkSyncing() const { return plex_sync_running_.load(); }
 
     std::vector<std::string> sourceIds()                              const;
-    MediaSource*             findSource(const std::string& source_id) const;
+    IMediaSource*             findSource(const std::string& source_id) const;
 
     int  getThreadCount() const;
     void setThreadCount(int n);
@@ -44,23 +44,23 @@ private:
 
     void syncPlexLinks(const std::string& source_id);
 
-    void syncShows(MediaSource& src,
+    void syncShows(IMediaSource& src,
                    const std::string& source_id,
                    const std::string& library_id,
                    const std::string& external_lib_id);
 
-    void syncMovies(MediaSource& src,
+    void syncMovies(IMediaSource& src,
                     const std::string& source_id,
                     const std::string& library_id,
                     const std::string& external_lib_id);
 
-    std::unique_ptr<MediaSource> buildSource(const std::string& source_id,
+    std::unique_ptr<IMediaSource> buildSource(const std::string& source_id,
                                              const std::string& source_type,
                                              const std::string& base_url) const;
 
     Database&                                 db_;
     ConfStore&                                conf_;
-    std::vector<std::unique_ptr<MediaSource>> sources_;
+    std::vector<std::unique_ptr<IMediaSource>> sources_;
     std::atomic<bool>                         sync_running_{false};
     std::atomic<bool>                         plex_sync_running_{false};
     std::atomic<int>                          override_thread_count_{0};
