@@ -905,6 +905,16 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE channel_bumper       ADD COLUMN season_filter INTEGER;
 )SQL", false }
 
+,
+
+// ── v38: app_config key-value table for service integrations (Sonarr, Radarr).
+{ 38, R"SQL(
+    CREATE TABLE app_config (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT ''
+    );
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace

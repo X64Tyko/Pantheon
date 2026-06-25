@@ -675,6 +675,155 @@ void Router::registerConfigRoutes() {
         } catch (const json::exception& e) { err(res, 400, e.what()); }
     });
 
+    // Arr integrations — Sonarr / Radarr config + add endpoint
+    svr_.Get("/api/config/arr", [this](const Req&, Res& res) {
+        auto getVal = [&](const char* k) -> std::string {
+            SQLite::Statement q(db_.get(), "SELECT value FROM app_config WHERE key = ?");
+            q.bind(1, std::string(k));
+            return q.executeStep() ? q.getColumn(0).getString() : "";
+        };
+        ok(res, json{
+            {"sonarr_url",     getVal("sonarr_url")},
+            {"sonarr_api_key", getVal("sonarr_api_key")},
+            {"radarr_url",     getVal("radarr_url")},
+            {"radarr_api_key", getVal("radarr_api_key")},
+        }.dump());
+    });
+
+    svr_.Patch("/api/config/arr", [this](const Req& req, Res& res) {
+        try {
+            auto b = json::parse(req.body);
+            auto setVal = [&](const char* k, const std::string& v) {
+                SQLite::Statement s(db_.get(),
+                    "INSERT INTO app_config (key, value) VALUES (?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+                s.bind(1, std::string(k)); s.bind(2, v); s.exec();
+            };
+            if (b.contains("sonarr_url"))     setVal("sonarr_url",     b["sonarr_url"]);
+            if (b.contains("sonarr_api_key")) setVal("sonarr_api_key", b["sonarr_api_key"]);
+            if (b.contains("radarr_url"))     setVal("radarr_url",     b["radarr_url"]);
+            if (b.contains("radarr_api_key")) setVal("radarr_api_key", b["radarr_api_key"]);
+            ok(res, json{{"ok", true}}.dump());
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
+    });
+
+    // POST /api/arr/add — proxy request to Sonarr (shows) or Radarr (movies)
+    svr_.Post("/api/arr/add", [this](const Req& req, Res& res) {
+        try {
+            auto b = json::parse(req.body);
+            std::string type    = b.value("type",    "");
+            std::string title   = b.value("title",   "");
+            std::string tvdb_id = b.value("tvdb_id", "");
+            std::string tmdb_id = b.value("tmdb_id", "");
+            std::string imdb_id = b.value("imdb_id", "");
+
+            auto getConf = [&](const char* k) -> std::string {
+                SQLite::Statement q(db_.get(), "SELECT value FROM app_config WHERE key = ?");
+                q.bind(1, std::string(k));
+                return q.executeStep() ? q.getColumn(0).getString() : "";
+            };
+
+            auto pctEncode = [](const std::string& s) {
+                std::string out;
+                for (unsigned char c : s) {
+                    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+                        out += c;
+                    else { char buf[4]; snprintf(buf, sizeof(buf), "%%%02X", c); out += buf; }
+                }
+                return out;
+            };
+
+            if (type == "show") {
+                std::string url = getConf("sonarr_url");
+                std::string key = getConf("sonarr_api_key");
+                if (url.empty() || key.empty()) { err(res, 400, "Sonarr not configured"); return; }
+
+                httplib::Client client(url);
+                client.set_default_headers({{"X-Api-Key", key}, {"Accept", "application/json"}});
+                client.set_connection_timeout(10);
+                client.set_read_timeout(30);
+
+                std::string term = tvdb_id.empty() ? title : ("tvdb:" + tvdb_id);
+                auto lr = client.Get(("/api/v3/series/lookup?term=" + pctEncode(term)).c_str());
+                if (!lr || lr->status != 200) { err(res, 502, "Sonarr lookup failed"); return; }
+
+                json results;
+                try { results = json::parse(lr->body); } catch (...) { err(res, 502, "bad Sonarr response"); return; }
+                if (!results.is_array() || results.empty()) { err(res, 404, "not found in Sonarr"); return; }
+
+                int quality_id = 1;
+                if (auto qr = client.Get("/api/v3/qualityprofile"); qr && qr->status == 200) {
+                    try { auto qj = json::parse(qr->body); if (qj.is_array() && !qj.empty()) quality_id = qj[0]["id"]; } catch (...) {}
+                }
+                std::string root_path = "/tv";
+                if (auto rf = client.Get("/api/v3/rootfolder"); rf && rf->status == 200) {
+                    try { auto rj = json::parse(rf->body); if (rj.is_array() && !rj.empty()) root_path = rj[0]["path"]; } catch (...) {}
+                }
+
+                json add_body = results[0];
+                add_body["qualityProfileId"] = quality_id;
+                add_body["rootFolderPath"]   = root_path;
+                add_body["monitored"]        = true;
+                add_body["seasonFolder"]     = true;
+                add_body["addOptions"] = {{"searchForMissingEpisodes", true},
+                                          {"ignoreEpisodesWithFiles", false},
+                                          {"ignoreEpisodesWithoutFiles", false}};
+
+                auto ar = client.Post("/api/v3/series", add_body.dump(), "application/json");
+                if (!ar || (ar->status != 200 && ar->status != 201)) {
+                    std::string detail = ar ? ar->body.substr(0, 300) : "no response";
+                    err(res, 502, "Sonarr add failed: " + detail); return;
+                }
+                ok(res, json{{"ok", true}, {"message", "Added to Sonarr"}}.dump());
+
+            } else if (type == "movie") {
+                std::string url = getConf("radarr_url");
+                std::string key = getConf("radarr_api_key");
+                if (url.empty() || key.empty()) { err(res, 400, "Radarr not configured"); return; }
+
+                httplib::Client client(url);
+                client.set_default_headers({{"X-Api-Key", key}, {"Accept", "application/json"}});
+                client.set_connection_timeout(10);
+                client.set_read_timeout(30);
+
+                std::string term = !tmdb_id.empty() ? ("tmdb:" + tmdb_id)
+                                 : !imdb_id.empty() ? ("imdb:" + imdb_id)
+                                 : title;
+                auto lr = client.Get(("/api/v3/movie/lookup?term=" + pctEncode(term)).c_str());
+                if (!lr || lr->status != 200) { err(res, 502, "Radarr lookup failed"); return; }
+
+                json results;
+                try { results = json::parse(lr->body); } catch (...) { err(res, 502, "bad Radarr response"); return; }
+                if (!results.is_array() || results.empty()) { err(res, 404, "not found in Radarr"); return; }
+
+                int quality_id = 1;
+                if (auto qr = client.Get("/api/v3/qualityprofile"); qr && qr->status == 200) {
+                    try { auto qj = json::parse(qr->body); if (qj.is_array() && !qj.empty()) quality_id = qj[0]["id"]; } catch (...) {}
+                }
+                std::string root_path = "/movies";
+                if (auto rf = client.Get("/api/v3/rootfolder"); rf && rf->status == 200) {
+                    try { auto rj = json::parse(rf->body); if (rj.is_array() && !rj.empty()) root_path = rj[0]["path"]; } catch (...) {}
+                }
+
+                json add_body = results[0];
+                add_body["qualityProfileId"] = quality_id;
+                add_body["rootFolderPath"]   = root_path;
+                add_body["monitored"]        = true;
+                add_body["addOptions"]       = {{"searchForMovie", true}};
+
+                auto ar = client.Post("/api/v3/movie", add_body.dump(), "application/json");
+                if (!ar || (ar->status != 200 && ar->status != 201)) {
+                    std::string detail = ar ? ar->body.substr(0, 300) : "no response";
+                    err(res, 502, "Radarr add failed: " + detail); return;
+                }
+                ok(res, json{{"ok", true}, {"message", "Added to Radarr"}}.dump());
+
+            } else {
+                err(res, 400, "type must be 'show' or 'movie'");
+            }
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
+    });
+
     // Return one raw (pre-mapping) file path from this source so the user can
     // see the actual prefix they need to map from.
     svr_.Get("/api/sources/:id/sample-path", [this](const Req& req, Res& res) {
@@ -1164,6 +1313,94 @@ void Router::registerChannelRoutes() {
         } catch (const std::exception& e) {
             logErr("GET /api/channels/:id/export", e); err(res, 500, e.what());
         }
+    });
+
+    // Dry-run import preview — resolves content against the DB, returns per-item status, no writes
+    svr_.Post("/api/channels/import/preview", [this](const Req& req, Res& res) {
+        try {
+            auto body = json::parse(req.body);
+            bool deep = (body.value("depth", "shallow") == "deep");
+
+            // Resolution helper (mirrors import logic, read-only)
+            auto resolve = [&](const std::string& ct, const json& item) -> std::string {
+                std::string cid, title = item.value("title", "");
+                auto tryQ = [&](const char* sql, const std::string& val) {
+                    if (!cid.empty() || val.empty()) return;
+                    SQLite::Statement q(db_.get(), sql);
+                    q.bind(1, val);
+                    if (q.executeStep()) cid = q.getColumn(0).getString();
+                };
+                if (ct == "show") {
+                    if (deep) {
+                        tryQ("SELECT show_id FROM show WHERE imdb_id=? AND imdb_id!='' LIMIT 1", item.value("imdb_id",""));
+                        tryQ("SELECT show_id FROM show WHERE tvdb_id=? AND tvdb_id!='' LIMIT 1", item.value("tvdb_id",""));
+                        tryQ("SELECT show_id FROM show WHERE tmdb_id=? AND tmdb_id!='' LIMIT 1", item.value("tmdb_id",""));
+                    }
+                    if (cid.empty() && item.contains("year") && !item["year"].is_null()) {
+                        SQLite::Statement q(db_.get(), "SELECT show_id FROM show WHERE title=? AND year=? LIMIT 1");
+                        q.bind(1, title); q.bind(2, item["year"].get<int>());
+                        if (q.executeStep()) cid = q.getColumn(0).getString();
+                    }
+                    tryQ("SELECT show_id FROM show WHERE title=? LIMIT 1", title);
+                } else if (ct == "movie") {
+                    if (deep) {
+                        tryQ("SELECT movie_id FROM movie WHERE imdb_id=? AND imdb_id!='' LIMIT 1", item.value("imdb_id",""));
+                        tryQ("SELECT movie_id FROM movie WHERE tmdb_id=? AND tmdb_id!='' LIMIT 1", item.value("tmdb_id",""));
+                    }
+                    if (cid.empty() && item.contains("year") && !item["year"].is_null()) {
+                        SQLite::Statement q(db_.get(), "SELECT movie_id FROM movie WHERE title=? AND year=? LIMIT 1");
+                        q.bind(1, title); q.bind(2, item["year"].get<int>());
+                        if (q.executeStep()) cid = q.getColumn(0).getString();
+                    }
+                    tryQ("SELECT movie_id FROM movie WHERE title=? LIMIT 1", title);
+                } else if (ct == "playlist") {
+                    tryQ("SELECT playlist_id FROM playlist WHERE title=? LIMIT 1", title);
+                } else if (ct == "filler_list") {
+                    tryQ("SELECT filler_list_id FROM filler_list WHERE title=? LIMIT 1", title);
+                }
+                return cid;
+            };
+
+            int unresolved_count = 0;
+            json preview_blocks  = json::array();
+
+            for (const auto& blk : body.value("blocks", json::array())) {
+                json block_out = {
+                    {"name",        blk.value("name",        "")},
+                    {"block_type",  blk.value("block_type",  "episode")},
+                    {"advancement", blk.value("advancement", "sequential")},
+                    {"day_mask",    blk.value("day_mask",    127)},
+                    {"start_time",  blk.value("start_time",  "00:00")},
+                    {"content",     json::array()},
+                };
+
+                for (const auto& item : blk.value("content", json::array())) {
+                    std::string ct    = item.value("content_type", "");
+                    std::string title = item.value("title", "");
+                    bool resolved     = !resolve(ct, item).empty();
+                    if (!resolved) ++unresolved_count;
+
+                    json out = {
+                        {"content_type", ct},
+                        {"title",        title},
+                        {"resolved",     resolved},
+                    };
+                    // Pass through external IDs for Arr integration
+                    if (item.contains("tvdb_id") && !item["tvdb_id"].is_null()) out["tvdb_id"] = item["tvdb_id"];
+                    if (item.contains("imdb_id") && !item["imdb_id"].is_null()) out["imdb_id"] = item["imdb_id"];
+                    if (item.contains("tmdb_id") && !item["tmdb_id"].is_null()) out["tmdb_id"] = item["tmdb_id"];
+                    if (item.contains("year")    && !item["year"].is_null())    out["year"]    = item["year"];
+                    if (item.contains("season_filter") && !item["season_filter"].is_null()) out["season_filter"] = item["season_filter"];
+                    block_out["content"].push_back(out);
+                }
+
+                if (blk.value("end_time", "").size()) block_out["end_time"] = blk["end_time"];
+                if (blk.value("program_count", 0) > 0) block_out["program_count"] = blk["program_count"];
+                preview_blocks.push_back(block_out);
+            }
+
+            ok(res, json{{"blocks", preview_blocks}, {"unresolved_count", unresolved_count}}.dump());
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
 
     svr_.Post("/api/channels/import", [this](const Req& req, Res& res) {
@@ -2056,6 +2293,161 @@ void Router::registerBlockRoutes() {
 
         clearScheduleCache(channel_id);
         ok(res, json{{"ok", true}}.dump());
+    });
+
+    // Create Kairos (+ optionally Plex) playlist from block content
+    svr_.Post("/api/channels/:id/blocks/:bid/playlist", [this](const Req& req, Res& res) {
+        auto channel_id = req.path_params.at("id");
+        auto bid        = req.path_params.at("bid");
+        try {
+            auto b = json::parse(req.body);
+            std::string title     = b.value("title",     "");
+            std::string source_id = b.value("source_id", "");
+            if (title.empty()) { err(res, 400, "title required"); return; }
+
+            // Resolve block content to a flat ordered list of episodes + movies
+            struct Item { std::string item_type; std::string item_id; };
+            std::vector<Item> items;
+            {
+                SQLite::Statement cq(db_.get(), R"(
+                    SELECT content_type, content_id, season_filter, episode_order, include_specials
+                    FROM block_content WHERE block_id = ? ORDER BY position
+                )");
+                cq.bind(1, bid);
+                while (cq.executeStep()) {
+                    std::string ct  = cq.getColumn(0).getString();
+                    std::string cid = cq.getColumn(1).getString();
+                    if (ct == "show") {
+                        bool        has_season    = !cq.getColumn(2).isNull();
+                        int         season_filter = has_season ? cq.getColumn(2).getInt() : -1;
+                        bool        incl_specials = cq.getColumn(4).getInt() != 0;
+                        std::string ep_order      = cq.getColumn(3).getString();
+                        std::string order_col     = (ep_order == "air_date") ? "air_date" : "season, episode";
+                        std::string where_extra   = has_season      ? " AND season = ?"
+                                                  : !incl_specials  ? " AND season > 0"
+                                                  : "";
+                        SQLite::Statement eq(db_.get(),
+                            "SELECT episode_id FROM episode WHERE show_id = ?" +
+                            where_extra + " ORDER BY " + order_col);
+                        eq.bind(1, cid);
+                        if (has_season) eq.bind(2, season_filter);
+                        while (eq.executeStep())
+                            items.push_back({"episode", eq.getColumn(0).getString()});
+                    } else if (ct == "movie") {
+                        items.push_back({"movie", cid});
+                    }
+                }
+            }
+
+            // Create Kairos playlist record + items in one transaction
+            std::string playlist_id = generateId();
+            {
+                SQLite::Transaction txn(db_.get());
+                SQLite::Statement ps(db_.get(),
+                    "INSERT INTO playlist (playlist_id, title, source, mode) VALUES (?,?,'custom','sequential')");
+                ps.bind(1, playlist_id); ps.bind(2, title); ps.exec();
+
+                int pos = 0;
+                for (const auto& item : items) {
+                    SQLite::Statement ins(db_.get(),
+                        "INSERT INTO playlist_item (playlist_id, position, item_type, item_id) VALUES (?,?,?,?)");
+                    ins.bind(1, playlist_id); ins.bind(2, pos++);
+                    ins.bind(3, item.item_type); ins.bind(4, item.item_id);
+                    ins.exec();
+                }
+                txn.commit();
+            }
+
+            json result = {{"playlist_id", playlist_id}, {"item_count", (int)items.size()}};
+
+            // Optionally mirror to Plex
+            if (!source_id.empty() && !items.empty()) {
+                std::string base_url, src_type;
+                {
+                    SQLite::Statement sq(db_.get(),
+                        "SELECT base_url, source_type FROM media_source WHERE source_id = ?");
+                    sq.bind(1, source_id);
+                    if (!sq.executeStep() || (src_type = sq.getColumn(1).getString()) != "plex") {
+                        res.status = 201; ok(res, result.dump()); return;
+                    }
+                    base_url = sq.getColumn(0).getString();
+                }
+
+                std::string token = conf_.token(source_id);
+                httplib::Client plex(base_url);
+                plex.set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
+                plex.set_connection_timeout(10);
+                plex.set_read_timeout(30);
+
+                // Fetch machine identifier
+                std::string machine_id;
+                if (auto r = plex.Get("/"); r && r->status == 200) {
+                    try { machine_id = json::parse(r->body)["MediaContainer"].value("machineIdentifier", ""); }
+                    catch (...) {}
+                }
+
+                if (!machine_id.empty()) {
+                    // Collect ratingKeys for items that exist in this Plex source
+                    std::vector<std::string> rating_keys;
+                    for (const auto& item : items) {
+                        SQLite::Statement lk(db_.get(),
+                            "SELECT external_id FROM source_mapping "
+                            "WHERE source_id = ? AND kairos_id = ? AND item_type = ?");
+                        lk.bind(1, source_id); lk.bind(2, item.item_id); lk.bind(3, item.item_type);
+                        if (lk.executeStep()) rating_keys.push_back(lk.getColumn(0).getString());
+                    }
+
+                    if (!rating_keys.empty()) {
+                        std::string keys_csv;
+                        for (size_t i = 0; i < rating_keys.size(); ++i) {
+                            if (i) keys_csv += ',';
+                            keys_csv += rating_keys[i];
+                        }
+
+                        auto urlEncode = [](const std::string& s) {
+                            std::string out;
+                            for (unsigned char c : s) {
+                                if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+                                    out += c;
+                                else { char buf[4]; snprintf(buf, sizeof(buf), "%%%02X", c); out += buf; }
+                            }
+                            return out;
+                        };
+
+                        std::string uri  = "server://" + machine_id +
+                            "/com.plexapp.plugins.library/library/metadata/" + keys_csv;
+                        std::string path = "/playlists?type=video&title=" + urlEncode(title) +
+                            "&smart=0&uri=" + urlEncode(uri) + "&machineIdentifier=" + machine_id;
+
+                        if (auto r = plex.Post(path.c_str(), "", "application/x-www-form-urlencoded");
+                            r && (r->status == 200 || r->status == 201)) {
+                            try {
+                                const auto& meta = json::parse(r->body)["MediaContainer"]["Metadata"];
+                                if (meta.is_array() && !meta.empty()) {
+                                    std::string plex_id = meta[0]["ratingKey"].get<std::string>();
+                                    int64_t now = static_cast<int64_t>(std::time(nullptr));
+                                    SQLite::Statement ul(db_.get(), R"(
+                                        INSERT INTO plex_list_link
+                                            (list_type, list_id, source_id, external_id, plex_type, last_synced_at)
+                                        VALUES ('playlist',?,?,?,'playlist',?)
+                                        ON CONFLICT(list_type, list_id) DO UPDATE SET
+                                            source_id = excluded.source_id, external_id = excluded.external_id,
+                                            plex_type = excluded.plex_type, last_synced_at = excluded.last_synced_at
+                                    )");
+                                    ul.bind(1, playlist_id); ul.bind(2, source_id);
+                                    ul.bind(3, plex_id); ul.bind(4, now);
+                                    ul.exec();
+                                    result["plex_playlist_id"] = plex_id;
+                                }
+                            } catch (...) {}
+                        }
+                    }
+                }
+            }
+
+            res.status = 201;
+            ok(res, result.dump());
+        } catch (const std::exception& e) { err(res, 400, e.what()); }
     });
 
     // ── Episode groups (multipart markup) ────────────────────────────────────

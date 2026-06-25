@@ -1,7 +1,8 @@
 import type {
+  ArrConfig,
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
   Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
-  Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportResult, ShowGroupingResult, StartScope,
+  Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
@@ -53,6 +54,13 @@ export const api = {
   deleteChannel:    (id: string)                                                  => request<void>('DELETE', `/channels/${id}`),
   exportChannel:    (id: string, depth: ExportDepth)                              => request<ChannelExport>('GET', `/channels/${id}/export?depth=${depth}`),
   importChannel:    (data: ChannelExport)                                         => request<ImportResult>('POST', '/channels/import', data),
+  previewImport:    (data: ChannelExport)                                         => request<ImportPreviewResult>('POST', '/channels/import/preview', data),
+
+  // Arr integrations
+  getArrConfig:  ()                                                       => request<ArrConfig>('GET',   '/config/arr'),
+  patchArrConfig:(b: Partial<ArrConfig>)                                  => request<{ok: boolean}>('PATCH', '/config/arr', b),
+  arrAdd:        (b: { type: 'show'|'movie'; title: string; tvdb_id?: string; tmdb_id?: string; imdb_id?: string }) =>
+                   request<{ ok: boolean; message: string }>('POST', '/arr/add', b),
 
   // Channel filler entries
   addChannelFiller:    (channelId: string, b: { content_type: string; content_id: string; advancement: FillerEntryAdvancement; weight?: number; season_filter?: number }) =>
@@ -104,6 +112,8 @@ export const api = {
                        request<void>('PATCH', `/channels/${channelId}/blocks/${blockId}/content/${cid}`, b),
   removeBlockContent:       (channelId: string, blockId: string, cid: number)     => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}/content/${cid}`),
   resetBlockContentCursor:  (channelId: string, blockId: string, cid: number)     => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}/content/${cid}/cursor`),
+  blockExportPlaylist: (channelId: string, blockId: string, b: { title: string; source_id?: string }) =>
+                       request<{ playlist_id: string; item_count: number; plex_playlist_id?: string }>('POST', `/channels/${channelId}/blocks/${blockId}/playlist`, b),
 
   // Episode groups
   getEpisodeGroups:       (showId: string)                                         => request<EpisodeGroup[]>('GET',    `/shows/${showId}/groups`),

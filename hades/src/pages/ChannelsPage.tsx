@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { channelStore } from '../stores'
 import { api } from '../api/client'
-import type { Block, Channel, ExportDepth } from '../api/types'
-import { DAYS } from '../channel/constants'
+import type { Block, Channel, ChannelExport, ExportDepth, ImportPreviewResult } from '../api/types'
+import { BLOCK_META, DAYS } from '../channel/constants'
 import { computeEpg } from '../channel/EpgPreview'
 import { todayEpgDay } from '../channel/utils'
 
@@ -22,6 +22,14 @@ export default observer(function ChannelsPage() {
   const [form, setForm]                 = useState({ name: '', number: '', timezone: 'UTC' })
   const [importError, setImportError]   = useState<string | null>(null)
   const [importResult, setImportResult] = useState<{ channel_id: string; unresolved: any[] } | null>(null)
+  const [importPending, setImportPending] = useState<{
+    data: ChannelExport
+    name: string
+    number: string
+    timezone: string
+  } | null>(null)
+  const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null)
+  const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { store.fetchAll() }, [])
@@ -45,15 +53,46 @@ export default observer(function ChannelsPage() {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
-    setImportError(null); setImportResult(null)
+    setImportError(null); setImportResult(null); setImportPending(null); setImportPreview(null)
     try {
       const text = await file.text()
-      const data = JSON.parse(text)
-      const result = await api.importChannel(data)
+      const data = JSON.parse(text) as ChannelExport
+      if (!data.kairos_export || !data.channel) throw new Error('Not a valid Kairos channel export.')
+      setImportPending({
+        data,
+        name:     data.channel.name,
+        number:   String(data.channel.number),
+        timezone: data.channel.timezone,
+      })
+      // Kick off resolution preview in background — don't block UI
+      api.previewImport(data).then(setImportPreview).catch(() => {})
+    } catch (err: any) {
+      setImportError(err.message ?? 'Could not parse file')
+    }
+  }
+
+  const confirmImport = async () => {
+    if (!importPending) return
+    setImporting(true); setImportError(null)
+    try {
+      const payload: ChannelExport = {
+        ...importPending.data,
+        channel: {
+          ...importPending.data.channel,
+          name:     importPending.name,
+          number:   parseInt(importPending.number) || importPending.data.channel.number,
+          timezone: importPending.timezone,
+        },
+      }
+      const result = await api.importChannel(payload)
       setImportResult(result)
+      setImportPending(null)
+      setImportPreview(null)
       store.fetchAll()
     } catch (err: any) {
       setImportError(err.message ?? 'Import failed')
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -80,7 +119,7 @@ export default observer(function ChannelsPage() {
 
       {importError && (
         <div className="text-red-400 text-sm bg-red-950/30 border border-red-900/40 rounded-lg p-3">
-          Import failed: {importError}
+          {importError}
         </div>
       )}
 
@@ -103,6 +142,20 @@ export default observer(function ChannelsPage() {
             Dismiss
           </button>
         </div>
+      )}
+
+      {importPending && (
+        <ImportPreview
+          data={importPending.data}
+          name={importPending.name}
+          number={importPending.number}
+          timezone={importPending.timezone}
+          preview={importPreview}
+          importing={importing}
+          onChange={(k, v) => setImportPending(p => p ? { ...p, [k]: v } : p)}
+          onConfirm={confirmImport}
+          onCancel={() => { setImportPending(null); setImportPreview(null); setImportError(null) }}
+        />
       )}
 
       {showAdd && (
@@ -169,6 +222,222 @@ export default observer(function ChannelsPage() {
     </div>
   )
 })
+
+// ── Import preview ────────────────────────────────────────────────────────────
+
+const DAY_BITS = [2, 4, 8, 16, 32, 64, 1] // Mon…Sun matching DAYS order
+
+function formatDayMask(mask: number): string {
+  const labels = DAYS.map(([short], i) => (mask & DAY_BITS[i] ? short : null)).filter(Boolean)
+  if (labels.length === 7) return 'Daily'
+  if (labels.length === 0) return '—'
+  return labels.join(' ')
+}
+
+function ImportPreview({ data, name, number, timezone, preview, importing, onChange, onConfirm, onCancel }: {
+  data:      ChannelExport
+  name:      string
+  number:    string
+  timezone:  string
+  preview:   ImportPreviewResult | null
+  importing: boolean
+  onChange:  (k: 'name' | 'number' | 'timezone', v: string) => void
+  onConfirm: () => void
+  onCancel:  () => void
+}) {
+  const [expanded,  setExpanded]  = useState<Record<number, boolean>>({})
+  const [arrStatus, setArrStatus] = useState<Record<string, 'idle'|'adding'|'ok'|'err'>>({})
+  const [arrMsg,    setArrMsg]    = useState<Record<string, string>>({})
+  const toggle = (i: number) => setExpanded(e => ({ ...e, [i]: !e[i] }))
+
+  const addToArr = async (item: ImportPreviewResult['blocks'][0]['content'][0], key: string) => {
+    setArrStatus(s => ({ ...s, [key]: 'adding' }))
+    try {
+      const r = await api.arrAdd({
+        type:    item.content_type === 'movie' ? 'movie' : 'show',
+        title:   item.title,
+        ...(item.tvdb_id ? { tvdb_id: item.tvdb_id } : {}),
+        ...(item.tmdb_id ? { tmdb_id: item.tmdb_id } : {}),
+        ...(item.imdb_id ? { imdb_id: item.imdb_id } : {}),
+      })
+      setArrStatus(s => ({ ...s, [key]: 'ok' }))
+      setArrMsg(m => ({ ...m, [key]: r.message }))
+    } catch (e: any) {
+      setArrStatus(s => ({ ...s, [key]: 'err' }))
+      setArrMsg(m => ({ ...m, [key]: e?.message ?? 'Failed' }))
+    }
+  }
+
+  return (
+    <div className="card p-5 space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h2 className="section-label">Import Preview</h2>
+        <div className="flex items-center gap-3">
+          {preview && preview.unresolved_count > 0 && (
+            <span className="text-[10px] font-mono text-amber-500">
+              {preview.unresolved_count} unresolved
+            </span>
+          )}
+          {preview && preview.unresolved_count === 0 && (
+            <span className="text-[10px] font-mono text-emerald-500">all resolved</span>
+          )}
+          {!preview && (
+            <span className="text-[10px] font-mono text-zinc-600">resolving…</span>
+          )}
+          <span className="text-[10px] font-mono text-zinc-600 uppercase">
+            {data.depth} export · {data.blocks.length} block{data.blocks.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+      </div>
+
+      {/* Editable fields */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="space-y-1">
+          <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Channel Name</div>
+          <input
+            value={name}
+            onChange={e => onChange('name', e.target.value)}
+            className="input w-full"
+            placeholder="Channel name"
+          />
+        </div>
+        <div className="space-y-1">
+          <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Channel #</div>
+          <input
+            type="number"
+            value={number}
+            onChange={e => onChange('number', e.target.value)}
+            className="input w-full"
+            placeholder="Number"
+          />
+        </div>
+        <div className="space-y-1">
+          <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Timezone</div>
+          <input
+            value={timezone}
+            onChange={e => onChange('timezone', e.target.value)}
+            className="input w-full"
+            placeholder="e.g. America/Denver"
+          />
+        </div>
+      </div>
+
+      {/* Block list */}
+      <div className="space-y-2">
+        <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Blocks</div>
+        {data.blocks.length === 0 && (
+          <p className="text-zinc-600 text-sm">No blocks in this export.</p>
+        )}
+        {data.blocks.map((b, i) => {
+          const meta     = BLOCK_META[b.block_type] ?? BLOCK_META.episode
+          const isOpen   = !!expanded[i]
+          const cCount   = b.content.length
+          const fCount   = b.filler_entries.length
+          return (
+            <div key={i} className="rounded-lg border border-zinc-800 overflow-hidden">
+              <button
+                onClick={() => toggle(i)}
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-zinc-800/40 transition-colors"
+              >
+                <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: meta.edge }} />
+                <span className="font-medium text-sm text-zinc-100 flex-1 truncate">{b.name}</span>
+                <span className="text-[10px] font-mono text-zinc-500 flex-shrink-0">{formatDayMask(b.day_mask)}</span>
+                <span className="text-[10px] font-mono text-zinc-500 flex-shrink-0 w-12 text-right">{b.start_time}</span>
+                <span className="text-[10px] text-zinc-600 flex-shrink-0 w-24 text-right">
+                  {cCount} content{fCount > 0 ? ` · ${fCount} filler` : ''}
+                </span>
+                <span className="text-zinc-600 text-xs">{isOpen ? '▲' : '▼'}</span>
+              </button>
+
+              {isOpen && (
+                <div className="border-t border-zinc-800 px-3 py-2.5 space-y-3 bg-zinc-900/40">
+                  {/* Block meta */}
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] font-mono text-zinc-500">
+                    <span>type: {b.block_type}</span>
+                    <span>adv: {b.advancement}</span>
+                    {b.program_count > 0 && <span>programs: {b.program_count}</span>}
+                    {b.end_time && <span>end: {b.end_time}</span>}
+                  </div>
+
+                  {/* Content */}
+                  {cCount > 0 && (
+                    <div>
+                      <div className="text-[9px] text-zinc-600 uppercase tracking-widest mb-1">Content</div>
+                      <div className="space-y-1">
+                        {b.content.map((c, j) => {
+                          const pItem    = preview?.blocks[i]?.content[j]
+                          const resolved = pItem?.resolved
+                          const key      = `${i}-${j}`
+                          const status   = arrStatus[key] ?? 'idle'
+                          const isShow   = c.content_type === 'show'
+                          const isMovie  = c.content_type === 'movie'
+                          const canArr   = (isShow || isMovie) && resolved === false
+                          return (
+                            <div key={j} className="flex items-center gap-2 text-xs">
+                              {/* Resolution dot */}
+                              {preview ? (
+                                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${resolved ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                              ) : (
+                                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-zinc-700" />
+                              )}
+                              <span className="text-[9px] font-mono text-zinc-600 w-14 flex-shrink-0">{c.content_type}</span>
+                              <span className="text-zinc-300 truncate flex-1">{c.title}</span>
+                              {c.season_filter != null && (
+                                <span className="text-[9px] font-mono text-zinc-600 flex-shrink-0">S{String(c.season_filter).padStart(2,'0')}</span>
+                              )}
+                              {canArr && status === 'idle' && (
+                                <button
+                                  onClick={() => addToArr(pItem!, key)}
+                                  className="text-[9px] font-mono text-zinc-500 hover:text-amber-400 flex-shrink-0 border border-zinc-700 hover:border-amber-700 rounded px-1.5 py-0.5 transition-colors"
+                                >
+                                  + {isShow ? 'Sonarr' : 'Radarr'}
+                                </button>
+                              )}
+                              {status === 'adding' && (
+                                <span className="text-[9px] font-mono text-zinc-500 flex-shrink-0">adding…</span>
+                              )}
+                              {status === 'ok' && (
+                                <span className="text-[9px] font-mono text-emerald-500 flex-shrink-0" title={arrMsg[key]}>added</span>
+                              )}
+                              {status === 'err' && (
+                                <span className="text-[9px] font-mono text-red-500 flex-shrink-0 cursor-help" title={arrMsg[key]}>failed</span>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Filler */}
+                  {fCount > 0 && (
+                    <div>
+                      <div className="text-[9px] text-zinc-600 uppercase tracking-widest mb-1">Filler</div>
+                      <div className="space-y-0.5">
+                        {b.filler_entries.map((f, j) => (
+                          <div key={j} className="text-xs text-zinc-400 truncate">{f.title}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 pt-1">
+        <button onClick={onConfirm} disabled={importing} className="btn-primary">
+          {importing ? 'Importing…' : 'Import Channel'}
+        </button>
+        <button onClick={onCancel} className="btn-ghost">Cancel</button>
+      </div>
+    </div>
+  )
+}
 
 // ── Channel guide strip ───────────────────────────────────────────────────────
 

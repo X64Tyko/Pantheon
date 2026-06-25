@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { BLOCK_META } from './constants'
 import { getLimitMode } from './utils'
@@ -7,7 +7,9 @@ import { EditorForm } from './EditorForm'
 import { LibraryBrowser } from './LibraryBrowser'
 import FillerOverlay from './FillerOverlay'
 import BumperOverlay from './BumperOverlay'
+import { api } from '../api/client'
 import type { ChannelDetailStore } from './store'
+import type { Source } from '../api/types'
 
 function fmtMs(ms: number) {
   const d = new Date(ms)
@@ -23,6 +25,40 @@ const BlockEditorModal = observer(function BlockEditorModal({ channelId, store }
   const d         = store.draft
   const m         = BLOCK_META[d.block_type]
   const limitMode = getLimitMode(d)
+
+  const [exportOpen,    setExportOpen]    = useState(false)
+  const [exportTitle,   setExportTitle]   = useState('')
+  const [exportSrcId,   setExportSrcId]   = useState('')
+  const [exportSaving,  setExportSaving]  = useState(false)
+  const [exportResult,  setExportResult]  = useState<{ playlist_id: string; item_count: number; plex_playlist_id?: string } | null>(null)
+  const [exportError,   setExportError]   = useState<string | null>(null)
+  const [plexSources,   setPlexSources]   = useState<Source[]>([])
+
+  const openExport = () => {
+    setExportTitle(store.draft.name?.trim() || 'Block Playlist')
+    setExportSrcId('')
+    setExportResult(null)
+    setExportError(null)
+    setExportOpen(true)
+    api.getSources().then(ss => setPlexSources(ss.filter(s => s.source_type === 'plex'))).catch(() => {})
+  }
+
+  const doExport = async () => {
+    if (!store.editing) return
+    setExportSaving(true)
+    setExportError(null)
+    try {
+      const r = await api.blockExportPlaylist(channelId, store.editing.block_id, {
+        title: exportTitle.trim(),
+        ...(exportSrcId ? { source_id: exportSrcId } : {}),
+      })
+      setExportResult(r)
+    } catch (e: any) {
+      setExportError(e?.message ?? 'Failed to create playlist')
+    } finally {
+      setExportSaving(false)
+    }
+  }
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => {
@@ -253,6 +289,71 @@ const BlockEditorModal = observer(function BlockEditorModal({ channelId, store }
 
           {store.fillerOverlayOpen && <FillerOverlay channelId={channelId} store={store} />}
           {store.bumperOverlayOpen && <BumperOverlay store={store} />}
+
+          {exportOpen && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'oklch(0.08 0.015 286 / 0.88)', backdropFilter: 'blur(6px)' }}>
+              <div style={{ width: 420, background: 'var(--hds-bg-2)', borderRadius: 12, border: '1px solid var(--hds-line)', padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.03em' }}>Create Playlist from Block</span>
+                  <div style={{ flex: 1 }} />
+                  <button onClick={() => setExportOpen(false)} style={{ width: 28, height: 28, border: 'none', background: 'transparent', color: 'var(--hds-txt-2)', cursor: 'pointer', fontSize: 18 }}>×</button>
+                </div>
+
+                {exportResult ? (
+                  <div style={{ fontSize: 12, color: 'oklch(0.78 0.18 140)', lineHeight: 1.7 }}>
+                    <div>Kairos playlist created with {exportResult.item_count} items.</div>
+                    {exportResult.plex_playlist_id && <div>Plex playlist created (ID {exportResult.plex_playlist_id}).</div>}
+                    <div style={{ marginTop: 14 }}>
+                      <button onClick={() => setExportOpen(false)} style={ghostBtnStyle}>Done</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      <label style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--hds-txt-3)' }}>PLAYLIST TITLE</label>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={exportTitle}
+                        onChange={e => setExportTitle(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && exportTitle.trim()) doExport() }}
+                        style={inputStyle}
+                      />
+                    </div>
+
+                    {plexSources.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <label style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--hds-txt-3)' }}>ALSO CREATE IN PLEX (OPTIONAL)</label>
+                        <select
+                          value={exportSrcId}
+                          onChange={e => setExportSrcId(e.target.value)}
+                          style={{ ...inputStyle, background: 'var(--hds-bg)', cursor: 'pointer' }}
+                        >
+                          <option value="">None — Kairos only</option>
+                          {plexSources.map(s => <option key={s.source_id} value={s.source_id}>{s.display_name}</option>)}
+                        </select>
+                      </div>
+                    )}
+
+                    {exportError && (
+                      <div style={{ fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{exportError}</div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={doExport}
+                        disabled={!exportTitle.trim() || exportSaving}
+                        style={goldBtnStyle}
+                      >
+                        {exportSaving ? 'Creating…' : 'Create Playlist'}
+                      </button>
+                      <button onClick={() => setExportOpen(false)} style={ghostBtnStyle}>Cancel</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Footer ── */}
@@ -263,6 +364,7 @@ const BlockEditorModal = observer(function BlockEditorModal({ channelId, store }
                 {store.saving ? 'Saving…' : 'Save Changes'}
               </button>
               <button onClick={() => store.duplicate(channelId)} style={ghostBtnStyle}>⧉ Duplicate</button>
+              <button onClick={openExport} style={ghostBtnStyle}>+ Playlist</button>
               <div style={{ flex: 1 }} />
               <button onClick={() => store.deleteBlock(channelId, store.editing!.block_id)} style={dangerBtnStyle}>Delete</button>
             </>

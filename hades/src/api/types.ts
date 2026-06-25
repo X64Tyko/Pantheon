@@ -460,6 +460,44 @@ export interface PlexBrowseItem {
   available:   boolean
 }
 
+// ── Import preview ────────────────────────────────────────────────────────────
+
+export interface ImportPreviewItem {
+  content_type:  string
+  title:         string
+  resolved:      boolean
+  tvdb_id?:      string
+  imdb_id?:      string
+  tmdb_id?:      string
+  year?:         number
+  season_filter?: number
+}
+
+export interface ImportPreviewBlock {
+  name:         string
+  block_type:   string
+  advancement:  string
+  day_mask:     number
+  start_time:   string
+  end_time?:    string
+  program_count?: number
+  content:      ImportPreviewItem[]
+}
+
+export interface ImportPreviewResult {
+  blocks:           ImportPreviewBlock[]
+  unresolved_count: number
+}
+
+// ── Arr integrations ──────────────────────────────────────────────────────────
+
+export interface ArrConfig {
+  sonarr_url:     string
+  sonarr_api_key: string
+  radarr_url:     string
+  radarr_api_key: string
+}
+
 // ── Downloads ─────────────────────────────────────────────────────────────────
 
 export interface DownloadJob {

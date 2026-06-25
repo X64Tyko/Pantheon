@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import type { ArrConfig } from '../api/types'
 
 interface Settings {
   epg_debug:    boolean
@@ -60,11 +61,15 @@ export default function SettingsPage() {
   const [error,    setError]      = useState<string | null>(null)
   const [threads,  setThreads]    = useState('')
 
+  const [arr,     setArr]     = useState<ArrConfig>({ sonarr_url: '', sonarr_api_key: '', radarr_url: '', radarr_api_key: '' })
+  const [arrSave, setArrSave] = useState<'idle'|'saving'|'ok'|'err'>('idle')
+
   useEffect(() => {
     api.getSettings().then(s => {
       setSettings(s)
       setThreads(String(s.sync_threads))
     }).catch(() => setError('Failed to load settings'))
+    api.getArrConfig().then(setArr).catch(() => {})
   }, [])
 
   const patch = async (update: Partial<Settings>) => {
@@ -169,9 +174,67 @@ export default function SettingsPage() {
         )}
       </Section>
 
+      <Section title="Sonarr">
+        <ArrField label="URL" hint="e.g. http://sonarr:8989" value={arr.sonarr_url}
+          onChange={v => setArr(a => ({ ...a, sonarr_url: v }))} />
+        <ArrField label="API Key" value={arr.sonarr_api_key} password
+          onChange={v => setArr(a => ({ ...a, sonarr_api_key: v }))} />
+      </Section>
+
+      <Section title="Radarr">
+        <ArrField label="URL" hint="e.g. http://radarr:7878" value={arr.radarr_url}
+          onChange={v => setArr(a => ({ ...a, radarr_url: v }))} />
+        <ArrField label="API Key" value={arr.radarr_api_key} password
+          onChange={v => setArr(a => ({ ...a, radarr_api_key: v }))} />
+      </Section>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button
+          onClick={async () => {
+            setArrSave('saving')
+            try { await api.patchArrConfig(arr); setArrSave('ok') }
+            catch { setArrSave('err') }
+            setTimeout(() => setArrSave('idle'), 2000)
+          }}
+          disabled={arrSave === 'saving'}
+          style={{
+            padding: '6px 18px', borderRadius: 6,
+            border: '1px solid oklch(0.72 0.18 84 / 0.6)',
+            background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
+            fontSize: 12, cursor: arrSave === 'saving' ? 'not-allowed' : 'pointer',
+            fontFamily: "'JetBrains Mono', monospace", opacity: arrSave === 'saving' ? 0.6 : 1,
+          }}
+        >
+          {arrSave === 'saving' ? 'Saving…' : arrSave === 'ok' ? 'Saved' : arrSave === 'err' ? 'Error' : 'Save Arr Settings'}
+        </button>
+        <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>
+          Used when adding missing media from the import preview.
+        </span>
+      </div>
+
       {saving && (
         <div style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>Saving…</div>
       )}
     </div>
+  )
+}
+
+function ArrField({ label, hint, value, onChange, password }: {
+  label: string; hint?: string; value: string; onChange: (v: string) => void; password?: boolean
+}) {
+  return (
+    <SettingRow label={label} hint={hint}>
+      <input
+        type={password ? 'password' : 'text'}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{
+          width: 240, padding: '4px 8px', borderRadius: 6,
+          border: '1px solid oklch(0.3 0.01 286)',
+          background: 'oklch(0.13 0.01 286)', color: 'var(--hds-txt)',
+          fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+        }}
+      />
+    </SettingRow>
   )
 }
