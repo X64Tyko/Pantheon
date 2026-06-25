@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - "kairos/**"
+      - "hades/**"
       - ".github/workflows/docker-kairos.yml"
   workflow_dispatch:
 
@@ -22,6 +23,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: hades/package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: hades/pnpm-lock.yaml
+
+      - name: Build Hades
+        working-directory: hades
+        run: pnpm install --frozen-lockfile && pnpm build
 
       - name: Set up QEMU (for multi-arch)
         uses: docker/setup-qemu-action@v3
