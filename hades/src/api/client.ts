@@ -1,5 +1,5 @@
 import type {
-  ArrConfig,
+  ArrConfig, ArrLookupResult, ArrServiceOptions,
   AuthResponse,
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
   Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
@@ -84,8 +84,11 @@ export const api = {
   // Arr integrations
   getArrConfig:  ()                                                       => request<ArrConfig>('GET',   '/config/arr'),
   patchArrConfig:(b: Partial<ArrConfig>)                                  => request<{ok: boolean}>('PATCH', '/config/arr', b),
-  arrAdd:        (b: { type: 'show'|'movie'; title: string; tvdb_id?: string; tmdb_id?: string; imdb_id?: string }) =>
-                   request<{ ok: boolean; message: string }>('POST', '/arr/add', b),
+  arrLookup:     (b: { type: 'show'|'movie'; title?: string; tvdb_id?: string; tmdb_id?: string; imdb_id?: string }) =>
+                   request<ArrLookupResult[]>('POST', '/arr/lookup', b),
+  arrOptions:    (type: 'show'|'movie')                                   => request<ArrServiceOptions>('GET', `/arr/options/${type}`),
+  arrAdd:        (b: { type: 'show'|'movie'; add_data: unknown; quality_profile_id: number; root_folder: string; search_on_add?: boolean }) =>
+                   request<{ ok: boolean }>('POST', '/arr/add', b),
 
   // Channel filler entries
   addChannelFiller:    (channelId: string, b: { content_type: string; content_id: string; advancement: FillerEntryAdvancement; weight?: number; season_filter?: number }) =>

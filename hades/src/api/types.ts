@@ -510,6 +510,25 @@ export interface ArrConfig {
   radarr_api_key: string
 }
 
+export interface ArrLookupResult {
+  title:        string
+  year:         number
+  external_id:  string
+  poster_url:   string
+  already_added: boolean
+  add_data:     unknown  // opaque — sent back verbatim on /arr/add
+}
+
+export interface ArrQualityProfile {
+  id:   number
+  name: string
+}
+
+export interface ArrServiceOptions {
+  quality_profiles: ArrQualityProfile[]
+  root_folders:     string[]
+}
+
 // ── Downloads ─────────────────────────────────────────────────────────────────
 
 export interface DownloadJob {

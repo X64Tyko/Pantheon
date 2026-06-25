@@ -1,4 +1,5 @@
 #include "Router.h"
+#include "arr/ArrServiceFactory.h"
 #include "auth/AuthStore.h"
 #include "conf/ConfStore.h"
 #include "db/Database.h"
@@ -753,7 +754,7 @@ void Router::registerConfigRoutes() {
           catch (const std::exception& e) { logErr("PUT /api/config/path-maps/:source_id", e); err(res, 500, e.what()); }
     });
 
-    // Arr integrations — Sonarr / Radarr config + add endpoint
+    // Arr integrations — Sonarr / Radarr config
     svr_.Get("/api/config/arr", [this](const Req&, Res& res) {
         auto getVal = [&](const char* k) -> std::string {
             SQLite::Statement q(db_.get(), "SELECT value FROM app_config WHERE key = ?");
@@ -785,120 +786,69 @@ void Router::registerConfigRoutes() {
         } catch (const std::exception& e) { logErr("PATCH /api/config/arr", e); err(res, 400, e.what()); }
     });
 
-    // POST /api/arr/add — proxy request to Sonarr (shows) or Radarr (movies)
+    // POST /api/arr/lookup — search Sonarr/Radarr without side effects
+    svr_.Post("/api/arr/lookup", [this](const Req& req, Res& res) {
+        try {
+            auto b    = json::parse(req.body);
+            auto type = b.value("type", "");
+            auto svc  = ArrServiceFactory::make(type, db_);
+            if (!svc) { err(res, 400, type.empty() ? "type required" : "arr service not configured"); return; }
+
+            // Build search term: prefer external ID prefixes for precision
+            std::string term;
+            if (type == "show")  term = !b.value("tvdb_id","").empty() ? "tvdb:" + b["tvdb_id"].get<std::string>() : b.value("title","");
+            if (type == "movie") {
+                if (!b.value("tmdb_id","").empty())      term = "tmdb:" + b["tmdb_id"].get<std::string>();
+                else if (!b.value("imdb_id","").empty()) term = "imdb:" + b["imdb_id"].get<std::string>();
+                else                                     term = b.value("title","");
+            }
+            if (term.empty()) { err(res, 400, "title or external ID required"); return; }
+
+            auto results = svc->lookup(term);
+            json out = json::array();
+            for (const auto& r : results) {
+                out.push_back({
+                    {"title",        r.title},
+                    {"year",         r.year},
+                    {"external_id",  r.external_id},
+                    {"poster_url",   r.poster_url},
+                    {"already_added",r.already_added},
+                    {"add_data",     r.add_data},
+                });
+            }
+            ok(res, out.dump());
+        } catch (const std::exception& e) { logErr("POST /api/arr/lookup", e); err(res, 400, e.what()); }
+    });
+
+    // GET /api/arr/options/:type — quality profiles + root folders for confirm dialog
+    svr_.Get("/api/arr/options/:type", [this](const Req& req, Res& res) {
+        auto svc = ArrServiceFactory::make(req.path_params.at("type"), db_);
+        if (!svc) { err(res, 400, "arr service not configured"); return; }
+        auto opts = svc->getOptions();
+        json profiles = json::array();
+        for (const auto& p : opts.quality_profiles)
+            profiles.push_back({{"id", p.id}, {"name", p.name}});
+        json folders = json::array();
+        for (const auto& f : opts.root_folders)
+            folders.push_back(f);
+        ok(res, json{{"quality_profiles", profiles}, {"root_folders", folders}}.dump());
+    });
+
+    // POST /api/arr/add — add the confirmed item to Sonarr/Radarr
     svr_.Post("/api/arr/add", [this](const Req& req, Res& res) {
         try {
-            auto b = json::parse(req.body);
-            std::string type    = b.value("type",    "");
-            std::string title   = b.value("title",   "");
-            std::string tvdb_id = b.value("tvdb_id", "");
-            std::string tmdb_id = b.value("tmdb_id", "");
-            std::string imdb_id = b.value("imdb_id", "");
+            auto b   = json::parse(req.body);
+            auto svc = ArrServiceFactory::make(b.value("type", ""), db_);
+            if (!svc) { err(res, 400, "arr service not configured"); return; }
+            if (!b.contains("add_data")) { err(res, 400, "add_data required"); return; }
 
-            auto getConf = [&](const char* k) -> std::string {
-                SQLite::Statement q(db_.get(), "SELECT value FROM app_config WHERE key = ?");
-                q.bind(1, std::string(k));
-                return q.executeStep() ? q.getColumn(0).getString() : "";
-            };
+            ArrAddOptions opts;
+            opts.quality_profile_id = b.value("quality_profile_id", 1);
+            opts.root_folder        = b.value("root_folder", "");
+            opts.search_on_add      = b.value("search_on_add", true);
 
-            auto pctEncode = [](const std::string& s) {
-                std::string out;
-                for (unsigned char c : s) {
-                    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
-                        out += c;
-                    else { char buf[4]; snprintf(buf, sizeof(buf), "%%%02X", c); out += buf; }
-                }
-                return out;
-            };
-
-            if (type == "show") {
-                std::string url = getConf("sonarr_url");
-                std::string key = getConf("sonarr_api_key");
-                if (url.empty() || key.empty()) { err(res, 400, "Sonarr not configured"); return; }
-
-                httplib::Client client(url);
-                client.set_default_headers({{"X-Api-Key", key}, {"Accept", "application/json"}});
-                client.set_connection_timeout(10);
-                client.set_read_timeout(30);
-
-                std::string term = tvdb_id.empty() ? title : ("tvdb:" + tvdb_id);
-                auto lr = client.Get(("/api/v3/series/lookup?term=" + pctEncode(term)).c_str());
-                if (!lr || lr->status != 200) { err(res, 502, "Sonarr lookup failed"); return; }
-
-                json results;
-                try { results = json::parse(lr->body); } catch (...) { err(res, 502, "bad Sonarr response"); return; }
-                if (!results.is_array() || results.empty()) { err(res, 404, "not found in Sonarr"); return; }
-
-                int quality_id = 1;
-                if (auto qr = client.Get("/api/v3/qualityprofile"); qr && qr->status == 200) {
-                    try { auto qj = json::parse(qr->body); if (qj.is_array() && !qj.empty()) quality_id = qj[0]["id"]; } catch (...) {}
-                }
-                std::string root_path = "/tv";
-                if (auto rf = client.Get("/api/v3/rootfolder"); rf && rf->status == 200) {
-                    try { auto rj = json::parse(rf->body); if (rj.is_array() && !rj.empty()) root_path = rj[0]["path"]; } catch (...) {}
-                }
-
-                json add_body = results[0];
-                add_body["qualityProfileId"] = quality_id;
-                add_body["rootFolderPath"]   = root_path;
-                add_body["monitored"]        = true;
-                add_body["seasonFolder"]     = true;
-                add_body["addOptions"] = {{"searchForMissingEpisodes", true},
-                                          {"ignoreEpisodesWithFiles", false},
-                                          {"ignoreEpisodesWithoutFiles", false}};
-
-                auto ar = client.Post("/api/v3/series", add_body.dump(), "application/json");
-                if (!ar || (ar->status != 200 && ar->status != 201)) {
-                    std::string detail = ar ? ar->body.substr(0, 300) : "no response";
-                    err(res, 502, "Sonarr add failed: " + detail); return;
-                }
-                ok(res, json{{"ok", true}, {"message", "Added to Sonarr"}}.dump());
-
-            } else if (type == "movie") {
-                std::string url = getConf("radarr_url");
-                std::string key = getConf("radarr_api_key");
-                if (url.empty() || key.empty()) { err(res, 400, "Radarr not configured"); return; }
-
-                httplib::Client client(url);
-                client.set_default_headers({{"X-Api-Key", key}, {"Accept", "application/json"}});
-                client.set_connection_timeout(10);
-                client.set_read_timeout(30);
-
-                std::string term = !tmdb_id.empty() ? ("tmdb:" + tmdb_id)
-                                 : !imdb_id.empty() ? ("imdb:" + imdb_id)
-                                 : title;
-                auto lr = client.Get(("/api/v3/movie/lookup?term=" + pctEncode(term)).c_str());
-                if (!lr || lr->status != 200) { err(res, 502, "Radarr lookup failed"); return; }
-
-                json results;
-                try { results = json::parse(lr->body); } catch (...) { err(res, 502, "bad Radarr response"); return; }
-                if (!results.is_array() || results.empty()) { err(res, 404, "not found in Radarr"); return; }
-
-                int quality_id = 1;
-                if (auto qr = client.Get("/api/v3/qualityprofile"); qr && qr->status == 200) {
-                    try { auto qj = json::parse(qr->body); if (qj.is_array() && !qj.empty()) quality_id = qj[0]["id"]; } catch (...) {}
-                }
-                std::string root_path = "/movies";
-                if (auto rf = client.Get("/api/v3/rootfolder"); rf && rf->status == 200) {
-                    try { auto rj = json::parse(rf->body); if (rj.is_array() && !rj.empty()) root_path = rj[0]["path"]; } catch (...) {}
-                }
-
-                json add_body = results[0];
-                add_body["qualityProfileId"] = quality_id;
-                add_body["rootFolderPath"]   = root_path;
-                add_body["monitored"]        = true;
-                add_body["addOptions"]       = {{"searchForMovie", true}};
-
-                auto ar = client.Post("/api/v3/movie", add_body.dump(), "application/json");
-                if (!ar || (ar->status != 200 && ar->status != 201)) {
-                    std::string detail = ar ? ar->body.substr(0, 300) : "no response";
-                    err(res, 502, "Radarr add failed: " + detail); return;
-                }
-                ok(res, json{{"ok", true}, {"message", "Added to Radarr"}}.dump());
-
-            } else {
-                err(res, 400, "type must be 'show' or 'movie'");
-            }
+            if (!svc->add(b["add_data"], opts)) { err(res, 502, "arr add failed"); return; }
+            ok(res, json{{"ok", true}}.dump());
         } catch (const std::exception& e) { logErr("POST /api/arr/add", e); err(res, 400, e.what()); }
     });
 

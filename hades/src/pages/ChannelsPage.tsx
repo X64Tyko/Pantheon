@@ -7,6 +7,7 @@ import type { Block, Channel, ChannelExport, ExportDepth, ImportPreviewResult } 
 import { BLOCK_META, DAYS } from '../channel/constants'
 import { computeEpg } from '../channel/EpgPreview'
 import { todayEpgDay } from '../channel/utils'
+import ArrAddModal from '../components/ArrAddModal'
 
 function triggerJsonDownload(data: object, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -261,26 +262,22 @@ function ImportPreview({ data, name, number, timezone, preview, importing, onCha
   onCancel:  () => void
 }) {
   const [expanded,  setExpanded]  = useState<Record<number, boolean>>({})
-  const [arrStatus, setArrStatus] = useState<Record<string, 'idle'|'adding'|'ok'|'err'>>({})
-  const [arrMsg,    setArrMsg]    = useState<Record<string, string>>({})
+  const [arrAdded, setArrAdded] = useState<Record<string, boolean>>({})
+  const [arrModal, setArrModal] = useState<{
+    type: 'show' | 'movie'; title: string; key: string
+    tvdb_id?: string; tmdb_id?: string; imdb_id?: string
+  } | null>(null)
   const toggle = (i: number) => setExpanded(e => ({ ...e, [i]: !e[i] }))
 
-  const addToArr = async (item: ImportPreviewResult['blocks'][0]['content'][0], key: string) => {
-    setArrStatus(s => ({ ...s, [key]: 'adding' }))
-    try {
-      const r = await api.arrAdd({
-        type:    item.content_type === 'movie' ? 'movie' : 'show',
-        title:   item.title,
-        ...(item.tvdb_id ? { tvdb_id: item.tvdb_id } : {}),
-        ...(item.tmdb_id ? { tmdb_id: item.tmdb_id } : {}),
-        ...(item.imdb_id ? { imdb_id: item.imdb_id } : {}),
-      })
-      setArrStatus(s => ({ ...s, [key]: 'ok' }))
-      setArrMsg(m => ({ ...m, [key]: r.message }))
-    } catch (e: any) {
-      setArrStatus(s => ({ ...s, [key]: 'err' }))
-      setArrMsg(m => ({ ...m, [key]: e?.message ?? 'Failed' }))
-    }
+  const openArrModal = (item: ImportPreviewResult['blocks'][0]['content'][0], key: string) => {
+    setArrModal({
+      type:    item.content_type === 'movie' ? 'movie' : 'show',
+      title:   item.title,
+      key,
+      tvdb_id: item.tvdb_id,
+      tmdb_id: item.tmdb_id,
+      imdb_id: item.imdb_id,
+    })
   }
 
   return (
@@ -384,10 +381,10 @@ function ImportPreview({ data, name, number, timezone, preview, importing, onCha
                           const pItem    = preview?.blocks[i]?.content[j]
                           const resolved = pItem?.resolved
                           const key      = `${i}-${j}`
-                          const status   = arrStatus[key] ?? 'idle'
                           const isShow   = c.content_type === 'show'
                           const isMovie  = c.content_type === 'movie'
                           const canArr   = (isShow || isMovie) && resolved === false
+                          const added    = arrAdded[key] ?? false
                           return (
                             <div key={j} className="flex items-center gap-2 text-xs">
                               {/* Resolution dot */}
@@ -401,22 +398,16 @@ function ImportPreview({ data, name, number, timezone, preview, importing, onCha
                               {c.season_filter != null && (
                                 <span className="text-[9px] font-mono text-zinc-600 flex-shrink-0">S{String(c.season_filter).padStart(2,'0')}</span>
                               )}
-                              {canArr && status === 'idle' && (
+                              {canArr && !added && (
                                 <button
-                                  onClick={() => addToArr(pItem!, key)}
+                                  onClick={() => openArrModal(pItem!, key)}
                                   className="text-[9px] font-mono text-zinc-500 hover:text-amber-400 flex-shrink-0 border border-zinc-700 hover:border-amber-700 rounded px-1.5 py-0.5 transition-colors"
                                 >
                                   + {isShow ? 'Sonarr' : 'Radarr'}
                                 </button>
                               )}
-                              {status === 'adding' && (
-                                <span className="text-[9px] font-mono text-zinc-500 flex-shrink-0">adding…</span>
-                              )}
-                              {status === 'ok' && (
-                                <span className="text-[9px] font-mono text-emerald-500 flex-shrink-0" title={arrMsg[key]}>added</span>
-                              )}
-                              {status === 'err' && (
-                                <span className="text-[9px] font-mono text-red-500 flex-shrink-0 cursor-help" title={arrMsg[key]}>failed</span>
+                              {added && (
+                                <span className="text-[9px] font-mono text-emerald-500 flex-shrink-0">added</span>
                               )}
                             </div>
                           )
@@ -450,6 +441,21 @@ function ImportPreview({ data, name, number, timezone, preview, importing, onCha
         </button>
         <button onClick={onCancel} className="btn-ghost">Cancel</button>
       </div>
+
+      {arrModal && (
+        <ArrAddModal
+          type={arrModal.type}
+          title={arrModal.title}
+          tvdb_id={arrModal.tvdb_id}
+          tmdb_id={arrModal.tmdb_id}
+          imdb_id={arrModal.imdb_id}
+          onClose={() => setArrModal(null)}
+          onAdded={() => {
+            setArrAdded(a => ({ ...a, [arrModal.key]: true }))
+            setArrModal(null)
+          }}
+        />
+      )}
     </div>
   )
 }
