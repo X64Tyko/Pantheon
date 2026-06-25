@@ -293,11 +293,20 @@ void Router::registerSourceRoutes() {
 
     svr_.Delete("/api/sources/:id", [this](const Req& req, Res& res) {
         auto id = req.path_params.at("id");
-        SQLite::Statement s(db_.get(), "DELETE FROM media_source WHERE source_id = ?");
-        s.bind(1, id);
-        s.exec();
-        sync_.loadSources();
-        ok(res, json{{"deleted", id}}.dump());
+        try {
+            SQLite::Transaction txn(db_.get());
+            { SQLite::Statement s(db_.get(), "DELETE FROM source_mapping WHERE source_id = ?");
+              s.bind(1, id); s.exec(); }
+            { SQLite::Statement s(db_.get(), "DELETE FROM media_source WHERE source_id = ?");
+              s.bind(1, id); s.exec(); }
+            txn.commit();
+            sync_.loadSources();
+            std::cout << "[api] deleted source: " << id << "\n";
+            ok(res, json{{"deleted", id}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/sources/" + id, e);
+            err(res, 500, e.what());
+        }
     });
 
     // List libraries available on the live server (not what's configured — what's there)
@@ -363,11 +372,21 @@ void Router::registerSourceRoutes() {
     });
 
     svr_.Delete("/api/sources/:id/libraries/:lid", [this](const Req& req, Res& res) {
+        auto id  = req.path_params.at("id");
         auto lid = req.path_params.at("lid");
-        SQLite::Statement s(db_.get(), "DELETE FROM media_library WHERE library_id = ?");
-        s.bind(1, lid);
-        s.exec();
-        ok(res, json{{"deleted", lid}}.dump());
+        try {
+            SQLite::Transaction txn(db_.get());
+            { SQLite::Statement s(db_.get(), "DELETE FROM source_mapping WHERE library_id = ?");
+              s.bind(1, lid); s.exec(); }
+            { SQLite::Statement s(db_.get(), "DELETE FROM media_library WHERE library_id = ?");
+              s.bind(1, lid); s.exec(); }
+            txn.commit();
+            std::cout << "[api] deleted library: " << lid << " (source: " << id << ")\n";
+            ok(res, json{{"deleted", lid}}.dump());
+        } catch (const std::exception& e) {
+            logErr("DELETE /api/sources/" + id + "/libraries/" + lid, e);
+            err(res, 500, e.what());
+        }
     });
 
     svr_.Post("/api/sources/:id/sync", [this](const Req& req, Res& res) {
