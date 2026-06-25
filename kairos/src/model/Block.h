@@ -15,6 +15,32 @@ enum class NoHistoryBehavior {
     Skip,        // skip the slot entirely (nullopt → dead air / gap)
 };
 
+// String → enum parsers (inline so both BlockRepository and RuleEngine can use them).
+inline BlockType parseBlockType(const std::string& s) {
+    if (s == "premier") return BlockType::Premier;
+    if (s == "filler")  return BlockType::Filler;
+    if (s == "movie")   return BlockType::Movie;
+    return BlockType::Episode;
+}
+inline Advancement parseAdvancement(const std::string& s) {
+    if (s == "shuffle")       return Advancement::Shuffle;
+    if (s == "smart_shuffle") return Advancement::SmartShuffle;
+    if (s == "rerun_shuffle") return Advancement::RerunShuffle;
+    if (s == "rerun_smart")   return Advancement::RerunSmart;
+    return Advancement::Sequential;
+}
+inline CursorScope parseCursorScope(const std::string& s) {
+    if (s == "global")  return CursorScope::Global;
+    if (s == "channel") return CursorScope::Channel;
+    return CursorScope::Block;
+}
+inline NoHistoryBehavior parseNoHistoryBehavior(const std::string& s) {
+    if (s == "fallback_all") return NoHistoryBehavior::FallbackAll;
+    if (s == "exclude")      return NoHistoryBehavior::Exclude;
+    if (s == "skip")         return NoHistoryBehavior::Skip;
+    return NoHistoryBehavior::Normal;
+}
+
 struct BlockFillerEntry {
     std::string        content_type; // "filler_list" | "playlist" | "show" | "movie"
     std::string        content_id;

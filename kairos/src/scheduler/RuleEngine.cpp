@@ -1,4 +1,6 @@
 #include "RuleEngine.h"
+#include "../db/BlockRepository.h"
+#include "../db/ContentRepository.h"
 #include "../db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -82,36 +84,8 @@ static int dayBit(const std::tm& tm) {
     return 1 << tm.tm_wday;
 }
 
-static BlockType parseBlockType(const std::string& s) {
-    if (s == "premier") return BlockType::Premier;
-    if (s == "filler")  return BlockType::Filler;
-    if (s == "movie")   return BlockType::Movie;
-    return BlockType::Episode;
-}
-
-static Advancement parseAdvancement(const std::string& s) {
-    if (s == "shuffle")       return Advancement::Shuffle;
-    if (s == "smart_shuffle") return Advancement::SmartShuffle;
-    if (s == "rerun_shuffle") return Advancement::RerunShuffle;
-    if (s == "rerun_smart")   return Advancement::RerunSmart;
-    return Advancement::Sequential;
-}
-
 static bool isRerunMode(Advancement a) {
     return a == Advancement::RerunShuffle || a == Advancement::RerunSmart;
-}
-
-static CursorScope parseCursorScope(const std::string& s) {
-    if (s == "global")  return CursorScope::Global;
-    if (s == "channel") return CursorScope::Channel;
-    return CursorScope::Block;
-}
-
-static NoHistoryBehavior parseNoHistoryBehavior(const std::string& s) {
-    if (s == "fallback_all") return NoHistoryBehavior::FallbackAll;
-    if (s == "exclude")      return NoHistoryBehavior::Exclude;
-    if (s == "skip")         return NoHistoryBehavior::Skip;
-    return NoHistoryBehavior::Normal;
 }
 
 // ── SimState JSON serialization (filler-only) ────────────────────────────────
@@ -127,7 +101,7 @@ static json simStateToJson(const RuleEngine::SimState& s) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-RuleEngine::RuleEngine(Database& db) : db_(db) {}
+RuleEngine::RuleEngine(Database& db) : db_(db), blocks_(db), content_(db) {}
 
 // ── Static helpers ────────────────────────────────────────────────────────────
 
@@ -149,136 +123,17 @@ std::string RuleEngine::scopeId(const Block& b, const std::string& channel_id) {
     return b.block_id;
 }
 
-// ── DB loading ────────────────────────────────────────────────────────────────
+// ── DB loading (delegates to BlockRepository / ContentRepository) ─────────────
 
 std::vector<Block> RuleEngine::loadBlocks(const std::string& channel_id) {
-    std::vector<Block> blocks;
-    SQLite::Statement q(db_.get(), R"(
-        SELECT block_id, block_type, day_mask, start_time, end_time,
-               program_count, priority, max_content_rating, advancement, cursor_scope,
-               late_start_mins, align_to_mins, inter_filler, early_start_secs,
-               filler_selection, smart_pct, start_scope, no_history_behavior,
-               max_consecutive_episodes,
-               intro_content_type, intro_content_id,
-               outro_content_type, outro_content_id,
-               interstitial_content_type, interstitial_content_id, interstitial_every_n,
-               snap_to_group_start
-        FROM block WHERE channel_id = ?
-        ORDER BY priority DESC
-    )");
-    q.bind(1, channel_id);
-
-    while (q.executeStep()) {
-        Block b;
-        b.block_id           = q.getColumn(0).getString();
-        b.channel_id         = channel_id;
-        b.block_type         = parseBlockType(q.getColumn(1).getString());
-        b.day_mask           = q.getColumn(2).getInt();
-        b.start_time         = q.getColumn(3).getString();
-        if (!q.getColumn(4).isNull())
-            b.end_time = q.getColumn(4).getString();
-        b.program_count      = q.getColumn(5).getInt();
-        b.priority           = q.getColumn(6).getInt();
-        b.max_content_rating = q.getColumn(7).getString();
-        b.advancement        = parseAdvancement(q.getColumn(8).getString());
-        b.cursor_scope       = parseCursorScope(q.getColumn(9).getString());
-        b.late_start_mins    = q.getColumn(10).getInt();
-        b.align_to_mins      = q.getColumn(11).getInt();
-        b.inter_filler       = q.getColumn(12).getInt() != 0;
-        b.early_start_secs   = q.getColumn(13).getInt();
-        b.filler_selection   = q.getColumn(14).getString();
-        b.smart_pct                = q.getColumn(15).getInt();
-        b.start_scope              = q.getColumn(16).getString();
-        b.no_history_behavior      = parseNoHistoryBehavior(q.getColumn(17).getString());
-        b.max_consecutive_episodes      = q.getColumn(18).getInt();
-        b.intro_content_type            = q.getColumn(19).getString();
-        b.intro_content_id              = q.getColumn(20).getString();
-        b.outro_content_type            = q.getColumn(21).getString();
-        b.outro_content_id              = q.getColumn(22).getString();
-        b.interstitial_content_type     = q.getColumn(23).getString();
-        b.interstitial_content_id       = q.getColumn(24).getString();
-        b.interstitial_every_n          = q.getColumn(25).getInt();
-        b.snap_to_group_start           = q.getColumn(26).getInt() != 0;
-
-        SQLite::Statement cq(db_.get(), R"(
-            SELECT id, content_type, content_id, position, season_filter, weight, run_count,
-                   include_specials, episode_order
-            FROM block_content WHERE block_id = ? ORDER BY position
-        )");
-        cq.bind(1, b.block_id);
-        while (cq.executeStep()) {
-            BlockContent bc;
-            bc.id              = cq.getColumn(0).getInt();
-            bc.block_id        = b.block_id;
-            bc.content_type    = cq.getColumn(1).getString();
-            bc.content_id      = cq.getColumn(2).getString();
-            bc.position        = cq.getColumn(3).getInt();
-            if (!cq.getColumn(4).isNull())
-                bc.season_filter = cq.getColumn(4).getInt();
-            bc.weight           = cq.getColumn(5).getInt();
-            bc.run_count        = cq.getColumn(6).getInt();
-            bc.include_specials = cq.getColumn(7).getInt() != 0;
-            bc.episode_order    = cq.getColumn(8).getString();
-            b.content.push_back(std::move(bc));
-        }
-
-        SQLite::Statement fq(db_.get(), R"(
-            SELECT content_type, content_id, advancement, weight, season_filter
-            FROM block_filler_entry WHERE block_id = ? ORDER BY position
-        )");
-        fq.bind(1, b.block_id);
-        while (fq.executeStep()) {
-            BlockFillerEntry fe;
-            fe.content_type = fq.getColumn(0).getString();
-            fe.content_id   = fq.getColumn(1).getString();
-            fe.advancement  = fq.getColumn(2).getString();
-            fe.weight       = fq.getColumn(3).getInt();
-            if (!fq.getColumn(4).isNull()) fe.season_filter = fq.getColumn(4).getInt();
-            b.filler_entries.push_back(std::move(fe));
-        }
-
-        blocks.push_back(std::move(b));
-    }
-    return blocks;
+    return blocks_.loadBlocks(channel_id);
 }
 
 std::vector<Episode> RuleEngine::getEpisodes(const std::string& show_id,
                                               std::optional<int> season,
                                               bool include_specials,
                                               const std::string& episode_order) {
-    std::string sql =
-        "SELECT episode_id, show_id, season, episode, title, file_path, duration_ms,"
-        " overview, air_date, thumb"
-        " FROM episode WHERE show_id = ?";
-    if (season)                         sql += " AND season = ?";
-    if (!season && !include_specials)   sql += " AND season != 0";
-    if (episode_order == "absolute")
-        sql += " ORDER BY COALESCE(absolute_index, season * 10000 + episode)";
-    else if (episode_order == "airdate")
-        sql += " ORDER BY air_date, episode";
-    else
-        sql += " ORDER BY season, episode";
-
-    SQLite::Statement q(db_.get(), sql);
-    q.bind(1, show_id);
-    if (season) q.bind(2, *season);
-
-    std::vector<Episode> eps;
-    while (q.executeStep()) {
-        Episode e;
-        e.episode_id  = q.getColumn(0).getString();
-        e.show_id     = q.getColumn(1).getString();
-        e.season      = q.getColumn(2).getInt();
-        e.episode     = q.getColumn(3).getInt();
-        e.title       = q.getColumn(4).getString();
-        e.file_path   = q.getColumn(5).getString();
-        e.duration_ms = q.getColumn(6).getInt64();
-        e.overview    = q.getColumn(7).getString();
-        e.air_date    = q.getColumn(8).getString();
-        e.thumb       = q.getColumn(9).getString();
-        eps.push_back(std::move(e));
-    }
-    return eps;
+    return content_.getEpisodes(show_id, season, include_specials, episode_order);
 }
 
 std::vector<Episode> RuleEngine::getPlayedEpisodes(const std::string& show_id,
@@ -288,46 +143,8 @@ std::vector<Episode> RuleEngine::getPlayedEpisodes(const std::string& show_id,
                                                      bool global_scope,
                                                      bool include_specials,
                                                      const std::string& episode_order) {
-    std::string sql =
-        "SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,"
-        " e.duration_ms, e.overview, e.air_date, e.thumb"
-        " FROM episode e WHERE e.show_id = ?";
-    if (season)                       sql += " AND e.season = ?";
-    if (!season && !include_specials) sql += " AND e.season != 0";
-    sql += " AND EXISTS (SELECT 1 FROM play_history ph"
-           " WHERE ph.item_type='episode' AND ph.item_id=e.episode_id";
-    if (!global_scope) sql += " AND ph.channel_id=?";
-    sql += " AND ph.aired_at < ?)";
-    if (episode_order == "absolute")
-        sql += " ORDER BY COALESCE(e.absolute_index, e.season * 10000 + e.episode)";
-    else if (episode_order == "airdate")
-        sql += " ORDER BY e.air_date, e.episode";
-    else
-        sql += " ORDER BY e.season, e.episode";
-
-    SQLite::Statement q(db_.get(), sql);
-    int idx = 1;
-    q.bind(idx++, show_id);
-    if (season) q.bind(idx++, *season);
-    if (!global_scope) q.bind(idx++, channel_id);
-    q.bind(idx++, static_cast<int64_t>(before_time));
-
-    std::vector<Episode> eps;
-    while (q.executeStep()) {
-        Episode e;
-        e.episode_id  = q.getColumn(0).getString();
-        e.show_id     = q.getColumn(1).getString();
-        e.season      = q.getColumn(2).getInt();
-        e.episode     = q.getColumn(3).getInt();
-        e.title       = q.getColumn(4).getString();
-        e.file_path   = q.getColumn(5).getString();
-        e.duration_ms = q.getColumn(6).getInt64();
-        e.overview    = q.getColumn(7).getString();
-        e.air_date    = q.getColumn(8).getString();
-        e.thumb       = q.getColumn(9).getString();
-        eps.push_back(std::move(e));
-    }
-    return eps;
+    return content_.getPlayedEpisodes(show_id, channel_id, season, before_time,
+                                      global_scope, include_specials, episode_order);
 }
 
 std::vector<Episode> RuleEngine::getPlayedEpisodesWithCooldown(const std::string& show_id,
@@ -337,88 +154,8 @@ std::vector<Episode> RuleEngine::getPlayedEpisodesWithCooldown(const std::string
                                                                   std::time_t before_time,
                                                                   bool global_scope,
                                                                   bool include_specials) {
-    // Full played pool ordered oldest→newest.
-    const char* sql_ch_season = R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
-               e.duration_ms, e.overview, e.air_date, e.thumb,
-               MAX(ph.aired_at) AS last_aired
-        FROM episode e
-        JOIN play_history ph ON ph.item_type='episode' AND ph.item_id=e.episode_id
-                             AND ph.channel_id=? AND ph.aired_at < ?
-        WHERE e.show_id=? AND e.season=?
-        GROUP BY e.episode_id
-        ORDER BY last_aired ASC
-    )";
-    const char* sql_ch_all = R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
-               e.duration_ms, e.overview, e.air_date, e.thumb,
-               MAX(ph.aired_at) AS last_aired
-        FROM episode e
-        JOIN play_history ph ON ph.item_type='episode' AND ph.item_id=e.episode_id
-                             AND ph.channel_id=? AND ph.aired_at < ?
-        WHERE e.show_id=?
-        GROUP BY e.episode_id
-        ORDER BY last_aired ASC
-    )";
-    const char* sql_gl_season = R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
-               e.duration_ms, e.overview, e.air_date, e.thumb,
-               MAX(ph.aired_at) AS last_aired
-        FROM episode e
-        JOIN play_history ph ON ph.item_type='episode' AND ph.item_id=e.episode_id
-                             AND ph.aired_at < ?
-        WHERE e.show_id=? AND e.season=?
-        GROUP BY e.episode_id
-        ORDER BY last_aired ASC
-    )";
-    const char* sql_gl_all = R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,
-               e.duration_ms, e.overview, e.air_date, e.thumb,
-               MAX(ph.aired_at) AS last_aired
-        FROM episode e
-        JOIN play_history ph ON ph.item_type='episode' AND ph.item_id=e.episode_id
-                             AND ph.aired_at < ?
-        WHERE e.show_id=?
-        GROUP BY e.episode_id
-        ORDER BY last_aired ASC
-    )";
-
-    SQLite::Statement q(db_.get(), global_scope
-        ? (season ? sql_gl_season : sql_gl_all)
-        : (season ? sql_ch_season : sql_ch_all));
-    if (global_scope) {
-        q.bind(1, static_cast<int64_t>(before_time)); q.bind(2, show_id);
-        if (season) q.bind(3, *season);
-    } else {
-        q.bind(1, channel_id); q.bind(2, static_cast<int64_t>(before_time)); q.bind(3, show_id);
-        if (season) q.bind(4, *season);
-    }
-
-    std::vector<Episode> all;
-    while (q.executeStep()) {
-        if (!include_specials && !season && q.getColumn(2).getInt() == 0) continue;
-        Episode e;
-        e.episode_id  = q.getColumn(0).getString();
-        e.show_id     = q.getColumn(1).getString();
-        e.season      = q.getColumn(2).getInt();
-        e.episode     = q.getColumn(3).getInt();
-        e.title       = q.getColumn(4).getString();
-        e.file_path   = q.getColumn(5).getString();
-        e.duration_ms = q.getColumn(6).getInt64();
-        e.overview    = q.getColumn(7).getString();
-        e.air_date    = q.getColumn(8).getString();
-        e.thumb       = q.getColumn(9).getString();
-        all.push_back(std::move(e));
-    }
-    if (all.empty()) return all;
-
-    // Exclude the most-recently-played smart_pct% from the eligible pool.
-    int cooldown = std::max(0, static_cast<int>(all.size()) * smart_pct / 100);
-    // all is sorted oldest→newest; the last `cooldown` entries are the hot ones.
-    int eligible_count = static_cast<int>(all.size()) - cooldown;
-    if (eligible_count <= 0) return all; // every episode is hot — fall back to full pool
-    all.resize(static_cast<size_t>(eligible_count));
-    return all;
+    return content_.getPlayedEpisodesWithCooldown(show_id, channel_id, season, smart_pct,
+                                                   before_time, global_scope, include_specials);
 }
 
 // ── Shuffle helpers ───────────────────────────────────────────────────────────
@@ -432,21 +169,10 @@ std::vector<int> RuleEngine::shufflePermutation(const std::string& seed_str, int
 }
 
 std::vector<int> RuleEngine::groupedShufflePermutation(const std::string& seed_str,
-                                                        const std::vector<Episode>& eps) const {
+                                                        const std::vector<Episode>& eps) {
     if (eps.empty()) return {};
 
-    // Fetch multipart group membership for this show in one query.
-    SQLite::Statement q(db_.get(), R"(
-        SELECT egm.episode_id, egm.group_id, egm.part_num
-        FROM episode_group_member egm
-        JOIN episode_group eg ON eg.group_id = egm.group_id
-        WHERE eg.show_id = ?
-    )");
-    q.bind(1, eps[0].show_id);
-
-    std::unordered_map<std::string, std::pair<std::string, int>> ep_group; // ep_id → {group_id, part_num}
-    while (q.executeStep())
-        ep_group[q.getColumn(0).getString()] = {q.getColumn(1).getString(), q.getColumn(2).getInt()};
+    auto ep_group = content_.getEpisodeGroupMap(eps[0].show_id);
 
     // Build chunks: episodes in a multipart group become one chunk (ordered by part_num).
     // Episodes with no group membership are singletons.
@@ -507,22 +233,7 @@ int RuleEngine::selectWeightedSmartCooldown(
     int hot_count = std::max(0, n * smart_pct / 100);
     if (hot_count == 0) return selectWeighted(block, rng);
 
-    // Most recently played movies for this channel (ordered most-recent first).
-    std::unordered_set<std::string> hot_ids;
-    {
-        SQLite::Statement q(db_.get(), R"(
-            SELECT item_id FROM (
-                SELECT item_id, MAX(aired_at) AS last_aired
-                FROM play_history
-                WHERE item_type='movie' AND channel_id=? AND aired_at<?
-                GROUP BY item_id
-            ) ORDER BY last_aired DESC LIMIT ?
-        )");
-        q.bind(1, channel_id);
-        q.bind(2, static_cast<int64_t>(before_time));
-        q.bind(3, hot_count);
-        while (q.executeStep()) hot_ids.insert(q.getColumn(0).getString());
-    }
+    auto hot_ids = content_.getHotMovieIds(channel_id, before_time, hot_count);
     if (hot_ids.empty()) return selectWeighted(block, rng);
 
     int total = 0;
@@ -551,23 +262,7 @@ std::vector<Episode> RuleEngine::smartShufflePool(
     int hot_count = std::max(0, n * smart_pct / 100);
     if (hot_count == 0 || all.empty()) return all;
 
-    std::unordered_set<std::string> hot_ids;
-    {
-        SQLite::Statement q(db_.get(), R"(
-            SELECT item_id FROM (
-                SELECT ph.item_id, MAX(ph.aired_at) AS last_aired
-                FROM play_history ph
-                JOIN episode e ON e.episode_id = ph.item_id
-                WHERE ph.item_type='episode' AND ph.channel_id=? AND ph.aired_at<? AND e.show_id=?
-                GROUP BY ph.item_id
-            ) ORDER BY last_aired DESC LIMIT ?
-        )");
-        q.bind(1, channel_id);
-        q.bind(2, static_cast<int64_t>(before_time));
-        q.bind(3, show_id);
-        q.bind(4, hot_count);
-        while (q.executeStep()) hot_ids.insert(q.getColumn(0).getString());
-    }
+    auto hot_ids = content_.getHotEpisodeIds(channel_id, before_time, show_id, hot_count);
     if (hot_ids.empty()) return all;
 
     std::vector<Episode> filtered;
@@ -579,19 +274,11 @@ std::vector<Episode> RuleEngine::smartShufflePool(
 }
 
 int RuleEngine::snapToGroupStart(const std::string& episode_id,
-                                  const std::vector<Episode>& eps) const {
-    // Find if this episode belongs to a multipart group with part_num > 1.
-    SQLite::Statement q(db_.get(), R"(
-        SELECT egm2.episode_id
-        FROM episode_group_member egm1
-        JOIN episode_group_member egm2 ON egm2.group_id = egm1.group_id AND egm2.part_num = 1
-        WHERE egm1.episode_id = ? AND egm1.part_num > 1
-    )");
-    q.bind(1, episode_id);
-    if (!q.executeStep()) return -1; // not a mid-group episode
-    std::string part1_id = q.getColumn(0).getString();
+                                  const std::vector<Episode>& eps) {
+    auto part1 = content_.findGroupPart1(episode_id);
+    if (!part1) return -1;
     for (int i = 0; i < static_cast<int>(eps.size()); ++i)
-        if (eps[i].episode_id == part1_id) return i;
+        if (eps[i].episode_id == *part1) return i;
     return -1;
 }
 
@@ -599,132 +286,41 @@ int RuleEngine::snapToGroupStart(const std::string& episode_id,
 
 int RuleEngine::readRunsRemaining(const std::string& block_id,
                                    const std::string& channel_id) {
-    SQLite::Statement q(db_.get(),
-        "SELECT runs_remaining FROM block_state WHERE block_id=? AND channel_id=?");
-    q.bind(1, block_id); q.bind(2, channel_id);
-    if (q.executeStep()) return q.getColumn(0).getInt();
-    return 0;
+    return blocks_.readRunsRemaining(block_id, channel_id);
 }
 
 int RuleEngine::readConsecutiveCount(const std::string& block_id,
                                       const std::string& channel_id) {
-    SQLite::Statement q(db_.get(),
-        "SELECT consecutive_count FROM block_state WHERE block_id=? AND channel_id=?");
-    q.bind(1, block_id); q.bind(2, channel_id);
-    if (q.executeStep()) return q.getColumn(0).getInt();
-    return 0;
+    return blocks_.readConsecutiveCount(block_id, channel_id);
 }
 
 void RuleEngine::writeRerunState(const std::string& block_id,
                                   const std::string& channel_id,
                                   int content_pos, int runs_remaining,
                                   int consecutive_count) {
-    SQLite::Statement q(db_.get(), R"(
-        INSERT INTO block_state (block_id, channel_id, content_position, runs_remaining,
-                                 consecutive_count, updated_at)
-        VALUES (?,?,?,?,?,?)
-        ON CONFLICT(block_id, channel_id)
-        DO UPDATE SET content_position=excluded.content_position,
-                      runs_remaining=excluded.runs_remaining,
-                      consecutive_count=excluded.consecutive_count,
-                      updated_at=excluded.updated_at
-    )");
-    q.bind(1, block_id); q.bind(2, channel_id); q.bind(3, content_pos);
-    q.bind(4, runs_remaining); q.bind(5, consecutive_count);
-    q.bind(6, static_cast<int64_t>(std::time(nullptr)));
-    q.exec();
+    blocks_.writeRerunState(block_id, channel_id, content_pos, runs_remaining, consecutive_count);
 }
 
 std::optional<Movie> RuleEngine::getMovie(const std::string& movie_id) {
-    SQLite::Statement q(db_.get(), R"(
-        SELECT movie_id, title, content_rating, file_path, duration_ms, year,
-               overview, tagline, studio, director, genres, thumb, art, imdb_id, tmdb_id
-        FROM movie WHERE movie_id = ?
-    )");
-    q.bind(1, movie_id);
-    if (!q.executeStep()) return std::nullopt;
-
-    Movie m;
-    m.movie_id       = q.getColumn(0).getString();
-    m.title          = q.getColumn(1).getString();
-    m.content_rating = q.getColumn(2).getString();
-    m.file_path      = q.getColumn(3).getString();
-    m.duration_ms    = q.getColumn(4).getInt64();
-    if (!q.getColumn(5).isNull()) m.year = q.getColumn(5).getInt();
-    m.overview  = q.getColumn(6).getString();
-    m.tagline   = q.getColumn(7).getString();
-    m.studio    = q.getColumn(8).getString();
-    m.director  = q.getColumn(9).getString();
-    m.genres    = q.getColumn(10).getString();
-    m.thumb     = q.getColumn(11).getString();
-    m.art       = q.getColumn(12).getString();
-    m.imdb_id   = q.getColumn(13).getString();
-    m.tmdb_id   = q.getColumn(14).getString();
-    return m;
+    return content_.getMovie(movie_id);
 }
 
 std::vector<std::pair<std::string, std::string>>
 RuleEngine::loadListItems(const std::string& content_type, const std::string& content_id) {
-    const char* sql = (content_type == "filler_list")
-        ? "SELECT item_type, item_id FROM filler_list_item WHERE filler_list_id=? ORDER BY position"
-        : "SELECT item_type, item_id FROM playlist_item     WHERE playlist_id=?    ORDER BY position";
-    SQLite::Statement q(db_.get(), sql);
-    q.bind(1, content_id);
-    std::vector<std::pair<std::string, std::string>> items;
-    while (q.executeStep())
-        items.emplace_back(q.getColumn(0).getString(), q.getColumn(1).getString());
-    return items;
+    return content_.loadListItems(content_type, content_id);
 }
 
 std::string RuleEngine::getPlaylistMode(const std::string& playlist_id) {
-    SQLite::Statement q(db_.get(), "SELECT mode FROM playlist WHERE playlist_id=?");
-    q.bind(1, playlist_id);
-    if (q.executeStep()) return q.getColumn(0).getString();
-    return "sequential";
+    return content_.getPlaylistMode(playlist_id);
 }
 
 std::vector<std::string> RuleEngine::getPlaylistShows(const std::string& playlist_id) {
-    SQLite::Statement q(db_.get(), R"(
-        SELECT e.show_id
-        FROM playlist_item pi
-        JOIN episode e ON pi.item_type = 'episode' AND pi.item_id = e.episode_id
-        WHERE pi.playlist_id = ?
-        GROUP BY e.show_id
-        ORDER BY MIN(pi.position)
-    )");
-    q.bind(1, playlist_id);
-    std::vector<std::string> shows;
-    while (q.executeStep()) shows.push_back(q.getColumn(0).getString());
-    return shows;
+    return content_.getPlaylistShows(playlist_id);
 }
 
 std::vector<Episode> RuleEngine::getPlaylistShowEpisodes(const std::string& playlist_id,
                                                           const std::string& show_id) {
-    SQLite::Statement q(db_.get(), R"(
-        SELECT e.episode_id, e.show_id, e.season, e.episode, e.title,
-               e.file_path, e.duration_ms, e.overview, e.air_date, e.thumb
-        FROM playlist_item pi
-        JOIN episode e ON pi.item_type = 'episode' AND pi.item_id = e.episode_id
-        WHERE pi.playlist_id = ? AND e.show_id = ?
-        ORDER BY pi.position
-    )");
-    q.bind(1, playlist_id); q.bind(2, show_id);
-    std::vector<Episode> eps;
-    while (q.executeStep()) {
-        Episode e;
-        e.episode_id  = q.getColumn(0).getString();
-        e.show_id     = q.getColumn(1).getString();
-        e.season      = q.getColumn(2).getInt();
-        e.episode     = q.getColumn(3).getInt();
-        e.title       = q.getColumn(4).getString();
-        e.file_path   = q.getColumn(5).getString();
-        e.duration_ms = q.getColumn(6).getInt64();
-        e.overview    = q.getColumn(7).getString();
-        e.air_date    = q.getColumn(8).getString();
-        e.thumb       = q.getColumn(9).getString();
-        eps.push_back(std::move(e));
-    }
-    return eps;
+    return content_.getPlaylistShowEpisodes(playlist_id, show_id);
 }
 
 std::optional<ScheduledItem> RuleEngine::episodeById(const std::string& episode_id) {
@@ -751,12 +347,7 @@ std::optional<ScheduledItem> RuleEngine::episodeById(const std::string& episode_
 }
 
 std::string RuleEngine::showTitle(const std::string& show_id) {
-    try {
-        SQLite::Statement q(db_.get(), "SELECT title FROM show WHERE show_id=?");
-        q.bind(1, show_id);
-        if (q.executeStep()) return q.getColumn(0).getString();
-    } catch (...) {}
-    return {};
+    return content_.showTitle(show_id);
 }
 
 // ── Cursor I/O ────────────────────────────────────────────────────────────────
@@ -765,15 +356,7 @@ int RuleEngine::readCursorPos(const std::string& content_type,
                                const std::string& content_id,
                                const std::string& scope,
                                const std::string& scope_id) {
-    SQLite::Statement q(db_.get(), R"(
-        SELECT position FROM media_cursor
-        WHERE content_type=? AND content_id=? AND cursor_scope=? AND scope_id=?
-    )");
-    q.bind(1, content_type); q.bind(2, content_id);
-    q.bind(3, scope);        q.bind(4, scope_id);
-    if (q.executeStep() && !q.getColumn(0).isNull())
-        return q.getColumn(0).getInt();
-    return 0;
+    return blocks_.readCursorPos(content_type, content_id, scope, scope_id);
 }
 
 void RuleEngine::writeCursorPos(const std::string& content_type,
@@ -781,45 +364,16 @@ void RuleEngine::writeCursorPos(const std::string& content_type,
                                  const std::string& scope,
                                  const std::string& scope_id,
                                  int pos, const std::string& episode_id) {
-    SQLite::Statement q(db_.get(), R"(
-        INSERT INTO media_cursor
-            (content_type, content_id, cursor_scope, scope_id, episode_id, position, updated_at)
-        VALUES (?,?,?,?,?,?,?)
-        ON CONFLICT(content_type, content_id, cursor_scope, scope_id)
-        DO UPDATE SET position=excluded.position,
-                      episode_id=excluded.episode_id,
-                      updated_at=excluded.updated_at
-    )");
-    q.bind(1, content_type); q.bind(2, content_id);
-    q.bind(3, scope);        q.bind(4, scope_id);
-    if (episode_id.empty()) q.bind(5); else q.bind(5, episode_id);
-    q.bind(6, pos);
-    q.bind(7, static_cast<int64_t>(std::time(nullptr)));
-    q.exec();
+    blocks_.writeCursorPos(content_type, content_id, scope, scope_id, pos, episode_id);
 }
 
 int RuleEngine::readBlockRR(const std::string& block_id, const std::string& channel_id) {
-    SQLite::Statement q(db_.get(), R"(
-        SELECT content_position FROM block_state WHERE block_id=? AND channel_id=?
-    )");
-    q.bind(1, block_id); q.bind(2, channel_id);
-    if (q.executeStep()) return q.getColumn(0).getInt();
-    return 0;
+    return blocks_.readBlockRR(block_id, channel_id);
 }
 
 void RuleEngine::writeBlockRR(const std::string& block_id,
                                const std::string& channel_id, int pos) {
-    SQLite::Statement q(db_.get(), R"(
-        INSERT INTO block_state (block_id, channel_id, content_position, updated_at)
-        VALUES (?,?,?,?)
-        ON CONFLICT(block_id, channel_id)
-        DO UPDATE SET content_position=excluded.content_position,
-                      updated_at=excluded.updated_at
-    )");
-    q.bind(1, block_id); q.bind(2, channel_id);
-    q.bind(3, pos);
-    q.bind(4, static_cast<int64_t>(std::time(nullptr)));
-    q.exec();
+    blocks_.writeBlockRR(block_id, channel_id, pos);
 }
 
 // ── Block resolution ──────────────────────────────────────────────────────────
@@ -855,23 +409,11 @@ std::optional<Block> RuleEngine::resolveFromList(const std::vector<Block>& block
 }
 
 std::string RuleEngine::channelTimezone(const std::string& channel_id) {
-    SQLite::Statement q(db_.get(), "SELECT timezone FROM channel WHERE channel_id=?");
-    q.bind(1, channel_id);
-    if (q.executeStep()) {
-        auto tz = q.getColumn(0).getString();
-        if (!tz.empty()) return tz;
-    }
-    return "UTC";
+    return blocks_.channelTimezone(channel_id);
 }
 
 std::string RuleEngine::channelAdvanceMode(const std::string& channel_id) {
-    SQLite::Statement q(db_.get(), "SELECT advance_mode FROM channel WHERE channel_id=?");
-    q.bind(1, channel_id);
-    if (q.executeStep()) {
-        auto m = q.getColumn(0).getString();
-        if (!m.empty()) return m;
-    }
-    return "scheduled";
+    return blocks_.channelAdvanceMode(channel_id);
 }
 
 std::optional<Block> RuleEngine::resolveBlock(const std::string& channel_id, std::time_t t) {
@@ -1490,49 +1032,9 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     // Load items from the selected filler source (filler_list, playlist, show, or movie).
     struct FI { std::string type, id; int64_t dur = 0; };
     std::vector<FI> items;
-    if (fe.content_type == "filler_list") {
-        SQLite::Statement q(db_.get(), R"(
-            SELECT fi.item_type, fi.item_id,
-                   COALESCE(e.duration_ms, m.duration_ms, 0)
-            FROM filler_list_item fi
-            LEFT JOIN episode e ON fi.item_type='episode' AND fi.item_id=e.episode_id
-            LEFT JOIN movie   m ON fi.item_type='movie'   AND fi.item_id=m.movie_id
-            WHERE fi.filler_list_id=? ORDER BY fi.position
-        )");
-        q.bind(1, fe.content_id);
-        while (q.executeStep())
-            items.push_back({q.getColumn(0).getString(), q.getColumn(1).getString(),
-                             q.getColumn(2).getInt64()});
-    } else if (fe.content_type == "playlist") {
-        SQLite::Statement q(db_.get(), R"(
-            SELECT pi.item_type, pi.item_id,
-                   COALESCE(e.duration_ms, m.duration_ms, 0)
-            FROM playlist_item pi
-            LEFT JOIN episode e ON pi.item_type='episode' AND pi.item_id=e.episode_id
-            LEFT JOIN movie   m ON pi.item_type='movie'   AND pi.item_id=m.movie_id
-            WHERE pi.playlist_id=? ORDER BY pi.position
-        )");
-        q.bind(1, fe.content_id);
-        while (q.executeStep())
-            items.push_back({q.getColumn(0).getString(), q.getColumn(1).getString(),
-                             q.getColumn(2).getInt64()});
-    } else if (fe.content_type == "show") {
-        std::string sql = "SELECT 'episode', episode_id, COALESCE(duration_ms, 0)"
-                          " FROM episode WHERE show_id=?";
-        if (fe.season_filter.has_value()) sql += " AND season=?";
-        sql += " ORDER BY season, episode";
-        SQLite::Statement q(db_.get(), sql);
-        q.bind(1, fe.content_id);
-        if (fe.season_filter.has_value()) q.bind(2, fe.season_filter.value());
-        while (q.executeStep())
-            items.push_back({q.getColumn(0).getString(), q.getColumn(1).getString(),
-                             q.getColumn(2).getInt64()});
-    } else if (fe.content_type == "movie") {
-        SQLite::Statement q(db_.get(), "SELECT duration_ms FROM movie WHERE movie_id=?");
-        q.bind(1, fe.content_id);
-        if (q.executeStep())
-            items.push_back({"movie", fe.content_id, q.getColumn(0).getInt64()});
-    }
+    for (const auto& fi : content_.loadFillerItems(fe.content_type, fe.content_id,
+                                                    fe.season_filter))
+        items.push_back({fi.item_type, fi.item_id, fi.duration_ms});
     if (items.empty()) return std::nullopt;
 
     // Determine item index within the list.
@@ -1548,17 +1050,7 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
         if (eligible.empty()) return std::nullopt;
 
         // Prefer the least recently played eligible clip (never-played first).
-        std::unordered_map<std::string, int64_t> last_played;
-        {
-            const char* sql = (before_time > 0)
-                ? "SELECT item_id, MAX(aired_at) FROM play_history WHERE channel_id=? AND aired_at<=? GROUP BY item_id"
-                : "SELECT item_id, MAX(aired_at) FROM play_history WHERE channel_id=? GROUP BY item_id";
-            SQLite::Statement q(db_.get(), sql);
-            q.bind(1, channel_id);
-            if (before_time > 0) q.bind(2, static_cast<int64_t>(before_time));
-            while (q.executeStep())
-                last_played[q.getColumn(0).getString()] = q.getColumn(1).getInt64();
-        }
+        auto last_played = content_.getLastPlayedMap(channel_id, before_time);
 
         item_idx = eligible[0];
         int64_t oldest = last_played.count(items[eligible[0]].id)
@@ -1662,15 +1154,10 @@ void RuleEngine::advanceBumperCursor(
                            next, eps[next].episode_id);
         }
     } else if (content_type == "playlist") {
-        SQLite::Statement q(db_.get(),
-            "SELECT COUNT(*) FROM playlist_item WHERE playlist_id=?");
-        q.bind(1, content_id);
-        if (q.executeStep()) {
-            int n = q.getColumn(0).getInt();
-            if (n > 0) {
-                int pos  = readCursorPos("playlist", content_id, "block", scope_id);
-                writeCursorPos("playlist", content_id, "block", scope_id, (pos + 1) % n);
-            }
+        int n = content_.getPlaylistItemCount(content_id);
+        if (n > 0) {
+            int pos = readCursorPos("playlist", content_id, "block", scope_id);
+            writeCursorPos("playlist", content_id, "block", scope_id, (pos + 1) % n);
         }
     }
 }

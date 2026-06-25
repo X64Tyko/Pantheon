@@ -5,6 +5,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "../db/BlockRepository.h"
+#include "../db/ContentRepository.h"
 #include "../model/Block.h"
 #include "../model/Episode.h"
 #include "../model/Movie.h"
@@ -123,7 +125,7 @@ private:
 
     // Given an episode index in eps, snap back to Part 1 of its multipart group (if any).
     int snapToGroupStart(const std::string& episode_id,
-                         const std::vector<Episode>& eps) const;
+                         const std::vector<Episode>& eps);
 
     // Shuffle helpers.
     static std::vector<int> shufflePermutation(const std::string& seed_str, int n);
@@ -131,7 +133,7 @@ private:
     // Like shufflePermutation but keeps multipart episodes (Part 1/2/…) consecutive.
     // Groups are shuffled as atomic units; within each group parts retain their part_num order.
     std::vector<int> groupedShufflePermutation(const std::string& seed_str,
-                                               const std::vector<Episode>& eps) const;
+                                               const std::vector<Episode>& eps);
 
     // Rerun-mode helpers: read/write the selected content position and runs_remaining.
     int  readRunsRemaining(const std::string& block_id, const std::string& channel_id);
@@ -201,5 +203,7 @@ private:
                                                Xoshiro256& rng,
                                                std::time_t before_time = 0);
 
-    Database& db_;
+    Database&         db_;
+    BlockRepository   blocks_;
+    ContentRepository content_;
 };
