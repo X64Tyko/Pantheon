@@ -1,6 +1,5 @@
 #include "Router.h"
 #include "AuthContext.h"
-#include "RouteHelpers.h"
 #include "ServiceContext.h"
 #include "auth/AuthStore.h"
 #include "conf/ConfStore.h"
@@ -15,6 +14,7 @@
 #include "services/AuthService.h"
 #include "services/BlockService.h"
 #include "services/ChannelService.h"
+#include "services/KairosService.h"
 #include "services/ConfigService.h"
 #include "services/ContentService.h"
 #include "services/DownloadService.h"
@@ -97,6 +97,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<ConfigService>(ctx));
 	services_.push_back(std::make_unique<ArrService>(ctx));
 	services_.push_back(std::make_unique<ChannelService>(ctx));
+	services_.push_back(std::make_unique<KairosService>(ctx));
 	services_.push_back(std::make_unique<BlockService>(ctx));
 	services_.push_back(std::make_unique<ContentService>(ctx));
 	services_.push_back(std::make_unique<PlaylistService>(ctx));
@@ -106,10 +107,6 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<SchedulerService>(ctx));
 
 	for (auto& svc : services_) svc->registerRoutes(svr_);
-
-	svr_.Get("/api/sync/status", [this](const Req&, Res& res) {
-		route::ok(res, json{{"running", sync_.isSyncing()}}.dump());
-	});
 
 	svr_.set_mount_point("/", "./ui-dist");
 	svr_.Get(".*", [](const Req&, Res& res) {

@@ -5,33 +5,33 @@
 #include "../../conf/ConfStore.h"
 #include "../../db/Database.h"
 #include "../../scheduler/EPGMaterializer.h"
-#include "../../scheduler/Rng.h"
+#include "../../db/DbHelpers.h"
 #include "../../scheduler/RuleEngine.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <ctime>
-#include <iomanip>
 #include <map>
-#include <random>
-#include <sstream>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-namespace {
-std::string generateId() {
-	thread_local Xoshiro256 rng(static_cast<uint64_t>(std::random_device{}()));
-	std::ostringstream ss;
-	ss << std::hex << std::setfill('0') << std::setw(16) << rng();
-	return ss.str();
-}
-} // namespace
-
 SchedulerService::SchedulerService(const ServiceContext& ctx)
 	: db_(ctx.db), conf_(ctx.conf), engine_(ctx.engine),
 	  materializer_(ctx.materializer), schedule_cache_(ctx.schedule_cache)
 {}
+
+void SchedulerService::attachSourceMapping(json& j, const std::string& item_id) {
+	try {
+		SQLite::Statement sm(db_.get(),
+			"SELECT source_id, external_id FROM source_mapping WHERE kairos_id = ? LIMIT 1");
+		sm.bind(1, item_id);
+		if (sm.executeStep()) {
+			j["source_id"]   = sm.getColumn(0).getString();
+			j["external_id"] = sm.getColumn(1).getString();
+		}
+	} catch (...) {}
+}
 
 void SchedulerService::registerRoutes(httplib::Server& svr) {
 
@@ -124,15 +124,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 					j["season"]      = season;
 					j["episode_num"] = ep_num;
 				}
-				try {
-					SQLite::Statement sm(db_.get(),
-						"SELECT source_id, external_id FROM source_mapping WHERE kairos_id = ? LIMIT 1");
-					sm.bind(1, item_id);
-					if (sm.executeStep()) {
-						j["source_id"]   = sm.getColumn(0).getString();
-						j["external_id"] = sm.getColumn(1).getString();
-					}
-				} catch (...) {}
+				attachSourceMapping(j, item_id);
 				route::ok(res, j.dump());
 				return;
 			}
@@ -162,15 +154,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 				j["season"]      = item.season;
 				j["episode_num"] = item.episode_num;
 			}
-			try {
-				SQLite::Statement sm(db_.get(),
-					"SELECT source_id, external_id FROM source_mapping WHERE kairos_id = ? LIMIT 1");
-				sm.bind(1, item.item_id);
-				if (sm.executeStep()) {
-					j["source_id"]   = sm.getColumn(0).getString();
-					j["external_id"] = sm.getColumn(1).getString();
-				}
-			} catch (...) {}
+			attachSourceMapping(j, item.item_id);
 			route::ok(res, j.dump());
 			return;
 		}
@@ -338,15 +322,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 			j["season"]      = season;
 			j["episode_num"] = ep_num;
 		}
-		try {
-			SQLite::Statement sm(db_.get(),
-				"SELECT source_id, external_id FROM source_mapping WHERE kairos_id = ? LIMIT 1");
-			sm.bind(1, item_id);
-			if (sm.executeStep()) {
-				j["source_id"]   = sm.getColumn(0).getString();
-				j["external_id"] = sm.getColumn(1).getString();
-			}
-		} catch (...) {}
+		attachSourceMapping(j, item_id);
 		route::ok(res, j.dump());
 	  } catch (const std::exception& e) {
 		route::logErr("GET /api/channels/next", e); route::err(res, 500, e.what());
@@ -510,7 +486,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 					delb.bind(1, channel_id); delb.exec();
 
 					for (auto& blk : body["blocks"]) {
-						std::string block_id = blk.value("block_id", generateId());
+						std::string block_id = blk.value("block_id", db::generateId());
 						std::string end_time = blk.value("end_time", "");
 						SQLite::Statement s(db_.get(), R"(
 							INSERT INTO block (block_id, channel_id, name, block_type, day_mask,

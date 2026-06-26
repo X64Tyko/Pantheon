@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 #include <algorithm>
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -237,11 +238,13 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		std::string season_filter;
 		if (req.has_param("season")) season_filter = req.get_param_value("season");
 
-		std::string where = season_filter.empty() ? "" : " AND season = " + season_filter;
+		bool has_season = !season_filter.empty();
 		SQLite::Statement q(db_.get(),
-			"SELECT episode_id, season, episode, title, duration_ms, overview, air_date, thumb "
-			"FROM episode WHERE show_id = ?" + where + " ORDER BY season, episode");
+			std::string("SELECT episode_id, season, episode, title, duration_ms, overview, air_date, thumb "
+			            "FROM episode WHERE show_id = ?") +
+			(has_season ? " AND season = ?" : "") + " ORDER BY season, episode");
 		q.bind(1, id);
+		if (has_season) q.bind(2, std::stoi(season_filter));
 		json result = json::array();
 		while (q.executeStep()) {
 			result.push_back({
@@ -480,36 +483,46 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		auto id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
-			auto upd = [&](const char* col, const std::string& val) {
-				SQLite::Statement s(db_.get(),
-					std::string("UPDATE show SET ") + col + " = ? WHERE show_id = ?");
-				s.bind(1, val); s.bind(2, id); s.exec();
+
+			std::vector<std::string> cols;
+			std::vector<std::function<void(SQLite::Statement&, int)>> binders;
+			auto addS = [&](const char* col, std::string val) {
+				cols.push_back(col);
+				binders.push_back([v = std::move(val)](SQLite::Statement& s, int p) { s.bind(p, v); });
 			};
-			auto updN = [&](const char* col, int val) {
-				SQLite::Statement s(db_.get(),
-					std::string("UPDATE show SET ") + col + " = ? WHERE show_id = ?");
-				s.bind(1, val); s.bind(2, id); s.exec();
+			auto addI = [&](const char* col, int val) {
+				cols.push_back(col);
+				binders.push_back([val](SQLite::Statement& s, int p) { s.bind(p, val); });
 			};
-			if (b.contains("title"))                   upd("title",                   b["title"].get<std::string>());
-			if (b.contains("overview"))                upd("overview",                b["overview"].get<std::string>());
-			if (b.contains("studio"))                  upd("studio",                  b["studio"].get<std::string>());
-			if (b.contains("status"))                  upd("status",                  b["status"].get<std::string>());
-			if (b.contains("content_rating"))          upd("content_rating",          b["content_rating"].get<std::string>());
-			if (b.contains("originally_available_at")) upd("originally_available_at", b["originally_available_at"].get<std::string>());
-			if (b.contains("imdb_id"))                 upd("imdb_id",                 b["imdb_id"].get<std::string>());
-			if (b.contains("tvdb_id"))                 upd("tvdb_id",                 b["tvdb_id"].get<std::string>());
-			if (b.contains("tmdb_id"))                 upd("tmdb_id",                 b["tmdb_id"].get<std::string>());
-			if (b.contains("thumb"))                   upd("thumb",                   b["thumb"].get<std::string>());
-			if (b.contains("art"))                     upd("art",                     b["art"].get<std::string>());
-			if (b.contains("year"))                    updN("year",                   b["year"].get<int>());
-			if (b.contains("genres"))      upd("genres",      b["genres"].is_array()      ? b["genres"].dump()      : b["genres"].get<std::string>());
-			if (b.contains("labels"))      upd("labels",      b["labels"].is_array()      ? b["labels"].dump()      : b["labels"].get<std::string>());
-			if (b.contains("network"))                 upd("network",                 b["network"].get<std::string>());
-			if (b.contains("actors"))      upd("actors",      b["actors"].is_array()      ? b["actors"].dump()      : b["actors"].get<std::string>());
-			if (b.contains("countries"))   upd("countries",   b["countries"].is_array()   ? b["countries"].dump()   : b["countries"].get<std::string>());
-			if (b.contains("collections")) upd("collections", b["collections"].is_array() ? b["collections"].dump() : b["collections"].get<std::string>());
-			SQLite::Statement lk(db_.get(), "UPDATE show SET locked = 1 WHERE show_id = ?");
-			lk.bind(1, id); lk.exec();
+			auto jsonStr = [](const json& j) { return j.is_array() ? j.dump() : j.get<std::string>(); };
+
+			if (b.contains("title"))                   addS("title",                   b["title"].get<std::string>());
+			if (b.contains("overview"))                addS("overview",                b["overview"].get<std::string>());
+			if (b.contains("studio"))                  addS("studio",                  b["studio"].get<std::string>());
+			if (b.contains("status"))                  addS("status",                  b["status"].get<std::string>());
+			if (b.contains("content_rating"))          addS("content_rating",          b["content_rating"].get<std::string>());
+			if (b.contains("originally_available_at")) addS("originally_available_at", b["originally_available_at"].get<std::string>());
+			if (b.contains("imdb_id"))                 addS("imdb_id",                 b["imdb_id"].get<std::string>());
+			if (b.contains("tvdb_id"))                 addS("tvdb_id",                 b["tvdb_id"].get<std::string>());
+			if (b.contains("tmdb_id"))                 addS("tmdb_id",                 b["tmdb_id"].get<std::string>());
+			if (b.contains("thumb"))                   addS("thumb",                   b["thumb"].get<std::string>());
+			if (b.contains("art"))                     addS("art",                     b["art"].get<std::string>());
+			if (b.contains("year"))                    addI("year",                    b["year"].get<int>());
+			if (b.contains("genres"))                  addS("genres",                  jsonStr(b["genres"]));
+			if (b.contains("labels"))                  addS("labels",                  jsonStr(b["labels"]));
+			if (b.contains("network"))                 addS("network",                 b["network"].get<std::string>());
+			if (b.contains("actors"))                  addS("actors",                  jsonStr(b["actors"]));
+			if (b.contains("countries"))               addS("countries",               jsonStr(b["countries"]));
+			if (b.contains("collections"))             addS("collections",             jsonStr(b["collections"]));
+
+			std::string sql = "UPDATE show SET locked = 1";
+			for (const auto& col : cols) sql += ", " + col + " = ?";
+			sql += " WHERE show_id = ?";
+			SQLite::Statement s(db_.get(), sql);
+			for (int p = 0; p < (int)binders.size(); ++p) binders[p](s, p + 1);
+			s.bind((int)binders.size() + 1, id);
+			s.exec();
+
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) { route::logErr("PATCH /api/shows/" + id, e); route::err(res, 400, e.what()); }
 	});
@@ -623,34 +636,44 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		auto id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
-			auto upd = [&](const char* col, const std::string& val) {
-				SQLite::Statement s(db_.get(),
-					std::string("UPDATE movie SET ") + col + " = ? WHERE movie_id = ?");
-				s.bind(1, val); s.bind(2, id); s.exec();
+
+			std::vector<std::string> cols;
+			std::vector<std::function<void(SQLite::Statement&, int)>> binders;
+			auto addS = [&](const char* col, std::string val) {
+				cols.push_back(col);
+				binders.push_back([v = std::move(val)](SQLite::Statement& s, int p) { s.bind(p, v); });
 			};
-			auto updN = [&](const char* col, int val) {
-				SQLite::Statement s(db_.get(),
-					std::string("UPDATE movie SET ") + col + " = ? WHERE movie_id = ?");
-				s.bind(1, val); s.bind(2, id); s.exec();
+			auto addI = [&](const char* col, int val) {
+				cols.push_back(col);
+				binders.push_back([val](SQLite::Statement& s, int p) { s.bind(p, val); });
 			};
-			if (b.contains("title"))          upd("title",          b["title"].get<std::string>());
-			if (b.contains("overview"))       upd("overview",       b["overview"].get<std::string>());
-			if (b.contains("tagline"))        upd("tagline",        b["tagline"].get<std::string>());
-			if (b.contains("studio"))         upd("studio",         b["studio"].get<std::string>());
-			if (b.contains("director"))       upd("director",       b["director"].get<std::string>());
-			if (b.contains("content_rating")) upd("content_rating", b["content_rating"].get<std::string>());
-			if (b.contains("imdb_id"))        upd("imdb_id",        b["imdb_id"].get<std::string>());
-			if (b.contains("tmdb_id"))        upd("tmdb_id",        b["tmdb_id"].get<std::string>());
-			if (b.contains("thumb"))          upd("thumb",          b["thumb"].get<std::string>());
-			if (b.contains("art"))            upd("art",            b["art"].get<std::string>());
-			if (b.contains("year"))           updN("year",          b["year"].get<int>());
-			if (b.contains("genres"))      upd("genres",      b["genres"].is_array()      ? b["genres"].dump()      : b["genres"].get<std::string>());
-			if (b.contains("labels"))      upd("labels",      b["labels"].is_array()      ? b["labels"].dump()      : b["labels"].get<std::string>());
-			if (b.contains("actors"))      upd("actors",      b["actors"].is_array()      ? b["actors"].dump()      : b["actors"].get<std::string>());
-			if (b.contains("countries"))   upd("countries",   b["countries"].is_array()   ? b["countries"].dump()   : b["countries"].get<std::string>());
-			if (b.contains("collections")) upd("collections", b["collections"].is_array() ? b["collections"].dump() : b["collections"].get<std::string>());
-			SQLite::Statement lk(db_.get(), "UPDATE movie SET locked = 1 WHERE movie_id = ?");
-			lk.bind(1, id); lk.exec();
+			auto jsonStr = [](const json& j) { return j.is_array() ? j.dump() : j.get<std::string>(); };
+
+			if (b.contains("title"))          addS("title",          b["title"].get<std::string>());
+			if (b.contains("overview"))       addS("overview",       b["overview"].get<std::string>());
+			if (b.contains("tagline"))        addS("tagline",        b["tagline"].get<std::string>());
+			if (b.contains("studio"))         addS("studio",         b["studio"].get<std::string>());
+			if (b.contains("director"))       addS("director",       b["director"].get<std::string>());
+			if (b.contains("content_rating")) addS("content_rating", b["content_rating"].get<std::string>());
+			if (b.contains("imdb_id"))        addS("imdb_id",        b["imdb_id"].get<std::string>());
+			if (b.contains("tmdb_id"))        addS("tmdb_id",        b["tmdb_id"].get<std::string>());
+			if (b.contains("thumb"))          addS("thumb",          b["thumb"].get<std::string>());
+			if (b.contains("art"))            addS("art",            b["art"].get<std::string>());
+			if (b.contains("year"))           addI("year",           b["year"].get<int>());
+			if (b.contains("genres"))         addS("genres",         jsonStr(b["genres"]));
+			if (b.contains("labels"))         addS("labels",         jsonStr(b["labels"]));
+			if (b.contains("actors"))         addS("actors",         jsonStr(b["actors"]));
+			if (b.contains("countries"))      addS("countries",      jsonStr(b["countries"]));
+			if (b.contains("collections"))    addS("collections",    jsonStr(b["collections"]));
+
+			std::string sql = "UPDATE movie SET locked = 1";
+			for (const auto& col : cols) sql += ", " + col + " = ?";
+			sql += " WHERE movie_id = ?";
+			SQLite::Statement s(db_.get(), sql);
+			for (int p = 0; p < (int)binders.size(); ++p) binders[p](s, p + 1);
+			s.bind((int)binders.size() + 1, id);
+			s.exec();
+
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) { route::logErr("PATCH /api/movies/" + id, e); route::err(res, 400, e.what()); }
 	});

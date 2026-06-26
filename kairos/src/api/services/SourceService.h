@@ -3,6 +3,7 @@
 #include "../ServiceContext.h"
 
 class Database;
+class LogBuffer;
 class SyncManager;
 
 class SourceService : public IKairosService {
@@ -13,4 +14,5 @@ public:
 private:
 	Database&    db_;
 	SyncManager& sync_;
+	LogBuffer&   logs_;
 };

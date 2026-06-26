@@ -1,15 +1,14 @@
 #include "ChannelService.h"
-#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../ScheduleCache.h"
 #include "../../conf/ConfStore.h"
 #include "../../db/ChannelRepository.h"
 #include "../../db/ChannelSerializer.h"
 #include "../../db/Database.h"
+#include "../../log/LogBuffer.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
-#include <iostream>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -21,7 +20,7 @@ static bool isValidTimezone(const std::string& tz) {
 }
 
 ChannelService::ChannelService(const ServiceContext& ctx)
-	: db_(ctx.db), conf_(ctx.conf), schedule_cache_(ctx.schedule_cache) {}
+	: db_(ctx.db), conf_(ctx.conf), schedule_cache_(ctx.schedule_cache), logs_(ctx.logs) {}
 
 void ChannelService::registerRoutes(httplib::Server& svr) {
 
@@ -127,7 +126,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 		auto id = req.path_params.at("id");
 		try {
 			ChannelRepository(db_).remove(id);
-			std::cout << "[api] deleted channel: " << id << "\n";
+			logs_.push("[api] deleted channel: " + id);
 			route::ok(res, json{{"deleted", id}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("DELETE /api/channels/" + id, e);
@@ -163,7 +162,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 			bool deep = (body.value("depth", "shallow") == "deep");
 			auto [channel_id, unresolved] = ChannelSerializer(db_).importChannel(body, deep);
 			res.status = 201;
-			std::cout << "[api] imported channel: " << channel_id << "\n";
+			logs_.push("[api] imported channel: " + channel_id);
 			route::ok(res, json{{"channel_id", channel_id}, {"unresolved", unresolved}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("POST /api/channels/import", e);

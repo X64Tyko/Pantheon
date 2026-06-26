@@ -4,6 +4,7 @@
 
 class Database;
 class ConfStore;
+class LogBuffer;
 class ScheduleCache;
 
 class ChannelService : public IKairosService {
@@ -15,4 +16,5 @@ private:
 	Database&      db_;
 	ConfStore&     conf_;
 	ScheduleCache& schedule_cache_;
+	LogBuffer&     logs_;
 };

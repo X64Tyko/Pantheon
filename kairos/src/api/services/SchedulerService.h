@@ -1,5 +1,6 @@
 #pragma once
 #include "../IKairosService.h"
+#include <nlohmann/json_fwd.hpp>
 
 struct ServiceContext;
 class ConfStore;
@@ -14,6 +15,8 @@ public:
 	void registerRoutes(httplib::Server& svr) override;
 
 private:
+	void attachSourceMapping(nlohmann::json& j, const std::string& item_id);
+
 	Database&        db_;
 	ConfStore&       conf_;
 	RuleEngine&      engine_;

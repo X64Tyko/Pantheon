@@ -2,6 +2,7 @@
 #include "../RouteHelpers.h"
 #include "../../db/Database.h"
 #include "../../db/SourceRepository.h"
+#include "../../log/LogBuffer.h"
 #include "../../source/SyncManager.h"
 #include "../../source/IMediaSource.h"
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -13,7 +14,7 @@ using Req  = httplib::Request;
 using Res  = httplib::Response;
 
 SourceService::SourceService(const ServiceContext& ctx)
-	: db_(ctx.db), sync_(ctx.sync) {}
+	: db_(ctx.db), sync_(ctx.sync), logs_(ctx.logs) {}
 
 void SourceService::registerRoutes(httplib::Server& svr) {
 
@@ -110,7 +111,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		try {
 			SourceRepository(db_).removeSource(id);
 			sync_.loadSources();
-			std::cout << "[api] deleted source: " << id << "\n";
+			logs_.push("[api] deleted source: " + id);
 			route::ok(res, json{{"deleted", id}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("DELETE /api/sources/" + id, e);
@@ -170,7 +171,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		auto lid = req.path_params.at("lid");
 		try {
 			SourceRepository(db_).removeLibrary(lid);
-			std::cout << "[api] deleted library: " << lid << " (source: " << id << ")\n";
+			logs_.push("[api] deleted library: " + lid + " (source: " + id + ")");
 			route::ok(res, json{{"deleted", lid}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("DELETE /api/sources/" + id + "/libraries/" + lid, e);
@@ -250,5 +251,9 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/sources/:id/sample-path", [this](const Req& req, Res& res) {
 		auto sample = SourceRepository(db_).samplePath(req.path_params.at("id"));
 		route::ok(res, json{{"path", sample ? json(*sample) : json(nullptr)}}.dump());
+	});
+
+	svr.Get("/api/sync/status", [this](const Req&, Res& res) {
+		route::ok(res, json{{"running", sync_.isSyncing()}}.dump());
 	});
 }
