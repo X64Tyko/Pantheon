@@ -1,8 +1,9 @@
 #pragma once
 #include <httplib.h>
-#include <mutex>
-#include <string>
-#include <unordered_map>
+#include <memory>
+#include <vector>
+#include "IKairosService.h"
+#include "ScheduleCache.h"
 
 class AuthStore;
 class ConfStore;
@@ -19,57 +20,20 @@ public:
 	       ConfStore& conf, LogBuffer& logs,
 	       RuleEngine& engine, EPGMaterializer& materializer,
 	       DownloadManager& dl, AuthStore& auth);
+	~Router();
 	void registerRoutes();
 
 private:
-	void registerAuthRoutes();
-	void registerSourceRoutes();
-	void registerConfigRoutes();
-	void registerChannelRoutes();
-	void registerBlockRoutes();
-	void registerContentRoutes();
-	void registerPlaylistRoutes();
-	void registerFillerRoutes();
-	void registerActivityRoutes();
-	void registerSchedulerRoutes();
-	void registerDownloadRoutes();
+	httplib::Server&  svr_;
+	Database&         db_;
+	SyncManager&      sync_;
+	ConfStore&        conf_;
+	LogBuffer&        logs_;
+	RuleEngine&       engine_;
+	EPGMaterializer&  materializer_;
+	DownloadManager&  dl_;
+	AuthStore&        auth_;
 
-    static void ok(httplib::Response& res, const std::string& json);
-    static void err(httplib::Response& res, int status, const std::string& msg);
-
-    void proxyImage(const std::string& imgPath, const std::string& sourceId,
-                    httplib::Response& res);
-
-    // Delete all cached schedule rows for a channel so the next EPG request
-    // rebuilds from the current block configuration.
-    void clearScheduleCache(const std::string& channel_id);
-
-    // Fetch items from a Plex playlist/collection, replace list items, record link.
-    void syncPlexListItems(httplib::Response& res,
-                           const std::string& list_type,
-                           const std::string& list_id,
-                           const std::string& source_id,
-                           const std::string& external_id,
-                           const std::string& plex_type);
-
-    httplib::Server&  svr_;
-    Database&         db_;
-    SyncManager&      sync_;
-    ConfStore&        conf_;
-    LogBuffer&        logs_;
-    RuleEngine&       engine_;
-    EPGMaterializer&  materializer_;
-    DownloadManager&  dl_;
-    AuthStore&        auth_;
-
-    // Preview simulation cache: keyed by channel_id, valid for one (seed, week_anchor) pair.
-    // Populated by the POST /epg/preview endpoint when seed is set and no draft blocks are
-    // present; invalidated by clearScheduleCache whenever blocks or content change.
-    struct PreviewCacheEntry {
-        int         seed;
-        std::time_t week_anchor;
-        std::string body;
-    };
-    std::mutex                                         preview_mu_;
-    std::unordered_map<std::string, PreviewCacheEntry> preview_cache_;
+	ScheduleCache                              schedule_cache_;
+	std::vector<std::unique_ptr<IKairosService>> services_;
 };

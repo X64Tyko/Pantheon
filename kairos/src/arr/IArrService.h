@@ -45,4 +45,14 @@ public:
 
     // Add the item. add_data is the opaque blob from ArrLookupResult::add_data.
     virtual bool add(const json& add_data, const ArrAddOptions& opts) = 0;
+
+    // Convenience: parse options from a request body and call add().
+    bool addFromRequest(const json& body) {
+        if (!body.contains("add_data")) return false;
+        ArrAddOptions opts;
+        opts.quality_profile_id = body.value("quality_profile_id", 1);
+        opts.root_folder        = body.value("root_folder", "");
+        opts.search_on_add      = body.value("search_on_add", true);
+        return add(body["add_data"], opts);
+    }
 };

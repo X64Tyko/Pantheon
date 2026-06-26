@@ -28,6 +28,9 @@ public:
     std::vector<BrowseListItem>    browseCollections(const std::string& ext_lib_id) override;
     std::vector<BrowseContentItem> browseCollectionItems(const std::string& id)     override;
 
+    std::optional<std::vector<PlexListItem>>
+        fetchListItems(const std::string& external_id, const std::string& plex_type) override;
+
 private:
     httplib::Result get(const std::string& path);
 

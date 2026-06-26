@@ -5,6 +5,7 @@
 #include "model/Show.h"
 #include "model/SourceConfig.h"
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,12 @@ struct BrowseListItem {
     std::string id;          // source-native key (Plex ratingKey, etc.)
     std::string title;
     int         item_count = 0;
+};
+
+// Minimal item for plex-sync: external_id + type only.
+struct PlexListItem {
+    std::string item_type;   // "movie" | "episode"
+    std::string external_id; // source-native ratingKey
 };
 
 // A content item returned by browsePlaylistItems / browseCollectionItems.
@@ -51,4 +58,12 @@ public:
     virtual std::vector<BrowseContentItem> browsePlaylistItems(const std::string& id)          = 0;
     virtual std::vector<BrowseListItem>    browseCollections(const std::string& ext_lib_id)    = 0;
     virtual std::vector<BrowseContentItem> browseCollectionItems(const std::string& id)        = 0;
+
+    // ── Plex sync helper ─────────────────────────────────────────────────────
+    // Fetches items from a Plex playlist or collection by external_id + plex_type.
+    // Returns nullopt on network/parse error; empty vector = success but no items.
+    virtual std::optional<std::vector<PlexListItem>>
+        fetchListItems(const std::string& /*external_id*/, const std::string& /*plex_type*/) {
+        return std::vector<PlexListItem>{};
+    }
 };

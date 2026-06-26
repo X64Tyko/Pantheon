@@ -402,3 +402,22 @@ std::vector<BrowseContentItem> PlexSource::browseCollectionItems(const std::stri
     if (!res || res->status != 200) return {};
     return parseBrowseItems(res->body);
 }
+
+std::optional<std::vector<PlexListItem>> PlexSource::fetchListItems(
+    const std::string& id, const std::string& plex_type) {
+    std::string path = (plex_type == "playlist")
+        ? "/playlists/" + id + "/items"
+        : "/library/metadata/" + id + "/children";
+    auto res = get(path);
+    if (!res || res->status != 200) return std::nullopt;
+    try {
+        auto raw = parseBrowseItems(res->body);
+        std::vector<PlexListItem> result;
+        result.reserve(raw.size());
+        for (auto& item : raw)
+            result.push_back({item.item_type, item.external_id});
+        return result;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
