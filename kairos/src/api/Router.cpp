@@ -37,6 +37,10 @@ static bool isPublicPath(const std::string& path) {
 	if (path == "/api/auth/login") return true;
 	if (path.ends_with("/now") || path.ends_with("/next") || path.ends_with("/epg"))
 		return true;
+	// Paths called by Tunarr (internal service-to-service, no user session).
+	if (path == "/api/channels") return true;
+	if (path == "/api/sources")  return true;
+	if (path.ends_with("/played")) return true;
 	return false;
 }
 
