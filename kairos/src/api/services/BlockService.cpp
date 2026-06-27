@@ -64,9 +64,9 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("priority"))                 repo.updateBlockField(bid, "priority",                (int)b["priority"]);
 			if (b.contains("program_count"))            repo.updateBlockField(bid, "program_count",           (int)b["program_count"]);
 			if (b.contains("late_start_mins"))          repo.updateBlockField(bid, "late_start_mins",         (int)b["late_start_mins"]);
+			if (b.contains("play_style"))               repo.updateBlockField(bid, "play_style",              b["play_style"].get<std::string>());
 			if (b.contains("advancement"))              repo.updateBlockField(bid, "advancement",             b["advancement"].get<std::string>());
 			if (b.contains("cursor_scope"))             repo.updateBlockField(bid, "cursor_scope",            b["cursor_scope"].get<std::string>());
-			if (b.contains("max_content_rating"))       repo.updateBlockField(bid, "max_content_rating",      b["max_content_rating"].get<std::string>());
 			if (b.contains("align_to_mins"))            repo.updateBlockField(bid, "align_to_mins",           (int)b["align_to_mins"]);
 			if (b.contains("early_start_secs"))         repo.updateBlockField(bid, "early_start_secs",        (int)b["early_start_secs"]);
 			if (b.contains("filler_selection"))         repo.updateBlockField(bid, "filler_selection",        b["filler_selection"].get<std::string>());

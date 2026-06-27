@@ -10,13 +10,23 @@ import type {
   AdvanceMode, Advancement, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
   EpisodeOrder, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, FillerEntry, FillerEntryAdvancement,
   FillerSelectionMode, LibraryWithSource, Movie, NoHistoryBehavior, Playlist,
-  PlaylistMode, Show, StartScope,
+  PlaylistMode, PlayStyle, Show, StartScope, TimeslotSlot, TimeslotQueueEntry,
 } from '../api/types'
 
 let _debounce:  ReturnType<typeof setTimeout>
 let _epgTimer:  ReturnType<typeof setTimeout> | null = null
 let _ruleId = 0
 let _searchCtrl: AbortController | null = null
+
+// Slot offsets are purely derived — always the cumulative sum of preceding durations.
+function recomputeSlotOffsets(slots: TimeslotSlot[]): TimeslotSlot[] {
+  let offset = 0
+  return slots.map(s => {
+    const updated = { ...s, slot_offset_mins: offset }
+    offset += s.slot_duration_mins
+    return updated
+  })
+}
 
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -73,7 +83,8 @@ export class ChannelDetailStore {
   expandedSeasons:        {number: number; name: string}[] = []
   expandedSeasonsLoading: boolean       = false
 
-  isNewMode: boolean = false
+  isNewMode:     boolean        = false
+  editingSlotId: string | null = null
 
   saving:          boolean       = false
   saveErr:         string | null = null
@@ -98,9 +109,10 @@ export class ChannelDetailStore {
   channelFillerSaving: boolean        = false
   channelFillerErr:    string | null  = null
 
-  draftContent:       BlockContent[] = []
-  draftFillerEntries: FillerEntry[]  = []
-  contentDirty:       boolean        = false
+  draftContent:       BlockContent[]  = []
+  draftFillerEntries: FillerEntry[]   = []
+  draftSlots:         TimeslotSlot[]  = []
+  contentDirty:       boolean         = false
 
   epgItems:   EpgProgram[]            = []
   epgLoading: boolean                 = false
@@ -221,6 +233,22 @@ export class ChannelDetailStore {
               advancement: fe.advancement, weight: fe.weight,
             })
           }
+          if (b.block_type === 'timeslot') {
+            for (const s of b.slots ?? []) {
+              const sr = await api.post<{ slot_id: string }>(`/blocks/${realId}/slots`, {
+                slot_offset_mins: s.slot_offset_mins, slot_duration_mins: s.slot_duration_mins,
+                overflow: s.overflow, late_start_mins: s.late_start_mins,
+                early_start_secs: s.early_start_secs, align_to_mins: s.align_to_mins,
+                start_scope: s.start_scope,
+              })
+              for (const q of s.queue) {
+                await api.post(`/blocks/${realId}/slots/${sr.slot_id}/queue`, {
+                  content_type: q.content_type, content_id: q.content_id,
+                  premiere_date: q.premiere_date, pre_premiere_behavior: q.pre_premiere_behavior,
+                })
+              }
+            }
+          }
         } else {
           const realId = b.block_id
           await api.updateBlock(channelId, realId, payload as any)
@@ -252,6 +280,66 @@ export class ChannelDetailStore {
             for (const fe of toRemoveFiller) await api.removeBlockFiller(channelId, realId, fe.id)
             for (const fe of toAddFiller)    await api.addBlockFiller(channelId, realId, { content_type: fe.content_type, content_id: fe.content_id, advancement: fe.advancement, weight: fe.weight, season_filter: fe.season_filter })
             for (const fe of toUpdateFiller) await api.updateBlockFiller(channelId, realId, fe.id, { advancement: fe.advancement, weight: fe.weight })
+
+            if (b.block_type === 'timeslot') {
+              const savedSlots = savedBlock.slots ?? []
+              const draftSlots = b.slots ?? []
+              for (const ss of savedSlots) {
+                if (!draftSlots.some(ds => ds.slot_id === ss.slot_id))
+                  await api.del(`/blocks/${realId}/slots/${ss.slot_id}`)
+              }
+              for (const ds of draftSlots) {
+                if (ds.slot_id.startsWith('tmp_')) {
+                  const sr = await api.post<{ slot_id: string }>(`/blocks/${realId}/slots`, {
+                    slot_offset_mins: ds.slot_offset_mins, slot_duration_mins: ds.slot_duration_mins,
+                    overflow: ds.overflow, late_start_mins: ds.late_start_mins,
+                    early_start_secs: ds.early_start_secs, align_to_mins: ds.align_to_mins,
+                    start_scope: ds.start_scope,
+                  })
+                  for (const q of ds.queue) {
+                    await api.post(`/blocks/${realId}/slots/${sr.slot_id}/queue`, {
+                      content_type: q.content_type, content_id: q.content_id,
+                      premiere_date: q.premiere_date, pre_premiere_behavior: q.pre_premiere_behavior,
+                    })
+                  }
+                } else {
+                  const orig = savedSlots.find(ss => ss.slot_id === ds.slot_id)
+                  if (orig) {
+                    const sp: Record<string, unknown> = {}
+                    if (orig.slot_offset_mins   !== ds.slot_offset_mins)   sp.slot_offset_mins   = ds.slot_offset_mins
+                    if (orig.slot_duration_mins !== ds.slot_duration_mins) sp.slot_duration_mins = ds.slot_duration_mins
+                    if (orig.overflow           !== ds.overflow)           sp.overflow           = ds.overflow
+                    if (orig.late_start_mins    !== ds.late_start_mins)    sp.late_start_mins    = ds.late_start_mins
+                    if (orig.early_start_secs   !== ds.early_start_secs)   sp.early_start_secs   = ds.early_start_secs
+                    if (orig.align_to_mins      !== ds.align_to_mins)      sp.align_to_mins      = ds.align_to_mins
+                    if (orig.start_scope        !== ds.start_scope)        sp.start_scope        = ds.start_scope
+                    if (Object.keys(sp).length > 0)
+                      await api.patch(`/blocks/${realId}/slots/${ds.slot_id}`, sp)
+                    for (const oq of orig.queue) {
+                      if (!ds.queue.some(dq => dq.entry_id === oq.entry_id))
+                        await api.del(`/blocks/${realId}/slots/${ds.slot_id}/queue/${oq.entry_id}`)
+                    }
+                    for (const dq of ds.queue) {
+                      if (dq.entry_id.startsWith('tmp_')) {
+                        await api.post(`/blocks/${realId}/slots/${ds.slot_id}/queue`, {
+                          content_type: dq.content_type, content_id: dq.content_id,
+                          premiere_date: dq.premiere_date, pre_premiere_behavior: dq.pre_premiere_behavior,
+                        })
+                      } else {
+                        const oq = orig.queue.find(q => q.entry_id === dq.entry_id)
+                        if (oq) {
+                          const qp: Record<string, string> = {}
+                          if (oq.premiere_date         !== dq.premiere_date)         qp.premiere_date         = dq.premiere_date
+                          if (oq.pre_premiere_behavior !== dq.pre_premiere_behavior) qp.pre_premiere_behavior = dq.pre_premiere_behavior
+                          if (Object.keys(qp).length > 0)
+                            await api.patch(`/blocks/${realId}/slots/${ds.slot_id}/queue/${dq.entry_id}`, qp)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -281,6 +369,7 @@ export class ChannelDetailStore {
           if (block) {
             this.draftContent       = [...block.content]
             this.draftFillerEntries = [...block.filler_entries]
+            this.draftSlots         = (block.slots ?? []).map(s => ({ ...s, queue: [...s.queue] }))
           }
         }
       })
@@ -356,9 +445,11 @@ export class ChannelDetailStore {
     this.selectedId         = blockId
     this.editing            = block
     this.isNewMode          = false
+    this.editingSlotId      = null
     this.draft              = blockToDraft(block)
     this.draftContent       = [...block.content]
     this.draftFillerEntries = [...block.filler_entries]
+    this.draftSlots         = (block.slots ?? []).map(s => ({ ...s, queue: [...s.queue] }))
     this.contentDirty       = false
     this.saveErr            = null
     this.pickerOpen         = false
@@ -375,9 +466,11 @@ export class ChannelDetailStore {
     this.selectedId         = null
     this.editing            = null
     this.isNewMode          = true
+    this.editingSlotId      = null
     this.draft              = { ...BLANK_DRAFT, priority: maxP + 1 }
     this.draftContent       = []
     this.draftFillerEntries = []
+    this.draftSlots         = []
     this.contentDirty       = false
     this.saveErr            = null
     this.pickerOpen         = false
@@ -387,10 +480,12 @@ export class ChannelDetailStore {
     this.selectedId         = null
     this.editing            = null
     this.isNewMode          = false
+    this.editingSlotId      = null
     this.pickerOpen         = false
     this.fillerPickerOpen   = false
     this.draftContent       = []
     this.draftFillerEntries = []
+    this.draftSlots         = []
     this.contentDirty       = false
   }
 
@@ -487,6 +582,7 @@ export class ChannelDetailStore {
             ...(payload as any),
             content:        [...this.draftContent],
             filler_entries: [...this.draftFillerEntries],
+            slots:          [...this.draftSlots],
           }
           this.blocks = [...this.blocks.slice(0, idx), updated, ...this.blocks.slice(idx + 1)]
         }
@@ -498,6 +594,7 @@ export class ChannelDetailStore {
           ...(payload as any),
           content:        [...this.draftContent],
           filler_entries: [...this.draftFillerEntries],
+          slots:          [...this.draftSlots],
         }
         this.blocks = [...this.blocks, newBlock]
       }
@@ -513,6 +610,7 @@ export class ChannelDetailStore {
         this.draft              = { ...blockToDraft(block), filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope }
         this.draftContent       = [...block.content]
         this.draftFillerEntries = [...block.filler_entries]
+        this.draftSlots         = (block.slots ?? []).map(s => ({ ...s, queue: [...s.queue] }))
       }
     } catch (e: any) {
       this.saveErr = e.message; this.saving = false
@@ -532,6 +630,11 @@ export class ChannelDetailStore {
       name:           src.name + ' (copy)',
       content:        src.content.map(c => ({ ...c, id: -(Date.now() * 100 + Math.random() * 100 | 0), block_id: newId })),
       filler_entries: src.filler_entries.map(fe => ({ ...fe, id: -(Date.now() * 100 + Math.random() * 100 | 0), block_id: newId })),
+      slots:          (src.slots ?? []).map((s, si) => ({
+        ...s,
+        slot_id: `tmp_${Date.now()}_s${si}`,
+        queue:   s.queue.map((q, qi) => ({ ...q, entry_id: `tmp_${Date.now()}_q${si}_${qi}` })),
+      })),
     }
     this.blocks             = [...this.blocks, newBlock]
     this.blocksDirty        = true
@@ -541,16 +644,20 @@ export class ChannelDetailStore {
     this.draft              = { ...blockToDraft(newBlock), filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope }
     this.draftContent       = [...newBlock.content]
     this.draftFillerEntries = [...newBlock.filler_entries]
+    this.draftSlots         = (newBlock.slots ?? []).map(s => ({ ...s, queue: [...s.queue] }))
     this.contentDirty       = false
     this.scheduleEpgRefresh(channelId)
   }
 
   async createPremierBlocks(channelId: string) {
     if (!this.editing) return
-    const isRerun = this.draft.advancement === 'rerun_shuffle' || this.draft.advancement === 'rerun_smart'
+    const isRerun = this.draft.play_style === 'rerun'
     if (!isRerun) return
     runInAction(() => { this.creatingPremiers = true })
-    const premierBlocks  = this.blocks.filter(b => b.block_type === 'premier')
+    const premierBlocks = this.blocks.filter(b =>
+      b.play_style === 'standard' && b.advancement === 'sequential' &&
+      (b.cursor_scope === 'channel' || b.cursor_scope === 'global')
+    )
     const showsToCreate  = this.draftContent.filter(c =>
       c.content_type === 'show' && c.id > 0 &&
       !premierBlocks.some(pb => pb.content.some(pc => pc.content_type === 'show' && pc.content_id === c.content_id))
@@ -563,17 +670,17 @@ export class ChannelDetailStore {
           block_id:                   bid,
           channel_id:                 channelId,
           name:                       item.title,
-          block_type:                 'premier'    as BlockType,
+          block_type:                 'episode'    as BlockType,
           day_mask:                   this.draft.day_mask,
           start_time:                 this.draft.start_time,
           end_time:                   '',
+          play_style:                 'standard'   as PlayStyle,
           advancement:                'sequential' as Advancement,
           cursor_scope:               this.draft.cursor_scope as CursorScope,
           priority:                   rerunPriority + 1,
           program_count:              1,
           late_start_mins:            5,
           early_start_secs:           15,
-          max_content_rating:         '',
           filler_selection:           'round_robin' as FillerSelectionMode,
           align_to_mins:              0,
           inter_filler:               false,
@@ -688,6 +795,128 @@ export class ChannelDetailStore {
   removeBlockFiller(channelId: string, blockId: string, entryId: number) {
     this.draftFillerEntries = this.draftFillerEntries.filter(e => e.id !== entryId)
     this.contentDirty = true
+  }
+
+  // ── Slot draft mutations (timeslot blocks) ───────────────────────────────────
+
+  setEditingSlot(id: string | null) { this.editingSlotId = id }
+
+  convertContentToSlots() {
+    const eligible = this.draftContent.filter(
+      c => c.content_type === 'show' || c.content_type === 'movie',
+    )
+    if (!eligible.length) return
+    this.draftSlots = recomputeSlotOffsets(eligible.map((c, i) => ({
+      slot_id:            `tmp_${Date.now()}_s${i}`,
+      slot_index:         i,
+      slot_offset_mins:   0,   // overwritten by recomputeSlotOffsets
+      slot_duration_mins: 30,
+      overflow:           'cutoff'  as const,
+      late_start_mins:    0,
+      early_start_secs:   0,
+      align_to_mins:      0,
+      start_scope:        'block'   as const,
+      queue_pos:          0,
+      episode_pos:        0,
+      queue: [{
+        entry_id:              `tmp_${Date.now()}_q${i}`,
+        queue_index:           0,
+        content_type:          c.content_type as 'show' | 'movie',
+        content_id:            c.content_id,
+        title:                 c.title,
+        premiere_date:         '',
+        pre_premiere_behavior: 'replay_previous' as const,
+      }],
+    })))
+    // Drop the converted entries; leave any non-convertible ones (episodes, playlists…)
+    this.draftContent = this.draftContent.filter(
+      c => c.content_type !== 'show' && c.content_type !== 'movie',
+    )
+    this.contentDirty = true
+  }
+
+  addDraftSlot() {
+    const offset = this.draftSlots.reduce((acc, s) => acc + s.slot_duration_mins, 0)
+    const idx    = this.draftSlots.length
+    this.draftSlots = [...this.draftSlots, {
+      slot_id:            `tmp_${Date.now()}_s${idx}`,
+      slot_index:         idx,
+      slot_offset_mins:   offset,
+      slot_duration_mins: 30,
+      overflow:           'cutoff',
+      late_start_mins:    0,
+      early_start_secs:   0,
+      align_to_mins:      0,
+      start_scope:        'block',
+      queue_pos:          0,
+      episode_pos:        0,
+      queue:              [],
+    }]
+    this.contentDirty = true
+  }
+
+  removeDraftSlot(slotId: string) {
+    const filtered = this.draftSlots
+      .filter(s => s.slot_id !== slotId)
+      .map((s, i) => ({ ...s, slot_index: i }))
+    this.draftSlots   = recomputeSlotOffsets(filtered)
+    this.contentDirty = true
+  }
+
+  patchDraftSlot(slotId: string, patch: Partial<TimeslotSlot>) {
+    const patched     = this.draftSlots.map(s => s.slot_id === slotId ? { ...s, ...patch } : s)
+    this.draftSlots   = recomputeSlotOffsets(patched)
+    this.contentDirty = true
+  }
+
+  addDraftQueueEntry(slotId: string, entry: { content_type: 'show' | 'movie'; content_id: string; title: string }) {
+    this.draftSlots = this.draftSlots.map(s => {
+      if (s.slot_id !== slotId) return s
+      const qi = s.queue.length
+      const newEntry: TimeslotQueueEntry = {
+        entry_id:              `tmp_${Date.now()}_q${qi}`,
+        queue_index:           qi,
+        content_type:          entry.content_type,
+        content_id:            entry.content_id,
+        title:                 entry.title,
+        premiere_date:         '',
+        pre_premiere_behavior: 'replay_previous',
+      }
+      return { ...s, queue: [...s.queue, newEntry] }
+    })
+    this.contentDirty = true
+  }
+
+  removeDraftQueueEntry(slotId: string, entryId: string) {
+    this.draftSlots = this.draftSlots.map(s => {
+      if (s.slot_id !== slotId) return s
+      return {
+        ...s,
+        queue: s.queue
+          .filter(q => q.entry_id !== entryId)
+          .map((q, i) => ({ ...q, queue_index: i })),
+      }
+    })
+    this.contentDirty = true
+  }
+
+  patchDraftQueueEntry(slotId: string, entryId: string, patch: Partial<Pick<TimeslotQueueEntry, 'premiere_date' | 'pre_premiere_behavior'>>) {
+    this.draftSlots = this.draftSlots.map(s => {
+      if (s.slot_id !== slotId) return s
+      return { ...s, queue: s.queue.map(q => q.entry_id === entryId ? { ...q, ...patch } : q) }
+    })
+    this.contentDirty = true
+  }
+
+  async resetDraftSlotCursor(blockId: string, slotId: string) {
+    if (!slotId.startsWith('tmp_') && !blockId.startsWith('tmp_')) {
+      await api.post(`/blocks/${blockId}/slots/${slotId}/cursor/reset`, {})
+    }
+    runInAction(() => {
+      this.draftSlots = this.draftSlots.map(s =>
+        s.slot_id === slotId ? { ...s, queue_pos: 0, episode_pos: 0 } : s,
+      )
+    })
   }
 
   async saveChannelFiller(channelId: string, patch: { default_filler_selection?: FillerSelectionMode }) {

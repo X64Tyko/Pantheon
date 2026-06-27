@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import type { FillerSelectionMode, BlockType } from '../api/types'
-import { ALIGN_OPTS, BLOCK_META, DAY_BITS, DAYS, DELAY_OPTS, EARLY_OPTS, FILLER_SEL_OPTS, RATINGS } from './constants'
+import { ALIGN_OPTS, BLOCK_META, DAY_BITS, DAYS, DELAY_OPTS, EARLY_OPTS, FILLER_SEL_OPTS } from './constants'
 import { inputStyle } from './styles'
 import type { ChannelDetailStore } from './store'
 import type { BlockDraft } from './types'
@@ -35,7 +35,7 @@ function FieldRow({ label, enabled, onToggle, children }: {
 
 // ─── BulkEditPanel ────────────────────────────────────────────────────────────
 
-const TYPE_ORDER: BlockType[] = ['episode', 'premier', 'movie', 'filler']
+const TYPE_ORDER: BlockType[] = ['episode', 'movie', 'timeslot', 'filler']
 
 export const BulkEditPanel = observer(function BulkEditPanel({ channelId, store }: {
   channelId: string
@@ -53,12 +53,9 @@ export const BulkEditPanel = observer(function BulkEditPanel({ channelId, store 
   const [fillerSelVal,       setFillerSelVal]       = useState<FillerSelectionMode>('round_robin')
   const [interEnabled,       setInterEnabled]       = useState(false)
   const [interVal,           setInterVal]           = useState(false)
-  const [ratingEnabled,      setRatingEnabled]      = useState(false)
-  const [ratingVal,          setRatingVal]          = useState('')
-
   const nSelected = store.bulkSelectedIds.length
   const anyEnabled = alignEnabled || lateEnabled || earlyEnabled || scopeEnabled ||
-                     fillerSelEnabled || interEnabled || ratingEnabled
+                     fillerSelEnabled || interEnabled
 
   const handleApply = () => {
     const patch: Partial<BlockDraft> = {}
@@ -68,7 +65,6 @@ export const BulkEditPanel = observer(function BulkEditPanel({ channelId, store 
     if (scopeEnabled)     patch.start_scope       = scopeVal
     if (fillerSelEnabled) patch.filler_selection  = fillerSelVal
     if (interEnabled)     patch.inter_filler      = interVal
-    if (ratingEnabled)    patch.max_content_rating = ratingVal
     store.applyBulk(channelId, patch)
   }
 
@@ -189,11 +185,6 @@ export const BulkEditPanel = observer(function BulkEditPanel({ channelId, store 
           </div>
         </FieldRow>
 
-        <FieldRow label="MAX RATING" enabled={ratingEnabled} onToggle={setRatingEnabled}>
-          <select value={ratingVal} onChange={e => setRatingVal(e.target.value)} style={inlineSelect}>
-            {RATINGS.map(r => <option key={r} value={r}>{r || 'No limit'}</option>)}
-          </select>
-        </FieldRow>
       </div>
 
       {/* Footer */}

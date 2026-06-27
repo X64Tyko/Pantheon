@@ -5,6 +5,7 @@
 #include "MediaProbe.h"
 #include "PlexSource.h"
 #include "conf/ConfStore.h"
+#include "db/ChapterRepository.h"
 #include "db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
@@ -112,6 +113,7 @@ void SyncManager::syncSource(const std::string& source_id) {
     }
 
     syncPlexLinks(source_id);
+    syncChaptersFromFiles(source_id);
     std::cout << "[sync] done: " << source_id << std::endl;
 }
 
@@ -650,4 +652,85 @@ std::unique_ptr<IMediaSource> SyncManager::buildSource(const std::string& source
 
     std::cout << "[sync] unknown source type '" << source_type << "' — skipping" << std::endl;
     return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Chapter sync
+// ---------------------------------------------------------------------------
+
+void SyncManager::syncItemChapters(IMediaSource& src,
+                                    const std::string& media_type,
+                                    const std::string& kairos_id,
+                                    const std::string& external_id,
+                                    const std::string& file_path) {
+    ChapterRepository repo(db_);
+
+    // Typed markers (intro, credits) from source API — highest priority.
+    if (!external_id.empty()) {
+        auto intro = src.fetchIntroMarkers(external_id);
+        if (!intro.empty())
+            repo.syncChapters(media_type, kairos_id, "plex_intro", std::move(intro));
+
+        auto source_ch = src.fetchChapters(external_id);
+        if (!source_ch.empty())
+            repo.syncChapters(media_type, kairos_id, "plex_chapters", std::move(source_ch));
+    }
+
+    // File-embedded chapters via ffprobe.
+    if (!file_path.empty()) {
+        auto file_ch = probeChapters(conf_.applyPathMap(file_path));
+        if (!file_ch.empty())
+            repo.syncChapters(media_type, kairos_id, "file", std::move(file_ch));
+    }
+}
+
+void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
+    {
+        SQLite::Statement q(db_.get(),
+            "SELECT value FROM app_config WHERE key='chapter_sync_enabled'");
+        if (q.executeStep() && q.getColumn(0).getString() == "false") return;
+    }
+
+    std::cout << "[sync] chapter sync (file): " << source_id << std::endl;
+    ChapterRepository repo(db_);
+
+    // Episodes
+    {
+        SQLite::Statement q(db_.get(), R"(
+            SELECT sm.kairos_id, e.file_path
+            FROM source_mapping sm
+            JOIN episode e ON e.episode_id = sm.kairos_id
+            WHERE sm.item_type='episode' AND sm.source_id=?
+        )");
+        q.bind(1, source_id);
+        while (q.executeStep()) {
+            const std::string kairos_id = q.getColumn(0).getString();
+            const std::string file_path = q.getColumn(1).getString();
+            if (file_path.empty()) continue;
+            auto chapters = probeChapters(conf_.applyPathMap(file_path));
+            if (!chapters.empty())
+                repo.syncChapters("episode", kairos_id, "file", std::move(chapters));
+        }
+    }
+
+    // Movies
+    {
+        SQLite::Statement q(db_.get(), R"(
+            SELECT sm.kairos_id, m.file_path
+            FROM source_mapping sm
+            JOIN movie m ON m.movie_id = sm.kairos_id
+            WHERE sm.item_type='movie' AND sm.source_id=?
+        )");
+        q.bind(1, source_id);
+        while (q.executeStep()) {
+            const std::string kairos_id = q.getColumn(0).getString();
+            const std::string file_path = q.getColumn(1).getString();
+            if (file_path.empty()) continue;
+            auto chapters = probeChapters(conf_.applyPathMap(file_path));
+            if (!chapters.empty())
+                repo.syncChapters("movie", kairos_id, "file", std::move(chapters));
+        }
+    }
+
+    std::cout << "[sync] chapter sync done: " << source_id << std::endl;
 }

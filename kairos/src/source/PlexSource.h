@@ -31,6 +31,9 @@ public:
     std::optional<std::vector<PlexListItem>>
         fetchListItems(const std::string& external_id, const std::string& plex_type) override;
 
+    std::vector<Chapter> fetchIntroMarkers(const std::string& external_id) override;
+    std::vector<Chapter> fetchChapters(const std::string& external_id)     override;
+
 private:
     httplib::Result get(const std::string& path);
 

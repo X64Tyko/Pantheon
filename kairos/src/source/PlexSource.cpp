@@ -421,3 +421,61 @@ std::optional<std::vector<PlexListItem>> PlexSource::fetchListItems(
         return std::nullopt;
     }
 }
+
+// ---------------------------------------------------------------------------
+
+std::vector<Chapter> PlexSource::fetchIntroMarkers(const std::string& external_id) {
+    auto res = get("/library/metadata/" + external_id + "/markers");
+    if (!res || res->status != 200) return {};
+
+    std::vector<Chapter> result;
+    try {
+        auto j = json::parse(res->body);
+        const auto& mc = j["MediaContainer"];
+        if (!mc.contains("Marker")) return result;
+        int pos = 0;
+        for (const auto& m : mc["Marker"]) {
+            Chapter c;
+            c.source   = "plex_intro";
+            c.position = pos++;
+            const std::string type = m.value("type", std::string("intro"));
+            c.chapter_type = (type == "credits") ? "credits" : "intro";
+            c.start_ms = m.value("startTimeOffset", int64_t{0});
+            c.end_ms   = m.value("endTimeOffset",   int64_t{0});
+            result.push_back(std::move(c));
+        }
+    } catch (const json::exception& e) {
+        std::cerr << "[plex:" << source_id_ << "] marker parse error (id=" << external_id
+                  << "): " << e.what() << '\n';
+    }
+    return result;
+}
+
+std::vector<Chapter> PlexSource::fetchChapters(const std::string& external_id) {
+    auto res = get("/library/metadata/" + external_id + "?includeChapters=1");
+    if (!res || res->status != 200) return {};
+
+    std::vector<Chapter> result;
+    try {
+        auto j = json::parse(res->body);
+        const auto& mc = j["MediaContainer"];
+        if (!mc.contains("Metadata") || mc["Metadata"].empty()) return result;
+        const auto& meta = mc["Metadata"][0];
+        if (!meta.contains("Chapter")) return result;
+        int pos = 0;
+        for (const auto& ch : meta["Chapter"]) {
+            Chapter c;
+            c.source       = "plex_chapters";
+            c.chapter_type = "unclassified";
+            c.position     = pos++;
+            c.title        = ch.value("tag", std::string(""));
+            c.start_ms     = ch.value("startTimeOffset", int64_t{0});
+            c.end_ms       = ch.value("endTimeOffset",   int64_t{0});
+            result.push_back(std::move(c));
+        }
+    } catch (const json::exception& e) {
+        std::cerr << "[plex:" << source_id_ << "] chapter parse error (id=" << external_id
+                  << "): " << e.what() << '\n';
+    }
+    return result;
+}

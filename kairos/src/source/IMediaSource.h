@@ -1,4 +1,5 @@
 #pragma once
+#include "model/Chapter.h"
 #include "model/Episode.h"
 #include "model/Movie.h"
 #include "model/Playlist.h"
@@ -65,5 +66,17 @@ public:
     virtual std::optional<std::vector<PlexListItem>>
         fetchListItems(const std::string& /*external_id*/, const std::string& /*plex_type*/) {
         return std::vector<PlexListItem>{};
+    }
+
+    // ── Chapter data ──────────────────────────────────────────────────────────
+    // Typed intro/credits markers for a single media item (external_id).
+    // source="plex_intro"; chapter_type is "intro" or "credits".
+    virtual std::vector<Chapter> fetchIntroMarkers(const std::string& /*external_id*/) {
+        return {};
+    }
+    // Generic chapter points embedded in source metadata (external_id).
+    // source="plex_chapters"; chapter_type is "unclassified".
+    virtual std::vector<Chapter> fetchChapters(const std::string& /*external_id*/) {
+        return {};
     }
 };

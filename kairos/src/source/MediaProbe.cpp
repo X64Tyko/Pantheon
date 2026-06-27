@@ -1,6 +1,10 @@
 #include "MediaProbe.h"
 #include <cstdio>
 #include <iostream>
+#include <nlohmann/json.hpp>
+#include <string>
+
+using json = nlohmann::json;
 
 namespace {
 
@@ -35,6 +39,53 @@ int64_t probeDurationMs(const std::string& file_path) {
 }
 
 } // namespace
+
+std::vector<Chapter> probeChapters(const std::string& file_path) {
+    const std::string cmd =
+        "ffprobe -v quiet -print_format json -show_chapters "
+        + shellQuote(file_path) + " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return {};
+    std::string out;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), pipe))
+        out += buf;
+    pclose(pipe);
+    if (out.empty()) return {};
+
+    std::vector<Chapter> result;
+    try {
+        auto j = json::parse(out);
+        if (!j.contains("chapters")) return result;
+        int pos = 0;
+        for (const auto& ch : j["chapters"]) {
+            Chapter c;
+            c.chapter_type = "unclassified";
+            c.source       = "file";
+            c.position     = pos++;
+            if (ch.contains("tags") && ch["tags"].is_object()
+                    && ch["tags"].contains("title"))
+                c.title = ch["tags"]["title"].get<std::string>();
+            if (ch.contains("start_time") && ch["start_time"].is_string()) {
+                try {
+                    c.start_ms = static_cast<int64_t>(
+                        std::stod(ch["start_time"].get<std::string>()) * 1000.0);
+                } catch (...) {}
+            }
+            if (ch.contains("end_time") && ch["end_time"].is_string()) {
+                try {
+                    c.end_ms = static_cast<int64_t>(
+                        std::stod(ch["end_time"].get<std::string>()) * 1000.0);
+                } catch (...) {}
+            }
+            result.push_back(std::move(c));
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[probe] chapter parse error for " << file_path
+                  << ": " << e.what() << '\n';
+    }
+    return result;
+}
 
 int64_t validateDurationMs(int64_t dur, const std::string& file_path) {
     if (dur >= kMinMs && dur <= kMaxMs)

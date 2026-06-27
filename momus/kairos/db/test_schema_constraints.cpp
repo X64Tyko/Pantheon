@@ -114,14 +114,20 @@ TEST_F(SchemaConstraintTest, Check_BlockTypeRejectsUnknownValue) {
     }, std::exception);
 }
 
-TEST_F(SchemaConstraintTest, Check_BlockTypeAcceptsAllFourValidValues) {
+TEST_F(SchemaConstraintTest, Check_BlockTypeAcceptsAllValidValues) {
     insertChannel("c1", 1);
     for (const auto& [bid, type] : std::vector<std::pair<std::string,std::string>>{
-        {"b1","episode"}, {"b2","premier"}, {"b3","filler"}, {"b4","movie"}
+        {"b1","episode"}, {"b2","filler"}, {"b3","movie"}, {"b4","timeslot"}
     }) {
         EXPECT_NO_THROW({ insertBlock(bid, "c1", type); })
             << "Rejected valid block_type: " << type;
     }
+}
+
+TEST_F(SchemaConstraintTest, Check_BlockTypeRejectsPremier) {
+    insertChannel("c1", 1);
+    EXPECT_THROW({ insertBlock("b1", "c1", "premier"); }, std::exception)
+        << "premier must be rejected after v42 collapse";
 }
 
 // ---------------------------------------------------------------------------
@@ -240,14 +246,42 @@ TEST_F(SchemaConstraintTest, Unique_BlockFillerEntryNoDuplicates) {
     fl.exec();
     {
         SQLite::Statement s(db.get(),
-            "INSERT INTO block_filler_entry (block_id, filler_list_id, advancement)"
-            " VALUES ('b1','fl1','sequential')");
+            "INSERT INTO block_filler_entry (block_id, content_type, content_id, advancement)"
+            " VALUES ('b1','filler_list','fl1','sequential')");
         s.exec();
     }
     EXPECT_THROW({
         SQLite::Statement s(db.get(),
-            "INSERT INTO block_filler_entry (block_id, filler_list_id, advancement)"
-            " VALUES ('b1','fl1','shuffle')");
+            "INSERT INTO block_filler_entry (block_id, content_type, content_id, advancement)"
+            " VALUES ('b1','filler_list','fl1','shuffle')");
+        s.exec();
+    }, std::exception);
+}
+
+TEST_F(SchemaConstraintTest, Unique_BlockFillerEntryAllowsSameShowDifferentSeasons) {
+    insertChannel("c1", 1);
+    insertBlock("b1", "c1");
+    SQLite::Statement sh(db.get(),
+        "INSERT INTO show (show_id, title) VALUES ('sh1','The Simpsons')");
+    sh.exec();
+    {
+        SQLite::Statement s(db.get(),
+            "INSERT INTO block_filler_entry (block_id, content_type, content_id, advancement, season_filter)"
+            " VALUES ('b1','show','sh1','sequential',1)");
+        s.exec();
+    }
+    // Same show, different season — must not throw.
+    EXPECT_NO_THROW({
+        SQLite::Statement s(db.get(),
+            "INSERT INTO block_filler_entry (block_id, content_type, content_id, advancement, season_filter)"
+            " VALUES ('b1','show','sh1','sequential',2)");
+        s.exec();
+    });
+    // Same show, same season — must throw.
+    EXPECT_THROW({
+        SQLite::Statement s(db.get(),
+            "INSERT INTO block_filler_entry (block_id, content_type, content_id, advancement, season_filter)"
+            " VALUES ('b1','show','sh1','shuffle',1)");
         s.exec();
     }, std::exception);
 }
@@ -419,4 +453,166 @@ TEST_F(SchemaConstraintTest, Default_ScheduledProgramStatusIsScheduled) {
         "SELECT status FROM scheduled_program WHERE channel_id='c1'");
     q.executeStep();
     EXPECT_EQ(q.getColumn(0).getString(), "scheduled");
+}
+
+// ---------------------------------------------------------------------------
+// chapter table — defaults and constraints
+// ---------------------------------------------------------------------------
+
+TEST_F(SchemaConstraintTest, Default_ChapterTypeIsUnclassified) {
+    SQLite::Statement s(db.get(),
+        "INSERT INTO chapter (chapter_id, media_type, media_id, start_ms, end_ms, position)"
+        " VALUES ('ch1','episode','ep1',0,90000,0)");
+    s.exec();
+    SQLite::Statement q(db.get(),
+        "SELECT chapter_type, source, locked FROM chapter WHERE chapter_id='ch1'");
+    q.executeStep();
+    EXPECT_EQ(q.getColumn(0).getString(), "unclassified");
+    EXPECT_EQ(q.getColumn(1).getString(), "manual");
+    EXPECT_EQ(q.getColumn(2).getInt(),    0);
+}
+
+TEST_F(SchemaConstraintTest, Chapter_LockedFlagPreventsDeleteBySource) {
+    // Insert a locked (manual) chapter and an unlocked (auto) chapter.
+    {
+        SQLite::Statement s(db.get(),
+            "INSERT INTO chapter (chapter_id, media_type, media_id, chapter_type,"
+            " start_ms, end_ms, position, source, locked)"
+            " VALUES ('ch_manual','episode','ep1','intro',0,90000,0,'manual',1)");
+        s.exec();
+    }
+    {
+        SQLite::Statement s(db.get(),
+            "INSERT INTO chapter (chapter_id, media_type, media_id, chapter_type,"
+            " start_ms, end_ms, position, source, locked)"
+            " VALUES ('ch_auto','episode','ep1','unclassified',0,90000,1,'file',0)");
+        s.exec();
+    }
+
+    // Simulate a re-sync: delete unlocked rows for source='file'.
+    SQLite::Statement del(db.get(),
+        "DELETE FROM chapter WHERE media_type='episode' AND media_id='ep1'"
+        " AND source='file' AND locked=0");
+    del.exec();
+
+    // Auto chapter gone; manual chapter survives.
+    {
+        SQLite::Statement q(db.get(),
+            "SELECT COUNT(*) FROM chapter WHERE chapter_id='ch_auto'");
+        q.executeStep();
+        EXPECT_EQ(q.getColumn(0).getInt(), 0) << "unlocked auto chapter should be deleted";
+    }
+    {
+        SQLite::Statement q(db.get(),
+            "SELECT COUNT(*) FROM chapter WHERE chapter_id='ch_manual'");
+        q.executeStep();
+        EXPECT_EQ(q.getColumn(0).getInt(), 1) << "locked manual chapter must survive";
+    }
+}
+
+TEST_F(SchemaConstraintTest, Chapter_MultipleSourcesCoexistForSameMedia) {
+    for (const auto& [id, src] : std::vector<std::pair<std::string,std::string>>{
+        {"ch1","plex_intro"}, {"ch2","file"}, {"ch3","manual"}
+    }) {
+        SQLite::Statement s(db.get(),
+            "INSERT INTO chapter (chapter_id, media_type, media_id, start_ms, end_ms,"
+            " position, source) VALUES (?,?,?,?,?,?,?)");
+        s.bind(1, id); s.bind(2, "episode"); s.bind(3, "ep1");
+        s.bind(4, 0);  s.bind(5, 1000); s.bind(6, 0); s.bind(7, src);
+        EXPECT_NO_THROW(s.exec()) << "Failed to insert chapter with source: " << src;
+    }
+    SQLite::Statement q(db.get(),
+        "SELECT COUNT(*) FROM chapter WHERE media_id='ep1'");
+    q.executeStep();
+    EXPECT_EQ(q.getColumn(0).getInt(), 3);
+}
+
+// ---------------------------------------------------------------------------
+// v43 — timeslot_slot and timeslot_slot_queue
+// ---------------------------------------------------------------------------
+
+TEST_F(SchemaConstraintTest, TimeslotSlot_FKRequiresExistingBlock) {
+    EXPECT_THROW({
+        SQLite::Statement s(db.get(),
+            "INSERT INTO timeslot_slot (slot_id, block_id) VALUES ('s1','nonexistent')");
+        s.exec();
+    }, std::exception);
+}
+
+TEST_F(SchemaConstraintTest, TimeslotSlot_CheckOverflowEnum) {
+    insertChannel("c1", 1);
+    insertBlock("b1", "c1", "timeslot");
+    EXPECT_THROW({
+        SQLite::Statement s(db.get(),
+            "INSERT INTO timeslot_slot (slot_id, block_id, slot_index, overflow)"
+            " VALUES ('s1','b1',0,'bad')");
+        s.exec();
+    }, std::exception);
+    EXPECT_NO_THROW({
+        SQLite::Statement s(db.get(),
+            "INSERT INTO timeslot_slot (slot_id, block_id, slot_index, overflow)"
+            " VALUES ('s1','b1',0,'cutoff')");
+        s.exec();
+    });
+    EXPECT_NO_THROW({
+        SQLite::Statement s(db.get(),
+            "INSERT INTO timeslot_slot (slot_id, block_id, slot_index, overflow)"
+            " VALUES ('s2','b1',1,'finish')");
+        s.exec();
+    });
+}
+
+TEST_F(SchemaConstraintTest, TimeslotSlot_UniqueBlockSlotIndex) {
+    insertChannel("c1", 1);
+    insertBlock("b1", "c1", "timeslot");
+    SQLite::Statement s1(db.get(),
+        "INSERT INTO timeslot_slot (slot_id, block_id, slot_index) VALUES ('s1','b1',0)");
+    s1.exec();
+    EXPECT_THROW({
+        SQLite::Statement s2(db.get(),
+            // duplicate (block_id, slot_index) must be rejected
+            "INSERT INTO timeslot_slot (slot_id, block_id, slot_index) VALUES ('s2','b1',0)");
+        s2.exec();
+    }, std::exception);
+}
+
+TEST_F(SchemaConstraintTest, TimeslotQueue_CheckContentTypeEnum) {
+    insertChannel("c1", 1);
+    insertBlock("b1", "c1", "timeslot");
+    SQLite::Statement sl(db.get(),
+        "INSERT INTO timeslot_slot (slot_id, block_id, slot_index) VALUES ('s1','b1',0)");
+    sl.exec();
+    EXPECT_THROW({
+        SQLite::Statement s(db.get(),
+            "INSERT INTO timeslot_slot_queue"
+            " (entry_id, slot_id, queue_index, content_type, content_id)"
+            " VALUES ('e1','s1',0,'episode','x')");
+        s.exec();
+    }, std::exception);
+    EXPECT_NO_THROW({
+        SQLite::Statement s(db.get(),
+            "INSERT INTO timeslot_slot_queue"
+            " (entry_id, slot_id, queue_index, content_type, content_id)"
+            " VALUES ('e1','s1',0,'show','x')");
+        s.exec();
+    });
+}
+
+TEST_F(SchemaConstraintTest, TimeslotQueue_CascadeDeleteSlot) {
+    insertChannel("c1", 1);
+    insertBlock("b1", "c1", "timeslot");
+    SQLite::Statement sl(db.get(),
+        "INSERT INTO timeslot_slot (slot_id, block_id, slot_index) VALUES ('s1','b1',0)");
+    sl.exec();
+    SQLite::Statement q(db.get(),
+        "INSERT INTO timeslot_slot_queue"
+        " (entry_id, slot_id, queue_index, content_type, content_id)"
+        " VALUES ('e1','s1',0,'show','sh1')");
+    q.exec();
+    SQLite::Statement del(db.get(), "DELETE FROM timeslot_slot WHERE slot_id='s1'");
+    del.exec();
+    SQLite::Statement cnt(db.get(),
+        "SELECT COUNT(*) FROM timeslot_slot_queue WHERE slot_id='s1'");
+    cnt.executeStep();
+    EXPECT_EQ(cnt.getColumn(0).getInt(), 0) << "queue entries must cascade-delete with slot";
 }

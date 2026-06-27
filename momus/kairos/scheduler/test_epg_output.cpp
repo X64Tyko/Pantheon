@@ -2,7 +2,9 @@
 #include "db/Database.h"
 #include "scheduler/RuleEngine.h"
 #include "scheduler/EPGMaterializer.h"
+#include "scheduler/CursorState.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <nlohmann/json.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -330,10 +332,12 @@ TEST_F(EPGOutputTest, M3U_EmptyWhenNoChannels) {
 TEST_F(EPGOutputTest, RoundTrip_XmltvProgramCountMatchesProjectedItems) {
     constexpr int HOURS = 6;
 
-    // Capture now before calling generateXMLTV() so our DB filter matches the
-    // same window that generateXMLTV() uses internally.
-    std::time_t now_ts     = std::time(nullptr);
-    std::time_t horizon_ts = now_ts + HOURS * 3600;
+    // generateXMLTV() queries from today_midnight (not now) so programs that
+    // aired earlier today are included.  Mirror that lower bound here so the
+    // DB reference count matches the XML output.
+    std::time_t now_ts          = std::time(nullptr);
+    std::time_t today_midnight  = (now_ts / 86400) * 86400;
+    std::time_t horizon_ts      = now_ts + HOURS * 3600;
 
     // Run the full production pipeline: generateXMLTV() calls ensureScheduled()
     // which writes to scheduled_program, then renders XML from that table.
@@ -348,7 +352,7 @@ TEST_F(EPGOutputTest, RoundTrip_XmltvProgramCountMatchesProjectedItems) {
     }
 
     // Count scheduled_program rows using the same filters that generateXMLTV()
-    // applies: non-filler, non-skipped, and within the [now, horizon) window.
+    // applies: non-filler, non-skipped, and within the [today_midnight, horizon) window.
     // ensureScheduled() may write a few overshoot rows past the horizon —
     // the window filter excludes those the same way the XML query does.
     SQLite::Statement q(db.get(), R"(
@@ -359,7 +363,7 @@ TEST_F(EPGOutputTest, RoundTrip_XmltvProgramCountMatchesProjectedItems) {
           AND wall_clock_end   > ?
           AND wall_clock_start < ?
     )");
-    q.bind(1, static_cast<int64_t>(now_ts));
+    q.bind(1, static_cast<int64_t>(today_midnight));
     q.bind(2, static_cast<int64_t>(horizon_ts));
     q.executeStep();
     size_t db_prog_count = static_cast<size_t>(q.getColumn(0).getInt());
@@ -367,4 +371,157 @@ TEST_F(EPGOutputTest, RoundTrip_XmltvProgramCountMatchesProjectedItems) {
     EXPECT_GT(xml_prog_count, 0u) << "XMLTV must contain programmes for channel 1";
     EXPECT_EQ(xml_prog_count, db_prog_count)
         << "XMLTV programme count must match filtered scheduled_program rows for ch1";
+}
+
+// ---------------------------------------------------------------------------
+// EPGMaterializer / generate() / ensureScheduled() integration
+// ---------------------------------------------------------------------------
+
+// 2024-01-01 00:00:00 UTC — Monday midnight that anchors kMonNoon's week.
+static constexpr std::time_t kMon2024Midnight = 1704067200;
+// 2024-01-01 12:00:00 UTC (same Monday, noon) — used as projection start.
+static constexpr std::time_t kMon2024Noon     = 1704110400;
+
+TEST_F(EPGOutputTest, Generate_OnPlayMode_DoesNotWriteCursorsToDB) {
+    // on_play mode: ensureScheduled() must not persist cursor state to media_cursor
+    // or block_state (the SAVEPOINT for cursor writes is rolled back implicitly by
+    // not calling applyToDB).
+    db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='ch1'");
+
+    materializer.ensureScheduled("ch1", kMon2024Noon, 4);
+
+    SQLite::Statement qc(db.get(),
+        "SELECT COUNT(*) FROM media_cursor"
+        " WHERE cursor_scope IN ('channel','block')"
+        "   AND scope_id IN (SELECT block_id FROM block WHERE channel_id='ch1'"
+        "                    UNION SELECT 'ch1')");
+    qc.executeStep();
+    EXPECT_EQ(qc.getColumn(0).getInt(), 0)
+        << "on_play mode must not persist cursor rows to media_cursor";
+
+    SQLite::Statement qb(db.get(),
+        "SELECT COUNT(*) FROM block_state WHERE channel_id='ch1'");
+    qb.executeStep();
+    EXPECT_EQ(qb.getColumn(0).getInt(), 0)
+        << "on_play mode must not persist block_state rows";
+}
+
+TEST_F(EPGOutputTest, Generate_OnPlayMode_WritesProgramRowsToScheduledProgram) {
+    db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='ch1'");
+
+    materializer.ensureScheduled("ch1", kMon2024Noon, 4);
+
+    SQLite::Statement q(db.get(),
+        "SELECT COUNT(*) FROM scheduled_program WHERE channel_id='ch1'");
+    q.executeStep();
+    EXPECT_GT(q.getColumn(0).getInt(), 0)
+        << "on_play mode must still write scheduled_program rows";
+}
+
+TEST_F(EPGOutputTest, Generate_ScheduledMode_CursorAdvancedInDB) {
+    // Default advance_mode='scheduled': commit() calls applyToDB() which must
+    // persist at least one cursor row for the show block on ch1.
+    materializer.ensureScheduled("ch1", kMon2024Noon, 4);
+
+    // block b1 has default cursor_scope='block', so look for a block-scoped cursor.
+    SQLite::Statement q(db.get(), R"(
+        SELECT COUNT(*) FROM media_cursor
+        WHERE cursor_scope='block'
+          AND scope_id IN (SELECT block_id FROM block WHERE channel_id='ch1')
+    )");
+    q.executeStep();
+    EXPECT_GT(q.getColumn(0).getInt(), 0)
+        << "scheduled mode must persist block-scoped cursor after ensureScheduled";
+}
+
+TEST_F(EPGOutputTest, Generate_AnchorRestoration_LoadsCursorStateFromJson) {
+    // Inject an anchor_hashes snapshot that places the show cursor at position 3
+    // (i.e., episode index 3 = s2e01 in the 6-episode test fixture).
+    // generate() must restore from it and produce s2e01 as the first item.
+    using json = nlohmann::json;
+
+    const std::string anchor_key = std::to_string(kMon2024Midnight);
+    // block_states must be non-empty so projectDay sees hasBlockPosition("b1")==true
+    // and skips the RNG-based seed-init that would overwrite the loaded cursor.
+    json snap = {
+        {"rng", "1 2 3 4"},   // arbitrary valid rng state
+        {"cursors", json::array({{
+            {"content_type", "show"},
+            {"content_id",   "s1"},
+            {"cursor_scope", "block"},
+            {"scope_id",     "b1"},
+            {"position",     3},
+            {"episode_id",   ""}
+        }})},
+        {"block_states", json::array({{
+            {"block_id",          "b1"},
+            {"content_position",  0},
+            {"runs_remaining",    1},
+            {"consecutive_count", 0}
+        }})}
+    };
+    json anchor_hashes = json::object();
+    anchor_hashes[anchor_key] = snap;
+
+    SQLite::Statement upd(db.get(),
+        "UPDATE channel SET anchor_hashes=? WHERE channel_id='ch1'");
+    upd.bind(1, anchor_hashes.dump());
+    upd.exec();
+
+    auto result = materializer.generate("ch1", kMon2024Noon, 2);
+    ASSERT_FALSE(result.items.empty());
+
+    // Filter to items that start at or after kMon2024Midnight so we skip any
+    // leftover items projected before our query window.
+    std::string first_id;
+    for (const auto& item : result.items) {
+        if (item.wall_clock_start_ms / 1000 >= kMon2024Midnight) {
+            first_id = item.item_id;
+            break;
+        }
+    }
+    EXPECT_EQ(first_id, "s2e01")
+        << "Anchor cursor at position=3 should restore to the 4th episode (s2e01)";
+}
+
+TEST_F(EPGOutputTest, EnsureScheduled_ClearsStaleHistoryBeforeReplay) {
+    // In on_play mode: after markPlayed advances the cursor for s1e01, a subsequent
+    // ensureScheduled() must schedule s1e02 first — not replay s1e01.
+    db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='ch1'");
+
+    // Pre-seed the cursor at position 0 so the RNG-based seed-init is bypassed.
+    // Without this, projectDay randomises the starting episode on a fresh channel.
+    db.get().exec(
+        "INSERT INTO block_state (block_id,channel_id,content_position,"
+        "runs_remaining,consecutive_count,updated_at)"
+        " VALUES ('b1','ch1',0,1,0,strftime('%s','now'))");
+    db.get().exec(
+        "INSERT INTO media_cursor (content_type,content_id,cursor_scope,scope_id,"
+        "position,episode_id,updated_at)"
+        " VALUES ('show','s1','block','b1',0,'s1e01',strftime('%s','now'))");
+
+    // Prime the schedule so we know what item 0 is.
+    materializer.ensureScheduled("ch1", kMon2024Noon, 4);
+    {
+        SQLite::Statement q(db.get(),
+            "SELECT item_id FROM scheduled_program"
+            " WHERE channel_id='ch1' ORDER BY wall_clock_start LIMIT 1");
+        ASSERT_TRUE(q.executeStep());
+        EXPECT_EQ(q.getColumn(0).getString(), "s1e01")
+            << "First scheduled item before any markPlayed should be s1e01";
+    }
+
+    // Advance the cursor via markPlayed (on_play mode: this is the sole cursor driver).
+    engine.markPlayed("ch1", "b1", "episode", "s1e01", 2700000);
+
+    // Regenerate — ensureScheduled deletes old rows and replans from cursor position.
+    materializer.ensureScheduled("ch1", kMon2024Noon, 4);
+    {
+        SQLite::Statement q(db.get(),
+            "SELECT item_id FROM scheduled_program"
+            " WHERE channel_id='ch1' ORDER BY wall_clock_start LIMIT 1");
+        ASSERT_TRUE(q.executeStep());
+        EXPECT_EQ(q.getColumn(0).getString(), "s1e02")
+            << "After markPlayed(s1e01), regenerated schedule must start from s1e02";
+    }
 }

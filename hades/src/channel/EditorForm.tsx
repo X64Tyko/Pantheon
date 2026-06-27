@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
-import type { Advancement, BlockType, CursorScope, EpisodeOrder, FillerSelectionMode, NoHistoryBehavior, Show, Playlist, EpisodeSearchResult } from '../api/types'
+import type { Advancement, BlockType, CursorScope, EpisodeOrder, FillerSelectionMode, NoHistoryBehavior, PlayStyle, Show, Playlist, EpisodeSearchResult } from '../api/types'
 import {
   ALIGN_OPTS, BLOCK_META, DAYS, DAY_BITS, DELAY_OPTS, EARLY_OPTS,
   FILLER_ADV_OPTS, FILLER_SEL_OPTS, NO_HISTORY_OPTS, RATINGS,
@@ -11,6 +11,8 @@ import { inputStyle } from './styles'
 import { FillerEntryRow, FillerAddPanel } from './FillerPanel'
 import { ContentPicker } from './ContentPicker'
 import { HelpTip, HelpSection, GifSlot } from './HelpTip'
+import { TimeslotEditor } from './TimeslotEditor'
+import { SlotEditorPanel } from './SlotEditorPanel'
 import { api } from '../api/client'
 import type { ChannelDetailStore } from './store'
 import type { LimitMode } from './types'
@@ -126,11 +128,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
     : 'Fills until midnight, or until a higher-priority block takes over.'
 
   const orderHint: Record<string, string> = {
-    sequential:    'Plays shows in order by position. COUNT on each show controls episodes before switching to the next.',
-    shuffle:       'Picks shows randomly each slot, weighted by WEIGHT. Episodes advance sequentially within each show.',
-    smart_shuffle: 'Weighted random show selection, but skips recently played episodes within each show.',
-    rerun_shuffle: 'Only plays episodes already aired on this channel. Requires play history to function.',
-    rerun_smart:   'Rerun pool with cooldown — avoids repeating episodes aired recently within the pool.',
+    sequential: 'Plays shows in order by position. COUNT on each show controls episodes before switching.',
+    shuffle:    'Picks shows randomly each slot, weighted by WEIGHT. Episodes advance sequentially within each show.',
+    smart:      'Weighted random show selection with cooldown — skips recently played episodes within each show.',
   }
 
   const cursorHint: Record<string, string> = {
@@ -142,8 +142,12 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
   const contentCount = store.draftContent.length
   const fillerCount  = store.draftFillerEntries.length
 
-  const isRerun = d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart'
-  const premierBlocks = store.blocks.filter(b => b.block_type === 'premier')
+  const isTimeslot = d.block_type === 'timeslot'
+  const isRerun = d.play_style === 'rerun'
+  const premierBlocks = store.blocks.filter(b =>
+    b.play_style === 'standard' && b.advancement === 'sequential' &&
+    (b.cursor_scope === 'channel' || b.cursor_scope === 'global')
+  )
   const newPremierCount = store.editing ? store.draftContent.filter(c =>
     c.content_type === 'show' && c.id > 0 &&
     !premierBlocks.some(pb => pb.content.some(pc => pc.content_type === 'show' && pc.content_id === c.content_id))
@@ -167,7 +171,12 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
     : daysOn.length === 2 && (d.day_mask & 0x41) === 0x41 ? 'Weekends'
     : daysOn.join('·') || 'No days'
   const stopStr   = limitMode === 'programs' ? `${d.program_count}p` : limitMode === 'end' ? (d.end_time ?? 'open') : 'fill day'
-  const timingStr = `${d.start_time || '—'} · ${stopStr}`
+  const timingStr = isTimeslot ? (d.start_time || '—') : `${d.start_time || '—'} · ${stopStr}`
+
+  // Slot editor takes over the full panel when a slot is selected
+  if (isTimeslot && store.editingSlotId) {
+    return <SlotEditorPanel store={store} />
+  }
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 12px 20px' }} className="scrollbar-dark">
@@ -205,7 +214,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           </HelpTip>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6, marginBottom: 16 }}>
-          {(['episode', 'movie', 'premier', 'filler'] as BlockType[]).map(t => {
+          {(['episode', 'movie', 'timeslot', 'filler'] as BlockType[]).map(t => {
             const tm = BLOCK_META[t]
             const on = d.block_type === t
             return (
@@ -288,6 +297,17 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           </div>
         </div>
 
+        {isTimeslot && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>PRIORITY</div>
+              <input type="number" min={1} value={d.priority} onChange={e => store.setDraft('priority', Math.max(1, +e.target.value || 1))} style={inputStyle} />
+              {sh && <div style={{ fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 4 }}>higher wins conflicts with movie blocks</div>}
+            </div>
+          </div>
+        )}
+
+        {!isTimeslot && (<>
         <div style={{ fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 7 }}>STOP CONDITION</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginBottom: 9 }}>
           {([['programs', '# Programs'], ['end', 'End time'], ['fill', 'Fill day']] as [LimitMode, string][]).map(([k, label]) => {
@@ -342,10 +362,11 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             ? 'Snaps each episode to the next time boundary. Early/late start define the tolerance window.'
             : 'Snaps the first program of the block to the next time boundary.'}
         </div>}
+        </>)}
       </AccordionSection>
 
-      {/* ── PLAYBACK ── */}
-      <AccordionSection title="PLAYBACK" open={sec.playback} onToggle={() => tog('playback')}>
+      {/* ── PLAYBACK ── (hidden for timeslot — no play_style / advancement) */}
+      {!isTimeslot && <AccordionSection title="PLAYBACK" open={sec.playback} onToggle={() => tog('playback')}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginBottom: 14 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>
@@ -362,9 +383,10 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             {sh && <div style={{ fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 4 }}>higher wins conflicts</div>}
           </div>
           <div>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>MAX RATING</div>
-            <select value={d.max_content_rating} onChange={e => store.setDraft('max_content_rating', e.target.value)} style={inputStyle}>
-              {RATINGS.map(r => <option key={r} value={r}>{r || 'No limit'}</option>)}
+            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>PLAY STYLE</div>
+            <select value={d.play_style ?? 'standard'} onChange={e => store.setDraft('play_style', e.target.value as PlayStyle)} style={inputStyle}>
+              <option value="standard">Standard</option>
+              <option value="rerun">Rerun</option>
             </select>
           </div>
         </div>
@@ -372,15 +394,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           <div>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>ORDER</div>
             <select value={d.advancement} onChange={e => store.setDraft('advancement', e.target.value as Advancement)} style={inputStyle}>
-              <optgroup label="Standard">
-                <option value="sequential">Sequential</option>
-                {d.block_type !== 'premier' && <option value="shuffle">Shuffle</option>}
-                {d.block_type !== 'premier' && <option value="smart_shuffle">Smart Shuffle</option>}
-              </optgroup>
-              <optgroup label="Reruns">
-                <option value="rerun_shuffle">Rerun Shuffle</option>
-                <option value="rerun_smart">Rerun Smart</option>
-              </optgroup>
+              <option value="sequential">Sequential</option>
+              <option value="shuffle">Shuffle</option>
+              <option value="smart">Smart</option>
             </select>
             {sh && <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
               {orderHint[d.advancement]}
@@ -411,7 +427,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             </div>}
           </div>
         </div>
-        {(d.advancement === 'smart_shuffle' || d.advancement === 'rerun_smart') && (
+        {d.advancement === 'smart' && (
           <div style={{ marginTop: 9 }}>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>COOLDOWN THRESHOLD</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -426,7 +442,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             </div>}
           </div>
         )}
-        {(d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart') && (
+        {isRerun && (
           <div style={{ marginTop: 9 }}>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>NO HISTORY BEHAVIOR</div>
             <select
@@ -441,7 +457,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             </div>}
           </div>
         )}
-        {(d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart') && (
+        {isRerun && (
           <div style={{ marginTop: 9 }}>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>EPISODE LIMIT</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -458,7 +474,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             </div>}
           </div>
         )}
-        {(d.advancement === 'rerun_shuffle' || d.advancement === 'rerun_smart') && (
+        {isRerun && (
           <div style={{ marginTop: 9 }}>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>GROUP SNAP</div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -474,7 +490,14 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             )}
           </div>
         )}
-      </AccordionSection>
+      </AccordionSection>}
+
+      {/* ── SLOTS (timeslot blocks only) ── */}
+      {isTimeslot && store.editing && (
+        <AccordionSection title="SLOTS" open={sec.content} onToggle={() => tog('content')}>
+          <TimeslotEditor block={store.editing} store={store} />
+        </AccordionSection>
+      )}
 
       {/* ── Compact launchers (modal mode only) ── */}
       {compact && (
@@ -497,7 +520,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
       {!compact && (<>
 
       {/* ── CONTENT (sidebar accordion: list + controls inline, add via modal) ── */}
-      <AccordionSection
+      {!isTimeslot && <AccordionSection
         title="CONTENT"
         open={sec.content}
         onToggle={() => tog('content')}
@@ -523,7 +546,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           {store.draftContent.map(item => {
             const dot       = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
             const canReset  = item.id > 0 && item.content_type === 'show' && !!store.editing
-            const isShuffle    = store.draft.advancement === 'shuffle'       || store.draft.advancement === 'smart_shuffle'
+            const isShuffle    = store.draft.advancement === 'shuffle'       || store.draft.advancement === 'smart'
             const isSequential = store.draft.advancement === 'sequential'
             const showWeightControl = (isRerun || isShuffle || isSequential) && item.content_type === 'show'
             const weightLabel  = isSequential ? 'COUNT' : 'WEIGHT'
@@ -641,7 +664,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           </div>
         )}
 
-      </AccordionSection>
+      </AccordionSection>}
 
       {/* ── FILLER launcher ── */}
       <LauncherRow

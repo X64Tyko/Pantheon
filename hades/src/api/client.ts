@@ -247,4 +247,10 @@ export const api = {
   setDownloadConfig:  (path: string)                                  => request<{ok: boolean}>('PUT', '/config/download', { path }),
   startDownload:      (url: string, path?: string)                    => request<{job_id: string}>('POST', '/download/jobs', { url, path }),
   getDownloadJobs:    ()                                              => request<DownloadJob[]>('GET', '/download/jobs'),
+
+  // Generic REST helpers — paths must NOT include the /api prefix
+  get:    <T = unknown>(path: string)                 => request<T>('GET',    path),
+  post:   <T = unknown>(path: string, body: unknown)  => request<T>('POST',   path, body),
+  patch:  <T = unknown>(path: string, body: unknown)  => request<T>('PATCH',  path, body),
+  del:    <T = unknown>(path: string)                 => request<T>('DELETE', path),
 }

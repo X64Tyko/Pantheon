@@ -164,8 +164,11 @@ export interface PathMap {
   to:   string
 }
 
-export type BlockType              = 'episode' | 'premier' | 'filler' | 'movie'
-export type Advancement            = 'sequential' | 'shuffle' | 'smart_shuffle' | 'rerun_shuffle' | 'rerun_smart'
+export type BlockType              = 'episode' | 'filler' | 'movie' | 'timeslot'
+export type SlotOverflow          = 'cutoff' | 'finish'
+export type PrePremiereBehavior   = 'replay_previous' | 'filler' | 'skip'
+export type PlayStyle              = 'standard' | 'rerun'
+export type Advancement            = 'sequential' | 'shuffle' | 'smart'
 export type NoHistoryBehavior      = 'normal' | 'fallback_all' | 'exclude' | 'skip'
 export type StartScope             = 'block' | 'episode'
 export type FillerAdvancement      = 'sequential' | 'shuffle'
@@ -173,6 +176,31 @@ export type FillerEntryAdvancement = 'sequential' | 'shuffle' | 'sized'
 export type FillerSelectionMode    = 'round_robin' | 'random' | 'weighted'
 export type CursorScope            = 'global' | 'channel' | 'block'
 export type ContentType            = 'show' | 'movie' | 'episode' | 'playlist' | 'filler_list'
+
+export interface TimeslotQueueEntry {
+  entry_id:              string
+  queue_index:           number
+  content_type:          'show' | 'movie'
+  content_id:            string
+  title:                 string    // resolved server-side
+  premiere_date:         string    // "YYYY-MM-DD" or ""
+  pre_premiere_behavior: PrePremiereBehavior
+}
+
+export interface TimeslotSlot {
+  slot_id:            string
+  slot_index:         number
+  slot_offset_mins:   number
+  slot_duration_mins: number
+  overflow:           SlotOverflow
+  late_start_mins:    number
+  early_start_secs:   number
+  align_to_mins:      number
+  start_scope:        StartScope
+  queue_pos:          number
+  episode_pos:        number
+  queue:              TimeslotQueueEntry[]
+}
 
 export interface FillerEntry {
   id:            number
@@ -237,7 +265,7 @@ export interface ChannelExportBlock {
   priority:                 number
   advancement:              Advancement
   cursor_scope:             CursorScope
-  max_content_rating:       string
+  play_style:               PlayStyle
   late_start_mins:          number
   early_start_secs:         number
   align_to_mins:            number
@@ -297,20 +325,21 @@ export interface Block {
   program_count:       number   // stop after N programs; 0 = no limit
   late_start_mins:     number   // block may start up to N min late if preempted; 0 = strict
   early_start_secs:    number   // block may start up to N sec early to absorb trailing flex; 0 = strict
+  play_style:          PlayStyle
   advancement:         Advancement
   cursor_scope:        CursorScope
   priority:            number
-  max_content_rating:  string
   filler_entries:      FillerEntry[]    // empty = inherit channel default
   filler_selection:    FillerSelectionMode
   align_to_mins:       number           // 0=none; 15/30/60 = snap first program to next N-min boundary
   inter_filler:        boolean          // insert filler between programs
-  smart_pct:           number           // cooldown threshold % for smart_shuffle / rerun_smart
+  smart_pct:           number           // cooldown threshold % for smart mode
   start_scope:         StartScope       // 'block' = align/early/late on block entry; 'episode' = per-item
   no_history_behavior:        NoHistoryBehavior
   max_consecutive_episodes:   number           // 0 = unlimited; rerun modes only
   snap_to_group_start:        boolean          // snap mid-group random pick to Part 1 (rerun modes)
   content:                    BlockContent[]
+  slots?:                     TimeslotSlot[]   // non-empty only when block_type === 'timeslot'
   // Block intro/outro/interstitials
   intro_content_type:         string
   intro_content_id:           string

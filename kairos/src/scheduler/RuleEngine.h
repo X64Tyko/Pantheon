@@ -4,12 +4,14 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include "../db/BlockRepository.h"
 #include "../db/ContentRepository.h"
 #include "../model/Block.h"
 #include "../model/Episode.h"
 #include "../model/Movie.h"
+#include "CursorState.h"
 #include "Rng.h"
 
 class Database;
@@ -36,12 +38,6 @@ struct ScheduledItem {
 
 class RuleEngine {
 public:
-    // Filler-only sim state — used by pickFillerSim() within a single project() call.
-    // Content cursor state (show positions, rerun selection) is now entirely in the DB.
-    struct SimState {
-        std::unordered_map<std::string, int> show_pos;    // fl_rr:block_id, fl_pos:list_id:block_id
-    };
-
     explicit RuleEngine(Database& db);
 
     // Active block for channel at wall-clock time t (UTC).
@@ -58,19 +54,34 @@ public:
                     const std::string& item_type, const std::string& item_id,
                     int64_t duration_ms);
 
-    // Forward EPG projection — writes play_history (is_scheduled=1) and advances
-    // DB cursors as it schedules each item. Must be called within a transaction or
-    // savepoint managed by the caller (EPGMaterializer::ensureScheduled).
-    // rng: caller-owned Xoshiro256. Passing the same instance across successive
-    //      project() calls preserves RNG continuity across the ensureScheduled loop.
-    // anchors_out: if non-null, receives {week_monday_ts -> JSON snapshot string} for
-    //      each Monday midnight boundary crossed during projection. The JSON contains
-    //      the RNG state and channel cursor/block_state snapshot at that boundary,
-    //      enough to deterministically rebuild that week from scratch.
+    // Forward EPG projection. Reads and writes cursor state entirely through `state`;
+    // no DB cursor reads or writes occur during projection. The caller (EPGMaterializer)
+    // loads state before calling and applies it to DB afterward — or discards it for
+    // preview / on_play modes.
+    //
+    // play_history (is_scheduled=1) is still written to DB during projection so
+    // recency queries (rerun pools, smart cooldown) see within-pass history.
+    // Phase 1B will move this into state.play_records_ too.
+    //
+    // rng: caller-owned. Pass the same instance across successive calls to preserve
+    //      RNG continuity when the ensureScheduled loop extends a schedule.
+    // anchors_out: if non-null, receives {week_monday_ts -> JSON snapshot} for each
+    //      Monday midnight boundary crossed. JSON contains rng state + serialized
+    //      CursorState for deterministic weekly rebuilds.
     std::vector<ScheduledItem> project(const std::string& channel_id,
                                         std::time_t start, int horizon_hours,
+                                        CursorState& state,
                                         Xoshiro256& rng,
                                         std::map<std::time_t, std::string>* anchors_out = nullptr);
+
+    // Convenience overload for callers that don't manage CursorState externally
+    // (tests, one-shot previews). Starts with a fresh empty state and discards it.
+    std::vector<ScheduledItem> project(const std::string& channel_id,
+                                        std::time_t start, int horizon_hours,
+                                        Xoshiro256& rng) {
+        CursorState state;
+        return project(channel_id, start, horizon_hours, state, rng);
+    }
 
     // Load all blocks for a channel with their content.
     std::vector<Block> loadBlocks(const std::string& channel_id);
@@ -111,8 +122,11 @@ private:
     // Weighted random selection of a content-item index from a block's content list.
     static int selectWeighted(const Block& block, Xoshiro256& rng);
 
-    // Like selectWeighted but for SmartShuffle movie blocks: excludes recently-played
-    // movies (last n*smart_pct/100 of the pool) from the weighted draw.
+    // Weighted content-entry selection with movie-level recency cooldown. Excludes the
+    // n*smart_pct/100 most-recently-played movie entries from the weighted draw.
+    // Only applies when every block content entry is a movie; mixed blocks fall back to
+    // selectWeighted. (Show content uses smart_pct at the episode-pool level via
+    // smartShufflePool; the block-selection level always sees the full show list.)
     int selectWeightedSmartCooldown(const Block& block, const std::string& channel_id,
                                     int smart_pct, std::time_t before_time, Xoshiro256& rng);
 
@@ -123,83 +137,158 @@ private:
                                           const std::string& channel_id,
                                           int smart_pct, std::time_t before_time);
 
-    // Given an episode index in eps, snap back to Part 1 of its multipart group (if any).
-    int snapToGroupStart(const std::string& episode_id,
-                         const std::vector<Episode>& eps);
+    // Given an episode_id, snap back to Part 1 of its multipart group (if any).
+    int snapToGroupStart(const std::string& episode_id, const std::vector<Episode>& eps);
 
-    // Shuffle helpers.
+    // Produces a deterministic shuffle permutation from a string seed.
+    // The seed-string design is intentional: same seed always produces the same order
+    // regardless of live RNG state, enabling reproducible shuffles across projections.
     static std::vector<int> shufflePermutation(const std::string& seed_str, int n);
 
-    // Like shufflePermutation but keeps multipart episodes (Part 1/2/…) consecutive.
-    // Groups are shuffled as atomic units; within each group parts retain their part_num order.
+    // Like shufflePermutation but keeps multipart episodes consecutive as atomic units.
     std::vector<int> groupedShufflePermutation(const std::string& seed_str,
                                                const std::vector<Episode>& eps);
-
-    // Rerun-mode helpers: read/write the selected content position and runs_remaining.
-    int  readRunsRemaining(const std::string& block_id, const std::string& channel_id);
-    int  readConsecutiveCount(const std::string& block_id, const std::string& channel_id);
-    void writeRerunState(const std::string& block_id, const std::string& channel_id,
-                         int content_pos, int runs_remaining, int consecutive_count = 0);
-
-    int  readCursorPos(const std::string& content_type, const std::string& content_id,
-                       const std::string& scope, const std::string& scope_id);
-    void writeCursorPos(const std::string& content_type, const std::string& content_id,
-                        const std::string& scope, const std::string& scope_id,
-                        int pos, const std::string& episode_id = "");
-
-    int  readBlockRR(const std::string& block_id, const std::string& channel_id);
-    void writeBlockRR(const std::string& block_id, const std::string& channel_id, int pos);
 
     static std::string scopeStr(const Block& b);
     static std::string scopeId(const Block& b, const std::string& channel_id);
 
-    // Advance DB cursors after scheduling or confirming a play of one item from `block`.
-    // before_time: same semantics as getPlayedEpisodes — rerun pool filtered to aired_at < before_time.
-    // rng: caller-owned RNG; must be the channel's scheduling RNG so all random decisions
-    //      (show selection, episode start) are part of the same deterministic sequence.
-    void advanceCursors(const std::string& channel_id, const Block& block,
-                        std::time_t before_time, Xoshiro256& rng);
+    // Select the next item from block AND advance cursor state atomically.
+    // Episode pool is queried once; returns nullopt without advancing if no item available.
+    std::optional<ScheduledItem> advanceAndGet(const std::string& channel_id,
+                                               const Block& block,
+                                               std::time_t before_time,
+                                               CursorState& state, Xoshiro256& rng);
 
-    // Returns the IANA timezone name for a channel (e.g. "America/Denver"), or "UTC".
     std::string channelTimezone(const std::string& channel_id);
-
-    // Returns the advance mode for a channel: "scheduled" or "on_play".
     std::string channelAdvanceMode(const std::string& channel_id);
+
+    // Channel bumper entry used for "between" injection mode.
+    struct BetweenBumper { int id; std::string ct, cid; int every_n; };
+
+    // In-memory play record written during projection (replaces is_scheduled=1
+    // play_history DB inserts). Consulted by rerun pool queries (Phase 5).
+    struct PlayRecord {
+        std::string channel_id;
+        std::string item_type;
+        std::string show_id;
+        std::string item_id;
+        std::time_t aired_at = 0;
+    };
+
+    // Constant data for the full projection pass. Constructed once in project()
+    // and passed by const-ref through all sub-calls.
+    struct ProjectContext {
+        const std::string&                   channel_id;
+        const std::vector<Block>&            blocks;
+        const std::vector<BlockFillerEntry>& channel_filler;
+        const std::vector<BetweenBumper>&    between_bumpers;
+        const std::string&                   tz;
+        std::time_t                          proj_start;
+        std::vector<ScheduledItem>&          result;
+        CursorState&                         state;
+        Xoshiro256&                          rng;
+        std::map<std::time_t,std::string>*   anchors_out;
+    };
+
+    // Mutable state that survives across day boundaries within a projection pass.
+    struct ProjectPassState {
+        std::time_t                          t                  = 0;
+        std::time_t                          anchor_next_monday = 0;
+        std::string                          prev_block_id;
+        std::string                          last_show_id;
+        std::unordered_map<std::string, int> transition_counts;
+        int                                  channel_prog_count = 0;
+        std::vector<PlayRecord>              play_records;
+    };
+
+    // Three-layer projection core.
+    //
+    // scheduleBlock: item loop for one block occurrence within [pass.t, window_end).
+    //   Returns true if block hit its program_count (exhausted) before window_end.
+    //   Items that would span window_end are rolled back. Day boundary (day_start)
+    //   is used for block end_time arithmetic; items ARE allowed to complete past it.
+    //
+    // projectDay: dispatch for one calendar day. Owns a local exhausted set (reset
+    //   per day). Resolves the active block at pass.t, computes its preemption window,
+    //   calls scheduleBlock. On exhaustion the block is removed from the active set
+    //   and the loop continues — no recursion needed. Exits when pass.t >= day_end
+    //   OR pass.t >= t_end (whichever comes first for dispatch purposes).
+    bool scheduleBlock(const ProjectContext& ctx,
+                       const Block& block,
+                       std::time_t window_end,
+                       int window_late_start_mins,
+                       bool first_entry,
+                       std::time_t day_start,
+                       ProjectPassState& pass);
+
+    // Timeslot-specific scheduling helpers.
+    bool scheduleTimeslotBlock(const ProjectContext& ctx,
+                               const Block& block,
+                               std::time_t window_end,
+                               int window_late_start_mins,
+                               std::time_t day_start,
+                               ProjectPassState& pass);
+
+    void scheduleTimeslotSlot(const ProjectContext& ctx,
+                              const Block& block,
+                              const TimeslotSlot& slot,
+                              std::time_t slot_end,
+                              ProjectPassState& pass);
+
+    std::optional<ScheduledItem> pickSlotEpisode(const std::string& channel_id,
+                                                  const std::string& block_id,
+                                                  const TimeslotQueueEntry& entry,
+                                                  int episode_pos);
+
+    // Fill pass.t → target with sized filler; advance pass.t to target if no filler fits.
+    void fillToTime(const ProjectContext& ctx,
+                    const Block& block,
+                    std::time_t target,
+                    ProjectPassState& pass);
+
+    void projectDay(const ProjectContext& ctx,
+                    std::time_t day_start,
+                    std::time_t day_end,
+                    int day_mask_bit,
+                    ProjectPassState& pass,
+                    std::time_t t_end);
 
     std::optional<Block> resolveFromList(const std::vector<Block>& blocks, std::time_t t,
                                          const std::string& tz = "UTC");
 
-    // Pick the next item from a show/episode/playlist content slot using a block-scoped
-    // cursor keyed on scope_id (e.g. block_id + ":intro"). Used for intro/outro/
-    // interstitial/channel-bumper injection.
+    // Resolves (content_type, content_id, position) to a ScheduledItem. position is
+    // modulo-indexed for show/playlist; ignored for episode/movie.
+    std::optional<ScheduledItem> pickFromSource(const std::string& channel_id,
+                                                const std::string& content_type,
+                                                const std::string& content_id,
+                                                int position);
+
     std::optional<ScheduledItem> pickBumperItem(const std::string& channel_id,
                                                 const std::string& content_type,
                                                 const std::string& content_id,
-                                                const std::string& scope_id);
+                                                const std::string& scope_id,
+                                                CursorState& state);
     void advanceBumperCursor(const std::string& content_type,
                              const std::string& content_id,
-                             const std::string& scope_id);
+                             const std::string& scope_id,
+                             CursorState& state);
 
-    // Schedule one bumper item (intro/outro/interstitial/channel-bumper) into result,
-    // write play_history, advance t, and advance the bumper cursor. Returns true if an
-    // item was successfully scheduled.
     bool scheduleBumperItem(const std::string& channel_id,
                             const std::string& block_id,
                             const std::string& content_type,
                             const std::string& content_id,
                             const std::string& scope_id,
                             std::vector<ScheduledItem>& result,
-                            std::time_t& t);
+                            std::time_t& t,
+                            CursorState& state);
 
-    // Pick one filler clip from the effective pool, advancing SimState cursors.
-    // max_ms > 0: "sized" advancement rejects clips longer than this and picks
-    //             the least recently played clip that fits (recency from play_history).
-    // before_time > 0: recency query includes only plays with aired_at <= before_time.
+    // Pick one filler clip from the effective pool, advancing filler positions in state.
+    // max_ms > 0: "sized" advancement rejects clips longer than this.
     std::optional<ScheduledItem> pickFillerSim(const std::string& channel_id,
                                                const Block& block,
                                                const std::vector<BlockFillerEntry>& pool,
                                                int64_t max_ms,
-                                               SimState& state,
+                                               CursorState& state,
                                                Xoshiro256& rng,
                                                std::time_t before_time = 0);
 

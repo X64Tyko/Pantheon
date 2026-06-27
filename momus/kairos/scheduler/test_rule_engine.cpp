@@ -116,17 +116,14 @@ TEST_F(RuleEngineTest, LoadBlocks_SortedByPriorityDescending) {
 
 TEST_F(RuleEngineTest, LoadBlocks_ParsesAllBlockTypes) {
     insertBlock("b_ep",   "episode", "00:00");
-    insertBlock("b_pr",   "premier", "00:00");
     insertBlock("b_fi",   "filler",  "00:00");
     insertBlock("b_mv",   "movie",   "00:00");
 
     auto blocks = engine.loadBlocks("c1");
-    ASSERT_EQ(blocks.size(), 4u);
-    // Sorted priority DESC (all 0), order may vary by insert but types should all be present
+    ASSERT_EQ(blocks.size(), 3u);
     std::set<BlockType> types;
     for (const auto& b : blocks) types.insert(b.block_type);
     EXPECT_GT(types.count(BlockType::Episode), 0u);
-    EXPECT_GT(types.count(BlockType::Premier), 0u);
     EXPECT_GT(types.count(BlockType::Filler),  0u);
     EXPECT_GT(types.count(BlockType::Movie),   0u);
 }
@@ -550,7 +547,7 @@ TEST_F(RuleEngineTest, GlobalScope_RerunBlockSchedulesEpisodesPlayedOnOtherChann
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
     // no_history_behavior=skip: empty pool → no output (avoids Normal fallback to all-eps).
-    raw.exec("UPDATE block SET advancement='rerun_shuffle', cursor_scope='channel',"
+    raw.exec("UPDATE block SET play_style='rerun', advancement='shuffle', cursor_scope='channel',"
              " no_history_behavior='skip' WHERE block_id='b1'");
 
     // Channel-scoped: c1 has no play history → rerun pool empty → skip → no items.
@@ -569,17 +566,19 @@ TEST_F(RuleEngineTest, GlobalScope_RerunBlockSchedulesEpisodesPlayedOnOtherChann
 
 TEST_F(RuleEngineTest, ChannelScope_RerunCursorUsesChannelScopedKey) {
     // With cursor_scope=channel the rerun cursor key should be ("show_rerun", s1, "channel", c1).
-    // We prime it via project() and verify the DB row has cursor_scope="channel".
+    // project() stores cursor state in CursorState; applyToDB() persists it so we can verify.
     auto& raw = db.get();
     raw.exec("INSERT INTO play_history (channel_id,item_type,item_id,aired_at,is_scheduled)"
              " VALUES ('c1','episode','e1'," + std::to_string(kMonNoon - 3600) + ",1)");
 
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    raw.exec("UPDATE block SET advancement='rerun_shuffle', cursor_scope='channel' WHERE block_id='b1'");
+    raw.exec("UPDATE block SET play_style='rerun', advancement='shuffle', cursor_scope='channel' WHERE block_id='b1'");
 
     Xoshiro256 rng(0);
-    engine.project("c1", kMonNoon, 1, rng);
+    CursorState state;
+    engine.project("c1", kMonNoon, 1, state, rng);
+    state.applyToDB(db, "c1");
 
     // The rerun cursor should be stored with cursor_scope='channel', scope_id='c1'.
     SQLite::Statement q(raw,
@@ -588,4 +587,136 @@ TEST_F(RuleEngineTest, ChannelScope_RerunCursorUsesChannelScopedKey) {
     ASSERT_TRUE(q.executeStep()) << "rerun cursor should exist after project()";
     EXPECT_EQ(q.getColumn(0).getString(), "channel");
     EXPECT_EQ(q.getColumn(1).getString(), "c1");
+}
+
+// ---------------------------------------------------------------------------
+// CursorState integration: advanceAndGet / applyToDB / nextItem continuity
+// ---------------------------------------------------------------------------
+
+TEST_F(RuleEngineTest, AdvanceAndGet_NulloptWhenNoContent) {
+    // advanceAndGet is tested via project(): a block with no content items must yield
+    // no scheduled output regardless of how many hours are projected.
+    insertBlock("b1", "episode", "00:00");
+    // no content added
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 2, rng);
+    EXPECT_TRUE(items.empty());
+}
+
+TEST_F(RuleEngineTest, SmartCooldown_OffByOneFixed) {
+    // Movie-only smart block with smart_pct=50 and 2 equally-weighted movies.
+    // m1 is in play history (hot); selectWeightedSmartCooldown should exclude m1
+    // and always return m2. The old r < 0 bug could accidentally pick m1 when r==0.
+    auto& raw = db.get();
+    raw.exec("INSERT INTO movie (movie_id,title,file_path,duration_ms)"
+             " VALUES ('m2','Movie 2','/m2.mkv',3600000)");
+    raw.exec("INSERT INTO play_history (channel_id,item_type,item_id,aired_at,is_scheduled)"
+             " VALUES ('c1','movie','m1'," + std::to_string(kMonNoon - 7200) + ",1)");
+
+    insertBlock("b1", "movie", "00:00");
+    addContentWeighted("b1", "movie", "m1", 1);
+    addContentWeighted("b1", "movie", "m2", 1);
+    db.get().exec("UPDATE block SET advancement='smart', smart_pct=50 WHERE block_id='b1'");
+
+    // m1 is 2h (fixture default), m2 is 1h; need a 4h window to fit both.
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 4, rng);
+    ASSERT_GE(items.size(), 2u);
+    // items[0] is always m1 (content_pos starts at 0). selectWeightedSmartCooldown
+    // sets the NEXT position: m1 is hot so m2 is chosen for items[1].
+    EXPECT_EQ(items[1].item_id, "m2")
+        << "hot movie m1 must be excluded by smart cooldown; second pick must be m2";
+}
+
+TEST_F(RuleEngineTest, MaxConsecutiveEpisodes_NeverExceedsLimit) {
+    // Two shows, max_consecutive_episodes=2. No run of the same show_id should exceed 2.
+    auto& raw = db.get();
+    raw.exec("INSERT INTO show (show_id, title) VALUES ('s2','Show 2')");
+    for (int i = 1; i <= 4; ++i) {
+        std::string eid = "s2e" + std::to_string(i);
+        raw.exec("INSERT INTO episode (episode_id,show_id,season,episode,title,file_path,duration_ms)"
+                 " VALUES ('" + eid + "','s2',1," + std::to_string(i) + ",'Ep " + std::to_string(i) + "','/"+eid+".mkv',3600000)");
+    }
+
+    insertBlock("b1", "episode", "00:00");
+    addContent("b1", "show", "s1");
+    addContent("b1", "show", "s2");
+    // play_style='rerun' is required: the consecutive-episode limit is only enforced
+    // in the rerun scheduling path; standard advancement uses plain selectWeighted.
+    raw.exec("UPDATE block SET play_style='rerun', advancement='smart', max_consecutive_episodes=2 WHERE block_id='b1'");
+
+    Xoshiro256 rng(42);
+    auto items = engine.project("c1", kMonNoon, 6, rng);
+    ASSERT_GE(items.size(), 4u) << "Need enough items to observe consecutive runs";
+
+    int consecutive = 1;
+    for (size_t i = 1; i < items.size(); ++i) {
+        if (items[i].show_id == items[i-1].show_id)
+            ++consecutive;
+        else
+            consecutive = 1;
+        EXPECT_LE(consecutive, 2)
+            << "Consecutive run of " << items[i].show_id << " exceeds max=2 at position " << i;
+    }
+}
+
+TEST_F(RuleEngineTest, MaxConsecutiveEpisodes_ZeroMeansUnlimited) {
+    // max_consecutive_episodes=0: the only show should repeat without being interrupted.
+    insertBlock("b1", "episode", "00:00");
+    addContent("b1", "show", "s1");
+    db.get().exec("UPDATE block SET advancement='shuffle', max_consecutive_episodes=0 WHERE block_id='b1'");
+
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 3, rng);
+    ASSERT_GE(items.size(), 2u);
+    for (const auto& item : items)
+        EXPECT_EQ(item.show_id, "s1") << "Only s1 is in the block; all items must be from s1";
+}
+
+TEST_F(RuleEngineTest, Project_CursorStateAppliedToDBAfterProject) {
+    // After project() + applyToDB(), the media_cursor table must contain an entry
+    // reflecting the advanced show cursor (block scope = default).
+    insertBlock("b1", "episode", "00:00");
+    addContent("b1", "show", "s1");
+
+    // Pre-seed state so the RNG-based seed-init inside project() is skipped.
+    // Without this, projectDay randomises the starting episode position, and the
+    // cursor wraps to 0 when it happens to start on the last episode.
+    CursorState state;
+    state.setBlockPosition("b1", 0, 1, 0);   // mark block as initialised
+    state.setCursorPos("show", "s1", "block", "b1", 0);  // episode cursor at 0
+
+    Xoshiro256 rng(0);
+    auto items = engine.project("c1", kMonNoon, 1, state, rng);
+    ASSERT_FALSE(items.empty());
+    state.applyToDB(db, "c1");
+
+    // Cursor advanced from 0 → 1 after scheduling e1; must exist in DB with position=1.
+    SQLite::Statement q(db.get(),
+        "SELECT position FROM media_cursor"
+        " WHERE content_id='s1' AND cursor_scope='block' AND scope_id='b1'");
+    ASSERT_TRUE(q.executeStep()) << "show cursor must be persisted after applyToDB";
+    EXPECT_GT(q.getColumn(0).getInt(), 0) << "cursor position must have advanced past 0";
+}
+
+TEST_F(RuleEngineTest, Project_NextItemReflectsCursorStateLoadFromDB) {
+    // After a project()+applyToDB() cycle, nextItem() (which loads state from DB)
+    // must return the episode after the last projected item, not episode 1 again.
+    insertBlock("b1", "episode", "00:00");
+    addContent("b1", "show", "s1");
+
+    // Project 1 hour (= 1 episode at 3600s each).
+    Xoshiro256 rng(0);
+    CursorState state;
+    auto items = engine.project("c1", kMonNoon, 1, state, rng);
+    ASSERT_FALSE(items.empty());
+    const std::string first_id = items[0].item_id;
+
+    state.applyToDB(db, "c1");
+
+    auto blocks  = engine.loadBlocks("c1");
+    auto peek    = engine.nextItem("c1", blocks[0], kMonNoon + 7200);
+    ASSERT_TRUE(peek.has_value());
+    EXPECT_NE(peek->item_id, first_id)
+        << "nextItem must reflect the advanced cursor — should not replay the first episode";
 }

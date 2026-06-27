@@ -7,7 +7,7 @@
 
 // Bump this when a new migration is added. Every test that cares about the
 // total count reads from here — no other number to update.
-static constexpr int kMigrationCount = 31;
+static constexpr int kMigrationCount = 44;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -84,6 +84,7 @@ TEST_F(MigrationTest, AllExpectedTablesExist) {
         "block_state",
         "media_cursor",
         "scheduled_program",
+        "chapter",
         "schema_migrations",
     };
     for (const auto& t : expected)
@@ -130,6 +131,7 @@ TEST_F(MigrationTest, BlockColumnsIncludeAllMigrationAdditions) {
     EXPECT_GT(cols.count("start_time"),      0u);
     EXPECT_GT(cols.count("priority"),        0u);
     EXPECT_GT(cols.count("program_count"),   0u) << "added v4";
+    EXPECT_GT(cols.count("play_style"),      0u) << "added v42";
     EXPECT_GT(cols.count("advancement"),     0u) << "added v5";
     EXPECT_GT(cols.count("cursor_scope"),    0u) << "added v5";
     EXPECT_GT(cols.count("late_start_mins"), 0u) << "added v6";
@@ -140,6 +142,8 @@ TEST_F(MigrationTest, BlockColumnsIncludeAllMigrationAdditions) {
     EXPECT_GT(cols.count("smart_pct"),       0u) << "added v13";
     EXPECT_GT(cols.count("start_scope"),         0u) << "added v14";
     EXPECT_GT(cols.count("no_history_behavior"), 0u) << "added v15";
+    EXPECT_EQ(cols.count("max_content_rating"),  0u) << "dropped v42";
+    EXPECT_EQ(cols.count("config_json"),         0u) << "dropped v42";
 }
 
 TEST_F(MigrationTest, ScheduledProgramColumnsFromV10) {
@@ -187,6 +191,20 @@ TEST_F(MigrationTest, BlockContentHasSeasonFilterFromV5) {
 // Index existence
 // ---------------------------------------------------------------------------
 
+TEST_F(MigrationTest, ChapterColumnsPresent) {
+    auto cols = columnNames(db.get(), "chapter");
+    EXPECT_GT(cols.count("chapter_id"),   0u);
+    EXPECT_GT(cols.count("media_type"),   0u);
+    EXPECT_GT(cols.count("media_id"),     0u);
+    EXPECT_GT(cols.count("chapter_type"), 0u) << "added v41";
+    EXPECT_GT(cols.count("title"),        0u) << "added v41";
+    EXPECT_GT(cols.count("start_ms"),     0u) << "added v41";
+    EXPECT_GT(cols.count("end_ms"),       0u) << "added v41";
+    EXPECT_GT(cols.count("position"),     0u) << "added v41";
+    EXPECT_GT(cols.count("source"),       0u) << "added v41";
+    EXPECT_GT(cols.count("locked"),       0u) << "added v41";
+}
+
 TEST_F(MigrationTest, AllKeyIndicesExist) {
     const std::vector<std::string> indices = {
         "idx_episode_show",
@@ -198,9 +216,12 @@ TEST_F(MigrationTest, AllKeyIndicesExist) {
         "idx_playlist_item",
         "idx_filler_list_item",
         "idx_block_filler_entry",
+        "idx_block_filler_no_season",
         "idx_channel_filler_entry",
+        "idx_channel_filler_no_season",
         "idx_sched_channel_time",
         "idx_sched_channel_end",
+        "idx_chapter_media",
     };
     for (const auto& idx : indices)
         EXPECT_TRUE(indexExists(db.get(), idx)) << "Missing index: " << idx;

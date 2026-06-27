@@ -29,6 +29,13 @@ export function m2t(m: number): string {
 
 export function endOf(block: Block): number {
   if (block.end_time) return t2m(block.end_time)
+  if (block.block_type === 'timeslot') {
+    if (block.slots && block.slots.length > 0) {
+      const last = block.slots[block.slots.length - 1]
+      return Math.min(t2m(block.start_time) + last.slot_offset_mins + last.slot_duration_mins, 1440)
+    }
+    return Math.min(t2m(block.start_time) + 60, 1440)
+  }
   if (block.program_count > 0) return Math.min(t2m(block.start_time) + 60, 1440)
   return 1440
 }
@@ -67,8 +74,8 @@ export function blockToDraft(block: Block): BlockDraft {
     start_time: block.start_time, end_time: block.end_time ?? '',
     program_count: block.program_count,
     late_start_mins: block.late_start_mins, early_start_secs: block.early_start_secs ?? 0,
-    advancement: block.advancement, cursor_scope: block.cursor_scope,
-    priority: block.priority, max_content_rating: block.max_content_rating,
+    play_style: block.play_style ?? 'standard', advancement: block.advancement, cursor_scope: block.cursor_scope,
+    priority: block.priority,
     filler_selection: block.filler_selection ?? 'round_robin',
     align_to_mins: block.align_to_mins ?? 0, inter_filler: block.inter_filler ?? false,
     smart_pct: block.smart_pct ?? 30, start_scope: block.start_scope ?? 'block',

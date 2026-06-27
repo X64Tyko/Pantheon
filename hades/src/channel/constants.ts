@@ -12,10 +12,10 @@ export const DAYS = [['Mo', 'MON'], ['Tu', 'TUE'], ['We', 'WED'], ['Th', 'THU'],
 export const DAY_BITS = [2, 4, 8, 16, 32, 64, 1]
 
 export const BLOCK_META: Record<BlockType, { name: string; bg: string; solid: string; edge: string; border: string }> = {
-  episode: { name: 'Episode', bg: 'linear-gradient(160deg, oklch(0.37 0.095 287), oklch(0.31 0.08 287))', solid: 'oklch(0.36 0.09 287)', edge: 'oklch(0.74 0.13 287)', border: 'oklch(0.48 0.1 287)' },
-  movie:   { name: 'Movie',   bg: 'linear-gradient(160deg, oklch(0.4 0.09 58), oklch(0.33 0.075 56))',     solid: 'oklch(0.39 0.085 58)',  edge: 'oklch(0.78 0.12 68)',  border: 'oklch(0.5 0.1 60)' },
-  premier: { name: 'Premier', bg: 'linear-gradient(160deg, oklch(0.42 0.13 19), oklch(0.34 0.11 18))',     solid: 'oklch(0.41 0.12 18)',   edge: 'oklch(0.76 0.17 24)',  border: 'oklch(0.52 0.14 20)' },
-  filler:  { name: 'Filler',  bg: 'linear-gradient(160deg, oklch(0.32 0.018 262), oklch(0.27 0.015 262))', solid: 'oklch(0.31 0.018 262)', edge: 'oklch(0.62 0.03 262)', border: 'oklch(0.42 0.02 262)' },
+  episode:  { name: 'Episode',  bg: 'linear-gradient(160deg, oklch(0.37 0.095 287), oklch(0.31 0.08 287))', solid: 'oklch(0.36 0.09 287)', edge: 'oklch(0.74 0.13 287)', border: 'oklch(0.48 0.1 287)' },
+  movie:    { name: 'Movie',    bg: 'linear-gradient(160deg, oklch(0.4 0.09 58), oklch(0.33 0.075 56))',     solid: 'oklch(0.39 0.085 58)',  edge: 'oklch(0.78 0.12 68)',  border: 'oklch(0.5 0.1 60)' },
+  timeslot: { name: 'Timeslot', bg: 'linear-gradient(160deg, oklch(0.39 0.11 320), oklch(0.32 0.09 318))',   solid: 'oklch(0.38 0.1 320)',   edge: 'oklch(0.76 0.15 325)', border: 'oklch(0.49 0.12 321)' },
+  filler:   { name: 'Filler',   bg: 'linear-gradient(160deg, oklch(0.32 0.018 262), oklch(0.27 0.015 262))', solid: 'oklch(0.31 0.018 262)', edge: 'oklch(0.62 0.03 262)', border: 'oklch(0.42 0.02 262)' },
 }
 
 export const RATINGS = ['', 'TV-Y', 'TV-Y7', 'TV-G', 'TV-PG', 'TV-14', 'TV-MA']
@@ -37,8 +37,8 @@ export const BLANK_DRAFT: BlockDraft = {
   block_type: 'episode', day_mask: 62,
   start_time: '20:00', end_time: '21:00',
   program_count: 0, late_start_mins: 5, early_start_secs: 15,
-  advancement: 'sequential', cursor_scope: 'block',
-  priority: 1, max_content_rating: '',
+  play_style: 'standard', advancement: 'sequential', cursor_scope: 'block',
+  priority: 1,
   filler_selection: 'round_robin',
   align_to_mins: 0, inter_filler: false,
   smart_pct: 30, start_scope: 'block',

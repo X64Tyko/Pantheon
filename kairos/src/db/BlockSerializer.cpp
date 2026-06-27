@@ -152,7 +152,7 @@ json BlockSerializer::exportSlot(const std::string& ct, const std::string& cid, 
 json BlockSerializer::exportBlock(const std::string& block_id, bool deep) {
     SQLite::Statement bq(db_.get(), R"(
         SELECT name, block_type, day_mask, start_time, end_time,
-               program_count, priority, max_content_rating, advancement, cursor_scope,
+               program_count, priority, play_style, advancement, cursor_scope,
                late_start_mins, align_to_mins, inter_filler, early_start_secs,
                filler_selection, smart_pct, start_scope, no_history_behavior,
                max_consecutive_episodes,
@@ -172,7 +172,7 @@ json BlockSerializer::exportBlock(const std::string& block_id, bool deep) {
         {"start_time",               bq.getColumn(3).getString()},
         {"program_count",            bq.getColumn(5).getInt()},
         {"priority",                 bq.getColumn(6).getInt()},
-        {"max_content_rating",       bq.getColumn(7).getString()},
+        {"play_style",               bq.getColumn(7).getString()},
         {"advancement",              bq.getColumn(8).getString()},
         {"cursor_scope",             bq.getColumn(9).getString()},
         {"late_start_mins",          bq.getColumn(10).getInt()},
@@ -317,7 +317,7 @@ std::string BlockSerializer::importBlock(const std::string& channel_id,
     if (end_time.empty()) s.bind(7); else s.bind(7, end_time);
     s.bind(8,  blk.value("program_count",        0));
     s.bind(9,  blk.value("priority",             0));
-    s.bind(10, blk.value("max_content_rating",   ""));
+    s.bind(10, blk.value("play_style",            "standard"));
     s.bind(11, blk.value("advancement",          "sequential"));
     s.bind(12, blk.value("cursor_scope",         "block"));
     s.bind(13, blk.value("late_start_mins",      0));

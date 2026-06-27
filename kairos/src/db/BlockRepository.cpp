@@ -11,7 +11,7 @@ std::vector<Block> BlockRepository::loadBlocks(const std::string& channel_id) {
     std::vector<Block> blocks;
     SQLite::Statement q(db_.get(), R"(
         SELECT block_id, block_type, day_mask, start_time, end_time,
-               program_count, priority, max_content_rating, advancement, cursor_scope,
+               program_count, priority, play_style, advancement, cursor_scope,
                late_start_mins, align_to_mins, inter_filler, early_start_secs,
                filler_selection, smart_pct, start_scope, no_history_behavior,
                max_consecutive_episodes,
@@ -34,7 +34,7 @@ std::vector<Block> BlockRepository::loadBlocks(const std::string& channel_id) {
         if (!q.getColumn(4).isNull()) b.end_time = q.getColumn(4).getString();
         b.program_count      = q.getColumn(5).getInt();
         b.priority           = q.getColumn(6).getInt();
-        b.max_content_rating = q.getColumn(7).getString();
+        b.play_style         = parsePlayStyle(q.getColumn(7).getString());
         b.advancement        = parseAdvancement(q.getColumn(8).getString());
         b.cursor_scope       = parseCursorScope(q.getColumn(9).getString());
         b.late_start_mins    = q.getColumn(10).getInt();
@@ -96,9 +96,182 @@ std::vector<Block> BlockRepository::loadBlocks(const std::string& channel_id) {
             }
         }
 
+        if (b.block_type == BlockType::Timeslot) {
+            SQLite::Statement sq(db_.get(), R"(
+                SELECT slot_id, slot_index, slot_offset_mins, slot_duration_mins,
+                       overflow, late_start_mins, early_start_secs, align_to_mins,
+                       start_scope, queue_pos, episode_pos
+                FROM timeslot_slot WHERE block_id = ? ORDER BY slot_index
+            )");
+            sq.bind(1, b.block_id);
+            while (sq.executeStep()) {
+                TimeslotSlot slot;
+                slot.slot_id           = sq.getColumn(0).getString();
+                slot.block_id          = b.block_id;
+                slot.slot_index        = sq.getColumn(1).getInt();
+                slot.slot_offset_mins  = sq.getColumn(2).getInt();
+                slot.slot_duration_mins = sq.getColumn(3).getInt();
+                slot.overflow          = parseSlotOverflow(sq.getColumn(4).getString());
+                slot.late_start_mins   = sq.getColumn(5).getInt();
+                slot.early_start_secs  = sq.getColumn(6).getInt();
+                slot.align_to_mins     = sq.getColumn(7).getInt();
+                slot.start_scope       = sq.getColumn(8).getString();
+                slot.queue_pos         = sq.getColumn(9).getInt();
+                slot.episode_pos       = sq.getColumn(10).getInt();
+                SQLite::Statement qq(db_.get(), R"(
+                    SELECT entry_id, queue_index, content_type, content_id,
+                           COALESCE(premiere_date,''), pre_premiere_behavior
+                    FROM timeslot_slot_queue WHERE slot_id = ? ORDER BY queue_index
+                )");
+                qq.bind(1, slot.slot_id);
+                while (qq.executeStep()) {
+                    TimeslotQueueEntry e;
+                    e.entry_id              = qq.getColumn(0).getString();
+                    e.queue_index           = qq.getColumn(1).getInt();
+                    e.content_type          = qq.getColumn(2).getString();
+                    e.content_id            = qq.getColumn(3).getString();
+                    e.premiere_date         = qq.getColumn(4).getString();
+                    e.pre_premiere_behavior = qq.getColumn(5).getString();
+                    slot.queue.push_back(std::move(e));
+                }
+                b.slots.push_back(std::move(slot));
+            }
+        }
+
         blocks.push_back(std::move(b));
     }
     return blocks;
+}
+
+std::optional<Block> BlockRepository::loadBlock(const std::string& block_id) {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT block_id, block_type, day_mask, start_time, end_time,
+               program_count, priority, play_style, advancement, cursor_scope,
+               late_start_mins, align_to_mins, inter_filler, early_start_secs,
+               filler_selection, smart_pct, start_scope, no_history_behavior,
+               max_consecutive_episodes,
+               intro_content_type, intro_content_id,
+               outro_content_type, outro_content_id,
+               interstitial_content_type, interstitial_content_id, interstitial_every_n,
+               snap_to_group_start, channel_id
+        FROM block WHERE block_id = ?
+    )");
+    q.bind(1, block_id);
+    if (!q.executeStep()) return std::nullopt;
+
+    Block b;
+    b.block_id           = q.getColumn(0).getString();
+    b.block_type         = parseBlockType(q.getColumn(1).getString());
+    b.day_mask           = q.getColumn(2).getInt();
+    b.start_time         = q.getColumn(3).getString();
+    if (!q.getColumn(4).isNull()) b.end_time = q.getColumn(4).getString();
+    b.program_count      = q.getColumn(5).getInt();
+    b.priority           = q.getColumn(6).getInt();
+    b.play_style         = parsePlayStyle(q.getColumn(7).getString());
+    b.advancement        = parseAdvancement(q.getColumn(8).getString());
+    b.cursor_scope       = parseCursorScope(q.getColumn(9).getString());
+    b.late_start_mins    = q.getColumn(10).getInt();
+    b.align_to_mins      = q.getColumn(11).getInt();
+    b.inter_filler       = q.getColumn(12).getInt() != 0;
+    b.early_start_secs   = q.getColumn(13).getInt();
+    b.filler_selection   = q.getColumn(14).getString();
+    b.smart_pct                = q.getColumn(15).getInt();
+    b.start_scope              = q.getColumn(16).getString();
+    b.no_history_behavior      = parseNoHistoryBehavior(q.getColumn(17).getString());
+    b.max_consecutive_episodes = q.getColumn(18).getInt();
+    b.intro_content_type       = q.getColumn(19).getString();
+    b.intro_content_id         = q.getColumn(20).getString();
+    b.outro_content_type       = q.getColumn(21).getString();
+    b.outro_content_id         = q.getColumn(22).getString();
+    b.interstitial_content_type = q.getColumn(23).getString();
+    b.interstitial_content_id   = q.getColumn(24).getString();
+    b.interstitial_every_n      = q.getColumn(25).getInt();
+    b.snap_to_group_start       = q.getColumn(26).getInt() != 0;
+    b.channel_id                = q.getColumn(27).getString();
+
+    {
+        SQLite::Statement cq(db_.get(), R"(
+            SELECT id, content_type, content_id, position, season_filter, weight, run_count,
+                   include_specials, episode_order
+            FROM block_content WHERE block_id = ? ORDER BY position
+        )");
+        cq.bind(1, block_id);
+        while (cq.executeStep()) {
+            BlockContent bc;
+            bc.id              = cq.getColumn(0).getInt();
+            bc.block_id        = block_id;
+            bc.content_type    = cq.getColumn(1).getString();
+            bc.content_id      = cq.getColumn(2).getString();
+            bc.position        = cq.getColumn(3).getInt();
+            if (!cq.getColumn(4).isNull()) bc.season_filter = cq.getColumn(4).getInt();
+            bc.weight           = cq.getColumn(5).getInt();
+            bc.run_count        = cq.getColumn(6).getInt();
+            bc.include_specials = cq.getColumn(7).getInt() != 0;
+            bc.episode_order    = cq.getColumn(8).getString();
+            b.content.push_back(std::move(bc));
+        }
+    }
+
+    {
+        SQLite::Statement fq(db_.get(), R"(
+            SELECT content_type, content_id, advancement, weight, season_filter
+            FROM block_filler_entry WHERE block_id = ? ORDER BY position
+        )");
+        fq.bind(1, block_id);
+        while (fq.executeStep()) {
+            BlockFillerEntry fe;
+            fe.content_type = fq.getColumn(0).getString();
+            fe.content_id   = fq.getColumn(1).getString();
+            fe.advancement  = fq.getColumn(2).getString();
+            fe.weight       = fq.getColumn(3).getInt();
+            if (!fq.getColumn(4).isNull()) fe.season_filter = fq.getColumn(4).getInt();
+            b.filler_entries.push_back(std::move(fe));
+        }
+    }
+
+    if (b.block_type == BlockType::Timeslot) {
+        SQLite::Statement sq(db_.get(), R"(
+            SELECT slot_id, slot_index, slot_offset_mins, slot_duration_mins,
+                   overflow, late_start_mins, early_start_secs, align_to_mins,
+                   start_scope, queue_pos, episode_pos
+            FROM timeslot_slot WHERE block_id = ? ORDER BY slot_index
+        )");
+        sq.bind(1, block_id);
+        while (sq.executeStep()) {
+            TimeslotSlot slot;
+            slot.slot_id            = sq.getColumn(0).getString();
+            slot.block_id           = block_id;
+            slot.slot_index         = sq.getColumn(1).getInt();
+            slot.slot_offset_mins   = sq.getColumn(2).getInt();
+            slot.slot_duration_mins = sq.getColumn(3).getInt();
+            slot.overflow           = parseSlotOverflow(sq.getColumn(4).getString());
+            slot.late_start_mins    = sq.getColumn(5).getInt();
+            slot.early_start_secs   = sq.getColumn(6).getInt();
+            slot.align_to_mins      = sq.getColumn(7).getInt();
+            slot.start_scope        = sq.getColumn(8).getString();
+            slot.queue_pos          = sq.getColumn(9).getInt();
+            slot.episode_pos        = sq.getColumn(10).getInt();
+            SQLite::Statement qq(db_.get(), R"(
+                SELECT entry_id, queue_index, content_type, content_id,
+                       COALESCE(premiere_date,''), pre_premiere_behavior
+                FROM timeslot_slot_queue WHERE slot_id = ? ORDER BY queue_index
+            )");
+            qq.bind(1, slot.slot_id);
+            while (qq.executeStep()) {
+                TimeslotQueueEntry e;
+                e.entry_id              = qq.getColumn(0).getString();
+                e.queue_index           = qq.getColumn(1).getInt();
+                e.content_type          = qq.getColumn(2).getString();
+                e.content_id            = qq.getColumn(3).getString();
+                e.premiere_date         = qq.getColumn(4).getString();
+                e.pre_premiere_behavior = qq.getColumn(5).getString();
+                slot.queue.push_back(std::move(e));
+            }
+            b.slots.push_back(std::move(slot));
+        }
+    }
+
+    return b;
 }
 
 std::string BlockRepository::channelTimezone(const std::string& channel_id) {
@@ -229,7 +402,7 @@ void BlockRepository::writeRerunState(const std::string& block_id,
 nlohmann::json BlockRepository::listWithContent(const std::string& channel_id) {
 	SQLite::Statement q(db_.get(), R"(
 		SELECT block_id, block_type, day_mask, start_time, end_time,
-		       program_count, priority, max_content_rating, advancement, cursor_scope,
+		       program_count, priority, play_style, advancement, cursor_scope,
 		       late_start_mins, align_to_mins, inter_filler, early_start_secs,
 		       filler_selection, smart_pct, start_scope, no_history_behavior,
 		       max_consecutive_episodes, name,
@@ -253,7 +426,7 @@ nlohmann::json BlockRepository::listWithContent(const std::string& channel_id) {
 			{"start_time",                 q.getColumn(3).getString()},
 			{"program_count",              q.getColumn(5).getInt()},
 			{"priority",                   q.getColumn(6).getInt()},
-			{"max_content_rating",         q.getColumn(7).getString()},
+			{"play_style",                 q.getColumn(7).getString()},
 			{"advancement",                q.getColumn(8).getString()},
 			{"cursor_scope",               q.getColumn(9).getString()},
 			{"late_start_mins",            q.getColumn(10).getInt()},
@@ -348,6 +521,62 @@ nlohmann::json BlockRepository::listWithContent(const std::string& channel_id) {
 		}
 		block["filler_entries"] = std::move(filler_entries);
 
+		// Slots (timeslot blocks only)
+		if (q.getColumn(1).getString() == "timeslot") {
+			SQLite::Statement sq(db_.get(), R"(
+				SELECT slot_id, slot_index, slot_offset_mins, slot_duration_mins,
+				       overflow, late_start_mins, early_start_secs, align_to_mins,
+				       start_scope, queue_pos, episode_pos
+				FROM timeslot_slot WHERE block_id = ? ORDER BY slot_index
+			)");
+			sq.bind(1, bid);
+			nlohmann::json slots = nlohmann::json::array();
+			while (sq.executeStep()) {
+				std::string sid = sq.getColumn(0).getString();
+				nlohmann::json slot = {
+					{"slot_id",            sid},
+					{"slot_index",         sq.getColumn(1).getInt()},
+					{"slot_offset_mins",   sq.getColumn(2).getInt()},
+					{"slot_duration_mins", sq.getColumn(3).getInt()},
+					{"overflow",           sq.getColumn(4).getString()},
+					{"late_start_mins",    sq.getColumn(5).getInt()},
+					{"early_start_secs",   sq.getColumn(6).getInt()},
+					{"align_to_mins",      sq.getColumn(7).getInt()},
+					{"start_scope",        sq.getColumn(8).getString()},
+					{"queue_pos",          sq.getColumn(9).getInt()},
+					{"episode_pos",        sq.getColumn(10).getInt()},
+				};
+				SQLite::Statement qq(db_.get(), R"(
+					SELECT entry_id, queue_index, content_type, content_id,
+					       COALESCE(premiere_date,''), pre_premiere_behavior,
+					       CASE content_type
+					           WHEN 'show'  THEN COALESCE((SELECT title FROM show  WHERE show_id  = content_id),'')
+					           WHEN 'movie' THEN COALESCE((SELECT title FROM movie WHERE movie_id = content_id),'')
+					           ELSE ''
+					       END
+					FROM timeslot_slot_queue WHERE slot_id = ? ORDER BY queue_index
+				)");
+				qq.bind(1, sid);
+				nlohmann::json queue_arr = nlohmann::json::array();
+				while (qq.executeStep()) {
+					queue_arr.push_back({
+						{"entry_id",              qq.getColumn(0).getString()},
+						{"queue_index",           qq.getColumn(1).getInt()},
+						{"content_type",          qq.getColumn(2).getString()},
+						{"content_id",            qq.getColumn(3).getString()},
+						{"premiere_date",         qq.getColumn(4).getString()},
+						{"pre_premiere_behavior", qq.getColumn(5).getString()},
+						{"title",                 qq.getColumn(6).getString()},
+					});
+				}
+				slot["queue"] = std::move(queue_arr);
+				slots.push_back(std::move(slot));
+			}
+			block["slots"] = std::move(slots);
+		} else {
+			block["slots"] = nlohmann::json::array();
+		}
+
 		result.push_back(std::move(block));
 	}
 	return result;
@@ -364,7 +593,7 @@ std::string BlockRepository::createBlock(const std::string& channel_id,
     SQLite::Statement s(db_.get(), R"(
         INSERT INTO block (block_id, channel_id, name, block_type, day_mask,
                            start_time, end_time, program_count, priority,
-                           max_content_rating, advancement, cursor_scope,
+                           play_style, advancement, cursor_scope,
                            late_start_mins, align_to_mins, inter_filler,
                            early_start_secs, filler_selection, smart_pct,
                            start_scope, no_history_behavior,
@@ -384,7 +613,7 @@ std::string BlockRepository::createBlock(const std::string& channel_id,
     if (end_time.empty()) s.bind(7); else s.bind(7, end_time);
     s.bind(8,  b.value("program_count",      0));
     s.bind(9,  b.value("priority",           0));
-    s.bind(10, b.value("max_content_rating", std::string("")));
+    s.bind(10, b.value("play_style",         std::string("standard")));
     s.bind(11, b.value("advancement",        std::string("sequential")));
     s.bind(12, b.value("cursor_scope",       std::string("block")));
     s.bind(13, b.value("late_start_mins",    0));
@@ -556,17 +785,17 @@ void BlockRepository::resetContentCursor(const std::string& channel_id,
     if (content_type != "show")
         throw std::invalid_argument("cursor reset only applies to show content");
 
-    std::string advancement, cursor_scope;
+    std::string play_style, cursor_scope;
     {
         SQLite::Statement q(db_.get(),
-            "SELECT advancement, cursor_scope FROM block WHERE block_id = ?");
+            "SELECT play_style, cursor_scope FROM block WHERE block_id = ?");
         q.bind(1, block_id);
         if (!q.executeStep()) throw std::runtime_error("block not found");
-        advancement  = q.getColumn(0).getString();
+        play_style   = q.getColumn(0).getString();
         cursor_scope = q.getColumn(1).getString();
     }
 
-    if (advancement == "rerun_shuffle" || advancement == "rerun_smart") {
+    if (play_style == "rerun") {
         SQLite::Statement s(db_.get(), R"(
             DELETE FROM media_cursor
             WHERE content_type='show_rerun' AND content_id=? AND cursor_scope='block' AND scope_id=?

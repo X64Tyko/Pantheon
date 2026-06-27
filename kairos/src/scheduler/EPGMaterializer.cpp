@@ -1,13 +1,14 @@
 #include "EPGMaterializer.h"
+#include "CursorState.h"
 #include "Rng.h"
 #include "../db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
-#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <map>
 #include <sstream>
+#include <unordered_map>
 
 #include "RuntimeFlags.h"
 
@@ -45,45 +46,187 @@ std::string EPGMaterializer::fmtXMLTVTime(std::time_t t) {
 
 // ── Schedule cache management ─────────────────────────────────────────────────
 
+GenerateResult EPGMaterializer::generate(
+    const std::string& channel_id, std::time_t from, int horizon_hours, int seed)
+{
+    using json = nlohmann::json;
+
+    const std::time_t horizon     = from + static_cast<std::time_t>(horizon_hours) * 3600;
+    const std::time_t from_days   = from / 86400;
+    const std::time_t from_dow    = (from_days + 3) % 7;
+    const std::time_t week_monday = (from_days - from_dow) * 86400;
+
+    int init_seed = seed;
+    if (init_seed < 0) {
+        SQLite::Statement qs(db_.get(), "SELECT seed FROM channel WHERE channel_id=?");
+        qs.bind(1, channel_id);
+        if (qs.executeStep()) init_seed = qs.getColumn(0).getInt();
+    }
+
+    Xoshiro256  rng(init_seed >= 0 ? static_cast<uint64_t>(init_seed) : 0ULL);
+    CursorState cs;
+    GenerateResult result;
+
+    bool has_anchor = false;
+    {
+        SQLite::Statement qa(db_.get(),
+            "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+        qa.bind(1, channel_id);
+        if (qa.executeStep() && !qa.getColumn(0).isNull()) {
+            try {
+                auto aj  = json::parse(qa.getColumn(0).getString());
+                auto key = std::to_string(week_monday);
+                if (aj.contains(key) && aj[key].is_object()) {
+                    const auto& snap = aj[key];
+                    has_anchor = true;
+                    if (snap.contains("rng"))
+                        rng = Xoshiro256::deserialize(snap["rng"].get<std::string>());
+                    cs = CursorState::deserializeCursors(snap.dump());
+                }
+            } catch (...) {}
+        }
+    }
+
+    // Bootstrap anchor captured in result.anchors for commit() to persist.
+    if (!has_anchor) {
+        result.anchors[week_monday] = json{
+            {"rng",          rng.serialize()},
+            {"cursors",      json::array()},
+            {"block_states", json::array()}
+        }.dump();
+    }
+
+    const int proj_hours = static_cast<int>((horizon - week_monday) / 3600) + 2;
+    result.items = engine_.project(channel_id, week_monday, proj_hours, cs, rng,
+                                   &result.anchors);
+    result.cursor_state = std::move(cs);
+
+    // Detect divergences: new items that differ from what is currently committed.
+    {
+        std::unordered_map<std::time_t, std::pair<std::string, std::string>> existing;
+        SQLite::Statement eq(db_.get(), R"(
+            SELECT wall_clock_start, item_type, item_id
+            FROM scheduled_program
+            WHERE channel_id = ?
+              AND wall_clock_end   > ?
+              AND wall_clock_start < ?
+        )");
+        eq.bind(1, channel_id);
+        eq.bind(2, static_cast<int64_t>(from));
+        eq.bind(3, static_cast<int64_t>(horizon));
+        while (eq.executeStep())
+            existing[static_cast<std::time_t>(eq.getColumn(0).getInt64())] = {
+                eq.getColumn(1).getString(), eq.getColumn(2).getString()
+            };
+
+        for (const auto& item : result.items) {
+            std::time_t ws = item.wall_clock_start_ms / 1000;
+            if (ws < from) continue;
+            auto it = existing.find(ws);
+            if (it != existing.end() &&
+                (it->second.first != item.item_type || it->second.second != item.item_id))
+            {
+                result.divergences.push_back({
+                    ws,
+                    item.wall_clock_end_ms / 1000,
+                    item.block_id,
+                    it->second.first, it->second.second,
+                    item.item_type,   item.item_id
+                });
+            }
+        }
+    }
+
+    if (epgDebug())
+        std::cout << "[epg] generate() channel=" << channel_id
+                  << " items=" << result.items.size()
+                  << " divergences=" << result.divergences.size() << '\n';
+
+    return result;
+}
+
+void EPGMaterializer::commit(
+    const std::string& channel_id, std::time_t horizon, GenerateResult& result)
+{
+    using json = nlohmann::json;
+    auto now   = static_cast<int64_t>(std::time(nullptr));
+
+    auto persistAnchors = [&]() {
+        if (result.anchors.empty()) return;
+        json existing = json::object();
+        {
+            SQLite::Statement qa(db_.get(),
+                "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+            qa.bind(1, channel_id);
+            if (qa.executeStep() && !qa.getColumn(0).isNull()) {
+                try { existing = json::parse(qa.getColumn(0).getString()); } catch (...) {}
+            }
+        }
+        for (auto& [ts, snap_str] : result.anchors) {
+            try { existing[std::to_string(ts)] = json::parse(snap_str); } catch (...) {}
+        }
+        SQLite::Statement upd(db_.get(),
+            "UPDATE channel SET anchor_hashes=? WHERE channel_id=?");
+        upd.bind(1, existing.dump()); upd.bind(2, channel_id); upd.exec();
+    };
+
+    db_.get().exec("SAVEPOINT sp_commit");
+    SQLite::Statement ins(db_.get(), R"(
+        INSERT OR IGNORE INTO scheduled_program
+            (channel_id, block_id, item_type, item_id,
+             wall_clock_start, wall_clock_end, cursor_json, created_at, is_filler)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    )");
+
+    int inserted = 0, skipped = 0;
+    for (const auto& item : result.items) {
+        std::time_t item_end = item.wall_clock_end_ms / 1000;
+        if (item_end > horizon + 7200) break;
+        ins.bind(1, channel_id);
+        if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
+        ins.bind(3, item.item_type);
+        ins.bind(4, item.item_id);
+        ins.bind(5, item.wall_clock_start_ms / 1000);
+        ins.bind(6, item_end);
+        ins.bind(7, item.cursor_json);
+        ins.bind(8, now);
+        ins.bind(9, item.is_filler ? 1 : 0);
+        ins.exec();
+        if (db_.get().getChanges() > 0) ++inserted; else ++skipped;
+        ins.reset();
+    }
+    result.cursor_state.applyToDB(db_, channel_id);
+    db_.get().exec("RELEASE SAVEPOINT sp_commit");
+    persistAnchors();
+
+    if (epgDebug())
+        std::cout << "[epg] commit() channel=" << channel_id
+                  << " inserted=" << inserted << " skipped=" << skipped << '\n';
+}
+
 void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                                        std::time_t from, int horizon_hours,
                                        int seed) {
-    // ── on_play mode: cursors advance only on confirmed playback. ─────────────
-    // project() runs inside a SAVEPOINT so its cursor/history writes are rolled
-    // back; only the generated scheduled_program rows are committed. The EPG is
-    // always regenerated from the current cursor position (no caching between plays).
+    // ── on_play mode: regenerate from current cursor position on every call. ──
     {
         bool on_play = false;
         {
-            SQLite::Statement q(db_.get(), "SELECT advance_mode FROM channel WHERE channel_id=?");
+            SQLite::Statement q(db_.get(),
+                "SELECT advance_mode FROM channel WHERE channel_id=?");
             q.bind(1, channel_id);
             if (q.executeStep()) on_play = (q.getColumn(0).getString() == "on_play");
         }
         if (on_play) {
             auto now_ts = static_cast<int64_t>(std::time(nullptr));
-
-            // Clear the stale schedule and unconfirmed history — the EPG always
-            // reflects the current cursor position, not a clock-driven plan.
             {
                 SQLite::Statement d1(db_.get(),
                     "DELETE FROM scheduled_program WHERE channel_id=?");
                 d1.bind(1, channel_id); d1.exec();
             }
-            {
-                SQLite::Statement d2(db_.get(),
-                    "DELETE FROM play_history WHERE channel_id=? AND is_scheduled=1");
-                d2.bind(1, channel_id); d2.exec();
-            }
+            CursorState cs = CursorState::loadFromDB(db_, channel_id);
+            Xoshiro256  onplay_rng(seed >= 0 ? static_cast<uint64_t>(seed) : 0);
+            auto items = engine_.project(channel_id, from, horizon_hours, cs, onplay_rng);
 
-            // Generate items with project() inside a SAVEPOINT — cursor advances
-            // and play_history writes are rolled back; items stay in memory.
-            db_.get().exec("SAVEPOINT onplay_gen_sp");
-            Xoshiro256 onplay_rng(seed >= 0 ? static_cast<uint64_t>(seed) : 0);
-            auto items = engine_.project(channel_id, from, horizon_hours, onplay_rng);
-            db_.get().exec("ROLLBACK TO SAVEPOINT onplay_gen_sp");
-            db_.get().exec("RELEASE SAVEPOINT onplay_gen_sp");
-
-            // Commit only the scheduled_program entries (including filler blocks).
             db_.get().exec("SAVEPOINT sp_ens");
             SQLite::Statement ins(db_.get(), R"(
                 INSERT OR IGNORE INTO scheduled_program
@@ -101,265 +244,31 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                 ins.bind(7, item.cursor_json);
                 ins.bind(8, now_ts);
                 ins.bind(9, item.is_filler ? 1 : 0);
-                ins.exec();
-                ins.reset();
+                ins.exec(); ins.reset();
             }
             db_.get().exec("RELEASE SAVEPOINT sp_ens");
 
             if (epgDebug())
                 std::cout << "[epg] ensureScheduled on_play channel=" << channel_id
-                          << " => " << items.size() << " items projected\n";
+                          << " => " << items.size() << " items\n";
             return;
         }
     }
-    // ── scheduled mode (default) ──────────────────────────────────────────────
 
-    std::time_t horizon = from + static_cast<std::time_t>(horizon_hours) * 3600;
-    auto now = static_cast<int64_t>(std::time(nullptr));
+    // ── scheduled mode ───────────────────────────────────────────────────────
+    const std::time_t horizon = from + static_cast<std::time_t>(horizon_hours) * 3600;
 
     if (epgDebug())
         std::cout << "[epg] ensureScheduled channel=" << channel_id
                   << " from=" << from << " horizon_hours=" << horizon_hours << '\n';
 
-    // Resolve seed (explicit arg wins; otherwise read from channel table).
-    int init_seed = seed;
-    if (init_seed < 0) {
-        SQLite::Statement qs(db_.get(),
-            "SELECT seed FROM channel WHERE channel_id=?");
-        qs.bind(1, channel_id);
-        if (qs.executeStep()) init_seed = qs.getColumn(0).getInt();
+    auto result = generate(channel_id, from, horizon_hours, seed);
+    if (result.items.empty()) {
+        std::cout << "[epg] WARNING: generate() returned 0 items for channel="
+                  << channel_id << " — EPG will be empty\n";
+        return;
     }
-
-    // Monday midnight UTC for the week that contains `from`.
-    const std::time_t from_days        = from / 86400;
-    const std::time_t from_dow         = (from_days + 3) % 7;  // 0 = Mon
-    const std::time_t from_week_monday = (from_days - from_dow) * 86400;
-
-    // Check whether the schedule is empty (first run, or post-clearScheduleCache).
-    bool schedule_empty = false;
-    {
-        SQLite::Statement qe(db_.get(),
-            "SELECT 1 FROM scheduled_program WHERE channel_id=? LIMIT 1");
-        qe.bind(1, channel_id);
-        schedule_empty = !qe.executeStep();
-    }
-
-    Xoshiro256 rng(init_seed >= 0 ? static_cast<uint64_t>(init_seed) : 0ULL);
-    // When rebuilding from scratch, always replay from Monday midnight so both the
-    // production path and the SAVEPOINT preview start from the same position and
-    // produce the same episode order at the same wall-clock times.
-    std::time_t rebuild_from = schedule_empty ? from_week_monday : from;
-
-    // Restore RNG + (when rebuilding) cursor/block_state from the stored week anchor.
-    bool has_week_anchor = false;
-    {
-        using json = nlohmann::json;
-        SQLite::Statement qa(db_.get(),
-            "SELECT anchor_hashes FROM channel WHERE channel_id=?");
-        qa.bind(1, channel_id);
-        if (qa.executeStep() && !qa.getColumn(0).isNull()) {
-            try {
-                auto aj  = json::parse(qa.getColumn(0).getString());
-                auto key = std::to_string(from_week_monday);
-                if (aj.contains(key) && aj[key].is_object()) {
-                    const auto& snap = aj[key];
-                    has_week_anchor  = true;
-                    if (snap.contains("rng"))
-                        rng = Xoshiro256::deserialize(snap["rng"].get<std::string>());
-
-                    if (schedule_empty) {
-                        if (snap.contains("cursors")) {
-                            SQLite::Statement dc(db_.get(),
-                                "DELETE FROM media_cursor"
-                                " WHERE cursor_scope='channel' AND scope_id=?");
-                            dc.bind(1, channel_id); dc.exec();
-                            for (const auto& c : snap["cursors"]) {
-                                SQLite::Statement ic(db_.get(), R"(
-                                    INSERT OR REPLACE INTO media_cursor
-                                        (content_type, content_id, cursor_scope, scope_id,
-                                         position, episode_id, updated_at)
-                                    VALUES (?,?,?,?,?,?,strftime('%s','now'))
-                                )");
-                                ic.bind(1, c["content_type"].get<std::string>());
-                                ic.bind(2, c["content_id"].get<std::string>());
-                                ic.bind(3, c["cursor_scope"].get<std::string>());
-                                ic.bind(4, c["scope_id"].get<std::string>());
-                                ic.bind(5, c["position"].get<int>());
-                                std::string eid = c.value("episode_id", "");
-                                if (eid.empty()) ic.bind(6); else ic.bind(6, eid);
-                                ic.exec();
-                            }
-                        }
-
-                        if (snap.contains("block_states")) {
-                            SQLite::Statement dbs(db_.get(),
-                                "DELETE FROM block_state WHERE channel_id=?");
-                            dbs.bind(1, channel_id); dbs.exec();
-                            for (const auto& bs : snap["block_states"]) {
-                                SQLite::Statement ibs(db_.get(), R"(
-                                    INSERT OR IGNORE INTO block_state
-                                        (block_id, channel_id, content_position,
-                                         runs_remaining, consecutive_count)
-                                    VALUES (?,?,?,?,?)
-                                )");
-                                ibs.bind(1, bs["block_id"].get<std::string>());
-                                ibs.bind(2, channel_id);
-                                ibs.bind(3, bs["content_position"].get<int>());
-                                ibs.bind(4, bs["runs_remaining"].get<int>());
-                                ibs.bind(5, bs["consecutive_count"].get<int>());
-                                ibs.exec();
-                            }
-                        }
-                    }
-                }
-            } catch (...) {}
-        }
-    }
-
-    std::map<std::time_t, std::string> new_anchors;
-
-    // Merge new_anchors into the channel's anchor_hashes column and persist.
-    // Called before every early return so anchors are never silently discarded.
-    auto persistAnchors = [&]() {
-        if (new_anchors.empty()) return;
-        using json = nlohmann::json;
-        json existing = json::object();
-        {
-            SQLite::Statement qa(db_.get(),
-                "SELECT anchor_hashes FROM channel WHERE channel_id=?");
-            qa.bind(1, channel_id);
-            if (qa.executeStep() && !qa.getColumn(0).isNull()) {
-                try { existing = json::parse(qa.getColumn(0).getString()); } catch (...) {}
-            }
-        }
-        for (auto& [ts, snap_str] : new_anchors) {
-            try { existing[std::to_string(ts)] = json::parse(snap_str); } catch (...) {}
-        }
-        SQLite::Statement upd(db_.get(),
-            "UPDATE channel SET anchor_hashes=? WHERE channel_id=?");
-        upd.bind(1, existing.dump());
-        upd.bind(2, channel_id);
-        upd.exec();
-    };
-
-    // No anchor yet for this week: clear stale cursor/block_state rows (left over from a
-    // previous projection that started from an arbitrary `from`) so the project() init
-    // guard fires fresh and re-seeds the cursor deterministically from the RNG.
-    // Then bootstrap the Monday midnight anchor from the current RNG state so any
-    // future rebuild — production or SAVEPOINT preview — restores the same starting point.
-    if (schedule_empty && !has_week_anchor) {
-        {
-            SQLite::Statement dc(db_.get(),
-                "DELETE FROM media_cursor WHERE cursor_scope='channel' AND scope_id=?");
-            dc.bind(1, channel_id); dc.exec();
-        }
-        {
-            SQLite::Statement dbs(db_.get(),
-                "DELETE FROM block_state WHERE channel_id=?");
-            dbs.bind(1, channel_id); dbs.exec();
-        }
-        using json = nlohmann::json;
-        new_anchors[from_week_monday] = json{
-            {"rng",          rng.serialize()},
-            {"cursors",      json::array()},
-            {"block_states", json::array()}
-        }.dump();
-    }
-
-    // Loop until the cache fully covers the horizon. project() is capped at
-    // MAX_ITEMS per call; for channels with short clips this loop re-extends
-    // from the tail on each pass rather than leaving a gap.
-    for (int guard = 0; guard < 200; ++guard) {
-        // Re-query the tail each pass — the previous pass may have added rows.
-        std::time_t last_end = 0;
-        {
-            SQLite::Statement q(db_.get(), R"(
-                SELECT wall_clock_end FROM scheduled_program
-                WHERE channel_id = ?
-                ORDER BY wall_clock_end DESC LIMIT 1
-            )");
-            q.bind(1, channel_id);
-            if (q.executeStep())
-                last_end = static_cast<std::time_t>(q.getColumn(0).getInt64());
-        }
-
-        if (epgDebug())
-            std::cout << "[epg]   guard=" << guard
-                      << " last_end=" << last_end << " horizon=" << horizon << '\n';
-
-        if (last_end >= horizon) {
-            if (epgDebug()) std::cout << "[epg]   cache fully covers horizon — done\n";
-            persistAnchors();
-            return;
-        }
-
-        std::time_t extend_from = (last_end > rebuild_from) ? last_end : rebuild_from;
-        int extend_hours = static_cast<int>((horizon - extend_from) / 3600) + 2;
-
-        if (epgDebug())
-            std::cout << "[epg]   calling project() extend_from=" << extend_from
-                      << " extend_hours=" << extend_hours << '\n';
-
-        // project() writes play_history (is_scheduled=1) and advances DB cursors
-        // as it schedules each item; DB state is the authoritative resume point.
-        auto items = engine_.project(channel_id, extend_from, extend_hours, rng, &new_anchors);
-
-        if (epgDebug())
-            std::cout << "[epg]   project() returned " << items.size() << " items\n";
-
-        if (items.empty()) {
-            std::cout << "[epg] WARNING: project() returned 0 items for channel="
-                      << channel_id << " — EPG will be empty\n";
-            persistAnchors();
-            return;
-        }
-
-        db_.get().exec("SAVEPOINT sp_ens");
-        SQLite::Statement ins(db_.get(), R"(
-            INSERT OR IGNORE INTO scheduled_program
-                (channel_id, block_id, item_type, item_id,
-                 wall_clock_start, wall_clock_end, cursor_json, created_at, is_filler)
-            VALUES (?,?,?,?,?,?,?,?,?)
-        )");
-
-        bool any_new = false;
-        int inserted = 0, skipped_dup = 0, skipped_horizon = 0;
-        for (const auto& item : items) {
-            std::time_t item_end = item.wall_clock_end_ms / 1000;
-            if (item_end > horizon + 7200) { ++skipped_horizon; break; }
-
-            ins.bind(1, channel_id);
-            if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
-            ins.bind(3, item.item_type);
-            ins.bind(4, item.item_id);
-            ins.bind(5, item.wall_clock_start_ms / 1000);
-            ins.bind(6, item_end);
-            ins.bind(7, item.cursor_json);
-            ins.bind(8, now);
-            ins.bind(9, item.is_filler ? 1 : 0);
-            ins.exec();
-            if (db_.get().getChanges() > 0) { any_new = true; ++inserted; }
-            else ++skipped_dup;
-            ins.reset();
-        }
-        db_.get().exec("RELEASE SAVEPOINT sp_ens");
-
-        if (epgDebug())
-            std::cout << "[epg]   inserted=" << inserted
-                      << " dup_skipped=" << skipped_dup
-                      << " horizon_skipped=" << skipped_horizon
-                      << " any_new=" << any_new << '\n';
-
-        if (!any_new) {
-            if (epgDebug())
-                std::cout << "[epg]   all items already cached — done\n";
-            persistAnchors();
-            return;
-        }
-    }
-
-    // Fallback: 200 guard iterations completed without fully covering horizon.
-    persistAnchors();
+    commit(channel_id, horizon, result);
 }
 
 void EPGMaterializer::notifyPlayed(const std::string& channel_id,
@@ -392,16 +301,20 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
                                   q.getColumn(2).getInt() });
     }
 
-    std::time_t now     = std::time(nullptr);
-    std::time_t horizon = now + static_cast<std::time_t>(horizon_hours) * 3600;
+    std::time_t now            = std::time(nullptr);
+    std::time_t today_midnight = (now / 86400) * 86400;
+    std::time_t horizon        = now + static_cast<std::time_t>(horizon_hours) * 3600;
 
     if (epgDebug())
         std::cout << "[epg] generateXMLTV: " << channels.size()
                   << " channel(s), horizon_hours=" << horizon_hours << '\n';
 
-    // Extend cache for every channel before building the XML.
+    // Extend cache from today midnight so programs that already aired today are
+    // present in scheduled_program and appear in the XMLTV output.  Callers that
+    // schedule from `now` leave a gap from midnight to the current moment.
+    int hours_from_midnight = static_cast<int>((horizon - today_midnight) / 3600) + 1;
     for (const auto& ch : channels)
-        ensureScheduled(ch.id, now, horizon_hours);
+        ensureScheduled(ch.id, today_midnight, hours_from_midnight);
 
     std::ostringstream xml;
     xml << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -453,7 +366,7 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
             ORDER BY c.wall_clock_start
         )");
         q.bind(1, ch.id);
-        q.bind(2, static_cast<int64_t>(now));
+        q.bind(2, static_cast<int64_t>(today_midnight));
         q.bind(3, static_cast<int64_t>(horizon));
 
         int prog_count = 0;

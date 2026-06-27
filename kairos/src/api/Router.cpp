@@ -13,6 +13,7 @@
 #include "services/ArrService.h"
 #include "services/AuthService.h"
 #include "services/BlockService.h"
+#include "services/ChapterService.h"
 #include "services/ChannelService.h"
 #include "services/KairosService.h"
 #include "services/ConfigService.h"
@@ -22,6 +23,7 @@
 #include "services/PlaylistService.h"
 #include "services/SchedulerService.h"
 #include "services/SourceService.h"
+#include "services/TimeslotService.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 
@@ -100,11 +102,13 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<KairosService>(ctx));
 	services_.push_back(std::make_unique<BlockService>(ctx));
 	services_.push_back(std::make_unique<ContentService>(ctx));
+	services_.push_back(std::make_unique<ChapterService>(ctx));
 	services_.push_back(std::make_unique<PlaylistService>(ctx));
 	services_.push_back(std::make_unique<FillerService>(ctx));
 	services_.push_back(std::make_unique<ActivityService>(ctx));
 	services_.push_back(std::make_unique<DownloadService>(ctx));
 	services_.push_back(std::make_unique<SchedulerService>(ctx));
+	services_.push_back(std::make_unique<TimeslotService>(ctx));
 
 	for (auto& svc : services_) svc->registerRoutes(svr_);
 

@@ -16,6 +16,9 @@ public:
     // Load all blocks for a channel, fully populated with content + filler_entries.
     std::vector<Block> loadBlocks(const std::string& channel_id);
 
+    // Load a single block by block_id, fully populated. Returns nullopt if not found.
+    std::optional<Block> loadBlock(const std::string& block_id);
+
     // Channel scheduling metadata.
     std::string channelTimezone(const std::string& channel_id);
     std::string channelAdvanceMode(const std::string& channel_id);

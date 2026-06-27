@@ -30,6 +30,14 @@ public:
     int  getThreadCount() const;
     void setThreadCount(int n);
 
+    // Sync chapters for a single item from all available sources (file + source API).
+    // Called by ChapterService for per-item sync endpoint.
+    void syncItemChapters(IMediaSource& src,
+                          const std::string& media_type,
+                          const std::string& kairos_id,
+                          const std::string& external_id,
+                          const std::string& file_path);
+
 private:
     // ID resolution: looks up existing kairos_id in source_mapping, or generates one
     std::string resolveId(const std::string& item_type,
@@ -53,6 +61,10 @@ private:
                     const std::string& source_id,
                     const std::string& library_id,
                     const std::string& external_lib_id);
+
+    // Chapter sync — called at end of syncSource if chapter_sync_enabled.
+    // File chapters (ffprobe) only; per-item source API sync is on-demand via API.
+    void syncChaptersFromFiles(const std::string& source_id);
 
     std::unique_ptr<IMediaSource> buildSource(const std::string& source_id,
                                              const std::string& source_type,

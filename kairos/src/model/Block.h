@@ -3,8 +3,43 @@
 #include <string>
 #include <vector>
 
-enum class BlockType   { Episode, Premier, Filler, Movie };
-enum class Advancement { Sequential, Shuffle, SmartShuffle, RerunShuffle, RerunSmart };
+enum class BlockType   { Episode, Filler, Movie, Timeslot };
+
+// ── Timeslot models ───────────────────────────────────────────────────────────
+
+enum class SlotOverflow { Cutoff, Finish };
+
+// One item in a slot's sequential content queue (e.g. ATLA → Korra).
+struct TimeslotQueueEntry {
+    std::string entry_id;
+    int         queue_index            = 0;
+    std::string content_type;           // "show" | "movie"
+    std::string content_id;
+    std::string premiere_date;          // "YYYY-MM-DD"; empty = advance on exhaustion
+    // What to do when the previous queue item is exhausted but premiere_date hasn't arrived.
+    std::string pre_premiere_behavior  = "replay_previous"; // "replay_previous"|"filler"|"skip"
+};
+
+// A single named time-slot within a timeslot block (e.g. the Naruto slot at 11pm).
+struct TimeslotSlot {
+    std::string slot_id;
+    std::string block_id;
+    int         slot_index         = 0;
+    int         slot_offset_mins   = 0;   // minutes from block start_time
+    int         slot_duration_mins = 60;
+    SlotOverflow overflow          = SlotOverflow::Cutoff;
+    // Per-slot edge controls
+    int         late_start_mins    = 5;
+    int         early_start_secs   = 0;
+    int         align_to_mins      = 0;
+    std::string start_scope        = "block"; // "block"|"episode"
+    // Persistent cursor — loaded from DB, tracked in CursorState during projection
+    int         queue_pos          = 0;
+    int         episode_pos        = 0;
+    std::vector<TimeslotQueueEntry> queue;
+};
+enum class PlayStyle   { Standard, Rerun };
+enum class Advancement { Sequential, Shuffle, Smart };
 enum class CursorScope { Global, Channel, Block };
 
 // What to do when a show in a rerun block has no play history on this channel.
@@ -17,16 +52,23 @@ enum class NoHistoryBehavior {
 
 // String → enum parsers (inline so both BlockRepository and RuleEngine can use them).
 inline BlockType parseBlockType(const std::string& s) {
-    if (s == "premier") return BlockType::Premier;
-    if (s == "filler")  return BlockType::Filler;
-    if (s == "movie")   return BlockType::Movie;
+    if (s == "filler")   return BlockType::Filler;
+    if (s == "movie")    return BlockType::Movie;
+    if (s == "timeslot") return BlockType::Timeslot;
     return BlockType::Episode;
 }
+
+inline SlotOverflow parseSlotOverflow(const std::string& s) {
+    if (s == "finish") return SlotOverflow::Finish;
+    return SlotOverflow::Cutoff;
+}
+inline PlayStyle parsePlayStyle(const std::string& s) {
+    if (s == "rerun") return PlayStyle::Rerun;
+    return PlayStyle::Standard;
+}
 inline Advancement parseAdvancement(const std::string& s) {
-    if (s == "shuffle")       return Advancement::Shuffle;
-    if (s == "smart_shuffle") return Advancement::SmartShuffle;
-    if (s == "rerun_shuffle") return Advancement::RerunShuffle;
-    if (s == "rerun_smart")   return Advancement::RerunSmart;
+    if (s == "shuffle") return Advancement::Shuffle;
+    if (s == "smart")   return Advancement::Smart;
     return Advancement::Sequential;
 }
 inline CursorScope parseCursorScope(const std::string& s) {
@@ -81,7 +123,7 @@ struct Block {
     std::optional<std::string> end_time;
     int                        priority            = 0;
     int                        program_count       = 0;
-    std::string                max_content_rating;
+    PlayStyle                  play_style          = PlayStyle::Standard;
     Advancement                advancement         = Advancement::Sequential;
     CursorScope                cursor_scope        = CursorScope::Block;
     int                        late_start_mins     = 0;
@@ -104,6 +146,7 @@ struct Block {
     std::string                interstitial_content_type;
     std::string                interstitial_content_id;
     int                        interstitial_every_n = 1;
-    std::vector<BlockContent>  content;
+    std::vector<BlockContent>     content;
     std::vector<BlockFillerEntry> filler_entries; // empty = inherit channel default
+    std::vector<TimeslotSlot>     slots;           // populated only when block_type==Timeslot
 };

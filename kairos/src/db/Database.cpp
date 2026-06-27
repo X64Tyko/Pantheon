@@ -952,6 +952,243 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_session_user ON session(user_id);
 )SQL", false }
 
+,
+
+// ── v41: chapter table for per-media segment metadata (intros, ad breaks,
+//         credits, chapter points). source tracks where data came from;
+//         locked=1 means a manual edit that survives re-syncs.
+{ 41, R"SQL(
+    CREATE TABLE chapter (
+        chapter_id   TEXT    PRIMARY KEY,
+        media_type   TEXT    NOT NULL,
+        media_id     TEXT    NOT NULL,
+        chapter_type TEXT    NOT NULL DEFAULT 'unclassified',
+        title        TEXT    NOT NULL DEFAULT '',
+        start_ms     INTEGER NOT NULL,
+        end_ms       INTEGER NOT NULL,
+        position     INTEGER NOT NULL,
+        source       TEXT    NOT NULL DEFAULT 'manual',
+        locked       INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX idx_chapter_media ON chapter(media_type, media_id, position);
+)SQL", false }
+
+,
+
+// ── v42: Block model refactor.
+//   • Drop max_content_rating (unused) and config_json (legacy).
+//   • Add play_style (standard|rerun) — splits the old compound advancement values.
+//   • Remap advancement: smart_shuffle→smart, rerun_shuffle→shuffle, rerun_smart→smart.
+//   • Collapse block_type 'premier' → 'episode' (Premier had no remaining unique behaviour).
+{ 42, R"SQL(
+    CREATE TABLE block_v42 (
+        block_id                  TEXT    PRIMARY KEY,
+        channel_id                TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        block_type                TEXT    NOT NULL DEFAULT 'episode'
+                                  CHECK(block_type IN ('episode','filler','movie')),
+        day_mask                  INTEGER NOT NULL DEFAULT 127,
+        start_time                TEXT    NOT NULL DEFAULT '00:00',
+        end_time                  TEXT,
+        priority                  INTEGER NOT NULL DEFAULT 0,
+        program_count             INTEGER NOT NULL DEFAULT 0,
+        play_style                TEXT    NOT NULL DEFAULT 'standard'
+                                  CHECK(play_style IN ('standard','rerun')),
+        advancement               TEXT    NOT NULL DEFAULT 'sequential'
+                                  CHECK(advancement IN ('sequential','shuffle','smart')),
+        cursor_scope              TEXT    NOT NULL DEFAULT 'block'
+                                  CHECK(cursor_scope IN ('global','channel','block')),
+        late_start_mins           INTEGER NOT NULL DEFAULT 0,
+        align_to_mins             INTEGER NOT NULL DEFAULT 0,
+        inter_filler              INTEGER NOT NULL DEFAULT 0,
+        early_start_secs          INTEGER NOT NULL DEFAULT 0,
+        filler_selection          TEXT    NOT NULL DEFAULT 'round_robin',
+        smart_pct                 INTEGER NOT NULL DEFAULT 30,
+        start_scope               TEXT    NOT NULL DEFAULT 'block',
+        no_history_behavior       TEXT    NOT NULL DEFAULT 'normal'
+                                  CHECK(no_history_behavior IN ('normal','fallback_all','exclude','filler','skip')),
+        max_consecutive_episodes  INTEGER NOT NULL DEFAULT 0,
+        name                      TEXT    NOT NULL DEFAULT '',
+        intro_content_type        TEXT    NOT NULL DEFAULT '',
+        intro_content_id          TEXT    NOT NULL DEFAULT '',
+        outro_content_type        TEXT    NOT NULL DEFAULT '',
+        outro_content_id          TEXT    NOT NULL DEFAULT '',
+        interstitial_content_type TEXT    NOT NULL DEFAULT '',
+        interstitial_content_id   TEXT    NOT NULL DEFAULT '',
+        interstitial_every_n      INTEGER NOT NULL DEFAULT 1,
+        snap_to_group_start       INTEGER NOT NULL DEFAULT 1
+    );
+
+    INSERT INTO block_v42 (
+        block_id, channel_id,
+        block_type,
+        day_mask, start_time, end_time, priority, program_count,
+        play_style,
+        advancement,
+        cursor_scope, late_start_mins, align_to_mins, inter_filler,
+        early_start_secs, filler_selection, smart_pct, start_scope,
+        no_history_behavior, max_consecutive_episodes, name,
+        intro_content_type, intro_content_id,
+        outro_content_type, outro_content_id,
+        interstitial_content_type, interstitial_content_id, interstitial_every_n,
+        snap_to_group_start
+    )
+    SELECT
+        block_id, channel_id,
+        CASE WHEN block_type = 'premier' THEN 'episode' ELSE block_type END,
+        day_mask, start_time, end_time, priority, program_count,
+        CASE WHEN advancement IN ('rerun_shuffle','rerun_smart') THEN 'rerun' ELSE 'standard' END,
+        CASE
+            WHEN advancement = 'smart_shuffle' THEN 'smart'
+            WHEN advancement = 'rerun_shuffle' THEN 'shuffle'
+            WHEN advancement = 'rerun_smart'   THEN 'smart'
+            ELSE advancement
+        END,
+        cursor_scope, late_start_mins, align_to_mins, inter_filler,
+        early_start_secs, filler_selection, smart_pct, start_scope,
+        no_history_behavior, max_consecutive_episodes, name,
+        intro_content_type, intro_content_id,
+        outro_content_type, outro_content_id,
+        interstitial_content_type, interstitial_content_id, interstitial_every_n,
+        snap_to_group_start
+    FROM block;
+
+    DROP TABLE block;
+    ALTER TABLE block_v42 RENAME TO block;
+    CREATE INDEX idx_block_channel ON block(channel_id, priority);
+)SQL", true }
+
+,
+
+// ── v43: Timeslot block type.
+//   • Extend block_type CHECK to allow 'timeslot'.
+//   • Add timeslot_slot and timeslot_slot_queue tables.
+{ 43, R"SQL(
+    CREATE TABLE block_v43 (
+        block_id                  TEXT    PRIMARY KEY,
+        channel_id                TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        block_type                TEXT    NOT NULL DEFAULT 'episode'
+                                  CHECK(block_type IN ('episode','filler','movie','timeslot')),
+        day_mask                  INTEGER NOT NULL DEFAULT 127,
+        start_time                TEXT    NOT NULL DEFAULT '00:00',
+        end_time                  TEXT,
+        priority                  INTEGER NOT NULL DEFAULT 0,
+        program_count             INTEGER NOT NULL DEFAULT 0,
+        play_style                TEXT    NOT NULL DEFAULT 'standard'
+                                  CHECK(play_style IN ('standard','rerun')),
+        advancement               TEXT    NOT NULL DEFAULT 'sequential'
+                                  CHECK(advancement IN ('sequential','shuffle','smart')),
+        cursor_scope              TEXT    NOT NULL DEFAULT 'block'
+                                  CHECK(cursor_scope IN ('global','channel','block')),
+        late_start_mins           INTEGER NOT NULL DEFAULT 0,
+        align_to_mins             INTEGER NOT NULL DEFAULT 0,
+        inter_filler              INTEGER NOT NULL DEFAULT 0,
+        early_start_secs          INTEGER NOT NULL DEFAULT 0,
+        filler_selection          TEXT    NOT NULL DEFAULT 'round_robin',
+        smart_pct                 INTEGER NOT NULL DEFAULT 30,
+        start_scope               TEXT    NOT NULL DEFAULT 'block',
+        no_history_behavior       TEXT    NOT NULL DEFAULT 'normal'
+                                  CHECK(no_history_behavior IN ('normal','fallback_all','exclude','filler','skip')),
+        max_consecutive_episodes  INTEGER NOT NULL DEFAULT 0,
+        name                      TEXT    NOT NULL DEFAULT '',
+        intro_content_type        TEXT    NOT NULL DEFAULT '',
+        intro_content_id          TEXT    NOT NULL DEFAULT '',
+        outro_content_type        TEXT    NOT NULL DEFAULT '',
+        outro_content_id          TEXT    NOT NULL DEFAULT '',
+        interstitial_content_type TEXT    NOT NULL DEFAULT '',
+        interstitial_content_id   TEXT    NOT NULL DEFAULT '',
+        interstitial_every_n      INTEGER NOT NULL DEFAULT 1,
+        snap_to_group_start       INTEGER NOT NULL DEFAULT 1
+    );
+
+    INSERT INTO block_v43 SELECT * FROM block;
+    DROP TABLE block;
+    ALTER TABLE block_v43 RENAME TO block;
+    CREATE INDEX idx_block_channel ON block(channel_id, priority);
+
+    CREATE TABLE timeslot_slot (
+        slot_id            TEXT    PRIMARY KEY,
+        block_id           TEXT    NOT NULL REFERENCES block(block_id) ON DELETE CASCADE,
+        slot_index         INTEGER NOT NULL,
+        slot_offset_mins   INTEGER NOT NULL DEFAULT 0,
+        slot_duration_mins INTEGER NOT NULL DEFAULT 60,
+        overflow           TEXT    NOT NULL DEFAULT 'cutoff' CHECK(overflow IN ('cutoff','finish')),
+        late_start_mins    INTEGER NOT NULL DEFAULT 5,
+        early_start_secs   INTEGER NOT NULL DEFAULT 0,
+        align_to_mins      INTEGER NOT NULL DEFAULT 0,
+        start_scope        TEXT    NOT NULL DEFAULT 'block' CHECK(start_scope IN ('block','episode')),
+        queue_pos          INTEGER NOT NULL DEFAULT 0,
+        episode_pos        INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(block_id, slot_index)
+    );
+
+    CREATE TABLE timeslot_slot_queue (
+        entry_id               TEXT    PRIMARY KEY,
+        slot_id                TEXT    NOT NULL REFERENCES timeslot_slot(slot_id) ON DELETE CASCADE,
+        queue_index            INTEGER NOT NULL,
+        content_type           TEXT    NOT NULL CHECK(content_type IN ('show','movie')),
+        content_id             TEXT    NOT NULL,
+        premiere_date          TEXT,
+        pre_premiere_behavior  TEXT    NOT NULL DEFAULT 'replay_previous'
+                               CHECK(pre_premiere_behavior IN ('replay_previous','filler','skip')),
+        UNIQUE(slot_id, queue_index)
+    );
+
+    CREATE INDEX idx_timeslot_slot_block ON timeslot_slot(block_id, slot_index);
+    CREATE INDEX idx_timeslot_queue_slot ON timeslot_slot_queue(slot_id, queue_index);
+)SQL", true }
+
+,
+
+// ── v44: include season_filter in filler entry unique constraints so the same
+//         show can appear multiple times with different season filters.
+//         Partial unique index on season_filter IS NULL prevents exact duplicates
+//         for unfiltered entries (SQLite treats NULLs as distinct in UNIQUE).
+{ 44, R"SQL(
+    CREATE TABLE block_filler_entry_new (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        block_id       TEXT    NOT NULL REFERENCES block(block_id) ON DELETE CASCADE,
+        filler_list_id TEXT,
+        advancement    TEXT    NOT NULL DEFAULT 'sequential'
+                               CHECK(advancement IN ('sequential','shuffle','sized')),
+        weight         INTEGER NOT NULL DEFAULT 1,
+        position       INTEGER NOT NULL DEFAULT 0,
+        content_type   TEXT    NOT NULL DEFAULT 'filler_list',
+        content_id     TEXT,
+        season_filter  INTEGER,
+        UNIQUE (block_id, content_type, content_id, season_filter)
+    );
+    INSERT INTO block_filler_entry_new
+        SELECT id, block_id, filler_list_id, advancement, weight, position, content_type, content_id, season_filter
+        FROM block_filler_entry;
+    DROP TABLE block_filler_entry;
+    ALTER TABLE block_filler_entry_new RENAME TO block_filler_entry;
+    CREATE INDEX IF NOT EXISTS idx_block_filler_entry ON block_filler_entry(block_id, position);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_block_filler_no_season
+        ON block_filler_entry (block_id, content_type, content_id) WHERE season_filter IS NULL;
+
+    CREATE TABLE channel_filler_entry_new (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id     TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        filler_list_id TEXT    REFERENCES filler_list(filler_list_id) ON DELETE CASCADE,
+        advancement    TEXT    NOT NULL DEFAULT 'sequential'
+                               CHECK(advancement IN ('sequential','shuffle','sized')),
+        weight         INTEGER NOT NULL DEFAULT 1,
+        position       INTEGER NOT NULL DEFAULT 0,
+        content_type   TEXT    NOT NULL DEFAULT 'filler_list',
+        content_id     TEXT,
+        season_filter  INTEGER,
+        UNIQUE (channel_id, content_type, content_id, season_filter)
+    );
+    INSERT INTO channel_filler_entry_new
+        SELECT id, channel_id, filler_list_id, advancement, weight, position, content_type, content_id, season_filter
+        FROM channel_filler_entry;
+    DROP TABLE channel_filler_entry;
+    ALTER TABLE channel_filler_entry_new RENAME TO channel_filler_entry;
+    CREATE INDEX IF NOT EXISTS idx_channel_filler_entry ON channel_filler_entry(channel_id, position);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_filler_no_season
+        ON channel_filler_entry (channel_id, content_type, content_id) WHERE season_filter IS NULL;
+)SQL", false }
+
 }; // kMigrations
 
 } // namespace
