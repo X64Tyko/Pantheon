@@ -1,6 +1,5 @@
 #include "SourceService.h"
 #include "../RouteHelpers.h"
-#include "../../db/Database.h"
 #include "../../db/SourceRepository.h"
 #include "../../log/LogBuffer.h"
 #include "../../source/SyncManager.h"
@@ -198,11 +197,9 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		} else if (kind == "collections") {
 			std::string library_id = req.has_param("library_id") ? req.get_param_value("library_id") : "";
 			if (library_id.empty()) { route::err(res, 400, "library_id required"); return; }
-			SQLite::Statement lq(db_.get(),
-				"SELECT external_lib_id FROM media_library WHERE library_id = ? AND source_id = ?");
-			lq.bind(1, library_id); lq.bind(2, source_id);
-			if (!lq.executeStep()) { route::err(res, 404, "library not found for this source"); return; }
-			items = src->browseCollections(lq.getColumn(0).getString());
+			auto ext_lib_id = SourceRepository(db_).getExternalLibId(library_id, source_id);
+			if (ext_lib_id.empty()) { route::err(res, 404, "library not found for this source"); return; }
+			items = src->browseCollections(ext_lib_id);
 		} else {
 			route::err(res, 400, "unknown kind: " + kind); return;
 		}

@@ -1,9 +1,8 @@
 #include "PlexSyncHelper.h"
 #include "../RouteHelpers.h"
-#include "../../db/Database.h"
 #include "../../db/PlaylistRepository.h"
+#include "../../db/SourceRepository.h"
 #include "../../source/SyncManager.h"
-#include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -26,37 +25,17 @@ void syncPlexListItems(
 	if (!raw) { route::err(res, 502, "failed to fetch items from Plex"); return; }
 
 	int total = static_cast<int>(raw->size());
-	struct Item { std::string item_type; std::string kairos_id; };
-	std::vector<Item> items;
+	SourceRepository sr(db);
+	std::vector<std::pair<std::string, std::string>> items;
 	for (const auto& ri : *raw) {
-		SQLite::Statement lk(db.get(),
-			"SELECT kairos_id FROM source_mapping WHERE source_id=? AND external_id=? AND item_type=?");
-		lk.bind(1, source_id); lk.bind(2, ri.external_id); lk.bind(3, ri.item_type);
-		if (lk.executeStep()) items.push_back({ri.item_type, lk.getColumn(0).getString()});
+		auto kairos_id = sr.resolveKairosId(source_id, ri.external_id, ri.item_type);
+		if (!kairos_id.empty()) items.push_back({ri.item_type, kairos_id});
 	}
 
-	const std::string fk_col   = (list_type == "playlist") ? "playlist_id"   : "filler_list_id";
-	const std::string item_tbl = (list_type == "playlist") ? "playlist_item" : "filler_list_item";
 	try {
-		SQLite::Transaction txn(db.get());
-
-		SQLite::Statement del(db.get(),
-			"DELETE FROM " + item_tbl + " WHERE " + fk_col + " = ?");
-		del.bind(1, list_id); del.exec();
-
-		int pos = 0;
-		for (const auto& item : items) {
-			SQLite::Statement ins(db.get(),
-				"INSERT OR IGNORE INTO " + item_tbl +
-				" (" + fk_col + ", position, item_type, item_id) VALUES (?,?,?,?)");
-			ins.bind(1, list_id); ins.bind(2, pos++);
-			ins.bind(3, item.item_type); ins.bind(4, item.kairos_id);
-			ins.exec();
-		}
-
-		PlaylistRepository(db).upsertPlexLink(list_type, list_id, source_id, external_id, plex_type);
-
-		txn.commit();
+		PlaylistRepository pr(db);
+		pr.replaceListItems(list_type, list_id, items);
+		pr.upsertPlexLink(list_type, list_id, source_id, external_id, plex_type);
 	} catch (const std::exception& e) { route::err(res, 500, e.what()); return; }
 
 	route::ok(res, json{{"synced", (int)items.size()}, {"total", total}}.dump());

@@ -11,6 +11,7 @@ const navItems: { to: string; label: string; icon: React.ReactNode; adminOnly?: 
   { to: '/groups',    label: 'Groups',       icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M3 4h4v4H3z" rx="0.8"/><path d="M9 4h4v4H9z" rx="0.8"/><path d="M6 8v2M10 8v2M4 12h8" strokeLinecap="round"/></svg> },
   { to: '/playlists', label: 'Playlists',    icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><path d="M6 5.5l4 2.5-4 2.5V5.5z" fill="currentColor" stroke="none"/></svg> },
 
+  // /filler is intentionally omitted from nav — accessed via channel context (ChannelFillerOverlay)
   { to: '/downloads', label: 'Downloads',    icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 2v8M5 7l3 3 3-3" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 12h10" strokeLinecap="round"/></svg> },
   { to: '/activity',  label: 'Activity',     icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/></svg> },
   { to: '/settings',  label: 'Settings',     icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.3M8 13.2v1.3M1.5 8h1.3M13.2 8h1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9" strokeLinecap="round"/></svg> },
@@ -24,7 +25,9 @@ export default observer(function Layout() {
   const isChannelDetail = /^\/channels\/.+/.test(location.pathname)
   const onActivity   = location.pathname === '/activity'
 
-  const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem('hds-nav-collapsed') === '1')
+  const [navCollapsed,    setNavCollapsed]    = useState(() => localStorage.getItem('hds-nav-collapsed') === '1')
+  const [expandBtnHover,  setExpandBtnHover]  = useState(false)
+  const [collapseBtnHover, setCollapseBtnHover] = useState(false)
 
   const toggleNav = () => setNavCollapsed(c => {
     const next = !c
@@ -83,14 +86,17 @@ export default observer(function Layout() {
               <button
                 onClick={toggleNav}
                 title="Expand nav"
+                onMouseEnter={() => setExpandBtnHover(true)}
+                onMouseLeave={() => setExpandBtnHover(false)}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: 28, height: 28, borderRadius: 7, border: '1px solid var(--hds-line-s)',
-                  background: 'transparent', cursor: 'pointer', color: 'var(--hds-txt-3)',
+                  width: 28, height: 28, borderRadius: 7,
+                  border: `1px solid ${expandBtnHover ? 'var(--hds-line)' : 'var(--hds-line-s)'}`,
+                  background: expandBtnHover ? 'var(--hds-bg-3)' : 'transparent',
+                  cursor: 'pointer',
+                  color: expandBtnHover ? 'var(--hds-txt)' : 'var(--hds-txt-3)',
                   transition: 'border-color .12s, color .12s, background .12s',
                 }}
-                onMouseEnter={e => { const b = e.currentTarget; b.style.borderColor = 'var(--hds-line)'; b.style.color = 'var(--hds-txt)'; b.style.background = 'var(--hds-bg-3)' }}
-                onMouseLeave={e => { const b = e.currentTarget; b.style.borderColor = 'var(--hds-line-s)'; b.style.color = 'var(--hds-txt-3)'; b.style.background = 'transparent' }}
               >
                 <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                   <path d="M4 2l3 3.5-3 3.5" />
@@ -112,15 +118,18 @@ export default observer(function Layout() {
               <button
                 onClick={toggleNav}
                 title="Collapse nav"
+                onMouseEnter={() => setCollapseBtnHover(true)}
+                onMouseLeave={() => setCollapseBtnHover(false)}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   width: 26, height: 26, marginTop: 2, borderRadius: 7,
-                  border: '1px solid transparent', background: 'transparent',
-                  cursor: 'pointer', color: 'var(--hds-txt-3)', flexShrink: 0,
+                  border: `1px solid ${collapseBtnHover ? 'var(--hds-line-s)' : 'transparent'}`,
+                  background: collapseBtnHover ? 'var(--hds-bg-3)' : 'transparent',
+                  cursor: 'pointer',
+                  color: collapseBtnHover ? 'var(--hds-txt)' : 'var(--hds-txt-3)',
+                  flexShrink: 0,
                   transition: 'border-color .12s, color .12s, background .12s',
                 }}
-                onMouseEnter={e => { const b = e.currentTarget; b.style.borderColor = 'var(--hds-line-s)'; b.style.color = 'var(--hds-txt)'; b.style.background = 'var(--hds-bg-3)' }}
-                onMouseLeave={e => { const b = e.currentTarget; b.style.borderColor = 'transparent'; b.style.color = 'var(--hds-txt-3)'; b.style.background = 'transparent' }}
               >
                 <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                   <path d="M7 2L4 5.5 7 9" />
@@ -171,7 +180,7 @@ export default observer(function Layout() {
                         minWidth: 16, height: 16, borderRadius: 8,
                         padding: '0 4px',
                         background: 'oklch(0.55 0.22 22)',
-                        color: '#fff',
+                        color: 'oklch(1 0 0)',
                         fontSize: 9, fontWeight: 700,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         boxShadow: '0 0 10px oklch(0.55 0.22 22 / 0.7)',

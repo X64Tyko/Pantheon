@@ -178,11 +178,9 @@ std::optional<PlaylistDetail> PlaylistRepository::getDetail(const std::string& p
     return d;
 }
 
-std::pair<std::string, int> PlaylistRepository::createFromBlock(const std::string& block_id,
-                                                                  const std::string& title) {
-    struct Item { std::string item_type; std::string item_id; };
-    std::vector<Item> items;
-
+std::vector<std::pair<std::string, std::string>>
+PlaylistRepository::expandBlockItems(const std::string& block_id) {
+    std::vector<std::pair<std::string, std::string>> items;
     SQLite::Statement cq(db_.get(), R"(
         SELECT content_type, content_id, season_filter, episode_order, include_specials
         FROM block_content WHERE block_id = ? ORDER BY position
@@ -211,6 +209,12 @@ std::pair<std::string, int> PlaylistRepository::createFromBlock(const std::strin
             items.push_back({"movie", cid});
         }
     }
+    return items;
+}
+
+std::pair<std::string, int> PlaylistRepository::createFromBlock(const std::string& block_id,
+                                                                  const std::string& title) {
+    auto items = expandBlockItems(block_id);
 
     std::string playlist_id = db::generateId();
     SQLite::Transaction txn(db_.get());
@@ -223,11 +227,34 @@ std::pair<std::string, int> PlaylistRepository::createFromBlock(const std::strin
         SQLite::Statement ins(db_.get(),
             "INSERT INTO playlist_item (playlist_id, position, item_type, item_id) VALUES (?,?,?,?)");
         ins.bind(1, playlist_id); ins.bind(2, pos++);
-        ins.bind(3, item.item_type); ins.bind(4, item.item_id);
+        ins.bind(3, item.first); ins.bind(4, item.second);
         ins.exec();
     }
     txn.commit();
     return {std::move(playlist_id), static_cast<int>(items.size())};
+}
+
+void PlaylistRepository::replaceListItems(
+    const std::string& list_type,
+    const std::string& list_id,
+    const std::vector<std::pair<std::string, std::string>>& items)
+{
+    const std::string fk_col   = (list_type == "playlist") ? "playlist_id"   : "filler_list_id";
+    const std::string item_tbl = (list_type == "playlist") ? "playlist_item" : "filler_list_item";
+
+    SQLite::Transaction txn(db_.get());
+    { SQLite::Statement del(db_.get(), "DELETE FROM " + item_tbl + " WHERE " + fk_col + " = ?");
+      del.bind(1, list_id); del.exec(); }
+    int pos = 0;
+    for (const auto& [itype, iid] : items) {
+        SQLite::Statement ins(db_.get(),
+            "INSERT OR IGNORE INTO " + item_tbl +
+            " (" + fk_col + ", position, item_type, item_id) VALUES (?,?,?,?)");
+        ins.bind(1, list_id); ins.bind(2, pos++);
+        ins.bind(3, itype); ins.bind(4, iid);
+        ins.exec();
+    }
+    txn.commit();
 }
 
 void PlaylistRepository::upsertPlexLink(const std::string& list_type,

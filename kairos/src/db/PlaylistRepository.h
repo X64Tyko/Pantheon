@@ -62,6 +62,10 @@ public:
     // Move item to new_position (simple position update).
     void moveItem(int item_id, const std::string& playlist_id, int new_position);
 
+    // Expand block content entries to flat {item_type, item_id} pairs.
+    std::vector<std::pair<std::string, std::string>>
+        expandBlockItems(const std::string& block_id);
+
     // Expand block content to episodes/movies, create playlist + items in a transaction.
     // Returns {playlist_id, item_count}.
     std::pair<std::string, int> createFromBlock(const std::string& block_id,
@@ -70,6 +74,12 @@ public:
     void upsertPlexLink(const std::string& list_type, const std::string& list_id,
                         const std::string& source_id, const std::string& external_id,
                         const std::string& plex_type);
+
+    // Replace all items in a list (playlist or filler_list) with the given set.
+    // list_type must be "playlist" or "filler_list".
+    void replaceListItems(const std::string& list_type,
+                          const std::string& list_id,
+                          const std::vector<std::pair<std::string, std::string>>& items);
 
 private:
     Database& db_;

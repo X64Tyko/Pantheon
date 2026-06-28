@@ -26,6 +26,15 @@ Episode ContentRepository::rowToEpisode(SQLite::Statement& q) {
     return e;
 }
 
+// Extended variant that also reads tvdb_id, tmdb_id, imdb_id (columns 10–12).
+Episode ContentRepository::rowToEpisodeFull(SQLite::Statement& q) {
+    Episode e = rowToEpisode(q);
+    e.tvdb_id = q.getColumn(10).getString();
+    e.tmdb_id = q.getColumn(11).getString();
+    e.imdb_id = q.getColumn(12).getString();
+    return e;
+}
+
 // ---------------------------------------------------------------------------
 // Episodes
 // ---------------------------------------------------------------------------
@@ -36,7 +45,7 @@ std::vector<Episode> ContentRepository::getEpisodes(const std::string& show_id,
                                                       const std::string& episode_order) {
     std::string sql =
         "SELECT episode_id, show_id, season, episode, title, file_path, duration_ms,"
-        " overview, air_date, thumb"
+        " overview, air_date, thumb, tvdb_id, tmdb_id, imdb_id"
         " FROM episode WHERE show_id = ?";
     if (season)                         sql += " AND season = ?";
     if (!season && !include_specials)   sql += " AND season != 0";
@@ -52,7 +61,7 @@ std::vector<Episode> ContentRepository::getEpisodes(const std::string& show_id,
     if (season) q.bind(2, *season);
 
     std::vector<Episode> eps;
-    while (q.executeStep()) eps.push_back(rowToEpisode(q));
+    while (q.executeStep()) eps.push_back(rowToEpisodeFull(q));
     return eps;
 }
 
@@ -65,7 +74,7 @@ std::vector<Episode> ContentRepository::getPlayedEpisodes(const std::string& sho
                                                            const std::string& episode_order) {
     std::string sql =
         "SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,"
-        " e.duration_ms, e.overview, e.air_date, e.thumb"
+        " e.duration_ms, e.overview, e.air_date, e.thumb, e.tvdb_id, e.tmdb_id, e.imdb_id"
         " FROM episode e WHERE e.show_id = ?";
     if (season)                       sql += " AND e.season = ?";
     if (!season && !include_specials) sql += " AND e.season != 0";
@@ -88,7 +97,7 @@ std::vector<Episode> ContentRepository::getPlayedEpisodes(const std::string& sho
     q.bind(idx++, static_cast<int64_t>(before_time));
 
     std::vector<Episode> eps;
-    while (q.executeStep()) eps.push_back(rowToEpisode(q));
+    while (q.executeStep()) eps.push_back(rowToEpisodeFull(q));
     return eps;
 }
 

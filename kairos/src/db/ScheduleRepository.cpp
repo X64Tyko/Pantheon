@@ -2,6 +2,7 @@
 #include "Database.h"
 #include "DbHelpers.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <ctime>
 
 ScheduleRepository::ScheduleRepository(Database& db) : db_(db) {}
 
@@ -359,4 +360,18 @@ void ScheduleRepository::insertPreviewBlocks(const std::string& channel_id,
             }
         }
     }
+}
+
+void ScheduleRepository::recordPlayHistory(const std::string& item_type,
+                                            const std::string& item_id,
+                                            const std::string& channel_id,
+                                            const std::string& block_id) {
+    SQLite::Statement q(db_.get(), R"(
+        INSERT INTO play_history (item_type, item_id, channel_id, block_id, aired_at, is_scheduled)
+        VALUES (?,?,?,?,?,0)
+    )");
+    q.bind(1, item_type); q.bind(2, item_id); q.bind(3, channel_id);
+    if (block_id.empty()) q.bind(4); else q.bind(4, block_id);
+    q.bind(5, static_cast<int64_t>(std::time(nullptr)));
+    q.exec();
 }

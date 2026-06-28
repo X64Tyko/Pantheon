@@ -4,11 +4,11 @@
 #include "../ServiceContext.h"
 #include "../../conf/ConfStore.h"
 #include "../../db/BlockRepository.h"
-#include "../../db/Database.h"
+#include "../../db/PlaylistRepository.h"
+#include "../../db/SourceRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <httplib.h>
-#include "../../db/PlaylistRepository.h"
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -208,52 +208,19 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 			std::string source_id = b.value("source_id", "");
 			if (title.empty()) { route::err(res, 400, "title required"); return; }
 
-			// Expand block content to {item_type, item_id} pairs.
-			std::vector<std::pair<std::string, std::string>> items;
-			{
-				SQLite::Statement cq(db_.get(), R"(
-					SELECT content_type, content_id, season_filter, episode_order, include_specials
-					FROM block_content WHERE block_id = ? ORDER BY position
-				)");
-				cq.bind(1, bid);
-				while (cq.executeStep()) {
-					std::string ct  = cq.getColumn(0).getString();
-					std::string cid = cq.getColumn(1).getString();
-					if (ct == "show") {
-						bool        has_season    = !cq.getColumn(2).isNull();
-						int         season_filter = has_season ? cq.getColumn(2).getInt() : -1;
-						bool        incl_specials = cq.getColumn(4).getInt() != 0;
-						std::string ep_order      = cq.getColumn(3).getString();
-						std::string order_col     = (ep_order == "air_date") ? "air_date" : "season, episode";
-						std::string where_extra   = has_season     ? " AND season = ?"
-						                          : !incl_specials ? " AND season > 0"
-						                          : "";
-						SQLite::Statement eq(db_.get(),
-							"SELECT episode_id FROM episode WHERE show_id = ?" +
-							where_extra + " ORDER BY " + order_col);
-						eq.bind(1, cid);
-						if (has_season) eq.bind(2, season_filter);
-						while (eq.executeStep())
-							items.push_back({"episode", eq.getColumn(0).getString()});
-					} else if (ct == "movie") {
-						items.push_back({"movie", cid});
-					}
-				}
-			}
-
-			PlaylistRepository repo(db_);
-			std::string playlist_id = repo.create(title);
-			int count = repo.addItems(playlist_id, items);
+			PlaylistRepository pr(db_);
+			auto items = pr.expandBlockItems(bid);
+			std::string playlist_id = pr.create(title);
+			int count = pr.addItems(playlist_id, items);
 			json result = {{"playlist_id", playlist_id}, {"item_count", count}};
 
 			if (!source_id.empty() && !items.empty()) {
+				SourceRepository sr(db_);
 				// Warn if items span multiple sources; can't merge into one Plex playlist.
 				std::unordered_set<std::string> item_sources;
 				for (const auto& [itype, iid] : items) {
-					SQLite::Statement sq(db_.get(),
-						"SELECT source_id FROM source_mapping WHERE kairos_id = ? LIMIT 1");
-					sq.bind(1, iid);
-					if (sq.executeStep()) item_sources.insert(sq.getColumn(0).getString());
+					auto mapping = sr.getSourceMapping(iid);
+					if (mapping) item_sources.insert(mapping->source_id);
 					if (item_sources.size() > 1) break;
 				}
 				if (item_sources.size() > 1) {
@@ -261,16 +228,11 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 					res.status = 201; route::ok(res, result.dump()); return;
 				}
 
-				std::string base_url, src_type;
-				{
-					SQLite::Statement sq(db_.get(),
-						"SELECT base_url, source_type FROM media_source WHERE source_id = ?");
-					sq.bind(1, source_id);
-					if (!sq.executeStep() || (src_type = sq.getColumn(1).getString()) != "plex") {
-						res.status = 201; route::ok(res, result.dump()); return;
-					}
-					base_url = sq.getColumn(0).getString();
+				auto src_info = sr.getSource(source_id);
+				if (!src_info || src_info->source_type != "plex") {
+					res.status = 201; route::ok(res, result.dump()); return;
 				}
+				std::string base_url = src_info->base_url;
 
 				std::string token = conf_.token(source_id);
 				httplib::Client plex(base_url);
@@ -287,11 +249,8 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 				if (!machine_id.empty()) {
 					std::vector<std::string> rating_keys;
 					for (const auto& [itype, iid] : items) {
-						SQLite::Statement lk(db_.get(),
-							"SELECT external_id FROM source_mapping "
-							"WHERE source_id = ? AND kairos_id = ? AND item_type = ?");
-						lk.bind(1, source_id); lk.bind(2, iid); lk.bind(3, itype);
-						if (lk.executeStep()) rating_keys.push_back(lk.getColumn(0).getString());
+						auto ext_id = sr.getExternalId(source_id, iid, itype);
+						if (!ext_id.empty()) rating_keys.push_back(ext_id);
 					}
 
 					if (!rating_keys.empty()) {
@@ -413,31 +372,20 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/channels/:id/bumpers", [this](const Req& req, Res& res) {
 		auto channel_id = req.path_params.at("id");
 		try {
-			SQLite::Statement q(db_.get(), R"(
-				SELECT id, content_type, content_id, mode, every_n, position,
-				       CASE content_type
-				         WHEN 'show'     THEN (SELECT title FROM show     WHERE show_id     = content_id)
-				         WHEN 'playlist' THEN (SELECT title FROM playlist WHERE playlist_id = content_id)
-				         WHEN 'episode'  THEN (SELECT title FROM episode  WHERE episode_id  = content_id)
-				         ELSE content_id
-				       END AS title,
-				       season_filter
-				FROM channel_bumper WHERE channel_id = ? ORDER BY position
-			)");
-			q.bind(1, channel_id);
+			auto rows   = BlockRepository(db_).listBumpers(channel_id);
 			json result = json::array();
-			while (q.executeStep()) {
+			for (const auto& r : rows) {
 				json bumper = {
-					{"id",           q.getColumn(0).getInt()},
+					{"id",           r.id},
 					{"channel_id",   channel_id},
-					{"content_type", q.getColumn(1).getString()},
-					{"content_id",   q.getColumn(2).getString()},
-					{"mode",         q.getColumn(3).getString()},
-					{"every_n",      q.getColumn(4).getInt()},
-					{"position",     q.getColumn(5).getInt()},
-					{"title",        q.getColumn(6).isNull() ? q.getColumn(2).getString() : q.getColumn(6).getString()},
+					{"content_type", r.content_type},
+					{"content_id",   r.content_id},
+					{"mode",         r.mode},
+					{"every_n",      r.every_n},
+					{"position",     r.position},
+					{"title",        r.title},
 				};
-				if (!q.getColumn(7).isNull()) bumper["season_filter"] = q.getColumn(7).getInt();
+				if (r.season_filter.has_value()) bumper["season_filter"] = r.season_filter.value();
 				result.push_back(bumper);
 			}
 			route::ok(res, result.dump());

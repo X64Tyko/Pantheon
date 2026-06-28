@@ -569,3 +569,46 @@ export interface DownloadJob {
   log:        string[]
   started_at: string   // ISO-8601
 }
+
+// ── Media scanner / scraper ───────────────────────────────────────────────────
+
+export type ScanJobStatus = 'pending' | 'running' | 'done' | 'error'
+export type MatchStatus   = 'unmatched' | 'matched' | 'skipped' | 'conflict'
+export type ScraperSource = 'tmdb' | 'tvdb' | 'local'
+
+export interface ScanJob {
+  job_id:       string
+  job_type:     'scan' | 'match' | 'fetch'
+  status:       ScanJobStatus
+  target_id:    string | null
+  error_msg:    string | null
+  created_at:   string        // ISO 8601
+  completed_at: string | null
+}
+
+export interface ScannedFile {
+  file_id:      string
+  file_path:    string
+  size_bytes:   number
+  duration_ms:  number | null
+  matched_id:   string | null
+  match_status: MatchStatus
+}
+
+export interface MatchCandidate {
+  candidate_id: string
+  file_id:      string
+  source:       ScraperSource
+  external_id:  string
+  title:        string
+  year:         number | null
+  score:        number        // 0–1 confidence
+  accepted:     boolean | null  // null = pending review
+}
+
+export interface ScraperConfig {
+  source:   ScraperSource
+  api_key:  string
+  enabled:  boolean
+  language: string
+}

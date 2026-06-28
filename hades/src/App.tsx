@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider }       from './auth/AuthContext'
+import { ErrorBoundary }      from './components/ErrorBoundary'
 import LoginPage              from './auth/LoginPage'
 import ProtectedRoute         from './auth/ProtectedRoute'
 import SetupPage              from './auth/SetupPage'
@@ -19,6 +20,7 @@ import UsersPage              from './pages/UsersPage'
 export default function App() {
   return (
     <AuthProvider>
+      <ErrorBoundary>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
@@ -40,6 +42,7 @@ export default function App() {
           </Route>
         </Route>
       </Routes>
+      </ErrorBoundary>
     </AuthProvider>
   )
 }

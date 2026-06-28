@@ -1,7 +1,7 @@
 #include "ChapterService.h"
 #include "../RouteHelpers.h"
 #include "../ServiceContext.h"
-#include "../../db/Database.h"
+#include "../../db/SourceRepository.h"
 #include "../../source/SyncManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -74,42 +74,22 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 
 	svr.Post("/api/episodes/:id/chapters/sync", [this](const Req& req, Res& res) {
 		const std::string kairos_id = req.path_params.at("id");
-		SQLite::Statement q(db_.get(), R"(
-			SELECT sm.source_id, sm.external_id, e.file_path
-			FROM source_mapping sm
-			JOIN episode e ON e.episode_id = sm.kairos_id
-			WHERE sm.item_type='episode' AND sm.kairos_id=?
-			LIMIT 1
-		)");
-		q.bind(1, kairos_id);
-		if (!q.executeStep()) { route::err(res, 404, "episode not found"); return; }
-		const std::string source_id   = q.getColumn(0).getString();
-		const std::string external_id = q.getColumn(1).getString();
-		const std::string file_path   = q.getColumn(2).getString();
-		auto* src = sync_.findSource(source_id);
+		auto resolved = SourceRepository(db_).resolveItemSource("episode", kairos_id);
+		if (!resolved) { route::err(res, 404, "episode not found"); return; }
+		auto* src = sync_.findSource(resolved->source_id);
 		if (!src) { route::err(res, 422, "source not loaded"); return; }
-		sync_.syncItemChapters(*src, "episode", kairos_id, external_id, file_path);
+		sync_.syncItemChapters(*src, "episode", kairos_id, resolved->external_id, resolved->file_path);
 		route::ok(res, ChapterRepository::toJson(
 		    repo_.get("episode", kairos_id)).dump());
 	});
 
 	svr.Post("/api/movies/:id/chapters/sync", [this](const Req& req, Res& res) {
 		const std::string kairos_id = req.path_params.at("id");
-		SQLite::Statement q(db_.get(), R"(
-			SELECT sm.source_id, sm.external_id, m.file_path
-			FROM source_mapping sm
-			JOIN movie m ON m.movie_id = sm.kairos_id
-			WHERE sm.item_type='movie' AND sm.kairos_id=?
-			LIMIT 1
-		)");
-		q.bind(1, kairos_id);
-		if (!q.executeStep()) { route::err(res, 404, "movie not found"); return; }
-		const std::string source_id   = q.getColumn(0).getString();
-		const std::string external_id = q.getColumn(1).getString();
-		const std::string file_path   = q.getColumn(2).getString();
-		auto* src = sync_.findSource(source_id);
+		auto resolved = SourceRepository(db_).resolveItemSource("movie", kairos_id);
+		if (!resolved) { route::err(res, 404, "movie not found"); return; }
+		auto* src = sync_.findSource(resolved->source_id);
 		if (!src) { route::err(res, 422, "source not loaded"); return; }
-		sync_.syncItemChapters(*src, "movie", kairos_id, external_id, file_path);
+		sync_.syncItemChapters(*src, "movie", kairos_id, resolved->external_id, resolved->file_path);
 		route::ok(res, ChapterRepository::toJson(
 		    repo_.get("movie", kairos_id)).dump());
 	});

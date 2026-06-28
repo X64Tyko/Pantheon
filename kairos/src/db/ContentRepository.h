@@ -236,4 +236,5 @@ private:
     Database& db_;
 
     static Episode rowToEpisode(SQLite::Statement& q);
+    static Episode rowToEpisodeFull(SQLite::Statement& q);
 };

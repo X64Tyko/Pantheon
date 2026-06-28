@@ -119,18 +119,25 @@ export class ChannelDetailStore {
   confirmedAnchors: Record<string, number> = {}
   previewAnchors:   Record<string, number> = {}
 
-  channelDraftName:             string      = ''
-  channelDraftNumber:           number      = 1
-  channelDraftTimezone:         string      = 'UTC'
-  channelDraftSeed:             number      = 12345
-  channelDraftAdvanceMode:      AdvanceMode = 'scheduled'
-  channelDraftOfflineVideoPath: string      = ''
-  channelDraftOfflineImagePath: string      = ''
-  channelDraftOfflineAudioId:    string      = ''
-  channelDraftOfflineAudioType:  'episode' | 'movie' | '' = ''
-  channelDraftOfflineAudioTitle: string      = ''
-  channelDraftLogoPath:         string      = ''
-  channelDirty:            boolean     = false
+  channelDraft: {
+    name:                string
+    number:              number
+    timezone:            string
+    seed:                number
+    advance_mode:        AdvanceMode
+    offline_video_path:  string
+    offline_image_path:  string
+    offline_audio_id:    string
+    offline_audio_type:  'episode' | 'movie' | ''
+    offline_audio_title: string
+    logo_path:           string
+  } = {
+    name: '', number: 1, timezone: 'UTC', seed: 12345, advance_mode: 'scheduled',
+    offline_video_path: '', offline_image_path: '',
+    offline_audio_id: '', offline_audio_type: '', offline_audio_title: '',
+    logo_path: '',
+  }
+  channelDirty:   boolean     = false
   channelSaving:        boolean = false
   channelSaveErr:       string | null = null
   epgClearing:          boolean = false
@@ -149,35 +156,27 @@ export class ChannelDetailStore {
   }
 
   initChannelDraft(channel: Channel) {
-    this.channelDraftName             = channel.name
-    this.channelDraftNumber           = channel.number
-    this.channelDraftTimezone         = channel.timezone
-    this.channelDraftSeed             = channel.seed !== undefined ? channel.seed : 12345
-    this.channelDraftAdvanceMode      = channel.advance_mode ?? 'scheduled'
-    this.channelDraftOfflineVideoPath = channel.offline_video_path ?? ''
-    this.channelDraftOfflineImagePath = channel.offline_image_path ?? ''
-    this.channelDraftOfflineAudioId    = channel.offline_audio_id    ?? ''
-    this.channelDraftOfflineAudioType  = channel.offline_audio_type  ?? ''
-    this.channelDraftOfflineAudioTitle = channel.offline_audio_title ?? ''
-    this.channelDraftLogoPath         = channel.logo_path          ?? ''
-    this.channelDirty                 = false
-    this.confirmedAnchors             = channel.anchor_hashes ?? {}
-    this.previewAnchors               = {}
-    this.epgDay                       = todayEpgDay(channel.timezone)
+    this.channelDraft = {
+      name:                channel.name,
+      number:              channel.number,
+      timezone:            channel.timezone,
+      seed:                channel.seed ?? 12345,
+      advance_mode:        channel.advance_mode ?? 'scheduled',
+      offline_video_path:  channel.offline_video_path  ?? '',
+      offline_image_path:  channel.offline_image_path  ?? '',
+      offline_audio_id:    channel.offline_audio_id    ?? '',
+      offline_audio_type:  channel.offline_audio_type  ?? '',
+      offline_audio_title: channel.offline_audio_title ?? '',
+      logo_path:           channel.logo_path           ?? '',
+    }
+    this.channelDirty    = false
+    this.confirmedAnchors = channel.anchor_hashes ?? {}
+    this.previewAnchors   = {}
+    this.epgDay           = todayEpgDay(channel.timezone)
   }
 
-  setChannelDraft(patch: Partial<{ name: string; number: number; timezone: string; seed: number; advance_mode: AdvanceMode; offline_video_path: string; offline_image_path: string; offline_audio_id: string; offline_audio_type: 'episode' | 'movie' | ''; offline_audio_title: string; logo_path: string }>) {
-    if (patch.name                 !== undefined) this.channelDraftName              = patch.name
-    if (patch.number               !== undefined) this.channelDraftNumber            = patch.number
-    if (patch.timezone             !== undefined) this.channelDraftTimezone          = patch.timezone
-    if (patch.seed                 !== undefined) this.channelDraftSeed              = patch.seed
-    if (patch.advance_mode         !== undefined) this.channelDraftAdvanceMode       = patch.advance_mode
-    if (patch.offline_video_path   !== undefined) this.channelDraftOfflineVideoPath  = patch.offline_video_path
-    if (patch.offline_image_path   !== undefined) this.channelDraftOfflineImagePath  = patch.offline_image_path
-    if (patch.offline_audio_id     !== undefined) this.channelDraftOfflineAudioId    = patch.offline_audio_id
-    if (patch.offline_audio_type   !== undefined) this.channelDraftOfflineAudioType  = patch.offline_audio_type
-    if (patch.offline_audio_title  !== undefined) this.channelDraftOfflineAudioTitle = patch.offline_audio_title
-    if (patch.logo_path            !== undefined) this.channelDraftLogoPath          = patch.logo_path
+  setChannelDraft(patch: Partial<typeof this.channelDraft>) {
+    this.channelDraft = { ...this.channelDraft, ...patch }
     this.channelDirty = true
   }
 
@@ -186,19 +185,7 @@ export class ChannelDetailStore {
   async saveChannel(channelId: string) {
     this.channelSaving = true; this.channelSaveErr = null
     try {
-      await api.updateChannel(channelId, {
-        name:                 this.channelDraftName,
-        number:               this.channelDraftNumber,
-        timezone:             this.channelDraftTimezone,
-        seed:                 this.channelDraftSeed,
-        advance_mode:         this.channelDraftAdvanceMode,
-        offline_video_path:   this.channelDraftOfflineVideoPath,
-        offline_image_path:   this.channelDraftOfflineImagePath,
-        offline_audio_id:     this.channelDraftOfflineAudioId,
-        offline_audio_type:   this.channelDraftOfflineAudioType,
-        offline_audio_title:  this.channelDraftOfflineAudioTitle,
-        logo_path:            this.channelDraftLogoPath,
-      })
+      await api.updateChannel(channelId, { ...this.channelDraft })
 
       const savedIds = new Set(this.savedBlocks.map(b => b.block_id))
       const draftIds = new Set(this.blocks.map(b => b.block_id))
@@ -428,7 +415,7 @@ export class ChannelDetailStore {
       // Only send draft blocks when they differ from DB — lets Kairos hit its live
       // EPG cache for normal previews and only runs the SAVEPOINT swap for real diffs.
       const draftBlocks = this.blocksDirty ? this.blocks : undefined
-      const result = await api.previewChannelEpg(channelId, 336, this.channelDraftSeed, draftBlocks)
+      const result = await api.previewChannelEpg(channelId, 336, this.channelDraft.seed, draftBlocks)
       runInAction(() => {
         this.epgItems       = result.programs
         this.previewAnchors = result.anchors
@@ -540,7 +527,7 @@ export class ChannelDetailStore {
     this.bulkSaving = true; this.bulkErr = null
     try {
       this.blocks = this.blocks.map(b =>
-        this.bulkSelectedIds.includes(b.block_id) ? { ...b, ...(patch as any) } : b
+        this.bulkSelectedIds.includes(b.block_id) ? { ...b, ...patch } as Block : b
       )
       this.blocksDirty     = true
       this.bulkSaving      = false
@@ -602,8 +589,9 @@ export class ChannelDetailStore {
         const idx = this.blocks.findIndex(b => b.block_id === blockId)
         if (idx >= 0) {
           const updated: Block = {
-            ...this.editing,
-            ...(payload as any),
+            block_id:       this.editing.block_id,
+            channel_id:     this.editing.channel_id,
+            ...payload,
             content:        [...this.draftContent],
             filler_entries: [...this.draftFillerEntries],
             slots:          [...this.draftSlots],
@@ -615,7 +603,7 @@ export class ChannelDetailStore {
         const newBlock: Block = {
           block_id:   blockId,
           channel_id: channelId,
-          ...(payload as any),
+          ...payload,
           content:        [...this.draftContent],
           filler_entries: [...this.draftFillerEntries],
           slots:          [...this.draftSlots],

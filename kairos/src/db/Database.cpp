@@ -1189,6 +1189,49 @@ constexpr Migration kMigrations[] = {
         ON channel_filler_entry (channel_id, content_type, content_id) WHERE season_filter IS NULL;
 )SQL", false }
 
+// ── v45: episode external IDs ────────────────────────────────────────────────
+,{ 45, R"SQL(
+    ALTER TABLE episode ADD COLUMN tvdb_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE episode ADD COLUMN tmdb_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE episode ADD COLUMN imdb_id TEXT NOT NULL DEFAULT '';
+)SQL" }
+
+// ── v46: scraper infrastructure ──────────────────────────────────────────────
+,{ 46, R"SQL(
+    CREATE TABLE IF NOT EXISTS scraper_job (
+        job_id       TEXT PRIMARY KEY,
+        job_type     TEXT NOT NULL CHECK(job_type IN ('scan','match','fetch')),
+        status       TEXT NOT NULL DEFAULT 'pending'
+                         CHECK(status IN ('pending','running','done','error')),
+        target_id    TEXT,
+        error_msg    TEXT,
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS scanned_file (
+        file_id      TEXT PRIMARY KEY,
+        file_path    TEXT NOT NULL UNIQUE,
+        size_bytes   INTEGER NOT NULL DEFAULT 0,
+        duration_ms  INTEGER,
+        matched_id   TEXT,
+        match_status TEXT NOT NULL DEFAULT 'unmatched'
+                         CHECK(match_status IN ('unmatched','matched','skipped','conflict'))
+    );
+
+    CREATE TABLE IF NOT EXISTS match_candidate (
+        candidate_id TEXT PRIMARY KEY,
+        file_id      TEXT NOT NULL REFERENCES scanned_file(file_id) ON DELETE CASCADE,
+        source       TEXT NOT NULL CHECK(source IN ('tmdb','tvdb','local')),
+        external_id  TEXT NOT NULL,
+        title        TEXT NOT NULL,
+        year         INTEGER,
+        score        REAL NOT NULL DEFAULT 0,
+        accepted     INTEGER,
+        UNIQUE(file_id, source, external_id)
+    );
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

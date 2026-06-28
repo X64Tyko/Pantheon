@@ -29,18 +29,18 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <div style={{ display: 'flex', gap: 7, marginBottom: 8 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>NAME</div>
-            <input value={store.channelDraftName} onChange={e => store.setChannelDraft({ name: e.target.value })} style={inputStyle} />
+            <input value={store.channelDraft.name} onChange={e => store.setChannelDraft({ name: e.target.value })} style={inputStyle} />
           </div>
           <div style={{ width: 64 }}>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>CH #</div>
-            <input type="number" min={1} value={store.channelDraftNumber} onChange={e => store.setChannelDraft({ number: Math.max(1, +e.target.value || 1) })} style={inputStyle} />
+            <input type="number" min={1} value={store.channelDraft.number} onChange={e => store.setChannelDraft({ number: Math.max(1, +e.target.value || 1) })} style={inputStyle} />
           </div>
         </div>
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>TIMEZONE</div>
           <input
             list="tz-suggestions"
-            value={store.channelDraftTimezone}
+            value={store.channelDraft.timezone}
             onChange={e => store.setChannelDraft({ timezone: e.target.value })}
             style={inputStyle}
             placeholder="America/Denver"
@@ -67,7 +67,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>EPG SEED</div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input type="number" min={0} value={store.channelDraftSeed} onChange={e => store.setChannelDraft({ seed: Math.max(0, +e.target.value || 0) })} style={{ ...inputStyle, flex: 1 }} />
+            <input type="number" min={0} value={store.channelDraft.seed} onChange={e => store.setChannelDraft({ seed: Math.max(0, +e.target.value || 0) })} style={{ ...inputStyle, flex: 1 }} />
             <button
               onClick={() => store.setChannelDraft({ seed: Math.floor(Math.random() * 99999) + 1 })}
               title="Randomize seed"
@@ -81,7 +81,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>ADVANCE MODE</div>
           <select
-            value={store.channelDraftAdvanceMode}
+            value={store.channelDraft.advance_mode}
             onChange={e => store.setChannelDraft({ advance_mode: e.target.value as AdvanceMode })}
             style={inputStyle}
           >
@@ -112,7 +112,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>LOGO PATH</div>
           <input
-            value={store.channelDraftLogoPath}
+            value={store.channelDraft.logo_path}
             onChange={e => store.setChannelDraft({ logo_path: e.target.value })}
             style={inputStyle}
             placeholder="/path/to/logo.png or https://…"
@@ -146,7 +146,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>VIDEO (looping)</div>
           <input
-            value={store.channelDraftOfflineVideoPath}
+            value={store.channelDraft.offline_video_path}
             onChange={e => store.setChannelDraft({ offline_video_path: e.target.value })}
             style={inputStyle}
             placeholder="/path/to/offline.mp4"
@@ -157,7 +157,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>IMAGE</div>
           <input
-            value={store.channelDraftOfflineImagePath}
+            value={store.channelDraft.offline_image_path}
             onChange={e => store.setChannelDraft({ offline_image_path: e.target.value })}
             style={inputStyle}
             placeholder="/path/to/offline.png or https://…"
@@ -168,8 +168,8 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>AUDIO (with image)</div>
           <AudioPicker
-            audioId={store.channelDraftOfflineAudioId}
-            audioTitle={store.channelDraftOfflineAudioTitle}
+            audioId={store.channelDraft.offline_audio_id}
+            audioTitle={store.channelDraft.offline_audio_title}
             onSelect={(id, type, title) => store.setChannelDraft({ offline_audio_id: id, offline_audio_type: type, offline_audio_title: title })}
             onClear={() => store.setChannelDraft({ offline_audio_id: '', offline_audio_type: '', offline_audio_title: '' })}
           />

@@ -3,6 +3,7 @@
 #include "../db/ContentRepository.h"
 #include "../db/CursorRepository.h"
 #include "../db/Database.h"
+#include "../db/ScheduleRepository.h"
 #include "../db/TimeslotRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -1920,14 +1921,7 @@ void RuleEngine::markPlayed(const std::string& channel_id, const std::string& bl
                               int64_t /*duration_ms*/) {
     SQLite::Transaction txn(db_.get());
 
-    SQLite::Statement qh(db_.get(), R"(
-        INSERT INTO play_history (item_type, item_id, channel_id, block_id, aired_at, is_scheduled)
-        VALUES (?,?,?,?,?,0)
-    )");
-    qh.bind(1, item_type); qh.bind(2, item_id); qh.bind(3, channel_id);
-    if (block_id.empty()) qh.bind(4); else qh.bind(4, block_id);
-    qh.bind(5, static_cast<int64_t>(std::time(nullptr)));
-    qh.exec();
+    ScheduleRepository(db_).recordPlayHistory(item_type, item_id, channel_id, block_id);
 
     // In 'scheduled' mode project() already advanced cursors during EPG generation,
     // so advancing again here would double-advance and skip episodes on the next

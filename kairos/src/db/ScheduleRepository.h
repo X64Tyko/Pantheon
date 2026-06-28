@@ -6,8 +6,6 @@
 #include <string>
 #include <vector>
 
-class Database;
-
 struct NowProgramRow {
     std::string item_type, item_id, block_id, file_path, title, show_title, show_id;
     int season = 0, episode = 0;
@@ -49,6 +47,9 @@ public:
     std::vector<EpgProgramRow>        getEpgPrograms(const std::string& channel_id,
                                                       int64_t from_sec, int64_t to_sec);
     int                               clearAllScheduled();
+
+    void recordPlayHistory(const std::string& item_type, const std::string& item_id,
+                           const std::string& channel_id, const std::string& block_id);
 
     // Run gen() with a temporary block graph injected for channel_id, rolled back afterwards.
     template<typename Fn>

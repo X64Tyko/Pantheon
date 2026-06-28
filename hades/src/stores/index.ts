@@ -7,3 +7,5 @@ export type { LogEntry, ErrorToast } from './SystemStore'
 export const sourceStore  = new SourceStore()
 export const channelStore = new ChannelStore()
 export const systemStore  = new SystemStore()
+
+export { contentStore } from './ContentStore'

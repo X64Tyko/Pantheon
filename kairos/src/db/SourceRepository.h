@@ -48,6 +48,29 @@ public:
     struct SourceBasicRow { std::string source_id, source_type, display_name; };
     std::vector<SourceBasicRow> listSourcesBasic();
 
+    // Returns external_lib_id for a library, or empty string if not found.
+    std::string getExternalLibId(const std::string& library_id, const std::string& source_id);
+
+    struct ResolvedSource {
+        std::string source_id;
+        std::string external_id;
+        std::string file_path;
+    };
+    // Resolves kairos_id → source_id + external_id + file_path via source_mapping JOIN.
+    std::optional<ResolvedSource> resolveItemSource(const std::string& item_type,
+                                                     const std::string& kairos_id);
+
+    // Returns base_url for a source, or empty string if not found.
+    std::string getSourceBaseUrl(const std::string& source_id);
+
+    // Returns full source config for a single source.
+    std::optional<MediaSourceConfig> getSource(const std::string& source_id);
+
+    // Returns external_id for an item in a specific source, or empty string if not found.
+    std::string getExternalId(const std::string& source_id,
+                               const std::string& kairos_id,
+                               const std::string& item_type);
+
 private:
     Database& db_;
 };

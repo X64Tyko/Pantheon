@@ -152,3 +152,74 @@ SourceRepository::getSourceMapping(const std::string& kairos_id) {
     if (!q.executeStep()) return std::nullopt;
     return SourceMappingRow{q.getColumn(0).getString(), q.getColumn(1).getString()};
 }
+
+std::string SourceRepository::getExternalLibId(const std::string& library_id,
+                                                const std::string& source_id) {
+    SQLite::Statement q(db_.get(),
+        "SELECT external_lib_id FROM media_library WHERE library_id = ? AND source_id = ?");
+    q.bind(1, library_id); q.bind(2, source_id);
+    return q.executeStep() ? q.getColumn(0).getString() : "";
+}
+
+std::optional<SourceRepository::ResolvedSource>
+SourceRepository::resolveItemSource(const std::string& item_type,
+                                     const std::string& kairos_id) {
+    std::string sql;
+    if (item_type == "episode") {
+        sql = R"(
+            SELECT sm.source_id, sm.external_id, e.file_path
+            FROM source_mapping sm
+            JOIN episode e ON e.episode_id = sm.kairos_id
+            WHERE sm.item_type='episode' AND sm.kairos_id=?
+            LIMIT 1
+        )";
+    } else {
+        sql = R"(
+            SELECT sm.source_id, sm.external_id, m.file_path
+            FROM source_mapping sm
+            JOIN movie m ON m.movie_id = sm.kairos_id
+            WHERE sm.item_type='movie' AND sm.kairos_id=?
+            LIMIT 1
+        )";
+    }
+    SQLite::Statement q(db_.get(), sql);
+    q.bind(1, kairos_id);
+    if (!q.executeStep()) return std::nullopt;
+    return ResolvedSource{
+        q.getColumn(0).getString(),
+        q.getColumn(1).getString(),
+        q.getColumn(2).getString(),
+    };
+}
+
+std::string SourceRepository::getSourceBaseUrl(const std::string& source_id) {
+    SQLite::Statement q(db_.get(),
+        "SELECT base_url FROM media_source WHERE source_id = ?");
+    q.bind(1, source_id);
+    return q.executeStep() ? q.getColumn(0).getString() : "";
+}
+
+std::optional<MediaSourceConfig> SourceRepository::getSource(const std::string& source_id) {
+    SQLite::Statement q(db_.get(),
+        "SELECT source_id, source_type, display_name, COALESCE(base_url,''), enabled "
+        "FROM media_source WHERE source_id = ?");
+    q.bind(1, source_id);
+    if (!q.executeStep()) return std::nullopt;
+    MediaSourceConfig s;
+    s.source_id    = q.getColumn(0).getString();
+    s.source_type  = q.getColumn(1).getString();
+    s.display_name = q.getColumn(2).getString();
+    s.base_url     = q.getColumn(3).getString();
+    s.enabled      = q.getColumn(4).getInt() != 0;
+    return s;
+}
+
+std::string SourceRepository::getExternalId(const std::string& source_id,
+                                             const std::string& kairos_id,
+                                             const std::string& item_type) {
+    SQLite::Statement q(db_.get(),
+        "SELECT external_id FROM source_mapping "
+        "WHERE source_id = ? AND kairos_id = ? AND item_type = ?");
+    q.bind(1, source_id); q.bind(2, kairos_id); q.bind(3, item_type);
+    return q.executeStep() ? q.getColumn(0).getString() : "";
+}

@@ -837,6 +837,35 @@ void BlockRepository::removeFillerEntry(int id) {
 // channel_bumper CRUD
 // ---------------------------------------------------------------------------
 
+std::vector<BlockRepository::BumperRow> BlockRepository::listBumpers(const std::string& channel_id) {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT id, content_type, content_id, mode, every_n, position,
+               CASE content_type
+                 WHEN 'show'     THEN (SELECT title FROM show     WHERE show_id     = content_id)
+                 WHEN 'playlist' THEN (SELECT title FROM playlist WHERE playlist_id = content_id)
+                 WHEN 'episode'  THEN (SELECT title FROM episode  WHERE episode_id  = content_id)
+                 ELSE content_id
+               END AS title,
+               season_filter
+        FROM channel_bumper WHERE channel_id = ? ORDER BY position
+    )");
+    q.bind(1, channel_id);
+    std::vector<BumperRow> rows;
+    while (q.executeStep()) {
+        BumperRow r;
+        r.id           = q.getColumn(0).getInt();
+        r.content_type = q.getColumn(1).getString();
+        r.content_id   = q.getColumn(2).getString();
+        r.mode         = q.getColumn(3).getString();
+        r.every_n      = q.getColumn(4).getInt();
+        r.position     = q.getColumn(5).getInt();
+        r.title        = q.getColumn(6).isNull() ? r.content_id : q.getColumn(6).getString();
+        if (!q.getColumn(7).isNull()) r.season_filter = q.getColumn(7).getInt();
+        rows.push_back(std::move(r));
+    }
+    return rows;
+}
+
 BlockRepository::BumperResult BlockRepository::addBumper(
     const std::string& channel_id,
     const std::string& content_type, const std::string& content_id,

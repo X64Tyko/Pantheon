@@ -70,6 +70,18 @@ public:
     void removeFillerEntry(int id);
 
     // ── channel_bumper CRUD ───────────────────────────────────────────────────
+    struct BumperRow {
+        int         id;
+        std::string content_type;
+        std::string content_id;
+        std::string mode;
+        int         every_n;
+        int         position;
+        std::string title;
+        std::optional<int> season_filter;
+    };
+    std::vector<BumperRow> listBumpers(const std::string& channel_id);
+
     struct BumperResult { int id; int position; std::string title; };
     BumperResult addBumper(const std::string& channel_id,
                             const std::string& content_type, const std::string& content_id,
