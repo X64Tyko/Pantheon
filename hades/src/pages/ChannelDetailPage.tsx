@@ -8,8 +8,8 @@ import { zoomBtnStyle } from '../channel/styles'
 import DayColumn from '../channel/DayColumn'
 import EpgPreview, { EpgErrorBoundary } from '../channel/EpgPreview'
 import ChannelDefaultsPanel from '../channel/ChannelDefaultsPanel'
-import { BlockEditor, NewBlockEditor } from '../channel/BlockEditor'
-import BlockEditorModal from '../channel/BlockEditorModal'
+import { EditorPanel } from '../channel/EditorPanel'
+import { BlockEditMain } from '../channel/BlockEditMain'
 import { BulkEditPanel } from '../channel/BulkEditPanel'
 import ChannelFillerOverlay from '../channel/ChannelFillerOverlay'
 import ChannelBumperOverlay from '../channel/ChannelBumperOverlay'
@@ -48,6 +48,8 @@ export default observer(function ChannelDetailPage() {
   const pph     = store.pxPerHour
   const gridH   = 24 * pph
   const zoomPct = Math.round(pph / PPH_DEFAULT * 100) + '%'
+
+  const editing = store.selectedId !== null || store.isNewMode
 
   // Merge the active draft into blocks so the EPG preview reacts to unsaved changes.
   const epgBlocks: Block[] = (() => {
@@ -158,72 +160,81 @@ export default observer(function ChannelDetailPage() {
       )}
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
 
-        {/* Grid + EPG column */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* Content area — switches between block edit mode and week grid */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
 
-          <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: 'auto' }} className="scrollbar-dark">
-            <div style={{ minWidth: GUTTER_W + DAY_MIN_W * 7 }}>
+          {editing ? (
+            /* ── Block editing mode ─────────────────────────────────────── */
+            <>
+              <BlockEditMain channelId={id} store={store} />
+              <aside style={{ flexShrink: 0, width: 360, borderLeft: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <EditorPanel channelId={id} store={store} />
+              </aside>
+            </>
+          ) : (
+            /* ── Default view: week grid + channel/bulk sidebar ─────────── */
+            <>
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: 'auto' }} className="scrollbar-dark">
+                  <div style={{ minWidth: GUTTER_W + DAY_MIN_W * 7 }}>
 
-              {/* Sticky day header */}
-              <div style={{ display: 'flex', position: 'sticky', top: 0, zIndex: 25, borderBottom: '1px solid var(--hds-line-s)', background: 'var(--hds-bg)' }}>
-                <div style={{ width: GUTTER_W, flexShrink: 0 }} />
-                {DAYS.map(([, long]) => (
-                  <div key={long} style={{ flex: `1 0 ${DAY_MIN_W}px`, textAlign: 'center', padding: '11px 0', fontSize: 10, letterSpacing: '0.24em', color: 'var(--hds-txt-2)', borderLeft: '1px solid var(--hds-line-s)' }}>
-                    {long}
-                  </div>
-                ))}
-              </div>
-
-              {/* Grid body */}
-              <div style={{ display: 'flex' }}>
-                {/* Time gutter */}
-                <div style={{ width: GUTTER_W, flexShrink: 0, position: 'relative', height: gridH }}>
-                  {Array.from({ length: 25 }, (_, h) => (
-                    <div key={h} style={{ position: 'absolute', top: h * pph, right: 9, transform: 'translateY(-50%)', fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.04em' }}>
-                      {String(h).padStart(2, '0')}:00
+                    {/* Sticky day header */}
+                    <div style={{ display: 'flex', position: 'sticky', top: 0, zIndex: 25, borderBottom: '1px solid var(--hds-line-s)', background: 'var(--hds-bg)' }}>
+                      <div style={{ width: GUTTER_W, flexShrink: 0 }} />
+                      {DAYS.map(([, long]) => (
+                        <div key={long} style={{ flex: `1 0 ${DAY_MIN_W}px`, textAlign: 'center', padding: '11px 0', fontSize: 10, letterSpacing: '0.24em', color: 'var(--hds-txt-2)', borderLeft: '1px solid var(--hds-line-s)' }}>
+                          {long}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                {DAYS.map(([, long], di) => (
-                  <DayColumn key={long} dayIdx={di} blocks={store.blocks} pph={pph} selectedId={store.selectedId} store={store} channelId={id} />
-                ))}
-              </div>
-            </div>
-          </div>
 
-          <EpgErrorBoundary>
-            <EpgPreview
-              blocks={epgBlocks}
-              epgItems={store.epgItems}
-              epgLoading={store.epgLoading}
-              epgDay={store.epgDay}
-              timezone={channel?.timezone ?? 'UTC'}
-              onDay={d => { store.epgDay = d }}
-              onRefresh={() => store.loadEpg(id)}
-              onSelectBlock={blockId => store.select(blockId)}
-            />
-          </EpgErrorBoundary>
+                    {/* Grid body */}
+                    <div style={{ display: 'flex' }}>
+                      {/* Time gutter */}
+                      <div style={{ width: GUTTER_W, flexShrink: 0, position: 'relative', height: gridH }}>
+                        {Array.from({ length: 25 }, (_, h) => (
+                          <div key={h} style={{ position: 'absolute', top: h * pph, right: 9, transform: 'translateY(-50%)', fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.04em' }}>
+                            {String(h).padStart(2, '0')}:00
+                          </div>
+                        ))}
+                      </div>
+                      {DAYS.map(([, long], di) => (
+                        <DayColumn key={long} dayIdx={di} blocks={store.blocks} pph={pph} selectedId={store.selectedId} store={store} channelId={id} />
+                      ))}
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+
+              <aside style={{ flexShrink: 0, width: 392, borderLeft: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                {store.bulkMode ? (
+                  <BulkEditPanel channelId={id} store={store} />
+                ) : (
+                  <ChannelDefaultsPanel channel={channel} channelId={id} store={store} />
+                )}
+              </aside>
+            </>
+          )}
         </div>
 
-        {/* Side panel */}
-        <aside style={{ flexShrink: 0, width: 392, borderLeft: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          {store.bulkMode ? (
-            <BulkEditPanel channelId={id} store={store} />
-          ) : store.selectedId !== null ? (
-            <BlockEditor channelId={id} store={store} />
-          ) : store.isNewMode ? (
-            <NewBlockEditor channelId={id} store={store} />
-          ) : (
-            <ChannelDefaultsPanel channel={channel} channelId={id} store={store} />
-          )}
-        </aside>
+        {/* EPG preview — always visible at bottom */}
+        <EpgErrorBoundary>
+          <EpgPreview
+            blocks={epgBlocks}
+            epgItems={store.epgItems}
+            epgLoading={store.epgLoading}
+            epgDay={store.epgDay}
+            timezone={channel?.timezone ?? 'UTC'}
+            onDay={d => { store.epgDay = d }}
+            onRefresh={() => store.loadEpg(id)}
+            onSelectBlock={blockId => store.select(blockId)}
+          />
+        </EpgErrorBoundary>
       </div>
 
-      {store.modalOpen && (
-        <BlockEditorModal channelId={id} store={store} />
-      )}
       {store.channelFillerOverlayOpen && channel && (
         <ChannelFillerOverlay channelId={id} channel={channel} store={store} />
       )}

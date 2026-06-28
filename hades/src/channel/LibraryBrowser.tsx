@@ -6,7 +6,7 @@ import { inputStyle } from './styles'
 import { FilterSection } from '../components/PickerFilters'
 import { HelpTip, HelpSection, GifSlot } from './HelpTip'
 import { MediaTile, ShowMediaTile, MediaInfoPanel, useDetailPanel, LoadMoreSentinel, BrowserEmpty } from './BrowserTiles'
-import type { InfoItem } from './BrowserTiles'
+import type { AddContentParams, InfoItem } from './BrowserTiles'
 import type { ChannelDetailStore } from './store'
 
 const TAB_LABELS: Record<PickerTab, string> = {
@@ -15,8 +15,13 @@ const TAB_LABELS: Record<PickerTab, string> = {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export const LibraryBrowser = observer(function LibraryBrowser({ channelId, store }: { channelId: string; store: ChannelDetailStore }) {
+export const LibraryBrowser = observer(function LibraryBrowser({ channelId, store, onAdd }: {
+  channelId: string
+  store:     ChannelDetailStore
+  onAdd?:    (params: AddContentParams) => void
+}) {
   const { infoItem, setInfoItem, infoDetail, infoSeasons, detailLoading } = useDetailPanel()
+  const handleAdd = onAdd ?? ((params: AddContentParams) => store.addContent(channelId, params))
 
   const tabs        = availablePickerTabs(store.draft.block_type)
   const showFilters = !infoItem && (store.pickerTab === 'shows' || store.pickerTab === 'movies')
@@ -91,11 +96,11 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
           detail={infoDetail}
           seasons={infoSeasons}
           detailLoading={detailLoading}
-          onAdd={params => store.addContent(channelId, params)}
+          onAdd={handleAdd}
           onBack={() => setInfoItem(null)}
         />
       ) : (
-        <TileGrid store={store} channelId={channelId} onSelect={setInfoItem} />
+        <TileGrid store={store} channelId={channelId} onSelect={setInfoItem} onAdd={handleAdd} />
       )}
     </div>
   )
@@ -103,7 +108,7 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
 
 // ─── Tile grid ────────────────────────────────────────────────────────────────
 
-const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { store: ChannelDetailStore; channelId: string; onSelect: (item: InfoItem) => void }) {
+const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd }: { store: ChannelDetailStore; channelId: string; onSelect: (item: InfoItem) => void; onAdd: (params: AddContentParams) => void }) {
   if (store.pickerLoading) {
     return <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
   }
@@ -132,7 +137,7 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect }: { st
             <ShowMediaTile key={s.show_id}
               show={s}
               isAdded={store.draftContent.some(c => c.content_type === 'show' && c.content_id === s.show_id)}
-              onAdd={params => store.addContent(channelId, params)}
+              onAdd={onAdd}
               onInfoOpen={() => onSelect({ kind: 'show', id: s.show_id, seed: s })}
               onDragStart={e => startDrag(e, 'show', s.show_id, s.title)}
               onDragEnd={endDrag}

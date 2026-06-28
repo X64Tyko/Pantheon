@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
 import type { AdvanceMode, Channel, EpisodeSearchResult } from '../api/types'
 import { inputStyle, filterInputStyle } from './styles'
-import { CardSection } from './EditorForm'
+import { CardSection, LauncherRow } from './sections'
 import type { ChannelDetailStore } from './store'
 import { api } from '../api/client'
 
@@ -180,31 +180,6 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
     </div>
   )
 })
-
-// ─── Launcher row ─────────────────────────────────────────────────────────────
-
-function LauncherRow({ icon, title, summary, onClick }: {
-  icon:    string
-  title:   string
-  summary: string
-  onClick: () => void
-}) {
-  return (
-    <div
-      onClick={onClick}
-      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 13px', marginBottom: 9, borderRadius: 11, cursor: 'pointer', border: '1px solid var(--hds-line-s)', background: 'oklch(0.19 0.018 288 / 0.45)', transition: 'border-color .12s, background .12s' }}
-      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line)'; (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.24 0.025 290 / 0.5)' }}
-      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'; (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.19 0.018 288 / 0.45)' }}
-    >
-      <span style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px solid var(--hds-line-s)', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 16 }}>{icon}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 11, letterSpacing: '0.18em', color: 'var(--hds-txt)' }}>{title}</div>
-        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summary}</div>
-      </div>
-      <span style={{ fontSize: 13, color: 'var(--hds-violet)', flexShrink: 0 }}>›</span>
-    </div>
-  )
-}
 
 // ─── Audio picker ─────────────────────────────────────────────────────────────
 

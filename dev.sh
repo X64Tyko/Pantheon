@@ -23,6 +23,9 @@ trap '
 ' EXIT INT TERM
 
 # ── Hades    :5173 ────────────────────────────────────────────────────────────
-echo '[dev] starting Hades on :5173 ...'
+echo '[dev] installing Hades dependencies ...'
 cd "$root/hades"
+pnpm install
+
+echo '[dev] starting Hades on :5173 ...'
 pnpm dev

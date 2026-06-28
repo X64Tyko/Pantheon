@@ -118,7 +118,7 @@ const BlockEditorModal = observer(function BlockEditorModal({ channelId, store }
             <div style={{ padding: '9px 14px 5px', flexShrink: 0 }}>
               <span style={{ fontSize: 9, letterSpacing: '0.2em', color: 'var(--hds-txt-3)' }}>① SCHEDULE & RULES</span>
             </div>
-            <EditorForm channelId={channelId} store={store} limitMode={limitMode} hidePicker compact />
+            <EditorForm channelId={channelId} store={store} limitMode={limitMode} />
           </div>
 
           {/* Center: Content */}

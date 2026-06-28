@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { systemStore } from '../stores'
@@ -23,6 +23,14 @@ export default observer(function Layout() {
   const { user, logout } = useAuth()
   const isChannelDetail = /^\/channels\/.+/.test(location.pathname)
   const onActivity   = location.pathname === '/activity'
+
+  const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem('hds-nav-collapsed') === '1')
+
+  const toggleNav = () => setNavCollapsed(c => {
+    const next = !c
+    localStorage.setItem('hds-nav-collapsed', next ? '1' : '0')
+    return next
+  })
 
   // Connect the global SSE log stream once and keep it alive.
   useEffect(() => { systemStore.connectLogs() }, [])
@@ -50,36 +58,88 @@ export default observer(function Layout() {
   }, [onActivity])
 
   const hasErrors = systemStore.unreadErrors > 0
+  const col = navCollapsed
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--hds-bg)' }}>
       {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
       <nav style={{
-        width: 236, flexShrink: 0, display: 'flex', flexDirection: 'column',
+        width: col ? 52 : 236, flexShrink: 0, display: 'flex', flexDirection: 'column',
         borderRight: '1px solid var(--hds-line-s)',
         background: 'linear-gradient(180deg, oklch(0.17 0.018 286), var(--hds-bg))',
-        padding: '22px 18px',
+        padding: col ? '22px 8px' : '22px 18px',
+        transition: 'width .18s cubic-bezier(0.4,0,0.2,1), padding .18s cubic-bezier(0.4,0,0.2,1)',
+        overflow: 'hidden',
       }}>
-        {/* Brand */}
+        {/* Brand + collapse toggle */}
         <div style={{ marginBottom: 30 }}>
-          <div style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontWeight: 800,
-            fontSize: 24, letterSpacing: '0.32em', color: 'var(--hds-gold)',
-            textShadow: '0 0 22px oklch(0.83 0.13 84 / 0.35)',
-          }}>HADES</div>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.42em', color: 'var(--hds-violet)', marginTop: 5, opacity: 0.85 }}>
-            KAIROS ENGINE
-          </div>
+          {col ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <div style={{
+                fontFamily: "'Chakra Petch', sans-serif", fontWeight: 800,
+                fontSize: 15, color: 'var(--hds-gold)',
+                textShadow: '0 0 16px oklch(0.83 0.13 84 / 0.4)',
+              }}>H</div>
+              <button
+                onClick={toggleNav}
+                title="Expand nav"
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 28, height: 28, borderRadius: 7, border: '1px solid var(--hds-line-s)',
+                  background: 'transparent', cursor: 'pointer', color: 'var(--hds-txt-3)',
+                  transition: 'border-color .12s, color .12s, background .12s',
+                }}
+                onMouseEnter={e => { const b = e.currentTarget; b.style.borderColor = 'var(--hds-line)'; b.style.color = 'var(--hds-txt)'; b.style.background = 'var(--hds-bg-3)' }}
+                onMouseLeave={e => { const b = e.currentTarget; b.style.borderColor = 'var(--hds-line-s)'; b.style.color = 'var(--hds-txt-3)'; b.style.background = 'transparent' }}
+              >
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M4 2l3 3.5-3 3.5" />
+                </svg>
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{
+                  fontFamily: "'Chakra Petch', sans-serif", fontWeight: 800,
+                  fontSize: 24, letterSpacing: '0.32em', color: 'var(--hds-gold)',
+                  textShadow: '0 0 22px oklch(0.83 0.13 84 / 0.35)',
+                }}>HADES</div>
+                <div style={{ fontSize: 9.5, letterSpacing: '0.42em', color: 'var(--hds-violet)', marginTop: 5, opacity: 0.85 }}>
+                  KAIROS ENGINE
+                </div>
+              </div>
+              <button
+                onClick={toggleNav}
+                title="Collapse nav"
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 26, height: 26, marginTop: 2, borderRadius: 7,
+                  border: '1px solid transparent', background: 'transparent',
+                  cursor: 'pointer', color: 'var(--hds-txt-3)', flexShrink: 0,
+                  transition: 'border-color .12s, color .12s, background .12s',
+                }}
+                onMouseEnter={e => { const b = e.currentTarget; b.style.borderColor = 'var(--hds-line-s)'; b.style.color = 'var(--hds-txt)'; b.style.background = 'var(--hds-bg-3)' }}
+                onMouseLeave={e => { const b = e.currentTarget; b.style.borderColor = 'transparent'; b.style.color = 'var(--hds-txt-3)'; b.style.background = 'transparent' }}
+              >
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M7 2L4 5.5 7 9" />
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Nav */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
           {navItems.filter(item => !item.adminOnly || user?.role === 'admin').map(({ to, label, icon }) => (
-            <NavLink key={to} to={to} style={{ textDecoration: 'none' }}>
+            <NavLink key={to} to={to} title={col ? label : undefined} style={{ textDecoration: 'none' }}>
               {({ isActive }) => (
                 <div style={{
-                  position: 'relative', display: 'flex', alignItems: 'center', gap: 11,
-                  padding: '10px 12px', borderRadius: 9,
+                  position: 'relative', display: 'flex', alignItems: 'center',
+                  gap: col ? 0 : 11,
+                  justifyContent: col ? 'center' : 'flex-start',
+                  padding: col ? '10px 0' : '10px 12px', borderRadius: 9,
                   background: isActive ? 'var(--hds-bg-3)' : 'transparent',
                   color: isActive ? 'var(--hds-gold)' : 'var(--hds-txt-2)',
                   boxShadow: isActive ? 'inset 0 0 0 1px oklch(0.83 0.13 84 / 0.18)' : 'none',
@@ -99,18 +159,20 @@ export default observer(function Layout() {
                   <span style={{ color: isActive ? 'var(--hds-gold)' : 'var(--hds-txt-3)', flexShrink: 0 }}>
                     {icon}
                   </span>
-                  <span>{label}</span>
+                  {!col && <span>{label}</span>}
 
                   {/* Activity indicator: red error badge > purple sync dot */}
                   {to === '/activity' && (
                     hasErrors ? (
                       <span style={{
-                        marginLeft: 'auto',
-                        minWidth: 18, height: 18, borderRadius: 9,
-                        padding: '0 5px',
+                        marginLeft: col ? undefined : 'auto',
+                        position: col ? 'absolute' : undefined,
+                        top: col ? 4 : undefined, right: col ? 4 : undefined,
+                        minWidth: 16, height: 16, borderRadius: 8,
+                        padding: '0 4px',
                         background: 'oklch(0.55 0.22 22)',
                         color: '#fff',
-                        fontSize: 9.5, fontWeight: 700,
+                        fontSize: 9, fontWeight: 700,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         boxShadow: '0 0 10px oklch(0.55 0.22 22 / 0.7)',
                         animation: 'hds-pulse 2s ease-in-out infinite',
@@ -119,7 +181,14 @@ export default observer(function Layout() {
                         {systemStore.unreadErrors > 99 ? '99+' : systemStore.unreadErrors}
                       </span>
                     ) : systemStore.syncing ? (
-                      <span style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: 'var(--hds-violet)', animation: 'hds-pulse 2.6s ease-in-out infinite' }} />
+                      <span style={{
+                        marginLeft: col ? undefined : 'auto',
+                        position: col ? 'absolute' : undefined,
+                        top: col ? 6 : undefined, right: col ? 6 : undefined,
+                        width: 6, height: 6, borderRadius: '50%',
+                        background: 'var(--hds-violet)',
+                        animation: 'hds-pulse 2.6s ease-in-out infinite',
+                      }} />
                     ) : null
                   )}
                 </div>
@@ -130,38 +199,52 @@ export default observer(function Layout() {
 
         {/* Status footer */}
         <div style={{ paddingTop: 14, borderTop: '1px solid var(--hds-line-s)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: 'oklch(0.7 0.16 150)',
-              boxShadow: '0 0 8px oklch(0.7 0.16 150)',
-              animation: 'hds-pulse 2.6s ease-in-out infinite',
-            }} />
-            <span style={{ fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
-              v0.1.0 · running
-            </span>
-          </div>
-          {user && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span style={{ fontSize: 11, color: 'var(--hds-txt-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {user.username}
-                {user.role === 'admin' && <span style={{ marginLeft: 5, color: 'var(--hds-gold)', opacity: 0.7, fontSize: 9 }}>ADMIN</span>}
-              </span>
-              <button
-                onClick={() => { logout().then(() => navigate('/login')) }}
-                title="Sign out"
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--hds-txt-3)', fontSize: 10, padding: '2px 4px',
-                  borderRadius: 4, flexShrink: 0,
-                  fontFamily: "'JetBrains Mono', monospace",
-                  letterSpacing: '0.05em',
-                }}
-              >
-                exit
-              </button>
+          {col ? (
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: 'oklch(0.7 0.16 150)',
+                boxShadow: '0 0 8px oklch(0.7 0.16 150)',
+                animation: 'hds-pulse 2.6s ease-in-out infinite',
+              }} />
             </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                  width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                  background: 'oklch(0.7 0.16 150)',
+                  boxShadow: '0 0 8px oklch(0.7 0.16 150)',
+                  animation: 'hds-pulse 2.6s ease-in-out infinite',
+                }} />
+                <span style={{ fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
+                  v0.1.0 · running
+                </span>
+              </div>
+              {user && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: 'var(--hds-txt-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {user.username}
+                    {user.role === 'admin' && <span style={{ marginLeft: 5, color: 'var(--hds-gold)', opacity: 0.7, fontSize: 9 }}>ADMIN</span>}
+                  </span>
+                  <button
+                    onClick={() => { logout().then(() => navigate('/login')) }}
+                    title="Sign out"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: 'var(--hds-txt-3)', fontSize: 10, padding: '2px 4px',
+                      borderRadius: 4, flexShrink: 0,
+                      fontFamily: "'JetBrains Mono', monospace",
+                      letterSpacing: '0.05em',
+                    }}
+                  >
+                    exit
+                  </button>
+                </div>
+              )}
+            </>
           )}
+
         </div>
       </nav>
 

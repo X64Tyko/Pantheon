@@ -175,6 +175,7 @@ void TimeslotService::registerRoutes(httplib::Server& svr) {
             for (const auto& item : arr) ids.push_back(item.at("entry_id").get<std::string>());
             TimeslotRepository repo(db_);
             repo.reorderQueueEntries(sid, ids);
+            repo.resetSlotCursor(sid);
             route::ok(res, "{}");
         } catch (const std::exception& e) {
             route::logErr("POST /api/blocks/:bid/slots/:sid/queue/reorder", e);

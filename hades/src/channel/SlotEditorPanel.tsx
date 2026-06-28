@@ -1,15 +1,14 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { observer } from 'mobx-react-lite'
-import { api } from '../api/client'
 import { inputStyle } from './styles'
-import type { TimeslotSlot, TimeslotQueueEntry, Show, Movie } from '../api/types'
+import type { TimeslotSlot, TimeslotQueueEntry } from '../api/types'
 import type { ChannelDetailStore } from './store'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 const ss: React.CSSProperties = { ...inputStyle, fontSize: 11, padding: '4px 8px' }
 
-function lbl(txt: string): React.CSSProperties {
+function lbl(): React.CSSProperties {
   return { fontSize: 9, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 3, display: 'block' }
 }
 function Row({ children }: { children: React.ReactNode }) {
@@ -18,7 +17,7 @@ function Row({ children }: { children: React.ReactNode }) {
 function Col({ label, children, width }: { label: string; children: React.ReactNode; width?: number }) {
   return (
     <div style={{ flex: width ? `0 0 ${width}px` : 1, minWidth: 0 }}>
-      <span style={lbl(label)}>{label}</span>
+      <span style={lbl()}>{label}</span>
       {children}
     </div>
   )
@@ -47,21 +46,48 @@ function slotLabel(slot: TimeslotSlot) {
   return `+${oHH}:${oMM} → +${eHH}:${eMM}`
 }
 
+// ─── Drop zone ────────────────────────────────────────────────────────────────
+
+function DropZone({ label, onDrop }: { label: string; onDrop: () => void }) {
+  const [over, setOver] = useState(false)
+  const counter = useRef(0)
+  return (
+    <div
+      onDragEnter={e => { e.preventDefault(); counter.current++; setOver(true) }}
+      onDragLeave={() => { counter.current--; if (counter.current === 0) setOver(false) }}
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => { e.preventDefault(); counter.current = 0; setOver(false); onDrop() }}
+      style={{
+        borderRadius: 8,
+        border: `1.5px dashed ${over ? 'var(--hds-violet)' : 'oklch(0.55 0.14 292 / 0.35)'}`,
+        background: over ? 'oklch(0.55 0.14 292 / 0.1)' : 'transparent',
+        padding: '11px 14px',
+        textAlign: 'center',
+        fontSize: 9.5,
+        color: over ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
+        letterSpacing: '0.12em',
+        transition: 'border-color .1s, background .1s, color .1s',
+        cursor: 'copy',
+        userSelect: 'none',
+      }}
+    >
+      {label}
+    </div>
+  )
+}
+
 // ─── Queue entry row ──────────────────────────────────────────────────────────
 
-function QueueRow({ entry, slotId, store }: {
+const QueueRow = observer(function QueueRow({ entry, slotId, store }: {
   entry:  TimeslotQueueEntry
   slotId: string
   store:  ChannelDetailStore
 }) {
-  const [open, setOpen] = useState(false)
   return (
-    <div style={{ borderRadius: 7, border: '1px solid var(--hds-line-s)', marginBottom: 5, overflow: 'hidden' }}>
-      <div
-        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'oklch(0.18 0.015 285 / 0.7)', cursor: 'pointer' }}
-        onClick={() => setOpen(o => !o)}
-      >
-        <span style={{ fontSize: 8, color: 'var(--hds-txt-3)', transform: open ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform .12s', flexShrink: 0 }}>▶</span>
+    <div style={{ borderRadius: 7, border: '1px solid var(--hds-line-s)', marginBottom: 6, overflow: 'hidden' }}>
+
+      {/* Title row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: 'oklch(0.18 0.015 285 / 0.7)' }}>
         <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {entry.title || entry.content_id}
         </span>
@@ -72,128 +98,59 @@ function QueueRow({ entry, slotId, store }: {
           </span>
         )}
         <button
-          onClick={e => { e.stopPropagation(); store.removeDraftQueueEntry(slotId, entry.entry_id) }}
+          onClick={() => store.removeDraftQueueEntry(slotId, entry.entry_id)}
           style={{ background: 'none', border: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 14, lineHeight: 1, flexShrink: 0, padding: 0 }}
         >×</button>
       </div>
-      {open && (
-        <div style={{ padding: '10px 12px 12px', borderTop: '1px solid var(--hds-line-s)' }}>
-          <Row>
-            <Col label="PREMIERE DATE">
-              <input
-                type="date" value={entry.premiere_date} style={ss}
-                onChange={e => store.patchDraftQueueEntry(slotId, entry.entry_id, { premiere_date: e.target.value })}
-              />
-            </Col>
-            <Col label="IF NOT YET PREMIERED">
-              <select
-                value={entry.pre_premiere_behavior} style={ss}
-                onChange={e => store.patchDraftQueueEntry(slotId, entry.entry_id, { pre_premiere_behavior: e.target.value as TimeslotQueueEntry['pre_premiere_behavior'] })}
-              >
-                <option value="replay_previous">Replay previous</option>
-                <option value="filler">Filler</option>
-                <option value="skip">Skip slot</option>
-              </select>
-            </Col>
-          </Row>
-        </div>
-      )}
-    </div>
-  )
-}
 
-// ─── Content search ───────────────────────────────────────────────────────────
-
-function ContentSearch({ slotId, store }: { slotId: string; store: ChannelDetailStore }) {
-  const [query,   setQuery]   = useState('')
-  const [type,    setType]    = useState<'show' | 'movie'>('show')
-  const [results, setResults] = useState<(Show | Movie)[]>([])
-  const [loading, setLoading] = useState(false)
-
-  const search = async () => {
-    if (!query.trim()) return
-    setLoading(true)
-    try {
-      const path = type === 'show'
-        ? `/shows?q=${encodeURIComponent(query)}&limit=20`
-        : `/movies?q=${encodeURIComponent(query)}&limit=20`
-      const r = await api.get<{ items: (Show | Movie)[] }>(path)
-      setResults(r.items ?? [])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const add = (item: Show | Movie) => {
-    const id = 'show_id' in item ? item.show_id : item.movie_id
-    store.addDraftQueueEntry(slotId, { content_type: type, content_id: id, title: item.title })
-  }
-
-  return (
-    <div>
-      <Row>
-        <Col label="TYPE" width={80}>
-          <select value={type} onChange={e => setType(e.target.value as 'show' | 'movie')} style={ss}>
-            <option value="show">Show</option>
-            <option value="movie">Movie</option>
-          </select>
-        </Col>
-        <Col label="SEARCH">
+      {/* Premiere date — always visible */}
+      <div style={{ display: 'flex', gap: 8, padding: '8px 10px 10px', borderTop: '1px solid var(--hds-line-s)', background: 'oklch(0.165 0.012 284 / 0.5)' }}>
+        <Col label="PREMIERE DATE">
           <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') search() }}
-            placeholder="Title…"
+            type="date"
+            value={entry.premiere_date}
             style={ss}
+            onChange={e => store.patchDraftQueueEntry(slotId, entry.entry_id, { premiere_date: e.target.value })}
           />
         </Col>
-        <div style={{ paddingBottom: 1 }}>
-          <button
-            onClick={search} disabled={loading}
-            style={{ ...ss, cursor: 'pointer', background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line)', borderRadius: 6 }}
+        <Col label="IF NOT YET PREMIERED">
+          <select
+            value={entry.pre_premiere_behavior}
+            style={ss}
+            onChange={e => store.patchDraftQueueEntry(slotId, entry.entry_id, { pre_premiere_behavior: e.target.value as TimeslotQueueEntry['pre_premiere_behavior'] })}
           >
-            {loading ? '…' : 'Search'}
-          </button>
-        </div>
-      </Row>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {results.map(item => {
-          const id = 'show_id' in item ? item.show_id : item.movie_id
-          return (
-            <div
-              key={id}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', borderRadius: 6, border: '1px solid var(--hds-line-s)', background: 'oklch(0.18 0.015 285 / 0.5)', transition: 'border-color .1s' }}
-              onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line)'}
-              onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'}
-              onClick={() => add(item)}
-            >
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt)', flex: 1 }}>{item.title}</span>
-              <span style={{ fontSize: 8.5, color: 'var(--hds-gold)', border: '1px solid currentColor', borderRadius: 4, padding: '1px 5px', flexShrink: 0 }}>+ Add</span>
-            </div>
-          )
-        })}
+            <option value="replay_previous">Replay previous</option>
+            <option value="filler">Filler</option>
+            <option value="skip">Skip slot</option>
+          </select>
+        </Col>
       </div>
     </div>
   )
-}
+})
 
 // ─── SlotEditorPanel ─────────────────────────────────────────────────────────
 
 export const SlotEditorPanel = observer(function SlotEditorPanel({ store }: {
   store: ChannelDetailStore
 }) {
-  const slotId = store.editingSlotId!
-  const slot   = store.draftSlots.find(s => s.slot_id === slotId)
+  const slotId  = store.editingSlotId!
+  const slot    = store.draftSlots.find(s => s.slot_id === slotId)
   const blockId = store.editing?.block_id ?? ''
 
   if (!slot) return null
 
-  const label = slotLabel(slot)
-  const patch  = (field: string, value: string | number) =>
+  const patch = (field: string, value: string | number) =>
     store.patchDraftSlot(slotId, { [field]: value } as Partial<TimeslotSlot>)
 
-  const handleCursorReset = () =>
-    store.resetDraftSlotCursor(blockId, slotId).catch(console.error)
+  const droppable = store.dragContent &&
+    (store.dragContent.content_type === 'show' || store.dragContent.content_type === 'movie')
+
+  const handleQueueDrop = () => {
+    const c = store.dragContent
+    if (!c || (c.content_type !== 'show' && c.content_type !== 'movie')) return
+    store.addDraftQueueEntry(slotId, { content_type: c.content_type, content_id: c.content_id, title: c.title })
+  }
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 12px 20px' }} className="scrollbar-dark">
@@ -208,7 +165,7 @@ export const SlotEditorPanel = observer(function SlotEditorPanel({ store }: {
 
       {/* Slot identity */}
       <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: 'var(--hds-txt)', marginBottom: 14, letterSpacing: '0.05em' }}>
-        {label}
+        {slotLabel(slot)}
         <span style={{ fontSize: 9, color: 'var(--hds-txt-3)', marginLeft: 10 }}>{slot.slot_duration_mins} min</span>
       </div>
 
@@ -253,40 +210,36 @@ export const SlotEditorPanel = observer(function SlotEditorPanel({ store }: {
         </Row>
       </Card>
 
-      {/* Queue */}
+      {/* Content queue */}
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
           <SectionLabel>CONTENT QUEUE</SectionLabel>
           <div style={{ flex: 1 }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 9, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
-              cursor {slot.queue_pos}/{slot.queue.length > 0 ? slot.queue.length - 1 : 0} · ep {slot.episode_pos}
-            </span>
-            <button
-              onClick={handleCursorReset}
-              style={{ fontSize: 9, padding: '2px 7px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace" }}
-            >
-              Reset
-            </button>
-          </div>
+          <span style={{ fontSize: 9, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", marginRight: 8 }}>
+            cursor {slot.queue_pos}/{Math.max(0, slot.queue.length - 1)} · ep {slot.episode_pos}
+          </span>
+          <button
+            onClick={() => store.resetDraftSlotCursor(blockId, slotId).catch(console.error)}
+            style={{ fontSize: 9, padding: '2px 7px', borderRadius: 4, border: '1px solid var(--hds-line)', background: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            Reset
+          </button>
         </div>
-        {slot.queue.length === 0 && (
-          <div style={{ padding: '8px 0', fontSize: 10.5, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace', letterSpacing: '0.05em" }}>
-            No content — add shows or movies below.
+
+        {slot.queue.length === 0 && !droppable && (
+          <div style={{ padding: '4px 0 6px', fontSize: 10.5, color: 'var(--hds-txt-3)', lineHeight: 1.55 }}>
+            Drag a show or movie from the browser on the left to add it to this slot's queue.
           </div>
         )}
-        {slot.queue.map(e => (
-          <QueueRow key={e.entry_id} entry={e} slotId={slotId} store={store} />
-        ))}
-      </Card>
 
-      {/* Add content */}
-      <div style={{ borderRadius: 9, border: '1px solid var(--hds-line-s)', overflow: 'hidden' }}>
-        <div style={{ padding: '10px 14px', background: 'oklch(0.19 0.015 285 / 0.5)' }}>
-          <SectionLabel>ADD CONTENT</SectionLabel>
-          <ContentSearch slotId={slotId} store={store} />
-        </div>
-      </div>
+        {slot.queue.map(e => <QueueRow key={e.entry_id} entry={e} slotId={slotId} store={store} />)}
+
+        {droppable && (
+          <div style={{ marginTop: slot.queue.length > 0 ? 6 : 0 }}>
+            <DropZone label="DROP SHOW / MOVIE TO ADD TO QUEUE" onDrop={handleQueueDrop} />
+          </div>
+        )}
+      </Card>
     </div>
   )
 })

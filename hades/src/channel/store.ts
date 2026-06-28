@@ -103,6 +103,11 @@ export class ChannelDetailStore {
   channelFillerOverlayOpen:  boolean = false
   channelBumperOverlayOpen:  boolean = false
 
+  activeBlockTab:        'content' | 'filler' | 'bumpers' = 'content'
+  selectedContentItemId: number | null                     = null
+  selectedFillerItemId:  number | null                     = null
+  selectedBumperSlot:    'intro' | 'outro' | 'interstitial' | null = null
+
   fillerPickerOpen: boolean      = false
   fillerSaving:     boolean      = false
 
@@ -319,12 +324,14 @@ export class ChannelDetailStore {
                       if (!ds.queue.some(dq => dq.entry_id === oq.entry_id))
                         await api.del(`/blocks/${realId}/slots/${ds.slot_id}/queue/${oq.entry_id}`)
                     }
+                    const finalOrderIds: string[] = []
                     for (const dq of ds.queue) {
                       if (dq.entry_id.startsWith('tmp_')) {
-                        await api.post(`/blocks/${realId}/slots/${ds.slot_id}/queue`, {
+                        const r = await api.post<{ entry_id: string }>(`/blocks/${realId}/slots/${ds.slot_id}/queue`, {
                           content_type: dq.content_type, content_id: dq.content_id,
                           premiere_date: dq.premiere_date, pre_premiere_behavior: dq.pre_premiere_behavior,
                         })
+                        finalOrderIds.push(r.entry_id)
                       } else {
                         const oq = orig.queue.find(q => q.entry_id === dq.entry_id)
                         if (oq) {
@@ -334,8 +341,15 @@ export class ChannelDetailStore {
                           if (Object.keys(qp).length > 0)
                             await api.patch(`/blocks/${realId}/slots/${ds.slot_id}/queue/${dq.entry_id}`, qp)
                         }
+                        finalOrderIds.push(dq.entry_id)
                       }
                     }
+                    const origIds = orig.queue.map(q => q.entry_id)
+                    const orderChanged = finalOrderIds.length !== origIds.length ||
+                      finalOrderIds.some((id, i) => id !== origIds[i])
+                    if (orderChanged && finalOrderIds.length > 0)
+                      await api.post(`/blocks/${realId}/slots/${ds.slot_id}/queue/reorder`,
+                        finalOrderIds.map(id => ({ entry_id: id })))
                   }
                 }
               }
@@ -442,18 +456,22 @@ export class ChannelDetailStore {
   select(blockId: string) {
     const block = this.blocks.find(b => b.block_id === blockId)
     if (!block) return
-    this.selectedId         = blockId
-    this.editing            = block
-    this.isNewMode          = false
-    this.editingSlotId      = null
-    this.draft              = blockToDraft(block)
-    this.draftContent       = [...block.content]
-    this.draftFillerEntries = [...block.filler_entries]
-    this.draftSlots         = (block.slots ?? []).map(s => ({ ...s, queue: [...s.queue] }))
-    this.contentDirty       = false
-    this.saveErr            = null
-    this.pickerOpen         = false
-    this.fillerPickerOpen   = false
+    this.selectedId            = blockId
+    this.editing               = block
+    this.isNewMode             = false
+    this.editingSlotId         = null
+    this.draft                 = blockToDraft(block)
+    this.draftContent          = [...block.content]
+    this.draftFillerEntries    = [...block.filler_entries]
+    this.draftSlots            = (block.slots ?? []).map(s => ({ ...s, queue: [...s.queue] }))
+    this.contentDirty          = false
+    this.saveErr               = null
+    this.pickerOpen            = false
+    this.fillerPickerOpen      = false
+    this.activeBlockTab        = 'content'
+    this.selectedContentItemId = null
+    this.selectedFillerItemId  = null
+    this.selectedBumperSlot    = null
     if (block.content.some(c => c.content_type === 'playlist')) {
       api.getPlaylists().then(r => runInAction(() => { this.pickerPlaylists = r; this.contentPlaylists = r })).catch(() => {})
     } else {
@@ -462,31 +480,47 @@ export class ChannelDetailStore {
   }
 
   openNew() {
-    const maxP              = Math.max(0, ...this.blocks.map(b => b.priority))
-    this.selectedId         = null
-    this.editing            = null
-    this.isNewMode          = true
-    this.editingSlotId      = null
-    this.draft              = { ...BLANK_DRAFT, priority: maxP + 1 }
-    this.draftContent       = []
-    this.draftFillerEntries = []
-    this.draftSlots         = []
-    this.contentDirty       = false
-    this.saveErr            = null
-    this.pickerOpen         = false
+    const maxP                 = Math.max(0, ...this.blocks.map(b => b.priority))
+    this.selectedId            = null
+    this.editing               = null
+    this.isNewMode             = true
+    this.editingSlotId         = null
+    this.draft                 = { ...BLANK_DRAFT, priority: maxP + 1 }
+    this.draftContent          = []
+    this.draftFillerEntries    = []
+    this.draftSlots            = []
+    this.contentDirty          = false
+    this.saveErr               = null
+    this.pickerOpen            = false
+    this.activeBlockTab        = 'content'
+    this.selectedContentItemId = null
+    this.selectedFillerItemId  = null
+    this.selectedBumperSlot    = null
   }
 
   closeEditor() {
-    this.selectedId         = null
-    this.editing            = null
-    this.isNewMode          = false
-    this.editingSlotId      = null
-    this.pickerOpen         = false
-    this.fillerPickerOpen   = false
-    this.draftContent       = []
-    this.draftFillerEntries = []
-    this.draftSlots         = []
-    this.contentDirty       = false
+    this.selectedId            = null
+    this.editing               = null
+    this.isNewMode             = false
+    this.editingSlotId         = null
+    this.pickerOpen            = false
+    this.fillerPickerOpen      = false
+    this.draftContent          = []
+    this.draftFillerEntries    = []
+    this.draftSlots            = []
+    this.contentDirty          = false
+    this.activeBlockTab        = 'content'
+    this.selectedContentItemId = null
+    this.selectedFillerItemId  = null
+    this.selectedBumperSlot    = null
+  }
+
+  setActiveBlockTab(tab: 'content' | 'filler' | 'bumpers') {
+    this.activeBlockTab        = tab
+    this.selectedContentItemId = null
+    this.selectedFillerItemId  = null
+    this.selectedBumperSlot    = null
+    this.editingSlotId         = null
   }
 
   toggleBulkMode() {
@@ -754,6 +788,18 @@ export class ChannelDetailStore {
     this.contentDirty = true
   }
 
+  reorderContent(fromId: number, toId: number, half: 'top' | 'bottom') {
+    const items   = [...this.draftContent]
+    const fromIdx = items.findIndex(c => c.id === fromId)
+    const toIdx   = items.findIndex(c => c.id === toId)
+    if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return
+    const [moved] = items.splice(fromIdx, 1)
+    const newTo   = items.findIndex(c => c.id === toId)
+    items.splice(half === 'top' ? newTo : newTo + 1, 0, moved)
+    this.draftContent = items.map((c, i) => ({ ...c, position: i }))
+    this.contentDirty = true
+  }
+
   updateContentField(channelId: string, cid: number, field: 'weight' | 'run_count' | 'episode_order' | 'include_specials', value: number | string | boolean) {
     this.draftContent = this.draftContent.map(c => c.id === cid ? { ...c, [field]: value } : c)
     this.contentDirty = true
@@ -869,6 +915,19 @@ export class ChannelDetailStore {
     this.contentDirty = true
   }
 
+  // Sort a queue by premiere_date ascending, undated entries last (stable within undated).
+  private sortSlotQueue(queue: TimeslotQueueEntry[]): TimeslotQueueEntry[] {
+    return [...queue]
+      .sort((a, b) => {
+        const aD = a.premiere_date, bD = b.premiere_date
+        if (aD && bD) return aD.localeCompare(bD)
+        if (aD) return -1
+        if (bD) return 1
+        return a.queue_index - b.queue_index
+      })
+      .map((e, i) => ({ ...e, queue_index: i }))
+  }
+
   addDraftQueueEntry(slotId: string, entry: { content_type: 'show' | 'movie'; content_id: string; title: string }) {
     this.draftSlots = this.draftSlots.map(s => {
       if (s.slot_id !== slotId) return s
@@ -882,7 +941,7 @@ export class ChannelDetailStore {
         premiere_date:         '',
         pre_premiere_behavior: 'replay_previous',
       }
-      return { ...s, queue: [...s.queue, newEntry] }
+      return { ...s, queue: this.sortSlotQueue([...s.queue, newEntry]) }
     })
     this.contentDirty = true
   }
@@ -903,7 +962,8 @@ export class ChannelDetailStore {
   patchDraftQueueEntry(slotId: string, entryId: string, patch: Partial<Pick<TimeslotQueueEntry, 'premiere_date' | 'pre_premiere_behavior'>>) {
     this.draftSlots = this.draftSlots.map(s => {
       if (s.slot_id !== slotId) return s
-      return { ...s, queue: s.queue.map(q => q.entry_id === entryId ? { ...q, ...patch } : q) }
+      const updated = s.queue.map(q => q.entry_id === entryId ? { ...q, ...patch } : q)
+      return { ...s, queue: 'premiere_date' in patch ? this.sortSlotQueue(updated) : updated }
     })
     this.contentDirty = true
   }
