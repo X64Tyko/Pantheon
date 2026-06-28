@@ -69,6 +69,10 @@ export default function SettingsPage() {
   const [error,    setError]      = useState<string | null>(null)
   const [threads,  setThreads]    = useState('')
 
+  const [resetConfirm,  setResetConfirm]  = useState(false)
+  const [resetting,     setResetting]     = useState(false)
+  const [resetMsg,      setResetMsg]      = useState<string | null>(null)
+
   const [arr,     setArr]     = useState<ArrConfig>({ sonarr_url: '', sonarr_api_key: '', radarr_url: '', radarr_api_key: '' })
   const [arrSave, setArrSave] = useState<'idle'|'saving'|'ok'|'err'>('idle')
 
@@ -112,6 +116,20 @@ export default function SettingsPage() {
     const n = parseInt(threads, 10)
     if (!isNaN(n) && n >= 1 && n <= 32) patch({ sync_threads: n })
     else setThreads(settings ? String(settings.sync_threads) : '6')
+  }
+
+  const resetLibrary = async () => {
+    setResetting(true)
+    setResetMsg(null)
+    try {
+      await api.resetLibrary()
+      setResetMsg('Library index cleared. Trigger a sync to repopulate.')
+      setResetConfirm(false)
+    } catch (e: any) {
+      setResetMsg(`Error: ${e.message ?? 'Unknown error'}`)
+    } finally {
+      setResetting(false)
+    }
   }
 
   const clearAllEpg = async () => {
@@ -442,6 +460,63 @@ export default function SettingsPage() {
       {saving && (
         <div style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>Saving…</div>
       )}
+
+      <Section title="Danger Zone">
+        <SettingRow
+          label="Reset Library Index"
+          hint="Wipes all shows, episodes, movies, and source mappings. Source/library config, channels, and users are kept. The next sync rebuilds everything from scratch."
+        >
+          {!resetConfirm ? (
+            <button
+              onClick={() => { setResetConfirm(true); setResetMsg(null) }}
+              style={{
+                padding: '5px 14px', borderRadius: 6,
+                border: '1px solid oklch(0.4 0.1 22 / 0.6)',
+                background: 'oklch(0.18 0.06 22 / 0.4)', color: 'oklch(0.75 0.15 22)',
+                fontSize: 12, cursor: 'pointer',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              Reset
+            </button>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: 'oklch(0.75 0.15 22)' }}>Sure?</span>
+              <button
+                onClick={resetLibrary}
+                disabled={resetting}
+                style={{
+                  padding: '5px 14px', borderRadius: 6,
+                  border: '1px solid oklch(0.55 0.2 22 / 0.8)',
+                  background: 'oklch(0.35 0.12 22 / 0.6)', color: 'oklch(0.88 0.12 22)',
+                  fontSize: 12, cursor: resetting ? 'not-allowed' : 'pointer',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontWeight: 600, opacity: resetting ? 0.6 : 1,
+                }}
+              >
+                {resetting ? 'Resetting…' : 'Yes, wipe it'}
+              </button>
+              <button
+                onClick={() => setResetConfirm(false)}
+                style={{
+                  padding: '5px 10px', borderRadius: 6,
+                  border: '1px solid oklch(0.3 0.01 286)',
+                  background: 'transparent', color: 'var(--hds-txt-3)',
+                  fontSize: 12, cursor: 'pointer',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </SettingRow>
+        {resetMsg && (
+          <div style={{ padding: '10px 0 14px', fontSize: 11, color: resetMsg.startsWith('Error') ? 'oklch(0.72 0.18 22)' : 'var(--hds-txt-3)' }}>
+            {resetMsg}
+          </div>
+        )}
+      </Section>
     </div>
   )
 }

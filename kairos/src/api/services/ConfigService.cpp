@@ -57,6 +57,48 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 		}
 	});
 
+	// Reset the entire media library index — wipes all show/episode/movie data and
+	// source mappings so the next sync starts completely fresh. Keeps source/library
+	// configuration, channels, users, and settings intact.
+	svr.Post("/api/config/library/reset", [this](const Req&, Res& res) {
+		try {
+			SQLite::Transaction txn(db_.get());
+
+			// Null out FK columns in media_cursor before deleting the rows they point at.
+			db_.get().exec("UPDATE media_cursor SET episode_id = NULL WHERE episode_id IS NOT NULL");
+			db_.get().exec("UPDATE media_cursor SET movie_id   = NULL WHERE movie_id   IS NOT NULL");
+
+			// Scraper match/override data tied to kairos IDs.
+			db_.get().exec("DELETE FROM item_match_candidate");
+			db_.get().exec("DELETE FROM metadata_override");
+			db_.get().exec("DELETE FROM scraper_job");
+
+			// Chapters are keyed by episode file path; stale after ID reassignment.
+			db_.get().exec("DELETE FROM chapter");
+
+			// Playlists are source-synced; they'll be recreated on next sync.
+			db_.get().exec("DELETE FROM playlist_item");
+			db_.get().exec("DELETE FROM playlist");
+
+			// Core media tables — delete in FK order (episode → show).
+			db_.get().exec("DELETE FROM episode");
+			db_.get().exec("DELETE FROM show_season");
+			db_.get().exec("DELETE FROM show");
+			db_.get().exec("DELETE FROM movie");
+			db_.get().exec("DELETE FROM source_mapping");
+
+			txn.commit();
+
+			// Reload sources so SyncManager's in-memory list is consistent.
+			sync_.loadSources();
+
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("POST /api/config/library/reset", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
 	svr.Get("/api/config/credentials", [this](const Req&, Res& res) {
 		json result = json::array();
 		for (const auto& r : SourceRepository(db_).listSourcesBasic()) {

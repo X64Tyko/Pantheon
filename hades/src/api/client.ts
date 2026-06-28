@@ -255,6 +255,7 @@ export const api = {
   getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_threads: number; image_cache_ttl_hours: number }>('GET',   '/config/settings'),
   updateSettings: (b: Partial<{ epg_debug: boolean; sync_threads: number; image_cache_ttl_hours: number }>) => request<{ epg_debug: boolean; sync_threads: number; image_cache_ttl_hours: number }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
+  resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),
 
   // Downloads
   getDownloadConfig:  ()                                              => request<{path: string}>('GET', '/config/download'),

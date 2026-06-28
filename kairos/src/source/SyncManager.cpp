@@ -330,6 +330,18 @@ void SyncManager::syncShows(IMediaSource& src,
                     INSERT INTO episode (episode_id, show_id, season, episode, title, file_path,
                                          duration_ms, overview, air_date, thumb, absolute_index)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(episode_id) DO UPDATE SET
+                        show_id        = excluded.show_id,
+                        season         = excluded.season,
+                        episode        = excluded.episode,
+                        title          = excluded.title,
+                        file_path      = excluded.file_path,
+                        duration_ms    = excluded.duration_ms,
+                        overview       = excluded.overview,
+                        air_date       = excluded.air_date,
+                        thumb          = excluded.thumb,
+                        absolute_index = excluded.absolute_index
+                    WHERE episode.locked = 0 OR episode.locked IS NULL
                 )");
                 e.bind(1,  ep.episode_id);
                 e.bind(2,  ep.show_id);
