@@ -1232,6 +1232,20 @@ constexpr Migration kMigrations[] = {
     );
 )SQL" }
 
+// ── v47: metadata overrides ───────────────────────────────────────────────────
+,{ 47, R"SQL(
+    CREATE TABLE IF NOT EXISTS metadata_override (
+        id          INTEGER PRIMARY KEY,
+        entity_type TEXT NOT NULL CHECK(entity_type IN ('show','movie','episode')),
+        entity_id   TEXT NOT NULL,
+        field_name  TEXT NOT NULL,
+        value       TEXT NOT NULL,
+        set_by      TEXT NOT NULL DEFAULT 'user',
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        UNIQUE(entity_type, entity_id, field_name)
+    );
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

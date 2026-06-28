@@ -104,9 +104,10 @@ bool CursorState::hasSlotCursor(const std::string& slot_id) const {
 
 // ── Play history ──────────────────────────────────────────────────────────────
 
-void CursorState::addPlayRecord(const std::string& item_type, const std::string& item_id,
-                                 const std::string& channel_id, std::time_t aired_at) {
-    play_records_.push_back({item_type, item_id, channel_id, aired_at});
+void CursorState::addPlayRecord(const std::string& channel_id, const std::string& item_type,
+                                 const std::string& item_id, const std::string& block_id,
+                                 std::time_t aired_at) {
+    play_records_.push_back({channel_id, item_type, item_id, block_id, aired_at});
 }
 
 // ── DB I/O ────────────────────────────────────────────────────────────────────

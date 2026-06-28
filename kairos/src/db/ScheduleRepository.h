@@ -51,6 +51,10 @@ public:
     void recordPlayHistory(const std::string& item_type, const std::string& item_id,
                            const std::string& channel_id, const std::string& block_id);
 
+    void recordScheduledPlayHistory(const std::string& item_type, const std::string& item_id,
+                                    const std::string& channel_id, const std::string& block_id,
+                                    std::time_t aired_at);
+
     // Run gen() with a temporary block graph injected for channel_id, rolled back afterwards.
     template<typename Fn>
     auto withPreviewBlocks(const std::string& channel_id,

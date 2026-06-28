@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router-dom'
 import { AuthProvider }       from './auth/AuthContext'
 import { ErrorBoundary }      from './components/ErrorBoundary'
 import LoginPage              from './auth/LoginPage'
@@ -12,6 +12,8 @@ import ContentPage            from './pages/ContentPage'
 import DownloadPage           from './pages/DownloadPage'
 import FillerPage             from './pages/FillerPage'
 import GroupsPage             from './pages/GroupsPage'
+import HomePage               from './pages/HomePage'
+import LibraryPage            from './pages/LibraryPage'
 import PlaylistPage           from './pages/PlaylistPage'
 import SettingsPage           from './pages/SettingsPage'
 import SourcesPage            from './pages/SourcesPage'
@@ -27,7 +29,8 @@ export default function App() {
 
         <Route element={<ProtectedRoute />}>
           <Route element={<Layout />}>
-            <Route index element={<Navigate to="/sources" replace />} />
+            <Route index element={<HomePage />} />
+            <Route path="library"          element={<LibraryPage />} />
             <Route path="sources"          element={<SourcesPage />} />
             <Route path="channels"         element={<ChannelsPage />} />
             <Route path="channels/:id"     element={<ChannelDetailPage />} />

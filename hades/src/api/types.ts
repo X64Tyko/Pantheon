@@ -570,6 +570,22 @@ export interface DownloadJob {
   started_at: string   // ISO-8601
 }
 
+// ── Library browser ──────────────────────────────────────────────────────────
+
+export type LibraryDensity = 'minimal' | 'standard' | 'rich'
+
+export interface MediaHeroItem {
+  id:           string
+  title:        string
+  year?:        number
+  overview?:    string
+  backdrop_url?: string
+  poster_url?:  string
+  content_type: 'show' | 'movie'
+  genres?:      string[]
+  rating?:      number
+}
+
 // ── Media scanner / scraper ───────────────────────────────────────────────────
 
 export type ScanJobStatus = 'pending' | 'running' | 'done' | 'error'

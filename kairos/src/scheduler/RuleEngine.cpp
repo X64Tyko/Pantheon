@@ -1272,7 +1272,7 @@ bool RuleEngine::scheduleBlock(
         const std::time_t t_prog_end = pass.t;
 
         if (!is_fallback_filler)
-            pass.play_records.push_back({ctx.channel_id, ph_type, ph_show, ph_id, ph_at});
+            pass.play_records.push_back({ctx.channel_id, ph_type, ph_id, block.block_id, ph_at});
 
         if (!is_fallback_filler && !ctx.between_bumpers.empty()) {
             ++pass.channel_prog_count;
@@ -1564,7 +1564,8 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                                                 std::time_t start, int horizon_hours,
                                                 CursorState& state,
                                                 Xoshiro256& rng,
-                                                std::map<std::time_t, std::string>* anchors_out) {
+                                                std::map<std::time_t, std::string>* anchors_out,
+                                                std::vector<PlayRecord>* play_records_out) {
     std::vector<ScheduledItem> result;
     auto blocks = loadBlocks(channel_id);
 
@@ -1652,6 +1653,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                   << " => " << result.size() << " items"
                   << (result.empty() ? " (EMPTY — no content scheduled)" : "") << '\n';
 
+    if (play_records_out) *play_records_out = std::move(pass.play_records);
     return result;
 }
 
@@ -1765,7 +1767,7 @@ void RuleEngine::scheduleTimeslotSlot(
                 item->cursor_json         = "{}";
                 item->channel_id          = ctx.channel_id;
                 item->block_id            = block.block_id;
-                pass.play_records.push_back({ctx.channel_id, item->item_type, item->show_id, item->item_id, pass.t});
+                pass.play_records.push_back({ctx.channel_id, item->item_type, item->item_id, block.block_id, pass.t});
                 ctx.result.push_back(std::move(*item));
                 pass.t += dur_ms / 1000;
                 sc.episode_pos++;
@@ -1813,7 +1815,7 @@ void RuleEngine::scheduleTimeslotSlot(
         item->cursor_json         = "{}";
         item->channel_id          = ctx.channel_id;
         item->block_id            = block.block_id;
-        pass.play_records.push_back({ctx.channel_id, item->item_type, item->show_id, item->item_id, pass.t});
+        pass.play_records.push_back({ctx.channel_id, item->item_type, item->item_id, block.block_id, pass.t});
         ctx.result.push_back(std::move(*item));
         pass.t += dur_ms / 1000;
 

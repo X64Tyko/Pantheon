@@ -18,6 +18,16 @@
   --hds-gold:   oklch(0.83 0.13 84);
   --hds-gold-2: oklch(0.72 0.12 80);
   --hds-violet: oklch(0.7 0.13 287);
+
+  /* ── Match confidence tokens ─────────────────────────────────────────────── */
+  --hds-match-green:  oklch(0.72 0.18 145);
+  --hds-match-amber:  oklch(0.78 0.16 68);
+  --hds-match-red:    oklch(0.62 0.2 22);
+  --hds-match-grey:   oklch(0.4 0.02 285);
+
+  /* ── Glass surface ───────────────────────────────────────────────────────── */
+  --hds-glass:        oklch(0.14 0.02 285 / 0.82);
+  --hds-glass-border: oklch(0.35 0.04 285 / 0.5);
 }
 
 /* ─── HADES animations ─────────────────────────────────────────────────────── */
@@ -191,4 +201,21 @@ body {
 }
 .animate-spin {
   animation: spin 0.8s linear infinite;
+}
+
+/* ─── Skeleton shimmer ─────────────────────────────────────────────────────── */
+
+@keyframes hds-shimmer {
+  0%   { background-position: -200% 0 }
+  100% { background-position:  200% 0 }
+}
+
+.hds-skeleton {
+  background: linear-gradient(90deg,
+    oklch(0.15 0.02 285) 25%,
+    oklch(0.2 0.025 285) 50%,
+    oklch(0.15 0.02 285) 75%
+  );
+  background-size: 200% 100%;
+  animation: hds-shimmer 1.4s ease infinite;
 }

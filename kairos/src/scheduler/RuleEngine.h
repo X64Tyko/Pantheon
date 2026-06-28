@@ -58,9 +58,9 @@ public:
     // loads state before calling and applies it to DB afterward — or discards it for
     // preview / on_play modes.
     //
-    // play_history (is_scheduled=1) is still written to DB during projection so
-    // recency queries (rerun pools, smart cooldown) see within-pass history.
-    // Phase 1B will move this into state.play_records_ too.
+    // play_history (is_scheduled=1) rows are buffered in play_records_out during
+    // projection and written to DB by EPGMaterializer::commit(), keeping project()
+    // free of DB writes.
     //
     // rng: caller-owned. Pass the same instance across successive calls to preserve
     //      RNG continuity when the ensureScheduled loop extends a schedule.
@@ -71,7 +71,8 @@ public:
                                         std::time_t start, int horizon_hours,
                                         CursorState& state,
                                         Xoshiro256& rng,
-                                        std::map<std::time_t, std::string>* anchors_out = nullptr);
+                                        std::map<std::time_t, std::string>* anchors_out = nullptr,
+                                        std::vector<PlayRecord>* play_records_out = nullptr);
 
     // Convenience overload for callers that don't manage CursorState externally
     // (tests, one-shot previews). Starts with a fresh empty state and discards it.
@@ -163,16 +164,6 @@ private:
 
     // Channel bumper entry used for "between" injection mode.
     struct BetweenBumper { int id; std::string ct, cid; int every_n; };
-
-    // In-memory play record written during projection (replaces is_scheduled=1
-    // play_history DB inserts). Consulted by rerun pool queries (Phase 5).
-    struct PlayRecord {
-        std::string channel_id;
-        std::string item_type;
-        std::string show_id;
-        std::string item_id;
-        std::time_t aired_at = 0;
-    };
 
     // Constant data for the full projection pass. Constructed once in project()
     // and passed by const-ref through all sub-calls.

@@ -375,3 +375,18 @@ void ScheduleRepository::recordPlayHistory(const std::string& item_type,
     q.bind(5, static_cast<int64_t>(std::time(nullptr)));
     q.exec();
 }
+
+void ScheduleRepository::recordScheduledPlayHistory(const std::string& item_type,
+                                                     const std::string& item_id,
+                                                     const std::string& channel_id,
+                                                     const std::string& block_id,
+                                                     std::time_t aired_at) {
+    SQLite::Statement q(db_.get(), R"(
+        INSERT OR IGNORE INTO play_history (item_type, item_id, channel_id, block_id, aired_at, is_scheduled)
+        VALUES (?,?,?,?,?,1)
+    )");
+    q.bind(1, item_type); q.bind(2, item_id); q.bind(3, channel_id);
+    if (block_id.empty()) q.bind(4); else q.bind(4, block_id);
+    q.bind(5, static_cast<int64_t>(aired_at));
+    q.exec();
+}

@@ -5,6 +5,8 @@ import { useAuth } from '../auth/AuthContext'
 import { systemStore } from '../stores'
 
 const navItems: { to: string; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+  { to: '/',         label: 'Home',         icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 7.5L8 2l6 5.5V14H10v-3.5H6V14H2V7.5z" strokeLinejoin="round"/></svg> },
+  { to: '/library',  label: 'Library',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg> },
   { to: '/sources',   label: 'Sources',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/></svg> },
   { to: '/channels',  label: 'Channels',     icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="4" y="4" width="8" height="8" rx="1.5" transform="rotate(45 8 8)"/></svg> },
   { to: '/content',   label: 'Content',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="3" y="3.5" width="10" height="2" rx="1"/><rect x="3" y="7" width="10" height="2" rx="1"/><rect x="3" y="10.5" width="10" height="2" rx="1"/></svg> },
@@ -23,7 +25,8 @@ export default observer(function Layout() {
   const navigate     = useNavigate()
   const { user, logout } = useAuth()
   const isChannelDetail = /^\/channels\/.+/.test(location.pathname)
-  const onActivity   = location.pathname === '/activity'
+  const isFullBleed     = isChannelDetail || location.pathname === '/' || location.pathname.startsWith('/library')
+  const onActivity      = location.pathname === '/activity'
 
   const [navCollapsed,    setNavCollapsed]    = useState(() => localStorage.getItem('hds-nav-collapsed') === '1')
   const [expandBtnHover,  setExpandBtnHover]  = useState(false)
@@ -260,13 +263,13 @@ export default observer(function Layout() {
       {/* ── Main content ────────────────────────────────────────────────────── */}
       <main style={{
         flex: 1, minWidth: 0,
-        overflow: isChannelDetail ? 'hidden' : 'auto',
-        padding: isChannelDetail ? 0 : 24,
+        overflow: isFullBleed ? 'hidden' : 'auto',
+        padding: isFullBleed ? 0 : 24,
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 13,
         color: 'var(--hds-txt)',
       }}
-        className={isChannelDetail ? '' : 'scrollbar-dark'}
+        className={isFullBleed ? '' : 'scrollbar-dark'}
       >
         <Outlet />
       </main>

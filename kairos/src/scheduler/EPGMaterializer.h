@@ -22,10 +22,11 @@ struct Divergence {
 
 // Result of a generate() call. Passed to commit() to write to the database.
 struct GenerateResult {
-    std::vector<ScheduledItem>         items;
-    std::vector<Divergence>            divergences;
-    CursorState                        cursor_state;
-    std::map<std::time_t, std::string> anchors;
+    std::vector<ScheduledItem>           items;
+    std::vector<Divergence>              divergences;
+    CursorState                          cursor_state;
+    std::map<std::time_t, std::string>   anchors;
+    std::vector<PlayRecord>              play_records;
 };
 
 class EPGMaterializer {

@@ -29,9 +29,10 @@ struct BlockPosition {
 };
 
 struct PlayRecord {
+    std::string channel_id;
     std::string item_type;  // "episode" | "movie"
     std::string item_id;
-    std::string channel_id;
+    std::string block_id;
     std::time_t aired_at = 0;
 };
 
@@ -42,9 +43,6 @@ struct PlayRecord {
 // and decides whether to apply the result back to DB afterward — or simply discard it
 // (preview / on_play modes). No SAVEPOINTs needed for cursor state.
 //
-// Note: play_history writes (for recency queries) are still written to DB during project()
-// in this phase. Phase 1B will move those into play_records_ and update ContentRepository
-// query functions to merge in-memory records, fully eliminating all DB writes from project().
 class CursorState {
 public:
     // ── Media cursors ─────────────────────────────────────────────────────────
@@ -81,10 +79,11 @@ public:
     bool hasFillerPos(const std::string& key) const;
 
     // ── In-pass play records ──────────────────────────────────────────────────
-    // Accumulates items scheduled during this projection pass. Not yet used by
-    // ContentRepository queries (Phase 1B); retained here for the upcoming migration.
-    void addPlayRecord(const std::string& item_type, const std::string& item_id,
-                       const std::string& channel_id, std::time_t aired_at);
+    // Accumulates items scheduled during this projection pass.
+    // Written to play_history (is_scheduled=1) by EPGMaterializer::commit(), not during project().
+    void addPlayRecord(const std::string& channel_id, const std::string& item_type,
+                       const std::string& item_id, const std::string& block_id,
+                       std::time_t aired_at);
     const std::vector<PlayRecord>& playRecords() const { return play_records_; }
 
     // ── DB I/O ────────────────────────────────────────────────────────────────
