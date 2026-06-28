@@ -1292,6 +1292,10 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX IF NOT EXISTS idx_request_user   ON content_request(user_id);
 )SQL" }
 
+,{ 50, R"SQL(
+    ALTER TABLE episode ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

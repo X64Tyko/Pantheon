@@ -275,162 +275,169 @@ void SyncManager::syncShows(IMediaSource& src,
         for (auto& t : workers) t.join();
     }
 
-    SQLite::Transaction txn(db_.get());
+    // Each show gets its own transaction so a single bad episode or duplicate
+    // doesn't roll back the entire library.  Per-episode errors are logged and
+    // skipped rather than aborting the show.
     for (size_t i = 0; i < shows.size(); ++i) {
         auto& show      = shows[i];
         auto& episodes  = episodes_by_show[i];
         const bool cross_show = cross_ref_shows[i];
 
-        if (!cross_show) {
-            // Clear existing episodes before reinserting the current set.
-            // media_cursor.episode_id references episode(episode_id) with no ON DELETE
-            // clause (RESTRICT), so we must nullify those refs before deleting episodes.
-            { SQLite::Statement q(db_.get(),
-                  "UPDATE media_cursor SET episode_id = NULL "
-                  "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
-              q.bind(1, show.show_id); q.exec(); }
-            { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id=?");
-              d.bind(1, show.show_id); d.exec(); }
-        }
-        // For cross-ref shows (mapped to another source's kairos_id), we skip the
-        // DELETE so we don't wipe episodes owned by the other source.
+        try {
+            SQLite::Transaction txn(db_.get());
 
-        std::unordered_map<int, std::string> season_names;
-        for (auto& ep : episodes) {
-            const std::string ext_ep_id = ep.episode_id;
-            bool ep_cross_ref = false;
-            std::string ep_kairos_id;
+            if (!cross_show) {
+                // Clear existing episodes before reinserting the current set.
+                // media_cursor.episode_id references episode(episode_id) with no ON DELETE
+                // clause (RESTRICT), so we must nullify those refs before deleting episodes.
+                { SQLite::Statement q(db_.get(),
+                      "UPDATE media_cursor SET episode_id = NULL "
+                      "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
+                  q.bind(1, show.show_id); q.exec(); }
+                { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id=?");
+                  d.bind(1, show.show_id); d.exec(); }
+            }
 
-            if (cross_show) {
-                // Show is cross-ref: resolve episode by file_path first.
-                ep_kairos_id = resolveByFilePath("episode", ep.file_path);
-                if (!ep_kairos_id.empty()) {
-                    ep_cross_ref = true;
+            std::unordered_map<int, std::string> season_names;
+            for (auto& ep : episodes) {
+                const std::string ext_ep_id = ep.episode_id;
+                bool ep_cross_ref = false;
+                std::string ep_kairos_id;
+
+                if (cross_show) {
+                    ep_kairos_id = resolveByFilePath("episode", ep.file_path);
+                    if (!ep_kairos_id.empty()) {
+                        ep_cross_ref = true;
+                    } else {
+                        ep_kairos_id = resolveId("episode", source_id, ext_ep_id);
+                    }
                 } else {
-                    // New file not yet indexed by any other source; create it.
                     ep_kairos_id = resolveId("episode", source_id, ext_ep_id);
+                    if (ep_kairos_id == source_id + ":" + ext_ep_id) {
+                        const std::string existing = resolveByFilePath("episode", ep.file_path);
+                        if (!existing.empty()) { ep_kairos_id = existing; ep_cross_ref = true; }
+                    } else if (!ep_kairos_id.starts_with(source_id + ":")) {
+                        ep_cross_ref = true;
+                    }
                 }
-            } else {
-                ep_kairos_id = resolveId("episode", source_id, ext_ep_id);
-                // Even for non-cross-ref shows, check file_path to prevent duplicate
-                // episode rows when another source has already indexed the same file.
-                if (ep_kairos_id == source_id + ":" + ext_ep_id) {
-                    const std::string existing = resolveByFilePath("episode", ep.file_path);
-                    if (!existing.empty()) { ep_kairos_id = existing; ep_cross_ref = true; }
-                } else if (!ep_kairos_id.starts_with(source_id + ":")) {
-                    ep_cross_ref = true;
+
+                ep.episode_id = ep_kairos_id;
+                ep.show_id    = show.show_id;
+
+                try {
+                    if (!ep_cross_ref) {
+                        SQLite::Statement e(db_.get(), R"(
+                            INSERT INTO episode (episode_id, show_id, season, episode, title,
+                                                 file_path, duration_ms, overview, air_date,
+                                                 thumb, absolute_index)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                            ON CONFLICT(episode_id) DO UPDATE SET
+                                show_id        = excluded.show_id,
+                                season         = excluded.season,
+                                episode        = excluded.episode,
+                                title          = CASE WHEN locked THEN title   ELSE excluded.title   END,
+                                file_path      = excluded.file_path,
+                                duration_ms    = excluded.duration_ms,
+                                overview       = CASE WHEN locked THEN overview ELSE excluded.overview END,
+                                air_date       = excluded.air_date,
+                                thumb          = CASE WHEN locked THEN thumb    ELSE excluded.thumb    END,
+                                absolute_index = excluded.absolute_index
+                        )");
+                        e.bind(1,  ep.episode_id);
+                        e.bind(2,  ep.show_id);
+                        e.bind(3,  ep.season);
+                        e.bind(4,  ep.episode);
+                        e.bind(5,  ep.title);
+                        e.bind(6,  ep.file_path);
+                        e.bind(7,  ep.duration_ms);
+                        e.bind(8,  ep.overview);
+                        e.bind(9,  ep.air_date);
+                        e.bind(10, ep.thumb);
+                        if (ep.absolute_index.has_value()) e.bind(11, ep.absolute_index.value());
+                        else                               e.bind(11);
+                        e.exec();
+                    }
+                    upsertMapping("episode", ep.episode_id, source_id, library_id, ext_ep_id);
+                } catch (const std::exception& e) {
+                    std::cerr << "[sync] skipping episode " << ep.file_path
+                              << ": " << e.what() << '\n';
+                }
+
+                if (!ep.season_name.empty() && !season_names.count(ep.season))
+                    season_names[ep.season] = ep.season_name;
+            }
+
+            if (!cross_show) {
+                { SQLite::Statement d(db_.get(), "DELETE FROM show_season WHERE show_id = ?");
+                  d.bind(1, show.show_id); d.exec(); }
+                for (const auto& [season, name] : season_names) {
+                    SQLite::Statement ins(db_.get(),
+                        "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
+                    ins.bind(1, show.show_id);
+                    ins.bind(2, season);
+                    ins.bind(3, name);
+                    ins.exec();
                 }
             }
 
-            ep.episode_id = ep_kairos_id;
-            ep.show_id    = show.show_id;
-
-            if (!ep_cross_ref) {
-                SQLite::Statement e(db_.get(), R"(
-                    INSERT INTO episode (episode_id, show_id, season, episode, title, file_path,
-                                         duration_ms, overview, air_date, thumb, absolute_index)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(episode_id) DO UPDATE SET
-                        show_id        = excluded.show_id,
-                        season         = excluded.season,
-                        episode        = excluded.episode,
-                        title          = excluded.title,
-                        file_path      = excluded.file_path,
-                        duration_ms    = excluded.duration_ms,
-                        overview       = excluded.overview,
-                        air_date       = excluded.air_date,
-                        thumb          = excluded.thumb,
-                        absolute_index = excluded.absolute_index
-                    WHERE episode.locked = 0 OR episode.locked IS NULL
-                )");
-                e.bind(1,  ep.episode_id);
-                e.bind(2,  ep.show_id);
-                e.bind(3,  ep.season);
-                e.bind(4,  ep.episode);
-                e.bind(5,  ep.title);
-                e.bind(6,  ep.file_path);
-                e.bind(7,  ep.duration_ms);
-                e.bind(8,  ep.overview);
-                e.bind(9,  ep.air_date);
-                e.bind(10, ep.thumb);
-                if (ep.absolute_index.has_value()) e.bind(11, ep.absolute_index.value());
-                else                               e.bind(11);
-                e.exec();
-            }
-
-            upsertMapping("episode", ep.episode_id, source_id, library_id, ext_ep_id);
-
-            if (!ep.season_name.empty() && !season_names.count(ep.season))
-                season_names[ep.season] = ep.season_name;
-        }
-
-        // Only update show_season for shows this source owns; cross-ref shows keep
-        // whatever season metadata was written by the authoritative source.
-        if (!cross_show) {
-            { SQLite::Statement d(db_.get(), "DELETE FROM show_season WHERE show_id = ?");
-              d.bind(1, show.show_id); d.exec(); }
-            for (const auto& [season, name] : season_names) {
-                SQLite::Statement ins(db_.get(),
-                    "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
-                ins.bind(1, show.show_id);
-                ins.bind(2, season);
-                ins.bind(3, name);
-                ins.exec();
-            }
+            txn.commit();
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] error syncing show \"" << shows[i].title
+                      << "\": " << e.what() << " — skipping\n";
         }
     }
 
-    // Remove shows that were in this library last sync but not returned this time.
-    // Collect stale IDs before deleting so we don't modify while iterating.
-    std::vector<std::string> stale_shows;
+    // Stale show cleanup runs outside per-show transactions.
     {
-        SQLite::Statement q(db_.get(),
-            "SELECT kairos_id FROM source_mapping "
-            "WHERE item_type='show' AND source_id=? AND library_id=?");
-        q.bind(1, source_id); q.bind(2, library_id);
-        while (q.executeStep()) {
-            const std::string kid = q.getColumn(0).getString();
-            if (!live_show_ids.contains(kid)) stale_shows.push_back(kid);
-        }
-    }
-    for (const auto& kid : stale_shows) {
-        // Guard: don't delete show/episodes if another source still references this item.
-        bool other_source_has_it = false;
+        SQLite::Transaction txn(db_.get());
+
+        std::vector<std::string> stale_shows;
         {
-            SQLite::Statement chk(db_.get(),
-                "SELECT COUNT(*) FROM source_mapping "
-                "WHERE item_type='show' AND kairos_id=? AND source_id!=?");
-            chk.bind(1, kid); chk.bind(2, source_id);
-            other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
+            SQLite::Statement q(db_.get(),
+                "SELECT kairos_id FROM source_mapping "
+                "WHERE item_type='show' AND source_id=? AND library_id=?");
+            q.bind(1, source_id); q.bind(2, library_id);
+            while (q.executeStep()) {
+                const std::string kid = q.getColumn(0).getString();
+                if (!live_show_ids.contains(kid)) stale_shows.push_back(kid);
+            }
         }
-        if (!other_source_has_it) {
-            { SQLite::Statement q(db_.get(),
-                  "UPDATE media_cursor SET episode_id = NULL "
-                  "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
-              q.bind(1, kid); q.exec(); }
-            { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id = ?");
-              d.bind(1, kid); d.exec(); }
-            { SQLite::Statement d(db_.get(), "DELETE FROM show WHERE show_id=?");
-              d.bind(1, kid); d.exec(); }
-            std::cout << "[sync]   removed stale show: " << kid << std::endl;
+        for (const auto& kid : stale_shows) {
+            bool other_source_has_it = false;
+            {
+                SQLite::Statement chk(db_.get(),
+                    "SELECT COUNT(*) FROM source_mapping "
+                    "WHERE item_type='show' AND kairos_id=? AND source_id!=?");
+                chk.bind(1, kid); chk.bind(2, source_id);
+                other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
+            }
+            if (!other_source_has_it) {
+                { SQLite::Statement q(db_.get(),
+                      "UPDATE media_cursor SET episode_id = NULL "
+                      "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
+                  q.bind(1, kid); q.exec(); }
+                { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id = ?");
+                  d.bind(1, kid); d.exec(); }
+                { SQLite::Statement d(db_.get(), "DELETE FROM show WHERE show_id=?");
+                  d.bind(1, kid); d.exec(); }
+                std::cout << "[sync]   removed stale show: " << kid << std::endl;
+            }
+            { SQLite::Statement d(db_.get(),
+                  "DELETE FROM source_mapping WHERE item_type='show' AND kairos_id=? AND source_id=? AND library_id=?");
+              d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
         }
-        // In both cases, prune this source's mapping for the stale show.
+
         { SQLite::Statement d(db_.get(),
-              "DELETE FROM source_mapping WHERE item_type='show' AND kairos_id=? AND source_id=? AND library_id=?");
-          d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
+              "DELETE FROM source_mapping WHERE item_type='show' AND source_id=? AND library_id=?"
+              " AND kairos_id NOT IN (SELECT show_id FROM show)");
+          d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
+        { SQLite::Statement d(db_.get(),
+              "DELETE FROM source_mapping WHERE item_type='episode' AND source_id=? AND library_id=?"
+              " AND kairos_id NOT IN (SELECT episode_id FROM episode)");
+          d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
+
+        txn.commit();
     }
-
-    // Prune source_mapping for any removed shows or orphaned episode entries.
-    { SQLite::Statement d(db_.get(),
-          "DELETE FROM source_mapping WHERE item_type='show' AND source_id=? AND library_id=?"
-          " AND kairos_id NOT IN (SELECT show_id FROM show)");
-      d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
-    { SQLite::Statement d(db_.get(),
-          "DELETE FROM source_mapping WHERE item_type='episode' AND source_id=? AND library_id=?"
-          " AND kairos_id NOT IN (SELECT episode_id FROM episode)");
-      d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
-
-    txn.commit();
 }
 
 // ---------------------------------------------------------------------------
