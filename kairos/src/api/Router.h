@@ -12,6 +12,7 @@ class DownloadManager;
 class EPGMaterializer;
 class LogBuffer;
 class RuleEngine;
+class ScraperManager;
 class SyncManager;
 
 class Router {
@@ -34,6 +35,7 @@ private:
 	DownloadManager&  dl_;
 	AuthStore&        auth_;
 
-	ScheduleCache                              schedule_cache_;
+	ScheduleCache                                schedule_cache_;
+	std::unique_ptr<ScraperManager>              scraper_mgr_;
 	std::vector<std::unique_ptr<IKairosService>> services_;
 };

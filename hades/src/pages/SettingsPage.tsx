@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
-import type { ArrConfig } from '../api/types'
+import type { ArrConfig, ScraperSettings, ScraperStats } from '../api/types'
 
 interface Settings {
-  epg_debug:    boolean
-  sync_threads: number
+  epg_debug:             boolean
+  sync_threads:          number
+  image_cache_ttl_hours: number
 }
 
 function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -53,6 +54,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
+const inputStyle: React.CSSProperties = {
+  padding: '4px 8px', borderRadius: 6,
+  border: '1px solid oklch(0.3 0.01 286)',
+  background: 'oklch(0.13 0.01 286)', color: 'var(--hds-txt)',
+  fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+}
+
 export default function SettingsPage() {
   const [settings, setSettings]   = useState<Settings | null>(null)
   const [saving,   setSaving]     = useState(false)
@@ -64,12 +72,26 @@ export default function SettingsPage() {
   const [arr,     setArr]     = useState<ArrConfig>({ sonarr_url: '', sonarr_api_key: '', radarr_url: '', radarr_api_key: '' })
   const [arrSave, setArrSave] = useState<'idle'|'saving'|'ok'|'err'>('idle')
 
+  const [scraperSettings, setScraperSettings] = useState<ScraperSettings | null>(null)
+  const [scraperStats,    setScraperStats]    = useState<ScraperStats | null>(null)
+  const [scraperDirty,    setScraperDirty]    = useState(false)
+  const [scraperSaving,   setScraperSaving]   = useState(false)
+  const [scraperSaved,    setScraperSaved]    = useState(false)
+  const [matchRunning,    setMatchRunning]    = useState(false)
+  const matchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
     api.getSettings().then(s => {
       setSettings(s)
       setThreads(String(s.sync_threads))
     }).catch(() => setError('Failed to load settings'))
     api.getArrConfig().then(setArr).catch(() => {})
+    api.getScraperSettings().then(setScraperSettings).catch(() => {})
+    api.getScraperStats().then(setScraperStats).catch(() => {})
+    matchPollRef.current = setInterval(() => {
+      api.getMatchStatus().then(s => setMatchRunning(s.running)).catch(() => {})
+    }, 3000)
+    return () => { if (matchPollRef.current) clearInterval(matchPollRef.current) }
   }, [])
 
   const patch = async (update: Partial<Settings>) => {
@@ -104,6 +126,47 @@ export default function SettingsPage() {
       setClearing(false)
     }
   }
+
+  const updateScraperConfig = (source: 'tmdb' | 'tvdb', field: string, value: string | boolean) => {
+    if (!scraperSettings) return
+    setScraperSettings(prev => prev ? {
+      ...prev,
+      configs: prev.configs.map(c => c.source === source ? { ...c, [field]: value } : c),
+    } : prev)
+    setScraperDirty(true)
+  }
+
+  const updateThreshold = (v: number) => {
+    if (!scraperSettings) return
+    setScraperSettings(prev => prev ? { ...prev, match_threshold: v } : prev)
+    setScraperDirty(true)
+  }
+
+  const saveScraperSettings = async () => {
+    if (!scraperSettings) return
+    setScraperSaving(true)
+    try {
+      await api.patchScraperSettings(scraperSettings)
+      setScraperDirty(false)
+      setScraperSaved(true)
+      setTimeout(() => setScraperSaved(false), 2000)
+      api.getScraperStats().then(setScraperStats).catch(() => {})
+    } finally {
+      setScraperSaving(false)
+    }
+  }
+
+  const runMatch = async () => {
+    setMatchRunning(true)
+    await api.triggerMatch()
+    setTimeout(() => {
+      setMatchRunning(false)
+      api.getScraperStats().then(setScraperStats).catch(() => {})
+    }, 4000)
+  }
+
+  const tmdb = scraperSettings?.configs.find(c => c.source === 'tmdb')
+  const tvdb = scraperSettings?.configs.find(c => c.source === 'tvdb')
 
   return (
     <div style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -142,12 +205,33 @@ export default function SettingsPage() {
               onKeyDown={e => e.key === 'Enter' && applyThreads()}
               disabled={!settings || saving}
               style={{
-                width: 60, padding: '4px 8px', borderRadius: 6, border: '1px solid oklch(0.3 0.01 286)',
-                background: 'oklch(0.13 0.01 286)', color: 'var(--hds-txt)', fontSize: 13,
-                fontFamily: "'JetBrains Mono', monospace", textAlign: 'center',
+                ...inputStyle, width: 60, textAlign: 'center',
               }}
             />
           </div>
+        </SettingRow>
+        <SettingRow
+          label="Image Cache TTL"
+          hint="How long poster and backdrop images are cached on disk before re-fetching from the source."
+        >
+          <select
+            value={settings?.image_cache_ttl_hours ?? 2}
+            disabled={!settings || saving}
+            onChange={e => patch({ image_cache_ttl_hours: parseInt(e.target.value, 10) })}
+            style={{ ...inputStyle, width: 120, cursor: 'pointer' }}
+          >
+            {([
+              [1,   '1 hour'],
+              [2,   '2 hours'],
+              [6,   '6 hours'],
+              [12,  '12 hours'],
+              [24,  '1 day'],
+              [48,  '2 days'],
+              [168, '7 days'],
+            ] as [number, string][]).map(([v, label]) => (
+              <option key={v} value={v}>{label}</option>
+            ))}
+          </select>
         </SettingRow>
       </Section>
 
@@ -210,6 +294,149 @@ export default function SettingsPage() {
         <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>
           Used when adding missing media from the import preview.
         </span>
+      </div>
+
+      {/* ── Metadata scrapers ───────────────────────────────────────────────── */}
+
+      <Section title="TMDB — The Movie Database">
+        <SettingRow label="Enabled" hint="Primary metadata source for movies and shows.">
+          <Toggle
+            checked={tmdb?.enabled ?? false}
+            disabled={!scraperSettings}
+            onChange={v => updateScraperConfig('tmdb', 'enabled', v)}
+          />
+        </SettingRow>
+        <SettingRow label="API Key (v3)">
+          <input
+            style={{ ...inputStyle, width: 260 }}
+            type="password"
+            placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            value={tmdb?.api_key ?? ''}
+            onChange={e => updateScraperConfig('tmdb', 'api_key', e.target.value)}
+          />
+        </SettingRow>
+        <SettingRow label="Language" hint="e.g. en-US">
+          <input
+            style={{ ...inputStyle, width: 80 }}
+            placeholder="en-US"
+            value={tmdb?.language ?? 'en-US'}
+            onChange={e => updateScraperConfig('tmdb', 'language', e.target.value)}
+          />
+        </SettingRow>
+      </Section>
+
+      <Section title="TVDB — TheTVDB">
+        <SettingRow label="Enabled" hint="Secondary source; provides TVDB IDs and series data.">
+          <Toggle
+            checked={tvdb?.enabled ?? false}
+            disabled={!scraperSettings}
+            onChange={v => updateScraperConfig('tvdb', 'enabled', v)}
+          />
+        </SettingRow>
+        <SettingRow label="API Key (v4 project key)">
+          <input
+            style={{ ...inputStyle, width: 260 }}
+            type="password"
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            value={tvdb?.api_key ?? ''}
+            onChange={e => updateScraperConfig('tvdb', 'api_key', e.target.value)}
+          />
+        </SettingRow>
+        <SettingRow label="Subscriber PIN" hint="Optional; required for some TVDB accounts.">
+          <input
+            style={{ ...inputStyle, width: 140 }}
+            type="password"
+            placeholder="optional"
+            value={tvdb?.pin ?? ''}
+            onChange={e => updateScraperConfig('tvdb', 'pin', e.target.value)}
+          />
+        </SettingRow>
+        <SettingRow label="Language" hint="e.g. eng">
+          <input
+            style={{ ...inputStyle, width: 80 }}
+            placeholder="eng"
+            value={tvdb?.language ?? 'eng'}
+            onChange={e => updateScraperConfig('tvdb', 'language', e.target.value)}
+          />
+        </SettingRow>
+      </Section>
+
+      <Section title="Matching">
+        <SettingRow
+          label="Confidence Threshold"
+          hint="Items below this score go to the Review Queue. 100% = only exact matches are auto-accepted."
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              type="range" min={0} max={1} step={0.05}
+              value={scraperSettings?.match_threshold ?? 1}
+              onChange={e => updateThreshold(parseFloat(e.target.value))}
+              disabled={!scraperSettings}
+              style={{ width: 110, accentColor: 'var(--hds-violet)' }}
+            />
+            <span style={{
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700,
+              color: 'var(--hds-violet)', minWidth: 38, textAlign: 'right',
+            }}>
+              {Math.round((scraperSettings?.match_threshold ?? 1) * 100)}%
+            </span>
+          </div>
+        </SettingRow>
+
+        {scraperStats && (
+          <div style={{ padding: '14px 0', borderBottom: '1px solid oklch(0.22 0.01 286)', display: 'flex', gap: 10 }}>
+            {([
+              { label: 'Total',     value: scraperStats.total,     color: 'var(--hds-txt-2)' },
+              { label: 'Matched',   value: scraperStats.matched,   color: 'var(--hds-match-green)' },
+              { label: 'Uncertain', value: scraperStats.uncertain, color: 'var(--hds-match-amber)' },
+              { label: 'Unmatched', value: scraperStats.unmatched, color: 'var(--hds-match-red)' },
+              { label: 'Unscraped', value: scraperStats.unscraped, color: 'var(--hds-txt-3)' },
+            ] as const).map(({ label, value, color }) => (
+              <div key={label} style={{
+                flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid oklch(0.22 0.01 286)',
+                background: 'oklch(0.13 0.01 286)',
+              }}>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, fontWeight: 700, color }}>{value}</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', letterSpacing: '0.1em', marginTop: 3 }}>{label.toUpperCase()}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ padding: '14px 0', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button
+            onClick={runMatch}
+            disabled={matchRunning}
+            style={{
+              padding: '6px 16px', borderRadius: 6, cursor: matchRunning ? 'not-allowed' : 'pointer',
+              border: '1px solid oklch(0.3 0.01 286)',
+              background: 'transparent',
+              color: matchRunning ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)',
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+              opacity: matchRunning ? 0.6 : 1,
+            }}
+          >
+            {matchRunning ? '● Running…' : 'Run Match Pass'}
+          </button>
+        </div>
+      </Section>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button
+          onClick={saveScraperSettings}
+          disabled={!scraperDirty || scraperSaving}
+          style={{
+            padding: '6px 18px', borderRadius: 6,
+            border: '1px solid oklch(0.72 0.18 84 / 0.6)',
+            background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
+            fontSize: 12,
+            cursor: (!scraperDirty || scraperSaving) ? 'not-allowed' : 'pointer',
+            fontFamily: "'JetBrains Mono', monospace",
+            opacity: (!scraperDirty || scraperSaving) ? 0.45 : 1,
+          }}
+        >
+          {scraperSaving ? 'Saving…' : scraperSaved ? '✓ Saved' : 'Save Scraper Settings'}
+        </button>
       </div>
 
       {saving && (

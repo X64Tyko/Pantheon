@@ -1,5 +1,5 @@
 import { makeAutoObservable, runInAction } from 'mobx'
-import { api, TOKEN_KEY } from '../api/client'
+import { TOKEN_KEY } from '../api/client'
 
 export interface LogEntry {
   id:      number
@@ -17,45 +17,19 @@ export interface ErrorToast {
 let _logId = 0
 
 export class SystemStore {
-  syncing       = false
   logs:         LogEntry[]      = []
   liveStatus:   'connecting' | 'live' | 'disconnected' = 'disconnected'
   unreadErrors: number          = 0
   toast:        ErrorToast | null = null
 
-  private _pollTimer:  ReturnType<typeof setTimeout> | null = null
   private _es:         EventSource | null = null
   private _toastTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
     makeAutoObservable(this, {
-      _pollTimer:  false,
       _es:         false,
       _toastTimer: false,
     } as any)
-  }
-
-  // ── Sync polling ─────────────────────────────────────────────────────────────
-
-  startPolling() {
-    if (this._pollTimer) return
-    this._poll()
-  }
-
-  stopPolling() {
-    if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null }
-  }
-
-  private async _poll() {
-    await this._fetchStatus()
-    this._pollTimer = setTimeout(() => this._poll(), this.syncing ? 2000 : 15000)
-  }
-
-  private async _fetchStatus() {
-    try {
-      const { running } = await api.getSyncStatus()
-      runInAction(() => { this.syncing = running })
-    } catch {}
   }
 
   // ── Log stream ───────────────────────────────────────────────────────────────

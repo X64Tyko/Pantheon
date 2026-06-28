@@ -7,6 +7,7 @@
 
 class Database;
 class ConfStore;
+class ScraperManager;
 
 class SyncManager {
 public:
@@ -29,6 +30,9 @@ public:
 
     int  getThreadCount() const;
     void setThreadCount(int n);
+
+    // Optional scraper hook — fires triggerMatch() after each source sync completes.
+    void setScraperManager(ScraperManager* s) { scraper_ = s; }
 
     // Sync chapters for a single item from all available sources (file + source API).
     // Called by ChapterService for per-item sync endpoint.
@@ -70,10 +74,11 @@ private:
                                              const std::string& source_type,
                                              const std::string& base_url) const;
 
-    Database&                                 db_;
-    ConfStore&                                conf_;
+    Database&                                  db_;
+    ConfStore&                                 conf_;
     std::vector<std::unique_ptr<IMediaSource>> sources_;
-    std::atomic<bool>                         sync_running_{false};
-    std::atomic<bool>                         plex_sync_running_{false};
-    std::atomic<int>                          override_thread_count_{0};
+    std::atomic<bool>                          sync_running_{false};
+    std::atomic<bool>                          plex_sync_running_{false};
+    std::atomic<int>                           override_thread_count_{0};
+    ScraperManager*                            scraper_{nullptr};
 };

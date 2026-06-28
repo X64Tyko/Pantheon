@@ -1,5 +1,6 @@
 import { observer } from 'mobx-react-lite'
 import { MediaCard } from './MediaCard'
+import { mediaUrl } from '../../api/client'
 import type { Show, Movie, LibraryDensity } from '../../api/types'
 
 interface MediaGridProps {
@@ -28,6 +29,10 @@ export const MediaGrid = observer(function MediaGrid({ shows, movies, density, s
           title={s.title}
           year={s.year}
           content_type="show"
+          thumb_url={s.thumb ? mediaUrl(`/api/shows/${s.show_id}/thumb`) : undefined}
+          rating={s.audience_rating}
+          match_status={s.match_status}
+          match_score={s.match_score ?? undefined}
           density={density}
           selected={selectedId === s.show_id}
           onClick={() => onItemClick(s.show_id, 'show')}
@@ -40,6 +45,10 @@ export const MediaGrid = observer(function MediaGrid({ shows, movies, density, s
           title={m.title}
           year={m.year}
           content_type="movie"
+          thumb_url={m.thumb ? mediaUrl(`/api/movies/${m.movie_id}/thumb`) : undefined}
+          rating={m.audience_rating}
+          match_status={m.match_status}
+          match_score={m.match_score ?? undefined}
           density={density}
           selected={selectedId === m.movie_id}
           onClick={() => onItemClick(m.movie_id, 'movie')}

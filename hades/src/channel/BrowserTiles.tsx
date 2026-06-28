@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { api } from '../api/client'
+import { api, mediaUrl } from '../api/client'
 import { imageQueue } from './imageQueue'
 import { SectionLabel } from './SectionLabel'
 import { fmtMs } from './utils'
@@ -99,7 +99,7 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
   const [seasons,        setSeasons]        = useState<{number: number; name: string}[] | null>(null)
   const [seasonsLoading, setSeasonsLoading] = useState(false)
   const titleRef = useRef<HTMLSpanElement>(null)
-  const imgUrl   = `/api/shows/${show.show_id}/thumb`
+  const imgUrl   = mediaUrl(`/api/shows/${show.show_id}/thumb`)
 
   useEffect(() => {
     setImgReady(false)
@@ -231,7 +231,7 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
             <>
               {d?.art && <Backdrop url={d.art} />}
               <div style={{ display: 'flex', gap: 12, marginBottom: 12, alignItems: 'flex-start' }}>
-                <ThumbSlot url={d?.thumb ?? `/api/shows/${s.show_id}/thumb`} />
+                <ThumbSlot url={mediaUrl(d?.thumb ?? `/api/shows/${s.show_id}/thumb`)} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.3, marginBottom: 5 }}>{s.title}</div>
                   {s.year           && <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginBottom: 3 }}>{s.year}</div>}
@@ -277,7 +277,7 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
             <>
               {d?.art && <Backdrop url={d.art} />}
               <div style={{ display: 'flex', gap: 12, marginBottom: 12, alignItems: 'flex-start' }}>
-                <ThumbSlot url={d?.thumb ?? `/api/movies/${m.movie_id}/thumb`} />
+                <ThumbSlot url={mediaUrl(d?.thumb ?? `/api/movies/${m.movie_id}/thumb`)} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.3, marginBottom: 5 }}>{m.title}</div>
                   {m.year           && <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginBottom: 3 }}>{m.year}</div>}

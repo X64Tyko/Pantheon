@@ -598,28 +598,48 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         for (const auto& v : extra_vals) q.bind(idx++, v);
     };
 
+    const std::string src_subq = R"(
+        COALESCE((SELECT ms.base_url FROM source_mapping sm2
+                  JOIN media_source ms ON ms.source_id = sm2.source_id
+                  WHERE sm2.kairos_id = s.show_id AND sm2.item_type = 'show'
+                  LIMIT 1), '') AS source_base_url)";
+    const std::string order_clause =
+        (p.sort == "recently_added") ? " ORDER BY s.rowid DESC" :
+        (p.sort == "random")         ? " ORDER BY RANDOM()" :
+                                       " ORDER BY s.title";
+    const std::string show_select = R"(
+            SELECT s.show_id, s.title, s.content_rating,
+                   COUNT(DISTINCT e.episode_id) AS episode_count, s.year,
+                   s.thumb, s.art, s.audience_rating, s.match_status, s.match_score, )" + src_subq;
+
+    auto parseShowRow = [](SQLite::Statement& q) {
+        ShowRow r;
+        r.show_id         = q.getColumn(0).getString();
+        r.title           = q.getColumn(1).getString();
+        r.content_rating  = q.getColumn(2).getString();
+        r.episode_count   = q.getColumn(3).getInt();
+        if (!q.getColumn(4).isNull()) r.year             = q.getColumn(4).getInt();
+        r.thumb           = q.getColumn(5).getString();
+        r.art             = q.getColumn(6).getString();
+        if (!q.getColumn(7).isNull()) r.audience_rating  = q.getColumn(7).getDouble();
+        r.match_status    = q.getColumn(8).getString();
+        if (!q.getColumn(9).isNull()) r.match_score      = q.getColumn(9).getDouble();
+        r.source_base_url = q.getColumn(10).getString();
+        return r;
+    };
+
     ShowListResult result;
     if (p.library_id.empty()) {
         SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM show s WHERE 1=1" + extras);
         int idx = 1; bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
-        SQLite::Statement q(db_.get(), R"(
-            SELECT s.show_id, s.title, s.content_rating,
-                   COUNT(e.episode_id) AS episode_count, s.year
-            FROM show s LEFT JOIN episode e ON e.show_id = s.show_id
-            WHERE 1=1)" + extras + R"( GROUP BY s.show_id ORDER BY s.title LIMIT ? OFFSET ?)");
+        SQLite::Statement q(db_.get(), show_select +
+            R"( FROM show s LEFT JOIN episode e ON e.show_id = s.show_id
+            WHERE 1=1)" + extras + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
         idx = 1; bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
-        while (q.executeStep()) {
-            ShowRow r;
-            r.show_id       = q.getColumn(0).getString();
-            r.title         = q.getColumn(1).getString();
-            r.content_rating= q.getColumn(2).getString();
-            r.episode_count = q.getColumn(3).getInt();
-            if (!q.getColumn(4).isNull()) r.year = q.getColumn(4).getInt();
-            result.items.push_back(std::move(r));
-        }
+        while (q.executeStep()) result.items.push_back(parseShowRow(q));
     } else {
         SQLite::Statement cnt(db_.get(), R"(
             SELECT COUNT(DISTINCT s.show_id) FROM show s
@@ -629,25 +649,15 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         int idx = 1; cnt.bind(idx++, p.library_id); bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
-        SQLite::Statement q(db_.get(), R"(
-            SELECT s.show_id, s.title, s.content_rating,
-                   COUNT(e.episode_id) AS episode_count, s.year
-            FROM show s
+        SQLite::Statement q(db_.get(), show_select +
+            R"( FROM show s
             JOIN source_mapping sm ON sm.kairos_id = s.show_id
                 AND sm.item_type = 'show' AND sm.library_id = ?
             LEFT JOIN episode e ON e.show_id = s.show_id
-            WHERE 1=1)" + extras + R"( GROUP BY s.show_id ORDER BY s.title LIMIT ? OFFSET ?)");
+            WHERE 1=1)" + extras + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
         idx = 1; q.bind(idx++, p.library_id); bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
-        while (q.executeStep()) {
-            ShowRow r;
-            r.show_id       = q.getColumn(0).getString();
-            r.title         = q.getColumn(1).getString();
-            r.content_rating= q.getColumn(2).getString();
-            r.episode_count = q.getColumn(3).getInt();
-            if (!q.getColumn(4).isNull()) r.year = q.getColumn(4).getInt();
-            result.items.push_back(std::move(r));
-        }
+        while (q.executeStep()) result.items.push_back(parseShowRow(q));
     }
     return result;
 }
@@ -675,6 +685,35 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         for (const auto& v : extra_vals) q.bind(idx++, v);
     };
 
+    const std::string msrc_subq = R"(
+        COALESCE((SELECT ms.base_url FROM source_mapping sm2
+                  JOIN media_source ms ON ms.source_id = sm2.source_id
+                  WHERE sm2.kairos_id = m.movie_id AND sm2.item_type = 'movie'
+                  LIMIT 1), '') AS source_base_url)";
+    const std::string morder =
+        (p.sort == "recently_added") ? " ORDER BY m.rowid DESC" :
+        (p.sort == "random")         ? " ORDER BY RANDOM()" :
+                                       " ORDER BY m.title";
+    const std::string movie_select =
+        "SELECT m.movie_id, m.title, m.content_rating, m.duration_ms, m.year,"
+        " m.thumb, m.art, m.audience_rating, m.match_status, m.match_score," + msrc_subq;
+
+    auto parseMovieRow = [](SQLite::Statement& q) {
+        MovieRow r;
+        r.movie_id        = q.getColumn(0).getString();
+        r.title           = q.getColumn(1).getString();
+        r.content_rating  = q.getColumn(2).getString();
+        r.duration_ms     = q.getColumn(3).getInt64();
+        if (!q.getColumn(4).isNull()) r.year             = q.getColumn(4).getInt();
+        r.thumb           = q.getColumn(5).getString();
+        r.art             = q.getColumn(6).getString();
+        if (!q.getColumn(7).isNull()) r.audience_rating  = q.getColumn(7).getDouble();
+        r.match_status    = q.getColumn(8).getString();
+        if (!q.getColumn(9).isNull()) r.match_score      = q.getColumn(9).getDouble();
+        r.source_base_url = q.getColumn(10).getString();
+        return r;
+    };
+
     MovieListResult result;
     if (p.library_id.empty()) {
         SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM movie m WHERE 1=1" + extras);
@@ -682,19 +721,10 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
         SQLite::Statement q(db_.get(),
-            "SELECT m.movie_id, m.title, m.content_rating, m.duration_ms, m.year "
-            "FROM movie m WHERE 1=1" + extras + " ORDER BY m.title LIMIT ? OFFSET ?");
+            movie_select + " FROM movie m WHERE 1=1" + extras + morder + " LIMIT ? OFFSET ?");
         idx = 1; bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
-        while (q.executeStep()) {
-            MovieRow r;
-            r.movie_id      = q.getColumn(0).getString();
-            r.title         = q.getColumn(1).getString();
-            r.content_rating= q.getColumn(2).getString();
-            r.duration_ms   = q.getColumn(3).getInt64();
-            if (!q.getColumn(4).isNull()) r.year = q.getColumn(4).getInt();
-            result.items.push_back(std::move(r));
-        }
+        while (q.executeStep()) result.items.push_back(parseMovieRow(q));
     } else {
         SQLite::Statement cnt(db_.get(), R"(
             SELECT COUNT(DISTINCT m.movie_id) FROM movie m
@@ -704,23 +734,14 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         int idx = 1; cnt.bind(idx++, p.library_id); bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
-        SQLite::Statement q(db_.get(), R"(
-            SELECT m.movie_id, m.title, m.content_rating, m.duration_ms, m.year
-            FROM movie m
+        SQLite::Statement q(db_.get(),
+            movie_select + R"( FROM movie m
             JOIN source_mapping sm ON sm.kairos_id = m.movie_id
                 AND sm.item_type = 'movie' AND sm.library_id = ?
-            WHERE 1=1)" + extras + " ORDER BY m.title LIMIT ? OFFSET ?");
+            WHERE 1=1)" + extras + morder + " LIMIT ? OFFSET ?");
         idx = 1; q.bind(idx++, p.library_id); bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
-        while (q.executeStep()) {
-            MovieRow r;
-            r.movie_id      = q.getColumn(0).getString();
-            r.title         = q.getColumn(1).getString();
-            r.content_rating= q.getColumn(2).getString();
-            r.duration_ms   = q.getColumn(3).getInt64();
-            if (!q.getColumn(4).isNull()) r.year = q.getColumn(4).getInt();
-            result.items.push_back(std::move(r));
-        }
+        while (q.executeStep()) result.items.push_back(parseMovieRow(q));
     }
     return result;
 }

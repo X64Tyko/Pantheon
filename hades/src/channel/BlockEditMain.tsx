@@ -1,5 +1,6 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useRef, useState } from 'react'
+import { mediaUrl } from '../api/client'
 import { BLOCK_META, DAYS, GUTTER_W, DAY_MIN_W } from './constants'
 import DayColumn from './DayColumn'
 import { LibraryBrowser } from './LibraryBrowser'
@@ -240,8 +241,8 @@ const ContentList = observer(function ContentList({ channelId, store }: { channe
         ) : items.map(item => {
           const dot      = BLOCK_META[item.content_type === 'movie' ? 'movie' : 'episode'].edge
           const selected = store.selectedContentItemId === item.id
-          const thumbUrl = item.content_type === 'show'  ? `/api/shows/${item.content_id}/thumb`
-                         : item.content_type === 'movie' ? `/api/movies/${item.content_id}/thumb`
+          const thumbUrl = item.content_type === 'show'  ? mediaUrl(`/api/shows/${item.content_id}/thumb`)
+                         : item.content_type === 'movie' ? mediaUrl(`/api/movies/${item.content_id}/thumb`)
                          : null
           const isDragging = draggingId === item.id
           const over       = overPos?.id === item.id ? overPos.half : null

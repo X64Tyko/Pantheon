@@ -92,6 +92,9 @@ void ConfStore::parseLocked(const std::string& text) {
         auto val = trim(line.substr(eq + 1));
         if (section == "_global") {
             if (key == "download_path") download_path_ = val;
+            if (key == "image_cache_ttl_hours") {
+                try { image_cache_ttl_hours_ = std::stoi(val); } catch (...) {}
+            }
             continue;
         }
         if (key == "token")   entries_[section].token   = val;
@@ -205,13 +208,31 @@ void ConfStore::setDownloadPath(const std::string& path) {
     mtime_ = std::filesystem::last_write_time(path_, ec);
 }
 
+int ConfStore::getImageCacheTtlHours() const {
+    std::lock_guard lock(mu_);
+    return image_cache_ttl_hours_;
+}
+
+void ConfStore::setImageCacheTtlHours(int hours) {
+    std::lock_guard lock(mu_);
+    if (hours < 1) hours = 1;
+    image_cache_ttl_hours_ = hours;
+    saveLocked();
+    std::error_code ec;
+    mtime_ = std::filesystem::last_write_time(path_, ec);
+}
+
 void ConfStore::saveLocked() const {
     std::ofstream f(path_);
     f << "# Kairos credentials — do not commit\n"
       << "# Managed by Hades UI\n\n";
-    if (!download_path_.empty()) {
+    if (!download_path_.empty() || image_cache_ttl_hours_ != 2) {
         f << "[_global]\n";
-        f << "download_path = " << download_path_ << "\n\n";
+        if (!download_path_.empty())
+            f << "download_path = " << download_path_ << "\n";
+        if (image_cache_ttl_hours_ != 2)
+            f << "image_cache_ttl_hours = " << image_cache_ttl_hours_ << "\n";
+        f << "\n";
     }
     for (const auto& [sid, e] : entries_) {
         f << "[" << sid << "]\n";

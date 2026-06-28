@@ -8,9 +8,11 @@
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
+#include "scraper/ScraperManager.h"
 #include "source/SyncManager.h"
 #include "services/ActivityService.h"
 #include "services/ArrService.h"
+#include "services/RequestService.h"
 #include "services/AuthService.h"
 #include "services/BlockService.h"
 #include "services/ChapterService.h"
@@ -21,6 +23,7 @@
 #include "services/DownloadService.h"
 #include "services/FillerService.h"
 #include "services/PlaylistService.h"
+#include "services/ScraperService.h"
 #include "services/SchedulerService.h"
 #include "services/SourceService.h"
 #include "services/TimeslotService.h"
@@ -95,6 +98,9 @@ void Router::registerRoutes() {
 		return httplib::Server::HandlerResponse::Unhandled;
 	});
 
+	scraper_mgr_ = std::make_unique<ScraperManager>(db_, conf_);
+	sync_.setScraperManager(scraper_mgr_.get());
+
 	ServiceContext ctx{db_, conf_, sync_, schedule_cache_,
 	                   materializer_, engine_, auth_, logs_, dl_};
 
@@ -102,6 +108,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<SourceService>(ctx));
 	services_.push_back(std::make_unique<ConfigService>(ctx));
 	services_.push_back(std::make_unique<ArrService>(ctx));
+	services_.push_back(std::make_unique<RequestService>(ctx));
 	services_.push_back(std::make_unique<ChannelService>(ctx));
 	services_.push_back(std::make_unique<KairosService>(ctx));
 	services_.push_back(std::make_unique<BlockService>(ctx));
@@ -111,6 +118,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<FillerService>(ctx));
 	services_.push_back(std::make_unique<ActivityService>(ctx));
 	services_.push_back(std::make_unique<DownloadService>(ctx));
+	services_.push_back(std::make_unique<ScraperService>(*scraper_mgr_));
 	services_.push_back(std::make_unique<SchedulerService>(ctx));
 	services_.push_back(std::make_unique<TimeslotService>(ctx));
 

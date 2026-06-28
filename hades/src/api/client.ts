@@ -2,15 +2,22 @@ import type {
   ArrConfig, ArrLookupResult, ArrServiceOptions,
   AuthResponse,
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
-  Channel, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
+  Channel, ContentRequest, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
   Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
-  Playlist, PlaylistDetail, Show, ShowDetail, Source, SourceType, User,
+  Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
+  Show, ShowDetail, Source, SourceType, User,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
+
+/** Append ?token= to a media proxy path so <img> tags can authenticate. */
+export function mediaUrl(path: string): string {
+  const token = localStorage.getItem(TOKEN_KEY)
+  return token ? `${path}?token=${encodeURIComponent(token)}` : path
+}
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {}
@@ -90,6 +97,13 @@ export const api = {
   arrAdd:        (b: { type: 'show'|'movie'; add_data: unknown; quality_profile_id: number; root_folder: string; search_on_add?: boolean }) =>
                    request<{ ok: boolean }>('POST', '/arr/add', b),
 
+  // Content requests
+  getRequests:    ()                                                                           => request<ContentRequest[]>('GET',    '/requests'),
+  createRequest:  (b: { content_type: 'show'|'movie'; source: 'tmdb'|'tvdb'; external_id: string; title: string; year?: number; poster_url?: string }) =>
+                    request<{ request_id: string; status: string; duplicate?: boolean }>('POST', '/requests', b),
+  updateRequest:  (id: string, status: 'approved'|'rejected')                                => request<{ok: boolean}>('PATCH',  `/requests/${id}`, { status }),
+  deleteRequest:  (id: string)                                                                => request<{ok: boolean}>('DELETE', `/requests/${id}`),
+
   // Channel filler entries
   addChannelFiller:    (channelId: string, b: { content_type: string; content_id: string; advancement: FillerEntryAdvancement; weight?: number; season_filter?: number }) =>
                          request<FillerEntry>('POST',   `/channels/${channelId}/filler`, b),
@@ -122,10 +136,10 @@ export const api = {
   getAllLibraries: ()                                    => request<LibraryWithSource[]>('GET', '/libraries'),
   getFilterValues: (field: string, params: { type?: 'movie' | 'show'; library_id?: string } = {}) =>
     request<{ values: string[] }>('GET', `/metadata/values?${qs({ field, ...params })}`).then(r => r.values),
-  getShows:       (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; network?: string; actor?: string } = {}) =>
+  getShows:       (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; network?: string; actor?: string; sort?: string } = {}) =>
                     request<PagedResult<Show>>('GET', `/shows?${qs(p)}`),
   getEpisodes:    (showId: string, season?: number)     => request<Episode[]>('GET', `/shows/${showId}/episodes${season != null ? '?season=' + season : ''}`),
-  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; actor?: string } = {}) =>
+  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; actor?: string; sort?: string } = {}) =>
                     request<PagedResult<Movie>>('GET', `/movies?${qs(p)}`),
 
   // Blocks
@@ -238,8 +252,8 @@ export const api = {
   deleteBumper:  (channelId: string, bumperId: number)               => request<void>          ('DELETE', `/channels/${channelId}/bumpers/${bumperId}`),
 
   // Runtime settings
-  getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_threads: number }>('GET',   '/config/settings'),
-  updateSettings: (b: Partial<{ epg_debug: boolean; sync_threads: number }>) => request<{ epg_debug: boolean; sync_threads: number }>('PATCH', '/config/settings', b),
+  getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_threads: number; image_cache_ttl_hours: number }>('GET',   '/config/settings'),
+  updateSettings: (b: Partial<{ epg_debug: boolean; sync_threads: number; image_cache_ttl_hours: number }>) => request<{ epg_debug: boolean; sync_threads: number; image_cache_ttl_hours: number }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
 
   // Downloads
@@ -253,4 +267,20 @@ export const api = {
   post:   <T = unknown>(path: string, body: unknown)  => request<T>('POST',   path, body),
   patch:  <T = unknown>(path: string, body: unknown)  => request<T>('PATCH',  path, body),
   del:    <T = unknown>(path: string)                 => request<T>('DELETE', path),
+
+  // Scrapers
+  getScraperSettings:  ()                                         => request<ScraperSettings>('GET',   '/scrapers/config'),
+  patchScraperSettings:(b: Partial<ScraperSettings>)              => request<{ok: boolean}>('PATCH', '/scrapers/config', b),
+  triggerMatch:        (b?: { target_id?: string; item_type?: string }) =>
+                         request<{status: string}>('POST', '/scrapers/match', b ?? {}),
+  getMatchStatus:      ()                                         => request<{running: boolean}>('GET', '/scrapers/match/status'),
+  getScraperStats:     ()                                         => request<ScraperStats>('GET',    '/scrapers/stats'),
+  getReviewQueue:      (p: { status?: string; limit?: number; offset?: number } = {}) =>
+                         request<{items: ReviewQueueItem[]; total: number}>('GET', `/scrapers/queue?${qs(p)}`),
+  acceptCandidate:     (id: string)                               => request<{ok: boolean}>('POST', `/scrapers/queue/${id}/accept`, {}),
+  rejectCandidate:     (id: string)                               => request<{ok: boolean}>('POST', `/scrapers/queue/${id}/reject`, {}),
+  manualMatch:         (kairos_id: string, b: { item_type: 'show'|'movie'; source: string; external_id: string; title: string; year?: number; poster_url?: string; overview?: string }) =>
+                         request<{ok: boolean}>('POST', `/scrapers/queue/${kairos_id}/manual-match`, b),
+  scraperSearch:       (q: string, type?: 'show' | 'movie')       =>
+                         request<{items: ScraperSearchResult[]}>('GET', `/scrapers/search?${qs({ q, type })}`),
 }

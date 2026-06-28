@@ -18,8 +18,9 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/config/settings", [this](const Req&, Res& res) {
 		route::ok(res, json{
-			{"epg_debug",    g_epg_debug.load()},
-			{"sync_threads", sync_.getThreadCount()},
+			{"epg_debug",              g_epg_debug.load()},
+			{"sync_threads",           sync_.getThreadCount()},
+			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
 		}.dump());
 	});
 
@@ -32,9 +33,14 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 				int n = b["sync_threads"].get<int>();
 				if (n >= 1 && n <= 32) sync_.setThreadCount(n);
 			}
+			if (b.contains("image_cache_ttl_hours") && b["image_cache_ttl_hours"].is_number_integer()) {
+				int h = b["image_cache_ttl_hours"].get<int>();
+				if (h >= 1 && h <= 720) conf_.setImageCacheTtlHours(h);
+			}
 			route::ok(res, json{
-				{"epg_debug",    g_epg_debug.load()},
-				{"sync_threads", sync_.getThreadCount()},
+				{"epg_debug",              g_epg_debug.load()},
+				{"sync_threads",           sync_.getThreadCount()},
+				{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
 			}.dump());
 		} catch (const std::exception& e) {
 			route::err(res, 400, e.what());

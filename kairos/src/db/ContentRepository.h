@@ -30,7 +30,11 @@ struct LibraryRow {
 struct ShowRow {
     std::string show_id, title, content_rating;
     int episode_count = 0;
-    std::optional<int> year;
+    std::optional<int>    year;
+    std::string           thumb, art, source_base_url;
+    std::optional<double> audience_rating;
+    std::string           match_status;
+    std::optional<double> match_score;
 };
 
 struct ShowListResult {
@@ -75,7 +79,11 @@ struct EpisodeSearchRow {
 struct MovieRow {
     std::string movie_id, title, content_rating;
     int64_t duration_ms = 0;
-    std::optional<int> year;
+    std::optional<int>    year;
+    std::string           thumb, art, source_base_url;
+    std::optional<double> audience_rating;
+    std::string           match_status;
+    std::optional<double> match_score;
 };
 
 struct MovieListResult {
@@ -103,12 +111,14 @@ struct ShowSearchParams {
     int limit = 50, offset = 0;
     std::string library_id, q, genre, year, content_rating;
     std::string label, network, actor, country, collection, studio;
+    std::string sort;   // "title" (default) | "recently_added" | "random"
 };
 
 struct MovieSearchParams {
     int limit = 50, offset = 0;
     std::string library_id, q, genre, year, content_rating;
     std::string label, actor, country, collection, studio;
+    std::string sort;   // "title" (default) | "recently_added" | "random"
 };
 
 struct StrField { std::string col, val; };

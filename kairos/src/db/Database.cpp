@@ -1246,6 +1246,52 @@ constexpr Migration kMigrations[] = {
     );
 )SQL" }
 
+// ── v48: per-item match status + confidence from metadata scrapers ─────────────
+,{ 48, R"SQL(
+    ALTER TABLE show  ADD COLUMN match_status TEXT NOT NULL DEFAULT 'unscraped';
+    ALTER TABLE show  ADD COLUMN match_score  REAL;
+    ALTER TABLE movie ADD COLUMN match_status TEXT NOT NULL DEFAULT 'unscraped';
+    ALTER TABLE movie ADD COLUMN match_score  REAL;
+
+    CREATE TABLE IF NOT EXISTS item_match_candidate (
+        candidate_id TEXT    PRIMARY KEY,
+        item_type    TEXT    NOT NULL CHECK(item_type IN ('show','movie')),
+        kairos_id    TEXT    NOT NULL,
+        source       TEXT    NOT NULL CHECK(source IN ('tmdb','tvdb')),
+        external_id  TEXT    NOT NULL,
+        title        TEXT    NOT NULL,
+        year         INTEGER,
+        score        REAL    NOT NULL DEFAULT 0,
+        accepted     INTEGER,
+        poster_url   TEXT    NOT NULL DEFAULT '',
+        overview     TEXT    NOT NULL DEFAULT '',
+        UNIQUE(item_type, kairos_id, source, external_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_item_match_kairos
+        ON item_match_candidate(item_type, kairos_id);
+    CREATE INDEX IF NOT EXISTS idx_item_match_pending
+        ON item_match_candidate(accepted) WHERE accepted IS NULL;
+)SQL" }
+
+// ── v49: content requests from viewers ────────────────────────────────────────
+,{ 49, R"SQL(
+    CREATE TABLE IF NOT EXISTS content_request (
+        request_id   TEXT    PRIMARY KEY,
+        user_id      TEXT    NOT NULL,
+        content_type TEXT    NOT NULL CHECK(content_type IN ('show','movie')),
+        source       TEXT    NOT NULL CHECK(source IN ('tmdb','tvdb')),
+        external_id  TEXT    NOT NULL,
+        title        TEXT    NOT NULL DEFAULT '',
+        year         INTEGER,
+        poster_url   TEXT    NOT NULL DEFAULT '',
+        status       TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+        created_at   INTEGER NOT NULL,
+        UNIQUE(user_id, content_type, source, external_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_request_status ON content_request(status);
+    CREATE INDEX IF NOT EXISTS idx_request_user   ON content_request(user_id);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

@@ -1,6 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api/client'
+import { api, mediaUrl } from '../api/client'
+import { useDebounce } from '../hooks/useDebounce'
 import { contentStore as store, PAGE_SIZE } from '../stores/ContentStore'
 import type { ContentStore } from '../stores/ContentStore'
 import type { DetailItem } from '../stores/ContentStore'
@@ -103,11 +104,15 @@ function fmtMins(ms: number) { return `${Math.round(ms / 60000)}m` }
 
 export default observer(function ContentPage() {
   const listRef = useRef<HTMLDivElement>(null)
+  const [rawQ, setRawQ] = useState(store.query)
+  const debouncedQ = useDebounce(rawQ, 300)
 
   useEffect(() => {
     store.loadLibraries()
     store.fetch()
   }, [])
+
+  useEffect(() => { store.setQuery(debouncedQ) }, [debouncedQ])
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: 0 })
@@ -179,8 +184,8 @@ export default observer(function ContentPage() {
           <div className="flex items-center gap-2 shrink-0">
             <input
               type="search"
-              value={store.query}
-              onChange={e => store.setQuery(e.target.value)}
+              value={rawQ}
+              onChange={e => setRawQ(e.target.value)}
               placeholder="Search by title…"
               className="flex-1 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-violet-700/60"
             />
@@ -207,9 +212,9 @@ export default observer(function ContentPage() {
               placeholder="Rating"
               className="w-20 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-violet-700/60"
             />
-            {(store.query || store.filterGenre || store.filterYear || store.filterRating) && (
+            {(rawQ || store.filterGenre || store.filterYear || store.filterRating) && (
               <button
-                onClick={() => store.clearFilters()}
+                onClick={() => { setRawQ(''); store.clearFilters() }}
                 className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors whitespace-nowrap"
               >✕ Clear</button>
             )}
@@ -646,7 +651,7 @@ function EpisodeRow({ ep, showId, season }: { ep: Episode; showId: string; seaso
         {/* Thumbnail */}
         <div className="shrink-0 w-16 h-9 rounded bg-zinc-800 overflow-hidden">
           <img
-            src={`/api/episodes/${ep.episode_id}/thumb`}
+            src={mediaUrl(`/api/episodes/${ep.episode_id}/thumb`)}
             className="w-full h-full object-cover"
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
             alt=""

@@ -79,20 +79,34 @@ export interface EpgPreviewResponse {
 
 // ── List-view types (minimal) ────────────────────────────────────────────────
 
+export type MatchStatus = 'matched' | 'uncertain' | 'unmatched' | 'unscraped'
+
 export interface Show {
-  show_id:        string
-  title:          string
-  content_rating: string
-  episode_count:  number
-  year?:          number
+  show_id:         string
+  title:           string
+  content_rating:  string
+  episode_count:   number
+  year?:           number
+  thumb?:          string
+  art?:            string
+  source_base_url?: string
+  audience_rating?: number
+  match_status?:   MatchStatus
+  match_score?:    number | null
 }
 
 export interface Movie {
-  movie_id:       string
-  title:          string
-  content_rating: string
-  duration_ms:    number
-  year?:          number
+  movie_id:        string
+  title:           string
+  content_rating:  string
+  duration_ms:     number
+  year?:           number
+  thumb?:          string
+  art?:            string
+  source_base_url?: string
+  audience_rating?: number
+  match_status?:   MatchStatus
+  match_score?:    number | null
 }
 
 // ── Detail types (full metadata) ─────────────────────────────────────────────
@@ -532,6 +546,23 @@ export interface ImportPreviewResult {
 
 // ── Arr integrations ──────────────────────────────────────────────────────────
 
+// ── Content requests ──────────────────────────────────────────────────────────
+
+export type RequestStatus = 'pending' | 'approved' | 'rejected'
+
+export interface ContentRequest {
+  request_id:   string
+  user_id:      string
+  content_type: 'show' | 'movie'
+  source:       'tmdb' | 'tvdb'
+  external_id:  string
+  title:        string
+  year?:        number | null
+  poster_url:   string
+  status:       RequestStatus
+  created_at:   number
+}
+
 export interface ArrConfig {
   sonarr_url:     string
   sonarr_api_key: string
@@ -586,45 +617,63 @@ export interface MediaHeroItem {
   rating?:      number
 }
 
-// ── Media scanner / scraper ───────────────────────────────────────────────────
+// ── Scraper infrastructure ────────────────────────────────────────────────────
 
-export type ScanJobStatus = 'pending' | 'running' | 'done' | 'error'
-export type MatchStatus   = 'unmatched' | 'matched' | 'skipped' | 'conflict'
-export type ScraperSource = 'tmdb' | 'tvdb' | 'local'
+export type ScraperSource = 'tmdb' | 'tvdb'
 
-export interface ScanJob {
-  job_id:       string
-  job_type:     'scan' | 'match' | 'fetch'
-  status:       ScanJobStatus
-  target_id:    string | null
-  error_msg:    string | null
-  created_at:   string        // ISO 8601
-  completed_at: string | null
+export interface ScraperConfig {
+  source:    ScraperSource
+  api_key:   string
+  enabled:   boolean
+  language:  string
+  pin?:      string  // TVDB subscriber pin
 }
 
-export interface ScannedFile {
-  file_id:      string
-  file_path:    string
-  size_bytes:   number
-  duration_ms:  number | null
-  matched_id:   string | null
-  match_status: MatchStatus
+export interface ScraperSettings {
+  configs:         ScraperConfig[]
+  match_threshold: number   // 0–1; default 1.0
 }
 
-export interface MatchCandidate {
+export interface ItemMatchCandidate {
   candidate_id: string
-  file_id:      string
   source:       ScraperSource
   external_id:  string
   title:        string
-  year:         number | null
+  year?:        number
   score:        number        // 0–1 confidence
-  accepted:     boolean | null  // null = pending review
+  accepted:     boolean | null
+  poster_url:   string
+  overview:     string
 }
 
-export interface ScraperConfig {
-  source:   ScraperSource
-  api_key:  string
-  enabled:  boolean
-  language: string
+export interface ReviewQueueItem {
+  kairos_id:       string
+  item_type:       'show' | 'movie'
+  title:           string
+  year?:           number
+  thumb:           string
+  source_id:       string
+  source_base_url: string
+  match_status:    'uncertain' | 'unmatched'
+  match_score:     number
+  candidates:      ItemMatchCandidate[]
+}
+
+export interface ScraperStats {
+  total:     number
+  matched:   number
+  uncertain: number
+  unmatched: number
+  unscraped: number
+}
+
+export interface ScraperSearchResult {
+  source:       ScraperSource
+  external_id:  string
+  title:        string
+  year?:        number
+  overview:     string
+  poster_url:   string
+  content_type: 'show' | 'movie'
+  in_library:   boolean
 }

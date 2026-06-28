@@ -36,6 +36,9 @@ public:
     std::string getDownloadPath() const;
     void        setDownloadPath(const std::string& path);
 
+    int  getImageCacheTtlHours() const;
+    void setImageCacheTtlHours(int hours);
+
     // Rewrite a file path by applying the first matching path_map prefix across
     // all configured sources. Returns the path unchanged if no mapping matches.
     std::string applyPathMap(const std::string& path) const;
@@ -64,6 +67,7 @@ private:
     std::filesystem::file_time_type          mtime_{};
     std::unordered_map<std::string, Entry>   entries_;
     std::string                              download_path_;
+    int                                      image_cache_ttl_hours_ = 2;
     mutable std::mutex                       mu_;
 
     // Throttle maybeReload() to at most once per 30 seconds.

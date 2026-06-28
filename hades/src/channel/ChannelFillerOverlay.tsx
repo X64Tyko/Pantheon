@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
+import { mediaUrl } from '../api/client'
 import type { Channel, FillerEntryAdvancement, FillerSelectionMode } from '../api/types'
 import { BLOCK_META, FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
 import { inputStyle, filterInputStyle } from './styles'
@@ -143,7 +144,7 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
                       <div style={gridStyle}>
                         {filtered.map(m => (
                           <MediaTile key={m.movie_id}
-                            imgUrl={`/api/movies/${m.movie_id}/thumb`}
+                            imgUrl={mediaUrl(`/api/movies/${m.movie_id}/thumb`)}
                             title={m.title}
                             sub={m.year ? String(m.year) : undefined}
                             badge={isAdded('movie', m.movie_id)}
@@ -162,7 +163,7 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
                       <div style={gridStyle}>
                         {filtered.map(ep => (
                           <MediaTile key={ep.episode_id}
-                            imgUrl={`/api/shows/${ep.show_id}/thumb`}
+                            imgUrl={mediaUrl(`/api/shows/${ep.show_id}/thumb`)}
                             title={`S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`}
                             sub={ep.show_title}
                             badge={isAdded('episode', ep.episode_id)}

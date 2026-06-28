@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
-import { api } from '../api/client'
+import { api, mediaUrl } from '../api/client'
 import { inputStyle, filterInputStyle } from './styles'
 import type { BumperContentType, BumperMode, ChannelBumper } from '../api/types'
 import type { ChannelDetailStore } from './store'
@@ -157,7 +157,7 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
                       <div style={gridStyle}>
                         {shows.map(s => (
                           <MediaTile key={s.show_id}
-                            imgUrl={`/api/shows/${s.show_id}/thumb`}
+                            imgUrl={mediaUrl(`/api/shows/${s.show_id}/thumb`)}
                             title={s.title}
                             sub={s.year ? String(s.year) : undefined}
                             badge={bumpers.some(b => b.content_type === 'show' && b.content_id === s.show_id)}
@@ -188,7 +188,7 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
                       <div style={gridStyle}>
                         {filtered.map(ep => (
                           <MediaTile key={ep.episode_id}
-                            imgUrl={`/api/shows/${ep.show_id}/thumb`}
+                            imgUrl={mediaUrl(`/api/shows/${ep.show_id}/thumb`)}
                             title={`S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} — ${ep.title}`}
                             sub={ep.show_title}
                             badge={bumpers.some(b => b.content_type === 'episode' && b.content_id === ep.episode_id)}

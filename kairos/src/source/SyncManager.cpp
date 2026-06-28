@@ -7,6 +7,7 @@
 #include "conf/ConfStore.h"
 #include "db/ChapterRepository.h"
 #include "db/Database.h"
+#include "scraper/ScraperManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <atomic>
@@ -113,6 +114,7 @@ void SyncManager::syncSource(const std::string& source_id) {
     }
 
     syncPlexLinks(source_id);
+    if (scraper_) scraper_->runMatchSync();
     syncChaptersFromFiles(source_id);
     std::cout << "[sync] done: " << source_id << std::endl;
 }
@@ -697,15 +699,24 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
     // Episodes
     {
         SQLite::Statement q(db_.get(), R"(
-            SELECT sm.kairos_id, e.file_path
+            SELECT sm.kairos_id, e.file_path, e.show_id, sh.title
             FROM source_mapping sm
-            JOIN episode e ON e.episode_id = sm.kairos_id
+            JOIN episode e  ON e.episode_id = sm.kairos_id
+            JOIN show    sh ON sh.show_id   = e.show_id
             WHERE sm.item_type='episode' AND sm.source_id=?
+            ORDER BY e.show_id
         )");
         q.bind(1, source_id);
+        std::string cur_show_id;
         while (q.executeStep()) {
             const std::string kairos_id = q.getColumn(0).getString();
             const std::string file_path = q.getColumn(1).getString();
+            const std::string show_id   = q.getColumn(2).getString();
+            const std::string show_title = q.getColumn(3).getString();
+            if (show_id != cur_show_id) {
+                cur_show_id = show_id;
+                std::cout << "[sync]   checking chapters: \"" << show_title << "\"" << std::endl;
+            }
             if (file_path.empty()) continue;
             auto chapters = probeChapters(conf_.applyPathMap(file_path));
             if (!chapters.empty())

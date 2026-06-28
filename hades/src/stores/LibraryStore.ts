@@ -1,6 +1,6 @@
 import { makeAutoObservable, runInAction } from 'mobx'
 import { api } from '../api/client'
-import type { LibraryWithSource, Show, Movie } from '../api/types'
+import type { LibraryWithSource, Show, Movie, ScraperSearchResult } from '../api/types'
 import type { LibraryDensity } from '../api/types'
 
 const DENSITY_KEY = 'hds-library-density'
@@ -21,6 +21,11 @@ class LibraryStore {
   sidebarOpen:  boolean = localStorage.getItem(SIDEBAR_KEY) !== 'false'
   selectedId:   string | null = null
   selectedType: 'show' | 'movie' | null = null
+
+  // Discover mode — searches scrapers rather than local library
+  discoverMode:    boolean = false
+  discoverResults: ScraperSearchResult[] = []
+  discoverLoading: boolean = false
 
   constructor() { makeAutoObservable(this) }
 
@@ -54,7 +59,15 @@ class LibraryStore {
     }
   }
 
-  setQuery(q: string)              { this.query       = q; this.page = 0; this.fetch() }
+  setQuery(q: string) {
+    this.query = q
+    this.page = 0
+    if (this.discoverMode) {
+      this.discoverSearch()
+    } else {
+      this.fetch()
+    }
+  }
   setLibrary(id: string | null)    { this.activeLibId = id; this.page = 0; this.fetch() }
   setContentType(t: 'show' | 'movie' | 'all') { this.contentType = t; this.page = 0; this.fetch() }
   setPage(p: number)               { this.page        = p; this.fetch() }
@@ -76,6 +89,28 @@ class LibraryStore {
   }
 
   clearSelection() { this.selectedId = null; this.selectedType = null }
+
+  toggleDiscoverMode() {
+    this.discoverMode = !this.discoverMode
+    this.discoverResults = []
+    if (this.discoverMode && this.query) {
+      this.discoverSearch()
+    } else if (!this.discoverMode) {
+      this.fetch()
+    }
+  }
+
+  async discoverSearch() {
+    if (!this.query.trim()) { runInAction(() => { this.discoverResults = [] }); return }
+    runInAction(() => { this.discoverLoading = true })
+    const type = this.contentType === 'all' ? undefined : this.contentType
+    try {
+      const res = await api.scraperSearch(this.query, type)
+      runInAction(() => { this.discoverResults = res.items; this.discoverLoading = false })
+    } catch {
+      runInAction(() => { this.discoverLoading = false })
+    }
+  }
 }
 
 export const libraryStore = new LibraryStore()

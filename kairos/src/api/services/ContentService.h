@@ -16,6 +16,6 @@ private:
 	Database&  db_;
 	ConfStore& conf_;
 
-	void proxyImage(const std::string& imgPath, const std::string& sourceId,
-	                httplib::Response& res);
+	void proxyImage(const httplib::Request& req, const std::string& imgPath,
+	                const std::string& sourceId, httplib::Response& res);
 };

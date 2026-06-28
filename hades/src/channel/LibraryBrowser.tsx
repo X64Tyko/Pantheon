@@ -1,5 +1,8 @@
 import { observer } from 'mobx-react-lite'
 import { runInAction } from 'mobx'
+import { useState, useEffect } from 'react'
+import { useDebounce } from '../hooks/useDebounce'
+import { mediaUrl } from '../api/client'
 import type { PickerTab } from './types'
 import { availablePickerTabs } from './utils'
 import { inputStyle } from './styles'
@@ -22,6 +25,10 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
 }) {
   const { infoItem, setInfoItem, infoDetail, infoSeasons, detailLoading } = useDetailPanel()
   const handleAdd = onAdd ?? ((params: AddContentParams) => store.addContent(channelId, params))
+
+  const [rawQ, setRawQ] = useState(store.pickerQuery)
+  const debouncedQ = useDebounce(rawQ, 300)
+  useEffect(() => { store.setPickerQuery(debouncedQ) }, [debouncedQ])
 
   const tabs        = availablePickerTabs(store.draft.block_type)
   const showFilters = !infoItem && (store.pickerTab === 'shows' || store.pickerTab === 'movies')
@@ -67,7 +74,7 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
             </div>
             {store.pickerTab !== 'playlists' && (
               <div style={{ display: 'flex', gap: 6 }}>
-                <input value={store.pickerQuery} onChange={e => store.setPickerQuery(e.target.value)} placeholder="Search…" style={{ ...inputStyle, flex: 1, fontSize: 11.5, padding: '6px 9px' }} />
+                <input value={rawQ} onChange={e => setRawQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, flex: 1, fontSize: 11.5, padding: '6px 9px' }} />
                 {store.pickerTab === 'episodes' && (
                   <input type="number" min={0} value={store.pickerSeasonFilter} onChange={e => store.setPickerSeasonFilter(e.target.value)} placeholder="S#" title="Filter by season" style={{ ...inputStyle, width: 48, fontSize: 11, padding: '5px 6px' }} />
                 )}
@@ -159,7 +166,7 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd 
         <div style={gridStyle}>
           {items.map(m => (
             <MediaTile key={m.movie_id}
-              imgUrl={`/api/movies/${m.movie_id}/thumb`}
+              imgUrl={mediaUrl(`/api/movies/${m.movie_id}/thumb`)}
               title={m.title}
               sub={m.year ? String(m.year) : undefined}
               badge={store.draftContent.some(c => c.content_type === 'movie' && c.content_id === m.movie_id)}
@@ -186,7 +193,7 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd 
           const title = `${ep.show_title} ${code} — ${ep.title}`
           return (
             <MediaTile key={ep.episode_id}
-              imgUrl={`/api/shows/${ep.show_id}/thumb`}
+              imgUrl={mediaUrl(`/api/shows/${ep.show_id}/thumb`)}
               title={`${code} — ${ep.title}`}
               sub={ep.show_title}
               onDragStart={e => startDrag(e, 'episode', ep.episode_id, title)}

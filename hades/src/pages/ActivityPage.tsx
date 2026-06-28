@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useRef } from 'react'
 import { api } from '../api/client'
-import { sourceStore, systemStore } from '../stores'
+import { sourceStore, systemStore, statusStore } from '../stores'
 import type { LogEntry } from '../stores'
 
 function tagColor(line: string): string {
@@ -43,16 +43,25 @@ export default observer(function ActivityPage() {
     systemStore.clearUnreadErrors()
   }, [])
 
-  // Auto-scroll to bottom when new logs arrive, if already near bottom.
+  // Auto-scroll when new logs arrive. Watch the last entry's id so this fires
+  // even when the buffer is full and logs.length stays constant at 1000.
+  const lastId = logs.length > 0 ? logs[logs.length - 1].id : null
   useEffect(() => {
     const el = logRef.current
     if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [logs.length])
+  }, [lastId])
 
   const handleScroll = () => {
     const el = logRef.current
     if (!el) return
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  }
+
+  const jumpToBottom = () => {
+    const el = logRef.current
+    if (!el) return
+    atBottomRef.current = true
+    el.scrollTop = el.scrollHeight
   }
 
   useEffect(() => { sourceStore.fetchAll() }, [])
@@ -73,26 +82,28 @@ export default observer(function ActivityPage() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 24, gap: 20, overflow: 'hidden' }}>
+
+      {/* Header */}
+      <div className="flex items-center justify-between" style={{ flexShrink: 0 }}>
         <h1 className="text-xl font-semibold text-zinc-100">Activity</h1>
         <button
           onClick={syncAll}
-          disabled={systemStore.syncing}
+          disabled={statusStore.anyRunning}
           className="flex items-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400
                      disabled:bg-amber-500/40 text-black text-sm rounded font-medium transition-colors"
         >
-          {systemStore.syncing
+          {statusStore.anyRunning
             ? <><Spinner className="text-black/70" /> Syncing…</>
             : '▶ Sync All'}
         </button>
       </div>
 
       {/* Sync status */}
-      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4">
+      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4" style={{ flexShrink: 0 }}>
         <h2 className="section-label mb-3">Sync Status</h2>
         <div className="flex items-center gap-2.5 mb-3">
-          {systemStore.syncing ? (
+          {statusStore.anyRunning ? (
             <>
               <Spinner className="text-violet-400" />
               <span className="text-sm text-violet-300">Sync in progress…</span>
@@ -114,7 +125,7 @@ export default observer(function ActivityPage() {
                    className="flex items-center gap-2 px-3 py-2 rounded
                               bg-zinc-950/60 border border-zinc-800/60 text-xs">
                 <span className={`w-1.5 h-1.5 rounded-full ${
-                  systemStore.syncing ? 'bg-violet-400 animate-pulse' : 'bg-zinc-600'
+                  statusStore.anyRunning ? 'bg-violet-400 animate-pulse' : 'bg-zinc-600'
                 }`} />
                 <span className="text-zinc-300 font-medium">{src.display_name}</span>
                 <span className="text-zinc-600 ml-auto uppercase">{src.source_type}</span>
@@ -124,9 +135,10 @@ export default observer(function ActivityPage() {
         )}
       </div>
 
-      {/* Log viewer */}
-      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/80">
+      {/* Log viewer — fills remaining height */}
+      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 overflow-hidden"
+           style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/80" style={{ flexShrink: 0 }}>
           <h2 className="section-label">Engine Logs</h2>
           <div className="flex items-center gap-4">
             <span className={`flex items-center gap-1.5 text-xs ${liveColors[liveStatus]}`}>
@@ -136,7 +148,7 @@ export default observer(function ActivityPage() {
                :                           'Disconnected'}
             </span>
             <button
-              onClick={() => { /* logs live in store — can't wipe store, just scroll to bottom */ }}
+              onClick={jumpToBottom}
               className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
             >
               ↓ Jump to bottom
@@ -147,7 +159,8 @@ export default observer(function ActivityPage() {
         <div
           ref={logRef}
           onScroll={handleScroll}
-          className="h-[28rem] overflow-y-auto p-3 font-mono text-xs space-y-0.5 scrollbar-dark"
+          className="overflow-y-auto p-3 font-mono text-xs space-y-0.5 scrollbar-dark"
+          style={{ flex: 1, minHeight: 0 }}
         >
           {logs.length === 0 ? (
             <span className="text-zinc-700">

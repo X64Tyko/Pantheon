@@ -2,22 +2,22 @@ import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { systemStore } from '../stores'
+import { api } from '../api/client'
+import { systemStore, statusStore } from '../stores'
 
 const navItems: { to: string; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
-  { to: '/',         label: 'Home',         icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 7.5L8 2l6 5.5V14H10v-3.5H6V14H2V7.5z" strokeLinejoin="round"/></svg> },
-  { to: '/library',  label: 'Library',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg> },
-  { to: '/sources',   label: 'Sources',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/></svg> },
-  { to: '/channels',  label: 'Channels',     icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="4" y="4" width="8" height="8" rx="1.5" transform="rotate(45 8 8)"/></svg> },
-  { to: '/content',   label: 'Content',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="3" y="3.5" width="10" height="2" rx="1"/><rect x="3" y="7" width="10" height="2" rx="1"/><rect x="3" y="10.5" width="10" height="2" rx="1"/></svg> },
-  { to: '/groups',    label: 'Groups',       icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M3 4h4v4H3z" rx="0.8"/><path d="M9 4h4v4H9z" rx="0.8"/><path d="M6 8v2M10 8v2M4 12h8" strokeLinecap="round"/></svg> },
-  { to: '/playlists', label: 'Playlists',    icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><path d="M6 5.5l4 2.5-4 2.5V5.5z" fill="currentColor" stroke="none"/></svg> },
-
+  { to: '/',          label: 'Home',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 7.5L8 2l6 5.5V14H10v-3.5H6V14H2V7.5z" strokeLinejoin="round"/></svg> },
+  { to: '/library',   label: 'Library',   icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg> },
+  { to: '/content',   label: 'Content',   icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="3" y="3.5" width="10" height="2" rx="1"/><rect x="3" y="7" width="10" height="2" rx="1"/><rect x="3" y="10.5" width="10" height="2" rx="1"/></svg> },
+  { to: '/sources',   label: 'Sources',   icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/></svg> },
+  { to: '/channels',  label: 'Channels',  icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="4" y="4" width="8" height="8" rx="1.5" transform="rotate(45 8 8)"/></svg> },
+  { to: '/playlists', label: 'Playlists', icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><path d="M6 5.5l4 2.5-4 2.5V5.5z" fill="currentColor" stroke="none"/></svg> },
   // /filler is intentionally omitted from nav — accessed via channel context (ChannelFillerOverlay)
-  { to: '/downloads', label: 'Downloads',    icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 2v8M5 7l3 3 3-3" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 12h10" strokeLinecap="round"/></svg> },
-  { to: '/activity',  label: 'Activity',     icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/></svg> },
-  { to: '/settings',  label: 'Settings',     icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.3M8 13.2v1.3M1.5 8h1.3M13.2 8h1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9" strokeLinecap="round"/></svg> },
-  { to: '/users',     label: 'Users',        icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="6" cy="5.5" r="2.2"/><path d="M1.5 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" strokeLinecap="round"/><circle cx="12" cy="5.5" r="1.6"/><path d="M14.5 12c0-1.8-1.1-3-2.5-3" strokeLinecap="round"/></svg>, adminOnly: true },
+  { to: '/downloads', label: 'Downloads', icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 2v8M5 7l3 3 3-3" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 12h10" strokeLinecap="round"/></svg> },
+  { to: '/activity',  label: 'Activity',  icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/></svg> },
+  { to: '/review',    label: 'Review',    icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><path d="M5.5 8l2 2 3-3" strokeLinecap="round" strokeLinejoin="round"/></svg> },
+  { to: '/settings',  label: 'Settings',  icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.3M8 13.2v1.3M1.5 8h1.3M13.2 8h1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9" strokeLinecap="round"/></svg> },
+  { to: '/users',     label: 'Users',     icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="6" cy="5.5" r="2.2"/><path d="M1.5 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" strokeLinecap="round"/><circle cx="12" cy="5.5" r="1.6"/><path d="M14.5 12c0-1.8-1.1-3-2.5-3" strokeLinecap="round"/></svg>, adminOnly: true },
 ]
 
 export default observer(function Layout() {
@@ -25,12 +25,13 @@ export default observer(function Layout() {
   const navigate     = useNavigate()
   const { user, logout } = useAuth()
   const isChannelDetail = /^\/channels\/.+/.test(location.pathname)
-  const isFullBleed     = isChannelDetail || location.pathname === '/' || location.pathname.startsWith('/library')
+  const isFullBleed     = isChannelDetail || location.pathname === '/' || location.pathname.startsWith('/library') || location.pathname.startsWith('/review') || location.pathname === '/activity'
   const onActivity      = location.pathname === '/activity'
 
-  const [navCollapsed,    setNavCollapsed]    = useState(() => localStorage.getItem('hds-nav-collapsed') === '1')
-  const [expandBtnHover,  setExpandBtnHover]  = useState(false)
+  const [navCollapsed,     setNavCollapsed]     = useState(() => localStorage.getItem('hds-nav-collapsed') === '1')
+  const [expandBtnHover,   setExpandBtnHover]   = useState(false)
   const [collapseBtnHover, setCollapseBtnHover] = useState(false)
+  const [pendingRequests,  setPendingRequests]  = useState(0)
 
   const toggleNav = () => setNavCollapsed(c => {
     const next = !c
@@ -38,23 +39,29 @@ export default observer(function Layout() {
     return next
   })
 
+  // Fetch pending request count for admin badge.
+  useEffect(() => {
+    if (user?.role !== 'admin') return
+    api.getRequests().then(reqs => setPendingRequests(reqs.filter(r => r.status === 'pending').length)).catch(() => {})
+  }, [user?.role, location.pathname])
+
   // Connect the global SSE log stream once and keep it alive.
   useEffect(() => { systemStore.connectLogs() }, [])
 
-  // Sync polling lifecycle — pause when tab is hidden.
+  // Status polling lifecycle — pause when tab is hidden.
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        systemStore.stopPolling()
+        statusStore.stopPolling()
       } else {
-        systemStore.startPolling()
+        statusStore.startPolling()
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
-    systemStore.startPolling()
+    statusStore.startPolling()
     return () => {
       document.removeEventListener('visibilitychange', onVisibility)
-      systemStore.stopPolling()
+      statusStore.stopPolling()
     }
   }, [])
 
@@ -173,6 +180,23 @@ export default observer(function Layout() {
                   </span>
                   {!col && <span>{label}</span>}
 
+                  {/* Pending requests badge on Review (admin) */}
+                  {to === '/review' && pendingRequests > 0 && (
+                    <span style={{
+                      marginLeft: col ? undefined : 'auto',
+                      position: col ? 'absolute' : undefined,
+                      top: col ? 4 : undefined, right: col ? 4 : undefined,
+                      minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px',
+                      background: 'oklch(0.75 0.12 80)',
+                      color: 'oklch(0.15 0.02 80)',
+                      fontSize: 9, fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      letterSpacing: 0,
+                    }}>
+                      {pendingRequests > 99 ? '99+' : pendingRequests}
+                    </span>
+                  )}
+
                   {/* Activity indicator: red error badge > purple sync dot */}
                   {to === '/activity' && (
                     hasErrors ? (
@@ -192,7 +216,7 @@ export default observer(function Layout() {
                       }}>
                         {systemStore.unreadErrors > 99 ? '99+' : systemStore.unreadErrors}
                       </span>
-                    ) : systemStore.syncing ? (
+                    ) : statusStore.anyRunning ? (
                       <span style={{
                         marginLeft: col ? undefined : 'auto',
                         position: col ? 'absolute' : undefined,
@@ -212,7 +236,13 @@ export default observer(function Layout() {
         {/* Status footer */}
         <div style={{ paddingTop: 14, borderTop: '1px solid var(--hds-line-s)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {col ? (
-            <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
+              {statusStore.syncing && (
+                <ProcessSpinner color="var(--hds-violet)" title="Syncing" />
+              )}
+              {statusStore.matching && (
+                <ProcessSpinner color="var(--hds-gold)" title="Matching" />
+              )}
               <span style={{
                 width: 7, height: 7, borderRadius: '50%',
                 background: 'oklch(0.7 0.16 150)',
@@ -222,6 +252,12 @@ export default observer(function Layout() {
             </div>
           ) : (
             <>
+              {statusStore.syncing && (
+                <ProcessRow color="var(--hds-violet)" label="Syncing" />
+              )}
+              {statusStore.matching && (
+                <ProcessRow color="var(--hds-gold)" label="Matching" />
+              )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{
                   width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
@@ -256,7 +292,6 @@ export default observer(function Layout() {
               )}
             </>
           )}
-
         </div>
       </nav>
 
@@ -285,6 +320,33 @@ export default observer(function Layout() {
     </div>
   )
 })
+
+// ── Process status components ─────────────────────────────────────────────────
+
+function ProcessSpinner({ color, title }: { color: string; title: string }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+         style={{ color, flexShrink: 0, animation: 'spin 0.9s linear infinite' }}>
+      <title>{title}</title>
+      <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.6"
+              strokeDasharray="18 10" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function ProcessRow({ color, label }: { color: string; label: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color }}>
+      <ProcessSpinner color={color} title={label} />
+      <span style={{
+        fontSize: 10, fontFamily: "'JetBrains Mono', monospace",
+        letterSpacing: '0.08em', whiteSpace: 'nowrap',
+      }}>
+        {label}
+      </span>
+    </div>
+  )
+}
 
 // ── Error toast popup ─────────────────────────────────────────────────────────
 

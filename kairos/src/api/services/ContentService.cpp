@@ -5,23 +5,74 @@
 #include "../../db/ContentRepository.h"
 #include <nlohmann/json.hpp>
 #include <httplib.h>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <ctime>
+#include <sys/stat.h>
 #include <string>
 #include <vector>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
+namespace fs = std::filesystem;
+
+static std::string imgCacheKey(const std::string& sourceId, const std::string& imgPath) {
+	uint64_t h = 14695981039346656037ULL;
+	for (unsigned char c : sourceId) { h ^= c; h *= 1099511628211ULL; }
+	h ^= ':'; h *= 1099511628211ULL;
+	for (unsigned char c : imgPath)  { h ^= c; h *= 1099511628211ULL; }
+	std::ostringstream oss;
+	oss << std::hex << std::setfill('0') << std::setw(16) << h;
+	return oss.str();
+}
 
 ContentService::ContentService(const ServiceContext& ctx)
 	: db_(ctx.db), conf_(ctx.conf) {}
 
-void ContentService::proxyImage(const std::string& imgPath,
+void ContentService::proxyImage(const Req& req,
+                                 const std::string& imgPath,
                                  const std::string& sourceId,
-                                 httplib::Response& res) {
+                                 Res& res) {
 	if (imgPath.rfind("http", 0) == 0) {
 		res.set_redirect(imgPath);
 		return;
 	}
+
+	std::string hash = imgCacheKey(sourceId, imgPath);
+	std::string etag = "\"" + hash + "\"";
+
+	if (req.has_header("If-None-Match") && req.get_header_value("If-None-Match") == etag) {
+		res.status = 304;
+		res.set_header("Cache-Control", "public, max-age=86400");
+		res.set_header("ETag", etag);
+		return;
+	}
+
+	fs::path cache_dir  = "image-cache";
+	try { fs::create_directories(cache_dir); } catch (...) {}
+	fs::path cache_file = cache_dir / hash;
+	fs::path ct_file    = cache_dir / (hash + ".ct");
+
+	struct stat st{};
+	long long ttl_secs = (long long)conf_.getImageCacheTtlHours() * 3600;
+	bool cache_hit = (stat(cache_file.c_str(), &st) == 0) &&
+	                 fs::exists(ct_file) &&
+	                 (time(nullptr) - st.st_mtime < ttl_secs);
+
+	if (cache_hit) {
+		std::string ct = "image/jpeg";
+		{ std::ifstream f(ct_file); if (f) std::getline(f, ct); }
+		std::ifstream f(cache_file, std::ios::binary);
+		std::string body((std::istreambuf_iterator<char>(f)), {});
+		res.set_header("Cache-Control", "public, max-age=86400");
+		res.set_header("ETag", etag);
+		res.set_content(body, ct);
+		return;
+	}
+
 	ContentRepository repo(db_);
 	auto base_url = repo.getSourceBaseUrl(sourceId);
 	if (base_url.empty()) { res.status = 404; return; }
@@ -38,6 +89,14 @@ void ContentService::proxyImage(const std::string& imgPath,
 
 	auto ct = img->get_header_value("Content-Type");
 	if (ct.empty()) ct = "image/jpeg";
+
+	try {
+		{ std::ofstream f(cache_file, std::ios::binary); f.write(img->body.data(), (std::streamsize)img->body.size()); }
+		{ std::ofstream f(ct_file);                      f << ct; }
+	} catch (...) {}
+
+	res.set_header("Cache-Control", "public, max-age=86400");
+	res.set_header("ETag", etag);
 	res.set_content(img->body, ct);
 }
 
@@ -95,16 +154,23 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("country"))        p.country       = req.get_param_value("country");
 		if (req.has_param("collection"))     p.collection    = req.get_param_value("collection");
 		if (req.has_param("studio"))         p.studio        = req.get_param_value("studio");
+		if (req.has_param("sort"))           p.sort          = req.get_param_value("sort");
 
 		ContentRepository repo(db_);
 		auto result = repo.searchShows(p);
 		json items = json::array();
 		for (const auto& r : result.items) {
-			json entry = {{"show_id",        r.show_id},
-			              {"title",          r.title},
-			              {"content_rating", r.content_rating},
-			              {"episode_count",  r.episode_count}};
-			if (r.year) entry["year"] = *r.year;
+			json entry = {{"show_id",         r.show_id},
+			              {"title",           r.title},
+			              {"content_rating",  r.content_rating},
+			              {"episode_count",   r.episode_count},
+			              {"thumb",           r.thumb},
+			              {"art",             r.art},
+			              {"source_base_url", r.source_base_url},
+			              {"match_status",    r.match_status.empty() ? "unscraped" : r.match_status}};
+			if (r.year)            entry["year"]            = *r.year;
+			if (r.audience_rating) entry["audience_rating"] = *r.audience_rating;
+			if (r.match_score)     entry["match_score"]     = *r.match_score;
 			items.push_back(std::move(entry));
 		}
 		route::ok(res, json{{"items", items}, {"total", result.total}}.dump());
@@ -184,16 +250,23 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("country"))        p.country       = req.get_param_value("country");
 		if (req.has_param("collection"))     p.collection    = req.get_param_value("collection");
 		if (req.has_param("studio"))         p.studio        = req.get_param_value("studio");
+		if (req.has_param("sort"))           p.sort          = req.get_param_value("sort");
 
 		ContentRepository repo(db_);
 		auto result = repo.searchMovies(p);
 		json items = json::array();
 		for (const auto& r : result.items) {
-			json entry = {{"movie_id",       r.movie_id},
-			              {"title",          r.title},
-			              {"content_rating", r.content_rating},
-			              {"duration_ms",    r.duration_ms}};
-			if (r.year) entry["year"] = *r.year;
+			json entry = {{"movie_id",        r.movie_id},
+			              {"title",           r.title},
+			              {"content_rating",  r.content_rating},
+			              {"duration_ms",     r.duration_ms},
+			              {"thumb",           r.thumb},
+			              {"art",             r.art},
+			              {"source_base_url", r.source_base_url},
+			              {"match_status",    r.match_status.empty() ? "unscraped" : r.match_status}};
+			if (r.year)            entry["year"]            = *r.year;
+			if (r.audience_rating) entry["audience_rating"] = *r.audience_rating;
+			if (r.match_score)     entry["match_score"]     = *r.match_score;
 			items.push_back(std::move(entry));
 		}
 		route::ok(res, json{{"items", items}, {"total", result.total}}.dump());
@@ -282,21 +355,21 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		auto id = req.path_params.at("id");
 		auto item = ContentRepository(db_).getShowThumb(id);
 		if (!item) { res.status = 404; return; }
-		proxyImage(item->image_path, item->source_id, res);
+		proxyImage(req, item->image_path, item->source_id, res);
 	});
 
 	svr.Get("/api/shows/:id/art", [this](const Req& req, Res& res) {
 		auto id = req.path_params.at("id");
 		auto item = ContentRepository(db_).getShowArt(id);
 		if (!item) { res.status = 404; return; }
-		proxyImage(item->image_path, item->source_id, res);
+		proxyImage(req, item->image_path, item->source_id, res);
 	});
 
 	svr.Get("/api/episodes/:id/thumb", [this](const Req& req, Res& res) {
 		auto id = req.path_params.at("id");
 		auto item = ContentRepository(db_).getEpisodeThumb(id);
 		if (!item) { res.status = 404; return; }
-		proxyImage(item->image_path, item->source_id, res);
+		proxyImage(req, item->image_path, item->source_id, res);
 	});
 
 	// ── Movie detail ──────────────────────────────────────────────────────────
@@ -372,13 +445,13 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		auto id = req.path_params.at("id");
 		auto item = ContentRepository(db_).getMovieThumb(id);
 		if (!item) { res.status = 404; return; }
-		proxyImage(item->image_path, item->source_id, res);
+		proxyImage(req, item->image_path, item->source_id, res);
 	});
 
 	svr.Get("/api/movies/:id/art", [this](const Req& req, Res& res) {
 		auto id = req.path_params.at("id");
 		auto item = ContentRepository(db_).getMovieArt(id);
 		if (!item) { res.status = 404; return; }
-		proxyImage(item->image_path, item->source_id, res);
+		proxyImage(req, item->image_path, item->source_id, res);
 	});
 }
