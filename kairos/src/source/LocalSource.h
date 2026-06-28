@@ -2,27 +2,38 @@
 #include "IMediaSource.h"
 #include <string>
 
-// Local filesystem source — not yet implemented.
-// Visible in the UI but not selectable (isSupported = false).
-// base_path is the root directory of the local library.
+// Local filesystem source. base_path_ is the root directory of the library.
+//
+// Expected layout:
+//   Shows:  {base}/{Show Name}/{Season N}/{S01E01 - Title.ext}
+//   Movies: {base}/{Title (Year)}/{movie.ext}  or  {base}/{Title (Year).ext}
+//
+// Shows and movies can coexist under the same base_path_ ("mixed" library type).
+// The library type configured in media_library controls which fetchX() methods
+// SyncManager calls — this source supports all three layouts.
 class LocalSource final : public IMediaSource {
 public:
-    LocalSource(const std::string& source_id, const std::string& base_path)
-        : source_id_(source_id), base_path_(base_path) {}
+    LocalSource(const std::string& source_id, const std::string& base_path);
 
     std::string sourceId()    const override { return source_id_; }
     std::string sourceType()  const override { return "local"; }
-    bool        isSupported() const override { return false; }
+    bool        isSupported() const override { return true; }
 
-    std::vector<LibraryInfo>       listAvailableLibraries()                     override { return {}; }
-    std::vector<Show>              fetchShows(const std::string&)                override { return {}; }
-    std::vector<Movie>             fetchMovies(const std::string&)               override { return {}; }
-    std::vector<Episode>           fetchEpisodes(const std::string&)             override { return {}; }
-    std::vector<Playlist>          fetchPlaylists(const std::string&)            override { return {}; }
-    std::vector<BrowseListItem>    browsePlaylists()                             override { return {}; }
-    std::vector<BrowseContentItem> browsePlaylistItems(const std::string&)       override { return {}; }
-    std::vector<BrowseListItem>    browseCollections(const std::string&)         override { return {}; }
-    std::vector<BrowseContentItem> browseCollectionItems(const std::string&)     override { return {}; }
+    // Returns one library entry for base_path_.
+    std::vector<LibraryInfo> listAvailableLibraries() override;
+
+    // Each top-level subdirectory is treated as a show.
+    std::vector<Show>    fetchShows(const std::string& external_lib_id)     override;
+    // Each top-level subdirectory (or bare video file) is treated as a movie.
+    std::vector<Movie>   fetchMovies(const std::string& external_lib_id)    override;
+    // external_show_id is the show directory path returned by fetchShows.
+    std::vector<Episode> fetchEpisodes(const std::string& external_show_id) override;
+
+    std::vector<Playlist>          fetchPlaylists(const std::string&)   override { return {}; }
+    std::vector<BrowseListItem>    browsePlaylists()                     override { return {}; }
+    std::vector<BrowseContentItem> browsePlaylistItems(const std::string&) override { return {}; }
+    std::vector<BrowseListItem>    browseCollections(const std::string&) override { return {}; }
+    std::vector<BrowseContentItem> browseCollectionItems(const std::string&) override { return {}; }
 
 private:
     std::string source_id_;

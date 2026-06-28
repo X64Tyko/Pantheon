@@ -113,7 +113,7 @@ export const api = {
                          request<void>       ('DELETE', `/channels/${channelId}/filler/${entryId}`),
 
   // Connection test (no persistence)
-  testSource:       (b: {source_type: string, base_url: string, token: string}) =>
+  testSource:       (b: {source_type: string, base_url: string, token: string, user_id?: string}) =>
                                                         request<{ok: boolean, error?: string}>('POST', '/sources/test', b),
 
   // Credentials (kairos.conf via API)

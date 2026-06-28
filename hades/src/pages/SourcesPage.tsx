@@ -6,20 +6,21 @@ import { sourceStore } from '../stores'
 
 type TestState = 'idle' | 'testing' | 'ok' | 'failed'
 
-const NEEDS_TOKEN = ['plex', 'jellyfin', 'emby']
+const NEEDS_TOKEN   = ['plex', 'jellyfin', 'emby']
+const NEEDS_USER_ID = ['jellyfin', 'emby']
 
 export default observer(function SourcesPage() {
   const store = sourceStore
 
   // ── Add-source form ────────────────────────────────────────────────────────
   const [showAdd, setShowAdd]   = useState(false)
-  const [form, setForm]         = useState({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '' })
+  const [form, setForm]         = useState({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '' })
   const [testState, setTest]    = useState<TestState>('idle')
   const [testError, setTestErr] = useState('')
 
   const updateForm = (patch: Partial<typeof form>) => {
     setForm(prev => ({ ...prev, ...patch }))
-    if ('source_type' in patch || 'base_url' in patch || 'token' in patch) {
+    if ('source_type' in patch || 'base_url' in patch || 'token' in patch || 'user_id' in patch) {
       setTest('idle'); setTestErr('')
     }
   }
@@ -27,7 +28,7 @@ export default observer(function SourcesPage() {
   const runTest = async () => {
     setTest('testing'); setTestErr('')
     try {
-      const r = await api.testSource({ source_type: form.source_type, base_url: form.base_url, token: form.token })
+      const r = await api.testSource({ source_type: form.source_type, base_url: form.base_url, token: form.token, user_id: form.user_id })
       r.ok ? setTest('ok') : (setTest('failed'), setTestErr(r.error ?? 'Connection failed'))
     } catch (e: any) {
       setTest('failed'); setTestErr(e.message)
@@ -36,17 +37,20 @@ export default observer(function SourcesPage() {
 
   const addSource = async () => {
     await store.addSource({ source_id: form.source_id, source_type: form.source_type as any, display_name: form.display_name, base_url: form.base_url })
-    if (form.token) await store.setCredentials(form.source_id, form.token)
+    if (form.token) await store.setCredentials(form.source_id, form.token, form.user_id)
     setShowAdd(false)
-    setForm({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '' })
+    setForm({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '' })
     setTest('idle'); setTestErr('')
   }
 
   const cancelAdd = () => { setShowAdd(false); setTest('idle'); setTestErr('') }
 
-  const needsToken = NEEDS_TOKEN.includes(form.source_type)
-  const canTest    = needsToken ? (!!form.base_url && !!form.token) : !!form.base_url
-  const saveReady  = !!form.source_id && !!form.display_name && (!needsToken || testState === 'ok')
+  const needsToken   = NEEDS_TOKEN.includes(form.source_type)
+  const needsUserId  = NEEDS_USER_ID.includes(form.source_type)
+  const canTest      = needsToken
+    ? (!!form.base_url && !!form.token && (!needsUserId || !!form.user_id))
+    : !!form.base_url
+  const saveReady    = !!form.source_id && !!form.display_name && (!needsToken || testState === 'ok')
 
   // ── Add-library form ───────────────────────────────────────────────────────
   const [showAddLib, setShowAddLib] = useState(false)
@@ -62,6 +66,7 @@ export default observer(function SourcesPage() {
   // ── Credential editor ──────────────────────────────────────────────────────
   const [editingCreds, setEditingCreds] = useState(false)
   const [credToken, setCredToken]       = useState('')
+  const [credUserId, setCredUserId]     = useState('')
 
   // ── Confirm-remove state ───────────────────────────────────────────────────
   const [confirmSrc, setConfirmSrc]   = useState<string | null>(null)  // source_id pending removal
@@ -75,7 +80,7 @@ export default observer(function SourcesPage() {
   const [pmTo, setPmTo]           = useState('')
   const [showAddPm, setShowAddPm] = useState(false)
 
-  useEffect(() => { setEditingCreds(false); setCredToken('') }, [store.selectedId])
+  useEffect(() => { setEditingCreds(false); setCredToken(''); setCredUserId('') }, [store.selectedId])
   useEffect(() => {
     if (!store.selectedId) { setPathMaps([]); setSample(null); return }
     api.getPathMaps(store.selectedId).then(setPathMaps).catch(() => setPathMaps([]))
@@ -144,7 +149,11 @@ export default observer(function SourcesPage() {
               className="input"
             />
             <input
-              placeholder="Base URL  (e.g. http://plex:32400)"
+              placeholder={
+                form.source_type === 'local'
+                  ? 'Path  (e.g. /media/library)'
+                  : 'Base URL  (e.g. http://plex:32400)'
+              }
               value={form.base_url}
               onChange={e => updateForm({ base_url: e.target.value })}
               className="input"
@@ -155,7 +164,15 @@ export default observer(function SourcesPage() {
                 type="password"
                 value={form.token}
                 onChange={e => updateForm({ token: e.target.value })}
-                className="input col-span-2"
+                className={needsUserId ? 'input' : 'input col-span-2'}
+              />
+            )}
+            {needsUserId && (
+              <input
+                placeholder="User ID"
+                value={form.user_id}
+                onChange={e => updateForm({ user_id: e.target.value })}
+                className="input"
               />
             )}
           </div>
@@ -259,10 +276,10 @@ export default observer(function SourcesPage() {
             {NEEDS_TOKEN.includes(store.selected?.source_type ?? '') && (
               <div className="card p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="section-label">Auth Token</span>
+                  <span className="section-label">Credentials</span>
                   {!editingCreds && (
                     <button
-                      onClick={() => { setEditingCreds(true); setCredToken('') }}
+                      onClick={() => { setEditingCreds(true); setCredToken(''); setCredUserId('') }}
                       className="text-xs px-2 py-0.5 bg-violet-900/30 hover:bg-violet-800/40
                                  text-violet-300 rounded border border-violet-800/30 transition-colors"
                     >
@@ -296,10 +313,18 @@ export default observer(function SourcesPage() {
                       onChange={e => setCredToken(e.target.value)}
                       className="input w-full"
                     />
+                    {NEEDS_USER_ID.includes(store.selected?.source_type ?? '') && (
+                      <input
+                        placeholder="User ID"
+                        value={credUserId}
+                        onChange={e => setCredUserId(e.target.value)}
+                        className="input w-full"
+                      />
+                    )}
                     <div className="flex gap-2">
                       <button
                         onClick={async () => {
-                          if (credToken) await store.setCredentials(store.selectedId!, credToken)
+                          if (credToken) await store.setCredentials(store.selectedId!, credToken, credUserId || undefined)
                           setEditingCreds(false)
                         }}
                         disabled={!credToken}

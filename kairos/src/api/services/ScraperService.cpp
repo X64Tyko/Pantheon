@@ -31,7 +31,8 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             cj["api_key"]  = c.api_key;
             cj["language"] = c.language;
             cj["enabled"]  = c.enabled;
-            if (c.source == "tvdb") cj["pin"] = c.pin;
+            if (c.source == "tvdb")  cj["pin"] = c.pin;
+            if (c.source == "anidb") cj["note"] = "api_key is your registered AniDB client name";
             out["configs"].push_back(cj);
         }
         ok(res, out);

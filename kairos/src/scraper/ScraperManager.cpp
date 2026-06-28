@@ -1,4 +1,5 @@
 #include "ScraperManager.h"
+#include "AnidbScraper.h"
 #include "TmdbScraper.h"
 #include "TvdbScraper.h"
 #include "conf/ConfStore.h"
@@ -146,7 +147,7 @@ ScraperSettings ScraperManager::getSettings() const {
     ScraperSettings s;
     s.match_threshold = std::stod(readKey("match_threshold", "1.0"));
 
-    for (const auto* src : { "tmdb", "tvdb" }) {
+    for (const auto* src : { "tmdb", "tvdb", "anidb" }) {
         ScraperConfig c;
         c.source   = src;
         c.api_key  = readKey(configKey(src, "api_key"),  "");
@@ -179,12 +180,14 @@ void ScraperManager::updateSettings(const ScraperSettings& s) {
 
 void ScraperManager::buildScrapers() {
     auto s = getSettings();
+    anidb_.reset();
     tmdb_.reset();
     tvdb_.reset();
     for (const auto& c : s.configs) {
         if (!c.enabled || c.api_key.empty()) continue;
-        if (c.source == "tmdb") tmdb_ = std::make_unique<TmdbScraper>(c.api_key, c.language);
-        if (c.source == "tvdb") tvdb_ = std::make_unique<TvdbScraper>(c.api_key, c.language, c.pin);
+        if (c.source == "tmdb")  tmdb_  = std::make_unique<TmdbScraper>(c.api_key, c.language);
+        if (c.source == "tvdb")  tvdb_  = std::make_unique<TvdbScraper>(c.api_key, c.language, c.pin);
+        if (c.source == "anidb") anidb_ = std::make_unique<AnidbScraper>(c.api_key);
     }
 }
 
@@ -352,15 +355,19 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
         for (auto& r : results) {
             double sc = computeScore(title, year, r.title,
                                      r.year.has_value() ? r.year.value() : 0);
-            std::string ext = (source == "tmdb") ? r.tmdb_id : r.tvdb_id;
+            std::string ext;
+            if (source == "tmdb")       ext = r.tmdb_id;
+            else if (source == "tvdb")  ext = r.tvdb_id;
+            else if (source == "anidb") ext = r.show_id;  // AID stored in show_id
             if (ext.empty()) continue;
             candidates.push_back({ source, ext, r.title, r.thumb, r.overview,
                                    r.year.has_value() ? r.year.value() : 0, sc });
         }
     };
 
-    if (tmdb_) collect("tmdb", tmdb_->searchShows(title, year));
-    if (tvdb_) collect("tvdb", tvdb_->searchShows(title, year));
+    if (tmdb_)  collect("tmdb",  tmdb_->searchShows(title, year));
+    if (tvdb_)  collect("tvdb",  tvdb_->searchShows(title, year));
+    if (anidb_) collect("anidb", anidb_->searchShows(title, year));
 
     double best = 0.0;
     for (const auto& c : candidates) {
@@ -431,15 +438,19 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
         for (auto& r : results) {
             double sc = computeScore(title, year, r.title,
                                      r.year.has_value() ? r.year.value() : 0);
-            std::string ext = (source == "tmdb") ? r.tmdb_id : r.imdb_id;
+            std::string ext;
+            if (source == "tmdb")       ext = r.tmdb_id;
+            else if (source == "tvdb")  ext = r.imdb_id;
+            else if (source == "anidb") ext = r.movie_id;  // AID stored in movie_id
             if (ext.empty()) continue;
             candidates.push_back({ source, ext, r.title, r.thumb, r.overview,
                                    r.year.has_value() ? r.year.value() : 0, sc });
         }
     };
 
-    if (tmdb_) collect("tmdb", tmdb_->searchMovies(title, year));
-    if (tvdb_) collect("tvdb", tvdb_->searchMovies(title, year));
+    if (tmdb_)  collect("tmdb",  tmdb_->searchMovies(title, year));
+    if (tvdb_)  collect("tvdb",  tvdb_->searchMovies(title, year));
+    if (anidb_) collect("anidb", anidb_->searchMovies(title, year));
 
     double best = 0.0;
     for (const auto& c : candidates) {
@@ -538,6 +549,34 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
     txn.commit();
 
     // Best-effort: fetch and apply full metadata from the scraper
+    if (source == "anidb" && anidb_) {
+        if (item_type == "show") {
+            auto show = anidb_->fetchShow(external_id);
+            if (show) {
+                SQLite::Statement app(db_.get(), R"(
+                    UPDATE show SET
+                        tvdb_id  = CASE WHEN locked THEN tvdb_id  ELSE ? END,
+                        overview = CASE WHEN locked THEN overview ELSE ? END,
+                        status   = CASE WHEN locked THEN status   ELSE ? END
+                    WHERE show_id = ?
+                )");
+                app.bind(1, show->tvdb_id); app.bind(2, show->overview);
+                app.bind(3, show->status);  app.bind(4, kairos_id);
+                app.exec();
+            }
+        } else if (item_type == "movie") {
+            auto movie = anidb_->fetchMovie(external_id);
+            if (movie) {
+                SQLite::Statement app(db_.get(), R"(
+                    UPDATE movie SET
+                        overview = CASE WHEN locked THEN overview ELSE ? END
+                    WHERE movie_id = ?
+                )");
+                app.bind(1, movie->overview); app.bind(2, kairos_id);
+                app.exec();
+            }
+        }
+    }
     if (source == "tmdb" && tmdb_) {
         if (item_type == "show") {
             auto show = tmdb_->fetchShow(external_id);
@@ -744,8 +783,10 @@ ScraperManager::search(const std::string& query, const std::string& content_type
 
     auto addShow = [&](const std::string& source, const Show& s) {
         SearchResult r;
-        r.source       = source;
-        r.external_id  = (source == "tmdb") ? s.tmdb_id : s.tvdb_id;
+        r.source      = source;
+        if (source == "tmdb")       r.external_id = s.tmdb_id;
+        else if (source == "tvdb")  r.external_id = s.tvdb_id;
+        else if (source == "anidb") r.external_id = s.show_id;
         r.title        = s.title;
         r.year         = s.year.has_value() ? s.year.value() : 0;
         r.overview     = s.overview;
@@ -768,8 +809,10 @@ ScraperManager::search(const std::string& query, const std::string& content_type
 
     auto addMovie = [&](const std::string& source, const Movie& m) {
         SearchResult r;
-        r.source       = source;
-        r.external_id  = m.tmdb_id;
+        r.source      = source;
+        if (source == "tmdb")       r.external_id = m.tmdb_id;
+        else if (source == "tvdb")  r.external_id = m.imdb_id;
+        else if (source == "anidb") r.external_id = m.movie_id;
         r.title        = m.title;
         r.year         = m.year.has_value() ? m.year.value() : 0;
         r.overview     = m.overview;
@@ -784,12 +827,14 @@ ScraperManager::search(const std::string& query, const std::string& content_type
         if (!r.external_id.empty()) out.push_back(std::move(r));
     };
 
-    // Direct ID lookup: "tmdb:NNN" or "tvdb:NNN"
+    // Direct ID lookup: "tmdb:NNN", "tvdb:NNN", or "anidb:NNN"
     std::string id_source, id_value;
     if (query.starts_with("tmdb:") && query.size() > 5) {
         id_source = "tmdb"; id_value = query.substr(5);
     } else if (query.starts_with("tvdb:") && query.size() > 5) {
         id_source = "tvdb"; id_value = query.substr(5);
+    } else if (query.starts_with("anidb:") && query.size() > 6) {
+        id_source = "anidb"; id_value = query.substr(6);
     }
     if (!id_value.empty()) {
         if (id_source == "tmdb" && tmdb_) {
@@ -812,17 +857,29 @@ ScraperManager::search(const std::string& query, const std::string& content_type
                 if (m) addMovie("tvdb", *m);
             }
         }
+        if (id_source == "anidb" && anidb_) {
+            if (content_type == "show" || content_type.empty()) {
+                auto s = anidb_->fetchShow(id_value);
+                if (s) addShow("anidb", *s);
+            }
+            if (content_type == "movie" || content_type.empty()) {
+                auto m = anidb_->fetchMovie(id_value);
+                if (m) addMovie("anidb", *m);
+            }
+        }
         return out;
     }
 
     // Text search
     if (content_type == "show" || content_type.empty()) {
-        if (tmdb_) for (auto& s : tmdb_->searchShows(query)) addShow("tmdb", s);
-        if (tvdb_) for (auto& s : tvdb_->searchShows(query)) addShow("tvdb", s);
+        if (tmdb_)  for (auto& s : tmdb_->searchShows(query))  addShow("tmdb",  s);
+        if (tvdb_)  for (auto& s : tvdb_->searchShows(query))  addShow("tvdb",  s);
+        if (anidb_) for (auto& s : anidb_->searchShows(query)) addShow("anidb", s);
     }
     if (content_type == "movie" || content_type.empty()) {
-        if (tmdb_) for (auto& m : tmdb_->searchMovies(query)) addMovie("tmdb", m);
-        if (tvdb_) for (auto& m : tvdb_->searchMovies(query)) addMovie("tvdb", m);
+        if (tmdb_)  for (auto& m : tmdb_->searchMovies(query))  addMovie("tmdb",  m);
+        if (tvdb_)  for (auto& m : tvdb_->searchMovies(query))  addMovie("tvdb",  m);
+        if (anidb_) for (auto& m : anidb_->searchMovies(query)) addMovie("anidb", m);
     }
     return out;
 }

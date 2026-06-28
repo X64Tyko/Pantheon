@@ -5,6 +5,7 @@
 #include "../../source/SyncManager.h"
 #include "../../source/IMediaSource.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 
@@ -20,9 +21,9 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/sources/types", [](const Req&, Res& res) {
 		json types = {
 			{{"type","plex"},     {"display_name","Plex"},        {"supported",true}},
-			{{"type","jellyfin"}, {"display_name","Jellyfin"},    {"supported",false}},
-			{{"type","emby"},     {"display_name","Emby"},        {"supported",false}},
-			{{"type","local"},    {"display_name","Local Media"}, {"supported",false}},
+			{{"type","jellyfin"}, {"display_name","Jellyfin"},    {"supported",true}},
+			{{"type","emby"},     {"display_name","Emby"},        {"supported",true}},
+			{{"type","local"},    {"display_name","Local Media"}, {"supported",true}},
 		};
 		route::ok(res, types.dump());
 	});
@@ -66,38 +67,84 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			std::string source_type = b.value("source_type", "");
 			std::string base_url    = b.value("base_url",    "");
 			std::string token       = b.value("token",       "");
+			std::string user_id     = b.value("user_id",     "");
 
-			if (source_type != "plex") {
-				route::err(res, 400, "connection test not yet supported for " + source_type);
+			if (source_type == "plex") {
+				if (base_url.empty() || token.empty()) {
+					route::err(res, 400, "base_url and token are required"); return;
+				}
+				httplib::Client client(base_url);
+				client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
+				client.set_connection_timeout(10);
+				client.set_read_timeout(10);
+				auto r = client.Get("/library/sections");
+				if (!r) {
+					route::ok(res, json{{"ok", false},
+					    {"error", "Cannot connect to " + base_url + ": " +
+					              httplib::to_string(r.error())}}.dump());
+					return;
+				}
+				if (r->status == 401 || r->status == 403) {
+					route::ok(res, json{{"ok", false},
+					    {"error", "Authentication failed — check your Plex token"}}.dump());
+					return;
+				}
+				if (r->status != 200) {
+					route::ok(res, json{{"ok", false},
+					    {"error", "Unexpected response: HTTP " + std::to_string(r->status)}}.dump());
+					return;
+				}
+				route::ok(res, json{{"ok", true}}.dump());
 				return;
-			}
-			if (base_url.empty() || token.empty()) {
-				route::err(res, 400, "base_url and token are required"); return;
 			}
 
-			httplib::Client client(base_url);
-			client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
-			client.set_connection_timeout(10);
-			client.set_read_timeout(10);
+			if (source_type == "jellyfin" || source_type == "emby") {
+				if (base_url.empty() || token.empty()) {
+					route::err(res, 400, "base_url and token are required"); return;
+				}
+				const std::string auth_header =
+				    (source_type == "jellyfin") ? "X-MediaBrowser-Token" : "X-Emby-Token";
+				httplib::Client client(base_url);
+				client.set_default_headers({{auth_header, token}, {"Accept", "application/json"}});
+				client.set_connection_timeout(10);
+				client.set_read_timeout(10);
+				auto r = client.Get("/System/Info");
+				if (!r) {
+					route::ok(res, json{{"ok", false},
+					    {"error", "Cannot connect to " + base_url + ": " +
+					              httplib::to_string(r.error())}}.dump());
+					return;
+				}
+				if (r->status == 401 || r->status == 403) {
+					route::ok(res, json{{"ok", false},
+					    {"error", "Authentication failed — check your API token"}}.dump());
+					return;
+				}
+				if (r->status != 200) {
+					route::ok(res, json{{"ok", false},
+					    {"error", "Unexpected response: HTTP " + std::to_string(r->status)}}.dump());
+					return;
+				}
+				route::ok(res, json{{"ok", true}}.dump());
+				return;
+			}
 
-			auto r = client.Get("/library/sections");
-			if (!r) {
-				route::ok(res, json{{"ok", false},
-				    {"error", "Cannot connect to " + base_url + ": " +
-				              httplib::to_string(r.error())}}.dump());
+			if (source_type == "local") {
+				if (base_url.empty()) {
+					route::err(res, 400, "base_url (directory path) is required"); return;
+				}
+				std::error_code ec;
+				const bool exists = std::filesystem::is_directory(base_url, ec);
+				if (ec || !exists) {
+					route::ok(res, json{{"ok", false},
+					    {"error", "Directory not found or not accessible: " + base_url}}.dump());
+					return;
+				}
+				route::ok(res, json{{"ok", true}}.dump());
 				return;
 			}
-			if (r->status == 401 || r->status == 403) {
-				route::ok(res, json{{"ok", false},
-				    {"error", "Authentication failed — check your Plex token"}}.dump());
-				return;
-			}
-			if (r->status != 200) {
-				route::ok(res, json{{"ok", false},
-				    {"error", "Unexpected response: HTTP " + std::to_string(r->status)}}.dump());
-				return;
-			}
-			route::ok(res, json{{"ok", true}}.dump());
+
+			route::err(res, 400, "unknown source_type: " + source_type);
 		} catch (const json::exception& e) {
 			route::err(res, 400, e.what());
 		} catch (const std::exception& e) {

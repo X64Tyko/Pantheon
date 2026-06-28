@@ -6,6 +6,7 @@
 
 class Database;
 class ConfStore;
+class AnidbScraper;
 class TmdbScraper;
 class TvdbScraper;
 
@@ -135,6 +136,7 @@ private:
     Database&    db_;
     ConfStore&   conf_;
 
+    std::unique_ptr<AnidbScraper> anidb_;
     std::unique_ptr<TmdbScraper> tmdb_;
     std::unique_ptr<TvdbScraper> tvdb_;
     std::atomic<bool>            matching_{false};

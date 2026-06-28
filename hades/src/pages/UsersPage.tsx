@@ -1,7 +1,7 @@
+import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
-import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import type { User } from '../api/types'
+import { userStore } from '../stores'
 
 const inputStyle: React.CSSProperties = {
   padding: '7px 10px', background: 'var(--hds-bg-3)',
@@ -28,32 +28,22 @@ const btnStyle = (variant: 'primary' | 'ghost' | 'danger'): React.CSSProperties 
 interface NewUserForm { username: string; password: string; role: 'admin' | 'viewer' }
 interface EditState   { userId: string; password: string; role: 'admin' | 'viewer' }
 
-export default function UsersPage() {
+export default observer(function UsersPage() {
   const { user: self } = useAuth()
-  const [users,   setUsers]   = useState<User[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState('')
+  const store = userStore
 
-  const [showNew,  setShowNew]  = useState(false)
-  const [newForm,  setNewForm]  = useState<NewUserForm>({ username: '', password: '', role: 'viewer' })
-  const [newError, setNewError] = useState('')
-  const [newBusy,  setNewBusy]  = useState(false)
+  const [showNew,   setShowNew]   = useState(false)
+  const [newForm,   setNewForm]   = useState<NewUserForm>({ username: '', password: '', role: 'viewer' })
+  const [newError,  setNewError]  = useState('')
+  const [newBusy,   setNewBusy]   = useState(false)
 
   const [editing,   setEditing]   = useState<EditState | null>(null)
   const [editError, setEditError] = useState('')
   const [editBusy,  setEditBusy]  = useState(false)
 
-  const [deleting, setDeleting] = useState<string | null>(null)
+  const [deleting,  setDeleting]  = useState<string | null>(null)
 
-  const load = () => {
-    setLoading(true)
-    api.getUsers()
-      .then(setUsers)
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(load, [])
+  useEffect(() => { store.fetchAll() }, [])
 
   if (self?.role !== 'admin') {
     return (
@@ -68,10 +58,9 @@ export default function UsersPage() {
     if (!newForm.username || !newForm.password) { setNewError('Username and password required'); return }
     setNewError(''); setNewBusy(true)
     try {
-      await api.createUser(newForm.username, newForm.password, newForm.role)
+      await store.create(newForm.username, newForm.password, newForm.role)
       setShowNew(false)
       setNewForm({ username: '', password: '', role: 'viewer' })
-      load()
     } catch (err: any) {
       setNewError(err.message ?? 'Failed to create user')
     } finally { setNewBusy(false) }
@@ -82,12 +71,11 @@ export default function UsersPage() {
     if (!editing) return
     setEditError(''); setEditBusy(true)
     try {
-      await api.updateUser(editing.userId, {
+      await store.update(editing.userId, {
         password: editing.password || undefined,
         role:     editing.role,
       })
       setEditing(null)
-      load()
     } catch (err: any) {
       setEditError(err.message ?? 'Failed to update user')
     } finally { setEditBusy(false) }
@@ -95,10 +83,9 @@ export default function UsersPage() {
 
   const confirmDelete = async (userId: string) => {
     try {
-      await api.deleteUser(userId)
-      load()
+      await store.remove(userId)
     } catch (err: any) {
-      setError(err.message ?? 'Failed to delete user')
+      // error surfaced via store.error
     } finally { setDeleting(null) }
   }
 
@@ -114,9 +101,9 @@ export default function UsersPage() {
         </button>
       </div>
 
-      {error && (
+      {store.error && (
         <div style={{ marginBottom: 14, fontSize: 11, color: 'oklch(0.72 0.18 22)', padding: '8px 10px', background: 'oklch(0.55 0.22 22 / 0.1)', borderRadius: 7, border: '1px solid oklch(0.55 0.22 22 / 0.3)' }}>
-          {error}
+          {store.error}
         </div>
       )}
 
@@ -161,13 +148,12 @@ export default function UsersPage() {
       )}
 
       {/* User list */}
-      {loading ? (
+      {store.loading ? (
         <div style={{ fontSize: 12, color: 'var(--hds-txt-3)' }}>Loading…</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {users.map(u => (
+          {store.users.map(u => (
             <div key={u.user_id}>
-              {/* Row */}
               {editing?.userId !== u.user_id && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 12,
@@ -209,7 +195,6 @@ export default function UsersPage() {
                 </div>
               )}
 
-              {/* Inline edit form */}
               {editing?.userId === u.user_id && (
                 <form onSubmit={submitEdit} style={{
                   padding: '14px 16px',
@@ -251,4 +236,4 @@ export default function UsersPage() {
       )}
     </div>
   )
-}
+})

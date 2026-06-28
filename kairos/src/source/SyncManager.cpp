@@ -48,10 +48,16 @@ void SyncManager::loadSources() {
         "FROM media_source WHERE enabled = 1");
 
     while (q.executeStep()) {
-        auto src = buildSource(q.getColumn(0).getString(),
-                               q.getColumn(1).getString(),
-                               q.getColumn(2).getString());
-        if (src) sources_.push_back(std::move(src));
+        const std::string sid  = q.getColumn(0).getString();
+        const std::string stype = q.getColumn(1).getString();
+        const std::string surl  = q.getColumn(2).getString();
+        try {
+            auto src = buildSource(sid, stype, surl);
+            if (src) sources_.push_back(std::move(src));
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] failed to load source '" << sid << "': " << e.what()
+                      << " — skipping (rebuild with OpenSSL for HTTPS support)\n";
+        }
     }
     std::cout << "[sync] loaded " << sources_.size() << " source(s)" << std::endl;
 }
@@ -160,67 +166,83 @@ void SyncManager::syncShows(IMediaSource& src,
     // before the episode fetch below, which mutates show.show_id in place.
     // Build live_show_ids here rather than in a separate pass.
     std::vector<std::string> ext_show_ids(shows.size());
+    std::vector<bool>        cross_ref_shows(shows.size(), false);
     std::unordered_set<std::string> live_show_ids;
     {
         SQLite::Transaction txn(db_.get());
         for (size_t i = 0; i < shows.size(); ++i) {
             auto& show = shows[i];
-            const std::string ext_show_id = show.show_id; // Plex rating key before resolution
-            const std::string kairos_id   = resolveId("show", source_id, ext_show_id);
-            ext_show_ids[i] = ext_show_id;
-            show.show_id    = kairos_id;
+            const std::string ext_show_id = show.show_id; // source-native key before resolution
+            std::string kairos_id = resolveId("show", source_id, ext_show_id);
+            bool is_cross_ref = false;
+
+            // Cross-source dedup: if no existing mapping for this source, check whether
+            // another source already indexes a show with the same title. If so, reuse
+            // that kairos_id instead of creating a duplicate show row.
+            if (kairos_id == source_id + ":" + ext_show_id) {
+                const std::string existing = resolveByTitle("show", show.title);
+                if (!existing.empty()) { kairos_id = existing; is_cross_ref = true; }
+            } else if (!kairos_id.starts_with(source_id + ":")) {
+                is_cross_ref = true;  // existing mapping points to another source's item
+            }
+
+            ext_show_ids[i]    = ext_show_id;
+            cross_ref_shows[i] = is_cross_ref;
+            show.show_id       = kairos_id;
             live_show_ids.insert(kairos_id);
 
-            SQLite::Statement s(db_.get(), R"(
-                INSERT INTO show (show_id, title, content_rating, overview, studio, status,
-                                  genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
-                                  originally_available_at, year, audience_rating,
-                                  labels, network, actors, countries, collections)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(show_id) DO UPDATE SET
-                    title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
-                    content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
-                    overview                = CASE WHEN locked THEN overview                ELSE excluded.overview                END,
-                    studio                  = CASE WHEN locked THEN studio                  ELSE excluded.studio                  END,
-                    status                  = CASE WHEN locked THEN status                  ELSE excluded.status                  END,
-                    genres                  = CASE WHEN locked THEN genres                  ELSE excluded.genres                  END,
-                    thumb                   = CASE WHEN locked THEN thumb                   ELSE excluded.thumb                   END,
-                    art                     = CASE WHEN locked THEN art                     ELSE excluded.art                     END,
-                    imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE excluded.imdb_id                 END,
-                    tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE excluded.tvdb_id                 END,
-                    tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE excluded.tmdb_id                 END,
-                    originally_available_at = CASE WHEN locked THEN originally_available_at ELSE excluded.originally_available_at END,
-                    year                    = CASE WHEN locked THEN year                    ELSE excluded.year                    END,
-                    audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END,
-                    labels                  = CASE WHEN locked THEN labels                  ELSE excluded.labels                  END,
-                    network                 = CASE WHEN locked THEN network                 ELSE excluded.network                 END,
-                    actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
-                    countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
-                    collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END
-            )");
-            s.bind(1,  show.show_id);
-            s.bind(2,  show.title);
-            s.bind(3,  show.content_rating);
-            s.bind(4,  show.overview);
-            s.bind(5,  show.studio);
-            s.bind(6,  show.status);
-            s.bind(7,  show.genres);
-            s.bind(8,  show.thumb);
-            s.bind(9,  show.art);
-            s.bind(10, show.imdb_id);
-            s.bind(11, show.tvdb_id);
-            s.bind(12, show.tmdb_id);
-            s.bind(13, show.originally_available_at);
-            if (show.year.has_value())            s.bind(14, show.year.value());
-            else                                  s.bind(14);
-            if (show.audience_rating.has_value()) s.bind(15, show.audience_rating.value());
-            else                                  s.bind(15);
-            s.bind(16, show.labels);
-            s.bind(17, show.network);
-            s.bind(18, show.actors);
-            s.bind(19, show.countries);
-            s.bind(20, show.collections);
-            s.exec();
+            if (!is_cross_ref) {
+                SQLite::Statement s(db_.get(), R"(
+                    INSERT INTO show (show_id, title, content_rating, overview, studio, status,
+                                      genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
+                                      originally_available_at, year, audience_rating,
+                                      labels, network, actors, countries, collections)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(show_id) DO UPDATE SET
+                        title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
+                        content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
+                        overview                = CASE WHEN locked THEN overview                ELSE excluded.overview                END,
+                        studio                  = CASE WHEN locked THEN studio                  ELSE excluded.studio                  END,
+                        status                  = CASE WHEN locked THEN status                  ELSE excluded.status                  END,
+                        genres                  = CASE WHEN locked THEN genres                  ELSE excluded.genres                  END,
+                        thumb                   = CASE WHEN locked THEN thumb                   ELSE excluded.thumb                   END,
+                        art                     = CASE WHEN locked THEN art                     ELSE excluded.art                     END,
+                        imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE excluded.imdb_id                 END,
+                        tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE excluded.tvdb_id                 END,
+                        tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE excluded.tmdb_id                 END,
+                        originally_available_at = CASE WHEN locked THEN originally_available_at ELSE excluded.originally_available_at END,
+                        year                    = CASE WHEN locked THEN year                    ELSE excluded.year                    END,
+                        audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END,
+                        labels                  = CASE WHEN locked THEN labels                  ELSE excluded.labels                  END,
+                        network                 = CASE WHEN locked THEN network                 ELSE excluded.network                 END,
+                        actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
+                        countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
+                        collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END
+                )");
+                s.bind(1,  show.show_id);
+                s.bind(2,  show.title);
+                s.bind(3,  show.content_rating);
+                s.bind(4,  show.overview);
+                s.bind(5,  show.studio);
+                s.bind(6,  show.status);
+                s.bind(7,  show.genres);
+                s.bind(8,  show.thumb);
+                s.bind(9,  show.art);
+                s.bind(10, show.imdb_id);
+                s.bind(11, show.tvdb_id);
+                s.bind(12, show.tmdb_id);
+                s.bind(13, show.originally_available_at);
+                if (show.year.has_value())            s.bind(14, show.year.value());
+                else                                  s.bind(14);
+                if (show.audience_rating.has_value()) s.bind(15, show.audience_rating.value());
+                else                                  s.bind(15);
+                s.bind(16, show.labels);
+                s.bind(17, show.network);
+                s.bind(18, show.actors);
+                s.bind(19, show.countries);
+                s.bind(20, show.collections);
+                s.exec();
+            }
 
             upsertMapping("show", kairos_id, source_id, library_id, ext_show_id);
         }
@@ -255,43 +277,74 @@ void SyncManager::syncShows(IMediaSource& src,
 
     SQLite::Transaction txn(db_.get());
     for (size_t i = 0; i < shows.size(); ++i) {
-        auto& show     = shows[i];
-        auto& episodes = episodes_by_show[i];
+        auto& show      = shows[i];
+        auto& episodes  = episodes_by_show[i];
+        const bool cross_show = cross_ref_shows[i];
 
-        // Clear existing episodes before reinserting the current set.
-        // media_cursor.episode_id references episode(episode_id) with no ON DELETE
-        // clause (RESTRICT), so we must nullify those refs before deleting episodes.
-        { SQLite::Statement q(db_.get(),
-              "UPDATE media_cursor SET episode_id = NULL "
-              "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
-          q.bind(1, show.show_id); q.exec(); }
-        { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id=?");
-          d.bind(1, show.show_id); d.exec(); }
+        if (!cross_show) {
+            // Clear existing episodes before reinserting the current set.
+            // media_cursor.episode_id references episode(episode_id) with no ON DELETE
+            // clause (RESTRICT), so we must nullify those refs before deleting episodes.
+            { SQLite::Statement q(db_.get(),
+                  "UPDATE media_cursor SET episode_id = NULL "
+                  "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
+              q.bind(1, show.show_id); q.exec(); }
+            { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id=?");
+              d.bind(1, show.show_id); d.exec(); }
+        }
+        // For cross-ref shows (mapped to another source's kairos_id), we skip the
+        // DELETE so we don't wipe episodes owned by the other source.
 
         std::unordered_map<int, std::string> season_names;
         for (auto& ep : episodes) {
             const std::string ext_ep_id = ep.episode_id;
-            ep.episode_id = resolveId("episode", source_id, ext_ep_id);
+            bool ep_cross_ref = false;
+            std::string ep_kairos_id;
+
+            if (cross_show) {
+                // Show is cross-ref: resolve episode by file_path first.
+                ep_kairos_id = resolveByFilePath("episode", ep.file_path);
+                if (!ep_kairos_id.empty()) {
+                    ep_cross_ref = true;
+                } else {
+                    // New file not yet indexed by any other source; create it.
+                    ep_kairos_id = resolveId("episode", source_id, ext_ep_id);
+                }
+            } else {
+                ep_kairos_id = resolveId("episode", source_id, ext_ep_id);
+                // Even for non-cross-ref shows, check file_path to prevent duplicate
+                // episode rows when another source has already indexed the same file.
+                if (ep_kairos_id == source_id + ":" + ext_ep_id) {
+                    const std::string existing = resolveByFilePath("episode", ep.file_path);
+                    if (!existing.empty()) { ep_kairos_id = existing; ep_cross_ref = true; }
+                } else if (!ep_kairos_id.starts_with(source_id + ":")) {
+                    ep_cross_ref = true;
+                }
+            }
+
+            ep.episode_id = ep_kairos_id;
             ep.show_id    = show.show_id;
 
-            SQLite::Statement e(db_.get(), R"(
-                INSERT INTO episode (episode_id, show_id, season, episode, title, file_path,
-                                     duration_ms, overview, air_date, thumb, absolute_index)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
-            )");
-            e.bind(1,  ep.episode_id);
-            e.bind(2,  ep.show_id);
-            e.bind(3,  ep.season);
-            e.bind(4,  ep.episode);
-            e.bind(5,  ep.title);
-            e.bind(6,  ep.file_path);
-            e.bind(7,  ep.duration_ms);
-            e.bind(8,  ep.overview);
-            e.bind(9,  ep.air_date);
-            e.bind(10, ep.thumb);
-            if (ep.absolute_index.has_value()) e.bind(11, ep.absolute_index.value());
-            else                               e.bind(11);
-            e.exec();
+            if (!ep_cross_ref) {
+                SQLite::Statement e(db_.get(), R"(
+                    INSERT INTO episode (episode_id, show_id, season, episode, title, file_path,
+                                         duration_ms, overview, air_date, thumb, absolute_index)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                )");
+                e.bind(1,  ep.episode_id);
+                e.bind(2,  ep.show_id);
+                e.bind(3,  ep.season);
+                e.bind(4,  ep.episode);
+                e.bind(5,  ep.title);
+                e.bind(6,  ep.file_path);
+                e.bind(7,  ep.duration_ms);
+                e.bind(8,  ep.overview);
+                e.bind(9,  ep.air_date);
+                e.bind(10, ep.thumb);
+                if (ep.absolute_index.has_value()) e.bind(11, ep.absolute_index.value());
+                else                               e.bind(11);
+                e.exec();
+            }
 
             upsertMapping("episode", ep.episode_id, source_id, library_id, ext_ep_id);
 
@@ -299,15 +352,19 @@ void SyncManager::syncShows(IMediaSource& src,
                 season_names[ep.season] = ep.season_name;
         }
 
-        { SQLite::Statement d(db_.get(), "DELETE FROM show_season WHERE show_id = ?");
-          d.bind(1, show.show_id); d.exec(); }
-        for (const auto& [season, name] : season_names) {
-            SQLite::Statement ins(db_.get(),
-                "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
-            ins.bind(1, show.show_id);
-            ins.bind(2, season);
-            ins.bind(3, name);
-            ins.exec();
+        // Only update show_season for shows this source owns; cross-ref shows keep
+        // whatever season metadata was written by the authoritative source.
+        if (!cross_show) {
+            { SQLite::Statement d(db_.get(), "DELETE FROM show_season WHERE show_id = ?");
+              d.bind(1, show.show_id); d.exec(); }
+            for (const auto& [season, name] : season_names) {
+                SQLite::Statement ins(db_.get(),
+                    "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
+                ins.bind(1, show.show_id);
+                ins.bind(2, season);
+                ins.bind(3, name);
+                ins.exec();
+            }
         }
     }
 
@@ -325,17 +382,30 @@ void SyncManager::syncShows(IMediaSource& src,
         }
     }
     for (const auto& kid : stale_shows) {
-        // episode.show_id has no ON DELETE CASCADE, so delete episodes explicitly.
-        // Nullify media_cursor.episode_id refs first (FK: RESTRICT).
-        { SQLite::Statement q(db_.get(),
-              "UPDATE media_cursor SET episode_id = NULL "
-              "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
-          q.bind(1, kid); q.exec(); }
-        { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id = ?");
-          d.bind(1, kid); d.exec(); }
-        { SQLite::Statement d(db_.get(), "DELETE FROM show WHERE show_id=?");
-          d.bind(1, kid); d.exec(); }
-        std::cout << "[sync]   removed stale show: " << kid << std::endl;
+        // Guard: don't delete show/episodes if another source still references this item.
+        bool other_source_has_it = false;
+        {
+            SQLite::Statement chk(db_.get(),
+                "SELECT COUNT(*) FROM source_mapping "
+                "WHERE item_type='show' AND kairos_id=? AND source_id!=?");
+            chk.bind(1, kid); chk.bind(2, source_id);
+            other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
+        }
+        if (!other_source_has_it) {
+            { SQLite::Statement q(db_.get(),
+                  "UPDATE media_cursor SET episode_id = NULL "
+                  "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
+              q.bind(1, kid); q.exec(); }
+            { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id = ?");
+              d.bind(1, kid); d.exec(); }
+            { SQLite::Statement d(db_.get(), "DELETE FROM show WHERE show_id=?");
+              d.bind(1, kid); d.exec(); }
+            std::cout << "[sync]   removed stale show: " << kid << std::endl;
+        }
+        // In both cases, prune this source's mapping for the stale show.
+        { SQLite::Statement d(db_.get(),
+              "DELETE FROM source_mapping WHERE item_type='show' AND kairos_id=? AND source_id=? AND library_id=?");
+          d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
     }
 
     // Prune source_mapping for any removed shows or orphaned episode entries.
@@ -368,60 +438,74 @@ void SyncManager::syncMovies(IMediaSource& src,
 
     for (auto& movie : movies) {
         const std::string ext_movie_id = movie.movie_id;
-        movie.movie_id    = resolveId("movie", source_id, ext_movie_id);
+        std::string kairos_id = resolveId("movie", source_id, ext_movie_id);
+        bool is_cross_ref = false;
+
+        // Cross-source dedup: if no existing mapping for this source, check whether
+        // another source already indexes this file_path to avoid duplicate movie rows.
+        if (kairos_id == source_id + ":" + ext_movie_id) {
+            const std::string existing = resolveByFilePath("movie", movie.file_path);
+            if (!existing.empty()) { kairos_id = existing; is_cross_ref = true; }
+        } else if (!kairos_id.starts_with(source_id + ":")) {
+            is_cross_ref = true;
+        }
+
+        movie.movie_id    = kairos_id;
         movie.duration_ms = validateDurationMs(movie.duration_ms, conf_.applyPathMap(movie.file_path));
         live_movie_ids.insert(movie.movie_id);
 
-        SQLite::Statement s(db_.get(), R"(
-            INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
-                               overview, tagline, studio, director, genres, thumb, art,
-                               imdb_id, tmdb_id, audience_rating,
-                               labels, actors, countries, collections)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(movie_id) DO UPDATE SET
-                title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
-                content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
-                file_path       = CASE WHEN locked THEN file_path       ELSE excluded.file_path       END,
-                duration_ms     = CASE WHEN locked THEN duration_ms     ELSE excluded.duration_ms     END,
-                year            = CASE WHEN locked THEN year            ELSE excluded.year            END,
-                overview        = CASE WHEN locked THEN overview        ELSE excluded.overview        END,
-                tagline         = CASE WHEN locked THEN tagline         ELSE excluded.tagline         END,
-                studio          = CASE WHEN locked THEN studio          ELSE excluded.studio          END,
-                director        = CASE WHEN locked THEN director        ELSE excluded.director        END,
-                genres          = CASE WHEN locked THEN genres          ELSE excluded.genres          END,
-                thumb           = CASE WHEN locked THEN thumb           ELSE excluded.thumb           END,
-                art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
-                imdb_id         = CASE WHEN locked THEN imdb_id         ELSE excluded.imdb_id         END,
-                tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE excluded.tmdb_id         END,
-                audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END,
-                labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
-                actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
-                countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
-                collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
-        )");
-        s.bind(1,  movie.movie_id);
-        s.bind(2,  movie.title);
-        s.bind(3,  movie.content_rating);
-        s.bind(4,  movie.file_path);
-        s.bind(5,  movie.duration_ms);
-        if (movie.year.has_value())            s.bind(6,  movie.year.value());
-        else                                   s.bind(6);
-        s.bind(7,  movie.overview);
-        s.bind(8,  movie.tagline);
-        s.bind(9,  movie.studio);
-        s.bind(10, movie.director);
-        s.bind(11, movie.genres);
-        s.bind(12, movie.thumb);
-        s.bind(13, movie.art);
-        s.bind(14, movie.imdb_id);
-        s.bind(15, movie.tmdb_id);
-        if (movie.audience_rating.has_value()) s.bind(16, movie.audience_rating.value());
-        else                                   s.bind(16);
-        s.bind(17, movie.labels);
-        s.bind(18, movie.actors);
-        s.bind(19, movie.countries);
-        s.bind(20, movie.collections);
-        s.exec();
+        if (!is_cross_ref) {
+            SQLite::Statement s(db_.get(), R"(
+                INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
+                                   overview, tagline, studio, director, genres, thumb, art,
+                                   imdb_id, tmdb_id, audience_rating,
+                                   labels, actors, countries, collections)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(movie_id) DO UPDATE SET
+                    title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
+                    content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
+                    file_path       = CASE WHEN locked THEN file_path       ELSE excluded.file_path       END,
+                    duration_ms     = CASE WHEN locked THEN duration_ms     ELSE excluded.duration_ms     END,
+                    year            = CASE WHEN locked THEN year            ELSE excluded.year            END,
+                    overview        = CASE WHEN locked THEN overview        ELSE excluded.overview        END,
+                    tagline         = CASE WHEN locked THEN tagline         ELSE excluded.tagline         END,
+                    studio          = CASE WHEN locked THEN studio          ELSE excluded.studio          END,
+                    director        = CASE WHEN locked THEN director        ELSE excluded.director        END,
+                    genres          = CASE WHEN locked THEN genres          ELSE excluded.genres          END,
+                    thumb           = CASE WHEN locked THEN thumb           ELSE excluded.thumb           END,
+                    art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
+                    imdb_id         = CASE WHEN locked THEN imdb_id         ELSE excluded.imdb_id         END,
+                    tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE excluded.tmdb_id         END,
+                    audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END,
+                    labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
+                    actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
+                    countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
+                    collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
+            )");
+            s.bind(1,  movie.movie_id);
+            s.bind(2,  movie.title);
+            s.bind(3,  movie.content_rating);
+            s.bind(4,  movie.file_path);
+            s.bind(5,  movie.duration_ms);
+            if (movie.year.has_value())            s.bind(6,  movie.year.value());
+            else                                   s.bind(6);
+            s.bind(7,  movie.overview);
+            s.bind(8,  movie.tagline);
+            s.bind(9,  movie.studio);
+            s.bind(10, movie.director);
+            s.bind(11, movie.genres);
+            s.bind(12, movie.thumb);
+            s.bind(13, movie.art);
+            s.bind(14, movie.imdb_id);
+            s.bind(15, movie.tmdb_id);
+            if (movie.audience_rating.has_value()) s.bind(16, movie.audience_rating.value());
+            else                                   s.bind(16);
+            s.bind(17, movie.labels);
+            s.bind(18, movie.actors);
+            s.bind(19, movie.countries);
+            s.bind(20, movie.collections);
+            s.exec();
+        }
 
         upsertMapping("movie", movie.movie_id, source_id, library_id, ext_movie_id);
     }
@@ -438,9 +522,23 @@ void SyncManager::syncMovies(IMediaSource& src,
         }
     }
     for (const auto& kid : stale_movies) {
-        SQLite::Statement d(db_.get(), "DELETE FROM movie WHERE movie_id=?");
-        d.bind(1, kid); d.exec();
-        std::cout << "[sync]   removed stale movie: " << kid << std::endl;
+        // Guard: don't delete the movie row if another source still references it.
+        bool other_source_has_it = false;
+        {
+            SQLite::Statement chk(db_.get(),
+                "SELECT COUNT(*) FROM source_mapping "
+                "WHERE item_type='movie' AND kairos_id=? AND source_id!=?");
+            chk.bind(1, kid); chk.bind(2, source_id);
+            other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
+        }
+        if (!other_source_has_it) {
+            SQLite::Statement d(db_.get(), "DELETE FROM movie WHERE movie_id=?");
+            d.bind(1, kid); d.exec();
+            std::cout << "[sync]   removed stale movie: " << kid << std::endl;
+        }
+        { SQLite::Statement d(db_.get(),
+              "DELETE FROM source_mapping WHERE item_type='movie' AND kairos_id=? AND source_id=? AND library_id=?");
+          d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
     }
 
     { SQLite::Statement d(db_.get(),
@@ -467,6 +565,30 @@ std::string SyncManager::resolveId(const std::string& item_type,
     if (q.executeStep())
         return q.getColumn(0).getString();
     return source_id + ":" + external_id; // deterministic, no UUID needed
+}
+
+std::string SyncManager::resolveByFilePath(const std::string& item_type,
+                                            const std::string& file_path) const {
+    if (file_path.empty()) return "";
+    const bool is_ep = (item_type == "episode");
+    const std::string col = is_ep ? "episode_id" : "movie_id";
+    const std::string tbl = is_ep ? "episode"    : "movie";
+    SQLite::Statement q(db_.get(),
+        "SELECT " + col + " FROM " + tbl + " WHERE file_path = ? LIMIT 1");
+    q.bind(1, file_path);
+    return q.executeStep() ? q.getColumn(0).getString() : "";
+}
+
+std::string SyncManager::resolveByTitle(const std::string& item_type,
+                                         const std::string& title) const {
+    if (title.empty()) return "";
+    const bool is_show = (item_type == "show");
+    const std::string col = is_show ? "show_id" : "movie_id";
+    const std::string tbl = is_show ? "show"    : "movie";
+    SQLite::Statement q(db_.get(),
+        "SELECT " + col + " FROM " + tbl + " WHERE LOWER(title) = LOWER(?) LIMIT 1");
+    q.bind(1, title);
+    return q.executeStep() ? q.getColumn(0).getString() : "";
 }
 
 void SyncManager::upsertMapping(const std::string& item_type,

@@ -54,6 +54,14 @@ private:
                        const std::string& library_id,
                        const std::string& external_id);
 
+    // Cross-source dedup: find an existing kairos_id by file_path (episode/movie)
+    // or by case-insensitive title (show/movie). Used so local-source scans reuse
+    // items already indexed by Plex/Jellyfin rather than creating duplicates.
+    std::string resolveByFilePath(const std::string& item_type,
+                                  const std::string& file_path) const;
+    std::string resolveByTitle(const std::string& item_type,
+                               const std::string& title) const;
+
     void syncPlexLinks(const std::string& source_id);
 
     void syncShows(IMediaSource& src,

@@ -60,14 +60,9 @@ if(UNIX)
     target_link_libraries(kairos_core PUBLIC pthread dl crypt)
 endif()
 
-find_package(OpenSSL QUIET)
-if(OpenSSL_FOUND)
-    target_link_libraries(kairos_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-    target_compile_definitions(kairos_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
-    message(STATUS "OpenSSL found — HTTPS scraper support enabled")
-else()
-    message(STATUS "OpenSSL not found — scraper HTTPS calls will fail at runtime")
-endif()
+find_package(OpenSSL REQUIRED)
+target_link_libraries(kairos_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+target_compile_definitions(kairos_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
 
 # KAIROS_DEV: enable CORS wildcard and other dev-only behaviour.
 # Set automatically for Debug builds; override with -DKAIROS_DEV=ON/OFF.

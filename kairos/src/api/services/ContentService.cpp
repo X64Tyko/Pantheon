@@ -78,13 +78,15 @@ void ContentService::proxyImage(const Req& req,
 	if (base_url.empty()) { res.status = 404; return; }
 
 	std::string token = conf_.token(sourceId);
-	httplib::Client client(base_url);
-	if (!token.empty())
-		client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "*/*"}});
-	client.set_connection_timeout(10);
-	client.set_read_timeout(15);
-
-	auto img = client.Get(imgPath);
+	httplib::Result img;
+	try {
+		httplib::Client client(base_url);
+		if (!token.empty())
+			client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "*/*"}});
+		client.set_connection_timeout(10);
+		client.set_read_timeout(15);
+		img = client.Get(imgPath);
+	} catch (const std::exception&) { res.status = 502; return; }
 	if (!img || img->status != 200) { res.status = 502; return; }
 
 	auto ct = img->get_header_value("Content-Type");
