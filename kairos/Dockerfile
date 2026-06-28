@@ -3,6 +3,7 @@ FROM ubuntu:24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake ninja-build g++ git ca-certificates \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -18,6 +19,7 @@ FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
+    libssl3 \
     ffmpeg \
     curl \
     ca-certificates \
