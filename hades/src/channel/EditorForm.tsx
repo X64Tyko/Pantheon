@@ -45,9 +45,7 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
   const isTimeslot = d.block_type === 'timeslot'
   const isRerun    = d.play_style === 'rerun'
 
-  const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
-  const DBITS     = [0x02,0x04,0x08,0x10,0x20,0x40,0x01]
-  const daysOn    = DAY_NAMES.filter((_,i) => (d.day_mask & DBITS[i]) !== 0)
+  const daysOn    = DAYS.filter((_, i) => (d.day_mask & DAY_BITS[i]) !== 0).map(([s]) => s)
   const daysStr   = daysOn.length === 7 ? 'Every day'
     : daysOn.length === 5 && (d.day_mask & 0x3e) === 0x3e ? 'Weekdays'
     : daysOn.length === 2 && (d.day_mask & 0x41) === 0x41 ? 'Weekends'

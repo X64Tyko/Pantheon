@@ -3,12 +3,11 @@
 #include "../ScheduleCache.h"
 #include "../ServiceContext.h"
 #include "../../conf/ConfStore.h"
-#include "../../db/Database.h"
+#include "../../db/ChannelRepository.h"
+#include "../../db/ScheduleRepository.h"
+#include "../../db/SourceRepository.h"
 #include "../../scheduler/EPGMaterializer.h"
-#include "../../db/DbHelpers.h"
-#include "../../scheduler/CursorState.h"
 #include "../../scheduler/RuleEngine.h"
-#include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <ctime>
 #include <map>
@@ -21,18 +20,6 @@ SchedulerService::SchedulerService(const ServiceContext& ctx)
 	: db_(ctx.db), conf_(ctx.conf), engine_(ctx.engine),
 	  materializer_(ctx.materializer), schedule_cache_(ctx.schedule_cache)
 {}
-
-void SchedulerService::attachSourceMapping(json& j, const std::string& item_id) {
-	try {
-		SQLite::Statement sm(db_.get(),
-			"SELECT source_id, external_id FROM source_mapping WHERE kairos_id = ? LIMIT 1");
-		sm.bind(1, item_id);
-		if (sm.executeStep()) {
-			j["source_id"]   = sm.getColumn(0).getString();
-			j["external_id"] = sm.getColumn(1).getString();
-		}
-	} catch (...) {}
-}
 
 void SchedulerService::registerRoutes(httplib::Server& svr) {
 
@@ -65,70 +52,31 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 
 		materializer_.ensureScheduled(channel_id, t - 3600, 4);
 
-		{
-			SQLite::Statement q(db_.get(), R"(
-				SELECT sp.item_type, sp.item_id,
-				       COALESCE(sp.block_id, '')          AS block_id,
-				       sp.wall_clock_start,
-				       COALESCE(e.title,  m.title,  '')   AS title,
-				       COALESCE(s.title,  '')             AS show_title,
-				       COALESCE(e.show_id,'')             AS show_id,
-				       COALESCE(e.season, 0)              AS season,
-				       COALESCE(e.episode,0)              AS ep_num,
-				       COALESCE(e.file_path, m.file_path,'') AS file_path,
-				       COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms,
-				       sp.wall_clock_end,
-				       sp.is_filler
-				FROM scheduled_program sp
-				LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
-				LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id =s.show_id
-				LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
-				WHERE sp.channel_id    = ?
-				  AND sp.wall_clock_start <= ?
-				  AND sp.wall_clock_end   >  ?
-				  AND sp.status != 'skipped'
-				ORDER BY sp.wall_clock_start DESC
-				LIMIT 1
-			)");
-			q.bind(1, channel_id);
-			q.bind(2, static_cast<int64_t>(t));
-			q.bind(3, static_cast<int64_t>(t));
-			if (q.executeStep()) {
-				std::string item_type  = q.getColumn(0).getString();
-				std::string item_id    = q.getColumn(1).getString();
-				std::string block_id   = q.getColumn(2).getString();
-				int64_t     wall_start = q.getColumn(3).getInt64();
-				std::string title      = q.getColumn(4).getString();
-				std::string show_title = q.getColumn(5).getString();
-				std::string show_id    = q.getColumn(6).getString();
-				int         season     = q.getColumn(7).getInt();
-				int         ep_num     = q.getColumn(8).getInt();
-				std::string file_path  = q.getColumn(9).getString();
-				int64_t     duration_ms= q.getColumn(10).getInt64();
-				int64_t     wall_end   = q.getColumn(11).getInt64();
-				bool        is_filler  = q.getColumn(12).getInt() != 0;
-
-				json j = {
-					{"item_type",           item_type},
-					{"item_id",             item_id},
-					{"file_path",           conf_.applyPathMap(file_path)},
-					{"duration_ms",         duration_ms},
-					{"title",               title},
-					{"block_id",            block_id},
-					{"wall_clock_start_ms", wall_start * 1000LL},
-					{"wall_clock_end_ms",   wall_end   * 1000LL},
-					{"is_filler",           is_filler},
-				};
-				if (!show_title.empty()) {
-					j["show_title"]  = show_title;
-					j["show_id"]     = show_id;
-					j["season"]      = season;
-					j["episode_num"] = ep_num;
-				}
-				attachSourceMapping(j, item_id);
-				route::ok(res, j.dump());
-				return;
+		ScheduleRepository sched(db_);
+		if (auto row = sched.getNowProgram(channel_id, t)) {
+			json j = {
+				{"item_type",           row->item_type},
+				{"item_id",             row->item_id},
+				{"file_path",           conf_.applyPathMap(row->file_path)},
+				{"duration_ms",         row->duration_ms},
+				{"title",               row->title},
+				{"block_id",            row->block_id},
+				{"wall_clock_start_ms", row->wall_clock_start * 1000LL},
+				{"wall_clock_end_ms",   row->wall_clock_end   * 1000LL},
+				{"is_filler",           row->is_filler},
+			};
+			if (!row->show_title.empty()) {
+				j["show_title"]  = row->show_title;
+				j["show_id"]     = row->show_id;
+				j["season"]      = row->season;
+				j["episode_num"] = row->episode;
 			}
+			if (auto sm = SourceRepository(db_).getSourceMapping(row->item_id)) {
+				j["source_id"]   = sm->source_id;
+				j["external_id"] = sm->external_id;
+			}
+			route::ok(res, j.dump());
+			return;
 		}
 
 		auto block_opt = engine_.resolveBlock(channel_id, t);
@@ -155,89 +103,54 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 				j["season"]      = item.season;
 				j["episode_num"] = item.episode_num;
 			}
-			attachSourceMapping(j, item.item_id);
+			if (auto sm = SourceRepository(db_).getSourceMapping(item.item_id)) {
+				j["source_id"]   = sm->source_id;
+				j["external_id"] = sm->external_id;
+			}
 			route::ok(res, j.dump());
 			return;
 		}
 
-		// Fallback 1: random item from the channel's default filler lists.
-		{
-			SQLite::Statement fq(db_.get(), R"(
-				SELECT fi.item_type, fi.item_id,
-				       COALESCE(e.file_path, m.file_path, '') AS file_path,
-				       COALESCE(e.title,     m.title,     '') AS title,
-				       COALESCE(e.duration_ms, m.duration_ms, 0) AS duration_ms
-				FROM channel_filler_entry cfe
-				JOIN filler_list_item fi ON fi.filler_list_id = cfe.filler_list_id
-				LEFT JOIN episode e ON fi.item_type='episode' AND fi.item_id=e.episode_id
-				LEFT JOIN movie   m ON fi.item_type='movie'   AND fi.item_id=m.movie_id
-				WHERE cfe.channel_id = ?
-				  AND (e.file_path IS NOT NULL OR m.file_path IS NOT NULL)
-				ORDER BY RANDOM()
-				LIMIT 1
-			)");
-			fq.bind(1, channel_id);
-			if (fq.executeStep()) {
-				int64_t dur = fq.getColumn(4).getInt64();
-				json j = {
-					{"item_type",           fq.getColumn(0).getString()},
-					{"item_id",             fq.getColumn(1).getString()},
-					{"file_path",           conf_.applyPathMap(fq.getColumn(2).getString())},
-					{"title",               fq.getColumn(3).getString()},
-					{"duration_ms",         dur},
-					{"block_id",            ""},
-					{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
-					{"wall_clock_end_ms",   static_cast<int64_t>(t) * 1000 + dur},
-					{"is_filler",           true},
-				};
-				route::ok(res, j.dump());
-				return;
-			}
+		if (auto filler = sched.getChannelFillerFallback(channel_id)) {
+			int64_t dur = filler->duration_ms;
+			json j = {
+				{"item_type",           filler->item_type},
+				{"item_id",             filler->item_id},
+				{"file_path",           conf_.applyPathMap(filler->file_path)},
+				{"title",               filler->title},
+				{"duration_ms",         dur},
+				{"block_id",            ""},
+				{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+				{"wall_clock_end_ms",   static_cast<int64_t>(t) * 1000 + dur},
+				{"is_filler",           true},
+			};
+			route::ok(res, j.dump());
+			return;
 		}
 
-		// Fallback 2: channel-configured offline screen.
-		{
-			SQLite::Statement oq(db_.get(),
-				"SELECT offline_video_path, offline_image_path, "
-				"       offline_audio_id, offline_audio_type "
-				"FROM channel WHERE channel_id = ?");
-			oq.bind(1, channel_id);
-			if (oq.executeStep()) {
-				std::string vid_path  = oq.getColumn(0).getString();
-				std::string img_path  = oq.getColumn(1).getString();
-				std::string audio_id  = oq.getColumn(2).getString();
-				std::string audio_typ = oq.getColumn(3).getString();
-
-				if (!vid_path.empty()) {
-					route::ok(res, json{
-						{"item_type",           "offline"},
-						{"file_path",           conf_.applyPathMap(vid_path)},
-						{"duration_ms",         0},
-						{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
-					}.dump());
-					return;
+		if (auto offline = sched.getChannelOfflineConfig(channel_id)) {
+			if (!offline->vid_path.empty()) {
+				route::ok(res, json{
+					{"item_type",           "offline"},
+					{"file_path",           conf_.applyPathMap(offline->vid_path)},
+					{"duration_ms",         0},
+					{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+				}.dump());
+				return;
+			}
+			if (!offline->img_path.empty()) {
+				json j = {
+					{"item_type",           "offline"},
+					{"offline_image_path",  conf_.applyPathMap(offline->img_path)},
+					{"duration_ms",         0},
+					{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+				};
+				if (!offline->audio_id.empty() && !offline->audio_typ.empty()) {
+					if (auto ap = sched.getAudioFilePath(offline->audio_typ, offline->audio_id))
+						j["offline_audio_path"] = conf_.applyPathMap(*ap);
 				}
-				if (!img_path.empty()) {
-					json j = {
-						{"item_type",           "offline"},
-						{"offline_image_path",  conf_.applyPathMap(img_path)},
-						{"duration_ms",         0},
-						{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
-					};
-					if (!audio_id.empty() && !audio_typ.empty()) {
-						const char* sql = (audio_typ == "episode")
-							? "SELECT file_path FROM episode WHERE episode_id = ?"
-							: "SELECT file_path FROM movie   WHERE movie_id   = ?";
-						SQLite::Statement aq(db_.get(), sql);
-						aq.bind(1, audio_id);
-						if (aq.executeStep()) {
-							std::string ap = aq.getColumn(0).getString();
-							if (!ap.empty()) j["offline_audio_path"] = conf_.applyPathMap(ap);
-						}
-					}
-					route::ok(res, j.dump());
-					return;
-				}
+				route::ok(res, j.dump());
+				return;
 			}
 		}
 
@@ -255,75 +168,29 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 
 		materializer_.ensureScheduled(channel_id, t, 4);
 
-		int64_t current_end = static_cast<int64_t>(t);
-		{
-			SQLite::Statement q(db_.get(), R"(
-				SELECT wall_clock_end FROM scheduled_program
-				WHERE channel_id = ? AND wall_clock_start <= ? AND wall_clock_end > ?
-				  AND status != 'skipped'
-				ORDER BY wall_clock_start DESC LIMIT 1
-			)");
-			q.bind(1, channel_id);
-			q.bind(2, static_cast<int64_t>(t));
-			q.bind(3, static_cast<int64_t>(t));
-			if (q.executeStep()) current_end = q.getColumn(0).getInt64();
-		}
-
-		SQLite::Statement q(db_.get(), R"(
-			SELECT sp.item_type, sp.item_id, COALESCE(sp.block_id, ''),
-			       sp.wall_clock_start,
-			       COALESCE(e.title, m.title, '')    AS title,
-			       COALESCE(s.title, '')              AS show_title,
-			       COALESCE(e.show_id, '')            AS show_id,
-			       COALESCE(e.season,  0)             AS season,
-			       COALESCE(e.episode, 0)             AS ep_num,
-			       COALESCE(e.file_path, m.file_path, '') AS file_path,
-			       COALESCE(e.duration_ms, m.duration_ms,
-			                (sp.wall_clock_end - sp.wall_clock_start) * 1000) AS duration_ms
-			FROM scheduled_program sp
-			LEFT JOIN episode e ON sp.item_type = 'episode' AND sp.item_id = e.episode_id
-			LEFT JOIN show    s ON sp.item_type = 'episode' AND e.show_id  = s.show_id
-			LEFT JOIN movie   m ON sp.item_type = 'movie'   AND sp.item_id = m.movie_id
-			WHERE sp.channel_id = ?
-			  AND sp.wall_clock_start >= ?
-			  AND sp.is_filler = 0
-			  AND sp.status != 'skipped'
-			ORDER BY sp.wall_clock_start
-			LIMIT 1
-		)");
-		q.bind(1, channel_id);
-		q.bind(2, current_end);
-
-		if (!q.executeStep()) { route::err(res, 404, "no next item available"); return; }
-
-		std::string item_type   = q.getColumn(0).getString();
-		std::string item_id     = q.getColumn(1).getString();
-		std::string block_id    = q.getColumn(2).getString();
-		int64_t     wall_start  = q.getColumn(3).getInt64();
-		std::string title       = q.getColumn(4).getString();
-		std::string show_title  = q.getColumn(5).getString();
-		std::string show_id     = q.getColumn(6).getString();
-		int         season      = q.getColumn(7).getInt();
-		int         ep_num      = q.getColumn(8).getInt();
-		std::string file_path   = q.getColumn(9).getString();
-		int64_t     duration_ms = q.getColumn(10).getInt64();
+		ScheduleRepository sched(db_);
+		auto row = sched.getNextProgram(channel_id, t);
+		if (!row) { route::err(res, 404, "no next item available"); return; }
 
 		json j = {
-			{"item_type",           item_type},
-			{"item_id",             item_id},
-			{"file_path",           conf_.applyPathMap(file_path)},
-			{"duration_ms",         duration_ms},
-			{"title",               title},
-			{"block_id",            block_id},
-			{"wall_clock_start_ms", wall_start * 1000LL},
+			{"item_type",           row->item_type},
+			{"item_id",             row->item_id},
+			{"file_path",           conf_.applyPathMap(row->file_path)},
+			{"duration_ms",         row->duration_ms},
+			{"title",               row->title},
+			{"block_id",            row->block_id},
+			{"wall_clock_start_ms", row->wall_clock_start * 1000LL},
 		};
-		if (!show_title.empty()) {
-			j["show_title"]  = show_title;
-			j["show_id"]     = show_id;
-			j["season"]      = season;
-			j["episode_num"] = ep_num;
+		if (!row->show_title.empty()) {
+			j["show_title"]  = row->show_title;
+			j["show_id"]     = row->show_id;
+			j["season"]      = row->season;
+			j["episode_num"] = row->episode;
 		}
-		attachSourceMapping(j, item_id);
+		if (auto sm = SourceRepository(db_).getSourceMapping(row->item_id)) {
+			j["source_id"]   = sm->source_id;
+			j["external_id"] = sm->external_id;
+		}
 		route::ok(res, j.dump());
 	  } catch (const std::exception& e) {
 		route::logErr("GET /api/channels/next", e); route::err(res, 500, e.what());
@@ -343,13 +210,8 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 			if (item_id.empty()) { route::err(res, 400, "item_id required"); return; }
 			engine_.markPlayed(channel_id, block_id, item_type, item_id, duration_ms);
 			materializer_.notifyPlayed(channel_id, item_id);
-			{
-				SQLite::Statement am(db_.get(),
-					"SELECT advance_mode FROM channel WHERE channel_id=?");
-				am.bind(1, channel_id);
-				if (am.executeStep() && am.getColumn(0).getString() == "on_play")
-					schedule_cache_.clear(channel_id);
-			}
+			if (ChannelRepository(db_).getAdvanceMode(channel_id) == "on_play")
+				schedule_cache_.clear(channel_id);
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("POST /api/channels/played", e);
@@ -399,160 +261,13 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 
 		GenerateResult gr;
 		if (has_blocks) {
-			// Temporarily inject preview blocks into DB, generate (pure), then rollback.
-			db_.get().exec("SAVEPOINT preview_sp");
-			try {
-				SQLite::Statement delbc(db_.get(),
-					"DELETE FROM block_content WHERE block_id IN (SELECT block_id FROM block WHERE channel_id=?)");
-				delbc.bind(1, channel_id); delbc.exec();
-				SQLite::Statement delbfe(db_.get(),
-					"DELETE FROM block_filler_entry WHERE block_id IN (SELECT block_id FROM block WHERE channel_id=?)");
-				delbfe.bind(1, channel_id); delbfe.exec();
-				SQLite::Statement delb(db_.get(), "DELETE FROM block WHERE channel_id=?");
-				delb.bind(1, channel_id); delb.exec();
-
-				for (auto& blk : body["blocks"]) {
-					std::string block_id = blk.value("block_id", db::generateId());
-					std::string end_time = blk.value("end_time", "");
-					SQLite::Statement s(db_.get(), R"(
-						INSERT INTO block (block_id, channel_id, name, block_type, day_mask,
-						                   start_time, end_time, program_count, priority,
-						                   play_style, advancement, cursor_scope,
-						                   late_start_mins, align_to_mins, inter_filler,
-						                   early_start_secs, filler_selection, smart_pct,
-						                   start_scope, no_history_behavior,
-						                   max_consecutive_episodes, interstitial_every_n)
-						VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-					)");
-					s.bind(1, block_id); s.bind(2, channel_id);
-					s.bind(3, blk.value("name", ""));
-					s.bind(4, blk.value("block_type", "episode"));
-					s.bind(5, blk.value("day_mask", 127));
-					s.bind(6, blk.value("start_time", "00:00"));
-					if (end_time.empty()) s.bind(7); else s.bind(7, end_time);
-					s.bind(8,  blk.value("program_count",      0));
-					s.bind(9,  blk.value("priority",           0));
-					s.bind(10, blk.value("play_style",          "standard"));
-					s.bind(11, blk.value("advancement",        "sequential"));
-					s.bind(12, blk.value("cursor_scope",       "block"));
-					s.bind(13, blk.value("late_start_mins",    0));
-					s.bind(14, blk.value("align_to_mins",      0));
-					s.bind(15, blk.value("inter_filler", false) ? 1 : 0);
-					s.bind(16, blk.value("early_start_secs",         0));
-					s.bind(17, blk.value("filler_selection",   "round_robin"));
-					s.bind(18, blk.value("smart_pct",          30));
-					s.bind(19, blk.value("start_scope",        "block"));
-					s.bind(20, blk.value("no_history_behavior", "normal"));
-					s.bind(21, blk.value("max_consecutive_episodes", 0));
-					s.bind(22, blk.value("interstitial_every_n",     1));
-					s.exec();
-
-					int pos = 0;
-					for (auto& item : blk.value("content", json::array())) {
-						std::string content_id = item.value("content_id", "");
-						std::string ct         = item.value("content_type", "");
-						if (content_id.empty() || ct.empty()) { pos++; continue; }
-						SQLite::Statement ins(db_.get(), R"(
-							INSERT OR IGNORE INTO block_content
-							    (block_id, content_type, content_id, position,
-							     weight, run_count, include_specials, episode_order)
-							VALUES (?,?,?,?,?,?,?,?)
-						)");
-						ins.bind(1, block_id); ins.bind(2, ct); ins.bind(3, content_id);
-						ins.bind(4, pos);
-						ins.bind(5, item.value("weight",           1));
-						ins.bind(6, item.value("run_count",        1));
-						ins.bind(7, item.value("include_specials", false) ? 1 : 0);
-						ins.bind(8, item.value("episode_order",    "season"));
-						ins.exec();
-						if (item.contains("season_filter") && !item["season_filter"].is_null()) {
-							SQLite::Statement upd(db_.get(), R"(
-								UPDATE block_content SET season_filter = ?
-								WHERE block_id = ? AND content_type = ? AND content_id = ?
-							)");
-							upd.bind(1, item["season_filter"].get<int>());
-							upd.bind(2, block_id); upd.bind(3, ct); upd.bind(4, content_id);
-							upd.exec();
-						}
-						pos++;
-					}
-
-					int fpos = 0;
-					for (auto& fe : blk.value("filler_entries", json::array())) {
-						std::string ct  = fe.value("content_type", "filler_list");
-						std::string cid = fe.value("content_id",   fe.value("filler_list_id", ""));
-						if (cid.empty()) { fpos++; continue; }
-						SQLite::Statement ins(db_.get(), R"(
-							INSERT OR IGNORE INTO block_filler_entry
-							    (block_id, content_type, content_id, advancement, weight, position)
-							VALUES (?,?,?,?,?,?)
-						)");
-						ins.bind(1, block_id); ins.bind(2, ct); ins.bind(3, cid);
-						ins.bind(4, fe.value("advancement", "sized"));
-						ins.bind(5, fe.value("weight", 1));
-						ins.bind(6, fpos); ins.exec();
-						fpos++;
-					}
-
-					// Slots (timeslot blocks only) — deleted by CASCADE when block was deleted,
-					// must be re-inserted from request JSON for projection to see them.
-					if (blk.value("block_type", std::string("")) == "timeslot") {
-						int sidx = 0;
-						for (auto& slot : blk.value("slots", json::array())) {
-							std::string slot_id = slot.value("slot_id", db::generateId());
-							SQLite::Statement ss(db_.get(), R"(
-								INSERT OR IGNORE INTO timeslot_slot
-								    (slot_id, block_id, slot_index, slot_offset_mins,
-								     slot_duration_mins, overflow, late_start_mins,
-								     early_start_secs, align_to_mins, start_scope)
-								VALUES (?,?,?,?,?,?,?,?,?,?)
-							)");
-							ss.bind(1, slot_id); ss.bind(2, block_id);
-							ss.bind(3, sidx++);
-							ss.bind(4, slot.value("slot_offset_mins",   0));
-							ss.bind(5, slot.value("slot_duration_mins", 60));
-							ss.bind(6, slot.value("overflow",           std::string("cutoff")));
-							ss.bind(7, slot.value("late_start_mins",    5));
-							ss.bind(8, slot.value("early_start_secs",   0));
-							ss.bind(9, slot.value("align_to_mins",      0));
-							ss.bind(10, slot.value("start_scope",       std::string("block")));
-							ss.exec();
-
-							int qidx = 0;
-							for (auto& qe : slot.value("queue", json::array())) {
-								std::string entry_id = qe.value("entry_id", db::generateId());
-								std::string prem     = qe.value("premiere_date", std::string(""));
-								SQLite::Statement sq(db_.get(), R"(
-									INSERT OR IGNORE INTO timeslot_slot_queue
-									    (entry_id, slot_id, queue_index, content_type, content_id,
-									     premiere_date, pre_premiere_behavior)
-									VALUES (?,?,?,?,?,?,?)
-								)");
-								sq.bind(1, entry_id); sq.bind(2, slot_id); sq.bind(3, qidx++);
-								sq.bind(4, qe.value("content_type", std::string("show")));
-								sq.bind(5, qe.value("content_id",   std::string("")));
-								if (prem.empty()) sq.bind(6); else sq.bind(6, prem);
-								sq.bind(7, qe.value("pre_premiere_behavior",
-								                    std::string("replay_previous")));
-								sq.exec();
-							}
-						}
-					}
-				}
-
-				gr = materializer_.generate(channel_id, now, hours, req_seed);
-			} catch (...) {
-				db_.get().exec("ROLLBACK TO SAVEPOINT preview_sp");
-				db_.get().exec("RELEASE SAVEPOINT preview_sp");
-				throw;
-			}
-			db_.get().exec("ROLLBACK TO SAVEPOINT preview_sp");
-			db_.get().exec("RELEASE SAVEPOINT preview_sp");
+			ScheduleRepository sched(db_);
+			gr = sched.withPreviewBlocks(channel_id, body["blocks"],
+				[&]() { return materializer_.generate(channel_id, now, hours, req_seed); });
 		} else {
 			gr = materializer_.generate(channel_id, now, hours, req_seed);
 		}
 
-		// Build response from gr.items — no DB read needed.
 		json arr = json::array();
 		std::map<std::time_t, int> anchor_counts;
 
@@ -590,15 +305,8 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 
 		json anchors_j = json::object();
 		if (!has_blocks) {
-			// Merge persisted anchors with newly discovered ones from this generate pass.
-			{
-				SQLite::Statement ach(db_.get(),
-					"SELECT anchor_hashes FROM channel WHERE channel_id=?");
-				ach.bind(1, channel_id);
-				if (ach.executeStep() && !ach.getColumn(0).isNull()) {
-					try { anchors_j = json::parse(ach.getColumn(0).getString()); }
-					catch (...) {}
-				}
+			if (auto ah = ChannelRepository(db_).getAnchorHashes(channel_id)) {
+				try { anchors_j = json::parse(*ah); } catch (...) {}
 			}
 			for (auto& [ts, snap_str] : gr.anchors) {
 				try { anchors_j[std::to_string(ts)] = json::parse(snap_str); } catch (...) {}
@@ -661,50 +369,26 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 		materializer_.ensureScheduled(channel_id, now, hours);
 
 		auto horizon = static_cast<int64_t>(now + hours * 3600LL);
-		SQLite::Statement q(db_.get(), R"(
-			SELECT sp.item_type, sp.item_id, sp.block_id,
-			       sp.wall_clock_start, sp.wall_clock_end, sp.status,
-			       COALESCE(e.title, m.title, '') AS item_title,
-			       COALESCE(s.title, '')           AS show_title,
-			       COALESCE(e.show_id, '')         AS show_id,
-			       COALESCE(e.season,  0)          AS season,
-			       COALESCE(e.episode, 0)          AS ep_num,
-			       COALESCE(e.file_path, m.file_path, '') AS file_path,
-			       COALESCE(e.duration_ms, m.duration_ms,
-			                (sp.wall_clock_end - sp.wall_clock_start) * 1000) AS duration_ms
-			FROM scheduled_program sp
-			LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
-			LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
-			LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
-			WHERE sp.channel_id=?
-			  AND sp.wall_clock_end   >  ?
-			  AND sp.wall_clock_start <  ?
-			  AND sp.status != 'skipped'
-			ORDER BY sp.wall_clock_start
-		)");
-		q.bind(1, channel_id);
-		q.bind(2, static_cast<int64_t>(now));
-		q.bind(3, horizon);
+		auto rows = ScheduleRepository(db_).getEpgPrograms(channel_id, now, horizon);
 
 		json arr = json::array();
-		while (q.executeStep()) {
+		for (const auto& r : rows) {
 			json j = {
-				{"item_type",           q.getColumn(0).getString()},
-				{"item_id",             q.getColumn(1).getString()},
-				{"block_id",            q.getColumn(2).isNull() ? "" : q.getColumn(2).getString()},
-				{"wall_clock_start_ms", q.getColumn(3).getInt64() * 1000},
-				{"wall_clock_end_ms",   q.getColumn(4).getInt64() * 1000},
-				{"status",              q.getColumn(5).getString()},
-				{"title",               q.getColumn(6).getString()},
-				{"file_path",           q.getColumn(11).getString()},
-				{"duration_ms",         q.getColumn(12).getInt64()},
+				{"item_type",           r.item_type},
+				{"item_id",             r.item_id},
+				{"block_id",            r.block_id},
+				{"wall_clock_start_ms", r.wall_clock_start * 1000},
+				{"wall_clock_end_ms",   r.wall_clock_end   * 1000},
+				{"status",              r.status},
+				{"title",               r.title},
+				{"file_path",           r.file_path},
+				{"duration_ms",         r.duration_ms},
 			};
-			std::string show_title = q.getColumn(7).getString();
-			if (!show_title.empty()) {
-				j["show_title"]  = show_title;
-				j["show_id"]     = q.getColumn(8).getString();
-				j["season"]      = q.getColumn(9).getInt();
-				j["episode_num"] = q.getColumn(10).getInt();
+			if (!r.show_title.empty()) {
+				j["show_title"]  = r.show_title;
+				j["show_id"]     = r.show_id;
+				j["season"]      = r.season;
+				j["episode_num"] = r.episode;
 			}
 			arr.push_back(j);
 		}

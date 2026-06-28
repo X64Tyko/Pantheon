@@ -1,6 +1,8 @@
 #include "EPGMaterializer.h"
 #include "CursorState.h"
 #include "Rng.h"
+#include "../db/ChannelRepository.h"
+#include "../db/CursorRepository.h"
 #include "../db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -195,7 +197,7 @@ void EPGMaterializer::commit(
         if (db_.get().getChanges() > 0) ++inserted; else ++skipped;
         ins.reset();
     }
-    result.cursor_state.applyToDB(db_, channel_id);
+    CursorRepository(db_).apply(channel_id, result.cursor_state);
     db_.get().exec("RELEASE SAVEPOINT sp_commit");
     persistAnchors();
 
@@ -209,13 +211,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                                        int seed) {
     // ── on_play mode: regenerate from current cursor position on every call. ──
     {
-        bool on_play = false;
-        {
-            SQLite::Statement q(db_.get(),
-                "SELECT advance_mode FROM channel WHERE channel_id=?");
-            q.bind(1, channel_id);
-            if (q.executeStep()) on_play = (q.getColumn(0).getString() == "on_play");
-        }
+        bool on_play = ChannelRepository(db_).getAdvanceMode(channel_id) == "on_play";
         if (on_play) {
             auto now_ts = static_cast<int64_t>(std::time(nullptr));
             {
@@ -223,7 +219,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                     "DELETE FROM scheduled_program WHERE channel_id=?");
                 d1.bind(1, channel_id); d1.exec();
             }
-            CursorState cs = CursorState::loadFromDB(db_, channel_id);
+            CursorState cs = CursorRepository(db_).load(channel_id);
             Xoshiro256  onplay_rng(seed >= 0 ? static_cast<uint64_t>(seed) : 0);
             auto items = engine_.project(channel_id, from, horizon_hours, cs, onplay_rng);
 

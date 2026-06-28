@@ -1,10 +1,32 @@
 #pragma once
+#include "ListTypes.h"
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 class Database;
+
+struct PlaylistItemRow {
+    int64_t id = 0;
+    int position = 0;
+    std::string item_type, item_id, title;
+    int64_t duration_ms = 0;
+    std::optional<int> season, episode;
+};
+
+struct PlaylistRow {
+    std::string playlist_id, title, mode;
+    int item_count = 0;
+    int64_t total_ms = 0;
+    std::optional<PlexLinkRow> plex_link;
+};
+
+struct PlaylistDetail {
+    std::string playlist_id, title, mode;
+    std::vector<PlaylistItemRow> items;
+};
 
 class PlaylistRepository {
 public:
@@ -21,6 +43,9 @@ public:
 
     // Remove the plex_list_link record; items are kept.
     void unlinkPlex(const std::string& playlist_id);
+
+    std::vector<PlaylistRow>      listAll();
+    std::optional<PlaylistDetail> getDetail(const std::string& playlist_id);
 
     // Add one item; returns {rowid, position}.
     std::pair<int64_t, int> addItem(const std::string& playlist_id,
@@ -41,6 +66,10 @@ public:
     // Returns {playlist_id, item_count}.
     std::pair<std::string, int> createFromBlock(const std::string& block_id,
                                                  const std::string& title);
+
+    void upsertPlexLink(const std::string& list_type, const std::string& list_id,
+                        const std::string& source_id, const std::string& external_id,
+                        const std::string& plex_type);
 
 private:
     Database& db_;

@@ -1,10 +1,9 @@
 #include "FillerService.h"
 #include "../RouteHelpers.h"
 #include "PlexSyncHelper.h"
-#include "../../db/Database.h"
 #include "../../db/FillerRepository.h"
-#include "../../source/SyncManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include "../../source/SyncManager.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -18,36 +17,22 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/filler-lists", [this](const Req&, Res& res) {
 		try {
-			SQLite::Statement q(db_.get(), R"(
-				SELECT fl.filler_list_id, fl.title, fl.advancement,
-				       COUNT(fi.id) AS item_count,
-				       COALESCE(SUM(CASE fi.item_type
-				           WHEN 'episode' THEN e.duration_ms
-				           WHEN 'movie'   THEN m.duration_ms ELSE 0 END), 0) AS total_ms,
-				       pll.source_id, pll.external_id, pll.plex_type, pll.last_synced_at
-				FROM filler_list fl
-				LEFT JOIN filler_list_item fi ON fi.filler_list_id = fl.filler_list_id
-				LEFT JOIN episode e ON fi.item_type = 'episode' AND fi.item_id = e.episode_id
-				LEFT JOIN movie   m ON fi.item_type = 'movie'   AND fi.item_id = m.movie_id
-				LEFT JOIN plex_list_link pll ON pll.list_type = 'filler_list' AND pll.list_id = fl.filler_list_id
-				GROUP BY fl.filler_list_id ORDER BY fl.title
-			)");
 			json result = json::array();
-			while (q.executeStep()) {
+			for (const auto& r : FillerRepository(db_).listAll()) {
 				json entry = {
-					{"filler_list_id", q.getColumn(0).getString()},
-					{"title",          q.getColumn(1).getString()},
-					{"advancement",    q.getColumn(2).getString()},
-					{"item_count",     q.getColumn(3).getInt()},
-					{"total_ms",       q.getColumn(4).getInt64()},
+					{"filler_list_id", r.filler_list_id},
+					{"title",          r.title},
+					{"advancement",    r.advancement},
+					{"item_count",     r.item_count},
+					{"total_ms",       r.total_ms},
 				};
-				if (!q.getColumn(5).isNull()) {
+				if (r.plex_link) {
 					entry["plex_link"] = {
-						{"source_id",      q.getColumn(5).getString()},
-						{"external_id",    q.getColumn(6).getString()},
-						{"plex_type",      q.getColumn(7).getString()},
-						{"last_synced_at", q.getColumn(8).isNull()
-							? json(nullptr) : json(q.getColumn(8).getInt64())},
+						{"source_id",      r.plex_link->source_id},
+						{"external_id",    r.plex_link->external_id},
+						{"plex_type",      r.plex_link->plex_type},
+						{"last_synced_at", r.plex_link->last_synced_at
+							? json(*r.plex_link->last_synced_at) : json(nullptr)},
 					};
 				}
 				result.push_back(entry);
@@ -78,44 +63,23 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/filler-lists/:id", [this](const Req& req, Res& res) {
 		try {
 			auto id = req.path_params.at("id");
-			SQLite::Statement fh(db_.get(),
-				"SELECT filler_list_id, title, advancement FROM filler_list WHERE filler_list_id = ?");
-			fh.bind(1, id);
-			if (!fh.executeStep()) { route::err(res, 404, "filler list not found"); return; }
-
-			SQLite::Statement q(db_.get(), R"(
-				SELECT fi.id, fi.item_type, fi.item_id, fi.position,
-				       CASE fi.item_type
-				           WHEN 'episode' THEN s.title || ' S' || PRINTF('%02d',e.season) ||
-				                               'E' || PRINTF('%02d',e.episode) || ' — ' || e.title
-				           WHEN 'movie'   THEN m.title ELSE ''
-				       END AS title,
-				       CASE fi.item_type
-				           WHEN 'episode' THEN e.duration_ms
-				           WHEN 'movie'   THEN m.duration_ms ELSE 0
-				       END AS duration_ms
-				FROM filler_list_item fi
-				LEFT JOIN episode e ON fi.item_type = 'episode' AND fi.item_id = e.episode_id
-				LEFT JOIN show    s ON e.show_id = s.show_id
-				LEFT JOIN movie   m ON fi.item_type = 'movie'   AND fi.item_id = m.movie_id
-				WHERE fi.filler_list_id = ? ORDER BY fi.position
-			)");
-			q.bind(1, id);
+			auto d = FillerRepository(db_).getDetail(id);
+			if (!d) { route::err(res, 404, "filler list not found"); return; }
 			json items = json::array();
-			while (q.executeStep()) {
+			for (const auto& r : d->items) {
 				items.push_back({
-					{"id",          q.getColumn(0).getInt()},
-					{"item_type",   q.getColumn(1).getString()},
-					{"item_id",     q.getColumn(2).getString()},
-					{"position",    q.getColumn(3).getInt()},
-					{"title",       q.getColumn(4).getString()},
-					{"duration_ms", q.getColumn(5).getInt64()},
+					{"id",          r.id},
+					{"item_type",   r.item_type},
+					{"item_id",     r.item_id},
+					{"position",    r.position},
+					{"title",       r.title},
+					{"duration_ms", r.duration_ms},
 				});
 			}
 			route::ok(res, json{
-				{"filler_list_id", fh.getColumn(0).getString()},
-				{"title",          fh.getColumn(1).getString()},
-				{"advancement",    fh.getColumn(2).getString()},
+				{"filler_list_id", d->filler_list_id},
+				{"title",          d->title},
+				{"advancement",    d->advancement},
 				{"items",          items}}.dump());
 		} catch (const std::exception& e) { route::logErr("GET /api/filler-lists/:id", e); route::err(res, 500, e.what()); }
 	});

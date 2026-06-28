@@ -322,18 +322,8 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 								const auto& meta = json::parse(r->body)["MediaContainer"]["Metadata"];
 								if (meta.is_array() && !meta.empty()) {
 									std::string plex_id = meta[0]["ratingKey"].get<std::string>();
-									int64_t now = static_cast<int64_t>(std::time(nullptr));
-									SQLite::Statement ul(db_.get(), R"(
-										INSERT INTO plex_list_link
-											(list_type, list_id, source_id, external_id, plex_type, last_synced_at)
-										VALUES ('playlist',?,?,?,'playlist',?)
-										ON CONFLICT(list_type, list_id) DO UPDATE SET
-											source_id = excluded.source_id, external_id = excluded.external_id,
-											plex_type = excluded.plex_type, last_synced_at = excluded.last_synced_at
-									)");
-									ul.bind(1, playlist_id); ul.bind(2, source_id);
-									ul.bind(3, plex_id); ul.bind(4, now);
-									ul.exec();
+									PlaylistRepository(db_).upsertPlexLink(
+										"playlist", playlist_id, source_id, plex_id, "playlist");
 									result["plex_playlist_id"] = plex_id;
 								}
 							} catch (...) {}

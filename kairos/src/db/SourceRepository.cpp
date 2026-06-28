@@ -133,3 +133,22 @@ std::optional<std::string> SourceRepository::samplePath(const std::string& sourc
 
     return std::nullopt;
 }
+
+std::vector<SourceRepository::SourceBasicRow> SourceRepository::listSourcesBasic() {
+    SQLite::Statement q(db_.get(),
+        "SELECT source_id, source_type, display_name FROM media_source ORDER BY display_name");
+    std::vector<SourceBasicRow> rows;
+    while (q.executeStep())
+        rows.push_back({q.getColumn(0).getString(), q.getColumn(1).getString(),
+                        q.getColumn(2).getString()});
+    return rows;
+}
+
+std::optional<SourceRepository::SourceMappingRow>
+SourceRepository::getSourceMapping(const std::string& kairos_id) {
+    SQLite::Statement q(db_.get(),
+        "SELECT source_id, external_id FROM source_mapping WHERE kairos_id = ? LIMIT 1");
+    q.bind(1, kairos_id);
+    if (!q.executeStep()) return std::nullopt;
+    return SourceMappingRow{q.getColumn(0).getString(), q.getColumn(1).getString()};
+}

@@ -57,7 +57,6 @@ export class ChannelDetailStore {
   painting:    boolean = false
   paintVal:    boolean = true
 
-  pickerOpen:        boolean               = false
   pickerQuery:       string                = ''
   pickerSeasonFilter: string              = ''
   pickerDurationMax:  string              = ''
@@ -96,10 +95,7 @@ export class ChannelDetailStore {
   bulkErr:         string | null = null
 
   openSections: Record<string, boolean> = { schedule: true, timing: true, playback: false, content: true, filler: false, bumpers: false }
-  modalOpen:          boolean = false
   showHints:          boolean = true
-  fillerOverlayOpen:         boolean = false
-  bumperOverlayOpen:         boolean = false
   channelFillerOverlayOpen:  boolean = false
   channelBumperOverlayOpen:  boolean = false
 
@@ -108,7 +104,6 @@ export class ChannelDetailStore {
   selectedFillerItemId:  number | null                     = null
   selectedBumperSlot:    'intro' | 'outro' | 'interstitial' | null = null
 
-  fillerPickerOpen: boolean      = false
   fillerSaving:     boolean      = false
 
   channelFillerSaving: boolean        = false
@@ -222,7 +217,7 @@ export class ChannelDetailStore {
         const payload = blockToDraft(b)
 
         if (isNew) {
-          const res = await api.createBlock(channelId, payload as any)
+          const res = await api.createBlock(channelId, payload)
           const realId = res.block_id
           idMap[b.block_id] = realId
           for (const c of b.content) {
@@ -256,7 +251,7 @@ export class ChannelDetailStore {
           }
         } else {
           const realId = b.block_id
-          await api.updateBlock(channelId, realId, payload as any)
+          await api.updateBlock(channelId, realId, payload)
           const savedBlock = this.savedBlocks.find(s => s.block_id === realId)
           if (savedBlock) {
             const toRemoveContent = savedBlock.content.filter(c => !b.content.some(dc => dc.id === c.id && dc.id > 0))
@@ -466,8 +461,6 @@ export class ChannelDetailStore {
     this.draftSlots            = (block.slots ?? []).map(s => ({ ...s, queue: [...s.queue] }))
     this.contentDirty          = false
     this.saveErr               = null
-    this.pickerOpen            = false
-    this.fillerPickerOpen      = false
     this.activeBlockTab        = 'content'
     this.selectedContentItemId = null
     this.selectedFillerItemId  = null
@@ -491,7 +484,6 @@ export class ChannelDetailStore {
     this.draftSlots            = []
     this.contentDirty          = false
     this.saveErr               = null
-    this.pickerOpen            = false
     this.activeBlockTab        = 'content'
     this.selectedContentItemId = null
     this.selectedFillerItemId  = null
@@ -503,8 +495,6 @@ export class ChannelDetailStore {
     this.editing               = null
     this.isNewMode             = false
     this.editingSlotId         = null
-    this.pickerOpen            = false
-    this.fillerPickerOpen      = false
     this.draftContent          = []
     this.draftFillerEntries    = []
     this.draftSlots            = []
@@ -828,19 +818,51 @@ export class ChannelDetailStore {
     }
     runInAction(() => {
       this.draftFillerEntries = [...this.draftFillerEntries, entry]
-      this.fillerPickerOpen   = false
       this.contentDirty       = true
     })
   }
 
-  updateBlockFiller(channelId: string, blockId: string, entryId: number, patch: { advancement?: FillerEntryAdvancement; weight?: number }) {
+  updateBlockFiller(entryId: number, patch: { advancement?: FillerEntryAdvancement; weight?: number }) {
     this.draftFillerEntries = this.draftFillerEntries.map(e => e.id === entryId ? { ...e, ...patch } : e)
     this.contentDirty = true
   }
 
-  removeBlockFiller(channelId: string, blockId: string, entryId: number) {
+  removeBlockFiller(entryId: number) {
     this.draftFillerEntries = this.draftFillerEntries.filter(e => e.id !== entryId)
     this.contentDirty = true
+  }
+
+  setBumperSlot(slot: 'intro' | 'outro' | 'interstitial', content_type: string, content_id: string) {
+    if (slot === 'intro') {
+      this.draft = { ...this.draft, intro_content_type: content_type, intro_content_id: content_id }
+    } else if (slot === 'outro') {
+      this.draft = { ...this.draft, outro_content_type: content_type, outro_content_id: content_id }
+    } else {
+      this.draft = { ...this.draft, interstitial_content_type: content_type, interstitial_content_id: content_id }
+    }
+    this.selectedBumperSlot = null
+  }
+
+  clearBumperSlot(slot: 'intro' | 'outro' | 'interstitial') {
+    if (slot === 'intro') {
+      this.draft = { ...this.draft, intro_content_type: '', intro_content_id: '' }
+    } else if (slot === 'outro') {
+      this.draft = { ...this.draft, outro_content_type: '', outro_content_id: '' }
+    } else {
+      this.draft = { ...this.draft, interstitial_content_type: '', interstitial_content_id: '' }
+    }
+  }
+
+  getBumperSlotContentId(slot: 'intro' | 'outro' | 'interstitial'): string {
+    return slot === 'intro' ? this.draft.intro_content_id
+         : slot === 'outro' ? this.draft.outro_content_id
+         :                    this.draft.interstitial_content_id
+  }
+
+  getBumperSlotContentType(slot: 'intro' | 'outro' | 'interstitial'): string {
+    return slot === 'intro' ? this.draft.intro_content_type
+         : slot === 'outro' ? this.draft.outro_content_type
+         :                    this.draft.interstitial_content_type
   }
 
   // ── Slot draft mutations (timeslot blocks) ───────────────────────────────────
@@ -1110,7 +1132,7 @@ export class ChannelDetailStore {
 
   openPicker() {
     clearTimeout(_debounce)
-    this.pickerOpen      = true; this.pickerQuery = ''; this.pickerSeasonFilter = ''
+    this.pickerQuery = ''; this.pickerSeasonFilter = ''
     this.filterRules     = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.expandedShowId  = null; this.expandedSeasons = []
     this.pickerShows     = []; this.pickerMovies = []; this.pickerEpisodes = []
@@ -1123,7 +1145,7 @@ export class ChannelDetailStore {
 
   closePicker() {
     clearTimeout(_debounce)
-    this.pickerOpen  = false; this.pickerQuery = ''; this.pickerSeasonFilter = ''
+    this.pickerQuery = ''; this.pickerSeasonFilter = ''
     this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
     this.expandedShowId = null
     this.pickerShows = []; this.pickerMovies = []; this.pickerEpisodes = []

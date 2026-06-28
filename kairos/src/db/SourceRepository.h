@@ -42,6 +42,12 @@ public:
     // Sample a raw file path for a given source (for path-mapping UI).
     std::optional<std::string> samplePath(const std::string& source_id);
 
+    struct SourceMappingRow { std::string source_id, external_id; };
+    std::optional<SourceMappingRow> getSourceMapping(const std::string& kairos_id);
+
+    struct SourceBasicRow { std::string source_id, source_type, display_name; };
+    std::vector<SourceBasicRow> listSourcesBasic();
+
 private:
     Database& db_;
 };

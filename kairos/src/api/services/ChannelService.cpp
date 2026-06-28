@@ -1,10 +1,8 @@
 #include "ChannelService.h"
 #include "../RouteHelpers.h"
 #include "../ScheduleCache.h"
-#include "../../conf/ConfStore.h"
 #include "../../db/ChannelRepository.h"
 #include "../../db/ChannelSerializer.h"
-#include "../../db/Database.h"
 #include "../../log/LogBuffer.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>

@@ -1,7 +1,9 @@
 #include "RuleEngine.h"
 #include "../db/BlockRepository.h"
 #include "../db/ContentRepository.h"
+#include "../db/CursorRepository.h"
 #include "../db/Database.h"
+#include "../db/TimeslotRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -407,7 +409,7 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
                                                     const Block& block,
                                                     std::time_t before_time) {
     // Peek-only: advance happens in a copy that is never persisted.
-    CursorState state = CursorState::loadFromDB(db_, channel_id);
+    CursorState state = CursorRepository(db_).load(channel_id);
     Xoshiro256 dummy_rng(0);
     return advanceAndGet(channel_id, block, before_time, state, dummy_rng);
 }
@@ -1789,20 +1791,7 @@ void RuleEngine::scheduleTimeslotSlot(
             }
 
             if (is_complete) {
-                // Permanently remove the exhausted entry and compact the queue.
-                SQLite::Statement del(db_.get(),
-                    "DELETE FROM timeslot_slot_queue WHERE entry_id=?");
-                del.bind(1, entry.entry_id); del.exec();
-                SQLite::Statement renum(db_.get(), R"(
-                    UPDATE timeslot_slot_queue
-                    SET queue_index = (
-                        SELECT COUNT(*) FROM timeslot_slot_queue t2
-                        WHERE t2.slot_id = timeslot_slot_queue.slot_id
-                          AND t2.queue_index < timeslot_slot_queue.queue_index
-                    )
-                    WHERE slot_id = ?
-                )");
-                renum.bind(1, slot.slot_id); renum.exec();
+                TimeslotRepository(db_).removeExhaustedQueueEntry(entry.entry_id, slot.slot_id);
                 // sc.queue_pos unchanged: next entry has shifted down to this index.
                 sc.episode_pos = 0;
                 ctx.state.setSlotCursor(slot.slot_id, sc.queue_pos, sc.episode_pos);
@@ -1946,11 +1935,11 @@ void RuleEngine::markPlayed(const std::string& channel_id, const std::string& bl
     if (!block_id.empty() && channelAdvanceMode(channel_id) == "on_play") {
         auto b = blocks_.loadBlock(block_id);
         if (b) {
-            CursorState cs = CursorState::loadFromDB(db_, channel_id);
+            CursorState cs = CursorRepository(db_).load(channel_id);
             Xoshiro256 rng(std::hash<std::string>{}(channel_id + block_id)
                            ^ static_cast<uint64_t>(std::time(nullptr)));
             advanceAndGet(channel_id, *b, std::time(nullptr), cs, rng);
-            cs.applyToDB(db_, channel_id);
+            CursorRepository(db_).apply(channel_id, cs);
         }
     }
 

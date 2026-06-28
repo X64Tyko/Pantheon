@@ -56,6 +56,12 @@ export function availablePickerTabs(t: BlockType): PickerTab[] {
   return ['shows', 'episodes', 'movies', 'playlists']
 }
 
+export function fmtMs(ms: number): string {
+  const m = Math.round(ms / 60000)
+  const h = Math.floor(m / 60)
+  return h > 0 ? `${h}h ${m % 60}m` : `${m}m`
+}
+
 export function normalizeBlock(b: Block): Block {
   return {
     ...b,

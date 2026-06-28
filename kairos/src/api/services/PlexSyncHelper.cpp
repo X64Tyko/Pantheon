@@ -1,10 +1,10 @@
 #include "PlexSyncHelper.h"
 #include "../RouteHelpers.h"
 #include "../../db/Database.h"
+#include "../../db/PlaylistRepository.h"
 #include "../../source/SyncManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
-#include <ctime>
 
 using json = nlohmann::json;
 
@@ -54,19 +54,7 @@ void syncPlexListItems(
 			ins.exec();
 		}
 
-		int64_t now = static_cast<int64_t>(std::time(nullptr));
-		SQLite::Statement ul(db.get(), R"(
-			INSERT INTO plex_list_link (list_type, list_id, source_id, external_id, plex_type, last_synced_at)
-			VALUES (?,?,?,?,?,?)
-			ON CONFLICT(list_type, list_id) DO UPDATE SET
-				source_id      = excluded.source_id,
-				external_id    = excluded.external_id,
-				plex_type      = excluded.plex_type,
-				last_synced_at = excluded.last_synced_at
-		)");
-		ul.bind(1, list_type); ul.bind(2, list_id); ul.bind(3, source_id);
-		ul.bind(4, external_id); ul.bind(5, plex_type); ul.bind(6, now);
-		ul.exec();
+		PlaylistRepository(db).upsertPlexLink(list_type, list_id, source_id, external_id, plex_type);
 
 		txn.commit();
 	} catch (const std::exception& e) { route::err(res, 500, e.what()); return; }

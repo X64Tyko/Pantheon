@@ -21,6 +21,9 @@ public:
     void        deleteQueueEntry(const std::string& entry_id);
     void        reorderQueueEntries(const std::string& slot_id, const std::vector<std::string>& ordered_ids);
 
+    // Remove a completed queue entry and compact the remaining queue_index values.
+    void removeExhaustedQueueEntry(const std::string& entry_id, const std::string& slot_id);
+
     // Validation
     bool slotBelongsToBlock(const std::string& slot_id, const std::string& block_id);
     bool entryBelongsToSlot(const std::string& entry_id, const std::string& slot_id);

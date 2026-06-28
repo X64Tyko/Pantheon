@@ -176,3 +176,16 @@ void ChannelRepository::removeFillerEntry(int id) {
 	SQLite::Statement s(db_.get(), "DELETE FROM channel_filler_entry WHERE id = ?");
 	s.bind(1, id); s.exec();
 }
+
+std::string ChannelRepository::getAdvanceMode(const std::string& channel_id) {
+	SQLite::Statement q(db_.get(), "SELECT advance_mode FROM channel WHERE channel_id=?");
+	q.bind(1, channel_id);
+	return q.executeStep() ? q.getColumn(0).getString() : "";
+}
+
+std::optional<std::string> ChannelRepository::getAnchorHashes(const std::string& channel_id) {
+	SQLite::Statement q(db_.get(), "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+	q.bind(1, channel_id);
+	if (!q.executeStep() || q.getColumn(0).isNull()) return std::nullopt;
+	return q.getColumn(0).getString();
+}

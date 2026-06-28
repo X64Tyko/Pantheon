@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
-import type { Channel, FillerEntryAdvancement, FillerSelectionMode, Show, Movie, Playlist, EpisodeSearchResult } from '../api/types'
+import type { Channel, FillerEntryAdvancement, FillerSelectionMode } from '../api/types'
 import { BLOCK_META, FILLER_ADV_OPTS, FILLER_SEL_OPTS } from './constants'
 import { inputStyle, filterInputStyle } from './styles'
-import { api } from '../api/client'
 import type { ChannelDetailStore } from './store'
 import { ShowMediaTile, MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty, LoadMoreSentinel } from './BrowserTiles'
+import { useBrowserSearch } from './useBrowserSearch'
 
 type FillerTab = 'shows' | 'movies' | 'episodes' | 'playlists'
 
@@ -14,90 +14,23 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
   channel:   Channel
   store:     ChannelDetailStore
 }) {
-  const [tab,         setTab]         = useState<FillerTab>('shows')
-  const [query,       setQuery]       = useState('')
-  const [maxDur,      setMaxDur]      = useState('')
-  const [sFilter,     setSFilter]     = useState('')
-  const [eps,           setEps]           = useState<EpisodeSearchResult[]>([])
-  const [epsLoading,    setEpsLoading]    = useState(false)
-  const [epsHasMore,    setEpsHasMore]    = useState(false)
-  const [epsLoadingMore,setEpsLoadingMore]= useState(false)
-
-  const [shows,            setShows]            = useState<Show[]>([])
-  const [showsLoading,     setShowsLoading]     = useState(false)
-  const [showsTotal,       setShowsTotal]       = useState(0)
-  const [showsLoadingMore, setShowsLoadingMore] = useState(false)
-  const [movies,           setMovies]           = useState<Movie[]>([])
-  const [moviesLoading,    setMoviesLoading]    = useState(false)
-  const [moviesTotal,      setMoviesTotal]      = useState(0)
-  const [moviesLoadingMore,setMoviesLoadingMore]= useState(false)
-  const [playlists,        setPlaylists]        = useState<Playlist[]>([])
-  const [playlistLoading,  setPlaylistLoading]  = useState(false)
+  const [tab,     setTab]     = useState<FillerTab>('shows')
+  const [query,   setQuery]   = useState('')
+  const [maxDur,  setMaxDur]  = useState('')
+  const [sFilter, setSFilter] = useState('')
 
   const { infoItem, setInfoItem, infoDetail, infoSeasons, detailLoading } = useDetailPanel()
+
+  const {
+    shows, showsTotal, showsLoadingMore, loadMoreShows,
+    movies, moviesTotal, moviesLoadingMore, loadMoreMovies,
+    eps, epsHasMore, epsLoadingMore, loadMoreEps,
+    lists: playlists, loading,
+  } = useBrowserSearch(tab, query, sFilter)
 
   const entries  = channel.default_filler_entries
   const selMode  = channel.default_filler_selection
   const showWeight = selMode === 'weighted'
-
-  useEffect(() => {
-    const ctrl = new AbortController()
-    if (tab === 'shows') {
-      setShowsLoading(true); setShowsTotal(0)
-      api.getShows({ limit: 80, q: query || undefined })
-        .then(r => { if (!ctrl.signal.aborted) { setShows(r.items); setShowsTotal(r.total) } })
-        .catch(() => {})
-        .finally(() => { if (!ctrl.signal.aborted) setShowsLoading(false) })
-    } else if (tab === 'movies') {
-      setMoviesLoading(true); setMoviesTotal(0)
-      api.getMovies({ limit: 80, q: query || undefined })
-        .then(r => { if (!ctrl.signal.aborted) { setMovies(r.items); setMoviesTotal(r.total) } })
-        .catch(() => {})
-        .finally(() => { if (!ctrl.signal.aborted) setMoviesLoading(false) })
-    } else if (tab === 'episodes') {
-      setEpsLoading(true); setEpsHasMore(false)
-      const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
-      api.searchEpisodes({ q: query || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 })
-        .then(r => { if (!ctrl.signal.aborted) { setEps(r.items); setEpsHasMore(r.items.length >= 40) } })
-        .catch(() => {})
-        .finally(() => { if (!ctrl.signal.aborted) setEpsLoading(false) })
-    } else {
-      setPlaylistLoading(true)
-      api.getPlaylists()
-        .then(r => { if (!ctrl.signal.aborted) setPlaylists(r) })
-        .catch(() => {})
-        .finally(() => { if (!ctrl.signal.aborted) setPlaylistLoading(false) })
-    }
-    return () => ctrl.abort()
-  }, [tab, query, sFilter])
-
-  const loadMoreShows = () => {
-    if (showsLoadingMore || shows.length >= showsTotal) return
-    setShowsLoadingMore(true)
-    api.getShows({ limit: 80, offset: shows.length, q: query || undefined })
-      .then(r => { setShows(s => [...s, ...r.items]); setShowsTotal(r.total) })
-      .catch(() => {})
-      .finally(() => setShowsLoadingMore(false))
-  }
-
-  const loadMoreMovies = () => {
-    if (moviesLoadingMore || movies.length >= moviesTotal) return
-    setMoviesLoadingMore(true)
-    api.getMovies({ limit: 80, offset: movies.length, q: query || undefined })
-      .then(r => { setMovies(m => [...m, ...r.items]); setMoviesTotal(r.total) })
-      .catch(() => {})
-      .finally(() => setMoviesLoadingMore(false))
-  }
-
-  const loadMoreEps = () => {
-    if (epsLoadingMore || !epsHasMore) return
-    setEpsLoadingMore(true)
-    const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
-    api.searchEpisodes({ q: query || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40, offset: eps.length })
-      .then(r => { setEps(e => [...e, ...r.items]); setEpsHasMore(r.items.length >= 40) })
-      .catch(() => {})
-      .finally(() => setEpsLoadingMore(false))
-  }
 
   const isAdded = (ct: string, cid: string, sf?: number) =>
     entries.some(e => e.content_type === ct && e.content_id === cid &&
@@ -107,7 +40,7 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
     const sf = params.season_filter ?? undefined
     if (isAdded(params.content_type, params.content_id, sf as number | undefined)) return
     store.addChannelFiller(channelId, {
-      content_type: params.content_type as any,
+      content_type: params.content_type,
       content_id:   params.content_id,
       title:        params.title,
       advancement:  'sized',
@@ -115,8 +48,6 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
       season_filter: sf,
     })
   }
-
-  const isLoading = (tab === 'shows' && showsLoading) || (tab === 'movies' && moviesLoading) || (tab === 'episodes' && epsLoading) || (tab === 'playlists' && playlistLoading)
 
   const gridStyle: React.CSSProperties = {
     display: 'grid',
@@ -186,7 +117,7 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
               </div>
 
               <div style={{ flex: 1, overflow: 'auto' }} className="scrollbar-dark">
-                {isLoading ? (
+                {loading ? (
                   <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
                 ) : tab === 'shows' ? (
                   shows.length === 0 ? <BrowserEmpty /> : (

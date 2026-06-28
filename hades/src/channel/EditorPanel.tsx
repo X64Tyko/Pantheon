@@ -88,7 +88,6 @@ const SelectedItemSection = observer(function SelectedItemSection({ channelId, s
   if (tab === 'filler' && store.selectedFillerItemId !== null) {
     const entry   = store.draftFillerEntries.find(e => e.id === store.selectedFillerItemId)
     if (!entry) return null
-    const blockId = store.editing?.block_id ?? ''
 
     return (
       <div style={{ padding: '10px 12px 12px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
@@ -104,7 +103,7 @@ const SelectedItemSection = observer(function SelectedItemSection({ channelId, s
             <div style={{ fontSize: 9, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 3 }}>ADVANCEMENT</div>
             <select
               value={entry.advancement}
-              onChange={e => store.updateBlockFiller(channelId, blockId, entry.id, { advancement: e.target.value as FillerEntryAdvancement })}
+              onChange={e => store.updateBlockFiller(entry.id, { advancement: e.target.value as FillerEntryAdvancement })}
               style={{ ...inputStyle, width: '100%', fontSize: 11, padding: '4px 7px' }}
             >
               <option value="sequential">Sequential</option>
@@ -117,7 +116,7 @@ const SelectedItemSection = observer(function SelectedItemSection({ channelId, s
             <input
               type="number" min={1}
               value={entry.weight}
-              onChange={e => store.updateBlockFiller(channelId, blockId, entry.id, { weight: Math.max(1, Number(e.target.value)) })}
+              onChange={e => store.updateBlockFiller(entry.id, { weight: Math.max(1, Number(e.target.value)) })}
               style={{ ...inputStyle, width: '100%', fontSize: 11, padding: '4px 7px' }}
             />
           </div>

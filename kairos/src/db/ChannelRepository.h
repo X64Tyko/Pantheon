@@ -41,6 +41,9 @@ public:
 	void updateFillerEntryField(int id, const std::string& col, int val);
 	void removeFillerEntry(int id);
 
+	std::string              getAdvanceMode(const std::string& channel_id);
+	std::optional<std::string> getAnchorHashes(const std::string& channel_id);
+
 private:
 	Database& db_;
 

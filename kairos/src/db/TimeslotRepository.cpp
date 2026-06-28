@@ -175,3 +175,20 @@ bool TimeslotRepository::entryBelongsToSlot(const std::string& entry_id,
     q.bind(1, entry_id); q.bind(2, slot_id);
     return q.executeStep();
 }
+
+void TimeslotRepository::removeExhaustedQueueEntry(const std::string& entry_id,
+                                                    const std::string& slot_id) {
+    { SQLite::Statement s(db_.get(),
+          "DELETE FROM timeslot_slot_queue WHERE entry_id=?");
+      s.bind(1, entry_id); s.exec(); }
+    SQLite::Statement renum(db_.get(), R"(
+        UPDATE timeslot_slot_queue
+        SET queue_index = (
+            SELECT COUNT(*) FROM timeslot_slot_queue t2
+            WHERE t2.slot_id = timeslot_slot_queue.slot_id
+              AND t2.queue_index < timeslot_slot_queue.queue_index
+        )
+        WHERE slot_id = ?
+    )");
+    renum.bind(1, slot_id); renum.exec();
+}

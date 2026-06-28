@@ -2,8 +2,7 @@
 #include "../RouteHelpers.h"
 #include "../../arr/ArrServiceFactory.h"
 #include "../../arr/IArrService.h"
-#include "../../db/Database.h"
-#include <SQLiteCpp/SQLiteCpp.h>
+#include "../../db/ConfigRepository.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -15,32 +14,23 @@ ArrService::ArrService(const ServiceContext& ctx) : db_(ctx.db) {}
 void ArrService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/config/arr", [this](const Req&, Res& res) {
-		auto getVal = [&](const char* k) -> std::string {
-			SQLite::Statement q(db_.get(), "SELECT value FROM app_config WHERE key = ?");
-			q.bind(1, std::string(k));
-			return q.executeStep() ? q.getColumn(0).getString() : "";
-		};
+		ConfigRepository cfg(db_);
 		route::ok(res, json{
-			{"sonarr_url",     getVal("sonarr_url")},
-			{"sonarr_api_key", getVal("sonarr_api_key")},
-			{"radarr_url",     getVal("radarr_url")},
-			{"radarr_api_key", getVal("radarr_api_key")},
+			{"sonarr_url",     cfg.getValue("sonarr_url")},
+			{"sonarr_api_key", cfg.getValue("sonarr_api_key")},
+			{"radarr_url",     cfg.getValue("radarr_url")},
+			{"radarr_api_key", cfg.getValue("radarr_api_key")},
 		}.dump());
 	});
 
 	svr.Patch("/api/config/arr", [this](const Req& req, Res& res) {
 		try {
 			auto b = json::parse(req.body);
-			auto setVal = [&](const char* k, const std::string& v) {
-				SQLite::Statement s(db_.get(),
-					"INSERT INTO app_config (key, value) VALUES (?,?) "
-					"ON CONFLICT(key) DO UPDATE SET value = excluded.value");
-				s.bind(1, std::string(k)); s.bind(2, v); s.exec();
-			};
-			if (b.contains("sonarr_url"))     setVal("sonarr_url",     b["sonarr_url"]);
-			if (b.contains("sonarr_api_key")) setVal("sonarr_api_key", b["sonarr_api_key"]);
-			if (b.contains("radarr_url"))     setVal("radarr_url",     b["radarr_url"]);
-			if (b.contains("radarr_api_key")) setVal("radarr_api_key", b["radarr_api_key"]);
+			ConfigRepository cfg(db_);
+			if (b.contains("sonarr_url"))     cfg.setValue("sonarr_url",     b["sonarr_url"]);
+			if (b.contains("sonarr_api_key")) cfg.setValue("sonarr_api_key", b["sonarr_api_key"]);
+			if (b.contains("radarr_url"))     cfg.setValue("radarr_url",     b["radarr_url"]);
+			if (b.contains("radarr_api_key")) cfg.setValue("radarr_api_key", b["radarr_api_key"]);
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("PATCH /api/config/arr", e); route::err(res, 400, e.what());

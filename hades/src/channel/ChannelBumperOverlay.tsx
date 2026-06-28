@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
 import { api } from '../api/client'
 import { inputStyle, filterInputStyle } from './styles'
-import type { BumperContentType, BumperMode, ChannelBumper, EpisodeSearchResult, Playlist, Show } from '../api/types'
+import type { BumperContentType, BumperMode, ChannelBumper } from '../api/types'
 import type { ChannelDetailStore } from './store'
 import { MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty, LoadMoreSentinel } from './BrowserTiles'
 import type { InfoItem, AddContentParams } from './BrowserTiles'
+import { useBrowserSearch } from './useBrowserSearch'
 
 type BumperTab = 'shows' | 'playlists' | 'episodes'
 
@@ -13,18 +14,10 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
   channelId: string
   store:     ChannelDetailStore
 }) {
-  const [tab,          setTab]          = useState<BumperTab>('shows')
-  const [q,            setQ]            = useState('')
-  const [sFilter,      setSFilter]      = useState('')
-  const [epsDurMax,    setEpsDurMax]    = useState('')
-  const [shows,        setShows]        = useState<Show[]>([])
-  const [showsTotal,   setShowsTotal]   = useState(0)
-  const [showsLoadMore,setShowsLoadMore]= useState(false)
-  const [lists,        setLists]        = useState<Playlist[]>([])
-  const [eps,          setEps]          = useState<EpisodeSearchResult[]>([])
-  const [epsHasMore,   setEpsHasMore]   = useState(false)
-  const [epsLoadMore,  setEpsLoadMore]  = useState(false)
-  const [loading,      setLoading]      = useState(false)
+  const [tab,       setTab]       = useState<BumperTab>('shows')
+  const [q,         setQ]         = useState('')
+  const [sFilter,   setSFilter]   = useState('')
+  const [epsDurMax, setEpsDurMax] = useState('')
 
   const [bumpers,   setBumpers]   = useState<ChannelBumper[]>([])
   const [bumperErr, setBumperErr] = useState('')
@@ -35,47 +28,15 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
 
   const { infoItem, setInfoItem, infoDetail, infoSeasons, detailLoading } = useDetailPanel()
 
+  const {
+    shows, showsTotal, showsLoadingMore: showsLoadMore, loadMoreShows,
+    eps, epsHasMore, epsLoadingMore: epsLoadMore, loadMoreEps,
+    lists, loading,
+  } = useBrowserSearch(tab, q, sFilter, !!infoItem)
+
   useEffect(() => {
     api.getBumpers(channelId).then(setBumpers).catch(() => {})
   }, [channelId])
-
-  useEffect(() => {
-    if (infoItem) return
-    const ctrl = new AbortController()
-    setLoading(true)
-    const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
-    let p: Promise<void>
-    if (tab === 'shows') {
-      setShowsTotal(0)
-      p = api.getShows({ limit: 80, q: q || undefined }).then(r => { if (!ctrl.signal.aborted) { setShows(r.items); setShowsTotal(r.total); setLoading(false) } })
-    } else if (tab === 'playlists') {
-      p = api.getPlaylists().then(r => { if (!ctrl.signal.aborted) { setLists(r); setLoading(false) } })
-    } else {
-      setEpsHasMore(false)
-      p = api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40 }).then(r => { if (!ctrl.signal.aborted) { setEps(r.items); setEpsHasMore(r.items.length >= 40); setLoading(false) } })
-    }
-    p.catch(() => { if (!ctrl.signal.aborted) setLoading(false) })
-    return () => ctrl.abort()
-  }, [tab, q, sFilter, infoItem])
-
-  const loadMoreShows = () => {
-    if (showsLoadMore || shows.length >= showsTotal) return
-    setShowsLoadMore(true)
-    api.getShows({ limit: 80, offset: shows.length, q: q || undefined })
-      .then(r => { setShows(s => [...s, ...r.items]); setShowsTotal(r.total) })
-      .catch(() => {})
-      .finally(() => setShowsLoadMore(false))
-  }
-
-  const loadMoreEps = () => {
-    if (epsLoadMore || !epsHasMore) return
-    setEpsLoadMore(true)
-    const season = sFilter.trim() !== '' ? parseInt(sFilter, 10) : undefined
-    api.searchEpisodes({ q: q || undefined, season: Number.isFinite(season) ? season : undefined, limit: 40, offset: eps.length })
-      .then(r => { setEps(e => [...e, ...r.items]); setEpsHasMore(r.items.length >= 40) })
-      .catch(() => {})
-      .finally(() => setEpsLoadMore(false))
-  }
 
   async function addBumper(item: AddContentParams) {
     setSaving(true); setBumperErr('')
@@ -114,7 +75,7 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
           </div>
         </div>
         <button
-          onClick={() => addBumper({ content_type: ct as any, content_id: cid, title })}
+          onClick={() => addBumper({ content_type: ct, content_id: cid, title })}
           disabled={saving}
           style={{ padding: '6px 14px', border: 'none', borderRadius: 6, background: 'var(--hds-violet)', color: 'oklch(0.15 0.02 286)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.5 : 1 }}
         >

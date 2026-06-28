@@ -20,6 +20,100 @@ struct FillerItem {
     int64_t     duration_ms = 0;
 };
 
+// ── API-layer result structs ──────────────────────────────────────────────────
+
+struct LibraryRow {
+    std::string library_id, source_id, display_name, library_type;
+    std::string source_name, source_type;
+};
+
+struct ShowRow {
+    std::string show_id, title, content_rating;
+    int episode_count = 0;
+    std::optional<int> year;
+};
+
+struct ShowListResult {
+    std::vector<ShowRow> items;
+    int total = 0;
+};
+
+struct SeasonRow {
+    int number = 0;
+    std::string name;
+};
+
+struct ShowDetail {
+    std::string show_id, title, content_rating, overview, studio, status;
+    std::string genres, thumb, art, imdb_id, tvdb_id, tmdb_id;
+    std::string originally_available_at;
+    std::optional<int>    year;
+    std::optional<double> audience_rating;
+    bool locked = false;
+    int  episode_count = 0;
+    std::string labels, network, actors, countries, collections;
+    std::string external_id, source_id, source_base_url;
+    std::vector<SeasonRow> seasons;
+};
+
+struct EpisodeRow {
+    std::string episode_id;
+    int season = 0, episode = 0;
+    std::string title;
+    int64_t duration_ms = 0;
+    std::string overview, air_date, thumb;
+};
+
+struct EpisodeSearchRow {
+    std::string episode_id;
+    int season = 0, episode = 0;
+    std::string title;
+    int64_t duration_ms = 0;
+    std::string show_id, show_title;
+};
+
+struct MovieRow {
+    std::string movie_id, title, content_rating;
+    int64_t duration_ms = 0;
+    std::optional<int> year;
+};
+
+struct MovieListResult {
+    std::vector<MovieRow> items;
+    int total = 0;
+};
+
+struct MovieDetail {
+    std::string movie_id, title, content_rating;
+    int64_t duration_ms = 0;
+    std::optional<int>    year;
+    std::optional<double> audience_rating;
+    bool locked = false;
+    std::string overview, tagline, studio, director, genres, thumb, art, imdb_id, tmdb_id;
+    std::string labels, actors, countries, collections;
+    std::string external_id, source_id, source_base_url;
+};
+
+struct ItemSource {
+    std::string image_path;
+    std::string source_id;
+};
+
+struct ShowSearchParams {
+    int limit = 50, offset = 0;
+    std::string library_id, q, genre, year, content_rating;
+    std::string label, network, actor, country, collection, studio;
+};
+
+struct MovieSearchParams {
+    int limit = 50, offset = 0;
+    std::string library_id, q, genre, year, content_rating;
+    std::string label, actor, country, collection, studio;
+};
+
+struct StrField { std::string col, val; };
+struct IntField { std::string col; int val = 0; };
+
 class ContentRepository {
 public:
     explicit ContentRepository(Database& db);
@@ -72,6 +166,41 @@ public:
 
     // Number of items in a playlist (for cursor wrap-around).
     int getPlaylistItemCount(const std::string& playlist_id);
+
+    // ── API-layer queries (used by ContentService) ────────────────────────────
+
+    std::vector<LibraryRow> listLibraries();
+
+    std::vector<std::string> getMetadataValues(const std::string& field,
+                                                const std::string& type,
+                                                const std::string& library_id);
+
+    ShowListResult  searchShows(const ShowSearchParams& p);
+    MovieListResult searchMovies(const MovieSearchParams& p);
+
+    std::optional<ShowDetail>  getShowDetail(const std::string& show_id);
+    std::optional<MovieDetail> getMovieDetail(const std::string& movie_id);
+
+    void updateShow(const std::string& show_id,
+                    const std::vector<StrField>& str_fields,
+                    const std::vector<IntField>& int_fields);
+    void updateMovie(const std::string& movie_id,
+                     const std::vector<StrField>& str_fields,
+                     const std::vector<IntField>& int_fields);
+
+    std::vector<EpisodeRow>       listEpisodesForShow(const std::string& show_id,
+                                                       const std::string& season_filter = "");
+    std::vector<SeasonRow>        listSeasons(const std::string& show_id);
+    std::vector<EpisodeSearchRow> searchEpisodes(const std::string& show_id,
+                                                  const std::string& q,
+                                                  int season, int limit, int offset);
+
+    std::optional<ItemSource> getShowThumb(const std::string& show_id);
+    std::optional<ItemSource> getShowArt(const std::string& show_id);
+    std::optional<ItemSource> getEpisodeThumb(const std::string& episode_id);
+    std::optional<ItemSource> getMovieThumb(const std::string& movie_id);
+    std::optional<ItemSource> getMovieArt(const std::string& movie_id);
+    std::string               getSourceBaseUrl(const std::string& source_id);
 
     // ── Metadata helpers ──────────────────────────────────────────────────────
 

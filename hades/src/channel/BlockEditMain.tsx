@@ -5,6 +5,7 @@ import DayColumn from './DayColumn'
 import { LibraryBrowser } from './LibraryBrowser'
 import { TimeslotEditor } from './TimeslotEditor'
 import { FillerEntryRow } from './FillerPanel'
+import { DropZone } from './sections'
 import type { AddContentParams } from './BrowserTiles'
 import type { ChannelDetailStore } from './store'
 
@@ -22,46 +23,7 @@ const BUMPER_SLOTS = [
   { key: 'interstitial',  label: 'Interstitial',  hint: 'Plays between episodes' },
 ] as const
 
-type BumperSlotKey = typeof BUMPER_SLOTS[number]['key']
 
-function getBumperTitle(store: ChannelDetailStore, slot: BumperSlotKey): string {
-  return slot === 'intro'       ? store.draft.intro_content_id
-       : slot === 'outro'       ? store.draft.outro_content_id
-       :                          store.draft.interstitial_content_id
-}
-
-function getBumperType(store: ChannelDetailStore, slot: BumperSlotKey): string {
-  return slot === 'intro'       ? store.draft.intro_content_type
-       : slot === 'outro'       ? store.draft.outro_content_type
-       :                          store.draft.interstitial_content_type
-}
-
-function clearBumperSlot(store: ChannelDetailStore, slot: BumperSlotKey) {
-  if (slot === 'intro') {
-    store.setDraft('intro_content_type', '')
-    store.setDraft('intro_content_id', '')
-  } else if (slot === 'outro') {
-    store.setDraft('outro_content_type', '')
-    store.setDraft('outro_content_id', '')
-  } else {
-    store.setDraft('interstitial_content_type', '')
-    store.setDraft('interstitial_content_id', '')
-  }
-}
-
-function assignBumperSlot(store: ChannelDetailStore, slot: BumperSlotKey, params: AddContentParams) {
-  if (slot === 'intro') {
-    store.setDraft('intro_content_type', params.content_type)
-    store.setDraft('intro_content_id', params.content_id)
-  } else if (slot === 'outro') {
-    store.setDraft('outro_content_type', params.content_type)
-    store.setDraft('outro_content_id', params.content_id)
-  } else {
-    store.setDraft('interstitial_content_type', params.content_type)
-    store.setDraft('interstitial_content_id', params.content_id)
-  }
-  store.selectedBumperSlot = null
-}
 
 // ─── Compact week grid ────────────────────────────────────────────────────────
 
@@ -131,36 +93,6 @@ const CompactWeekGrid = observer(function CompactWeekGrid({ channelId, store, co
   )
 })
 
-// ─── Drop zone ────────────────────────────────────────────────────────────────
-
-function DropZone({ label, onDrop }: { label: string; onDrop: () => void }) {
-  const [over, setOver] = useState(false)
-  const counter = useRef(0)
-  return (
-    <div
-      onDragEnter={e => { e.preventDefault(); counter.current++; setOver(true) }}
-      onDragLeave={() => { counter.current--; if (counter.current === 0) setOver(false) }}
-      onDragOver={e => e.preventDefault()}
-      onDrop={e => { e.preventDefault(); counter.current = 0; setOver(false); onDrop() }}
-      style={{
-        borderRadius: 8,
-        border: `1.5px dashed ${over ? 'var(--hds-violet)' : 'oklch(0.55 0.14 292 / 0.35)'}`,
-        background: over ? 'oklch(0.55 0.14 292 / 0.1)' : 'transparent',
-        padding: '11px 14px',
-        textAlign: 'center',
-        fontSize: 9.5,
-        color: over ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-        letterSpacing: '0.12em',
-        transition: 'border-color .1s, background .1s, color .1s',
-        cursor: 'copy',
-        userSelect: 'none',
-      }}
-    >
-      {label}
-    </div>
-  )
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export const BlockEditMain = observer(function BlockEditMain({ channelId, store }: {
@@ -199,7 +131,7 @@ export const BlockEditMain = observer(function BlockEditMain({ channelId, store 
         season_filter: params.season_filter ?? undefined,
       })
     } else if (tab === 'bumpers' && selectedSlot) {
-      assignBumperSlot(store, selectedSlot, params)
+      store.setBumperSlot(selectedSlot, params.content_type, params.content_id)
     } else {
       store.addContent(channelId, params)
     }
@@ -422,9 +354,9 @@ const FillerList = observer(function FillerList({ channelId, store }: { channelI
               <FillerEntryRow
                 entry={entry}
                 showWeight
-                onAdvancement={adv => store.updateBlockFiller(channelId, entry.id.toString(), entry.id, { advancement: adv })}
-                onWeight={w   => store.updateBlockFiller(channelId, entry.id.toString(), entry.id, { weight: w })}
-                onRemove={() => store.removeBlockFiller(channelId, entry.id.toString(), entry.id)}
+                onAdvancement={adv => store.updateBlockFiller(entry.id, { advancement: adv })}
+                onWeight={w   => store.updateBlockFiller(entry.id, { weight: w })}
+                onRemove={() => store.removeBlockFiller(entry.id)}
               />
             </div>
           )
@@ -448,8 +380,8 @@ const BumperList = observer(function BumperList({ store }: { store: ChannelDetai
         </div>
         {BUMPER_SLOTS.map(({ key, label, hint }) => {
           const selected    = store.selectedBumperSlot === key
-          const contentId   = getBumperTitle(store, key)
-          const contentType = getBumperType(store, key)
+          const contentId   = store.getBumperSlotContentId(key)
+          const contentType = store.getBumperSlotContentType(key)
           const assigned    = contentId !== ''
           return (
             <div
@@ -474,7 +406,7 @@ const BumperList = observer(function BumperList({ store }: { store: ChannelDetai
                 )}
                 {assigned && !selected && (
                   <button
-                    onClick={e => { e.stopPropagation(); clearBumperSlot(store, key) }}
+                    onClick={e => { e.stopPropagation(); store.clearBumperSlot(key) }}
                     style={{ background: 'none', border: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '0 2px' }}
                   >×</button>
                 )}

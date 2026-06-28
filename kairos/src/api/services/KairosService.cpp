@@ -1,7 +1,7 @@
 #include "KairosService.h"
 #include "../RouteHelpers.h"
 #include "../../db/BlockRepository.h"
-#include "../../db/Database.h"
+#include "../../db/GroupRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -56,8 +56,7 @@ std::optional<std::pair<std::string, int>> tryMatchTitle(const std::string& titl
 	return std::nullopt;
 }
 
-struct EpRow { std::string ep_id; int season; int ep_num; std::string title; };
-struct Part   { std::string ep_id; int part_num; int ep_idx; };
+struct Part { std::string ep_id; int part_num; int ep_idx; };
 
 json buildGroupingCandidates(const std::vector<EpRow>& eps,
                              const std::unordered_set<std::string>& confirmed_ids) {
@@ -118,29 +117,21 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/shows/:id/groups", [this](const Req& req, Res& res) {
 		auto show_id = req.path_params.at("id");
-		SQLite::Statement q(db_.get(),
-			"SELECT group_id, name, group_type FROM episode_group WHERE show_id=? ORDER BY name");
-		q.bind(1, show_id);
 		json arr = json::array();
-		while (q.executeStep()) {
-			std::string gid = q.getColumn(0).getString();
-			json g = {{"group_id", gid}, {"name", q.getColumn(1).getString()},
-			          {"group_type", q.getColumn(2).getString()}, {"members", json::array()}};
-			SQLite::Statement mq(db_.get(),
-				"SELECT egm.id, egm.episode_id, egm.part_num, e.season, e.episode, e.title "
-				"FROM episode_group_member egm JOIN episode e ON e.episode_id=egm.episode_id "
-				"WHERE egm.group_id=? ORDER BY egm.part_num");
-			mq.bind(1, gid);
-			while (mq.executeStep())
-				g["members"].push_back({
-					{"id",         mq.getColumn(0).getInt()},
-					{"episode_id", mq.getColumn(1).getString()},
-					{"part_num",   mq.getColumn(2).getInt()},
-					{"season",     mq.getColumn(3).getInt()},
-					{"episode",    mq.getColumn(4).getInt()},
-					{"title",      mq.getColumn(5).getString()},
+		for (const auto& g : GroupRepository(db_).listGroups(show_id)) {
+			json members = json::array();
+			for (const auto& m : g.members) {
+				members.push_back({
+					{"id",         m.id},
+					{"episode_id", m.episode_id},
+					{"part_num",   m.part_num},
+					{"season",     m.season},
+					{"episode",    m.episode},
+					{"title",      m.title},
 				});
-			arr.push_back(g);
+			}
+			arr.push_back({{"group_id", g.group_id}, {"name", g.name},
+			               {"group_type", g.group_type}, {"members", members}});
 		}
 		route::ok(res, arr.dump());
 	});
@@ -208,34 +199,15 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/shows/:id/grouping-candidates", [this](const Req& req, Res& res) {
 		try {
 			auto show_id = req.path_params.at("id");
-
-			std::vector<EpRow> eps;
-			{
-				SQLite::Statement q(db_.get(),
-					"SELECT episode_id, season, episode, title FROM episode "
-					"WHERE show_id=? ORDER BY season, episode");
-				q.bind(1, show_id);
-				while (q.executeStep())
-					eps.push_back({q.getColumn(0).getString(), q.getColumn(1).getInt(),
-					               q.getColumn(2).getInt(), q.getColumn(3).getString()});
-			}
-
-			std::unordered_set<std::string> confirmed_ids;
-			{
-				SQLite::Statement q(db_.get(),
-					"SELECT egm.episode_id FROM episode_group_member egm "
-					"JOIN episode_group eg ON eg.group_id = egm.group_id WHERE eg.show_id = ?");
-				q.bind(1, show_id);
-				while (q.executeStep()) confirmed_ids.insert(q.getColumn(0).getString());
-			}
-
+			GroupRepository repo(db_);
+			auto eps          = repo.listEpisodes(show_id);
+			auto confirmed_ids = repo.getConfirmedMemberIds(show_id);
 			json candidates = buildGroupingCandidates(eps, confirmed_ids);
 			std::sort(candidates.begin(), candidates.end(), [](const json& a, const json& b) {
 				int ca = a["confidence"].get<int>(), cb = b["confidence"].get<int>();
 				if (ca != cb) return ca > cb;
 				return a["base_title"].get<std::string>() < b["base_title"].get<std::string>();
 			});
-
 			route::ok(res, json{{"show_id", show_id}, {"candidates", candidates}}.dump());
 		} catch (const std::exception& e) {
 			route::err(res, 500, e.what());
@@ -244,37 +216,12 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/grouping-candidates", [this](const Req&, Res& res) {
 		try {
-			struct ShowRow { std::string show_id; std::string title; };
-			std::vector<ShowRow> shows;
-			{
-				SQLite::Statement q(db_.get(), "SELECT show_id, title FROM show ORDER BY title");
-				while (q.executeStep())
-					shows.push_back({q.getColumn(0).getString(), q.getColumn(1).getString()});
-			}
-
+			GroupRepository repo(db_);
 			json result = json::array();
-			for (const auto& show : shows) {
-				std::vector<EpRow> eps;
-				{
-					SQLite::Statement q(db_.get(),
-						"SELECT episode_id, season, episode, title FROM episode "
-						"WHERE show_id=? ORDER BY season, episode");
-					q.bind(1, show.show_id);
-					while (q.executeStep())
-						eps.push_back({q.getColumn(0).getString(), q.getColumn(1).getInt(),
-						               q.getColumn(2).getInt(), q.getColumn(3).getString()});
-				}
+			for (const auto& show : repo.listShows()) {
+				auto eps = repo.listEpisodes(show.show_id);
 				if (eps.empty()) continue;
-
-				std::unordered_set<std::string> confirmed_ids;
-				{
-					SQLite::Statement q(db_.get(),
-						"SELECT egm.episode_id FROM episode_group_member egm "
-						"JOIN episode_group eg ON eg.group_id = egm.group_id WHERE eg.show_id = ?");
-					q.bind(1, show.show_id);
-					while (q.executeStep()) confirmed_ids.insert(q.getColumn(0).getString());
-				}
-
+				auto confirmed_ids = repo.getConfirmedMemberIds(show.show_id);
 				json candidates = buildGroupingCandidates(eps, confirmed_ids);
 
 				bool has_unconfirmed = false;
@@ -287,14 +234,9 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 					if (ca != cb) return ca > cb;
 					return a["base_title"].get<std::string>() < b["base_title"].get<std::string>();
 				});
-
-				result.push_back({
-					{"show_id",    show.show_id},
-					{"show_title", show.title},
-					{"candidates", candidates},
-				});
+				result.push_back({{"show_id", show.show_id}, {"show_title", show.title},
+				                   {"candidates", candidates}});
 			}
-
 			route::ok(res, result.dump());
 		} catch (const std::exception& e) {
 			route::err(res, 500, e.what());

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../api/client'
 import { imageQueue } from './imageQueue'
+import { SectionLabel } from './SectionLabel'
+import { fmtMs } from './utils'
 import type { Show, Movie, ShowDetail, MovieDetail, EpisodeSearchResult, Playlist } from '../api/types'
 
 const MAX_HOVER_SEASONS = 5
@@ -211,12 +213,6 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
 }) {
   const add = (params: AddContentParams) => { onAdd(params); onBack() }
 
-  const fmtMs = (ms: number) => {
-    const m = Math.round(ms / 60000)
-    const h = Math.floor(m / 60)
-    return h > 0 ? `${h}h ${m % 60}m` : `${m}m`
-  }
-
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -251,7 +247,7 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
               {d?.overview ? <Overview text={d.overview} /> : detailLoading && <OverviewSkeleton />}
 
               <div style={{ marginTop: 12 }}>
-                <DetailSectionLabel>{addLabel}</DetailSectionLabel>
+                <SectionLabel style={{ fontSize: 9.5, letterSpacing: '0.16em', marginBottom: 0 }}>{addLabel}</SectionLabel>
                 {renderAdd ? renderAdd(item, seasons, add) : (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                     <AddBtn onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: null, title: s.title, include_specials: true })}>Add All</AddBtn>
@@ -298,7 +294,7 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
               {d?.overview ? <Overview text={d.overview} /> : detailLoading && <OverviewSkeleton />}
 
               <div style={{ marginTop: 12 }}>
-                <DetailSectionLabel>{addLabel}</DetailSectionLabel>
+                <SectionLabel style={{ fontSize: 9.5, letterSpacing: '0.16em', marginBottom: 0 }}>{addLabel}</SectionLabel>
                 {renderAdd ? renderAdd(item, [], add) : (
                   <div style={{ marginTop: 6 }}>
                     <AddBtn onClick={() => add({ content_type: 'movie', content_id: m.movie_id, title: m.title })}>Add Movie</AddBtn>
@@ -319,7 +315,7 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
               <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.3, marginBottom: 8 }}>{code} — {ep.title}</div>
               {ep.duration_ms > 0 && <div style={{ fontSize: 10.5, color: 'var(--hds-txt-3)', marginBottom: 14 }}>{fmtMs(ep.duration_ms)}</div>}
               <div style={{ marginTop: 4 }}>
-                <DetailSectionLabel>{addLabel}</DetailSectionLabel>
+                <SectionLabel style={{ fontSize: 9.5, letterSpacing: '0.16em', marginBottom: 0 }}>{addLabel}</SectionLabel>
                 {renderAdd ? renderAdd(item, [], add) : (
                   <div style={{ marginTop: 6 }}>
                     <AddBtn onClick={() => add({ content_type: 'episode', content_id: ep.episode_id, title })}>Add Episode</AddBtn>
@@ -338,7 +334,7 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
               <div style={{ fontSize: 10.5, color: 'var(--hds-txt-3)', marginBottom: 3 }}>{pl.item_count} items · {pl.mode === 'show_collection' ? 'Show Collection' : 'In-Order'}</div>
               {pl.total_ms > 0 && <div style={{ fontSize: 10.5, color: 'var(--hds-txt-3)', marginBottom: 14 }}>{fmtMs(pl.total_ms)} total</div>}
               <div style={{ marginTop: 4 }}>
-                <DetailSectionLabel>{addLabel}</DetailSectionLabel>
+                <SectionLabel style={{ fontSize: 9.5, letterSpacing: '0.16em', marginBottom: 0 }}>{addLabel}</SectionLabel>
                 {renderAdd ? renderAdd(item, [], add) : (
                   <div style={{ marginTop: 6 }}>
                     <AddBtn onClick={() => add({ content_type: 'playlist', content_id: pl.playlist_id, title: pl.title })}>Add Playlist</AddBtn>
@@ -460,6 +456,3 @@ function OverviewSkeleton() {
   )
 }
 
-function DetailSectionLabel({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)' }}>{children}</div>
-}

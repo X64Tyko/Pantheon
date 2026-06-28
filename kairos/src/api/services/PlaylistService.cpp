@@ -1,10 +1,9 @@
 #include "PlaylistService.h"
 #include "../RouteHelpers.h"
 #include "PlexSyncHelper.h"
-#include "../../db/Database.h"
 #include "../../db/PlaylistRepository.h"
-#include "../../source/SyncManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include "../../source/SyncManager.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -18,36 +17,22 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/playlists", [this](const Req&, Res& res) {
 		try {
-			SQLite::Statement q(db_.get(), R"(
-				SELECT p.playlist_id, p.title, p.mode,
-				       COUNT(pi.id) AS item_count,
-				       COALESCE(SUM(CASE pi.item_type
-				           WHEN 'episode' THEN e.duration_ms
-				           WHEN 'movie'   THEN m.duration_ms ELSE 0 END), 0) AS total_ms,
-				       pll.source_id, pll.external_id, pll.plex_type, pll.last_synced_at
-				FROM playlist p
-				LEFT JOIN playlist_item pi ON pi.playlist_id = p.playlist_id
-				LEFT JOIN episode e ON pi.item_type = 'episode' AND pi.item_id = e.episode_id
-				LEFT JOIN movie   m ON pi.item_type = 'movie'   AND pi.item_id = m.movie_id
-				LEFT JOIN plex_list_link pll ON pll.list_type = 'playlist' AND pll.list_id = p.playlist_id
-				GROUP BY p.playlist_id ORDER BY p.title
-			)");
 			json result = json::array();
-			while (q.executeStep()) {
+			for (const auto& r : PlaylistRepository(db_).listAll()) {
 				json entry = {
-					{"playlist_id", q.getColumn(0).getString()},
-					{"title",       q.getColumn(1).getString()},
-					{"mode",        q.getColumn(2).getString()},
-					{"item_count",  q.getColumn(3).getInt()},
-					{"total_ms",    q.getColumn(4).getInt64()},
+					{"playlist_id", r.playlist_id},
+					{"title",       r.title},
+					{"mode",        r.mode},
+					{"item_count",  r.item_count},
+					{"total_ms",    r.total_ms},
 				};
-				if (!q.getColumn(5).isNull()) {
+				if (r.plex_link) {
 					entry["plex_link"] = {
-						{"source_id",      q.getColumn(5).getString()},
-						{"external_id",    q.getColumn(6).getString()},
-						{"plex_type",      q.getColumn(7).getString()},
-						{"last_synced_at", q.getColumn(8).isNull()
-							? json(nullptr) : json(q.getColumn(8).getInt64())},
+						{"source_id",      r.plex_link->source_id},
+						{"external_id",    r.plex_link->external_id},
+						{"plex_type",      r.plex_link->plex_type},
+						{"last_synced_at", r.plex_link->last_synced_at
+							? json(*r.plex_link->last_synced_at) : json(nullptr)},
 					};
 				}
 				result.push_back(entry);
@@ -77,50 +62,26 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/playlists/:id", [this](const Req& req, Res& res) {
 		try {
 			auto id = req.path_params.at("id");
-			SQLite::Statement ph(db_.get(),
-				"SELECT playlist_id, title, mode FROM playlist WHERE playlist_id = ?");
-			ph.bind(1, id);
-			if (!ph.executeStep()) { route::err(res, 404, "playlist not found"); return; }
-
-			SQLite::Statement q(db_.get(), R"(
-				SELECT pi.id, pi.position, pi.item_type, pi.item_id,
-				       CASE pi.item_type
-				           WHEN 'episode' THEN s.title || ' S' || PRINTF('%02d',e.season) ||
-				                               'E' || PRINTF('%02d',e.episode) || ' — ' || e.title
-				           WHEN 'movie'   THEN m.title ELSE ''
-				       END AS title,
-				       CASE pi.item_type
-				           WHEN 'episode' THEN e.duration_ms
-				           WHEN 'movie'   THEN m.duration_ms ELSE 0
-				       END AS duration_ms,
-				       e.season, e.episode
-				FROM playlist_item pi
-				LEFT JOIN episode e ON pi.item_type = 'episode' AND pi.item_id = e.episode_id
-				LEFT JOIN show    s ON e.show_id = s.show_id
-				LEFT JOIN movie   m ON pi.item_type = 'movie'   AND pi.item_id = m.movie_id
-				WHERE pi.playlist_id = ? ORDER BY pi.position
-			)");
-			q.bind(1, id);
+			auto d = PlaylistRepository(db_).getDetail(id);
+			if (!d) { route::err(res, 404, "playlist not found"); return; }
 			json items = json::array();
-			while (q.executeStep()) {
+			for (const auto& r : d->items) {
 				json item = {
-					{"id",          q.getColumn(0).getInt()},
-					{"position",    q.getColumn(1).getInt()},
-					{"item_type",   q.getColumn(2).getString()},
-					{"item_id",     q.getColumn(3).getString()},
-					{"title",       q.getColumn(4).getString()},
-					{"duration_ms", q.getColumn(5).getInt64()},
+					{"id",          r.id},
+					{"position",    r.position},
+					{"item_type",   r.item_type},
+					{"item_id",     r.item_id},
+					{"title",       r.title},
+					{"duration_ms", r.duration_ms},
 				};
-				if (!q.getColumn(6).isNull()) {
-					item["season"]  = q.getColumn(6).getInt();
-					item["episode"] = q.getColumn(7).getInt();
-				}
+				if (r.season)  item["season"]  = *r.season;
+				if (r.episode) item["episode"] = *r.episode;
 				items.push_back(item);
 			}
 			route::ok(res, json{
-				{"playlist_id", ph.getColumn(0).getString()},
-				{"title",       ph.getColumn(1).getString()},
-				{"mode",        ph.getColumn(2).getString()},
+				{"playlist_id", d->playlist_id},
+				{"title",       d->title},
+				{"mode",        d->mode},
 				{"items",       items}}.dump());
 		} catch (const std::exception& e) { route::logErr("GET /api/playlists/:id", e); route::err(res, 500, e.what()); }
 	});

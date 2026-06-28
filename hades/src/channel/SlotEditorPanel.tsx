@@ -1,6 +1,8 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { inputStyle } from './styles'
+import { DropZone } from './sections'
+import { SectionLabel } from './SectionLabel'
 import type { TimeslotSlot, TimeslotQueueEntry } from '../api/types'
 import type { ChannelDetailStore } from './store'
 
@@ -29,13 +31,6 @@ function Card({ children }: { children: React.ReactNode }) {
     </div>
   )
 }
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: 9, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', marginBottom: 8 }}>
-      {children}
-    </div>
-  )
-}
 
 function slotLabel(slot: TimeslotSlot) {
   const oHH = String(Math.floor(slot.slot_offset_mins / 60)).padStart(2, '0')
@@ -44,36 +39,6 @@ function slotLabel(slot: TimeslotSlot) {
   const eHH = String(Math.floor(end / 60)).padStart(2, '0')
   const eMM = String(end % 60).padStart(2, '0')
   return `+${oHH}:${oMM} → +${eHH}:${eMM}`
-}
-
-// ─── Drop zone ────────────────────────────────────────────────────────────────
-
-function DropZone({ label, onDrop }: { label: string; onDrop: () => void }) {
-  const [over, setOver] = useState(false)
-  const counter = useRef(0)
-  return (
-    <div
-      onDragEnter={e => { e.preventDefault(); counter.current++; setOver(true) }}
-      onDragLeave={() => { counter.current--; if (counter.current === 0) setOver(false) }}
-      onDragOver={e => e.preventDefault()}
-      onDrop={e => { e.preventDefault(); counter.current = 0; setOver(false); onDrop() }}
-      style={{
-        borderRadius: 8,
-        border: `1.5px dashed ${over ? 'var(--hds-violet)' : 'oklch(0.55 0.14 292 / 0.35)'}`,
-        background: over ? 'oklch(0.55 0.14 292 / 0.1)' : 'transparent',
-        padding: '11px 14px',
-        textAlign: 'center',
-        fontSize: 9.5,
-        color: over ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-        letterSpacing: '0.12em',
-        transition: 'border-color .1s, background .1s, color .1s',
-        cursor: 'copy',
-        userSelect: 'none',
-      }}
-    >
-      {label}
-    </div>
-  )
 }
 
 // ─── Queue entry row ──────────────────────────────────────────────────────────
@@ -171,7 +136,7 @@ export const SlotEditorPanel = observer(function SlotEditorPanel({ store }: {
 
       {/* Settings */}
       <Card>
-        <SectionLabel>SETTINGS</SectionLabel>
+        <SectionLabel style={{ fontSize: 9, letterSpacing: '0.18em', marginBottom: 8 }}>SETTINGS</SectionLabel>
         <Row>
           <Col label="DURATION (MIN)">
             <input type="number" min={1} value={slot.slot_duration_mins} style={ss}
@@ -213,7 +178,7 @@ export const SlotEditorPanel = observer(function SlotEditorPanel({ store }: {
       {/* Content queue */}
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-          <SectionLabel>CONTENT QUEUE</SectionLabel>
+          <SectionLabel style={{ fontSize: 9, letterSpacing: '0.18em', marginBottom: 8 }}>CONTENT QUEUE</SectionLabel>
           <div style={{ flex: 1 }} />
           <span style={{ fontSize: 9, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", marginRight: 8 }}>
             cursor {slot.queue_pos}/{Math.max(0, slot.queue.length - 1)} · ep {slot.episode_pos}

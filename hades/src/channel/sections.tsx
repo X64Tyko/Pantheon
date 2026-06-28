@@ -1,3 +1,4 @@
+import { useState, useRef } from 'react'
 import type { ReactNode } from 'react'
 
 export function AccordionSection({ title, badge, open, onToggle, children, forceOpen }: {
@@ -66,12 +67,18 @@ export function LauncherRow({ icon, title, summary, onClick }: {
   summary: string
   onClick: () => void
 }) {
+  const [hovered, setHovered] = useState(false)
   return (
     <div
       onClick={onClick}
-      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 13px', marginBottom: 9, borderRadius: 11, cursor: 'pointer', border: '1px solid var(--hds-line-s)', background: 'oklch(0.19 0.018 288 / 0.45)', transition: 'border-color .12s, background .12s' }}
-      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line)'; (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.24 0.025 290 / 0.5)' }}
-      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'; (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.19 0.018 288 / 0.45)' }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 13px', marginBottom: 9,
+        borderRadius: 11, cursor: 'pointer', transition: 'border-color .12s, background .12s',
+        border: `1px solid ${hovered ? 'var(--hds-line)' : 'var(--hds-line-s)'}`,
+        background: hovered ? 'oklch(0.24 0.025 290 / 0.5)' : 'oklch(0.19 0.018 288 / 0.45)',
+      }}
     >
       <span style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px solid var(--hds-line-s)', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 16 }}>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -79,6 +86,34 @@ export function LauncherRow({ icon, title, summary, onClick }: {
         <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summary}</div>
       </div>
       <span style={{ fontSize: 13, color: 'var(--hds-violet)', flexShrink: 0 }}>›</span>
+    </div>
+  )
+}
+
+export function DropZone({ label, onDrop }: { label: string; onDrop: () => void }) {
+  const [over, setOver] = useState(false)
+  const counter = useRef(0)
+  return (
+    <div
+      onDragEnter={e => { e.preventDefault(); counter.current++; setOver(true) }}
+      onDragLeave={() => { counter.current--; if (counter.current === 0) setOver(false) }}
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => { e.preventDefault(); counter.current = 0; setOver(false); onDrop() }}
+      style={{
+        borderRadius: 8,
+        border: `1.5px dashed ${over ? 'var(--hds-violet)' : 'oklch(0.55 0.14 292 / 0.35)'}`,
+        background: over ? 'oklch(0.55 0.14 292 / 0.1)' : 'transparent',
+        padding: '11px 14px',
+        textAlign: 'center',
+        fontSize: 9.5,
+        color: over ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
+        letterSpacing: '0.12em',
+        transition: 'border-color .1s, background .1s, color .1s',
+        cursor: 'copy',
+        userSelect: 'none',
+      }}
+    >
+      {label}
     </div>
   )
 }

@@ -1,10 +1,10 @@
 #include "ConfigService.h"
 #include "../RouteHelpers.h"
 #include "../../conf/ConfStore.h"
-#include "../../db/Database.h"
+#include "../../db/ScheduleRepository.h"
+#include "../../db/SourceRepository.h"
 #include "../../source/SyncManager.h"
 #include "../../scheduler/RuntimeFlags.h"
-#include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -43,8 +43,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 
 	svr.Post("/api/config/epg/clear-all", [this](const Req&, Res& res) {
 		try {
-			SQLite::Statement q(db_.get(), "DELETE FROM scheduled_program");
-			int affected = q.exec();
+			int affected = ScheduleRepository(db_).clearAllScheduled();
 			route::ok(res, json{{"cleared", affected}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("POST /api/config/epg/clear-all", e);
@@ -53,17 +52,14 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/config/credentials", [this](const Req&, Res& res) {
-		SQLite::Statement q(db_.get(),
-			"SELECT source_id, source_type, display_name FROM media_source ORDER BY display_name");
 		json result = json::array();
-		while (q.executeStep()) {
-			auto sid = q.getColumn(0).getString();
+		for (const auto& r : SourceRepository(db_).listSourcesBasic()) {
 			result.push_back({
-				{"source_id",    sid},
-				{"source_type",  q.getColumn(1).getString()},
-				{"display_name", q.getColumn(2).getString()},
-				{"has_token",    conf_.hasToken(sid)},
-				{"has_user_id",  conf_.hasUserId(sid)},
+				{"source_id",    r.source_id},
+				{"source_type",  r.source_type},
+				{"display_name", r.display_name},
+				{"has_token",    conf_.hasToken(r.source_id)},
+				{"has_user_id",  conf_.hasUserId(r.source_id)},
 			});
 		}
 		route::ok(res, result.dump());
