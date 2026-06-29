@@ -66,12 +66,19 @@ static void proxyRequest(const std::string& upstream_base,
 
     auto ct = req.get_header_value("Content-Type");
 
+    // Forward headers that upstreams need for auth and content negotiation.
+    httplib::Headers fwd;
+    for (const char* h : {"Authorization", "Cookie", "Accept", "Accept-Language"}) {
+        auto v = req.get_header_value(h);
+        if (!v.empty()) fwd.emplace(h, v);
+    }
+
     httplib::Result r;
-    if      (req.method == "GET")    r = cli.Get(path);
-    else if (req.method == "POST")   r = cli.Post(path, req.body, ct.c_str());
-    else if (req.method == "PUT")    r = cli.Put(path, req.body, ct.c_str());
-    else if (req.method == "DELETE") r = cli.Delete(path, req.body, ct.c_str());
-    else if (req.method == "PATCH")  r = cli.Patch(path, req.body, ct.c_str());
+    if      (req.method == "GET")    r = cli.Get(path, fwd);
+    else if (req.method == "POST")   r = cli.Post(path, fwd, req.body, ct.c_str());
+    else if (req.method == "PUT")    r = cli.Put(path, fwd, req.body, ct.c_str());
+    else if (req.method == "DELETE") r = cli.Delete(path, fwd, req.body, ct.c_str());
+    else if (req.method == "PATCH")  r = cli.Patch(path, fwd, req.body, ct.c_str());
     else { res.status = 405; return; }
 
     if (!r || r->status == 0) {

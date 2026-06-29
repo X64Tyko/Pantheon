@@ -22,6 +22,7 @@ inline Config parseConfig(int argc, char* argv[]) {
         std::string v = argv[i + 1];
         if      (k == "--hephaestus-url") { cfg.hephaestus_url = v;           ++i; }
         else if (k == "--kairos-url")     { cfg.kairos_url = v;               ++i; }
+        else if (k == "--hades-url")      { cfg.hades_url = v;                ++i; }
         else if (k == "--port")           { cfg.port = std::stoi(v);          ++i; }
         else if (k == "--linger")         { cfg.linger_secs = std::stoi(v);   ++i; }
         else if (k == "--device-id")      { cfg.hdhr_device_id = v;           ++i; }
