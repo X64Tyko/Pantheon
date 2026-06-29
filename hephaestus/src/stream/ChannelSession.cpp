@@ -23,13 +23,19 @@ static std::vector<std::string> buildArgs(
     int64_t startOffsetMs,
     int audioTrackIndex,
     int subtitleTrackIndex,
-    bool loudnorm)
+    bool loudnorm,
+    HwAccel hw_accel,
+    const std::string& vaapi_device)
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
 
     // Reduce startup latency / buffer
     a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt", "-flags", "low_delay"});
+
+    // AMD VAAPI: expose the render node before -i so the encoder can find it
+    if (hw_accel == HwAccel::amd)
+        a.insert(a.end(), {"-vaapi_device", vaapi_device});
 
     // Seek before input for fast seek
     if (startOffsetMs > 0) {
@@ -49,11 +55,22 @@ static std::vector<std::string> buildArgs(
     // No data streams, no chapter metadata in output
     a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
 
-    // Video: H.264, copy if already H.264 to avoid re-encode latency
-    // For IPTV we always transcode for codec compatibility + clean timestamps.
-    // TODO: detect codec and copy when possible.
-    a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
-                        "-crf", "23", "-pix_fmt", "yuv420p"});
+    // Video encoder
+    switch (hw_accel) {
+        case HwAccel::nvidia:
+            // CPU decode → NVENC encode; works with any input codec
+            a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
+                                "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p"});
+            break;
+        case HwAccel::amd:
+            // CPU decode → upload to VAAPI → h264_vaapi encode
+            a.insert(a.end(), {"-vf", "format=nv12,hwupload",
+                                "-c:v", "h264_vaapi"});
+            break;
+        default:
+            a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
+                                "-crf", "23", "-pix_fmt", "yuv420p"});
+    }
 
     // Audio: AAC
     if (loudnorm) {
@@ -200,7 +217,8 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
         }
     }
 
-    auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack, opts.loudnorm);
+    auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack,
+                          opts.loudnorm, opts.hw_accel, opts.vaapi_device);
 
     std::lock_guard<std::mutex> lock(ffmpeg_mtx);
     // Re-check active after acquiring the mutex: stop() may have run between

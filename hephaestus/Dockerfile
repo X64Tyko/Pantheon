@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
     libssl3 \
     ffmpeg \
+    libva-drm2 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

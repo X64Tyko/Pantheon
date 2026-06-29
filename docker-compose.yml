@@ -39,8 +39,18 @@ services:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Hephaestus_Beta_Icon.png"
     environment:
       - KAIROS_URL=http://kairos:8080
+      # ── NVIDIA: uncomment these three lines and add `runtime: nvidia` below ──
+      # - HEPH_HW_ACCEL=nvidia
+      # - NVIDIA_VISIBLE_DEVICES=all
+      # - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
+      # ── AMD / Intel VAAPI: uncomment these two lines and add `devices` below ─
+      # - HEPH_HW_ACCEL=amd
+      # - HEPH_VAAPI_DEV=/dev/dri/renderD128   # override if your render node differs
+    # runtime: nvidia   # NVIDIA — requires NVIDIA Container Toolkit on the host
     volumes:
       - /mnt/user/Media:/media:ro
+    # devices:          # AMD — expose the GPU render node
+    #   - /dev/dri/renderD128:/dev/dri/renderD128
     depends_on:
       - kairos
     restart: unless-stopped

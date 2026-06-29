@@ -1,4 +1,5 @@
 #pragma once
+#include "stream/ChannelSession.h"
 #include <string>
 #include <cstdlib>
 
@@ -10,6 +11,8 @@ struct Config {
     std::string audio_lang    = "eng";
     bool        loudnorm      = false;
     int         session_linger_secs = 60; // keep session alive after last client disconnects
+    HwAccel     hw_accel      = HwAccel::none;
+    std::string vaapi_device  = "/dev/dri/renderD128";
 
     // HDHomeRun device identity presented to Plex / Emby / Jellyfin
     std::string hdhr_device_id   = "48455048"; // "HEPH" in ASCII hex
@@ -17,25 +20,35 @@ struct Config {
     int         hdhr_tuner_count = 4;
 };
 
+inline HwAccel parseHwAccel(const std::string& s) {
+    if (s == "nvidia") return HwAccel::nvidia;
+    if (s == "amd")    return HwAccel::amd;
+    return HwAccel::none;
+}
+
 inline Config parseConfig(int argc, char* argv[]) {
     Config cfg;
     for (int i = 1; i + 1 < argc; ++i) {
         std::string k = argv[i];
         std::string v = argv[i + 1];
-        if      (k == "--kairos-url")    { cfg.kairos_url = v;              ++i; }
-        else if (k == "--ffmpeg")        { cfg.ffmpeg_path = v;             ++i; }
-        else if (k == "--ffprobe")       { cfg.ffprobe_path = v;            ++i; }
-        else if (k == "--port")          { cfg.port = std::stoi(v);         ++i; }
-        else if (k == "--audio-lang")    { cfg.audio_lang = v;              ++i; }
+        if      (k == "--kairos-url")    { cfg.kairos_url = v;                    ++i; }
+        else if (k == "--ffmpeg")        { cfg.ffmpeg_path = v;                   ++i; }
+        else if (k == "--ffprobe")       { cfg.ffprobe_path = v;                  ++i; }
+        else if (k == "--port")          { cfg.port = std::stoi(v);               ++i; }
+        else if (k == "--audio-lang")    { cfg.audio_lang = v;                    ++i; }
         else if (k == "--loudnorm")      { cfg.loudnorm = (v != "0" && v != "false"); ++i; }
         else if (k == "--linger")        { cfg.session_linger_secs = std::stoi(v); ++i; }
-        else if (k == "--device-id")     { cfg.hdhr_device_id = v;          ++i; }
-        else if (k == "--friendly-name") { cfg.hdhr_friendly = v;           ++i; }
-        else if (k == "--tuners")        { cfg.hdhr_tuner_count = std::stoi(v); ++i; }
+        else if (k == "--hw-accel")      { cfg.hw_accel = parseHwAccel(v);        ++i; }
+        else if (k == "--vaapi-device")  { cfg.vaapi_device = v;                  ++i; }
+        else if (k == "--device-id")     { cfg.hdhr_device_id = v;                ++i; }
+        else if (k == "--friendly-name") { cfg.hdhr_friendly = v;                 ++i; }
+        else if (k == "--tuners")        { cfg.hdhr_tuner_count = std::stoi(v);   ++i; }
     }
-    if (auto* p = getenv("KAIROS_URL"))    cfg.kairos_url   = p;
-    if (auto* p = getenv("FFMPEG_PATH"))   cfg.ffmpeg_path  = p;
-    if (auto* p = getenv("FFPROBE_PATH"))  cfg.ffprobe_path = p;
-    if (auto* p = getenv("HEPH_LOUDNORM")) cfg.loudnorm     = (std::string(p) != "0");
+    if (auto* p = getenv("KAIROS_URL"))      cfg.kairos_url   = p;
+    if (auto* p = getenv("FFMPEG_PATH"))     cfg.ffmpeg_path  = p;
+    if (auto* p = getenv("FFPROBE_PATH"))    cfg.ffprobe_path = p;
+    if (auto* p = getenv("HEPH_LOUDNORM"))   cfg.loudnorm     = (std::string(p) != "0");
+    if (auto* p = getenv("HEPH_HW_ACCEL"))   cfg.hw_accel     = parseHwAccel(p);
+    if (auto* p = getenv("HEPH_VAAPI_DEV"))  cfg.vaapi_device = p;
     return cfg;
 }

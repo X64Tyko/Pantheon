@@ -22,12 +22,16 @@ struct ClientSink {
     static constexpr size_t MAX_QUEUE = 64; // ~8 MB at 128 KB chunks; slow clients are dropped
 };
 
+enum class HwAccel { none, nvidia, amd };
+
 struct StreamOptions {
     std::string ffprobe_path  = "ffprobe";
     std::string audio_lang    = "eng";
     std::string subtitle_lang = "";   // empty = no subtitle mapping
     bool        loudnorm      = false;
     int         linger_secs   = 60;
+    HwAccel     hw_accel      = HwAccel::none;
+    std::string vaapi_device  = "/dev/dri/renderD128";
 };
 
 class ChannelSession {

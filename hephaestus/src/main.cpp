@@ -21,6 +21,8 @@ int main(int argc, char* argv[]) {
     stream_opts.audio_lang   = cfg.audio_lang;
     stream_opts.loudnorm     = cfg.loudnorm;
     stream_opts.linger_secs  = cfg.session_linger_secs;
+    stream_opts.hw_accel     = cfg.hw_accel;
+    stream_opts.vaapi_device = cfg.vaapi_device;
 
     SessionManager sessions(kairos, cfg.ffmpeg_path, stream_opts);
 
