@@ -1,18 +1,20 @@
 # Pantheon
 
-Turn your Plex library into a network of 24/7 TV channels — each with its own block schedule, rerun rules, and live EPG.
+A media platform built around three pillars:
 
-**Kairos** is the scheduling engine. It decides what plays when, tracks watch history, manages rerun pools, and generates XMLTV/M3U for any IPTV client. **Hades** is the management UI, served by Kairos on the same port. **Tunarr** handles the FFmpeg stream pipeline. Together they replace the static schedule approach used by dizqueTV and vanilla Tunarr with a live, state-driven rule engine.
+- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections, filler lists, and content catalogues across sources.
+- **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, and live EPG. Connect any IPTV client or route through XTeve into Plex DVR.
+- **Media player** — direct playback within Hades, in progress.
 
-![Hades channel grid](.github/screenshot.png)
+**Kairos** is the scheduling and library engine. **Hades** is the management UI. **Hermes** is the public-facing server (streams, HDHomeRun emulation, EPG, media player API). **Hephaestus** handles the FFmpeg transcoding pipeline.
 
 ---
 
 ## Requirements
 
 - Docker + Docker Compose
-- A running Plex Media Server with at least one library
-- *(Optional)* NVIDIA GPU for hardware-accelerated transcoding in Tunarr
+- A media server with at least one library — **Plex, Jellyfin, Emby**, or a **local filesystem** source are all supported
+- *(Optional)* NVIDIA GPU for hardware-accelerated transcoding
 
 ---
 
@@ -29,7 +31,7 @@ Download it or paste the contents from this repo's `docker-compose.yml`.
 
 **2. Set your paths**
 
-Open `docker-compose.yml` and update two volume lines under `kairos`:
+Open `docker-compose.yml` and update the volume lines under `kairos`:
 
 ```yaml
 volumes:
@@ -38,11 +40,9 @@ volumes:
   - /mnt/user/Media/Filler:/downloads       # yt-dlp download destination
 ```
 
-The `/downloads` path should be a folder your Plex already watches so downloaded filler appears automatically after a library scan.
-
 **3. No NVIDIA GPU?**
 
-Remove these three lines from the `tunarr` service:
+Remove these lines from the `hephaestus` service:
 
 ```yaml
 runtime: nvidia
@@ -57,29 +57,40 @@ environment:
 docker compose up -d
 ```
 
-Open **http://your-server:8081** — that's Hades.
+Open **http://your-server:8000** — that's the Hades management UI, served through Hermes.
+
+Direct Kairos access (API, debugging) is on **:8081**.
 
 ---
 
 ## First-time setup (5 minutes)
 
-### 1. Add your Plex server
+### 1. Add a media source
 
-Go to **Sources → Add Source**. Enter your Plex URL and token, then test the connection. Your token is in Plex's web UI under **Account → Troubleshooting → XML** or via [plex.tv/claim](https://www.plex.tv/claim/).
+Go to **Sources → Add Source**. Pantheon supports:
+
+| Source type | Auth |
+|---|---|
+| **Plex** | Server URL + token (from Account → Troubleshooting → XML) |
+| **Jellyfin** | Server URL + API key + user ID |
+| **Emby** | Server URL + API key + user ID |
+| **Local** | Mount path (no auth needed) |
+
+Enter the connection details and test the connection.
 
 ### 2. Add libraries and sync
 
-After saving the source, go back into it and add the libraries you want Kairos to know about (TV Shows, Movies). Then hit **Sync** — Kairos fetches all episode metadata and file paths from Plex. Large libraries take a few minutes; progress is visible in the **Activity** log.
+After saving the source, go back into it and add the libraries you want Kairos to know about (TV Shows, Movies). Hit **Sync** — Kairos fetches all episode metadata and file paths. Large libraries take a few minutes; progress is visible in the **Activity** log.
 
 ### 3. Set the path map
 
-Plex reports file paths from its own perspective (e.g. `/data/TV/...`). If your media is mounted at a different path in the Kairos container (e.g. `/media`), add a path map under **Sources → your source → Path Maps**:
+Your media server reports file paths from its own perspective (e.g. `/data/TV/...`). If your media is mounted at a different path inside the Kairos container (e.g. `/media`), add a path map under **Sources → your source → Path Maps**:
 
 ```
 /data  →  /media
 ```
 
-This tells Tunarr's FFmpeg where to actually find the files.
+This tells the transcoder where to actually find the files.
 
 ### 4. Create a channel
 
@@ -97,14 +108,13 @@ Click **Preview** on the channel page. You'll see the resolved grid — what pla
 
 ## Connecting IPTV clients
 
-Kairos exposes standard M3U and XMLTV endpoints:
+Hermes exposes standard M3U and XMLTV endpoints:
 
 | Endpoint | URL |
 |---|---|
-| M3U playlist | `http://your-server:8081/playlist.m3u` |
-| XMLTV guide | `http://your-server:8081/epg.xml` |
-
-These point directly to Tunarr's stream URLs for each channel.
+| M3U playlist | `http://your-server:8000/playlist.m3u` |
+| XMLTV guide | `http://your-server:8000/epg.xml` |
+| HDHomeRun | auto-discovered on the LAN |
 
 ### XTeve → Plex
 
@@ -140,58 +150,87 @@ For a full visual breakdown of how all these interact, see the scheduling diagra
 
 ## Downloading filler
 
-Kairos includes yt-dlp. Go to **Downloads** in Hades, paste a URL (YouTube playlist, video, etc.), and set the destination path. Point that path at a folder Plex watches so the content shows up as a library item you can add to a filler list.
+Kairos includes yt-dlp. Go to **Downloads** in Hades, paste a URL (YouTube playlist, video, etc.), and set the destination path. Point that path at a folder your media server watches so the content shows up as a library item you can add to a filler list.
 
 ---
 
 ## Environment variables
 
+### Kairos
+
 | Variable | Default | Description |
 |---|---|---|
-| `KAIROS_SYNC_THREADS` | `4` | Parallel connections when syncing episode metadata |
-| `KAIROS_DEBUG_EPG` | *(unset)* | Set to `1` for verbose EPG scheduling logs |
-| `KAIROS_URL` | *(tunarr only)* | URL Tunarr uses to reach Kairos — set automatically in compose |
+| `KAIROS_SYNC_THREADS` | `min(8, cpu count)` | Parallel connections when fetching episode metadata. The compose file sets this to `4` explicitly. |
+| `KAIROS_DEBUG` | *(unset)* | Set to `1` for verbose sync, ffprobe, and scraper logs. Equivalent to toggling **Sync Debug Logging** in Settings. |
+| `KAIROS_DEBUG_EPG` | *(unset)* | Set to `1` for verbose EPG scheduling logs. Equivalent to **EPG Debug Logging** in Settings. |
+
+Both debug flags are also controllable at runtime without restart via **Settings → Diagnostics** in Hades — changes are persisted to the database.
+
+### Hermes
+
+| Variable | Description |
+|---|---|
+| `KAIROS_URL` | URL Hermes uses to reach Kairos — set automatically in compose (`http://kairos:8080`) |
+| `HEPHAESTUS_URL` | URL Hermes uses to reach Hephaestus — set automatically in compose |
+| `HADES_URL` | URL of the Hades frontend — set automatically in compose |
 
 ---
 
 ## Building from source
 
 ```bash
-# C++ (requires cmake, ninja, g++)
-cmake -B cmake-build-debug -G Ninja
-cmake --build cmake-build-debug
+# C++ engine (requires cmake, ninja, g++)
+cmake -B kairos/build -G Ninja -S .
+cmake --build kairos/build
 
 # Hades UI (requires node, pnpm)
 cd hades
 pnpm install
-pnpm dev        # dev server on :5173
-pnpm build      # production build → ../kairos/ui-dist
+pnpm dev        # dev server on :5173 (proxies API to kairos on :8080)
+pnpm build      # production build
 ```
 
-Run both with `./dev.sh` — starts Kairos on `:8080` and Hades dev server on `:5173`.
+Run both together with `./dev.sh` — starts Kairos on `:8080` and the Hades dev server on `:5173`.
 
 ---
 
 ## Architecture
 
 ```
-Kairos (C++ · :8080)
-  ├─ Scheduling engine (blocks, cursors, rerun pools)
-  ├─ EPG materialization (XMLTV + M3U)
-  ├─ Plex library sync
-  └─ Hades UI (served as static files)
-
-Tunarr (:8000)
-  └─ FFmpeg stream pipeline → HLS / HDHomeRun output
-       calls Kairos /now, /next, /played
+                         ┌──────────────────────────────┐
+                         │  Hermes (:8000)               │
+                         │  Public endpoint              │
+                         │  M3U · XMLTV · HDHomeRun      │
+                         │  Hades UI reverse proxy       │
+                         └──────────┬───────────────────┘
+                                    │
+               ┌────────────────────┼────────────────────┐
+               ▼                    ▼                    ▼
+  ┌────────────────────┐  ┌──────────────────┐  ┌─────────────┐
+  │  Kairos (:8080)    │  │  Hephaestus      │  │  Hades      │
+  │  Scheduling engine │  │  FFmpeg pipeline │  │  React UI   │
+  │  EPG materialization│  │  HLS · TS output │  │             │
+  │  Library sync      │  │                  │  │             │
+  │  Plex/Jellyfin/    │  │                  │  │             │
+  │  Emby/Local        │  │                  │  │             │
+  └────────────────────┘  └──────────────────┘  └─────────────┘
 ```
 
-Kairos publishes what to play and when. Tunarr renders it. They communicate over the Docker Compose network — nothing else needed.
+Kairos publishes what to play and when. Hephaestus renders it to a stream. Hermes ties everything together into a single user-facing endpoint.
 
 ---
 
 ## Status
 
-Early access. Plex is the only supported media source today; Jellyfin, Emby, and local filesystem sources are in progress. The streaming pipeline requires Tunarr; a native stream server (removing the Tunarr dependency) is planned.
+Beta.
+
+| Area | State |
+|---|---|
+| Library sync (Plex, Jellyfin, Emby, local) | Working |
+| Metadata scraping (TMDB, TVDB, AniDB) | Working |
+| IPTV channel scheduling + EPG | Working |
+| Stream delivery (Hermes + Hephaestus) | In progress |
+| Media player | In progress |
+| HDHomeRun emulation | In progress |
 
 Issues and feedback welcome.
