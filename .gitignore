@@ -34,3 +34,5 @@ desktop.ini
 # ── Design handoff / one-off assets ───────────────────────────────────────────
 /design_handoff_hades_scheduler/
 /image-cache/
+/anidb-xml-cache/
+/data/

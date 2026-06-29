@@ -280,9 +280,10 @@ std::string AnidbScraper::fetchAnimeXml(const std::string& aid) {
                   << " failed (HTTP " << (res ? res->status : 0) << ")\n";
         return {};
     }
-    if (res->body.find("<error>") != std::string::npos) {
+    if (res->body.find("<error>") != std::string::npos ||
+        res->body.find("<error ") != std::string::npos) {
         std::cerr << "[anidb] API error for aid=" << aid
-                  << ": " << xmlText(res->body, "error") << '\n';
+                  << ": " << res->body << '\n';
         return {};
     }
 
