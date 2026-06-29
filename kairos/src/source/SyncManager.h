@@ -62,6 +62,9 @@ private:
     std::string resolveByTitle(const std::string& item_type,
                                const std::string& title) const;
 
+    // Content-only phase: shows + movies + plex links. No match or chapters.
+    void syncContent(const std::string& source_id);
+
     void syncPlexLinks(const std::string& source_id);
 
     void syncShows(IMediaSource& src,

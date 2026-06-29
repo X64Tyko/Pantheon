@@ -87,21 +87,30 @@ void SyncManager::triggerSync(const std::string& source_id) {
 }
 
 void SyncManager::syncAll() {
+    // Phase 1: ingest content from every source before running match or chapters.
     for (const auto& src : sources_) {
         if (!src->isSupported()) {
             std::cout << "[sync] " << src->sourceId()
                       << " (" << src->sourceType() << ") not yet supported" << std::endl;
             continue;
         }
-        syncSource(src->sourceId());
+        syncContent(src->sourceId());
     }
+    // Phase 2: match the full combined library once.
+    if (scraper_) scraper_->runMatchSync();
+    // Phase 3: chapter sync for every source now that matches are settled.
+    for (const auto& src : sources_) {
+        if (src->isSupported())
+            syncChaptersFromFiles(src->sourceId());
+    }
+    std::cout << "[sync] all sources done" << std::endl;
 }
 
-void SyncManager::syncSource(const std::string& source_id) {
+void SyncManager::syncContent(const std::string& source_id) {
     IMediaSource* src = findSource(source_id);
     if (!src || !src->isSupported()) return;
 
-    std::cout << "[sync] syncing source: " << source_id << std::endl;
+    std::cout << "[sync] content: " << source_id << std::endl;
 
     SQLite::Statement q(db_.get(),
         "SELECT library_id, external_lib_id, library_type "
@@ -120,6 +129,10 @@ void SyncManager::syncSource(const std::string& source_id) {
     }
 
     syncPlexLinks(source_id);
+}
+
+void SyncManager::syncSource(const std::string& source_id) {
+    syncContent(source_id);
     if (scraper_) scraper_->runMatchSync();
     syncChaptersFromFiles(source_id);
     std::cout << "[sync] done: " << source_id << std::endl;
