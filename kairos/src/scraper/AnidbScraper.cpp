@@ -132,13 +132,14 @@ double titleSim(const std::string& a, const std::string& b) {
 
 AnidbScraper::AnidbScraper(std::string client_name)
     : client_name_(std::move(client_name))
-    , api_client_("https://api.anidb.net:9001")
+    , api_client_("http://api.anidb.net:9001")   // AniDB HTTP API is plain HTTP on port 9001
     , dump_client_("http://anidb.net")
 {
     api_client_.set_connection_timeout(15);
     api_client_.set_read_timeout(30);
     dump_client_.set_connection_timeout(30);
     dump_client_.set_read_timeout(120);
+    dump_client_.set_default_headers({{"User-Agent", "kairos/1.0 (https://github.com/X64Tyko/Pantheon)"}});
     // Allow an immediate first request
     last_api_call_ = std::chrono::steady_clock::now() - std::chrono::seconds(10);
 }
