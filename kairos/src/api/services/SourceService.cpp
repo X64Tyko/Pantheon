@@ -4,6 +4,7 @@
 #include "../../log/LogBuffer.h"
 #include "../../source/SyncManager.h"
 #include "../../source/IMediaSource.h"
+#include "../../source/LocalSource.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <filesystem>
 #include <nlohmann/json.hpp>
@@ -175,6 +176,20 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		for (const auto& lib : libs)
 			result.push_back({{"external_lib_id", lib.external_lib_id},
 			                  {"name", lib.name}, {"type", lib.type}});
+		route::ok(res, result.dump());
+	});
+
+	svr.Get("/api/sources/:id/fs", [this](const Req& req, Res& res) {
+		auto id  = req.path_params.at("id");
+		auto src = sync_.findSource(id);
+		if (!src)                         { route::err(res, 404, "source not found"); return; }
+		auto* local = dynamic_cast<LocalSource*>(src);
+		if (!local)                       { route::err(res, 400, "not a local source"); return; }
+		std::string path = req.has_param("path") ? req.get_param_value("path") : "";
+		auto entries = local->listSubdirectories(path);
+		json result = json::array();
+		for (const auto& e : entries)
+			result.push_back({{"external_lib_id", e.external_lib_id}, {"name", e.name}, {"type", e.type}});
 		route::ok(res, result.dump());
 	});
 

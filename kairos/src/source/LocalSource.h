@@ -19,8 +19,12 @@ public:
     std::string sourceType()  const override { return "local"; }
     bool        isSupported() const override { return true; }
 
-    // Returns one library entry for base_path_.
+    // Returns one library entry per immediate subdirectory of base_path_.
     std::vector<LibraryInfo> listAvailableLibraries() override;
+
+    // Returns subdirectories at path (must be within base_path_).
+    // Used by the /api/sources/:id/fs endpoint for the folder browser.
+    std::vector<LibraryInfo> listSubdirectories(const std::string& path);
 
     // Each top-level subdirectory is treated as a show.
     std::vector<Show>    fetchShows(const std::string& external_lib_id)     override;

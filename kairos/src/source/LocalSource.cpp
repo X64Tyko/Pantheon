@@ -172,6 +172,34 @@ std::vector<LibraryInfo> LocalSource::listAvailableLibraries() {
     return result;
 }
 
+std::vector<LibraryInfo> LocalSource::listSubdirectories(const std::string& path) {
+    std::error_code ec;
+    const fs::path target(path.empty() ? base_path_ : path);
+    const fs::path base(base_path_);
+
+    // Reject any path that escapes base_path_.
+    auto normTarget = fs::weakly_canonical(target, ec);
+    auto normBase   = fs::weakly_canonical(base, ec);
+    auto rel = normTarget.lexically_relative(normBase);
+    if (rel.empty() || rel.native().rfind("..", 0) == 0) return {};
+
+    if (!fs::is_directory(normTarget, ec)) return {};
+
+    std::vector<LibraryInfo> result;
+    for (const auto& entry : fs::directory_iterator(normTarget, ec)) {
+        if (!entry.is_directory() || isHidden(entry.path())) continue;
+        LibraryInfo info;
+        info.external_lib_id = entry.path().string();
+        info.name            = entry.path().filename().string();
+        info.type            = guessLibraryType(entry.path());
+        result.push_back(std::move(info));
+    }
+    std::sort(result.begin(), result.end(), [](const LibraryInfo& a, const LibraryInfo& b) {
+        return a.name < b.name;
+    });
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Shows — each non-hidden top-level subdirectory is a show.
 // ---------------------------------------------------------------------------

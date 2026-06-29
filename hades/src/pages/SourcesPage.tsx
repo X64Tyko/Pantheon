@@ -1,13 +1,66 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { PathMap } from '../api/types'
+import type { LibraryInfo, PathMap } from '../api/types'
 import { sourceStore } from '../stores'
 
 type TestState = 'idle' | 'testing' | 'ok' | 'failed'
 
 const NEEDS_TOKEN   = ['plex', 'jellyfin', 'emby']
 const NEEDS_USER_ID = ['jellyfin', 'emby']
+
+const SOURCE_HELP: Record<string, { url: string; token: string; userId?: string }> = {
+  plex: {
+    url:   'The address of your Plex server, e.g. http://192.168.1.10:32400 or http://plex:32400. Find it in Plex Web → Settings → Remote Access.',
+    token: 'Open Plex Web, play any item, then open its XML (⋮ → Get Info → View XML). The X-Plex-Token= value in the URL is your token. Alternatively: Plex Web → Account → Privacy → see your token in network requests.',
+  },
+  jellyfin: {
+    url:    'The address of your Jellyfin server, e.g. http://192.168.1.10:8096.',
+    token:  'Jellyfin Dashboard → Administration → API Keys → click + to create a new key. Paste the generated key here.',
+    userId: 'Jellyfin Dashboard → Users → click a user → copy the ID from the URL (the long hex string after /users/).',
+  },
+  emby: {
+    url:    'The address of your Emby server, e.g. http://192.168.1.10:8096.',
+    token:  'Emby Dashboard → Advanced → API Keys → New API Key. Paste the generated key here.',
+    userId: 'Emby Dashboard → Users → click a user → copy the ID from the URL.',
+  },
+}
+
+function SourceHelpGuide({ sourceType }: { sourceType: string }) {
+  const [open, setOpen] = useState(false)
+  const help = SOURCE_HELP[sourceType]
+  if (!help) return null
+  return (
+    <div className="col-span-2 text-xs">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 text-violet-400/70 hover:text-violet-300 transition-colors"
+      >
+        <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-violet-500/40 text-[9px] leading-none">?</span>
+        {open ? 'Hide setup guide' : 'How do I find these values?'}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2 bg-zinc-900/60 border border-violet-900/30 rounded-lg p-3">
+          <div>
+            <span className="text-zinc-400 font-medium">Base URL — </span>
+            <span className="text-zinc-500">{help.url}</span>
+          </div>
+          <div>
+            <span className="text-zinc-400 font-medium">Auth token — </span>
+            <span className="text-zinc-500">{help.token}</span>
+          </div>
+          {help.userId && (
+            <div>
+              <span className="text-zinc-400 font-medium">User ID — </span>
+              <span className="text-zinc-500">{help.userId}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default observer(function SourcesPage() {
   const store = sourceStore
@@ -56,11 +109,28 @@ export default observer(function SourcesPage() {
   const [showAddLib, setShowAddLib] = useState(false)
   const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' })
 
+  // ── Local folder browser ───────────────────────────────────────────────────
+  const [localBrowsePath,    setLocalBrowsePath]   = useState('')
+  const [localEntries,       setLocalEntries]       = useState<LibraryInfo[]>([])
+  const [localBrowseLoading, setLocalBrowseLoading] = useState(false)
+
+  const browseTo = async (path: string) => {
+    if (!store.selectedId) return
+    setLocalBrowseLoading(true)
+    try {
+      const entries = await api.browseLocalDir(store.selectedId, path)
+      setLocalBrowsePath(path)
+      setLocalEntries(entries)
+    } catch {}
+    finally { setLocalBrowseLoading(false) }
+  }
+
   const addLib = async () => {
     if (!store.selectedId) return
     await store.addLibrary(store.selectedId, libForm.external_lib_id, libForm.display_name, libForm.library_type)
     setShowAddLib(false)
     setLibForm({ external_lib_id: '', display_name: '', library_type: 'show' })
+    setLocalBrowsePath(''); setLocalEntries([])
   }
 
   // ── Credential editor ──────────────────────────────────────────────────────
@@ -175,6 +245,7 @@ export default observer(function SourcesPage() {
                 className="input"
               />
             )}
+            <SourceHelpGuide sourceType={form.source_type} />
           </div>
 
           {needsToken && (
@@ -431,7 +502,17 @@ export default observer(function SourcesPage() {
                   Libraries — {store.selected?.display_name}
                 </h2>
                 <button
-                  onClick={() => { store.fetchAvailable(store.selectedId!); setShowAddLib(v => !v) }}
+                  onClick={() => {
+                    const opening = !showAddLib
+                    setShowAddLib(v => !v)
+                    if (opening) {
+                      if (store.selected?.source_type === 'local') {
+                        browseTo(store.selected.base_url)
+                      } else {
+                        store.fetchAvailable(store.selectedId!)
+                      }
+                    }
+                  }}
                   className="text-xs px-2 py-1 bg-violet-900/30 hover:bg-violet-800/40
                              text-violet-300 rounded border border-violet-800/30 transition-colors"
                 >
@@ -439,36 +520,103 @@ export default observer(function SourcesPage() {
                 </button>
               </div>
 
-              {showAddLib && (
+              {showAddLib && (() => {
+                const isLocal = store.selected?.source_type === 'local'
+                return (
                 <div className="card p-3 space-y-2">
-                  {store.available.length > 0 ? (
-                    <select
-                      value={libForm.external_lib_id}
-                      onChange={e => {
-                        const lib = store.available.find(l => l.external_lib_id === e.target.value)
-                        setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any })
-                      }}
-                      className="input w-full"
-                    >
-                      <option value="">— select from server —</option>
-                      {store.available.map(l => (
-                        <option key={l.external_lib_id} value={l.external_lib_id}>
-                          {l.name} ({l.type})
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="space-y-1">
-                      <input
-                        placeholder="Library ID (e.g. 1, 2, 3 — from your media server)"
+                  {isLocal ? (() => {
+                    const basePath = store.selected?.base_url ?? ''
+                    const relParts = localBrowsePath.startsWith(basePath)
+                      ? localBrowsePath.slice(basePath.length).split('/').filter(Boolean)
+                      : []
+                    return (
+                      <div className="space-y-2">
+                        {/* Breadcrumb */}
+                        <div className="flex items-center gap-1 text-[11px] font-mono text-zinc-500 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => browseTo(basePath)}
+                            className="hover:text-violet-300 transition-colors"
+                          >
+                            {basePath.split('/').filter(Boolean).pop() ?? '/'}
+                          </button>
+                          {relParts.map((seg, i) => {
+                            const p = basePath + '/' + relParts.slice(0, i + 1).join('/')
+                            return (
+                              <span key={i} className="flex items-center gap-1">
+                                <span className="text-zinc-700">/</span>
+                                <button type="button" onClick={() => browseTo(p)} className="hover:text-violet-300 transition-colors">{seg}</button>
+                              </span>
+                            )
+                          })}
+                        </div>
+
+                        {/* Folder list */}
+                        {localBrowseLoading ? (
+                          <div className="text-xs text-zinc-600 py-1">Loading…</div>
+                        ) : localEntries.length === 0 ? (
+                          <div className="text-xs text-zinc-600 py-1">No subdirectories.</div>
+                        ) : (
+                          <div className="space-y-1 max-h-52 overflow-y-auto pr-0.5">
+                            {localEntries.map(e => (
+                              <div
+                                key={e.external_lib_id}
+                                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md border transition-colors ${
+                                  libForm.external_lib_id === e.external_lib_id
+                                    ? 'border-amber-500/40 bg-amber-500/5 ring-1 ring-amber-500/10'
+                                    : 'border-zinc-800/40 hover:border-violet-700/40'
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  className="flex-1 text-left min-w-0"
+                                  onClick={() => setLibForm({ external_lib_id: e.external_lib_id, display_name: e.name, library_type: e.type as any })}
+                                >
+                                  <span className="text-xs text-zinc-200 truncate block">{e.name}</span>
+                                </button>
+                                <span className="text-[10px] text-violet-500/60 uppercase tracking-widest shrink-0">{e.type}</span>
+                                <button
+                                  type="button"
+                                  title="Browse into folder"
+                                  onClick={() => browseTo(e.external_lib_id)}
+                                  className="text-zinc-600 hover:text-violet-300 transition-colors px-1 shrink-0 text-sm leading-none"
+                                >›</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })() : (
+                    store.available.length > 0 ? (
+                      <select
                         value={libForm.external_lib_id}
-                        onChange={e => setLibForm({ ...libForm, external_lib_id: e.target.value })}
-                        className="input w-full font-mono"
-                      />
-                      <p className="text-[10px] text-zinc-600">
-                        Server unavailable — enter the library ID manually. For Plex this is a section number like 1 or 2.
-                      </p>
-                    </div>
+                        onChange={e => {
+                          const lib = store.available.find(l => l.external_lib_id === e.target.value)
+                          setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any })
+                        }}
+                        className="input w-full"
+                      >
+                        <option value="">— select from server —</option>
+                        {store.available.map(l => (
+                          <option key={l.external_lib_id} value={l.external_lib_id}>
+                            {l.name} ({l.type})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="space-y-1">
+                        <input
+                          placeholder="Library ID (e.g. 1, 2, 3 — from your media server)"
+                          value={libForm.external_lib_id}
+                          onChange={e => setLibForm({ ...libForm, external_lib_id: e.target.value })}
+                          className="input w-full font-mono"
+                        />
+                        <p className="text-[10px] text-zinc-600">
+                          Server unavailable — enter the library ID manually. For Plex this is a section number like 1 or 2.
+                        </p>
+                      </div>
+                    )
                   )}
                   <input
                     placeholder="Display name"
@@ -476,15 +624,17 @@ export default observer(function SourcesPage() {
                     onChange={e => setLibForm({ ...libForm, display_name: e.target.value })}
                     className="input w-full"
                   />
-                  <select
-                    value={libForm.library_type}
-                    onChange={e => setLibForm({ ...libForm, library_type: e.target.value as any })}
-                    className="input w-full"
-                  >
-                    <option value="show">TV Shows</option>
-                    <option value="movie">Movies</option>
-                    <option value="mixed">Mixed</option>
-                  </select>
+                  {!isLocal && (
+                    <select
+                      value={libForm.library_type}
+                      onChange={e => setLibForm({ ...libForm, library_type: e.target.value as any })}
+                      className="input w-full"
+                    >
+                      <option value="show">TV Shows</option>
+                      <option value="movie">Movies</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                  )}
                   <div className="flex gap-2">
                     <button
                       onClick={addLib}
@@ -494,7 +644,8 @@ export default observer(function SourcesPage() {
                     <button onClick={() => setShowAddLib(false)} className="btn-ghost">Cancel</button>
                   </div>
                 </div>
-              )}
+                )
+              })()}
 
               {store.libraries.length === 0 && (
                 <p className="text-zinc-600 text-sm">No libraries added yet.</p>
