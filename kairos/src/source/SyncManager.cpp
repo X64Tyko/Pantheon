@@ -707,22 +707,10 @@ void SyncManager::triggerPlexLinkSync() {
 }
 
 void SyncManager::syncPlexLinks(const std::string& source_id) {
-    // Only Plex sources have playlists/collections
-    std::string base_url, source_type;
-    {
-        SQLite::Statement sq(db_.get(),
-            "SELECT base_url, source_type FROM media_source WHERE source_id = ? AND enabled = 1");
-        sq.bind(1, source_id);
-        if (!sq.executeStep()) return;
-        base_url    = sq.getColumn(0).getString();
-        source_type = sq.getColumn(1).getString();
-    }
-    if (source_type != "plex" || base_url.empty()) return;
+    auto* src = findSource(source_id);
+    if (!src) return;
 
-    std::string token = conf_.token(source_id);
-    if (token.empty()) return;
-
-    struct LinkRow { std::string list_type, list_id, external_id, plex_type; };
+    struct LinkRow { std::string list_type, list_id, external_id, list_kind; };
     std::vector<LinkRow> links;
     {
         SQLite::Statement q(db_.get(),
@@ -738,45 +726,27 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
     }
     if (links.empty()) return;
 
-    std::cout << "[sync] re-syncing " << links.size() << " Plex-linked list(s)" << std::endl;
-
-    httplib::Client client(base_url);
-    client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
-    client.set_connection_timeout(10);
-    client.set_read_timeout(30);
+    std::cout << "[sync] re-syncing " << links.size() << " linked list(s) for source "
+              << source_id << std::endl;
 
     for (const auto& link : links) {
         try {
-            std::string path = (link.plex_type == "playlist")
-                ? "/playlists/" + link.external_id + "/items"
-                : "/library/metadata/" + link.external_id + "/children";
+            auto raw = (link.list_kind == "collection")
+                ? src->browseCollectionItems(link.external_id)
+                : src->browsePlaylistItems(link.external_id);
 
-            auto r = client.Get(path.c_str());
-            if (!r || r->status != 200) {
-                std::cerr << "[sync] failed to fetch Plex items for list "
-                          << link.list_id << " (HTTP " << (r ? r->status : 0) << ")" << std::endl;
-                continue;
+            std::vector<std::pair<std::string, std::string>> items;
+            for (const auto& item : raw) {
+                SQLite::Statement lk(db_.get(),
+                    "SELECT kairos_id FROM source_mapping "
+                    "WHERE source_id=? AND external_id=? AND item_type=?");
+                lk.bind(1, source_id); lk.bind(2, item.external_id); lk.bind(3, item.item_type);
+                if (lk.executeStep())
+                    items.push_back({item.item_type, lk.getColumn(0).getString()});
             }
 
-            struct Item { std::string item_type; std::string kairos_id; };
-            std::vector<Item> items;
-            auto j = json::parse(r->body);
-            const auto& md = j["MediaContainer"];
-            if (md.contains("Metadata")) {
-                for (const auto& item : md["Metadata"]) {
-                    std::string pt = item.value("type", "");
-                    std::string it = (pt == "movie") ? "movie" : "episode";
-                    std::string rk = item["ratingKey"].get<std::string>();
-                    SQLite::Statement lk(db_.get(),
-                        "SELECT kairos_id FROM source_mapping "
-                        "WHERE source_id=? AND external_id=? AND item_type=?");
-                    lk.bind(1, source_id); lk.bind(2, rk); lk.bind(3, it);
-                    if (lk.executeStep()) items.push_back({ it, lk.getColumn(0).getString() });
-                }
-            }
-
-            const std::string fk_col   = (link.list_type == "playlist") ? "playlist_id"    : "filler_list_id";
-            const std::string item_tbl = (link.list_type == "playlist") ? "playlist_item"  : "filler_list_item";
+            const std::string fk_col   = (link.list_type == "playlist") ? "playlist_id"   : "filler_list_id";
+            const std::string item_tbl = (link.list_type == "playlist") ? "playlist_item" : "filler_list_item";
 
             SQLite::Transaction txn(db_.get());
             SQLite::Statement del(db_.get(),
@@ -789,7 +759,7 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
                     "INSERT OR IGNORE INTO " + item_tbl +
                     " (" + fk_col + ", position, item_type, item_id) VALUES (?,?,?,?)");
                 ins.bind(1, link.list_id); ins.bind(2, pos++);
-                ins.bind(3, item.item_type); ins.bind(4, item.kairos_id);
+                ins.bind(3, item.first); ins.bind(4, item.second);
                 ins.exec();
             }
 
@@ -798,8 +768,8 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
             ts.bind(1, static_cast<int64_t>(std::time(nullptr)));
             ts.bind(2, link.list_type); ts.bind(3, link.list_id);
             ts.exec();
-
             txn.commit();
+
             std::cout << "[sync]   \"" << link.list_id << "\": "
                       << items.size() << " item(s)" << std::endl;
         } catch (const std::exception& e) {

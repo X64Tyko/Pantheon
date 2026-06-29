@@ -48,6 +48,12 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, json{{"status","accepted"}}.dump());
 	});
 
+	svr.Post("/api/playlists/source-sync-all", [this](const Req&, Res& res) {
+		sync_.triggerPlexLinkSync();
+		res.status = 202;
+		route::ok(res, json{{"status","accepted"}}.dump());
+	});
+
 	svr.Post("/api/playlists", [this](const Req& req, Res& res) {
 		try {
 			auto b = json::parse(req.body);
@@ -100,6 +106,20 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
 	});
 
+	svr.Post("/api/playlists/:id/source-sync", [this](const Req& req, Res& res) {
+		auto id = req.path_params.at("id");
+		try {
+			auto b           = json::parse(req.body);
+			std::string src  = b.value("source_id",   "");
+			std::string ext  = b.value("external_id", "");
+			std::string kind = b.value("list_kind",   "");
+			if (src.empty() || ext.empty() || (kind != "playlist" && kind != "collection")) {
+				route::err(res, 400, "source_id, external_id, list_kind required"); return;
+			}
+			syncSourceListItems(res, "playlist", id, src, ext, kind, db_, sync_);
+		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
+	});
+
 	svr.Delete("/api/playlists/:id/plex-link", [this](const Req& req, Res& res) {
 		auto id = req.path_params.at("id");
 		try {
@@ -108,6 +128,18 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 			res.set_content("", "application/json");
 		} catch (const std::exception& e) {
 			route::logErr("DELETE /api/playlists/:id/plex-link", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	svr.Delete("/api/playlists/:id/source-link", [this](const Req& req, Res& res) {
+		auto id = req.path_params.at("id");
+		try {
+			PlaylistRepository(db_).unlinkPlex(id);
+			res.status = 204;
+			res.set_content("", "application/json");
+		} catch (const std::exception& e) {
+			route::logErr("DELETE /api/playlists/:id/source-link", e);
 			route::err(res, 500, e.what());
 		}
 	});
