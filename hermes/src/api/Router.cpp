@@ -234,6 +234,37 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         proxyRequest(cfg.kairos_url, req, res);
     });
 
+    // ── M3U / XMLTV aliases ───────────────────────────────────────────────────
+    // Common alternate paths used by DVR clients — must come before /api/.*
+    svr.Get("/api/channels.m3u", [&kairos](const httplib::Request& req, httplib::Response& res) {
+        auto base = baseUrl(req);
+        auto channels = kairos.getChannels();
+        std::string m3u = "#EXTM3U\n";
+        for (auto& ch : channels) {
+            m3u += "#EXTINF:-1"
+                   " tvg-id=\""         + ch.channel_id + "\""
+                   " tvg-name=\""       + ch.name       + "\""
+                   " channel-number=\"" + std::to_string(ch.number) + "\""
+                   "," + ch.name + "\n"
+                   + base + "/stream/channels/" + ch.channel_id + "\n";
+        }
+        res.set_content(m3u, "application/x-mpegurl");
+    });
+    svr.Get("/api/channels.xml", [&cfg](const httplib::Request& req, httplib::Response& res) {
+        int hours = 24;
+        auto it = req.params.find("hours");
+        if (it != req.params.end()) {
+            try { hours = std::stoi(it->second); } catch (...) {}
+        }
+        httplib::Client cli(cfg.kairos_url);
+        cli.set_connection_timeout(5);
+        cli.set_read_timeout(30);
+        auto r = cli.Get("/epg.xml?hours=" + std::to_string(hours));
+        if (!r || r->status == 0) { res.status = 502; return; }
+        res.status = r->status;
+        res.set_content(r->body, "application/xml");
+    });
+
     // ── Kairos API proxy (all methods) ────────────────────────────────────────
     // Registered before the Hades catch-all so /api/* routes never reach nginx.
     auto kairosProxy = [&cfg](const httplib::Request& req, httplib::Response& res) {

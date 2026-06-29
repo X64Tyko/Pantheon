@@ -69,4 +69,20 @@ inline bool appendJsonInClause(const std::string& tbl, const std::string& col,
 	return true;
 }
 
+inline std::string urlEncode(const std::string& s) {
+	std::string out;
+	out.reserve(s.size() * 3);
+	static const char* hex = "0123456789ABCDEF";
+	for (unsigned char c : s) {
+		if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+			out += static_cast<char>(c);
+		} else {
+			out += '%';
+			out += hex[c >> 4];
+			out += hex[c & 0xF];
+		}
+	}
+	return out;
+}
+
 } // namespace route

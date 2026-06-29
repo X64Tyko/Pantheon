@@ -1,5 +1,6 @@
 #include "ScraperService.h"
 #include "scraper/ScraperManager.h"
+#include "../RouteHelpers.h"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -204,7 +205,8 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             rj["title"]        = r.title;
             if (r.year > 0) rj["year"] = r.year;
             rj["overview"]     = r.overview;
-            rj["poster_url"]   = r.poster_url;
+            rj["poster_url"]   = r.poster_url.empty() ? ""
+                                 : "/api/images/proxy?url=" + route::urlEncode(r.poster_url);
             rj["content_type"] = r.content_type;
             rj["in_library"]   = r.in_library;
             arr.push_back(rj);

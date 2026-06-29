@@ -36,12 +36,31 @@ void ContentService::proxyImage(const Req& req,
                                  const std::string& imgPath,
                                  const std::string& sourceId,
                                  Res& res) {
-	if (imgPath.rfind("http", 0) == 0) {
-		res.set_redirect(imgPath);
-		return;
+	// For absolute CDN URLs (AniDB, TMDB, TVDB, etc.) split into base + path
+	// so we can proxy and cache server-side rather than redirecting. Hotlink
+	// protection on cdn.anidb.net blocks direct browser fetches.
+	std::string effective_base, fetch_path;
+	bool is_cdn = (imgPath.rfind("http", 0) == 0);
+
+	if (is_cdn) {
+		auto scheme_end = imgPath.find("://");
+		auto path_start = (scheme_end != std::string::npos)
+		                  ? imgPath.find('/', scheme_end + 3)
+		                  : std::string::npos;
+		if (path_start == std::string::npos) {
+			res.set_redirect(imgPath);
+			return;
+		}
+		effective_base = imgPath.substr(0, path_start);
+		fetch_path     = imgPath.substr(path_start);
+	} else {
+		ContentRepository repo(db_);
+		effective_base = repo.getSourceBaseUrl(sourceId);
+		if (effective_base.empty()) { res.status = 404; return; }
+		fetch_path = imgPath;
 	}
 
-	std::string hash = imgCacheKey(sourceId, imgPath);
+	std::string hash = imgCacheKey(is_cdn ? effective_base : sourceId, imgPath);
 	std::string etag = "\"" + hash + "\"";
 
 	if (req.has_header("If-None-Match") && req.get_header_value("If-None-Match") == etag) {
@@ -73,19 +92,15 @@ void ContentService::proxyImage(const Req& req,
 		return;
 	}
 
-	ContentRepository repo(db_);
-	auto base_url = repo.getSourceBaseUrl(sourceId);
-	if (base_url.empty()) { res.status = 404; return; }
-
-	std::string token = conf_.token(sourceId);
+	std::string token = is_cdn ? "" : conf_.token(sourceId);
 	httplib::Result img;
 	try {
-		httplib::Client client(base_url);
+		httplib::Client client(effective_base);
 		if (!token.empty())
 			client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "*/*"}});
 		client.set_connection_timeout(10);
 		client.set_read_timeout(15);
-		img = client.Get(imgPath);
+		img = client.Get(fetch_path);
 	} catch (const std::exception&) { res.status = 502; return; }
 	if (!img || img->status != 200) { res.status = 502; return; }
 
@@ -103,6 +118,13 @@ void ContentService::proxyImage(const Req& req,
 }
 
 void ContentService::registerRoutes(httplib::Server& svr) {
+
+	// ── Public image proxy — used by <img> tags that can't send auth headers ──
+	// Fetches and caches any external image URL. Exempt from auth in isPublicPath.
+	svr.Get("/api/images/proxy", [this](const Req& req, Res& res) {
+		if (!req.has_param("url")) { res.status = 400; return; }
+		proxyImage(req, req.get_param_value("url"), "", res);
+	});
 
 	// ── Libraries ────────────────────────────────────────────────────────────
 

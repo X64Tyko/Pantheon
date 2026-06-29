@@ -43,6 +43,8 @@ static bool isPublicPath(const std::string& path) {
 	if (path == "/api/channels") return true;
 	if (path == "/api/sources")  return true;
 	if (path.ends_with("/played")) return true;
+	// Image proxy — loaded by <img> tags that cannot send Authorization headers.
+	if (path == "/api/images/proxy") return true;
 	return false;
 }
 

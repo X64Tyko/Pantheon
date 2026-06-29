@@ -557,11 +557,13 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                     UPDATE show SET
                         tvdb_id  = CASE WHEN locked THEN tvdb_id  ELSE ? END,
                         overview = CASE WHEN locked THEN overview ELSE ? END,
-                        status   = CASE WHEN locked THEN status   ELSE ? END
+                        status   = CASE WHEN locked THEN status   ELSE ? END,
+                        thumb    = CASE WHEN locked THEN thumb    ELSE ? END
                     WHERE show_id = ?
                 )");
                 app.bind(1, show->tvdb_id); app.bind(2, show->overview);
-                app.bind(3, show->status);  app.bind(4, kairos_id);
+                app.bind(3, show->status);  app.bind(4, show->thumb);
+                app.bind(5, kairos_id);
                 app.exec();
             }
         } else if (item_type == "movie") {
@@ -569,10 +571,12 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
             if (movie) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE movie SET
-                        overview = CASE WHEN locked THEN overview ELSE ? END
+                        overview = CASE WHEN locked THEN overview ELSE ? END,
+                        thumb    = CASE WHEN locked THEN thumb    ELSE ? END
                     WHERE movie_id = ?
                 )");
-                app.bind(1, movie->overview); app.bind(2, kairos_id);
+                app.bind(1, movie->overview); app.bind(2, movie->thumb);
+                app.bind(3, kairos_id);
                 app.exec();
             }
         }
