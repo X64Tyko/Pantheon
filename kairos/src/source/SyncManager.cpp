@@ -96,9 +96,11 @@ void SyncManager::syncAll() {
         }
         syncContent(src->sourceId());
     }
-    // Phase 2: match the full combined library once.
-    if (scraper_) scraper_->runMatchSync();
-    // Phase 3: chapter sync for every source now that matches are settled.
+    // Phase 2: kick off scraper match in the background so it doesn't block
+    // chapter sync. Network calls (TMDB/TVDB/AniDB) can be slow or unreachable;
+    // running them async keeps the sync pipeline moving.
+    if (scraper_) scraper_->triggerMatch();
+    // Phase 3: chapter sync runs immediately; scraper match runs concurrently.
     for (const auto& src : sources_) {
         if (src->isSupported())
             syncChaptersFromFiles(src->sourceId());
@@ -133,7 +135,7 @@ void SyncManager::syncContent(const std::string& source_id) {
 
 void SyncManager::syncSource(const std::string& source_id) {
     syncContent(source_id);
-    if (scraper_) scraper_->runMatchSync();
+    if (scraper_) scraper_->triggerMatch();
     syncChaptersFromFiles(source_id);
     std::cout << "[sync] done: " << source_id << std::endl;
 }
@@ -853,7 +855,7 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
     // Episodes
     {
         SQLite::Statement q(db_.get(), R"(
-            SELECT sm.kairos_id, e.file_path, e.show_id, sh.title
+            SELECT sm.kairos_id, e.file_path, e.show_id, sh.title, e.duration_ms
             FROM source_mapping sm
             JOIN episode e  ON e.episode_id = sm.kairos_id
             JOIN show    sh ON sh.show_id   = e.show_id
@@ -863,15 +865,17 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
         q.bind(1, source_id);
         std::string cur_show_id;
         while (q.executeStep()) {
-            const std::string kairos_id = q.getColumn(0).getString();
-            const std::string file_path = q.getColumn(1).getString();
-            const std::string show_id   = q.getColumn(2).getString();
+            const std::string kairos_id  = q.getColumn(0).getString();
+            const std::string file_path  = q.getColumn(1).getString();
+            const std::string show_id    = q.getColumn(2).getString();
             const std::string show_title = q.getColumn(3).getString();
+            const int64_t     duration   = q.getColumn(4).getInt64();
             if (show_id != cur_show_id) {
                 cur_show_id = show_id;
                 std::cout << "[sync]   checking chapters: \"" << show_title << "\"" << std::endl;
             }
-            if (file_path.empty()) continue;
+            // Skip files that failed duration probing — ffprobe can't read them.
+            if (file_path.empty() || duration == 0) continue;
             auto chapters = probeChapters(conf_.applyPathMap(file_path));
             if (!chapters.empty())
                 repo.syncChapters("episode", kairos_id, "file", std::move(chapters));
