@@ -130,63 +130,79 @@ std::vector<LibraryInfo> JellyfinBaseSource::listAvailableLibraries() {
 // ---------------------------------------------------------------------------
 
 std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib_id) {
-    const std::string path =
+    const std::string base_path =
         "/Users/" + user_id_ + "/Items"
         "?ParentId=" + external_lib_id +
         "&IncludeItemTypes=Series&Recursive=true"
         "&Fields=Overview,Genres,Studios,People,ProviderIds,Tags,ProductionYear,"
         "OfficialRating,CommunityRating,Status,ImageTags,BackdropImageTags,"
-        "ProductionLocations,PremiereDate";
-    auto res = get(path);
-    if (!res || res->status != 200) return {};
+        "ProductionLocations,PremiereDate"
+        "&Limit=500";
 
     std::vector<Show> result;
-    try {
-        auto j = json::parse(res->body);
-        for (const auto& item : j["Items"]) {
-            const std::string id = item["Id"].get<std::string>();
-            Show show;
-            show.show_id        = id;
-            show.title          = item.value("Name", "");
-            show.content_rating = item.value("OfficialRating", "");
-            show.overview       = item.value("Overview", "");
-            show.status         = item.value("Status", "");
-            show.thumb          = thumbPath(id, item);
-            show.art            = artPath(id, item);
+    int start_index = 0;
 
-            // In Jellyfin, Studios holds the network name for TV shows.
-            if (item.contains("Studios") && !item["Studios"].empty()) {
-                show.studio  = item["Studios"][0].value("Name", "");
-                show.network = show.studio;
+    while (true) {
+        const std::string path = base_path + "&StartIndex=" + std::to_string(start_index);
+        auto res = get(path);
+        if (!res || res->status != 200) break;
+
+        int page_count = 0;
+        try {
+            auto j = json::parse(res->body);
+            const auto& items = j["Items"];
+            page_count = static_cast<int>(items.size());
+
+            for (const auto& item : items) {
+                const std::string id = item["Id"].get<std::string>();
+                Show show;
+                show.show_id        = id;
+                show.title          = item.value("Name", "");
+                show.content_rating = item.value("OfficialRating", "");
+                show.overview       = item.value("Overview", "");
+                show.status         = item.value("Status", "");
+                show.thumb          = thumbPath(id, item);
+                show.art            = artPath(id, item);
+
+                // In Jellyfin, Studios holds the network name for TV shows.
+                if (item.contains("Studios") && !item["Studios"].empty()) {
+                    show.studio  = item["Studios"][0].value("Name", "");
+                    show.network = show.studio;
+                }
+
+                if (item.contains("ProductionYear") && !item["ProductionYear"].is_null())
+                    show.year = item["ProductionYear"].get<int>();
+                if (item.contains("CommunityRating") && !item["CommunityRating"].is_null())
+                    show.audience_rating = item["CommunityRating"].get<float>();
+                if (item.contains("PremiereDate") && !item["PremiereDate"].is_null())
+                    show.originally_available_at = isoDate(item["PremiereDate"].get<std::string>());
+
+                if (item.contains("Genres"))
+                    show.genres   = jsonStringArray(item["Genres"]);
+                if (item.contains("Tags"))
+                    show.labels   = jsonStringArray(item["Tags"]);
+                if (item.contains("ProductionLocations"))
+                    show.countries = jsonStringArray(item["ProductionLocations"]);
+                if (item.contains("People"))
+                    show.actors   = personNames(item["People"], "Actor");
+
+                const auto& pids = item.value("ProviderIds", json::object());
+                show.imdb_id = pids.value("Imdb", "");
+                show.tvdb_id = pids.value("Tvdb", "");
+                show.tmdb_id = pids.value("Tmdb", "");
+
+                result.push_back(std::move(show));
             }
-
-            if (item.contains("ProductionYear") && !item["ProductionYear"].is_null())
-                show.year = item["ProductionYear"].get<int>();
-            if (item.contains("CommunityRating") && !item["CommunityRating"].is_null())
-                show.audience_rating = item["CommunityRating"].get<float>();
-            if (item.contains("PremiereDate") && !item["PremiereDate"].is_null())
-                show.originally_available_at = isoDate(item["PremiereDate"].get<std::string>());
-
-            if (item.contains("Genres"))
-                show.genres   = jsonStringArray(item["Genres"]);
-            if (item.contains("Tags"))
-                show.labels   = jsonStringArray(item["Tags"]);
-            if (item.contains("ProductionLocations"))
-                show.countries = jsonStringArray(item["ProductionLocations"]);
-            if (item.contains("People"))
-                show.actors   = personNames(item["People"], "Actor");
-
-            const auto& pids = item.value("ProviderIds", json::object());
-            show.imdb_id = pids.value("Imdb", "");
-            show.tvdb_id = pids.value("Tvdb", "");
-            show.tmdb_id = pids.value("Tmdb", "");
-
-            result.push_back(std::move(show));
+        } catch (const json::exception& e) {
+            std::cerr << "[" << sourceType() << ":" << source_id_
+                      << "] parse error (shows): " << e.what() << '\n';
+            break;
         }
-    } catch (const json::exception& e) {
-        std::cerr << "[" << sourceType() << ":" << source_id_
-                  << "] parse error (shows): " << e.what() << '\n';
+
+        if (page_count < 500) break;
+        start_index += page_count;
     }
+
     return result;
 }
 
@@ -195,76 +211,92 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
 // ---------------------------------------------------------------------------
 
 std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_lib_id) {
-    const std::string path =
+    const std::string base_path =
         "/Users/" + user_id_ + "/Items"
         "?ParentId=" + external_lib_id +
         "&IncludeItemTypes=Movie&Recursive=true"
         "&Fields=Overview,Genres,Studios,People,ProviderIds,Tags,ProductionYear,"
         "OfficialRating,CommunityRating,Tagline,MediaSources,ImageTags,"
-        "BackdropImageTags,ProductionLocations,PremiereDate";
-    auto res = get(path);
-    if (!res || res->status != 200) return {};
+        "BackdropImageTags,ProductionLocations,PremiereDate"
+        "&Limit=500";
 
     std::vector<Movie> result;
-    try {
-        auto j = json::parse(res->body);
-        for (const auto& item : j["Items"]) {
-            std::string file_path;
-            if (item.contains("MediaSources") && !item["MediaSources"].empty())
-                file_path = item["MediaSources"][0].value("Path", "");
-            if (file_path.empty()) continue;
+    int start_index = 0;
 
-            const std::string id = item["Id"].get<std::string>();
-            Movie movie;
-            movie.movie_id       = id;
-            movie.title          = item.value("Name", "");
-            movie.content_rating = item.value("OfficialRating", "");
-            movie.file_path      = std::move(file_path);
-            movie.overview       = item.value("Overview", "");
-            movie.tagline        = item.value("Tagline", "");
-            movie.thumb          = thumbPath(id, item);
-            movie.art            = artPath(id, item);
+    while (true) {
+        const std::string path = base_path + "&StartIndex=" + std::to_string(start_index);
+        auto res = get(path);
+        if (!res || res->status != 200) break;
 
-            // RunTimeTicks is 100ns units; divide by 10000 for ms.
-            {
-                int64_t ticks = 0;
-                if (item.contains("RunTimeTicks") && !item["RunTimeTicks"].is_null())
-                    ticks = item["RunTimeTicks"].get<int64_t>();
-                if (ticks <= 0 && item.contains("MediaSources") && !item["MediaSources"].empty())
-                    ticks = item["MediaSources"][0].value("RunTimeTicks", int64_t{0});
-                movie.duration_ms = ticks / 10000;
+        int page_count = 0;
+        try {
+            auto j = json::parse(res->body);
+            const auto& items = j["Items"];
+            page_count = static_cast<int>(items.size());
+
+            for (const auto& item : items) {
+                std::string file_path;
+                if (item.contains("MediaSources") && !item["MediaSources"].empty())
+                    file_path = item["MediaSources"][0].value("Path", "");
+                if (file_path.empty()) continue;
+
+                const std::string id = item["Id"].get<std::string>();
+                Movie movie;
+                movie.movie_id       = id;
+                movie.title          = item.value("Name", "");
+                movie.content_rating = item.value("OfficialRating", "");
+                movie.file_path      = std::move(file_path);
+                movie.overview       = item.value("Overview", "");
+                movie.tagline        = item.value("Tagline", "");
+                movie.thumb          = thumbPath(id, item);
+                movie.art            = artPath(id, item);
+
+                // RunTimeTicks is 100ns units; divide by 10000 for ms.
+                {
+                    int64_t ticks = 0;
+                    if (item.contains("RunTimeTicks") && !item["RunTimeTicks"].is_null())
+                        ticks = item["RunTimeTicks"].get<int64_t>();
+                    if (ticks <= 0 && item.contains("MediaSources") && !item["MediaSources"].empty())
+                        ticks = item["MediaSources"][0].value("RunTimeTicks", int64_t{0});
+                    movie.duration_ms = ticks / 10000;
+                }
+
+                if (item.contains("ProductionYear") && !item["ProductionYear"].is_null())
+                    movie.year = item["ProductionYear"].get<int>();
+                if (item.contains("CommunityRating") && !item["CommunityRating"].is_null())
+                    movie.audience_rating = item["CommunityRating"].get<float>();
+
+                if (item.contains("Studios") && !item["Studios"].empty())
+                    movie.studio = item["Studios"][0].value("Name", "");
+
+                if (item.contains("People")) {
+                    movie.director = firstPerson(item["People"], "Director");
+                    movie.actors   = personNames(item["People"], "Actor");
+                }
+
+                if (item.contains("Genres"))
+                    movie.genres   = jsonStringArray(item["Genres"]);
+                if (item.contains("Tags"))
+                    movie.labels   = jsonStringArray(item["Tags"]);
+                if (item.contains("ProductionLocations"))
+                    movie.countries = jsonStringArray(item["ProductionLocations"]);
+
+                const auto& pids = item.value("ProviderIds", json::object());
+                movie.imdb_id = pids.value("Imdb", "");
+                movie.tmdb_id = pids.value("Tmdb", "");
+
+                result.push_back(std::move(movie));
             }
-
-            if (item.contains("ProductionYear") && !item["ProductionYear"].is_null())
-                movie.year = item["ProductionYear"].get<int>();
-            if (item.contains("CommunityRating") && !item["CommunityRating"].is_null())
-                movie.audience_rating = item["CommunityRating"].get<float>();
-
-            if (item.contains("Studios") && !item["Studios"].empty())
-                movie.studio = item["Studios"][0].value("Name", "");
-
-            if (item.contains("People")) {
-                movie.director = firstPerson(item["People"], "Director");
-                movie.actors   = personNames(item["People"], "Actor");
-            }
-
-            if (item.contains("Genres"))
-                movie.genres   = jsonStringArray(item["Genres"]);
-            if (item.contains("Tags"))
-                movie.labels   = jsonStringArray(item["Tags"]);
-            if (item.contains("ProductionLocations"))
-                movie.countries = jsonStringArray(item["ProductionLocations"]);
-
-            const auto& pids = item.value("ProviderIds", json::object());
-            movie.imdb_id = pids.value("Imdb", "");
-            movie.tmdb_id = pids.value("Tmdb", "");
-
-            result.push_back(std::move(movie));
+        } catch (const json::exception& e) {
+            std::cerr << "[" << sourceType() << ":" << source_id_
+                      << "] parse error (movies): " << e.what() << '\n';
+            break;
         }
-    } catch (const json::exception& e) {
-        std::cerr << "[" << sourceType() << ":" << source_id_
-                  << "] parse error (movies): " << e.what() << '\n';
+
+        if (page_count < 500) break;
+        start_index += page_count;
     }
+
     return result;
 }
 

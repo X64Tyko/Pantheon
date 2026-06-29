@@ -102,12 +102,11 @@ void SourceRepository::updateLibraryPreferredScraper(const std::string& library_
 }
 
 void SourceRepository::removeLibrary(const std::string& library_id) {
-    SQLite::Transaction txn(db_.get());
+    // No transaction: avoids "cannot start a transaction within a transaction" when sync is mid-write on the same connection.
     { SQLite::Statement s(db_.get(), "DELETE FROM source_mapping WHERE library_id = ?");
       s.bind(1, library_id); s.exec(); }
     { SQLite::Statement s(db_.get(), "DELETE FROM media_library WHERE library_id = ?");
       s.bind(1, library_id); s.exec(); }
-    txn.commit();
 }
 
 std::string SourceRepository::resolveKairosId(const std::string& source_id,
