@@ -22,32 +22,62 @@ std::string shellQuote(const std::string& s) {
     return r + "'";
 }
 
-int64_t probeDurationMs(const std::string& file_path) {
+// Primary: container-level duration from the format header (fast).
+int64_t probeFormatDurationMs(const std::string& file_path) {
     const std::string cmd =
         "timeout -k 2 10 ffprobe -v quiet -show_entries format=duration -of csv=p=0 "
         + shellQuote(file_path) + " 2>/dev/null";
-    DLOG << "[probe] duration cmd: " << cmd << '\n';
-    const auto t0 = std::chrono::steady_clock::now();
+    DLOG << "[probe] format-duration cmd: " << cmd << '\n';
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        DLOG << "[probe] duration popen failed: " << file_path << '\n';
-        return 0;
-    }
+    if (!pipe) return 0;
     char buf[64] = {};
     fgets(buf, sizeof(buf), pipe);
     pclose(pipe);
-    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
     try {
         const double secs = std::stod(buf);
-        if (secs > 0.0) {
-            const int64_t result = static_cast<int64_t>(secs * 1000.0);
-            DLOG << "[probe] duration done in " << ms << "ms → " << result << "ms: " << file_path << '\n';
-            return result;
-        }
-    } catch (const std::exception&) {}
-    DLOG << "[probe] duration done in " << ms << "ms → no result (buf=\""
-         << buf << "\"): " << file_path << '\n';
+        if (secs > 0.0) return static_cast<int64_t>(secs * 1000.0);
+    } catch (...) {}
     return 0;
+}
+
+// Fallback: per-track stream duration.  Matroska track headers are stored near
+// the start of the file even when the segment SegmentInfo Duration element is
+// absent (common in some Blu-ray MKV encodes).  Returns the longest track
+// duration so the result reflects whichever track runs longest.
+int64_t probeStreamDurationMs(const std::string& file_path) {
+    const std::string cmd =
+        "timeout -k 2 10 ffprobe -v quiet -show_entries stream=duration -of csv=p=0 "
+        + shellQuote(file_path) + " 2>/dev/null";
+    DLOG << "[probe] stream-duration cmd: " << cmd << '\n';
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return 0;
+    int64_t best = 0;
+    char buf[64] = {};
+    while (fgets(buf, sizeof(buf), pipe)) {
+        try {
+            const double secs = std::stod(buf);
+            const int64_t ms = static_cast<int64_t>(secs * 1000.0);
+            if (ms > best) best = ms;
+        } catch (...) {}
+    }
+    pclose(pipe);
+    return best;
+}
+
+int64_t probeDurationMs(const std::string& file_path) {
+    const auto t0 = std::chrono::steady_clock::now();
+
+    int64_t result = probeFormatDurationMs(file_path);
+    if (result > 0) {
+        DLOG << "[probe] format-duration " << elapsedMs(t0, std::chrono::steady_clock::now())
+             << "ms → " << result << "ms: " << file_path << '\n';
+        return result;
+    }
+
+    result = probeStreamDurationMs(file_path);
+    DLOG << "[probe] stream-duration fallback " << elapsedMs(t0, std::chrono::steady_clock::now())
+         << "ms → " << result << "ms: " << file_path << '\n';
+    return result;
 }
 
 } // namespace
