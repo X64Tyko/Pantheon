@@ -7,12 +7,14 @@
 #include "conf/ConfStore.h"
 #include "db/ChapterRepository.h"
 #include "db/Database.h"
+#include "log/DebugLog.h"
 #include "scraper/ScraperManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -87,7 +89,11 @@ void SyncManager::triggerSync(const std::string& source_id) {
 }
 
 void SyncManager::syncAll() {
+    const auto t_total = std::chrono::steady_clock::now();
+
     // Phase 1: ingest content from every source before running match or chapters.
+    DLOG << "[sync] === phase 1: content ingestion ===\n";
+    const auto t1 = std::chrono::steady_clock::now();
     for (const auto& src : sources_) {
         if (!src->isSupported()) {
             std::cout << "[sync] " << src->sourceId()
@@ -96,16 +102,25 @@ void SyncManager::syncAll() {
         }
         syncContent(src->sourceId());
     }
+    DLOG << "[sync] phase 1 done in " << elapsedMs(t1, std::chrono::steady_clock::now()) << "ms\n";
+
     // Phase 2: kick off scraper match in the background so it doesn't block
     // chapter sync. Network calls (TMDB/TVDB/AniDB) can be slow or unreachable;
     // running them async keeps the sync pipeline moving.
+    DLOG << "[sync] === phase 2: trigger scraper match ===\n";
     if (scraper_) scraper_->triggerMatch();
+
     // Phase 3: chapter sync runs immediately; scraper match runs concurrently.
+    DLOG << "[sync] === phase 3: chapter sync ===\n";
+    const auto t3 = std::chrono::steady_clock::now();
     for (const auto& src : sources_) {
         if (src->isSupported())
             syncChaptersFromFiles(src->sourceId());
     }
-    std::cout << "[sync] all sources done" << std::endl;
+    DLOG << "[sync] phase 3 done in " << elapsedMs(t3, std::chrono::steady_clock::now()) << "ms\n";
+
+    std::cout << "[sync] all sources done (total "
+              << elapsedMs(t_total, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }
 
 void SyncManager::syncContent(const std::string& source_id) {
@@ -278,12 +293,30 @@ void SyncManager::syncShows(IMediaSource& src,
         for (int w = 0; w < worker_count; ++w) {
             workers.emplace_back([&]() {
                 for (size_t i = next.fetch_add(1); i < shows.size(); i = next.fetch_add(1)) {
+                    const auto t_fetch = std::chrono::steady_clock::now();
                     auto& eps = episodes_by_show[i] = src.fetchEpisodes(ext_show_ids[i]);
-                    for (auto& ep : eps)
-                        ep.duration_ms = validateDurationMs(ep.duration_ms, conf_.applyPathMap(ep.file_path));
+                    const long long fetch_ms = elapsedMs(t_fetch, std::chrono::steady_clock::now());
+
+                    const auto t_validate = std::chrono::steady_clock::now();
+                    for (auto& ep : eps) {
+                        const std::string mapped = conf_.applyPathMap(ep.file_path);
+                        const int64_t before = ep.duration_ms;
+                        ep.duration_ms = validateDurationMs(ep.duration_ms, mapped);
+                        if (g_debug_logging && ep.duration_ms != before) {
+                            std::lock_guard lock(s_log_mu);
+                            DLOG << "[sync]       duration corrected: "
+                                 << before << " → " << ep.duration_ms << "ms  "
+                                 << ep.file_path << '\n';
+                        }
+                    }
+                    const long long validate_ms = elapsedMs(t_validate, std::chrono::steady_clock::now());
+
                     std::lock_guard lock(s_log_mu);
                     std::cout << "[sync]     \"" << shows[i].title << "\": "
                               << eps.size() << " episode(s)" << std::endl;
+                    DLOG << "[sync]       fetch=" << fetch_ms << "ms validate=" << validate_ms
+                         << "ms  ext_id=" << ext_show_ids[i]
+                         << "  kairos_id=" << shows[i].show_id << '\n';
                 }
             });
         }
@@ -849,8 +882,11 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
         if (q.executeStep() && q.getColumn(0).getString() == "false") return;
     }
 
+    const auto t_ch_start = std::chrono::steady_clock::now();
     std::cout << "[sync] chapter sync (file): " << source_id << std::endl;
     ChapterRepository repo(db_);
+
+    int ep_checked = 0, ep_skipped_duration = 0, ep_skipped_missing = 0, ep_with_chapters = 0;
 
     // Episodes
     {
@@ -874,13 +910,43 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
                 cur_show_id = show_id;
                 std::cout << "[sync]   checking chapters: \"" << show_title << "\"" << std::endl;
             }
+            ++ep_checked;
+
             // Skip files that failed duration probing — ffprobe can't read them.
-            if (file_path.empty() || duration == 0) continue;
-            auto chapters = probeChapters(conf_.applyPathMap(file_path));
-            if (!chapters.empty())
+            if (file_path.empty() || duration == 0) {
+                ++ep_skipped_duration;
+                DLOG << "[sync]     skip (no path/duration=0): kairos_id=" << kairos_id
+                     << "  path=" << file_path << "  duration=" << duration << '\n';
+                continue;
+            }
+            const std::string mapped_path = conf_.applyPathMap(file_path);
+            const bool exists = std::filesystem::exists(mapped_path);
+            DLOG << "[sync]     ep kairos_id=" << kairos_id
+                 << "\n            src:    " << file_path
+                 << "\n            mapped: " << mapped_path
+                 << "\n            exists: " << (exists ? "yes" : "NO")
+                 << "  duration=" << duration << "ms\n";
+            if (!exists) {
+                ++ep_skipped_missing;
+                continue;
+            }
+            const auto t_probe = std::chrono::steady_clock::now();
+            auto chapters = probeChapters(mapped_path);
+            DLOG << "[sync]     probe took " << elapsedMs(t_probe, std::chrono::steady_clock::now())
+                 << "ms → " << chapters.size() << " chapter(s)\n";
+            if (!chapters.empty()) {
+                ++ep_with_chapters;
                 repo.syncChapters("episode", kairos_id, "file", std::move(chapters));
+            }
         }
     }
+
+    DLOG << "[sync] episode chapter summary: checked=" << ep_checked
+         << " skipped_duration=" << ep_skipped_duration
+         << " skipped_missing=" << ep_skipped_missing
+         << " with_chapters=" << ep_with_chapters << '\n';
+
+    int mv_checked = 0, mv_skipped_missing = 0, mv_with_chapters = 0;
 
     // Movies
     {
@@ -895,11 +961,32 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
             const std::string kairos_id = q.getColumn(0).getString();
             const std::string file_path = q.getColumn(1).getString();
             if (file_path.empty()) continue;
-            auto chapters = probeChapters(conf_.applyPathMap(file_path));
-            if (!chapters.empty())
+            ++mv_checked;
+            const std::string mapped_path = conf_.applyPathMap(file_path);
+            const bool exists = std::filesystem::exists(mapped_path);
+            DLOG << "[sync]   movie kairos_id=" << kairos_id
+                 << "\n           src:    " << file_path
+                 << "\n           mapped: " << mapped_path
+                 << "\n           exists: " << (exists ? "yes" : "NO") << '\n';
+            if (!exists) {
+                ++mv_skipped_missing;
+                continue;
+            }
+            const auto t_probe = std::chrono::steady_clock::now();
+            auto chapters = probeChapters(mapped_path);
+            DLOG << "[sync]   probe took " << elapsedMs(t_probe, std::chrono::steady_clock::now())
+                 << "ms → " << chapters.size() << " chapter(s)\n";
+            if (!chapters.empty()) {
+                ++mv_with_chapters;
                 repo.syncChapters("movie", kairos_id, "file", std::move(chapters));
+            }
         }
     }
 
-    std::cout << "[sync] chapter sync done: " << source_id << std::endl;
+    DLOG << "[sync] movie chapter summary: checked=" << mv_checked
+         << " skipped_missing=" << mv_skipped_missing
+         << " with_chapters=" << mv_with_chapters << '\n';
+
+    std::cout << "[sync] chapter sync done: " << source_id
+              << " (" << elapsedMs(t_ch_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }

@@ -4,6 +4,7 @@
 #include "TvdbScraper.h"
 #include "conf/ConfStore.h"
 #include "db/Database.h"
+#include "log/DebugLog.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <cctype>
@@ -254,6 +255,7 @@ void ScraperManager::runMatch(const std::string& target_id,
     }
     std::cout << "[scraper] match: " << pending_shows << " show(s), "
               << pending_movies << " movie(s)\n";
+    const auto t_match_start = std::chrono::steady_clock::now();
 
     // ── Shows ────────────────────────────────────────────────────────────────
     if (item_type.empty() || item_type == "show") {
@@ -302,7 +304,8 @@ void ScraperManager::runMatch(const std::string& target_id,
                        q.getColumn(5).getString());
         }
     }
-    std::cout << "[scraper] match complete\n";
+    std::cout << "[scraper] match complete ("
+              << elapsedMs(t_match_start, std::chrono::steady_clock::now()) << "ms)\n";
 }
 
 // ── Per-item matching ─────────────────────────────────────────────────────────
@@ -381,9 +384,37 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
     auto wantScraper = [&](const std::string& src) {
         return preferred_scraper.empty() || preferred_scraper == src;
     };
-    if (tmdb_  && wantScraper("tmdb"))  collect("tmdb",  tmdb_->searchShows(title, year));
-    if (tvdb_  && wantScraper("tvdb"))  collect("tvdb",  tvdb_->searchShows(title, year));
-    if (anidb_ && wantScraper("anidb")) collect("anidb", anidb_->searchShows(title, year));
+    auto timedSearch = [&](const std::string& src, std::vector<Show> results) {
+        DLOG << "[scraper]   " << src << ": " << results.size() << " result(s)\n";
+        for (const auto& r : results)
+            DLOG << "[scraper]     " << src << " candidate: \"" << r.title << "\""
+                 << " (" << (r.year.has_value() ? r.year.value() : 0) << ")"
+                 << " score=" << std::fixed << std::setprecision(3)
+                 << computeScore(title, year, r.title, r.year.has_value() ? r.year.value() : 0)
+                 << '\n';
+        collect(src, std::move(results));
+    };
+    if (tmdb_ && wantScraper("tmdb")) {
+        DLOG << "[scraper]   querying tmdb for show \"" << title << "\" year=" << year << '\n';
+        const auto t0 = std::chrono::steady_clock::now();
+        auto results = tmdb_->searchShows(title, year);
+        DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+        timedSearch("tmdb", std::move(results));
+    }
+    if (tvdb_ && wantScraper("tvdb")) {
+        DLOG << "[scraper]   querying tvdb for show \"" << title << "\" year=" << year << '\n';
+        const auto t0 = std::chrono::steady_clock::now();
+        auto results = tvdb_->searchShows(title, year);
+        DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+        timedSearch("tvdb", std::move(results));
+    }
+    if (anidb_ && wantScraper("anidb")) {
+        DLOG << "[scraper]   querying anidb for show \"" << title << "\" year=" << year << '\n';
+        const auto t0 = std::chrono::steady_clock::now();
+        auto results = anidb_->searchShows(title, year);
+        DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+        timedSearch("anidb", std::move(results));
+    }
 
     double best = 0.0;
     for (const auto& c : candidates) {
@@ -468,9 +499,37 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
     auto wantScraper = [&](const std::string& src) {
         return preferred_scraper.empty() || preferred_scraper == src;
     };
-    if (tmdb_  && wantScraper("tmdb"))  collect("tmdb",  tmdb_->searchMovies(title, year));
-    if (tvdb_  && wantScraper("tvdb"))  collect("tvdb",  tvdb_->searchMovies(title, year));
-    if (anidb_ && wantScraper("anidb")) collect("anidb", anidb_->searchMovies(title, year));
+    auto timedSearchM = [&](const std::string& src, std::vector<Movie> results) {
+        DLOG << "[scraper]   " << src << ": " << results.size() << " result(s)\n";
+        for (const auto& r : results)
+            DLOG << "[scraper]     " << src << " candidate: \"" << r.title << "\""
+                 << " (" << (r.year.has_value() ? r.year.value() : 0) << ")"
+                 << " score=" << std::fixed << std::setprecision(3)
+                 << computeScore(title, year, r.title, r.year.has_value() ? r.year.value() : 0)
+                 << '\n';
+        collect(src, std::move(results));
+    };
+    if (tmdb_ && wantScraper("tmdb")) {
+        DLOG << "[scraper]   querying tmdb for movie \"" << title << "\" year=" << year << '\n';
+        const auto t0 = std::chrono::steady_clock::now();
+        auto results = tmdb_->searchMovies(title, year);
+        DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+        timedSearchM("tmdb", std::move(results));
+    }
+    if (tvdb_ && wantScraper("tvdb")) {
+        DLOG << "[scraper]   querying tvdb for movie \"" << title << "\" year=" << year << '\n';
+        const auto t0 = std::chrono::steady_clock::now();
+        auto results = tvdb_->searchMovies(title, year);
+        DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+        timedSearchM("tvdb", std::move(results));
+    }
+    if (anidb_ && wantScraper("anidb")) {
+        DLOG << "[scraper]   querying anidb for movie \"" << title << "\" year=" << year << '\n';
+        const auto t0 = std::chrono::steady_clock::now();
+        auto results = anidb_->searchMovies(title, year);
+        DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+        timedSearchM("anidb", std::move(results));
+    }
 
     double best = 0.0;
     for (const auto& c : candidates) {

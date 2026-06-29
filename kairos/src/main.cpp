@@ -6,10 +6,13 @@
 #include "conf/ConfStore.h"
 #include "db/Database.h"
 #include "download/DownloadManager.h"
+#include "log/DebugLog.h"
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
 #include "source/SyncManager.h"
+
+bool g_debug_logging = false;
 
 int main(int argc, char* argv[]) {
     // Intercept cout/cerr before anything else so startup messages are captured.
@@ -34,7 +37,11 @@ int main(int argc, char* argv[]) {
             reset_user = argv[++i];
             reset_pass = argv[++i];
         }
+        else if (arg == "--debug")
+            g_debug_logging = true;
     }
+    if (!g_debug_logging && std::getenv("KAIROS_DEBUG"))
+        g_debug_logging = true;
 
     // Admin recovery mode — reset password and exit without starting the server.
     if (!reset_user.empty()) {
@@ -80,6 +87,8 @@ int main(int argc, char* argv[]) {
     Router router(svr, db, sync, conf, log_buffer, engine, materializer, dl, auth);
     router.registerRoutes();
 
+    if (g_debug_logging)
+        std::cout << "[kairos] debug logging enabled\n";
     std::cout << "[kairos] listening on 0.0.0.0:" << port
               << "  db=" << db_path
               << "  conf=" << conf_path << std::endl;

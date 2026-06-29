@@ -239,8 +239,8 @@ void CursorState::applyToDB(Database& db, const std::string& channel_id) const {
     }
 
     SQLite::Statement bsins(db.get(), R"(
-        INSERT INTO block_state (block_id, channel_id, content_position,
-                                 runs_remaining, consecutive_count, updated_at)
+        INSERT OR IGNORE INTO block_state (block_id, channel_id, content_position,
+                                          runs_remaining, consecutive_count, updated_at)
         VALUES (?,?,?,?,?,strftime('%s','now'))
     )");
     for (const auto& [block_id, bp] : block_positions_) {

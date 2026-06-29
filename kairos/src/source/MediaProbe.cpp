@@ -1,4 +1,5 @@
 #include "MediaProbe.h"
+#include "log/DebugLog.h"
 #include <cstdio>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -25,16 +26,27 @@ int64_t probeDurationMs(const std::string& file_path) {
     const std::string cmd =
         "timeout 10 ffprobe -v quiet -show_entries format=duration -of csv=p=0 "
         + shellQuote(file_path) + " 2>/dev/null";
+    DLOG << "[probe] duration cmd: " << cmd << '\n';
+    const auto t0 = std::chrono::steady_clock::now();
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return 0;
+    if (!pipe) {
+        DLOG << "[probe] duration popen failed: " << file_path << '\n';
+        return 0;
+    }
     char buf[64] = {};
     fgets(buf, sizeof(buf), pipe);
     pclose(pipe);
+    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
     try {
         const double secs = std::stod(buf);
-        if (secs > 0.0)
-            return static_cast<int64_t>(secs * 1000.0);
+        if (secs > 0.0) {
+            const int64_t result = static_cast<int64_t>(secs * 1000.0);
+            DLOG << "[probe] duration done in " << ms << "ms → " << result << "ms: " << file_path << '\n';
+            return result;
+        }
     } catch (const std::exception&) {}
+    DLOG << "[probe] duration done in " << ms << "ms → no result (buf=\""
+         << buf << "\"): " << file_path << '\n';
     return 0;
 }
 
@@ -44,14 +56,23 @@ std::vector<Chapter> probeChapters(const std::string& file_path) {
     const std::string cmd =
         "timeout 10 ffprobe -v quiet -print_format json -show_chapters "
         + shellQuote(file_path) + " 2>/dev/null";
+    DLOG << "[probe] chapters cmd: " << cmd << '\n';
+    const auto t0 = std::chrono::steady_clock::now();
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return {};
+    if (!pipe) {
+        DLOG << "[probe] chapters popen failed: " << file_path << '\n';
+        return {};
+    }
     std::string out;
     char buf[4096];
     while (fgets(buf, sizeof(buf), pipe))
         out += buf;
     pclose(pipe);
-    if (out.empty()) return {};
+    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
+    if (out.empty()) {
+        DLOG << "[probe] chapters done in " << ms << "ms → no output: " << file_path << '\n';
+        return {};
+    }
 
     std::vector<Chapter> result;
     try {
@@ -84,6 +105,8 @@ std::vector<Chapter> probeChapters(const std::string& file_path) {
         std::cerr << "[probe] chapter parse error for " << file_path
                   << ": " << e.what() << '\n';
     }
+    DLOG << "[probe] chapters done in " << ms << "ms → " << result.size()
+         << " chapter(s): " << file_path << '\n';
     return result;
 }
 
@@ -91,14 +114,23 @@ StreamLanguages probeStreamLanguages(const std::string& file_path) {
     const std::string cmd =
         "timeout 15 ffprobe -v quiet -print_format json -show_streams "
         + shellQuote(file_path) + " 2>/dev/null";
+    DLOG << "[probe] streams cmd: " << cmd << '\n';
+    const auto t0 = std::chrono::steady_clock::now();
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return {};
+    if (!pipe) {
+        DLOG << "[probe] streams popen failed: " << file_path << '\n';
+        return {};
+    }
     std::string out;
     char buf[8192];
     while (fgets(buf, sizeof(buf), pipe))
         out += buf;
     pclose(pipe);
-    if (out.empty()) return {};
+    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
+    if (out.empty()) {
+        DLOG << "[probe] streams done in " << ms << "ms → no output: " << file_path << '\n';
+        return {};
+    }
 
     StreamLanguages result;
     try {
@@ -120,6 +152,9 @@ StreamLanguages probeStreamLanguages(const std::string& file_path) {
         std::cerr << "[probe] stream-lang parse error for " << file_path
                   << ": " << e.what() << '\n';
     }
+    DLOG << "[probe] streams done in " << ms << "ms → "
+         << result.audio.size() << " audio, "
+         << result.subtitle.size() << " subtitle track(s): " << file_path << '\n';
     return result;
 }
 
