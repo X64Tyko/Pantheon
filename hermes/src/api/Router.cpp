@@ -1,6 +1,5 @@
 #include "Router.h"
 #include <nlohmann/json.hpp>
-#include <chrono>
 #include <string>
 
 using json = nlohmann::json;
@@ -52,6 +51,43 @@ static std::string buildQuery(const httplib::Params& params) {
     return q;
 }
 
+// Proxy a long-lived streaming response (SSE, chunked) from an upstream service.
+// Unlike proxyRequest this never buffers — it pipes bytes to the client as they arrive.
+static void proxyStream(const std::string& upstream_base,
+                         const httplib::Request& req,
+                         httplib::Response& res) {
+    std::string path = req.path;
+    auto q = buildQuery(req.params);
+    if (!q.empty()) path += "?" + q;
+
+    httplib::Headers fwd;
+    for (const char* h : {"Authorization", "Cookie", "Accept", "Accept-Language"}) {
+        auto v = req.get_header_value(h);
+        if (!v.empty()) fwd.emplace(h, v);
+    }
+
+    res.set_header("Cache-Control",     "no-cache");
+    res.set_header("Connection",        "keep-alive");
+    res.set_header("X-Accel-Buffering", "no");
+    res.set_header("Access-Control-Allow-Origin", "*");
+
+    res.set_chunked_content_provider("text/event-stream",
+        [upstream_base, path, fwd](size_t, httplib::DataSink& sink) -> bool {
+            httplib::Client cli(upstream_base);
+            cli.set_connection_timeout(5);
+            cli.set_read_timeout(60);
+
+            cli.Get(path, fwd,
+                [](const httplib::Response&) -> bool { return true; },
+                [&sink](const char* data, size_t len) -> bool {
+                    return sink.is_writable() && sink.write(data, len);
+                });
+
+            if (sink.is_writable()) sink.done();
+            return false;
+        });
+}
+
 // Forward any HTTP request to an upstream service verbatim.
 static void proxyRequest(const std::string& upstream_base,
                           const httplib::Request& req,
@@ -92,7 +128,7 @@ static void proxyRequest(const std::string& upstream_base,
 }
 
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
-                    KairosClient& kairos, LogBuffer& logs, const Config& cfg) {
+                    KairosClient& kairos, const Config& cfg) {
 
     // ── Health ────────────────────────────────────────────────────────────────
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
@@ -101,45 +137,9 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
             "application/json");
     });
 
-    // ── Log stream (SSE) ──────────────────────────────────────────────────────
-    svr.Get("/api/logs/stream", [&logs](const httplib::Request&, httplib::Response& res) {
-        res.set_header("Cache-Control",     "no-cache");
-        res.set_header("Connection",        "keep-alive");
-        res.set_header("X-Accel-Buffering", "no");
-        res.set_header("Access-Control-Allow-Origin", "*");
-
-        res.set_chunked_content_provider("text/event-stream",
-            [&logs, cur_seq = uint64_t{0}, sent_init = false]
-            (size_t, httplib::DataSink& sink) mutable -> bool {
-
-                if (!sent_init) {
-                    sent_init = true;
-                    auto [lines, seq] = logs.recent(200);
-                    cur_seq = seq;
-                    for (const auto& line : lines) {
-                        std::string ev = "data:" + line + "\n\n";
-                        if (!sink.write(ev.data(), ev.size())) return false;
-                    }
-                    return true;
-                }
-
-                auto [new_lines, new_seq] =
-                    logs.waitAfter(cur_seq, std::chrono::milliseconds{25'000});
-
-                if (!sink.is_writable()) return false;
-
-                if (new_lines.empty()) {
-                    static const std::string ping = ": ping\n\n";
-                    return sink.write(ping.data(), ping.size());
-                }
-
-                cur_seq = new_seq;
-                for (const auto& line : new_lines) {
-                    std::string ev = "data:" + line + "\n\n";
-                    if (!sink.write(ev.data(), ev.size())) return false;
-                }
-                return true;
-            });
+    // ── Log stream (SSE) — proxied from Kairos ───────────────────────────────
+    svr.Get("/api/logs/stream", [&cfg](const httplib::Request& req, httplib::Response& res) {
+        proxyStream(cfg.kairos_url, req, res);
     });
 
     // ── HDHomeRun device emulation ────────────────────────────────────────────

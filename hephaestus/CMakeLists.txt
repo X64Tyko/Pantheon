@@ -28,8 +28,6 @@ FetchContent_MakeAvailable(httplib)
 find_package(OpenSSL REQUIRED)
 
 # ── hephaestus_core ───────────────────────────────────────────────────────────
-# Collect all non-main sources. Once there are files here, they compile into a
-# static lib that tests can link against independently of the executable.
 file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 list(FILTER CORE_SOURCES EXCLUDE REGEX ".*[/\\\\]main\\.cpp$")
 
@@ -46,22 +44,24 @@ if(CORE_SOURCES)
         target_link_libraries(hephaestus_core PUBLIC pthread)
     endif()
     target_compile_definitions(hephaestus_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
-endif()
-
-# ── hephaestus executable ─────────────────────────────────────────────────────
-add_executable(hephaestus src/main.cpp)
-target_include_directories(hephaestus PRIVATE src)
-
-if(CORE_SOURCES)
-    target_link_libraries(hephaestus PRIVATE hephaestus_core)
 else()
-    target_link_libraries(hephaestus PRIVATE
+    add_library(hephaestus_core INTERFACE)
+    target_include_directories(hephaestus_core INTERFACE src)
+    target_link_libraries(hephaestus_core
+        INTERFACE
         nlohmann_json::nlohmann_json
         httplib::httplib
         OpenSSL::SSL OpenSSL::Crypto
     )
     if(UNIX)
-        target_link_libraries(hephaestus PRIVATE pthread)
+        target_link_libraries(hephaestus_core INTERFACE pthread)
     endif()
-    target_compile_definitions(hephaestus PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+    target_compile_definitions(hephaestus_core INTERFACE CPPHTTPLIB_OPENSSL_SUPPORT)
+endif()
+
+# ── hephaestus executable ─────────────────────────────────────────────────────
+if(CORE_SOURCES)
+    add_executable(hephaestus src/main.cpp)
+    target_include_directories(hephaestus PRIVATE src)
+    target_link_libraries(hephaestus PRIVATE hephaestus_core)
 endif()

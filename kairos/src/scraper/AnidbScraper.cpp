@@ -133,7 +133,7 @@ double titleSim(const std::string& a, const std::string& b) {
 AnidbScraper::AnidbScraper(std::string client_name)
     : client_name_(std::move(client_name))
     , api_client_("http://api.anidb.net:9001")   // AniDB HTTP API is plain HTTP on port 9001
-    , dump_client_("http://anidb.net")
+    , dump_client_("https://anidb.net")
 {
     api_client_.set_connection_timeout(15);
     api_client_.set_read_timeout(30);

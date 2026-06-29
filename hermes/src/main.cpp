@@ -2,17 +2,12 @@
 #include "api/Router.h"
 #include "broadcast/BroadcasterManager.h"
 #include "kairos/KairosClient.h"
-#include "log/LogBuffer.h"
 #include <httplib.h>
 #include <iostream>
 #include <thread>
 #include <chrono>
 
 int main(int argc, char* argv[]) {
-    LogBuffer log_buffer;
-    LogTee    tee_cout(std::cout, log_buffer);
-    LogTee    tee_cerr(std::cerr, log_buffer);
-
     Config cfg = parseConfig(argc, argv);
 
     KairosClient kairos(cfg.kairos_url);
@@ -21,7 +16,7 @@ int main(int argc, char* argv[]) {
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(32); };
 
-    registerRoutes(svr, broadcasters, kairos, log_buffer, cfg);
+    registerRoutes(svr, broadcasters, kairos, cfg);
 
     // Periodic reap of dead broadcasters (every 60s).
     std::thread reaper([&broadcasters, &svr] {
