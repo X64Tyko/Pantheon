@@ -1783,7 +1783,7 @@ void RuleEngine::scheduleTimeslotSlot(
             bool is_complete = false;
             if (entry.content_type == "show") {
                 SQLite::Statement aq(db_.get(),
-                    "SELECT COALESCE(MAX(aired_at),0) FROM episode WHERE show_id=?");
+                    "SELECT COALESCE(strftime('%s', MAX(air_date)), 0) FROM episode WHERE show_id=?");
                 aq.bind(1, entry.content_id);
                 if (aq.executeStep()) {
                     int64_t last_aired = aq.getColumn(0).getInt64();
