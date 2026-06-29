@@ -1,10 +1,12 @@
 # Stage 1: build
 FROM node:22-alpine AS builder
 
-RUN npm install -g pnpm@latest --ignore-scripts
+RUN corepack enable
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
+# Copy all pnpm config before install so the workspace settings and lockfile
+# are consistent. pnpm 9+ requires pnpm-workspace.yaml for allowBuilds (esbuild).
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
