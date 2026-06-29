@@ -5,28 +5,17 @@
 
 using json = nlohmann::json;
 
-// Extracts "http://host:port" from a request, falling back to the Host header.
 static std::string baseUrl(const httplib::Request& req) {
     auto host = req.get_header_value("Host");
-    if (host.empty()) host = "localhost:8082";
+    if (host.empty()) host = "localhost:8000";
     return "http://" + host;
 }
 
-// Shared stream handler: looks up / creates a session and fans the client in.
 static void handleStream(const std::string& channel_id,
-                          SessionManager& sessions,
+                          BroadcasterManager& broadcasters,
                           httplib::Response& res) {
-    auto session = sessions.getOrCreate(channel_id);
-    if (!session) {
-        res.status = 503;
-        res.set_content(
-            json{{"error", "channel unavailable"}, {"channel_id", channel_id}}.dump(),
-            "application/json");
-        return;
-    }
-
-    auto sink = std::make_shared<ClientSink>();
-    session->addClient(sink);
+    auto bc = broadcasters.getOrCreate(channel_id);
+    auto sink = bc->addClient();
 
     res.set_chunked_content_provider(
         "video/mp2t",
@@ -49,23 +38,45 @@ static void handleStream(const std::string& channel_id,
                 reinterpret_cast<const char*>(chunk.data()),
                 chunk.size());
         },
-        [sink, session](bool) {
-            session->removeClient(sink);
+        [sink, bc](bool) {
+            bc->removeClient(sink);
         }
     );
 }
 
-void registerRoutes(httplib::Server& svr, SessionManager& sessions,
+// Forward a GET to an upstream service and copy the response verbatim.
+static void proxyGet(const std::string& upstream_base,
+                     const std::string& path,
+                     const std::string& query,
+                     httplib::Response& res) {
+    httplib::Client cli(upstream_base);
+    cli.set_connection_timeout(5);
+    cli.set_read_timeout(10);
+
+    std::string full = path;
+    if (!query.empty()) full += "?" + query;
+
+    auto r = cli.Get(full);
+    if (!r || r->status == 0) {
+        res.status = 502;
+        res.set_content(json{{"error","upstream unavailable"}}.dump(), "application/json");
+        return;
+    }
+    res.status = r->status;
+    res.set_content(r->body, r->get_header_value("Content-Type"));
+}
+
+void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
                     KairosClient& kairos, LogBuffer& logs, const Config& cfg) {
 
     // ── Health ────────────────────────────────────────────────────────────────
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(
-            json{{"status", "ok"}, {"service", "hephaestus"}}.dump(),
+            json{{"status","ok"},{"service","hermes"}}.dump(),
             "application/json");
     });
 
-    // ── Log stream (SSE — same contract as Kairos /api/logs/stream) ───────────
+    // ── Log stream (SSE) ──────────────────────────────────────────────────────
     svr.Get("/api/logs/stream", [&logs](const httplib::Request&, httplib::Response& res) {
         res.set_header("Cache-Control",     "no-cache");
         res.set_header("Connection",        "keep-alive");
@@ -107,10 +118,6 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions,
     });
 
     // ── HDHomeRun device emulation ────────────────────────────────────────────
-    // Plex, Emby, and Jellyfin all speak the HDHomeRun HTTP API for live TV
-    // discovery. Add the device manually in the DVR settings by pointing at
-    // http://<hephaestus-host>:<port>. No SSDP required for manual entry.
-
     svr.Get("/discover.json", [&cfg](const httplib::Request& req, httplib::Response& res) {
         auto base = baseUrl(req);
         res.set_content(json{
@@ -157,10 +164,9 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions,
         }.dump(), "application/json");
     });
 
-    // lineup.json: one entry per Kairos channel, stream URL points back here.
-    // Uses the .ts suffix so Plex doesn't try to negotiate HLS.
-    svr.Get("/lineup.json", [&kairos, &sessions](
-            const httplib::Request& req, httplib::Response& res) {
+    // lineup.json: stream URLs point at Hermes (not Hephaestus) so DVR clients
+    // see a single public endpoint.
+    svr.Get("/lineup.json", [&kairos](const httplib::Request& req, httplib::Response& res) {
         auto base = baseUrl(req);
         auto channels = kairos.getChannels();
 
@@ -172,40 +178,29 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions,
                 {"URL",         base + "/stream/channels/" + ch.channel_id + ".ts"},
             });
         }
-
-        if (lineup.empty()) {
-            lineup.push_back({
-                {"GuideNumber", "1"},
-                {"GuideName",   "No channels — check Kairos"},
-                {"URL",         base + "/health"},
-            });
-        }
-
         res.set_content(lineup.dump(), "application/json");
     });
 
-    // ── MPEG-TS stream ────────────────────────────────────────────────────────
-    // Plain UUID form — used by M3U players and direct clients.
-    svr.Get(R"(/stream/channels/([^/.]+)$)", [&sessions](
+    // ── MPEG-TS live stream ───────────────────────────────────────────────────
+    svr.Get(R"(/stream/channels/([^/.]+)$)", [&broadcasters](
             const httplib::Request& req, httplib::Response& res) {
-        handleStream(req.matches[1], sessions, res);
+        handleStream(req.matches[1], broadcasters, res);
     });
 
-    // .ts suffix form — used by HDHomeRun lineup.json and Plex.
-    svr.Get(R"(/stream/channels/([^/]+)\.ts$)", [&sessions](
+    svr.Get(R"(/stream/channels/([^/]+)\.ts$)", [&broadcasters](
             const httplib::Request& req, httplib::Response& res) {
-        handleStream(req.matches[1], sessions, res);
+        handleStream(req.matches[1], broadcasters, res);
     });
 
-    // ── M3U playlist ──────────────────────────────────────────────────────────
+    // ── M3U playlist (stream URLs point at Hermes) ────────────────────────────
     svr.Get("/playlist.m3u", [&kairos](const httplib::Request& req, httplib::Response& res) {
         auto base = baseUrl(req);
         auto channels = kairos.getChannels();
         std::string m3u = "#EXTM3U\n";
         for (auto& ch : channels) {
             m3u += "#EXTINF:-1"
-                   " tvg-id=\""      + ch.channel_id + "\""
-                   " tvg-name=\""    + ch.name       + "\""
+                   " tvg-id=\""         + ch.channel_id + "\""
+                   " tvg-name=\""       + ch.name       + "\""
                    " channel-number=\"" + std::to_string(ch.number) + "\""
                    "," + ch.name + "\n"
                    + base + "/stream/channels/" + ch.channel_id + "\n";
@@ -213,14 +208,28 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions,
         res.set_content(m3u, "application/x-mpegurl");
     });
 
-    // ── Internal channel list (proxied from Kairos) ───────────────────────────
-    svr.Get("/api/channels", [&kairos](const httplib::Request&, httplib::Response& res) {
-        auto channels = kairos.getChannels();
-        json arr = json::array();
-        for (auto& ch : channels)
-            arr.push_back({{"channel_id", ch.channel_id},
-                           {"name",       ch.name},
-                           {"number",     ch.number}});
-        res.set_content(arr.dump(), "application/json");
+    // ── Kairos API proxy (channels, EPG, schedule) ────────────────────────────
+    // Anything under /api/ that isn't handled above goes to Kairos.
+    svr.Get(R"(/api/(.*))", [&cfg](const httplib::Request& req, httplib::Response& res) {
+        proxyGet(cfg.kairos_url, req.path, req.params.empty() ? "" :
+            [&req] {
+                std::string q;
+                for (auto& [k, v] : req.params)
+                    q += (q.empty() ? "" : "&") + k + "=" + v;
+                return q;
+            }(),
+            res);
+    });
+
+    // Kairos EPG XML
+    svr.Get("/epg.xml", [&cfg](const httplib::Request& req, httplib::Response& res) {
+        proxyGet(cfg.kairos_url, "/epg.xml",
+            req.params.empty() ? "" : [&req] {
+                std::string q;
+                for (auto& [k, v] : req.params)
+                    q += (q.empty() ? "" : "&") + k + "=" + v;
+                return q;
+            }(),
+            res);
     });
 }

@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(16); };
 
-    registerRoutes(svr, sessions, kairos, log_buffer);
+    registerRoutes(svr, sessions, kairos, log_buffer, cfg);
 
     std::cout << "[hephaestus] listening on :" << cfg.port
               << "  kairos=" << cfg.kairos_url
