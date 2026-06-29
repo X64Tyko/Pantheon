@@ -30,12 +30,17 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	auto xmltvHandler = [this](const Req& req, Res& res) {
-		int hours = 24;
-		if (req.has_param("hours")) {
-			try { hours = std::stoi(req.get_param_value("hours")); } catch (...) {}
+		try {
+			int hours = 24;
+			if (req.has_param("hours")) {
+				try { hours = std::stoi(req.get_param_value("hours")); } catch (...) {}
+			}
+			hours = std::max(1, std::min(hours, 72));
+			res.set_content(materializer_.generateXMLTV(hours), "application/xml");
+		} catch (const std::exception& e) {
+			route::logErr("GET xmltv", e);
+			route::err(res, 500, e.what());
 		}
-		hours = std::max(1, std::min(hours, 72));
-		res.set_content(materializer_.generateXMLTV(hours), "application/xml");
 	};
 	svr.Get("/epg.xml",          xmltvHandler);
 	svr.Get("/api/epg.xml",      xmltvHandler);
