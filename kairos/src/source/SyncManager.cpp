@@ -188,8 +188,11 @@ void SyncManager::syncShows(IMediaSource& src,
                              const std::string& source_id,
                              const std::string& library_id,
                              const std::string& external_lib_id) {
+    std::cout << "[sync]   fetching shows: " << external_lib_id << std::endl;
+    const auto t_shows = std::chrono::steady_clock::now();
     auto shows = src.fetchShows(external_lib_id);
-    std::cout << "[sync]   " << external_lib_id << ": " << shows.size() << " show(s)" << std::endl;
+    std::cout << "[sync]   " << external_lib_id << ": " << shows.size()
+              << " show(s) (" << elapsedMs(t_shows, std::chrono::steady_clock::now()) << "ms)" << std::endl;
     if (shows.empty()) return; // skip stale cleanup — empty fetch may be a source error
 
     // Resolve IDs and upsert show metadata first so ext_show_id is captured
@@ -323,6 +326,70 @@ void SyncManager::syncShows(IMediaSource& src,
         for (auto& t : workers) t.join();
     }
 
+    {
+        size_t total_eps = 0;
+        for (const auto& eps : episodes_by_show) total_eps += eps.size();
+        std::cout << "[sync]   writing " << shows.size() << " show(s), "
+                  << total_eps << " episode(s) to db: " << external_lib_id << std::endl;
+    }
+    const auto t_write = std::chrono::steady_clock::now();
+
+    // Prepare hot statements once for this library pass to avoid re-compiling SQL
+    // on every episode.  For a 500-show / 15 000-episode library this replaces
+    // ~60 000 sqlite3_prepare_v2 calls with 8.
+    const std::string ep_prefix = source_id + ":";
+    SQLite::Statement s_resolve_ep(db_.get(),
+        "SELECT kairos_id FROM source_mapping "
+        "WHERE item_type='episode' AND source_id=? AND external_id=?");
+    SQLite::Statement s_ep_by_path(db_.get(),
+        "SELECT episode_id FROM episode WHERE file_path=? LIMIT 1");
+    SQLite::Statement s_clear_ep_cursors(db_.get(),
+        "UPDATE media_cursor SET episode_id = NULL "
+        "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
+    SQLite::Statement s_delete_eps(db_.get(),
+        "DELETE FROM episode WHERE show_id=?");
+    SQLite::Statement s_upsert_ep(db_.get(), R"(
+        INSERT INTO episode (episode_id, show_id, season, episode, title,
+                             file_path, duration_ms, overview, air_date,
+                             thumb, absolute_index)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(episode_id) DO UPDATE SET
+            show_id        = excluded.show_id,
+            season         = excluded.season,
+            episode        = excluded.episode,
+            title          = CASE WHEN locked THEN title    ELSE excluded.title    END,
+            file_path      = excluded.file_path,
+            duration_ms    = excluded.duration_ms,
+            overview       = CASE WHEN locked THEN overview ELSE excluded.overview END,
+            air_date       = excluded.air_date,
+            thumb          = CASE WHEN locked THEN thumb    ELSE excluded.thumb    END,
+            absolute_index = excluded.absolute_index
+    )");
+    SQLite::Statement s_ep_mapping(db_.get(), R"(
+        INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
+        VALUES ('episode',?,?,?,?)
+        ON CONFLICT(item_type, kairos_id, source_id) DO UPDATE SET
+            library_id  = excluded.library_id,
+            external_id = excluded.external_id
+    )");
+    SQLite::Statement s_delete_seasons(db_.get(),
+        "DELETE FROM show_season WHERE show_id = ?");
+    SQLite::Statement s_insert_season(db_.get(),
+        "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
+
+    auto ep_resolve_id = [&](const std::string& ext) -> std::string {
+        s_resolve_ep.reset();
+        s_resolve_ep.bind(1, source_id);
+        s_resolve_ep.bind(2, ext);
+        return s_resolve_ep.executeStep() ? s_resolve_ep.getColumn(0).getString() : ep_prefix + ext;
+    };
+    auto ep_resolve_by_path = [&](const std::string& path) -> std::string {
+        if (path.empty()) return "";
+        s_ep_by_path.reset();
+        s_ep_by_path.bind(1, path);
+        return s_ep_by_path.executeStep() ? s_ep_by_path.getColumn(0).getString() : "";
+    };
+
     // Each show gets its own transaction so a single bad episode or duplicate
     // doesn't roll back the entire library.  Per-episode errors are logged and
     // skipped rather than aborting the show.
@@ -331,6 +398,10 @@ void SyncManager::syncShows(IMediaSource& src,
         auto& episodes  = episodes_by_show[i];
         const bool cross_show = cross_ref_shows[i];
 
+        // Yield between shows so the coordinator can open a write window for
+        // the HTTP thread pool (channel creation, playlist edits, etc.).
+        yieldIfRequested();
+
         try {
             SQLite::Transaction txn(db_.get());
 
@@ -338,12 +409,8 @@ void SyncManager::syncShows(IMediaSource& src,
                 // Clear existing episodes before reinserting the current set.
                 // media_cursor.episode_id references episode(episode_id) with no ON DELETE
                 // clause (RESTRICT), so we must nullify those refs before deleting episodes.
-                { SQLite::Statement q(db_.get(),
-                      "UPDATE media_cursor SET episode_id = NULL "
-                      "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
-                  q.bind(1, show.show_id); q.exec(); }
-                { SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE show_id=?");
-                  d.bind(1, show.show_id); d.exec(); }
+                s_clear_ep_cursors.reset(); s_clear_ep_cursors.bind(1, show.show_id); s_clear_ep_cursors.exec();
+                s_delete_eps.reset();       s_delete_eps.bind(1, show.show_id);       s_delete_eps.exec();
             }
 
             std::unordered_map<int, std::string> season_names;
@@ -353,18 +420,18 @@ void SyncManager::syncShows(IMediaSource& src,
                 std::string ep_kairos_id;
 
                 if (cross_show) {
-                    ep_kairos_id = resolveByFilePath("episode", ep.file_path);
+                    ep_kairos_id = ep_resolve_by_path(ep.file_path);
                     if (!ep_kairos_id.empty()) {
                         ep_cross_ref = true;
                     } else {
-                        ep_kairos_id = resolveId("episode", source_id, ext_ep_id);
+                        ep_kairos_id = ep_resolve_id(ext_ep_id);
                     }
                 } else {
-                    ep_kairos_id = resolveId("episode", source_id, ext_ep_id);
-                    if (ep_kairos_id == source_id + ":" + ext_ep_id) {
-                        const std::string existing = resolveByFilePath("episode", ep.file_path);
+                    ep_kairos_id = ep_resolve_id(ext_ep_id);
+                    if (ep_kairos_id == ep_prefix + ext_ep_id) {
+                        const std::string existing = ep_resolve_by_path(ep.file_path);
                         if (!existing.empty()) { ep_kairos_id = existing; ep_cross_ref = true; }
-                    } else if (!ep_kairos_id.starts_with(source_id + ":")) {
+                    } else if (!ep_kairos_id.starts_with(ep_prefix)) {
                         ep_cross_ref = true;
                     }
                 }
@@ -374,38 +441,27 @@ void SyncManager::syncShows(IMediaSource& src,
 
                 try {
                     if (!ep_cross_ref) {
-                        SQLite::Statement e(db_.get(), R"(
-                            INSERT INTO episode (episode_id, show_id, season, episode, title,
-                                                 file_path, duration_ms, overview, air_date,
-                                                 thumb, absolute_index)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                            ON CONFLICT(episode_id) DO UPDATE SET
-                                show_id        = excluded.show_id,
-                                season         = excluded.season,
-                                episode        = excluded.episode,
-                                title          = CASE WHEN locked THEN title   ELSE excluded.title   END,
-                                file_path      = excluded.file_path,
-                                duration_ms    = excluded.duration_ms,
-                                overview       = CASE WHEN locked THEN overview ELSE excluded.overview END,
-                                air_date       = excluded.air_date,
-                                thumb          = CASE WHEN locked THEN thumb    ELSE excluded.thumb    END,
-                                absolute_index = excluded.absolute_index
-                        )");
-                        e.bind(1,  ep.episode_id);
-                        e.bind(2,  ep.show_id);
-                        e.bind(3,  ep.season);
-                        e.bind(4,  ep.episode);
-                        e.bind(5,  ep.title);
-                        e.bind(6,  ep.file_path);
-                        e.bind(7,  ep.duration_ms);
-                        e.bind(8,  ep.overview);
-                        e.bind(9,  ep.air_date);
-                        e.bind(10, ep.thumb);
-                        if (ep.absolute_index.has_value()) e.bind(11, ep.absolute_index.value());
-                        else                               e.bind(11);
-                        e.exec();
+                        s_upsert_ep.reset();
+                        s_upsert_ep.bind(1,  ep.episode_id);
+                        s_upsert_ep.bind(2,  ep.show_id);
+                        s_upsert_ep.bind(3,  ep.season);
+                        s_upsert_ep.bind(4,  ep.episode);
+                        s_upsert_ep.bind(5,  ep.title);
+                        s_upsert_ep.bind(6,  ep.file_path);
+                        s_upsert_ep.bind(7,  ep.duration_ms);
+                        s_upsert_ep.bind(8,  ep.overview);
+                        s_upsert_ep.bind(9,  ep.air_date);
+                        s_upsert_ep.bind(10, ep.thumb);
+                        if (ep.absolute_index.has_value()) s_upsert_ep.bind(11, ep.absolute_index.value());
+                        else                               s_upsert_ep.bind(11);
+                        s_upsert_ep.exec();
                     }
-                    upsertMapping("episode", ep.episode_id, source_id, library_id, ext_ep_id);
+                    s_ep_mapping.reset();
+                    s_ep_mapping.bind(1, ep.episode_id);
+                    s_ep_mapping.bind(2, source_id);
+                    s_ep_mapping.bind(3, library_id);
+                    s_ep_mapping.bind(4, ext_ep_id);
+                    s_ep_mapping.exec();
                 } catch (const std::exception& e) {
                     std::cerr << "[sync] skipping episode " << ep.file_path
                               << ": " << e.what() << '\n';
@@ -416,15 +472,13 @@ void SyncManager::syncShows(IMediaSource& src,
             }
 
             if (!cross_show) {
-                { SQLite::Statement d(db_.get(), "DELETE FROM show_season WHERE show_id = ?");
-                  d.bind(1, show.show_id); d.exec(); }
+                s_delete_seasons.reset(); s_delete_seasons.bind(1, show.show_id); s_delete_seasons.exec();
                 for (const auto& [season, name] : season_names) {
-                    SQLite::Statement ins(db_.get(),
-                        "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
-                    ins.bind(1, show.show_id);
-                    ins.bind(2, season);
-                    ins.bind(3, name);
-                    ins.exec();
+                    s_insert_season.reset();
+                    s_insert_season.bind(1, show.show_id);
+                    s_insert_season.bind(2, season);
+                    s_insert_season.bind(3, name);
+                    s_insert_season.exec();
                 }
             }
 
@@ -434,6 +488,9 @@ void SyncManager::syncShows(IMediaSource& src,
                       << "\": " << e.what() << " — skipping\n";
         }
     }
+
+    std::cout << "[sync]   db writes done: " << external_lib_id
+              << " (" << elapsedMs(t_write, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 
     // Stale show cleanup runs outside per-show transactions.
     {
@@ -496,124 +553,150 @@ void SyncManager::syncMovies(IMediaSource& src,
                               const std::string& source_id,
                               const std::string& library_id,
                               const std::string& external_lib_id) {
+    std::cout << "[sync]   fetching movies: " << external_lib_id << std::endl;
+    const auto t_movies = std::chrono::steady_clock::now();
     auto movies = src.fetchMovies(external_lib_id);
-    std::cout << "[sync]   " << external_lib_id << ": " << movies.size() << " movie(s)" << std::endl;
+    std::cout << "[sync]   " << external_lib_id << ": " << movies.size()
+              << " movie(s) (" << elapsedMs(t_movies, std::chrono::steady_clock::now()) << "ms)" << std::endl;
     if (movies.empty()) return;
 
-    std::unordered_set<std::string> live_movie_ids;
-    SQLite::Transaction txn(db_.get());
-
-    for (auto& movie : movies) {
-        const std::string ext_movie_id = movie.movie_id;
-        std::string kairos_id = resolveId("movie", source_id, ext_movie_id);
-        bool is_cross_ref = false;
-
-        // Cross-source dedup: if no existing mapping for this source, check whether
-        // another source already indexes this file_path to avoid duplicate movie rows.
-        if (kairos_id == source_id + ":" + ext_movie_id) {
-            const std::string existing = resolveByFilePath("movie", movie.file_path);
-            if (!existing.empty()) { kairos_id = existing; is_cross_ref = true; }
-        } else if (!kairos_id.starts_with(source_id + ":")) {
-            is_cross_ref = true;
-        }
-
-        movie.movie_id    = kairos_id;
+    // Resolve durations before touching the DB so file I/O doesn't happen
+    // inside a write transaction.
+    for (auto& movie : movies)
         movie.duration_ms = validateDurationMs(movie.duration_ms, conf_.applyPathMap(movie.file_path));
-        live_movie_ids.insert(movie.movie_id);
 
-        if (!is_cross_ref) {
-            SQLite::Statement s(db_.get(), R"(
-                INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
-                                   overview, tagline, studio, director, genres, thumb, art,
-                                   imdb_id, tmdb_id, audience_rating,
-                                   labels, actors, countries, collections)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(movie_id) DO UPDATE SET
-                    title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
-                    content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
-                    file_path       = CASE WHEN locked THEN file_path       ELSE excluded.file_path       END,
-                    duration_ms     = CASE WHEN locked THEN duration_ms     ELSE excluded.duration_ms     END,
-                    year            = CASE WHEN locked THEN year            ELSE excluded.year            END,
-                    overview        = CASE WHEN locked THEN overview        ELSE excluded.overview        END,
-                    tagline         = CASE WHEN locked THEN tagline         ELSE excluded.tagline         END,
-                    studio          = CASE WHEN locked THEN studio          ELSE excluded.studio          END,
-                    director        = CASE WHEN locked THEN director        ELSE excluded.director        END,
-                    genres          = CASE WHEN locked THEN genres          ELSE excluded.genres          END,
-                    thumb           = CASE WHEN locked THEN thumb           ELSE excluded.thumb           END,
-                    art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
-                    imdb_id         = CASE WHEN locked THEN imdb_id         ELSE excluded.imdb_id         END,
-                    tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE excluded.tmdb_id         END,
-                    audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END,
-                    labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
-                    actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
-                    countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
-                    collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
-            )");
-            s.bind(1,  movie.movie_id);
-            s.bind(2,  movie.title);
-            s.bind(3,  movie.content_rating);
-            s.bind(4,  movie.file_path);
-            s.bind(5,  movie.duration_ms);
-            if (movie.year.has_value())            s.bind(6,  movie.year.value());
-            else                                   s.bind(6);
-            s.bind(7,  movie.overview);
-            s.bind(8,  movie.tagline);
-            s.bind(9,  movie.studio);
-            s.bind(10, movie.director);
-            s.bind(11, movie.genres);
-            s.bind(12, movie.thumb);
-            s.bind(13, movie.art);
-            s.bind(14, movie.imdb_id);
-            s.bind(15, movie.tmdb_id);
-            if (movie.audience_rating.has_value()) s.bind(16, movie.audience_rating.value());
-            else                                   s.bind(16);
-            s.bind(17, movie.labels);
-            s.bind(18, movie.actors);
-            s.bind(19, movie.countries);
-            s.bind(20, movie.collections);
-            s.exec();
+    // Process in batches so the write lock is released between batches.
+    // The coordinator can inject yield pauses here to give HTTP writes a window.
+    static constexpr size_t kMovieBatchSize = 50;
+    std::unordered_set<std::string> live_movie_ids;
+    const auto t_write = std::chrono::steady_clock::now();
+
+    for (size_t batch_start = 0; batch_start < movies.size(); batch_start += kMovieBatchSize) {
+        yieldIfRequested();
+        const size_t batch_end = std::min(batch_start + kMovieBatchSize, movies.size());
+
+        SQLite::Transaction txn(db_.get());
+        for (size_t mi = batch_start; mi < batch_end; ++mi) {
+            auto& movie = movies[mi];
+            const std::string ext_movie_id = movie.movie_id;
+            std::string kairos_id = resolveId("movie", source_id, ext_movie_id);
+            bool is_cross_ref = false;
+
+            // Cross-source dedup: if no existing mapping for this source, check whether
+            // another source already indexes this file_path to avoid duplicate movie rows.
+            if (kairos_id == source_id + ":" + ext_movie_id) {
+                const std::string existing = resolveByFilePath("movie", movie.file_path);
+                if (!existing.empty()) { kairos_id = existing; is_cross_ref = true; }
+            } else if (!kairos_id.starts_with(source_id + ":")) {
+                is_cross_ref = true;
+            }
+
+            movie.movie_id = kairos_id;
+            live_movie_ids.insert(movie.movie_id);
+
+            if (!is_cross_ref) {
+                SQLite::Statement s(db_.get(), R"(
+                    INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
+                                       overview, tagline, studio, director, genres, thumb, art,
+                                       imdb_id, tmdb_id, audience_rating,
+                                       labels, actors, countries, collections)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(movie_id) DO UPDATE SET
+                        title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
+                        content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
+                        file_path       = CASE WHEN locked THEN file_path       ELSE excluded.file_path       END,
+                        duration_ms     = CASE WHEN locked THEN duration_ms     ELSE excluded.duration_ms     END,
+                        year            = CASE WHEN locked THEN year            ELSE excluded.year            END,
+                        overview        = CASE WHEN locked THEN overview        ELSE excluded.overview        END,
+                        tagline         = CASE WHEN locked THEN tagline         ELSE excluded.tagline         END,
+                        studio          = CASE WHEN locked THEN studio          ELSE excluded.studio          END,
+                        director        = CASE WHEN locked THEN director        ELSE excluded.director        END,
+                        genres          = CASE WHEN locked THEN genres          ELSE excluded.genres          END,
+                        thumb           = CASE WHEN locked THEN thumb           ELSE excluded.thumb           END,
+                        art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
+                        imdb_id         = CASE WHEN locked THEN imdb_id         ELSE excluded.imdb_id         END,
+                        tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE excluded.tmdb_id         END,
+                        audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END,
+                        labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
+                        actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
+                        countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
+                        collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
+                )");
+                s.bind(1,  movie.movie_id);
+                s.bind(2,  movie.title);
+                s.bind(3,  movie.content_rating);
+                s.bind(4,  movie.file_path);
+                s.bind(5,  movie.duration_ms);
+                if (movie.year.has_value())            s.bind(6,  movie.year.value());
+                else                                   s.bind(6);
+                s.bind(7,  movie.overview);
+                s.bind(8,  movie.tagline);
+                s.bind(9,  movie.studio);
+                s.bind(10, movie.director);
+                s.bind(11, movie.genres);
+                s.bind(12, movie.thumb);
+                s.bind(13, movie.art);
+                s.bind(14, movie.imdb_id);
+                s.bind(15, movie.tmdb_id);
+                if (movie.audience_rating.has_value()) s.bind(16, movie.audience_rating.value());
+                else                                   s.bind(16);
+                s.bind(17, movie.labels);
+                s.bind(18, movie.actors);
+                s.bind(19, movie.countries);
+                s.bind(20, movie.collections);
+                s.exec();
+            }
+
+            upsertMapping("movie", movie.movie_id, source_id, library_id, ext_movie_id);
         }
-
-        upsertMapping("movie", movie.movie_id, source_id, library_id, ext_movie_id);
+        txn.commit();
     }
 
-    std::vector<std::string> stale_movies;
+    std::cout << "[sync]   db writes done: " << external_lib_id
+              << " (" << elapsedMs(t_write, std::chrono::steady_clock::now()) << "ms)" << std::endl;
+
+    // Stale cleanup runs in its own transaction after all upserts are done.
+    yieldIfRequested();
     {
-        SQLite::Statement q(db_.get(),
-            "SELECT kairos_id FROM source_mapping "
-            "WHERE item_type='movie' AND source_id=? AND library_id=?");
-        q.bind(1, source_id); q.bind(2, library_id);
-        while (q.executeStep()) {
-            const std::string kid = q.getColumn(0).getString();
-            if (!live_movie_ids.contains(kid)) stale_movies.push_back(kid);
-        }
-    }
-    for (const auto& kid : stale_movies) {
-        // Guard: don't delete the movie row if another source still references it.
-        bool other_source_has_it = false;
+        std::vector<std::string> stale_movies;
         {
-            SQLite::Statement chk(db_.get(),
-                "SELECT COUNT(*) FROM source_mapping "
-                "WHERE item_type='movie' AND kairos_id=? AND source_id!=?");
-            chk.bind(1, kid); chk.bind(2, source_id);
-            other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
+            SQLite::Statement q(db_.get(),
+                "SELECT kairos_id FROM source_mapping "
+                "WHERE item_type='movie' AND source_id=? AND library_id=?");
+            q.bind(1, source_id); q.bind(2, library_id);
+            while (q.executeStep()) {
+                const std::string kid = q.getColumn(0).getString();
+                if (!live_movie_ids.contains(kid)) stale_movies.push_back(kid);
+            }
         }
-        if (!other_source_has_it) {
-            SQLite::Statement d(db_.get(), "DELETE FROM movie WHERE movie_id=?");
-            d.bind(1, kid); d.exec();
-            std::cout << "[sync]   removed stale movie: " << kid << std::endl;
+
+        SQLite::Transaction txn(db_.get());
+        for (const auto& kid : stale_movies) {
+            bool other_source_has_it = false;
+            {
+                SQLite::Statement chk(db_.get(),
+                    "SELECT COUNT(*) FROM source_mapping "
+                    "WHERE item_type='movie' AND kairos_id=? AND source_id!=?");
+                chk.bind(1, kid); chk.bind(2, source_id);
+                other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
+            }
+            if (!other_source_has_it) {
+                SQLite::Statement d(db_.get(), "DELETE FROM movie WHERE movie_id=?");
+                d.bind(1, kid); d.exec();
+                std::cout << "[sync]   removed stale movie: " << kid << std::endl;
+            }
+            { SQLite::Statement d(db_.get(),
+                  "DELETE FROM source_mapping WHERE item_type='movie' AND kairos_id=? AND source_id=? AND library_id=?");
+              d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
         }
+
         { SQLite::Statement d(db_.get(),
-              "DELETE FROM source_mapping WHERE item_type='movie' AND kairos_id=? AND source_id=? AND library_id=?");
-          d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
+              "DELETE FROM source_mapping WHERE item_type='movie' AND source_id=? AND library_id=?"
+              " AND kairos_id NOT IN (SELECT movie_id FROM movie)");
+          d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
+
+        txn.commit();
     }
-
-    { SQLite::Statement d(db_.get(),
-          "DELETE FROM source_mapping WHERE item_type='movie' AND source_id=? AND library_id=?"
-          " AND kairos_id NOT IN (SELECT movie_id FROM movie)");
-      d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
-
-    txn.commit();
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +766,17 @@ std::vector<std::string> SyncManager::sourceIds() const {
     ids.reserve(sources_.size());
     for (const auto& s : sources_) ids.push_back(s->sourceId());
     return ids;
+}
+
+// ---------------------------------------------------------------------------
+// Coordinator yield
+// ---------------------------------------------------------------------------
+
+void SyncManager::yieldIfRequested() {
+    if (!yield_requested_.load(std::memory_order_relaxed)) return;
+    DLOG << "[sync] yielding — coordinator requested DB write window\n";
+    while (yield_requested_.load(std::memory_order_relaxed))
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
 }
 
 // ---------------------------------------------------------------------------
