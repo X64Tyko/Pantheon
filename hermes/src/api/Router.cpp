@@ -43,11 +43,27 @@ static void handleStream(const std::string& channel_id,
     );
 }
 
-// Build query string from httplib params map.
+static std::string urlEncodeValue(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() * 3);
+    static const char* hex = "0123456789ABCDEF";
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0xF];
+        }
+    }
+    return out;
+}
+
+// Build query string from httplib params map, re-encoding values.
 static std::string buildQuery(const httplib::Params& params) {
     std::string q;
     for (auto& [k, v] : params)
-        q += (q.empty() ? "" : "&") + k + "=" + v;
+        q += (q.empty() ? "" : "&") + k + "=" + urlEncodeValue(v);
     return q;
 }
 
@@ -123,8 +139,11 @@ static void proxyRequest(const std::string& upstream_base,
         return;
     }
     res.status = r->status;
+    auto loc = r->get_header_value("Location");
+    if (!loc.empty()) res.set_header("Location", loc);
     auto resp_ct = r->get_header_value("Content-Type");
-    res.set_content(r->body, resp_ct.empty() ? "application/octet-stream" : resp_ct);
+    if (!r->body.empty())
+        res.set_content(r->body, resp_ct.empty() ? "application/octet-stream" : resp_ct);
 }
 
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
@@ -236,6 +255,25 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 
     // ── M3U / XMLTV aliases ───────────────────────────────────────────────────
     // Common alternate paths used by DVR clients — must come before /api/.*
+    // /api/epg.xml and /api/xmltv.xml are also handled by Kairos (public paths),
+    // but registering them here avoids the round-trip through proxyRequest.
+    auto xmltvAlias = [&cfg](const httplib::Request& req, httplib::Response& res) {
+        int hours = 24;
+        auto it = req.params.find("hours");
+        if (it != req.params.end()) {
+            try { hours = std::stoi(it->second); } catch (...) {}
+        }
+        httplib::Client cli(cfg.kairos_url);
+        cli.set_connection_timeout(5);
+        cli.set_read_timeout(60);
+        auto r = cli.Get("/epg.xml?hours=" + std::to_string(hours));
+        if (!r || r->status == 0) { res.status = 502; return; }
+        res.status = r->status;
+        res.set_content(r->body, "application/xml");
+    };
+    svr.Get("/api/epg.xml",   xmltvAlias);
+    svr.Get("/api/xmltv.xml", xmltvAlias);
+
     svr.Get("/api/channels.m3u", [&kairos](const httplib::Request& req, httplib::Response& res) {
         auto base = baseUrl(req);
         auto channels = kairos.getChannels();

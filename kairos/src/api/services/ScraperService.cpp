@@ -190,6 +190,14 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             err(res, 404, "candidate not found");
     });
 
+    // GET /api/scrapers/anidb/poster/:aid — public, no auth (loaded by <img> tags)
+    svr.Get(R"(/api/scrapers/anidb/poster/([^/]+))", [this](const Req& req, Res& res) {
+        std::string aid = req.matches[1];
+        std::string cdn = scraper_.anidbPosterUrl(aid);
+        if (cdn.empty()) { res.status = 404; return; }
+        res.set_redirect("/api/images/proxy?url=" + route::urlEncode(cdn));
+    });
+
     // GET /api/scrapers/search?q=...&type=show|movie
     svr.Get("/api/scrapers/search", [this](const Req& req, Res& res) {
         std::string q    = req.has_param("q")    ? req.get_param_value("q")    : "";
@@ -205,8 +213,14 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             rj["title"]        = r.title;
             if (r.year > 0) rj["year"] = r.year;
             rj["overview"]     = r.overview;
-            rj["poster_url"]   = r.poster_url.empty() ? ""
-                                 : "/api/images/proxy?url=" + route::urlEncode(r.poster_url);
+            // AniDB search results have no poster in the title dump — use the lazy
+            // per-AID endpoint so the browser fetches each one independently.
+            if (r.source == "anidb" && !r.external_id.empty()) {
+                rj["poster_url"] = "/api/scrapers/anidb/poster/" + r.external_id;
+            } else {
+                rj["poster_url"] = r.poster_url.empty() ? ""
+                                   : "/api/images/proxy?url=" + route::urlEncode(r.poster_url);
+            }
             rj["content_type"] = r.content_type;
             rj["in_library"]   = r.in_library;
             arr.push_back(rj);

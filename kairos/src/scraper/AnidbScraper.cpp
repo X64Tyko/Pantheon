@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sys/stat.h>
 #include <thread>
 #include <vector>
 
@@ -257,6 +258,19 @@ AnidbScraper::searchTitleDump(const std::string& query) const {
 // ---------------------------------------------------------------------------
 
 std::string AnidbScraper::fetchAnimeXml(const std::string& aid) {
+    // Check 24-hour disk cache before hitting the rate-limited API.
+    fs::path cache_dir  = kXmlCacheDir;
+    fs::path cache_file = cache_dir / (aid + ".xml");
+    try {
+        fs::create_directories(cache_dir);
+        struct stat st{};
+        if (stat(cache_file.c_str(), &st) == 0 &&
+            time(nullptr) - st.st_mtime < 86400) {
+            std::ifstream f(cache_file);
+            return std::string((std::istreambuf_iterator<char>(f)), {});
+        }
+    } catch (...) {}
+
     rateLimitWait();
     const std::string path = "/httpapi?request=anime&aid=" + aid
         + "&client=" + client_name_ + "&clientver=1&protover=1";
@@ -271,7 +285,21 @@ std::string AnidbScraper::fetchAnimeXml(const std::string& aid) {
                   << ": " << xmlText(res->body, "error") << '\n';
         return {};
     }
+
+    try {
+        std::ofstream f(cache_file);
+        f << res->body;
+    } catch (...) {}
+
     return res->body;
+}
+
+std::string AnidbScraper::posterUrl(const std::string& aid) {
+    auto xml = fetchAnimeXml(aid);
+    if (xml.empty()) return {};
+    const std::string pic = xmlText(xml, "picture");
+    if (pic.empty()) return {};
+    return std::string(kImgBase) + pic;
 }
 
 // ---------------------------------------------------------------------------

@@ -115,6 +115,9 @@ public:
 
     ScraperStats stats() const;
 
+    // Returns the CDN poster URL for an AniDB AID, or empty if unavailable/disabled.
+    std::string anidbPosterUrl(const std::string& aid) const;
+
 private:
     void buildScrapers();
     void runMatch(const std::string& target_id, const std::string& item_type);

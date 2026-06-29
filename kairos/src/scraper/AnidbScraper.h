@@ -30,8 +30,15 @@ private:
 
     bool                     ensureTitleDump();
     std::vector<TitleMatch>  searchTitleDump(const std::string& query) const;
-    std::string              fetchAnimeXml(const std::string& aid);
     void                     rateLimitWait();
+
+public:
+    // Returns the CDN poster URL for an AID, or empty if unavailable.
+    // Caches the anime XML to disk so repeated calls are instant.
+    std::string posterUrl(const std::string& aid);
+
+private:
+    std::string              fetchAnimeXml(const std::string& aid);
 
     Show                 showFromXml   (const std::string& xml, const std::string& aid);
     Movie                movieFromXml  (const std::string& xml, const std::string& aid);
@@ -44,7 +51,8 @@ private:
     std::mutex                            rate_mu_;
     std::chrono::steady_clock::time_point last_api_call_;
 
-    static constexpr const char* kTitlesXml = "/tmp/kairos-anidb-titles.xml";
-    static constexpr const char* kTitlesGz  = "/tmp/kairos-anidb-titles.xml.gz";
-    static constexpr const char* kImgBase   = "https://cdn-us.anidb.net/images/main/";
+    static constexpr const char* kTitlesXml  = "/tmp/kairos-anidb-titles.xml";
+    static constexpr const char* kTitlesGz   = "/tmp/kairos-anidb-titles.xml.gz";
+    static constexpr const char* kXmlCacheDir = "anidb-xml-cache";
+    static constexpr const char* kImgBase    = "https://cdn-us.anidb.net/images/main/";
 };

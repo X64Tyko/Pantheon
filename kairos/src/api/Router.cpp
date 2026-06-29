@@ -45,6 +45,11 @@ static bool isPublicPath(const std::string& path) {
 	if (path.ends_with("/played")) return true;
 	// Image proxy — loaded by <img> tags that cannot send Authorization headers.
 	if (path == "/api/images/proxy") return true;
+	// AniDB per-AID poster endpoint — same reason.
+	if (path.starts_with("/api/scrapers/anidb/poster/")) return true;
+	// M3U / XMLTV endpoints — accessed by DVR clients without auth.
+	if (path == "/api/epg.xml" || path == "/api/xmltv.xml" ||
+	    path == "/api/channels.xml" || path == "/api/channels.m3u") return true;
 	return false;
 }
 

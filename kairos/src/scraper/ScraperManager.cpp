@@ -888,6 +888,13 @@ ScraperManager::search(const std::string& query, const std::string& content_type
     return out;
 }
 
+// ── AniDB poster URL ──────────────────────────────────────────────────────────
+
+std::string ScraperManager::anidbPosterUrl(const std::string& aid) const {
+    if (!anidb_) return {};
+    return anidb_->posterUrl(aid);
+}
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 ScraperStats ScraperManager::stats() const {

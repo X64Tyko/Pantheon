@@ -29,14 +29,18 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 		res.set_content(materializer_.generateM3U("http://" + host), "application/x-mpegURL");
 	});
 
-	svr.Get("/epg.xml", [this](const Req& req, Res& res) {
+	auto xmltvHandler = [this](const Req& req, Res& res) {
 		int hours = 24;
 		if (req.has_param("hours")) {
 			try { hours = std::stoi(req.get_param_value("hours")); } catch (...) {}
 		}
 		hours = std::max(1, std::min(hours, 72));
 		res.set_content(materializer_.generateXMLTV(hours), "application/xml");
-	});
+	};
+	svr.Get("/epg.xml",          xmltvHandler);
+	svr.Get("/api/epg.xml",      xmltvHandler);
+	svr.Get("/api/xmltv.xml",    xmltvHandler);
+	svr.Get("/api/channels.xml", xmltvHandler);
 
 	// ── What's playing now ────────────────────────────────────────────────────
 	svr.Get(R"(/api/channels/([^/]+)/now)", [this](const Req& req, Res& res) {
