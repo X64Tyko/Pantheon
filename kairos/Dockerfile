@@ -7,15 +7,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-COPY . .
 
+# Copy only the build manifest first. CMake configure fetches all FetchContent
+# dependencies here — this layer is cached until CMakeLists.txt changes.
+COPY CMakeLists.txt .
 RUN cmake -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
-        -DFETCHCONTENT_QUIET=OFF \
-    && cmake --build build --parallel
+        -DFETCHCONTENT_QUIET=OFF
+
+# Source changes only rebuild from this point.
+COPY src/ src/
+RUN cmake --build build --parallel
+
+# ui-dist is built by Hades in CI and injected into the build context.
+COPY ui-dist/ ui-dist/
 
 # Stage 2: runtime
 FROM ubuntu:24.04
+
+# Set by Buildx; used to pick the correct arch-specific binaries below.
+ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
@@ -25,10 +36,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     unzip \
     && rm -rf /var/lib/apt/lists/* \
-    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+    && YTDLP_SUFFIX=$([ "$TARGETARCH" = "arm64" ] && echo "_aarch64" || echo "") \
+    && curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux${YTDLP_SUFFIX}" \
        -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp \
-    && curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip \
+    && DENO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
+    && curl -fsSL "https://github.com/denoland/deno/releases/latest/download/deno-${DENO_ARCH}-unknown-linux-gnu.zip" \
        -o /tmp/deno.zip \
     && unzip /tmp/deno.zip -d /usr/local/bin/ \
     && rm /tmp/deno.zip \
