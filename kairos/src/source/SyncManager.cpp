@@ -201,21 +201,72 @@ void SyncManager::syncShows(IMediaSource& src,
     std::vector<std::string> ext_show_ids(shows.size());
     std::vector<bool>        cross_ref_shows(shows.size(), false);
     std::unordered_set<std::string> live_show_ids;
+
+    const std::string show_prefix = source_id + ":";
+    SQLite::Statement s_resolve_show(db_.get(),
+        "SELECT kairos_id FROM source_mapping "
+        "WHERE item_type='show' AND source_id=? AND external_id=?");
+    SQLite::Statement s_show_by_title(db_.get(),
+        "SELECT show_id FROM show WHERE LOWER(title) = LOWER(?) LIMIT 1");
+    SQLite::Statement s_upsert_show(db_.get(), R"(
+        INSERT INTO show (show_id, title, content_rating, overview, studio, status,
+                          genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
+                          originally_available_at, year, audience_rating,
+                          labels, network, actors, countries, collections)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(show_id) DO UPDATE SET
+            title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
+            content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
+            overview                = CASE WHEN locked THEN overview                ELSE excluded.overview                END,
+            studio                  = CASE WHEN locked THEN studio                  ELSE excluded.studio                  END,
+            status                  = CASE WHEN locked THEN status                  ELSE excluded.status                  END,
+            genres                  = CASE WHEN locked THEN genres                  ELSE excluded.genres                  END,
+            thumb                   = CASE WHEN locked THEN thumb                   ELSE excluded.thumb                   END,
+            art                     = CASE WHEN locked THEN art                     ELSE excluded.art                     END,
+            imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE excluded.imdb_id                 END,
+            tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE excluded.tvdb_id                 END,
+            tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE excluded.tmdb_id                 END,
+            originally_available_at = CASE WHEN locked THEN originally_available_at ELSE excluded.originally_available_at END,
+            year                    = CASE WHEN locked THEN year                    ELSE excluded.year                    END,
+            audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END,
+            labels                  = CASE WHEN locked THEN labels                  ELSE excluded.labels                  END,
+            network                 = CASE WHEN locked THEN network                 ELSE excluded.network                 END,
+            actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
+            countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
+            collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END
+    )");
+    SQLite::Statement s_show_mapping(db_.get(), R"(
+        INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
+        VALUES ('show',?,?,?,?)
+        ON CONFLICT(item_type, kairos_id, source_id) DO UPDATE SET
+            library_id  = excluded.library_id,
+            external_id = excluded.external_id
+    )");
+
     {
         SQLite::Transaction txn(db_.get());
         for (size_t i = 0; i < shows.size(); ++i) {
             auto& show = shows[i];
             const std::string ext_show_id = show.show_id; // source-native key before resolution
-            std::string kairos_id = resolveId("show", source_id, ext_show_id);
+            s_resolve_show.reset();
+            s_resolve_show.bind(1, source_id);
+            s_resolve_show.bind(2, ext_show_id);
+            std::string kairos_id = s_resolve_show.executeStep()
+                ? s_resolve_show.getColumn(0).getString()
+                : show_prefix + ext_show_id;
             bool is_cross_ref = false;
 
             // Cross-source dedup: if no existing mapping for this source, check whether
             // another source already indexes a show with the same title. If so, reuse
             // that kairos_id instead of creating a duplicate show row.
-            if (kairos_id == source_id + ":" + ext_show_id) {
-                const std::string existing = resolveByTitle("show", show.title);
-                if (!existing.empty()) { kairos_id = existing; is_cross_ref = true; }
-            } else if (!kairos_id.starts_with(source_id + ":")) {
+            if (kairos_id == show_prefix + ext_show_id) {
+                s_show_by_title.reset();
+                s_show_by_title.bind(1, show.title);
+                if (s_show_by_title.executeStep()) {
+                    kairos_id = s_show_by_title.getColumn(0).getString();
+                    is_cross_ref = true;
+                }
+            } else if (!kairos_id.starts_with(show_prefix)) {
                 is_cross_ref = true;  // existing mapping points to another source's item
             }
 
@@ -225,59 +276,38 @@ void SyncManager::syncShows(IMediaSource& src,
             live_show_ids.insert(kairos_id);
 
             if (!is_cross_ref) {
-                SQLite::Statement s(db_.get(), R"(
-                    INSERT INTO show (show_id, title, content_rating, overview, studio, status,
-                                      genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
-                                      originally_available_at, year, audience_rating,
-                                      labels, network, actors, countries, collections)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(show_id) DO UPDATE SET
-                        title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
-                        content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
-                        overview                = CASE WHEN locked THEN overview                ELSE excluded.overview                END,
-                        studio                  = CASE WHEN locked THEN studio                  ELSE excluded.studio                  END,
-                        status                  = CASE WHEN locked THEN status                  ELSE excluded.status                  END,
-                        genres                  = CASE WHEN locked THEN genres                  ELSE excluded.genres                  END,
-                        thumb                   = CASE WHEN locked THEN thumb                   ELSE excluded.thumb                   END,
-                        art                     = CASE WHEN locked THEN art                     ELSE excluded.art                     END,
-                        imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE excluded.imdb_id                 END,
-                        tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE excluded.tvdb_id                 END,
-                        tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE excluded.tmdb_id                 END,
-                        originally_available_at = CASE WHEN locked THEN originally_available_at ELSE excluded.originally_available_at END,
-                        year                    = CASE WHEN locked THEN year                    ELSE excluded.year                    END,
-                        audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END,
-                        labels                  = CASE WHEN locked THEN labels                  ELSE excluded.labels                  END,
-                        network                 = CASE WHEN locked THEN network                 ELSE excluded.network                 END,
-                        actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
-                        countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
-                        collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END
-                )");
-                s.bind(1,  show.show_id);
-                s.bind(2,  show.title);
-                s.bind(3,  show.content_rating);
-                s.bind(4,  show.overview);
-                s.bind(5,  show.studio);
-                s.bind(6,  show.status);
-                s.bind(7,  show.genres);
-                s.bind(8,  show.thumb);
-                s.bind(9,  show.art);
-                s.bind(10, show.imdb_id);
-                s.bind(11, show.tvdb_id);
-                s.bind(12, show.tmdb_id);
-                s.bind(13, show.originally_available_at);
-                if (show.year.has_value())            s.bind(14, show.year.value());
-                else                                  s.bind(14);
-                if (show.audience_rating.has_value()) s.bind(15, show.audience_rating.value());
-                else                                  s.bind(15);
-                s.bind(16, show.labels);
-                s.bind(17, show.network);
-                s.bind(18, show.actors);
-                s.bind(19, show.countries);
-                s.bind(20, show.collections);
-                s.exec();
+                s_upsert_show.reset();
+                s_upsert_show.bind(1,  show.show_id);
+                s_upsert_show.bind(2,  show.title);
+                s_upsert_show.bind(3,  show.content_rating);
+                s_upsert_show.bind(4,  show.overview);
+                s_upsert_show.bind(5,  show.studio);
+                s_upsert_show.bind(6,  show.status);
+                s_upsert_show.bind(7,  show.genres);
+                s_upsert_show.bind(8,  show.thumb);
+                s_upsert_show.bind(9,  show.art);
+                s_upsert_show.bind(10, show.imdb_id);
+                s_upsert_show.bind(11, show.tvdb_id);
+                s_upsert_show.bind(12, show.tmdb_id);
+                s_upsert_show.bind(13, show.originally_available_at);
+                if (show.year.has_value())            s_upsert_show.bind(14, show.year.value());
+                else                                  s_upsert_show.bind(14);
+                if (show.audience_rating.has_value()) s_upsert_show.bind(15, show.audience_rating.value());
+                else                                  s_upsert_show.bind(15);
+                s_upsert_show.bind(16, show.labels);
+                s_upsert_show.bind(17, show.network);
+                s_upsert_show.bind(18, show.actors);
+                s_upsert_show.bind(19, show.countries);
+                s_upsert_show.bind(20, show.collections);
+                s_upsert_show.exec();
             }
 
-            upsertMapping("show", kairos_id, source_id, library_id, ext_show_id);
+            s_show_mapping.reset();
+            s_show_mapping.bind(1, kairos_id);
+            s_show_mapping.bind(2, source_id);
+            s_show_mapping.bind(3, library_id);
+            s_show_mapping.bind(4, ext_show_id);
+            s_show_mapping.exec();
         }
         txn.commit();
     }
@@ -571,6 +601,47 @@ void SyncManager::syncMovies(IMediaSource& src,
     std::unordered_set<std::string> live_movie_ids;
     const auto t_write = std::chrono::steady_clock::now();
 
+    const std::string movie_prefix = source_id + ":";
+    SQLite::Statement s_resolve_movie(db_.get(),
+        "SELECT kairos_id FROM source_mapping "
+        "WHERE item_type='movie' AND source_id=? AND external_id=?");
+    SQLite::Statement s_movie_by_path(db_.get(),
+        "SELECT movie_id FROM movie WHERE file_path=? LIMIT 1");
+    SQLite::Statement s_upsert_movie(db_.get(), R"(
+        INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
+                           overview, tagline, studio, director, genres, thumb, art,
+                           imdb_id, tmdb_id, audience_rating,
+                           labels, actors, countries, collections)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(movie_id) DO UPDATE SET
+            title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
+            content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
+            file_path       = CASE WHEN locked THEN file_path       ELSE excluded.file_path       END,
+            duration_ms     = CASE WHEN locked THEN duration_ms     ELSE excluded.duration_ms     END,
+            year            = CASE WHEN locked THEN year            ELSE excluded.year            END,
+            overview        = CASE WHEN locked THEN overview        ELSE excluded.overview        END,
+            tagline         = CASE WHEN locked THEN tagline         ELSE excluded.tagline         END,
+            studio          = CASE WHEN locked THEN studio          ELSE excluded.studio          END,
+            director        = CASE WHEN locked THEN director        ELSE excluded.director        END,
+            genres          = CASE WHEN locked THEN genres          ELSE excluded.genres          END,
+            thumb           = CASE WHEN locked THEN thumb           ELSE excluded.thumb           END,
+            art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
+            imdb_id         = CASE WHEN locked THEN imdb_id         ELSE excluded.imdb_id         END,
+            tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE excluded.tmdb_id         END,
+            audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END,
+            labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
+            actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
+            countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
+            collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
+    )");
+    SQLite::Statement s_movie_mapping(db_.get(), R"(
+        INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
+        VALUES ('movie',?,?,?,?)
+        ON CONFLICT(item_type, kairos_id, source_id) DO UPDATE SET
+            library_id  = excluded.library_id,
+            external_id = excluded.external_id
+    )");
+
     for (size_t batch_start = 0; batch_start < movies.size(); batch_start += kMovieBatchSize) {
         yieldIfRequested();
         const size_t batch_end = std::min(batch_start + kMovieBatchSize, movies.size());
@@ -579,15 +650,24 @@ void SyncManager::syncMovies(IMediaSource& src,
         for (size_t mi = batch_start; mi < batch_end; ++mi) {
             auto& movie = movies[mi];
             const std::string ext_movie_id = movie.movie_id;
-            std::string kairos_id = resolveId("movie", source_id, ext_movie_id);
+            s_resolve_movie.reset();
+            s_resolve_movie.bind(1, source_id);
+            s_resolve_movie.bind(2, ext_movie_id);
+            std::string kairos_id = s_resolve_movie.executeStep()
+                ? s_resolve_movie.getColumn(0).getString()
+                : movie_prefix + ext_movie_id;
             bool is_cross_ref = false;
 
             // Cross-source dedup: if no existing mapping for this source, check whether
             // another source already indexes this file_path to avoid duplicate movie rows.
-            if (kairos_id == source_id + ":" + ext_movie_id) {
-                const std::string existing = resolveByFilePath("movie", movie.file_path);
-                if (!existing.empty()) { kairos_id = existing; is_cross_ref = true; }
-            } else if (!kairos_id.starts_with(source_id + ":")) {
+            if (kairos_id == movie_prefix + ext_movie_id) {
+                s_movie_by_path.reset();
+                s_movie_by_path.bind(1, movie.file_path);
+                if (s_movie_by_path.executeStep()) {
+                    kairos_id = s_movie_by_path.getColumn(0).getString();
+                    is_cross_ref = true;
+                }
+            } else if (!kairos_id.starts_with(movie_prefix)) {
                 is_cross_ref = true;
             }
 
@@ -595,59 +675,38 @@ void SyncManager::syncMovies(IMediaSource& src,
             live_movie_ids.insert(movie.movie_id);
 
             if (!is_cross_ref) {
-                SQLite::Statement s(db_.get(), R"(
-                    INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
-                                       overview, tagline, studio, director, genres, thumb, art,
-                                       imdb_id, tmdb_id, audience_rating,
-                                       labels, actors, countries, collections)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(movie_id) DO UPDATE SET
-                        title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
-                        content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
-                        file_path       = CASE WHEN locked THEN file_path       ELSE excluded.file_path       END,
-                        duration_ms     = CASE WHEN locked THEN duration_ms     ELSE excluded.duration_ms     END,
-                        year            = CASE WHEN locked THEN year            ELSE excluded.year            END,
-                        overview        = CASE WHEN locked THEN overview        ELSE excluded.overview        END,
-                        tagline         = CASE WHEN locked THEN tagline         ELSE excluded.tagline         END,
-                        studio          = CASE WHEN locked THEN studio          ELSE excluded.studio          END,
-                        director        = CASE WHEN locked THEN director        ELSE excluded.director        END,
-                        genres          = CASE WHEN locked THEN genres          ELSE excluded.genres          END,
-                        thumb           = CASE WHEN locked THEN thumb           ELSE excluded.thumb           END,
-                        art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
-                        imdb_id         = CASE WHEN locked THEN imdb_id         ELSE excluded.imdb_id         END,
-                        tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE excluded.tmdb_id         END,
-                        audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END,
-                        labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
-                        actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
-                        countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
-                        collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
-                )");
-                s.bind(1,  movie.movie_id);
-                s.bind(2,  movie.title);
-                s.bind(3,  movie.content_rating);
-                s.bind(4,  movie.file_path);
-                s.bind(5,  movie.duration_ms);
-                if (movie.year.has_value())            s.bind(6,  movie.year.value());
-                else                                   s.bind(6);
-                s.bind(7,  movie.overview);
-                s.bind(8,  movie.tagline);
-                s.bind(9,  movie.studio);
-                s.bind(10, movie.director);
-                s.bind(11, movie.genres);
-                s.bind(12, movie.thumb);
-                s.bind(13, movie.art);
-                s.bind(14, movie.imdb_id);
-                s.bind(15, movie.tmdb_id);
-                if (movie.audience_rating.has_value()) s.bind(16, movie.audience_rating.value());
-                else                                   s.bind(16);
-                s.bind(17, movie.labels);
-                s.bind(18, movie.actors);
-                s.bind(19, movie.countries);
-                s.bind(20, movie.collections);
-                s.exec();
+                s_upsert_movie.reset();
+                s_upsert_movie.bind(1,  movie.movie_id);
+                s_upsert_movie.bind(2,  movie.title);
+                s_upsert_movie.bind(3,  movie.content_rating);
+                s_upsert_movie.bind(4,  movie.file_path);
+                s_upsert_movie.bind(5,  movie.duration_ms);
+                if (movie.year.has_value())            s_upsert_movie.bind(6,  movie.year.value());
+                else                                   s_upsert_movie.bind(6);
+                s_upsert_movie.bind(7,  movie.overview);
+                s_upsert_movie.bind(8,  movie.tagline);
+                s_upsert_movie.bind(9,  movie.studio);
+                s_upsert_movie.bind(10, movie.director);
+                s_upsert_movie.bind(11, movie.genres);
+                s_upsert_movie.bind(12, movie.thumb);
+                s_upsert_movie.bind(13, movie.art);
+                s_upsert_movie.bind(14, movie.imdb_id);
+                s_upsert_movie.bind(15, movie.tmdb_id);
+                if (movie.audience_rating.has_value()) s_upsert_movie.bind(16, movie.audience_rating.value());
+                else                                   s_upsert_movie.bind(16);
+                s_upsert_movie.bind(17, movie.labels);
+                s_upsert_movie.bind(18, movie.actors);
+                s_upsert_movie.bind(19, movie.countries);
+                s_upsert_movie.bind(20, movie.collections);
+                s_upsert_movie.exec();
             }
 
-            upsertMapping("movie", movie.movie_id, source_id, library_id, ext_movie_id);
+            s_movie_mapping.reset();
+            s_movie_mapping.bind(1, movie.movie_id);
+            s_movie_mapping.bind(2, source_id);
+            s_movie_mapping.bind(3, library_id);
+            s_movie_mapping.bind(4, ext_movie_id);
+            s_movie_mapping.exec();
         }
         txn.commit();
     }
