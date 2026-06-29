@@ -1,6 +1,11 @@
 #include <httplib.h>
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <string>
+#include <thread>
 #include "api/Router.h"
 #include "auth/AuthStore.h"
 #include "conf/ConfStore.h"
@@ -14,6 +19,12 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 
 int main(int argc, char* argv[]) {
+    // Force line-buffered output before LogTee so Docker pipe writes flush on
+    // every newline at the C stdio level (belt-and-suspenders alongside
+    // LogTee::sync() which covers the C++ stream layer).
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+    setvbuf(stderr, nullptr, _IOLBF, 0);
+
     // Intercept cout/cerr before anything else so startup messages are captured.
     LogBuffer log_buffer;
     LogTee    tee_cout(std::cout, log_buffer);
@@ -86,8 +97,17 @@ int main(int argc, char* argv[]) {
     loadFlag("sync_debug", g_debug_logging);
     loadFlag("epg_debug",  g_epg_debug);
 
+    // KAIROS_API_THREADS lets operators reserve HTTP capacity independently of
+    // the sync worker pool (KAIROS_SYNC_THREADS). Lower sync threads in Docker
+    // when running against large libraries to prevent starving HTTP requests.
+    int api_threads = 8;
+    if (const char* env = std::getenv("KAIROS_API_THREADS")) {
+        try { int n = std::stoi(env); if (n > 0) api_threads = n; }
+        catch (...) { std::cerr << "[kairos] invalid KAIROS_API_THREADS — using 8\n"; }
+    }
+
     httplib::Server svr;
-    svr.new_task_queue = [] { return new httplib::ThreadPool(8); };
+    svr.new_task_queue = [api_threads] { return new httplib::ThreadPool(api_threads); };
 
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(R"({"status":"ok","service":"kairos"})", "application/json");
@@ -98,9 +118,52 @@ int main(int argc, char* argv[]) {
 
     if (g_debug_logging.load()) std::cout << "[kairos] sync debug logging enabled\n";
     if (g_epg_debug.load())     std::cout << "[kairos] EPG debug logging enabled\n";
+    std::cout << "[kairos] api_threads=" << api_threads
+              << "  sync_threads=" << sync.getThreadCount() << std::endl;
     std::cout << "[kairos] listening on 0.0.0.0:" << port
               << "  db=" << db_path
               << "  conf=" << conf_path << std::endl;
 
+    // Coordinator thread: keeps Hades responsive while sync runs.
+    //
+    // Responsibilities:
+    //  1. Flush stdout/stderr every 500 ms so Docker pipe buffering never
+    //     silences log output between sync passes.
+    //  2. Every 5 s during an active sync, signal the sync thread to pause at
+    //     its next transaction boundary for 100 ms.  HTTP write handlers
+    //     (channel creation, playlist edits, etc.) use this window to grab the
+    //     SQLite write lock without competing with a sync transaction.
+    //  3. Emit a heartbeat every 30 s while sync is running so the log stream
+    //     never goes completely silent during a large library pass.
+    std::atomic<bool> coordinator_stop{false};
+    std::thread coordinator([&]() {
+        using namespace std::chrono_literals;
+        int ticks = 0;
+        while (!coordinator_stop.load(std::memory_order_relaxed)) {
+            std::this_thread::sleep_for(500ms);
+            fflush(stdout);
+            fflush(stderr);
+            ++ticks;
+
+            if (!sync.isSyncing()) continue;
+
+            // Every 5 s: open a write window by pausing sync between transactions.
+            if (ticks % 10 == 0) {
+                sync.requestYield();
+                std::this_thread::sleep_for(100ms);
+                sync.clearYield();
+            }
+
+            // Heartbeat every 30 s so the log never goes silent mid-sync.
+            if (ticks % 60 == 0) {
+                std::cout << "[kairos] sync in progress..." << std::endl;
+            }
+        }
+    });
+
+    // Run the HTTP server on the main thread; the coordinator runs alongside it.
     svr.listen("0.0.0.0", port);
+
+    coordinator_stop.store(true);
+    coordinator.join();
 }

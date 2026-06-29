@@ -88,6 +88,11 @@ protected:
         return orig_->sputn(s, n);
     }
 
+    // Forward flush() calls to the real underlying buffer so that std::endl
+    // and explicit flush() calls actually drain the pipe in non-TTY environments
+    // (Docker). Without this override, flush signals are silently dropped here.
+    int sync() override { return orig_->pubsync(); }
+
 private:
     std::streambuf* orig_;
     LogBuffer&      buf_;

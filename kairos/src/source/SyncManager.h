@@ -31,6 +31,13 @@ public:
     int  getThreadCount() const;
     void setThreadCount(int n);
 
+    // Coordinator interface: request a brief pause between sync write transactions
+    // so the HTTP thread pool has a guaranteed window to acquire the DB write lock.
+    // requestYield() sets the flag; clearYield() releases it.  Sync checks the flag
+    // at every transaction boundary and sleeps until it is cleared.
+    void requestYield() { yield_requested_.store(true,  std::memory_order_relaxed); }
+    void clearYield()   { yield_requested_.store(false, std::memory_order_relaxed); }
+
     // Optional scraper hook — fires triggerMatch() after each source sync completes.
     void setScraperManager(ScraperManager* s) { scraper_ = s; }
 
@@ -85,11 +92,17 @@ private:
                                              const std::string& source_type,
                                              const std::string& base_url) const;
 
+    // Sleeps at transaction boundaries while yield_requested_ is set.
+    // Called by sync before acquiring each write transaction so the coordinator
+    // can create a brief DB-write window for the HTTP thread pool.
+    void yieldIfRequested();
+
     Database&                                  db_;
     ConfStore&                                 conf_;
     std::vector<std::unique_ptr<IMediaSource>> sources_;
     std::atomic<bool>                          sync_running_{false};
     std::atomic<bool>                          plex_sync_running_{false};
     std::atomic<int>                           override_thread_count_{0};
+    std::atomic<bool>                          yield_requested_{false};
     ScraperManager*                            scraper_{nullptr};
 };

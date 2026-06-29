@@ -1378,6 +1378,11 @@ void Database::configure() {
     db_.exec("PRAGMA foreign_keys = ON");
     db_.exec("PRAGMA synchronous  = NORMAL");
     db_.exec("PRAGMA cache_size   = -8000");
+    // Allow up to 5 s of retries before returning SQLITE_BUSY.  Protects HTTP
+    // write handlers from failing immediately when the sync thread holds the
+    // write lock.  The coordinator's yield mechanism is the primary relief valve;
+    // this is the fallback for any window it misses.
+    db_.exec("PRAGMA busy_timeout = 5000");
 }
 
 void Database::runMigrations() {
