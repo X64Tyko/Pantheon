@@ -1,5 +1,6 @@
 #pragma once
 #include "IMediaSource.h"
+#include <SQLiteCpp/SQLiteCpp.h>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -99,6 +100,7 @@ private:
 
     Database&                                  db_;
     ConfStore&                                 conf_;
+    SQLite::Database                           sync_db_; // dedicated connection for sync writes
     std::vector<std::unique_ptr<IMediaSource>> sources_;
     std::atomic<bool>                          sync_running_{false};
     std::atomic<bool>                          plex_sync_running_{false};

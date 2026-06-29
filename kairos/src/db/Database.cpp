@@ -1361,28 +1361,37 @@ constexpr Migration kMigrations[] = {
 // ---------------------------------------------------------------------------
 
 Database::Database(const std::string& path)
-    : db_([&]() -> std::string {
+    : path_(path),
+      db_([&]() -> std::string {
           auto parent = std::filesystem::path(path).parent_path();
           if (!parent.empty())
               std::filesystem::create_directories(parent);
           return path;
       }(), SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE)
 {
-    configure();
+    configure(db_);
     runMigrations();
     std::cout << "[db] opened " << path << '\n';
 }
 
-void Database::configure() {
-    db_.exec("PRAGMA journal_mode = WAL");
-    db_.exec("PRAGMA foreign_keys = ON");
-    db_.exec("PRAGMA synchronous  = NORMAL");
-    db_.exec("PRAGMA cache_size   = -8000");
-    // Allow up to 5 s of retries before returning SQLITE_BUSY.  Protects HTTP
-    // write handlers from failing immediately when the sync thread holds the
-    // write lock.  The coordinator's yield mechanism is the primary relief valve;
-    // this is the fallback for any window it misses.
-    db_.exec("PRAGMA busy_timeout = 5000");
+void Database::configure() { configure(db_); }
+
+void Database::configure(SQLite::Database& db) const {
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec("PRAGMA synchronous  = NORMAL");
+    db.exec("PRAGMA cache_size   = -8000");
+    // Allow up to 5 s of retries before returning SQLITE_BUSY.  With separate
+    // connections (sync thread vs HTTP thread pool) this is the primary
+    // mechanism that lets HTTP writes proceed as soon as the sync connection
+    // releases a per-show write transaction.
+    db.exec("PRAGMA busy_timeout = 5000");
+}
+
+SQLite::Database Database::openConnection() const {
+    SQLite::Database conn(path_, SQLite::OPEN_READWRITE);
+    configure(conn);
+    return conn;
 }
 
 void Database::runMigrations() {
