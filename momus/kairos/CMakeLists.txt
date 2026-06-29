@@ -20,6 +20,9 @@ add_executable(momus_kairos
     scheduler/test_cursor_state.cpp
     scheduler/test_rule_engine.cpp
     scheduler/test_epg_output.cpp
+    source/test_jellyfin_source.cpp
+    source/test_plex_source.cpp
+    source/test_local_source.cpp
 )
 
 # kairos_core brings in SQLiteCpp, nlohmann_json, httplib, and the src/ include

@@ -6,6 +6,7 @@ on:
     paths:
       - "kairos/**"
       - "hades/**"
+      - "momus/**"
       - ".github/workflows/docker-kairos.yml"
   workflow_dispatch:
 
@@ -14,7 +15,33 @@ env:
   IMAGE_NAME: x64tyko/kairos
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ libssl-dev
+
+      - name: Cache FetchContent deps
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: momus-deps-${{ hashFiles('kairos/CMakeLists.txt', 'momus/CMakeLists.txt', 'momus/kairos/CMakeLists.txt') }}
+          restore-keys: momus-deps-
+
+      - name: Configure
+        run: cmake -B build -G Ninja -S . -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --target momus_kairos -j$(nproc)
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
