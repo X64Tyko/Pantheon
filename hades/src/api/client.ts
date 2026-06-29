@@ -100,7 +100,7 @@ export const api = {
 
   // Content requests
   getRequests:    ()                                                                           => request<ContentRequest[]>('GET',    '/requests'),
-  createRequest:  (b: { content_type: 'show'|'movie'; source: 'tmdb'|'tvdb'; external_id: string; title: string; year?: number; poster_url?: string }) =>
+  createRequest:  (b: { content_type: 'show'|'movie'; source: 'tmdb'|'tvdb'|'anidb'; external_id: string; title: string; year?: number; poster_url?: string }) =>
                     request<{ request_id: string; status: string; duplicate?: boolean }>('POST', '/requests', b),
   updateRequest:  (id: string, status: 'approved'|'rejected')                                => request<{ok: boolean}>('PATCH',  `/requests/${id}`, { status }),
   deleteRequest:  (id: string)                                                                => request<{ok: boolean}>('DELETE', `/requests/${id}`),

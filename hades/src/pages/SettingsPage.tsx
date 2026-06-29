@@ -145,7 +145,7 @@ export default function SettingsPage() {
     }
   }
 
-  const updateScraperConfig = (source: 'tmdb' | 'tvdb', field: string, value: string | boolean) => {
+  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb', field: string, value: string | boolean) => {
     if (!scraperSettings) return
     setScraperSettings(prev => prev ? {
       ...prev,
@@ -183,8 +183,9 @@ export default function SettingsPage() {
     }, 4000)
   }
 
-  const tmdb = scraperSettings?.configs.find(c => c.source === 'tmdb')
-  const tvdb = scraperSettings?.configs.find(c => c.source === 'tvdb')
+  const tmdb  = scraperSettings?.configs.find(c => c.source === 'tmdb')
+  const tvdb  = scraperSettings?.configs.find(c => c.source === 'tvdb')
+  const anidb = scraperSettings?.configs.find(c => c.source === 'anidb')
 
   return (
     <div style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -375,6 +376,24 @@ export default function SettingsPage() {
             placeholder="eng"
             value={tvdb?.language ?? 'eng'}
             onChange={e => updateScraperConfig('tvdb', 'language', e.target.value)}
+          />
+        </SettingRow>
+      </Section>
+
+      <Section title="AniDB">
+        <SettingRow label="Enabled" hint="Anime metadata source for shows and movies via the AniDB HTTP API.">
+          <Toggle
+            checked={anidb?.enabled ?? false}
+            disabled={!scraperSettings}
+            onChange={v => updateScraperConfig('anidb', 'enabled', v)}
+          />
+        </SettingRow>
+        <SettingRow label="Client Name" hint="Your registered AniDB HTTP API client name. Register at anidb.net/software/add.">
+          <input
+            style={{ ...inputStyle, width: 200 }}
+            placeholder="myclientname"
+            value={anidb?.api_key ?? ''}
+            onChange={e => updateScraperConfig('anidb', 'api_key', e.target.value)}
           />
         </SettingRow>
       </Section>

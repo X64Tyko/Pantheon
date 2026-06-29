@@ -554,7 +554,7 @@ export interface ContentRequest {
   request_id:   string
   user_id:      string
   content_type: 'show' | 'movie'
-  source:       'tmdb' | 'tvdb'
+  source:       ScraperSource
   external_id:  string
   title:        string
   year?:        number | null
@@ -619,7 +619,7 @@ export interface MediaHeroItem {
 
 // ── Scraper infrastructure ────────────────────────────────────────────────────
 
-export type ScraperSource = 'tmdb' | 'tvdb'
+export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb'
 
 export interface ScraperConfig {
   source:    ScraperSource
