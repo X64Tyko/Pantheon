@@ -19,6 +19,8 @@
 services:
   kairos:
     image: ghcr.io/x64tyko/kairos:latest
+    labels:
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Kairos_Beta_Icon.png"
     ports:
       - "8081:8080"
     environment:
@@ -32,6 +34,8 @@ services:
 
   hephaestus:
     image: ghcr.io/x64tyko/hephaestus:latest
+    labels:
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Hephaestus_Beta_Icon.png"
     environment:
       - KAIROS_URL=http://kairos:8080
     volumes:
@@ -42,10 +46,14 @@ services:
 
   hades:
     image: ghcr.io/x64tyko/hades:latest
+    labels:
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Hades_Beta_Icon.png"
     restart: unless-stopped
 
   hermes:
     image: ghcr.io/x64tyko/hermes:latest
+    labels:
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Hermes_Beta_Icon.png"
     ports:
       - "8000:8000"
     environment:
