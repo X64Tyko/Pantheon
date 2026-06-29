@@ -6,13 +6,12 @@
 #include "conf/ConfStore.h"
 #include "db/Database.h"
 #include "download/DownloadManager.h"
-#include "log/DebugLog.h"
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
+#include "scheduler/RuntimeFlags.h"
 #include "scheduler/RuleEngine.h"
 #include "source/SyncManager.h"
-
-bool g_debug_logging = false;
+#include <SQLiteCpp/SQLiteCpp.h>
 
 int main(int argc, char* argv[]) {
     // Intercept cout/cerr before anything else so startup messages are captured.
@@ -38,10 +37,8 @@ int main(int argc, char* argv[]) {
             reset_pass = argv[++i];
         }
         else if (arg == "--debug")
-            g_debug_logging = true;
+            g_debug_logging.store(true);
     }
-    if (!g_debug_logging && std::getenv("KAIROS_DEBUG"))
-        g_debug_logging = true;
 
     // Admin recovery mode — reset password and exit without starting the server.
     if (!reset_user.empty()) {
@@ -77,6 +74,18 @@ int main(int argc, char* argv[]) {
     AuthStore        auth(db);
     sync.loadSources();
 
+    // Load persisted runtime flags from app_config.
+    // Env vars and --debug can force flags on; if not forced, use DB value.
+    auto loadFlag = [&](const char* key, std::atomic<bool>& flag) {
+        if (flag.load()) return; // already forced on by env var or CLI arg
+        SQLite::Statement q(db.get(), "SELECT value FROM app_config WHERE key=?");
+        q.bind(1, std::string(key));
+        if (q.executeStep() && q.getColumn(0).getString() == "1")
+            flag.store(true);
+    };
+    loadFlag("sync_debug", g_debug_logging);
+    loadFlag("epg_debug",  g_epg_debug);
+
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(8); };
 
@@ -87,8 +96,8 @@ int main(int argc, char* argv[]) {
     Router router(svr, db, sync, conf, log_buffer, engine, materializer, dl, auth);
     router.registerRoutes();
 
-    if (g_debug_logging)
-        std::cout << "[kairos] debug logging enabled\n";
+    if (g_debug_logging.load()) std::cout << "[kairos] sync debug logging enabled\n";
+    if (g_epg_debug.load())     std::cout << "[kairos] EPG debug logging enabled\n";
     std::cout << "[kairos] listening on 0.0.0.0:" << port
               << "  db=" << db_path
               << "  conf=" << conf_path << std::endl;

@@ -1,12 +1,10 @@
 #pragma once
 #include <chrono>
-
-// Enable with KAIROS_DEBUG=1 env var or --debug CLI arg.
-extern bool g_debug_logging;
+#include "scheduler/RuntimeFlags.h"
 
 // Debug-only stream — usage: DLOG << "message\n";
-// The including TU must also include <iostream>.
-#define DLOG if (g_debug_logging) std::cout
+// Enabled via KAIROS_DEBUG=1 env var, --debug CLI arg, or the Settings UI.
+#define DLOG if (g_debug_logging.load(std::memory_order_relaxed)) std::cout
 
 // Returns elapsed milliseconds between two steady_clock time points.
 inline long long elapsedMs(std::chrono::steady_clock::time_point t0,

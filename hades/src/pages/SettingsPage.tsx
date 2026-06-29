@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
+import { statusStore } from '../stores'
 import type { ArrConfig, ScraperSettings, ScraperStats } from '../api/types'
 
 interface Settings {
   epg_debug:             boolean
+  sync_debug:            boolean
   sync_threads:          number
   image_cache_ttl_hours: number
 }
@@ -105,6 +107,9 @@ export default function SettingsPage() {
       const next = await api.updateSettings(update)
       setSettings(next)
       setThreads(String(next.sync_threads))
+      // Keep statusStore in sync immediately so the debug banner reflects the change.
+      if ('sync_debug' in update) statusStore.syncDebug = next.sync_debug
+      if ('epg_debug'  in update) statusStore.epgDebug  = next.epg_debug
     } catch (e: any) {
       setError(e.message ?? 'Save failed')
     } finally {
@@ -198,6 +203,16 @@ export default function SettingsPage() {
       )}
 
       <Section title="Diagnostics">
+        <SettingRow
+          label="Sync Debug Logging"
+          hint="Verbose output for every sync, ffprobe call, and scraper query — phase timings, per-episode path mapping, and chapter probe results. Disable when not actively diagnosing."
+        >
+          <Toggle
+            checked={settings?.sync_debug ?? false}
+            disabled={!settings || saving}
+            onChange={v => patch({ sync_debug: v })}
+          />
+        </SettingRow>
         <SettingRow
           label="EPG Debug Logging"
           hint="Emits verbose [epg] lines to stdout during schedule projection. Visible in engine logs and docker logs."

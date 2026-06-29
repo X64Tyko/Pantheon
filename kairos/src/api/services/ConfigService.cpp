@@ -5,6 +5,7 @@
 #include "../../db/SourceRepository.h"
 #include "../../source/SyncManager.h"
 #include "../../scheduler/RuntimeFlags.h"
+#include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -16,19 +17,42 @@ ConfigService::ConfigService(const ServiceContext& ctx)
 
 void ConfigService::registerRoutes(httplib::Server& svr) {
 
-	svr.Get("/api/config/settings", [this](const Req&, Res& res) {
-		route::ok(res, json{
+	auto persistFlag = [this](const char* key, bool value) {
+		SQLite::Statement s(db_.get(),
+			"INSERT INTO app_config(key,value) VALUES(?,?)"
+			" ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+		s.bind(1, std::string(key));
+		s.bind(2, value ? "1" : "0");
+		s.exec();
+	};
+
+	auto settingsJson = [this]() {
+		return json{
 			{"epg_debug",              g_epg_debug.load()},
+			{"sync_debug",             g_debug_logging.load()},
 			{"sync_threads",           sync_.getThreadCount()},
 			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
-		}.dump());
+		};
+	};
+
+	svr.Get("/api/config/settings", [settingsJson](const Req&, Res& res) {
+		route::ok(res, settingsJson().dump());
 	});
 
-	svr.Patch("/api/config/settings", [this](const Req& req, Res& res) {
+	svr.Patch("/api/config/settings", [this, persistFlag, settingsJson](const Req& req, Res& res) {
 		try {
 			auto b = json::parse(req.body);
-			if (b.contains("epg_debug") && b["epg_debug"].is_boolean())
-				g_epg_debug.store(b["epg_debug"].get<bool>());
+			if (b.contains("epg_debug") && b["epg_debug"].is_boolean()) {
+				bool v = b["epg_debug"].get<bool>();
+				g_epg_debug.store(v);
+				persistFlag("epg_debug", v);
+			}
+			if (b.contains("sync_debug") && b["sync_debug"].is_boolean()) {
+				bool v = b["sync_debug"].get<bool>();
+				g_debug_logging.store(v);
+				persistFlag("sync_debug", v);
+				std::cout << "[config] sync debug logging " << (v ? "enabled" : "disabled") << '\n';
+			}
 			if (b.contains("sync_threads") && b["sync_threads"].is_number_integer()) {
 				int n = b["sync_threads"].get<int>();
 				if (n >= 1 && n <= 32) sync_.setThreadCount(n);
@@ -37,11 +61,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 				int h = b["image_cache_ttl_hours"].get<int>();
 				if (h >= 1 && h <= 720) conf_.setImageCacheTtlHours(h);
 			}
-			route::ok(res, json{
-				{"epg_debug",              g_epg_debug.load()},
-				{"sync_threads",           sync_.getThreadCount()},
-				{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
-			}.dump());
+			route::ok(res, settingsJson().dump());
 		} catch (const std::exception& e) {
 			route::err(res, 400, e.what());
 		}

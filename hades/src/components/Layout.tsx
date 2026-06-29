@@ -297,16 +297,30 @@ export default observer(function Layout() {
 
       {/* ── Main content ────────────────────────────────────────────────────── */}
       <main style={{
-        flex: 1, minWidth: 0,
-        overflow: isFullBleed ? 'hidden' : 'auto',
-        padding: isFullBleed ? 0 : 24,
+        flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
+        overflow: 'hidden',
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 13,
         color: 'var(--hds-txt)',
-      }}
-        className={isFullBleed ? '' : 'scrollbar-dark'}
-      >
-        <Outlet />
+      }}>
+        {/* Debug banner — shown when any debug logging flag is active */}
+        {statusStore.anyDebugEnabled && (
+          <DebugBanner
+            syncDebug={statusStore.syncDebug}
+            epgDebug={statusStore.epgDebug}
+            onSettings={() => navigate('/settings')}
+          />
+        )}
+
+        <div style={{
+          flex: 1, minWidth: 0,
+          overflow: isFullBleed ? 'hidden' : 'auto',
+          padding: isFullBleed ? 0 : 24,
+        }}
+          className={isFullBleed ? '' : 'scrollbar-dark'}
+        >
+          <Outlet />
+        </div>
       </main>
 
       {/* ── Error toast ─────────────────────────────────────────────────────── */}
@@ -344,6 +358,59 @@ function ProcessRow({ color, label }: { color: string; label: string }) {
       }}>
         {label}
       </span>
+    </div>
+  )
+}
+
+// ── Debug banner ──────────────────────────────────────────────────────────────
+
+function DebugBanner({ syncDebug, epgDebug, onSettings }: {
+  syncDebug:  boolean
+  epgDebug:   boolean
+  onSettings: () => void
+}) {
+  const modes = [
+    syncDebug && 'sync',
+    epgDebug  && 'epg',
+  ].filter(Boolean).join(' + ')
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '0 16px',
+      height: 32, flexShrink: 0,
+      background: 'oklch(0.22 0.08 60 / 0.55)',
+      borderBottom: '1px solid oklch(0.55 0.18 60 / 0.5)',
+      fontSize: 10, letterSpacing: '0.06em',
+      color: 'oklch(0.88 0.16 70)',
+      fontFamily: "'JetBrains Mono', monospace",
+    }}>
+      <span style={{
+        width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+        background: 'oklch(0.75 0.2 70)',
+        boxShadow: '0 0 8px oklch(0.75 0.2 70 / 0.8)',
+        animation: 'hds-pulse 2s ease-in-out infinite',
+      }} />
+      <span style={{ flex: 1 }}>
+        DEBUG LOGGING ACTIVE
+        <span style={{ color: 'oklch(0.65 0.12 70)', marginLeft: 6 }}>({modes})</span>
+        <span style={{ color: 'oklch(0.55 0.08 70)', marginLeft: 8 }}>
+          — verbose output is being written to logs
+        </span>
+      </span>
+      <button
+        onClick={onSettings}
+        style={{
+          background: 'none', border: '1px solid oklch(0.45 0.1 60 / 0.6)',
+          borderRadius: 5, padding: '2px 10px',
+          color: 'oklch(0.75 0.14 70)', fontSize: 10,
+          cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: '0.04em',
+          transition: 'border-color .12s, color .12s',
+        }}
+      >
+        Settings
+      </button>
     </div>
   )
 }
