@@ -25,6 +25,7 @@ struct ClientSink {
 struct StreamOptions {
     std::string ffprobe_path  = "ffprobe";
     std::string audio_lang    = "eng";
+    std::string subtitle_lang = "";   // empty = no subtitle mapping
     bool        loudnorm      = false;
     int         linger_secs   = 60;
 };

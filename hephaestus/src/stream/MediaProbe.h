@@ -41,3 +41,7 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 // Returns the relative audio index (for -map 0:a:N) of the best matching
 // track: prefers preferred_lang if non-empty, otherwise returns 0.
 int pickAudioTrack(const MediaInfo& info, const std::string& preferred_lang);
+
+// Returns the relative subtitle index (for -map 0:s:N) of the best matching
+// track, or -1 if not found or preferred_lang is empty.
+int pickSubtitleTrack(const MediaInfo& info, const std::string& preferred_lang);

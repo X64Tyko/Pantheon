@@ -8,9 +8,14 @@
 #include "../../db/SourceRepository.h"
 #include "../../scheduler/EPGMaterializer.h"
 #include "../../scheduler/RuleEngine.h"
+#include "../../source/MediaProbe.h"
 #include <nlohmann/json.hpp>
+#include <SQLiteCpp/SQLiteCpp.h>
+#include <chrono>
 #include <ctime>
 #include <map>
+#include <mutex>
+#include <set>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -21,12 +26,72 @@ SchedulerService::SchedulerService(const ServiceContext& ctx)
 	  materializer_(ctx.materializer), schedule_cache_(ctx.schedule_cache)
 {}
 
+namespace {
+
+struct LangCache {
+    std::mutex                          mtx;
+    json                                data;
+    std::chrono::steady_clock::time_point expires{};
+};
+
+LangCache g_lang_cache;
+
+} // namespace
+
 void SchedulerService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/playlist.m3u", [this](const Req& req, Res& res) {
 		std::string host = req.get_header_value("Host");
 		if (host.empty()) host = "localhost:8080";
 		res.set_content(materializer_.generateM3U("http://" + host), "application/x-mpegURL");
+	});
+
+	// ── Media language catalog ─────────────────────────────────────────────────
+	// Probes a random sample of media files via ffprobe and returns the distinct
+	// audio and subtitle language codes present in the library.
+	// Result is cached for 1 hour to avoid repeated ffprobe calls.
+	svr.Get("/api/media/languages", [this](const Req&, Res& res) {
+		{
+			std::lock_guard<std::mutex> lk(g_lang_cache.mtx);
+			if (!g_lang_cache.data.is_null() &&
+			    std::chrono::steady_clock::now() < g_lang_cache.expires) {
+				route::ok(res, g_lang_cache.data.dump());
+				return;
+			}
+		}
+
+		std::set<std::string> audio_set, sub_set;
+		auto probe = [&](const std::string& raw_path) {
+			const std::string path = conf_.applyPathMap(raw_path);
+			auto langs = probeStreamLanguages(path);
+			for (auto& l : langs.audio)    audio_set.insert(l);
+			for (auto& l : langs.subtitle) sub_set.insert(l);
+		};
+
+		try {
+			SQLite::Statement qe(db_.get(),
+				"SELECT file_path FROM episode "
+				"WHERE file_path != '' ORDER BY RANDOM() LIMIT 30");
+			while (qe.executeStep()) probe(qe.getColumn(0).getString());
+
+			SQLite::Statement qm(db_.get(),
+				"SELECT file_path FROM movie "
+				"WHERE file_path != '' ORDER BY RANDOM() LIMIT 10");
+			while (qm.executeStep()) probe(qm.getColumn(0).getString());
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/media/languages", e);
+		}
+
+		json result = {{"audio", json::array()}, {"subtitle", json::array()}};
+		for (const auto& l : audio_set) result["audio"].push_back(l);
+		for (const auto& l : sub_set)   result["subtitle"].push_back(l);
+
+		{
+			std::lock_guard<std::mutex> lk(g_lang_cache.mtx);
+			g_lang_cache.data    = result;
+			g_lang_cache.expires = std::chrono::steady_clock::now() + std::chrono::hours(1);
+		}
+		route::ok(res, result.dump());
 	});
 
 	auto xmltvHandler = [this](const Req& req, Res& res) {

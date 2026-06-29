@@ -28,7 +28,11 @@ public:
     std::string createLibrary(const std::string& source_id,
                               const std::string& external_lib_id,
                               const std::string& display_name,
-                              const std::string& library_type);
+                              const std::string& library_type,
+                              const std::string& preferred_scraper = "");
+
+    void updateLibraryPreferredScraper(const std::string& library_id,
+                                        const std::string& preferred_scraper);
 
     void removeLibrary(const std::string& library_id);
 

@@ -33,7 +33,7 @@ export default observer(function ChannelDetailPage() {
 
   useEffect(() => {
     if (channel) store.initChannelDraft(channel)
-  }, [channel?.channel_id, channel?.seed, channel?.name, channel?.number, channel?.timezone])
+  }, [channel?.channel_id, channel?.seed, channel?.name, channel?.number, channel?.timezone, channel?.audio_lang, channel?.subtitle_lang])
 
   useEffect(() => {
     const up  = () => store.stopPainting()

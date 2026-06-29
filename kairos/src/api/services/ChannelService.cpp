@@ -41,6 +41,8 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 					{"offline_audio_type",       c.offline_audio_type},
 					{"offline_audio_title",      c.offline_audio_title},
 					{"logo_path",                c.logo_path},
+					{"audio_lang",               c.audio_lang},
+					{"subtitle_lang",            c.subtitle_lang},
 				};
 				if (!c.anchor_hashes.empty()) {
 					try { channel["anchor_hashes"] = json::parse(c.anchor_hashes); } catch (...) {}
@@ -104,6 +106,8 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("offline_audio_type"))       upd("offline_audio_type",       b["offline_audio_type"]);
 			if (b.contains("offline_audio_title"))      upd("offline_audio_title",      b["offline_audio_title"]);
 			if (b.contains("logo_path"))                upd("logo_path",                b["logo_path"]);
+			if (b.contains("audio_lang"))               upd("audio_lang",               b["audio_lang"]);
+			if (b.contains("subtitle_lang"))            upd("subtitle_lang",            b["subtitle_lang"]);
 			if (b.contains("seed"))                     updI("seed",                    b["seed"].get<int>());
 			if (b.contains("anchor_hashes")) {
 				std::string ah = b["anchor_hashes"].is_string()

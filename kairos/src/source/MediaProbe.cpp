@@ -87,6 +87,42 @@ std::vector<Chapter> probeChapters(const std::string& file_path) {
     return result;
 }
 
+StreamLanguages probeStreamLanguages(const std::string& file_path) {
+    const std::string cmd =
+        "timeout 15 ffprobe -v quiet -print_format json -show_streams "
+        + shellQuote(file_path) + " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return {};
+    std::string out;
+    char buf[8192];
+    while (fgets(buf, sizeof(buf), pipe))
+        out += buf;
+    pclose(pipe);
+    if (out.empty()) return {};
+
+    StreamLanguages result;
+    try {
+        auto j = json::parse(out);
+        if (!j.contains("streams")) return result;
+        for (const auto& s : j["streams"]) {
+            const std::string type = s.value("codec_type", "");
+            std::string lang;
+            if (s.contains("tags") && s["tags"].is_object()) {
+                auto& t = s["tags"];
+                if      (t.contains("language"))  lang = t["language"].get<std::string>();
+                else if (t.contains("LANGUAGE"))  lang = t["LANGUAGE"].get<std::string>();
+            }
+            if (lang.empty() || lang == "und") continue;
+            if      (type == "audio")    result.audio.push_back(lang);
+            else if (type == "subtitle") result.subtitle.push_back(lang);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[probe] stream-lang parse error for " << file_path
+                  << ": " << e.what() << '\n';
+    }
+    return result;
+}
+
 int64_t validateDurationMs(int64_t dur, const std::string& file_path) {
     if (dur >= kMinMs && dur <= kMaxMs)
         return dur;

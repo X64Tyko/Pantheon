@@ -16,4 +16,6 @@ struct Channel {
     std::string offline_audio_title;
     std::string logo_path;
     std::string anchor_hashes;  // JSON blob, may be empty
+    std::string audio_lang;     // preferred audio language, e.g. "eng"; empty = default
+    std::string subtitle_lang;  // preferred subtitle language; empty = none
 };

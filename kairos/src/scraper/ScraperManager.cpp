@@ -258,10 +258,15 @@ void ScraperManager::runMatch(const std::string& target_id,
     // ── Shows ────────────────────────────────────────────────────────────────
     if (item_type.empty() || item_type == "show") {
         std::string sql = R"(
-            SELECT show_id, title, COALESCE(year,0), tmdb_id, tvdb_id
-            FROM show WHERE match_status IN ('unscraped','uncertain','unmatched')
+            SELECT s.show_id, s.title, COALESCE(s.year,0), s.tmdb_id, s.tvdb_id,
+              COALESCE((SELECT ml.preferred_scraper
+                        FROM source_mapping sm
+                        JOIN media_library ml ON ml.library_id = sm.library_id
+                        WHERE sm.kairos_id = s.show_id AND sm.item_type = 'show'
+                        LIMIT 1), '') AS preferred_scraper
+            FROM show s WHERE s.match_status IN ('unscraped','uncertain','unmatched')
         )";
-        if (!target_id.empty()) sql += " AND show_id = '" + target_id + "'";
+        if (!target_id.empty()) sql += " AND s.show_id = '" + target_id + "'";
 
         SQLite::Statement q(db_.get(), sql);
         while (q.executeStep()) {
@@ -269,17 +274,23 @@ void ScraperManager::runMatch(const std::string& target_id,
                       q.getColumn(1).getString(),
                       q.getColumn(2).getInt(),
                       q.getColumn(3).getString(),
-                      q.getColumn(4).getString());
+                      q.getColumn(4).getString(),
+                      q.getColumn(5).getString());
         }
     }
 
     // ── Movies ───────────────────────────────────────────────────────────────
     if (item_type.empty() || item_type == "movie") {
         std::string sql = R"(
-            SELECT movie_id, title, COALESCE(year,0), tmdb_id, COALESCE(file_path,'')
-            FROM movie WHERE match_status IN ('unscraped','uncertain','unmatched')
+            SELECT m.movie_id, m.title, COALESCE(m.year,0), m.tmdb_id, COALESCE(m.file_path,''),
+              COALESCE((SELECT ml.preferred_scraper
+                        FROM source_mapping sm
+                        JOIN media_library ml ON ml.library_id = sm.library_id
+                        WHERE sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
+                        LIMIT 1), '') AS preferred_scraper
+            FROM movie m WHERE m.match_status IN ('unscraped','uncertain','unmatched')
         )";
-        if (!target_id.empty()) sql += " AND movie_id = '" + target_id + "'";
+        if (!target_id.empty()) sql += " AND m.movie_id = '" + target_id + "'";
 
         SQLite::Statement q(db_.get(), sql);
         while (q.executeStep()) {
@@ -287,7 +298,8 @@ void ScraperManager::runMatch(const std::string& target_id,
                        q.getColumn(1).getString(),
                        q.getColumn(2).getInt(),
                        q.getColumn(3).getString(),
-                       q.getColumn(4).getString());
+                       q.getColumn(4).getString(),
+                       q.getColumn(5).getString());
         }
     }
     std::cout << "[scraper] match complete\n";
@@ -297,7 +309,8 @@ void ScraperManager::runMatch(const std::string& target_id,
 
 void ScraperManager::matchShow(const std::string& kairos_id, const std::string& title,
                                 int year, const std::string& tmdb_id,
-                                const std::string& tvdb_id) {
+                                const std::string& tvdb_id,
+                                const std::string& preferred_scraper) {
     // Items with existing external IDs (set by Plex/Jellyfin) are trusted for the
     // metadata match, but we still validate that the episode files actually resolve
     // to a real folder on disk after path mapping.
@@ -365,9 +378,12 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
         }
     };
 
-    if (tmdb_)  collect("tmdb",  tmdb_->searchShows(title, year));
-    if (tvdb_)  collect("tvdb",  tvdb_->searchShows(title, year));
-    if (anidb_) collect("anidb", anidb_->searchShows(title, year));
+    auto wantScraper = [&](const std::string& src) {
+        return preferred_scraper.empty() || preferred_scraper == src;
+    };
+    if (tmdb_  && wantScraper("tmdb"))  collect("tmdb",  tmdb_->searchShows(title, year));
+    if (tvdb_  && wantScraper("tvdb"))  collect("tvdb",  tvdb_->searchShows(title, year));
+    if (anidb_ && wantScraper("anidb")) collect("anidb", anidb_->searchShows(title, year));
 
     double best = 0.0;
     for (const auto& c : candidates) {
@@ -399,7 +415,8 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
 
 void ScraperManager::matchMovie(const std::string& kairos_id, const std::string& title,
                                  int year, const std::string& tmdb_id,
-                                 const std::string& file_path) {
+                                 const std::string& file_path,
+                                 const std::string& preferred_scraper) {
     if (!tmdb_id.empty()) {
         if (!file_path.empty()) {
             std::string mapped = conf_.applyPathMap(file_path);
@@ -448,9 +465,12 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
         }
     };
 
-    if (tmdb_)  collect("tmdb",  tmdb_->searchMovies(title, year));
-    if (tvdb_)  collect("tvdb",  tvdb_->searchMovies(title, year));
-    if (anidb_) collect("anidb", anidb_->searchMovies(title, year));
+    auto wantScraper = [&](const std::string& src) {
+        return preferred_scraper.empty() || preferred_scraper == src;
+    };
+    if (tmdb_  && wantScraper("tmdb"))  collect("tmdb",  tmdb_->searchMovies(title, year));
+    if (tvdb_  && wantScraper("tvdb"))  collect("tvdb",  tvdb_->searchMovies(title, year));
+    if (anidb_ && wantScraper("anidb")) collect("anidb", anidb_->searchMovies(title, year));
 
     double best = 0.0;
     for (const auto& c : candidates) {

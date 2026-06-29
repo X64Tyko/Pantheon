@@ -90,9 +90,11 @@ std::vector<KairosChannel> KairosClient::getChannels() {
         std::vector<KairosChannel> channels;
         for (auto& item : j) {
             KairosChannel ch;
-            ch.channel_id = item.value("channel_id", "");
-            ch.name       = item.value("name",       "");
-            ch.number     = item.value("number",     0);
+            ch.channel_id    = item.value("channel_id",   "");
+            ch.name          = item.value("name",         "");
+            ch.number        = item.value("number",       0);
+            ch.audio_lang    = item.value("audio_lang",   "");
+            ch.subtitle_lang = item.value("subtitle_lang","");
             if (!ch.channel_id.empty()) channels.push_back(std::move(ch));
         }
         return channels;

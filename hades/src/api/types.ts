@@ -26,14 +26,14 @@ export interface SourceType {
 export interface LibraryInfo {
   external_lib_id: string
   name:            string
-  type:            'show' | 'movie' | 'mixed'
+  type:            'show' | 'movie' | 'mixed' | 'music' | 'photo'
 }
 
 export interface LibraryWithSource {
   library_id:   string
   source_id:    string
   display_name: string
-  library_type: 'show' | 'movie' | 'mixed'
+  library_type: 'show' | 'movie' | 'mixed' | 'music' | 'photo'
   source_name:  string
   source_type:  string
 }
@@ -44,12 +44,13 @@ export interface PagedResult<T> {
 }
 
 export interface Library {
-  library_id:      string
-  source_id:       string
-  external_lib_id: string
-  display_name:    string
-  library_type:    'show' | 'movie' | 'mixed'
-  enabled:         boolean
+  library_id:        string
+  source_id:         string
+  external_lib_id:   string
+  display_name:      string
+  library_type:      'show' | 'movie' | 'mixed' | 'music' | 'photo'
+  preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'
+  enabled:           boolean
 }
 
 export type AdvanceMode = 'scheduled' | 'on_play'
@@ -70,11 +71,18 @@ export interface Channel {
   offline_audio_title?:     string
   logo_path?:               string
   anchor_hashes?:           Record<string, number>
+  audio_lang?:              string  // e.g. "eng"; empty = use global default
+  subtitle_lang?:           string  // e.g. "eng"; empty = no subtitle
 }
 
 export interface EpgPreviewResponse {
   programs: EpgProgram[]
   anchors:  Record<string, number>
+}
+
+export interface MediaLanguages {
+  audio:    string[]
+  subtitle: string[]
 }
 
 // ── List-view types (minimal) ────────────────────────────────────────────────

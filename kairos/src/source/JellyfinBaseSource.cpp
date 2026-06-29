@@ -103,11 +103,19 @@ std::vector<LibraryInfo> JellyfinBaseSource::listAvailableLibraries() {
         auto j = json::parse(res->body);
         for (const auto& item : j["Items"]) {
             const std::string ct = item.value("CollectionType", "");
-            if (ct != "tvshows" && ct != "movies") continue;
             LibraryInfo info;
             info.external_lib_id = item["Id"].get<std::string>();
             info.name            = item.value("Name", "");
-            info.type            = (ct == "tvshows") ? "show" : "movie";
+            if      (ct == "tvshows")                            info.type = "show";
+            else if (ct == "movies")                             info.type = "movie";
+            else if (ct == "music")                              info.type = "music";
+            else if (ct == "photos")                             info.type = "photo";
+            else if (ct == "homevideos" || ct == "musicvideos")  info.type = "mixed";
+            else                                                  info.type = "mixed";
+            std::cout << "[" << sourceType() << ":" << source_id_
+                      << "] found library: \"" << info.name
+                      << "\" collectionType=" << (ct.empty() ? "(none)" : ct)
+                      << " → suggested type: " << info.type << '\n';
             result.push_back(std::move(info));
         }
     } catch (const json::exception& e) {

@@ -131,11 +131,13 @@ export class ChannelDetailStore {
     offline_audio_type:  'episode' | 'movie' | ''
     offline_audio_title: string
     logo_path:           string
+    audio_lang:          string
+    subtitle_lang:       string
   } = {
     name: '', number: 1, timezone: 'UTC', seed: 12345, advance_mode: 'scheduled',
     offline_video_path: '', offline_image_path: '',
     offline_audio_id: '', offline_audio_type: '', offline_audio_title: '',
-    logo_path: '',
+    logo_path: '', audio_lang: '', subtitle_lang: '',
   }
   channelDirty:   boolean     = false
   channelSaving:        boolean = false
@@ -168,6 +170,8 @@ export class ChannelDetailStore {
       offline_audio_type:  channel.offline_audio_type  ?? '',
       offline_audio_title: channel.offline_audio_title ?? '',
       logo_path:           channel.logo_path           ?? '',
+      audio_lang:          channel.audio_lang          ?? '',
+      subtitle_lang:       channel.subtitle_lang        ?? '',
     }
     this.channelDirty    = false
     this.confirmedAnchors = channel.anchor_hashes ?? {}

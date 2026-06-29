@@ -25,4 +25,6 @@ struct KairosChannel {
     std::string channel_id;
     std::string name;
     int         number = 0;
+    std::string audio_lang;    // overrides global --audio-lang when non-empty
+    std::string subtitle_lang; // empty = no subtitle mapping
 };

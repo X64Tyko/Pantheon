@@ -95,3 +95,12 @@ int pickAudioTrack(const MediaInfo& info, const std::string& preferred_lang) {
     }
     return 0;
 }
+
+int pickSubtitleTrack(const MediaInfo& info, const std::string& preferred_lang) {
+    if (preferred_lang.empty() || info.subtitles.empty()) return -1;
+    for (auto& s : info.subtitles) {
+        if (s.language.substr(0, 3) == preferred_lang.substr(0, 3))
+            return s.relative_index;
+    }
+    return -1;
+}

@@ -200,6 +200,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			result.push_back({{"library_id", lib.library_id}, {"source_id", lib.source_id},
 			                  {"external_lib_id", lib.external_lib_id},
 			                  {"display_name", lib.display_name}, {"library_type", lib.library_type},
+			                  {"preferred_scraper", lib.preferred_scraper},
 			                  {"enabled", lib.enabled}});
 		route::ok(res, result.dump());
 	});
@@ -208,14 +209,15 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		try {
 			auto source_id = req.path_params.at("id");
 			auto b = json::parse(req.body);
-			std::string external_lib_id = b.value("external_lib_id", "");
-			std::string display_name    = b.value("display_name",    "");
-			std::string library_type    = b.value("library_type",    "show");
+			std::string external_lib_id    = b.value("external_lib_id",    "");
+			std::string display_name       = b.value("display_name",       "");
+			std::string library_type       = b.value("library_type",       "show");
+			std::string preferred_scraper  = b.value("preferred_scraper",  "");
 			if (external_lib_id.empty() || display_name.empty()) {
 				route::err(res, 400, "external_lib_id and display_name required"); return;
 			}
 			std::string library_id = SourceRepository(db_).createLibrary(
-				source_id, external_lib_id, display_name, library_type);
+				source_id, external_lib_id, display_name, library_type, preferred_scraper);
 			res.status = 201;
 			route::ok(res, json{{"library_id", library_id}}.dump());
 		} catch (const SQLite::Exception& e) {
@@ -224,6 +226,23 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			route::err(res, 400, e.what());
 		} catch (const std::exception& e) {
 			route::logErr("POST /api/sources/:id/libraries", e); route::err(res, 500, e.what());
+		}
+	});
+
+	svr.Patch("/api/sources/:id/libraries/:lid", [this](const Req& req, Res& res) {
+		auto lid = req.path_params.at("lid");
+		try {
+			auto b = json::parse(req.body);
+			if (b.contains("preferred_scraper")) {
+				SourceRepository(db_).updateLibraryPreferredScraper(
+					lid, b["preferred_scraper"].get<std::string>());
+			}
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const json::exception& e) {
+			route::err(res, 400, e.what());
+		} catch (const std::exception& e) {
+			route::logErr("PATCH /api/sources/:id/libraries/:lid", e);
+			route::err(res, 500, e.what());
 		}
 	});
 

@@ -10,8 +10,18 @@ std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& c
     auto it = sessions.find(channelId);
     if (it != sessions.end() && it->second->isActive()) return it->second;
 
+    // Apply per-channel language overrides from Kairos channel config
+    StreamOptions opts = stream_opts;
+    for (const auto& ch : kairos.getChannels()) {
+        if (ch.channel_id == channelId) {
+            if (!ch.audio_lang.empty())    opts.audio_lang    = ch.audio_lang;
+            if (!ch.subtitle_lang.empty()) opts.subtitle_lang = ch.subtitle_lang;
+            break;
+        }
+    }
+
     // Create and start a new session
-    auto session = std::make_shared<ChannelSession>(channelId, kairos, ffmpeg_path, stream_opts);
+    auto session = std::make_shared<ChannelSession>(channelId, kairos, ffmpeg_path, opts);
     if (!session->start()) {
         std::cerr << "[sessions] failed to start session for channel " << channelId << "\n";
         return nullptr;

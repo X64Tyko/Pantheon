@@ -107,7 +107,7 @@ export default observer(function SourcesPage() {
 
   // ── Add-library form ───────────────────────────────────────────────────────
   const [showAddLib, setShowAddLib] = useState(false)
-  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' })
+  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb' })
 
   // ── Local folder browser ───────────────────────────────────────────────────
   const [localBrowsePath,    setLocalBrowsePath]   = useState('')
@@ -127,9 +127,9 @@ export default observer(function SourcesPage() {
 
   const addLib = async () => {
     if (!store.selectedId) return
-    await store.addLibrary(store.selectedId, libForm.external_lib_id, libForm.display_name, libForm.library_type)
+    await store.addLibrary(store.selectedId, libForm.external_lib_id, libForm.display_name, libForm.library_type, libForm.preferred_scraper)
     setShowAddLib(false)
-    setLibForm({ external_lib_id: '', display_name: '', library_type: 'show' })
+    setLibForm({ external_lib_id: '', display_name: '', library_type: 'show', preferred_scraper: '' })
     setLocalBrowsePath(''); setLocalEntries([])
   }
 
@@ -570,7 +570,7 @@ export default observer(function SourcesPage() {
                                 <button
                                   type="button"
                                   className="flex-1 text-left min-w-0"
-                                  onClick={() => setLibForm({ external_lib_id: e.external_lib_id, display_name: e.name, library_type: e.type as any })}
+                                  onClick={() => setLibForm({ external_lib_id: e.external_lib_id, display_name: e.name, library_type: e.type as any, preferred_scraper: '' })}
                                 >
                                   <span className="text-xs text-zinc-200 truncate block">{e.name}</span>
                                 </button>
@@ -593,7 +593,7 @@ export default observer(function SourcesPage() {
                         value={libForm.external_lib_id}
                         onChange={e => {
                           const lib = store.available.find(l => l.external_lib_id === e.target.value)
-                          setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any })
+                          setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any, preferred_scraper: '' })
                         }}
                         className="input w-full"
                       >
@@ -633,8 +633,20 @@ export default observer(function SourcesPage() {
                       <option value="show">TV Shows</option>
                       <option value="movie">Movies</option>
                       <option value="mixed">Mixed</option>
+                      <option value="music">Music</option>
+                      <option value="photo">Photos</option>
                     </select>
                   )}
+                  <select
+                    value={libForm.preferred_scraper}
+                    onChange={e => setLibForm({ ...libForm, preferred_scraper: e.target.value as any })}
+                    className="input w-full"
+                  >
+                    <option value="">Scraper — auto (all enabled)</option>
+                    <option value="tmdb">TMDB</option>
+                    <option value="tvdb">TVDB</option>
+                    <option value="anidb">AniDB</option>
+                  </select>
                   <div className="flex gap-2">
                     <button
                       onClick={addLib}
@@ -653,11 +665,22 @@ export default observer(function SourcesPage() {
               {store.libraries.map(lib => (
                 <div key={lib.library_id}
                      className="flex items-center justify-between card px-3 py-2.5">
-                  <div>
+                  <div className="flex-1 min-w-0 mr-3">
                     <div className="text-sm text-zinc-200">{lib.display_name}</div>
                     <div className="text-xs text-zinc-600 mt-0.5">
                       {lib.library_type} · id: {lib.external_lib_id}
                     </div>
+                    <select
+                      value={lib.preferred_scraper ?? ''}
+                      onChange={e => store.updatePreferredScraper(store.selectedId!, lib.library_id, e.target.value as any)}
+                      className="input text-[10px] mt-1.5 py-0.5 h-6 w-full"
+                      title="Preferred scraper for this library"
+                    >
+                      <option value="">Auto (all enabled scrapers)</option>
+                      <option value="tmdb">TMDB</option>
+                      <option value="tvdb">TVDB</option>
+                      <option value="anidb">AniDB</option>
+                    </select>
                   </div>
                   {confirmLib === lib.library_id ? (
                     <span className="flex items-center gap-1.5 text-xs">

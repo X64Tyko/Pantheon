@@ -42,13 +42,18 @@ std::vector<LibraryInfo> PlexSource::listAvailableLibraries() {
     try {
         auto j = json::parse(res->body);
         for (const auto& dir : j["MediaContainer"]["Directory"]) {
-            std::string plex_type = dir.value("type", "");
-            if (plex_type != "show" && plex_type != "movie") continue;
-
+            const std::string plex_type = dir.value("type", "");
             LibraryInfo info;
             info.external_lib_id = dir["key"].get<std::string>();
             info.name            = dir["title"].get<std::string>();
-            info.type            = (plex_type == "show") ? "show" : "movie";
+            if      (plex_type == "show")   info.type = "show";
+            else if (plex_type == "movie")  info.type = "movie";
+            else if (plex_type == "artist") info.type = "music";
+            else if (plex_type == "photo")  info.type = "photo";
+            else                            info.type = "mixed";
+            std::cout << "[plex:" << source_id_ << "] found library: \""
+                      << info.name << "\" type=" << plex_type
+                      << " → suggested type: " << info.type << '\n';
             result.push_back(std::move(info));
         }
     } catch (const json::exception& e) {

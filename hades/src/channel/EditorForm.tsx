@@ -291,6 +291,14 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             </div>}
           </div>
         </div>
+        <div style={{ marginTop: 9 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input type="checkbox"
+              checked={d.inter_filler ?? false}
+              onChange={e => store.setDraft('inter_filler', e.target.checked)} />
+            <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)' }}>Insert filler clips between programs</span>
+          </label>
+        </div>
         {d.advancement === 'smart' && (
           <div style={{ marginTop: 9 }}>
             <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 5 }}>COOLDOWN THRESHOLD</div>

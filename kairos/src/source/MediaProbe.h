@@ -21,3 +21,9 @@ int64_t validateDurationMs(int64_t dur, const std::string& file_path);
 // media_type and media_id are left empty — caller fills them in.
 // Returns empty vector if ffprobe fails or the file has no chapters.
 std::vector<Chapter> probeChapters(const std::string& file_path);
+
+// Returns the distinct audio and subtitle language codes found in a file.
+// Language codes are ISO 639-2 strings (e.g. "eng", "jpn"). "und" is excluded.
+// Returns empty lists if ffprobe fails or the file has no tagged streams.
+struct StreamLanguages { std::vector<std::string> audio, subtitle; };
+StreamLanguages probeStreamLanguages(const std::string& file_path);

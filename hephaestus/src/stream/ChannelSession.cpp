@@ -22,6 +22,7 @@ static std::vector<std::string> buildArgs(
     const KairosNowResponse& item,
     int64_t startOffsetMs,
     int audioTrackIndex,
+    int subtitleTrackIndex,
     bool loudnorm)
 {
     std::vector<std::string> a;
@@ -42,6 +43,8 @@ static std::vector<std::string> buildArgs(
     // Stream selection: first video (optional), selected audio track (optional)
     a.insert(a.end(), {"-map", "0:v:0?",
                         "-map", "0:a:" + std::to_string(audioTrackIndex) + "?"});
+    if (subtitleTrackIndex >= 0)
+        a.insert(a.end(), {"-map", "0:s:" + std::to_string(subtitleTrackIndex) + "?"});
 
     // No data streams, no chapter metadata in output
     a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
@@ -184,14 +187,20 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
         return;
     }
 
-    // Audio track selection via ffprobe
-    int audioTrack = 0;
-    if (!opts.audio_lang.empty()) {
+    // Audio + subtitle track selection via ffprobe
+    int audioTrack    = 0;
+    int subtitleTrack = -1;
+    if (!opts.audio_lang.empty() || !opts.subtitle_lang.empty()) {
         auto info = probeMedia(opts.ffprobe_path, item.file_path);
-        if (info) audioTrack = pickAudioTrack(*info, opts.audio_lang);
+        if (info) {
+            if (!opts.audio_lang.empty())
+                audioTrack    = pickAudioTrack(*info, opts.audio_lang);
+            if (!opts.subtitle_lang.empty())
+                subtitleTrack = pickSubtitleTrack(*info, opts.subtitle_lang);
+        }
     }
 
-    auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, opts.loudnorm);
+    auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack, opts.loudnorm);
 
     std::lock_guard<std::mutex> lock(ffmpeg_mtx);
     // Re-check active after acquiring the mutex: stop() may have run between

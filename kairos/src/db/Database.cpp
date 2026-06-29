@@ -1343,6 +1343,17 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX IF NOT EXISTS idx_request_user   ON content_request(user_id);
 )SQL" }
 
+// ── v52: preferred scraper per library ─────────────────────────────────────
+,{ 52, R"SQL(
+    ALTER TABLE media_library ADD COLUMN preferred_scraper TEXT NOT NULL DEFAULT '';
+)SQL" }
+
+// ── v53: per-channel audio / subtitle language ──────────────────────────────
+,{ 53, R"SQL(
+    ALTER TABLE channel ADD COLUMN audio_lang    TEXT NOT NULL DEFAULT '';
+    ALTER TABLE channel ADD COLUMN subtitle_lang TEXT NOT NULL DEFAULT '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace
