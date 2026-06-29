@@ -45,24 +45,40 @@ FetchContent_MakeAvailable(httplib)
 file(GLOB_RECURSE ALL_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 list(FILTER ALL_SOURCES EXCLUDE REGEX ".*[/\\\\]main\\.cpp$")
 
-add_library(kairos_core STATIC ${ALL_SOURCES})
-
-target_include_directories(kairos_core PUBLIC src)
-
-target_link_libraries(kairos_core
-    PUBLIC
-    nlohmann_json::nlohmann_json
-    SQLiteCpp
-    httplib::httplib
-)
-
-if(UNIX)
-    target_link_libraries(kairos_core PUBLIC pthread dl crypt)
-endif()
-
 find_package(OpenSSL REQUIRED)
-target_link_libraries(kairos_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-target_compile_definitions(kairos_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+
+# Guard: during the Docker layer-split build the configure step runs before
+# src/ is copied in, leaving ALL_SOURCES empty. Use INTERFACE in that case so
+# the target exists for the executable to link against unconditionally.
+if(ALL_SOURCES)
+    add_library(kairos_core STATIC ${ALL_SOURCES})
+    target_include_directories(kairos_core PUBLIC src)
+    target_link_libraries(kairos_core
+        PUBLIC
+        nlohmann_json::nlohmann_json
+        SQLiteCpp
+        httplib::httplib
+        OpenSSL::SSL OpenSSL::Crypto
+    )
+    if(UNIX)
+        target_link_libraries(kairos_core PUBLIC pthread dl crypt)
+    endif()
+    target_compile_definitions(kairos_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+else()
+    add_library(kairos_core INTERFACE)
+    target_include_directories(kairos_core INTERFACE src)
+    target_link_libraries(kairos_core
+        INTERFACE
+        nlohmann_json::nlohmann_json
+        SQLiteCpp
+        httplib::httplib
+        OpenSSL::SSL OpenSSL::Crypto
+    )
+    if(UNIX)
+        target_link_libraries(kairos_core INTERFACE pthread dl crypt)
+    endif()
+    target_compile_definitions(kairos_core INTERFACE CPPHTTPLIB_OPENSSL_SUPPORT)
+endif()
 
 # KAIROS_DEV: enable CORS wildcard and other dev-only behaviour.
 # Set automatically for Debug builds; override with -DKAIROS_DEV=ON/OFF.
@@ -79,10 +95,13 @@ if(KAIROS_DEV)
 endif()
 
 # ── kairos executable ─────────────────────────────────────────────────────────
-add_executable(kairos src/main.cpp)
-target_link_libraries(kairos PRIVATE kairos_core)
-
-# When built as part of Pantheon, sequence after hades so ui-dist is ready.
-if(TARGET hades)
-    add_dependencies(kairos hades)
+# Guard: same Docker layer-split case — no main.cpp during configure-only step.
+# CONFIGURE_DEPENDS on ALL_SOURCES causes a re-configure when src/ is added,
+# so the full target graph is created before the actual build runs.
+if(ALL_SOURCES)
+    add_executable(kairos src/main.cpp)
+    target_link_libraries(kairos PRIVATE kairos_core)
+    if(TARGET hades)
+        add_dependencies(kairos hades)
+    endif()
 endif()

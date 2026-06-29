@@ -1,23 +1,38 @@
+#include "Config.h"
+#include "api/Router.h"
+#include "kairos/KairosClient.h"
+#include "log/LogBuffer.h"
+#include "stream/SessionManager.h"
 #include <httplib.h>
-#include <nlohmann/json.hpp>
 #include <iostream>
 
-using json = nlohmann::json;
-
 int main(int argc, char* argv[]) {
-    int port = 8082;
-    for (int i = 1; i < argc - 1; ++i) {
-        if (std::string(argv[i]) == "--port")
-            port = std::stoi(argv[i + 1]);
-    }
+    // Intercept cout/cerr before anything else so startup messages are captured.
+    LogBuffer log_buffer;
+    LogTee    tee_cout(std::cout, log_buffer);
+    LogTee    tee_cerr(std::cerr, log_buffer);
+
+    Config cfg = parseConfig(argc, argv);
+
+    KairosClient kairos(cfg.kairos_url);
+
+    StreamOptions stream_opts;
+    stream_opts.ffprobe_path = cfg.ffprobe_path;
+    stream_opts.audio_lang   = cfg.audio_lang;
+    stream_opts.loudnorm     = cfg.loudnorm;
+    stream_opts.linger_secs  = cfg.session_linger_secs;
+
+    SessionManager sessions(kairos, cfg.ffmpeg_path, stream_opts);
 
     httplib::Server svr;
+    svr.new_task_queue = [] { return new httplib::ThreadPool(16); };
 
-    svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(json{{"status", "ok"}}.dump(), "application/json");
-    });
+    registerRoutes(svr, sessions, kairos, log_buffer);
 
-    std::cout << "[hephaestus] listening on port " << port << std::endl;
-    svr.listen("0.0.0.0", port);
+    std::cout << "[hephaestus] listening on :" << cfg.port
+              << "  kairos=" << cfg.kairos_url
+              << "  ffmpeg=" << cfg.ffmpeg_path << "\n";
+
+    svr.listen("0.0.0.0", cfg.port);
     return 0;
 }
