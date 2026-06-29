@@ -234,6 +234,27 @@ void SyncManager::syncShows(IMediaSource& src,
             actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
             countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
             collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END
+        WHERE NOT locked AND (
+            title                   != excluded.title                   OR
+            content_rating          != excluded.content_rating          OR
+            overview                != excluded.overview                OR
+            studio                  != excluded.studio                  OR
+            status                  != excluded.status                  OR
+            genres                  != excluded.genres                  OR
+            thumb                   != excluded.thumb                   OR
+            art                     != excluded.art                     OR
+            imdb_id                 != excluded.imdb_id                 OR
+            tvdb_id                 != excluded.tvdb_id                 OR
+            tmdb_id                 != excluded.tmdb_id                 OR
+            originally_available_at != excluded.originally_available_at OR
+            COALESCE(year,           -1) != COALESCE(excluded.year,           -1) OR
+            COALESCE(audience_rating, 0) != COALESCE(excluded.audience_rating,  0) OR
+            labels                  != excluded.labels                  OR
+            network                 != excluded.network                 OR
+            actors                  != excluded.actors                  OR
+            countries               != excluded.countries               OR
+            collections             != excluded.collections
+        )
     )");
     SQLite::Statement s_show_mapping(db_.get(), R"(
         INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
@@ -376,8 +397,6 @@ void SyncManager::syncShows(IMediaSource& src,
     SQLite::Statement s_clear_ep_cursors(db_.get(),
         "UPDATE media_cursor SET episode_id = NULL "
         "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
-    SQLite::Statement s_delete_eps(db_.get(),
-        "DELETE FROM episode WHERE show_id=?");
     SQLite::Statement s_upsert_ep(db_.get(), R"(
         INSERT INTO episode (episode_id, show_id, season, episode, title,
                              file_path, duration_ms, overview, air_date,
@@ -394,6 +413,19 @@ void SyncManager::syncShows(IMediaSource& src,
             air_date       = excluded.air_date,
             thumb          = CASE WHEN locked THEN thumb    ELSE excluded.thumb    END,
             absolute_index = excluded.absolute_index
+        WHERE
+            show_id        != excluded.show_id        OR
+            season         != excluded.season         OR
+            episode        != excluded.episode        OR
+            file_path      != excluded.file_path      OR
+            duration_ms    != excluded.duration_ms    OR
+            air_date       != excluded.air_date       OR
+            COALESCE(absolute_index, -1) != COALESCE(excluded.absolute_index, -1) OR
+            (NOT locked AND (
+                title    != excluded.title    OR
+                overview != excluded.overview OR
+                thumb    != excluded.thumb
+            ))
     )");
     SQLite::Statement s_ep_mapping(db_.get(), R"(
         INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
@@ -435,15 +467,8 @@ void SyncManager::syncShows(IMediaSource& src,
         try {
             SQLite::Transaction txn(db_.get());
 
-            if (!cross_show) {
-                // Clear existing episodes before reinserting the current set.
-                // media_cursor.episode_id references episode(episode_id) with no ON DELETE
-                // clause (RESTRICT), so we must nullify those refs before deleting episodes.
-                s_clear_ep_cursors.reset(); s_clear_ep_cursors.bind(1, show.show_id); s_clear_ep_cursors.exec();
-                s_delete_eps.reset();       s_delete_eps.bind(1, show.show_id);       s_delete_eps.exec();
-            }
-
             std::unordered_map<int, std::string> season_names;
+            std::unordered_set<std::string> live_ep_ids;
             for (auto& ep : episodes) {
                 const std::string ext_ep_id = ep.episode_id;
                 bool ep_cross_ref = false;
@@ -471,6 +496,7 @@ void SyncManager::syncShows(IMediaSource& src,
 
                 try {
                     if (!ep_cross_ref) {
+                        live_ep_ids.insert(ep.episode_id);
                         s_upsert_ep.reset();
                         s_upsert_ep.bind(1,  ep.episode_id);
                         s_upsert_ep.bind(2,  ep.show_id);
@@ -501,7 +527,23 @@ void SyncManager::syncShows(IMediaSource& src,
                     season_names[ep.season] = ep.season_name;
             }
 
+            // Remove episodes that were in the DB but are no longer returned by
+            // the source. Nullify cursor refs first (RESTRICT FK on episode_id).
             if (!cross_show) {
+                SQLite::Statement q_existing(db_.get(),
+                    "SELECT episode_id FROM episode WHERE show_id = ?");
+                q_existing.bind(1, show.show_id);
+                std::vector<std::string> stale_eps;
+                while (q_existing.executeStep()) {
+                    const std::string eid = q_existing.getColumn(0).getString();
+                    if (!live_ep_ids.contains(eid)) stale_eps.push_back(eid);
+                }
+                for (const auto& eid : stale_eps) {
+                    s_clear_ep_cursors.reset(); s_clear_ep_cursors.bind(1, show.show_id); s_clear_ep_cursors.exec();
+                    SQLite::Statement d(db_.get(), "DELETE FROM episode WHERE episode_id = ?");
+                    d.bind(1, eid); d.exec();
+                }
+
                 s_delete_seasons.reset(); s_delete_seasons.bind(1, show.show_id); s_delete_seasons.exec();
                 for (const auto& [season, name] : season_names) {
                     s_insert_season.reset();
@@ -633,6 +675,27 @@ void SyncManager::syncMovies(IMediaSource& src,
             actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
             countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
             collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
+        WHERE NOT locked AND (
+            title           != excluded.title           OR
+            content_rating  != excluded.content_rating  OR
+            file_path       != excluded.file_path       OR
+            duration_ms     != excluded.duration_ms     OR
+            overview        != excluded.overview        OR
+            tagline         != excluded.tagline         OR
+            studio          != excluded.studio          OR
+            director        != excluded.director        OR
+            genres          != excluded.genres          OR
+            thumb           != excluded.thumb           OR
+            art             != excluded.art             OR
+            imdb_id         != excluded.imdb_id         OR
+            tmdb_id         != excluded.tmdb_id         OR
+            COALESCE(year,           -1) != COALESCE(excluded.year,           -1) OR
+            COALESCE(audience_rating, 0) != COALESCE(excluded.audience_rating,  0) OR
+            labels          != excluded.labels          OR
+            actors          != excluded.actors          OR
+            countries       != excluded.countries       OR
+            collections     != excluded.collections
+        )
     )");
     SQLite::Statement s_movie_mapping(db_.get(), R"(
         INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
