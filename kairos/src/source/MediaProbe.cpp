@@ -24,7 +24,7 @@ std::string shellQuote(const std::string& s) {
 
 int64_t probeDurationMs(const std::string& file_path) {
     const std::string cmd =
-        "timeout 10 ffprobe -v quiet -show_entries format=duration -of csv=p=0 "
+        "timeout -k 2 10 ffprobe -v quiet -show_entries format=duration -of csv=p=0 "
         + shellQuote(file_path) + " 2>/dev/null";
     DLOG << "[probe] duration cmd: " << cmd << '\n';
     const auto t0 = std::chrono::steady_clock::now();
@@ -54,7 +54,7 @@ int64_t probeDurationMs(const std::string& file_path) {
 
 std::vector<Chapter> probeChapters(const std::string& file_path) {
     const std::string cmd =
-        "timeout 10 ffprobe -v quiet -print_format json -show_chapters "
+        "timeout -k 2 10 ffprobe -v quiet -print_format json -show_chapters "
         + shellQuote(file_path) + " 2>/dev/null";
     DLOG << "[probe] chapters cmd: " << cmd << '\n';
     const auto t0 = std::chrono::steady_clock::now();
@@ -112,7 +112,7 @@ std::vector<Chapter> probeChapters(const std::string& file_path) {
 
 StreamLanguages probeStreamLanguages(const std::string& file_path) {
     const std::string cmd =
-        "timeout 15 ffprobe -v quiet -print_format json -show_streams "
+        "timeout -k 2 15 ffprobe -v quiet -print_format json -show_streams "
         + shellQuote(file_path) + " 2>/dev/null";
     DLOG << "[probe] streams cmd: " << cmd << '\n';
     const auto t0 = std::chrono::steady_clock::now();
