@@ -19,9 +19,6 @@ RUN cmake -B build -G Ninja \
 COPY src/ src/
 RUN cmake --build build --parallel
 
-# ui-dist is built by Hades in CI and injected into the build context.
-COPY ui-dist/ ui-dist/
-
 # Stage 2: runtime
 FROM ubuntu:24.04
 
@@ -48,11 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod a+rx /usr/local/bin/deno
 
 COPY --from=builder /src/build/kairos /usr/local/bin/kairos
-COPY --from=builder /src/ui-dist /app/ui-dist
 
-# /app is the working directory so ./ui-dist resolves correctly.
-# Config and database live in /data (the mounted volume) and are
-# referenced by explicit absolute paths.
 WORKDIR /app
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/kairos"]

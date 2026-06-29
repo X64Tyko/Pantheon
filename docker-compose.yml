@@ -1,4 +1,4 @@
-# Pantheon — Kairos + Tunarr stack
+# Pantheon
 #
 # Unraid Compose Manager URL:
 #   https://raw.githubusercontent.com/X64Tyko/Pantheon/master/docker-compose.yml
@@ -6,14 +6,15 @@
 # Before first run, edit the volume paths below to match your setup:
 #   MEDIA_PATH  — your media library root (e.g. /mnt/user/Media on Unraid)
 #   FILLER_PATH — where yt-dlp downloads land; set this same path as the
-#                 Default Download Path in the Hades Downloads page (/downloads
-#                 inside the container maps to wherever FILLER_PATH points).
-#                 Point it at a folder Plex already watches so filler shows up
-#                 automatically after a library scan.
+#                 Default Download Path in the Hades Downloads page.
 #
-# Kairos stores its database and kairos.conf in ./data/kairos.
-# On first start Kairos creates a blank kairos.conf there.  Open the Kairos
-# UI (port 8081) and configure your Plex credentials + path maps through it.
+# Kairos stores its database and config in ./data/kairos.
+# On first start, open the Hades UI at http://<host>:8000 and configure
+# your settings through it.
+#
+# Port map:
+#   8000 — Hermes (single public endpoint: UI, API, live TV, HDHomeRun)
+#   8081 — Kairos direct access (optional; useful for debugging)
 
 services:
   kairos:
@@ -21,28 +22,38 @@ services:
     ports:
       - "8081:8080"
     environment:
-      # Number of parallel workers used when syncing episode metadata from Plex.
       - KAIROS_SYNC_THREADS=4
-      # Uncomment to enable verbose EPG scheduling logs.
       # - KAIROS_DEBUG_EPG=1
     volumes:
       - /mnt/user/appdata/kairos:/data
-      - /mnt/user/Media:/media:ro          # <-- change to your media path (read-only)
-      - /mnt/user/Media/Filler:/downloads  # <-- change to your filler destination (writable)
+      - /mnt/user/Media:/media:ro
+      - /mnt/user/Media/Filler:/downloads
     restart: unless-stopped
 
-  tunarr:
-    image: ghcr.io/x64tyko/tunarr:latest
-    runtime: nvidia
+  hephaestus:
+    image: ghcr.io/x64tyko/hephaestus:latest
+    environment:
+      - KAIROS_URL=http://kairos:8080
+    volumes:
+      - /mnt/user/Media:/media:ro
+    depends_on:
+      - kairos
+    restart: unless-stopped
+
+  hades:
+    image: ghcr.io/x64tyko/hades:latest
+    restart: unless-stopped
+
+  hermes:
+    image: ghcr.io/x64tyko/hermes:latest
     ports:
       - "8000:8000"
     environment:
       - KAIROS_URL=http://kairos:8080
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
-    volumes:
-      - /mnt/user/appdata/tunarr:/config/tunarr
-      - /mnt/user/Media:/media:ro   # <-- same path as above
+      - HEPHAESTUS_URL=http://hephaestus:8082
+      - HADES_URL=http://hades:3000
     depends_on:
       - kairos
+      - hephaestus
+      - hades
     restart: unless-stopped

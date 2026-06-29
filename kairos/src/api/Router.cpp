@@ -28,7 +28,6 @@
 #include "services/SourceService.h"
 #include "services/TimeslotService.h"
 #include <nlohmann/json.hpp>
-#include <fstream>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -123,12 +122,4 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<TimeslotService>(ctx));
 
 	for (auto& svc : services_) svc->registerRoutes(svr_);
-
-	svr_.set_mount_point("/", "./ui-dist");
-	svr_.Get(".*", [](const Req&, Res& res) {
-		std::ifstream ifs("./ui-dist/index.html");
-		if (!ifs) { res.status = 404; return; }
-		std::string html((std::istreambuf_iterator<char>(ifs)), {});
-		res.set_content(html, "text/html; charset=utf-8");
-	});
 }

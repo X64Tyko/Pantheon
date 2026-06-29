@@ -5,6 +5,7 @@
 struct Config {
     std::string hephaestus_url = "http://localhost:8082";
     std::string kairos_url     = "http://localhost:8080";
+    std::string hades_url      = "http://localhost:3000";
     int         port           = 8000;
     int         linger_secs    = 30;
 
@@ -29,5 +30,6 @@ inline Config parseConfig(int argc, char* argv[]) {
     }
     if (auto* p = getenv("HEPHAESTUS_URL")) cfg.hephaestus_url = p;
     if (auto* p = getenv("KAIROS_URL"))     cfg.kairos_url     = p;
+    if (auto* p = getenv("HADES_URL"))      cfg.hades_url      = p;
     return cfg;
 }

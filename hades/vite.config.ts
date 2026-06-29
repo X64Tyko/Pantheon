@@ -9,13 +9,17 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8000',  // dev: route through Hermes
         changeOrigin: true,
-      }
+      },
+      '/stream': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     }
   },
   build: {
-    outDir: '../kairos/ui-dist',   // built output lands where Kairos can serve it
+    outDir: './dist',
     emptyOutDir: true,
     rollupOptions: {
       output: {

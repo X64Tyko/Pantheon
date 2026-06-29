@@ -1,17 +1,16 @@
-name: Build & publish Kairos image
+name: Build & publish Hades image
 
 on:
   push:
     branches: [master]
     paths:
-      - "kairos/**"
       - "hades/**"
-      - ".github/workflows/docker-kairos.yml"
+      - ".github/workflows/docker-hades.yml"
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: x64tyko/kairos
+  IMAGE_NAME: x64tyko/hades
 
 jobs:
   build:
@@ -46,7 +45,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./kairos
+          context: ./hades
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true

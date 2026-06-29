@@ -44,26 +44,44 @@ static void handleStream(const std::string& channel_id,
     );
 }
 
-// Forward a GET to an upstream service and copy the response verbatim.
-static void proxyGet(const std::string& upstream_base,
-                     const std::string& path,
-                     const std::string& query,
-                     httplib::Response& res) {
+// Build query string from httplib params map.
+static std::string buildQuery(const httplib::Params& params) {
+    std::string q;
+    for (auto& [k, v] : params)
+        q += (q.empty() ? "" : "&") + k + "=" + v;
+    return q;
+}
+
+// Forward any HTTP request to an upstream service verbatim.
+static void proxyRequest(const std::string& upstream_base,
+                          const httplib::Request& req,
+                          httplib::Response& res) {
     httplib::Client cli(upstream_base);
     cli.set_connection_timeout(5);
-    cli.set_read_timeout(10);
+    cli.set_read_timeout(30);
 
-    std::string full = path;
-    if (!query.empty()) full += "?" + query;
+    std::string path = req.path;
+    auto q = buildQuery(req.params);
+    if (!q.empty()) path += "?" + q;
 
-    auto r = cli.Get(full);
+    auto ct = req.get_header_value("Content-Type");
+
+    httplib::Result r;
+    if      (req.method == "GET")    r = cli.Get(path);
+    else if (req.method == "POST")   r = cli.Post(path, req.body, ct.c_str());
+    else if (req.method == "PUT")    r = cli.Put(path, req.body, ct.c_str());
+    else if (req.method == "DELETE") r = cli.Delete(path, req.body, ct.c_str());
+    else if (req.method == "PATCH")  r = cli.Patch(path, req.body, ct.c_str());
+    else { res.status = 405; return; }
+
     if (!r || r->status == 0) {
         res.status = 502;
-        res.set_content(json{{"error","upstream unavailable"}}.dump(), "application/json");
+        res.set_content(json{{"error", "upstream unavailable"}}.dump(), "application/json");
         return;
     }
     res.status = r->status;
-    res.set_content(r->body, r->get_header_value("Content-Type"));
+    auto resp_ct = r->get_header_value("Content-Type");
+    res.set_content(r->body, resp_ct.empty() ? "application/octet-stream" : resp_ct);
 }
 
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
@@ -164,12 +182,9 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         }.dump(), "application/json");
     });
 
-    // lineup.json: stream URLs point at Hermes (not Hephaestus) so DVR clients
-    // see a single public endpoint.
     svr.Get("/lineup.json", [&kairos](const httplib::Request& req, httplib::Response& res) {
         auto base = baseUrl(req);
         auto channels = kairos.getChannels();
-
         json lineup = json::array();
         for (auto& ch : channels) {
             lineup.push_back({
@@ -192,7 +207,7 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         handleStream(req.matches[1], broadcasters, res);
     });
 
-    // ── M3U playlist (stream URLs point at Hermes) ────────────────────────────
+    // ── M3U playlist ──────────────────────────────────────────────────────────
     svr.Get("/playlist.m3u", [&kairos](const httplib::Request& req, httplib::Response& res) {
         auto base = baseUrl(req);
         auto channels = kairos.getChannels();
@@ -208,28 +223,27 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         res.set_content(m3u, "application/x-mpegurl");
     });
 
-    // ── Kairos API proxy (channels, EPG, schedule) ────────────────────────────
-    // Anything under /api/ that isn't handled above goes to Kairos.
-    svr.Get(R"(/api/(.*))", [&cfg](const httplib::Request& req, httplib::Response& res) {
-        proxyGet(cfg.kairos_url, req.path, req.params.empty() ? "" :
-            [&req] {
-                std::string q;
-                for (auto& [k, v] : req.params)
-                    q += (q.empty() ? "" : "&") + k + "=" + v;
-                return q;
-            }(),
-            res);
+    svr.Get("/epg.xml", [&cfg](const httplib::Request& req, httplib::Response& res) {
+        proxyRequest(cfg.kairos_url, req, res);
     });
 
-    // Kairos EPG XML
-    svr.Get("/epg.xml", [&cfg](const httplib::Request& req, httplib::Response& res) {
-        proxyGet(cfg.kairos_url, "/epg.xml",
-            req.params.empty() ? "" : [&req] {
-                std::string q;
-                for (auto& [k, v] : req.params)
-                    q += (q.empty() ? "" : "&") + k + "=" + v;
-                return q;
-            }(),
-            res);
-    });
+    // ── Kairos API proxy (all methods) ────────────────────────────────────────
+    // Registered before the Hades catch-all so /api/* routes never reach nginx.
+    auto kairosProxy = [&cfg](const httplib::Request& req, httplib::Response& res) {
+        proxyRequest(cfg.kairos_url, req, res);
+    };
+    svr.Get(R"(/api/.*)",    kairosProxy);
+    svr.Post(R"(/api/.*)",   kairosProxy);
+    svr.Put(R"(/api/.*)",    kairosProxy);
+    svr.Delete(R"(/api/.*)", kairosProxy);
+    svr.Patch(R"(/api/.*)",  kairosProxy);
+
+    // ── Hades UI catch-all ────────────────────────────────────────────────────
+    // Everything that didn't match above is the SPA. nginx's try_files handles
+    // SPA routing server-side so deep links and refreshes work.
+    auto hadesProxy = [&cfg](const httplib::Request& req, httplib::Response& res) {
+        proxyRequest(cfg.hades_url, req, res);
+    };
+    svr.Get(".*",  hadesProxy);
+    svr.Post(".*", hadesProxy);
 }
