@@ -288,14 +288,10 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         res.set_content(m3u, "application/x-mpegurl");
     });
 
-    svr.Get("/epg.xml", [&cfg](const httplib::Request& req, httplib::Response& res) {
-        proxyRequest(cfg.kairos_url, req, res);
-    });
-
     // ── M3U / XMLTV aliases ───────────────────────────────────────────────────
     // Common alternate paths used by DVR clients — must come before /api/.*
-    // /api/epg.xml and /api/xmltv.xml are also handled by Kairos (public paths),
-    // but registering them here avoids the round-trip through proxyRequest.
+    // Uses a dedicated client with a longer read timeout than proxyRequest because
+    // XMLTV generation can be slow on a cold cache (ensureScheduled for every channel).
     auto xmltvAlias = [&cfg](const httplib::Request& req, httplib::Response& res) {
         int hours = 24;
         auto it = req.params.find("hours");
@@ -310,6 +306,7 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         res.status = r->status;
         res.set_content(r->body, "application/xml");
     };
+    svr.Get("/epg.xml",       xmltvAlias);
     svr.Get("/api/epg.xml",   xmltvAlias);
     svr.Get("/api/xmltv.xml", xmltvAlias);
 

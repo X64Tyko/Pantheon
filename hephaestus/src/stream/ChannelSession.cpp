@@ -117,6 +117,17 @@ bool ChannelSession::start() {
     item_start   = steady_::now();
     active       = true;
 
+    // If the offset meets or exceeds the item's known duration, ffmpeg would
+    // seek past EOF and exit immediately with code=0, looping indefinitely.
+    // Skip to transition directly instead.
+    if (!item->is_filler && item->duration_ms > 0 && startOffset >= item->duration_ms) {
+        std::cerr << "[session:" << channel_id << "] startup offset " << startOffset
+                  << "ms >= duration " << item->duration_ms << "ms for \""
+                  << item->file_path << "\", skipping to next item\n";
+        std::thread([this] { transition(); }).detach();
+        return true;
+    }
+
     spawnFfmpeg(*item, startOffset);
     return active.load();
 }
@@ -203,6 +214,9 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
         broadcastDone();
         return;
     }
+
+    std::cout << "[session:" << channel_id << "] spawning ffmpeg: \""
+              << item.file_path << "\" offset=" << startOffsetMs << "ms\n";
 
     // Audio + subtitle track selection via ffprobe
     int audioTrack    = 0;

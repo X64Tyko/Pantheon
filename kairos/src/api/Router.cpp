@@ -39,10 +39,12 @@ static bool isPublicPath(const std::string& path) {
 	if (path == "/api/auth/login") return true;
 	if (path.ends_with("/now") || path.ends_with("/next") || path.ends_with("/epg"))
 		return true;
-	// Paths called by Tunarr (internal service-to-service, no user session).
+	// Paths called by internal services (Hermes, Hephaestus) with no user session.
 	if (path == "/api/channels") return true;
 	if (path == "/api/sources")  return true;
 	if (path.ends_with("/played")) return true;
+	// Log stream — relayed by Hermes into the unified Hades log view.
+	if (path == "/api/logs/stream") return true;
 	// Image proxy — loaded by <img> tags that cannot send Authorization headers.
 	if (path == "/api/images/proxy") return true;
 	// AniDB per-AID poster endpoint — same reason.
