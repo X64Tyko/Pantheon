@@ -3,6 +3,7 @@
 #include "../ServiceContext.h"
 #include "../../conf/ConfStore.h"
 #include "../../db/ContentRepository.h"
+#include "../../source/SyncManager.h"
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 #include <filesystem>
@@ -30,7 +31,7 @@ static std::string imgCacheKey(const std::string& sourceId, const std::string& i
 }
 
 ContentService::ContentService(const ServiceContext& ctx)
-	: db_(ctx.db), conf_(ctx.conf) {}
+	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync) {}
 
 void ContentService::proxyImage(const Req& req,
                                  const std::string& imgPath,
@@ -344,6 +345,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/shows/:id", [this](const Req& req, Res& res) {
+		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -436,6 +438,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/movies/:id", [this](const Req& req, Res& res) {
+		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);

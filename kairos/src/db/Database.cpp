@@ -1392,7 +1392,7 @@ SQLite::Database Database::openConnection(int busy_timeout_ms) const {
     conn.exec("PRAGMA foreign_keys = ON");
     conn.exec("PRAGMA synchronous  = NORMAL");
     conn.exec("PRAGMA cache_size   = -8000");
-    conn.exec("PRAGMA busy_timeout = " + std::to_string(busy_timeout_ms));
+    conn.setBusyTimeout(busy_timeout_ms);
     return conn;
 }
 

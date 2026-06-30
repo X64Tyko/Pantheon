@@ -12,6 +12,7 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -34,7 +35,6 @@ SyncManager::SyncManager(Database& db, ConfStore& conf)
 // ---------------------------------------------------------------------------
 
 namespace {
-// Serialises log output so concurrent worker threads don't interleave lines.
 std::mutex s_log_mu;
 
 std::string envVar(const char* prefix, const std::string& source_id) {
@@ -46,12 +46,12 @@ std::string envVar(const char* prefix, const std::string& source_id) {
 
 void SyncManager::loadSources() {
     sources_.clear();
-    SQLite::Statement q(sync_db_,
+    SQLite::Statement q(db_.get(),
         "SELECT source_id, source_type, COALESCE(base_url,'') "
         "FROM media_source WHERE enabled = 1");
 
     while (q.executeStep()) {
-        const std::string sid  = q.getColumn(0).getString();
+        const std::string sid   = q.getColumn(0).getString();
         const std::string stype = q.getColumn(1).getString();
         const std::string surl  = q.getColumn(2).getString();
         try {
@@ -59,7 +59,7 @@ void SyncManager::loadSources() {
             if (src) sources_.push_back(std::move(src));
         } catch (const std::exception& e) {
             std::cerr << "[sync] failed to load source '" << sid << "': " << e.what()
-                      << " — skipping (rebuild with OpenSSL for HTTPS support)\n";
+                      << " — skipping\n";
         }
     }
     std::cout << "[sync] loaded " << sources_.size() << " source(s)" << std::endl;
@@ -75,7 +75,6 @@ void SyncManager::triggerSync(const std::string& source_id) {
         std::cout << "[sync] already running — ignoring trigger" << std::endl;
         return;
     }
-    // detach so the HTTP handler returns immediately (202)
     std::thread([this, source_id]() {
         try {
             if (source_id.empty())
@@ -90,69 +89,98 @@ void SyncManager::triggerSync(const std::string& source_id) {
 }
 
 void SyncManager::syncAll() {
+    sync_db_ = db_.openConnection(60000);
+    media_locked_.store(true);
     const auto t_total = std::chrono::steady_clock::now();
 
-    // Phase 1: ingest content from every source before running match or chapters.
+    // Phase 1: ingest content from every source.
+    // All DB reads happen up front per library (snapshot); fetch and write
+    // phases do not interleave reads and writes on sync_db_.
     DLOG << "[sync] === phase 1: content ingestion ===\n";
-    const auto t1 = std::chrono::steady_clock::now();
+    SyncLiveIds live;
     for (const auto& src : sources_) {
         if (!src->isSupported()) {
             std::cout << "[sync] " << src->sourceId()
                       << " (" << src->sourceType() << ") not yet supported" << std::endl;
             continue;
         }
-        syncContent(src->sourceId());
+        syncContent(src->sourceId(), live);
     }
-    DLOG << "[sync] phase 1 done in " << elapsedMs(t1, std::chrono::steady_clock::now()) << "ms\n";
 
-    // Phase 2: kick off scraper match in the background so it doesn't block
-    // chapter sync. Network calls (TMDB/TVDB/AniDB) can be slow or unreachable;
-    // running them async keeps the sync pipeline moving.
-    DLOG << "[sync] === phase 2: trigger scraper match ===\n";
-    if (scraper_) scraper_->triggerMatch();
+    // Phase 1b: orphan cleanup — runs after ALL sources are known so a show
+    // present in source B is never deleted because source A dropped it.
+    DLOG << "[sync] === phase 1b: orphan cleanup ===\n";
+    runOrphanCleanup(live);
 
-    // Phase 3: chapter sync runs immediately; scraper match runs concurrently.
+    // Phase 2: scraper matching — blocking so chapters don't race against it.
+    DLOG << "[sync] === phase 2: scraper match ===\n";
+    if (scraper_) scraper_->runMatchSync();
+
+    // Phase 3: chapter sync.
     DLOG << "[sync] === phase 3: chapter sync ===\n";
-    const auto t3 = std::chrono::steady_clock::now();
     for (const auto& src : sources_) {
         if (src->isSupported())
             syncChaptersFromFiles(src->sourceId());
     }
-    DLOG << "[sync] phase 3 done in " << elapsedMs(t3, std::chrono::steady_clock::now()) << "ms\n";
 
+    media_locked_.store(false);
     std::cout << "[sync] all sources done (total "
               << elapsedMs(t_total, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }
 
-void SyncManager::syncContent(const std::string& source_id) {
+void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live) {
     IMediaSource* src = findSource(source_id);
     if (!src || !src->isSupported()) return;
 
     std::cout << "[sync] content: " << source_id << std::endl;
 
-    SQLite::Statement q(sync_db_,
-        "SELECT library_id, external_lib_id, library_type "
-        "FROM media_library WHERE source_id = ? AND enabled = 1");
-    q.bind(1, source_id);
+    // Drain the cursor before calling syncShows/syncMovies so no read cursor
+    // on sync_db_ is live when BEGIN IMMEDIATE transactions start.
+    std::string source_display;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT display_name FROM media_source WHERE source_id = ?");
+        q.bind(1, source_id);
+        source_display = q.executeStep() ? q.getColumn(0).getString() : source_id;
+    }
 
-    while (q.executeStep()) {
-        const std::string library_id      = q.getColumn(0).getString();
-        const std::string external_lib_id = q.getColumn(1).getString();
-        const std::string library_type    = q.getColumn(2).getString();
+    struct LibRow { std::string library_id, external_lib_id, library_type, display_name; };
+    std::vector<LibRow> libs;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT library_id, external_lib_id, library_type, display_name "
+            "FROM media_library WHERE source_id = ? AND enabled = 1");
+        q.bind(1, source_id);
+        while (q.executeStep()) {
+            libs.push_back({
+                q.getColumn(0).getString(),
+                q.getColumn(1).getString(),
+                q.getColumn(2).getString(),
+                q.getColumn(3).getString()
+            });
+        }
+    }
 
-        if (library_type == "show" || library_type == "mixed")
-            syncShows(*src, source_id, library_id, external_lib_id);
-        if (library_type == "movie" || library_type == "mixed")
-            syncMovies(*src, source_id, library_id, external_lib_id);
+    for (const auto& lib : libs) {
+        const std::string label = source_display + " / " + lib.display_name;
+        if (lib.library_type == "show" || lib.library_type == "mixed")
+            syncShows(*src, source_id, lib.library_id, lib.external_lib_id, label, live);
+        if (lib.library_type == "movie" || lib.library_type == "mixed")
+            syncMovies(*src, source_id, lib.library_id, lib.external_lib_id, label, live);
     }
 
     syncPlexLinks(source_id);
 }
 
 void SyncManager::syncSource(const std::string& source_id) {
-    syncContent(source_id);
-    if (scraper_) scraper_->triggerMatch();
+    sync_db_ = db_.openConnection(60000);
+    media_locked_.store(true);
+    SyncLiveIds live;
+    syncContent(source_id, live);
+    runOrphanCleanup(live);
+    if (scraper_) scraper_->runMatchSync();
     syncChaptersFromFiles(source_id);
+    media_locked_.store(false);
     std::cout << "[sync] done: " << source_id << std::endl;
 }
 
@@ -162,8 +190,9 @@ void SyncManager::syncSource(const std::string& source_id) {
 
 namespace {
 constexpr int    kEpisodeFetchConcurrency = 8;
-constexpr size_t kShowMetaBatchSize       = 100; // show metadata rows per write transaction
-constexpr size_t kMovieBatchSize          = 200; // movie rows per write transaction
+constexpr size_t kShowMetaBatchSize       = 100;
+constexpr size_t kMovieBatchSize          = 200;
+constexpr size_t kEpisodeBatchSize        = 50; // shows per write transaction
 
 int defaultSyncThreadCount() {
     if (const char* env = std::getenv("KAIROS_SYNC_THREADS")) {
@@ -190,27 +219,100 @@ void SyncManager::setThreadCount(int n) {
 void SyncManager::syncShows(IMediaSource& src,
                              const std::string& source_id,
                              const std::string& library_id,
-                             const std::string& external_lib_id) {
-    std::cout << "[sync]   fetching shows: " << external_lib_id << std::endl;
-    const auto t_shows = std::chrono::steady_clock::now();
-    auto shows = src.fetchShows(external_lib_id);
-    std::cout << "[sync]   " << external_lib_id << ": " << shows.size()
-              << " show(s) (" << elapsedMs(t_shows, std::chrono::steady_clock::now()) << "ms)" << std::endl;
-    if (shows.empty()) return; // skip stale cleanup — empty fetch may be a source error
-
-    // Resolve IDs and upsert show metadata first so ext_show_id is captured
-    // before the episode fetch below, which mutates show.show_id in place.
-    // Build live_show_ids here rather than in a separate pass.
-    std::vector<std::string> ext_show_ids(shows.size());
-    std::vector<bool>        cross_ref_shows(shows.size(), false);
-    std::unordered_set<std::string> live_show_ids;
+                             const std::string& external_lib_id,
+                             const std::string& label,
+                             SyncLiveIds& live) {
+    // ── Snapshot load ────────────────────────────────────────────────────────
+    // All DB reads happen here before any fetch or write.  The write phase
+    // uses in-memory maps for ID resolution — no reads inside transactions.
 
     const std::string show_prefix = source_id + ":";
-    SQLite::Statement s_resolve_show(sync_db_,
-        "SELECT kairos_id FROM source_mapping "
-        "WHERE item_type='show' AND source_id=? AND external_id=?");
-    SQLite::Statement s_show_by_title(sync_db_,
-        "SELECT show_id FROM show WHERE LOWER(title) = LOWER(?) LIMIT 1");
+    const std::string ep_prefix   = source_id + ":";
+
+    // source_mapping for shows in this library: ext_id → kairos_id
+    std::unordered_map<std::string, std::string> show_ext_to_kairos;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT external_id, kairos_id FROM source_mapping "
+            "WHERE item_type='show' AND source_id=? AND library_id=?");
+        q.bind(1, source_id); q.bind(2, library_id);
+        while (q.executeStep())
+            show_ext_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
+    }
+
+    // Cross-source dedup: all shows by lowercase title
+    std::unordered_map<std::string, std::string> show_title_to_id;
+    {
+        SQLite::Statement q(sync_db_, "SELECT LOWER(title), show_id FROM show");
+        while (q.executeStep())
+            show_title_to_id[q.getColumn(0).getString()] = q.getColumn(1).getString();
+    }
+
+    // source_mapping for episodes from this source: ext_ep_id → kairos_ep_id
+    std::unordered_map<std::string, std::string> ep_ext_to_kairos;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT external_id, kairos_id FROM source_mapping "
+            "WHERE item_type='episode' AND source_id=?");
+        q.bind(1, source_id);
+        while (q.executeStep())
+            ep_ext_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
+    }
+
+    // Cross-source episode dedup: file_path → kairos_ep_id
+    std::unordered_map<std::string, std::string> ep_path_to_id;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT file_path, episode_id FROM episode WHERE file_path != ''");
+        while (q.executeStep())
+            ep_path_to_id[q.getColumn(0).getString()] = q.getColumn(1).getString();
+    }
+
+    // ── Fetch shows ──────────────────────────────────────────────────────────
+    std::cout << "[sync]   fetching shows: " << label << std::endl;
+    const auto t_shows = std::chrono::steady_clock::now();
+    auto shows = src.fetchShows(external_lib_id);
+    std::cout << "[sync]   " << label << ": " << shows.size()
+              << " show(s) (" << elapsedMs(t_shows, std::chrono::steady_clock::now()) << "ms)"
+              << std::endl;
+    if (shows.empty()) return;
+
+    // ── ID resolution in memory ──────────────────────────────────────────────
+    std::vector<std::string> ext_show_ids(shows.size());
+    std::vector<bool>        cross_ref_shows(shows.size(), false);
+
+    for (size_t i = 0; i < shows.size(); ++i) {
+        auto& show = shows[i];
+        const std::string ext_id = show.show_id;
+        std::string kairos_id;
+        bool is_cross_ref = false;
+
+        auto it = show_ext_to_kairos.find(ext_id);
+        if (it != show_ext_to_kairos.end()) {
+            kairos_id = it->second;
+            if (!kairos_id.starts_with(show_prefix)) is_cross_ref = true;
+        } else {
+            std::string lower = show.title;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c){ return std::tolower(c); });
+            auto tit = show_title_to_id.find(lower);
+            if (tit != show_title_to_id.end()) {
+                kairos_id = tit->second;
+                is_cross_ref = true;
+            } else {
+                kairos_id = show_prefix + ext_id;
+            }
+        }
+
+        ext_show_ids[i]    = ext_id;
+        cross_ref_shows[i] = is_cross_ref;
+        show.show_id       = kairos_id;
+
+        live.shows.insert(kairos_id);
+        live.by_source_shows[source_id].insert(kairos_id);
+    }
+
+    // ── Write show metadata (Pass 2) ─────────────────────────────────────────
     SQLite::Statement s_upsert_show(sync_db_, R"(
         INSERT INTO show (show_id, title, content_rating, overview, studio, status,
                           genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
@@ -268,81 +370,63 @@ void SyncManager::syncShows(IMediaSource& src,
     )");
 
     for (size_t batch_start = 0; batch_start < shows.size(); batch_start += kShowMetaBatchSize) {
-        SQLite::Transaction txn(sync_db_);
         const size_t batch_end = std::min(batch_start + kShowMetaBatchSize, shows.size());
-        for (size_t i = batch_start; i < batch_end; ++i) {
-            auto& show = shows[i];
-            const std::string ext_show_id = show.show_id; // source-native key before resolution
-            s_resolve_show.reset();
-            s_resolve_show.bind(1, source_id);
-            s_resolve_show.bind(2, ext_show_id);
-            std::string kairos_id = s_resolve_show.executeStep()
-                ? s_resolve_show.getColumn(0).getString()
-                : show_prefix + ext_show_id;
-            bool is_cross_ref = false;
-
-            // Cross-source dedup: if no existing mapping for this source, check whether
-            // another source already indexes a show with the same title. If so, reuse
-            // that kairos_id instead of creating a duplicate show row.
-            if (kairos_id == show_prefix + ext_show_id) {
-                s_show_by_title.reset();
-                s_show_by_title.bind(1, show.title);
-                if (s_show_by_title.executeStep()) {
-                    kairos_id = s_show_by_title.getColumn(0).getString();
-                    is_cross_ref = true;
+        yieldIfRequested();
+        try {
+            SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
+            for (size_t i = batch_start; i < batch_end; ++i) {
+                const auto& show = shows[i];
+                if (!cross_ref_shows[i]) {
+                    s_upsert_show.reset();
+                    s_upsert_show.bind(1,  show.show_id);
+                    s_upsert_show.bind(2,  show.title);
+                    s_upsert_show.bind(3,  show.content_rating);
+                    s_upsert_show.bind(4,  show.overview);
+                    s_upsert_show.bind(5,  show.studio);
+                    s_upsert_show.bind(6,  show.status);
+                    s_upsert_show.bind(7,  show.genres);
+                    s_upsert_show.bind(8,  show.thumb);
+                    s_upsert_show.bind(9,  show.art);
+                    s_upsert_show.bind(10, show.imdb_id);
+                    s_upsert_show.bind(11, show.tvdb_id);
+                    s_upsert_show.bind(12, show.tmdb_id);
+                    s_upsert_show.bind(13, show.originally_available_at);
+                    if (show.year.has_value())            s_upsert_show.bind(14, show.year.value());
+                    else                                  s_upsert_show.bind(14);
+                    if (show.audience_rating.has_value()) s_upsert_show.bind(15, show.audience_rating.value());
+                    else                                  s_upsert_show.bind(15);
+                    s_upsert_show.bind(16, show.labels);
+                    s_upsert_show.bind(17, show.network);
+                    s_upsert_show.bind(18, show.actors);
+                    s_upsert_show.bind(19, show.countries);
+                    s_upsert_show.bind(20, show.collections);
+                    s_upsert_show.exec();
                 }
-            } else if (!kairos_id.starts_with(show_prefix)) {
-                is_cross_ref = true;  // existing mapping points to another source's item
+                s_show_mapping.reset();
+                s_show_mapping.bind(1, show.show_id);
+                s_show_mapping.bind(2, source_id);
+                s_show_mapping.bind(3, library_id);
+                s_show_mapping.bind(4, ext_show_ids[i]);
+                s_show_mapping.exec();
             }
-
-            ext_show_ids[i]    = ext_show_id;
-            cross_ref_shows[i] = is_cross_ref;
-            show.show_id       = kairos_id;
-            live_show_ids.insert(kairos_id);
-
-            if (!is_cross_ref) {
-                s_upsert_show.reset();
-                s_upsert_show.bind(1,  show.show_id);
-                s_upsert_show.bind(2,  show.title);
-                s_upsert_show.bind(3,  show.content_rating);
-                s_upsert_show.bind(4,  show.overview);
-                s_upsert_show.bind(5,  show.studio);
-                s_upsert_show.bind(6,  show.status);
-                s_upsert_show.bind(7,  show.genres);
-                s_upsert_show.bind(8,  show.thumb);
-                s_upsert_show.bind(9,  show.art);
-                s_upsert_show.bind(10, show.imdb_id);
-                s_upsert_show.bind(11, show.tvdb_id);
-                s_upsert_show.bind(12, show.tmdb_id);
-                s_upsert_show.bind(13, show.originally_available_at);
-                if (show.year.has_value())            s_upsert_show.bind(14, show.year.value());
-                else                                  s_upsert_show.bind(14);
-                if (show.audience_rating.has_value()) s_upsert_show.bind(15, show.audience_rating.value());
-                else                                  s_upsert_show.bind(15);
-                s_upsert_show.bind(16, show.labels);
-                s_upsert_show.bind(17, show.network);
-                s_upsert_show.bind(18, show.actors);
-                s_upsert_show.bind(19, show.countries);
-                s_upsert_show.bind(20, show.collections);
-                s_upsert_show.exec();
-            }
-
-            s_show_mapping.reset();
-            s_show_mapping.bind(1, kairos_id);
-            s_show_mapping.bind(2, source_id);
-            s_show_mapping.bind(3, library_id);
-            s_show_mapping.bind(4, ext_show_id);
-            s_show_mapping.exec();
+            txn.commit();
+            std::cout << "[sync]   wrote show metadata: "
+                      << batch_end << "/" << shows.size() << std::endl;
+        } catch (const SQLite::Exception& e) {
+            std::cerr << "[sync] error writing show metadata batch "
+                      << batch_start << "-" << batch_end
+                      << ": " << e.what() << " (sqlite_errcode=" << e.getExtendedErrorCode() << ") — skipping\n";
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] error writing show metadata batch "
+                      << batch_start << "-" << batch_end
+                      << ": " << e.what() << " — skipping\n";
         }
-        txn.commit();
-        std::cout << "[sync]   wrote show metadata: "
-                  << batch_end << "/" << shows.size() << std::endl;
     }
+    s_upsert_show.reset();
+    s_show_mapping.reset();
 
-    // Episode fetches are one HTTP round-trip per show and dominate sync time,
-    // so they run across a small worker pool. DB writes stay single-threaded
-    // below, so the shared connection is never touched from multiple threads.
-    // Requires fetchEpisodes() to tolerate concurrent calls on the same source.
+    // ── Parallel episode fetch ────────────────────────────────────────────────
+    std::cout << "[sync]   fetching episodes: " << shows.size() << " show(s)" << std::endl;
     std::vector<std::vector<Episode>> episodes_by_show(shows.size());
     {
         std::atomic<size_t> next{0};
@@ -387,22 +471,21 @@ void SyncManager::syncShows(IMediaSource& src,
         size_t total_eps = 0;
         for (const auto& eps : episodes_by_show) total_eps += eps.size();
         std::cout << "[sync]   writing " << shows.size() << " show(s), "
-                  << total_eps << " episode(s) to db: " << external_lib_id << std::endl;
+                  << total_eps << " episode(s) to db: " << label << std::endl;
     }
     const auto t_write = std::chrono::steady_clock::now();
 
-    // Prepare hot statements once for this library pass to avoid re-compiling SQL
-    // on every episode.  For a 500-show / 15 000-episode library this replaces
-    // ~60 000 sqlite3_prepare_v2 calls with 8.
-    const std::string ep_prefix = source_id + ":";
-    SQLite::Statement s_resolve_ep(sync_db_,
-        "SELECT kairos_id FROM source_mapping "
-        "WHERE item_type='episode' AND source_id=? AND external_id=?");
-    SQLite::Statement s_ep_by_path(sync_db_,
-        "SELECT episode_id FROM episode WHERE file_path=? LIMIT 1");
-    SQLite::Statement s_clear_ep_cursors(sync_db_,
-        "UPDATE media_cursor SET episode_id = NULL "
-        "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
+    // In-memory episode ID resolution helpers — no DB reads during write phase.
+    auto ep_resolve_id = [&](const std::string& ext) -> std::string {
+        auto it = ep_ext_to_kairos.find(ext);
+        return it != ep_ext_to_kairos.end() ? it->second : ep_prefix + ext;
+    };
+    auto ep_resolve_by_path = [&](const std::string& path) -> std::string {
+        if (path.empty()) return "";
+        auto it = ep_path_to_id.find(path);
+        return it != ep_path_to_id.end() ? it->second : "";
+    };
+
     SQLite::Statement s_upsert_ep(sync_db_, R"(
         INSERT INTO episode (episode_id, show_id, season, episode, title,
                              file_path, duration_ms, overview, air_date,
@@ -419,7 +502,7 @@ void SyncManager::syncShows(IMediaSource& src,
             air_date       = excluded.air_date,
             thumb          = CASE WHEN locked THEN thumb    ELSE excluded.thumb    END,
             absolute_index = excluded.absolute_index
-        WHERE
+        WHERE (
             show_id        != excluded.show_id        OR
             season         != excluded.season         OR
             episode        != excluded.episode        OR
@@ -432,6 +515,7 @@ void SyncManager::syncShows(IMediaSource& src,
                 overview != excluded.overview OR
                 thumb    != excluded.thumb
             ))
+        )
     )");
     SQLite::Statement s_ep_mapping(sync_db_, R"(
         INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
@@ -445,34 +529,16 @@ void SyncManager::syncShows(IMediaSource& src,
     SQLite::Statement s_insert_season(sync_db_,
         "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
 
-    auto ep_resolve_id = [&](const std::string& ext) -> std::string {
-        s_resolve_ep.reset();
-        s_resolve_ep.bind(1, source_id);
-        s_resolve_ep.bind(2, ext);
-        return s_resolve_ep.executeStep() ? s_resolve_ep.getColumn(0).getString() : ep_prefix + ext;
-    };
-    auto ep_resolve_by_path = [&](const std::string& path) -> std::string {
-        if (path.empty()) return "";
-        s_ep_by_path.reset();
-        s_ep_by_path.bind(1, path);
-        return s_ep_by_path.executeStep() ? s_ep_by_path.getColumn(0).getString() : "";
-    };
-
-    // Each show gets its own transaction so a single bad episode or duplicate
-    // doesn't roll back the entire library.  Per-episode errors are logged and
-    // skipped rather than aborting the show.
     for (size_t i = 0; i < shows.size(); ++i) {
-        auto& show      = shows[i];
-        auto& episodes  = episodes_by_show[i];
+        auto& show     = shows[i];
+        auto& episodes = episodes_by_show[i];
         const bool cross_show = cross_ref_shows[i];
 
         yieldIfRequested();
-
         try {
-            SQLite::Transaction txn(sync_db_);
+            SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
 
             std::unordered_map<int, std::string> season_names;
-            std::unordered_set<std::string> live_ep_ids;
             for (auto& ep : episodes) {
                 const std::string ext_ep_id = ep.episode_id;
                 bool ep_cross_ref = false;
@@ -498,9 +564,11 @@ void SyncManager::syncShows(IMediaSource& src,
                 ep.episode_id = ep_kairos_id;
                 ep.show_id    = show.show_id;
 
+                live.episodes.insert(ep_kairos_id);
+                live.by_source_episodes[source_id].insert(ep_kairos_id);
+
                 try {
                     if (!ep_cross_ref) {
-                        live_ep_ids.insert(ep.episode_id);
                         s_upsert_ep.reset();
                         s_upsert_ep.bind(1,  ep.episode_id);
                         s_upsert_ep.bind(2,  ep.show_id);
@@ -531,23 +599,7 @@ void SyncManager::syncShows(IMediaSource& src,
                     season_names[ep.season] = ep.season_name;
             }
 
-            // Remove episodes that were in the DB but are no longer returned by
-            // the source. Nullify cursor refs first (RESTRICT FK on episode_id).
             if (!cross_show) {
-                SQLite::Statement q_existing(sync_db_,
-                    "SELECT episode_id FROM episode WHERE show_id = ?");
-                q_existing.bind(1, show.show_id);
-                std::vector<std::string> stale_eps;
-                while (q_existing.executeStep()) {
-                    const std::string eid = q_existing.getColumn(0).getString();
-                    if (!live_ep_ids.contains(eid)) stale_eps.push_back(eid);
-                }
-                for (const auto& eid : stale_eps) {
-                    s_clear_ep_cursors.reset(); s_clear_ep_cursors.bind(1, show.show_id); s_clear_ep_cursors.exec();
-                    SQLite::Statement d(sync_db_, "DELETE FROM episode WHERE episode_id = ?");
-                    d.bind(1, eid); d.exec();
-                }
-
                 s_delete_seasons.reset(); s_delete_seasons.bind(1, show.show_id); s_delete_seasons.exec();
                 for (const auto& [season, name] : season_names) {
                     s_insert_season.reset();
@@ -561,68 +613,18 @@ void SyncManager::syncShows(IMediaSource& src,
             txn.commit();
             std::cout << "[sync]   wrote series: \"" << show.title << "\" ("
                       << episodes.size() << " episode(s))" << std::endl;
+        } catch (const SQLite::Exception& e) {
+            std::cerr << "[sync] error syncing show \"" << show.title
+                      << "\": " << e.what()
+                      << " (sqlite_errcode=" << e.getExtendedErrorCode() << ") — skipping\n";
         } catch (const std::exception& e) {
-            std::cerr << "[sync] error syncing show \"" << shows[i].title
+            std::cerr << "[sync] error syncing show \"" << show.title
                       << "\": " << e.what() << " — skipping\n";
         }
     }
 
-    std::cout << "[sync]   episodes done: " << external_lib_id
+    std::cout << "[sync]   episodes done: " << label
               << " (" << elapsedMs(t_write, std::chrono::steady_clock::now()) << "ms)" << std::endl;
-
-    // Stale show cleanup runs outside per-show transactions.
-    try {
-        SQLite::Transaction txn(sync_db_);
-
-        std::vector<std::string> stale_shows;
-        {
-            SQLite::Statement q(sync_db_,
-                "SELECT kairos_id FROM source_mapping "
-                "WHERE item_type='show' AND source_id=? AND library_id=?");
-            q.bind(1, source_id); q.bind(2, library_id);
-            while (q.executeStep()) {
-                const std::string kid = q.getColumn(0).getString();
-                if (!live_show_ids.contains(kid)) stale_shows.push_back(kid);
-            }
-        }
-        for (const auto& kid : stale_shows) {
-            bool other_source_has_it = false;
-            {
-                SQLite::Statement chk(sync_db_,
-                    "SELECT COUNT(*) FROM source_mapping "
-                    "WHERE item_type='show' AND kairos_id=? AND source_id!=?");
-                chk.bind(1, kid); chk.bind(2, source_id);
-                other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
-            }
-            if (!other_source_has_it) {
-                { SQLite::Statement q(sync_db_,
-                      "UPDATE media_cursor SET episode_id = NULL "
-                      "WHERE episode_id IN (SELECT episode_id FROM episode WHERE show_id = ?)");
-                  q.bind(1, kid); q.exec(); }
-                { SQLite::Statement d(sync_db_, "DELETE FROM episode WHERE show_id = ?");
-                  d.bind(1, kid); d.exec(); }
-                { SQLite::Statement d(sync_db_, "DELETE FROM show WHERE show_id=?");
-                  d.bind(1, kid); d.exec(); }
-                std::cout << "[sync]   removed stale show: " << kid << std::endl;
-            }
-            { SQLite::Statement d(sync_db_,
-                  "DELETE FROM source_mapping WHERE item_type='show' AND kairos_id=? AND source_id=? AND library_id=?");
-              d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
-        }
-
-        { SQLite::Statement d(sync_db_,
-              "DELETE FROM source_mapping WHERE item_type='show' AND source_id=? AND library_id=?"
-              " AND kairos_id NOT IN (SELECT show_id FROM show)");
-          d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
-        { SQLite::Statement d(sync_db_,
-              "DELETE FROM source_mapping WHERE item_type='episode' AND source_id=? AND library_id=?"
-              " AND kairos_id NOT IN (SELECT episode_id FROM episode)");
-          d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
-
-        txn.commit();
-    } catch (const std::exception& e) {
-        std::cerr << "[sync] error during stale show cleanup: " << e.what() << " — skipping\n";
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -632,31 +634,90 @@ void SyncManager::syncShows(IMediaSource& src,
 void SyncManager::syncMovies(IMediaSource& src,
                               const std::string& source_id,
                               const std::string& library_id,
-                              const std::string& external_lib_id) {
-    std::cout << "[sync]   fetching movies: " << external_lib_id << std::endl;
-    const auto t_movies = std::chrono::steady_clock::now();
+                              const std::string& external_lib_id,
+                              const std::string& label,
+                              SyncLiveIds& live) {
+    // ── Snapshot load ────────────────────────────────────────────────────────
+    const std::string movie_prefix = source_id + ":";
+
+    std::unordered_map<std::string, std::string> ext_to_kairos;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT external_id, kairos_id FROM source_mapping "
+            "WHERE item_type='movie' AND source_id=? AND library_id=?");
+        q.bind(1, source_id); q.bind(2, library_id);
+        while (q.executeStep())
+            ext_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
+    }
+
+    std::unordered_map<std::string, std::string> path_to_kairos;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT file_path, movie_id FROM movie WHERE file_path != ''");
+        while (q.executeStep())
+            path_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
+    }
+
+    // ── Fetch ────────────────────────────────────────────────────────────────
+    std::cout << "[sync]   fetching movies: " << label << std::endl;
+    const auto t_fetch = std::chrono::steady_clock::now();
     auto movies = src.fetchMovies(external_lib_id);
-    std::cout << "[sync]   " << external_lib_id << ": " << movies.size()
-              << " movie(s) (" << elapsedMs(t_movies, std::chrono::steady_clock::now()) << "ms)" << std::endl;
+    std::cout << "[sync]   " << label << ": " << movies.size()
+              << " movie(s) (" << elapsedMs(t_fetch, std::chrono::steady_clock::now()) << "ms)"
+              << std::endl;
     if (movies.empty()) return;
 
-    // Resolve durations before touching the DB so file I/O doesn't happen
-    // inside a write transaction.
-    for (auto& movie : movies)
-        movie.duration_ms = validateDurationMs(movie.duration_ms, conf_.applyPathMap(movie.file_path));
+    // ── Parallel duration probe ───────────────────────────────────────────────
+    {
+        std::atomic<size_t> next{0};
+        const int worker_count = std::min<int>(getThreadCount(),
+                                                static_cast<int>(movies.size()));
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<size_t>(worker_count));
+        for (int w = 0; w < worker_count; ++w) {
+            workers.emplace_back([&]() {
+                for (size_t i = next.fetch_add(1); i < movies.size(); i = next.fetch_add(1)) {
+                    const std::string mapped = conf_.applyPathMap(movies[i].file_path);
+                    movies[i].duration_ms = validateDurationMs(movies[i].duration_ms, mapped);
+                }
+            });
+        }
+        for (auto& t : workers) t.join();
+    }
 
-    // Process in batches. sync_db_ is a dedicated connection so HTTP writes on
-    // the main connection are only blocked for the duration of each batch's
-    // write transaction (SQLite WAL busy_timeout handles the wait).
-    std::unordered_set<std::string> live_movie_ids;
+    // ── ID resolution in memory ──────────────────────────────────────────────
+    struct ResolvedMovie { std::string kairos_id, ext_id; bool is_cross_ref; };
+    std::vector<ResolvedMovie> resolved(movies.size());
+
+    for (size_t i = 0; i < movies.size(); ++i) {
+        auto& movie = movies[i];
+        const std::string ext_id = movie.movie_id;
+        std::string kairos_id;
+        bool is_cross_ref = false;
+
+        auto it = ext_to_kairos.find(ext_id);
+        if (it != ext_to_kairos.end()) {
+            kairos_id = it->second;
+            if (!kairos_id.starts_with(movie_prefix)) is_cross_ref = true;
+        } else {
+            auto pit = path_to_kairos.find(movie.file_path);
+            if (pit != path_to_kairos.end()) {
+                kairos_id = pit->second;
+                is_cross_ref = true;
+            } else {
+                kairos_id = movie_prefix + ext_id;
+            }
+        }
+
+        movie.movie_id = kairos_id;
+        live.movies.insert(kairos_id);
+        live.by_source_movies[source_id].insert(kairos_id);
+        resolved[i] = {kairos_id, ext_id, is_cross_ref};
+    }
+
+    // ── Batch write (no DB reads) ─────────────────────────────────────────────
     const auto t_write = std::chrono::steady_clock::now();
 
-    const std::string movie_prefix = source_id + ":";
-    SQLite::Statement s_resolve_movie(sync_db_,
-        "SELECT kairos_id FROM source_mapping "
-        "WHERE item_type='movie' AND source_id=? AND external_id=?");
-    SQLite::Statement s_movie_by_path(sync_db_,
-        "SELECT movie_id FROM movie WHERE file_path=? LIMIT 1");
     SQLite::Statement s_upsert_movie(sync_db_, R"(
         INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
                            overview, tagline, studio, director, genres, thumb, art,
@@ -716,73 +777,53 @@ void SyncManager::syncMovies(IMediaSource& src,
     for (size_t batch_start = 0; batch_start < movies.size(); batch_start += kMovieBatchSize) {
         yieldIfRequested();
         const size_t batch_end = std::min(batch_start + kMovieBatchSize, movies.size());
-
         try {
-        SQLite::Transaction txn(sync_db_);
-        for (size_t mi = batch_start; mi < batch_end; ++mi) {
-            auto& movie = movies[mi];
-            const std::string ext_movie_id = movie.movie_id;
-            s_resolve_movie.reset();
-            s_resolve_movie.bind(1, source_id);
-            s_resolve_movie.bind(2, ext_movie_id);
-            std::string kairos_id = s_resolve_movie.executeStep()
-                ? s_resolve_movie.getColumn(0).getString()
-                : movie_prefix + ext_movie_id;
-            bool is_cross_ref = false;
+            SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
+            for (size_t i = batch_start; i < batch_end; ++i) {
+                const auto& movie = movies[i];
+                const auto& res   = resolved[i];
 
-            // Cross-source dedup: if no existing mapping for this source, check whether
-            // another source already indexes this file_path to avoid duplicate movie rows.
-            if (kairos_id == movie_prefix + ext_movie_id) {
-                s_movie_by_path.reset();
-                s_movie_by_path.bind(1, movie.file_path);
-                if (s_movie_by_path.executeStep()) {
-                    kairos_id = s_movie_by_path.getColumn(0).getString();
-                    is_cross_ref = true;
+                if (!res.is_cross_ref) {
+                    s_upsert_movie.reset();
+                    s_upsert_movie.bind(1,  movie.movie_id);
+                    s_upsert_movie.bind(2,  movie.title);
+                    s_upsert_movie.bind(3,  movie.content_rating);
+                    s_upsert_movie.bind(4,  movie.file_path);
+                    s_upsert_movie.bind(5,  movie.duration_ms);
+                    if (movie.year.has_value())            s_upsert_movie.bind(6,  movie.year.value());
+                    else                                   s_upsert_movie.bind(6);
+                    s_upsert_movie.bind(7,  movie.overview);
+                    s_upsert_movie.bind(8,  movie.tagline);
+                    s_upsert_movie.bind(9,  movie.studio);
+                    s_upsert_movie.bind(10, movie.director);
+                    s_upsert_movie.bind(11, movie.genres);
+                    s_upsert_movie.bind(12, movie.thumb);
+                    s_upsert_movie.bind(13, movie.art);
+                    s_upsert_movie.bind(14, movie.imdb_id);
+                    s_upsert_movie.bind(15, movie.tmdb_id);
+                    if (movie.audience_rating.has_value()) s_upsert_movie.bind(16, movie.audience_rating.value());
+                    else                                   s_upsert_movie.bind(16);
+                    s_upsert_movie.bind(17, movie.labels);
+                    s_upsert_movie.bind(18, movie.actors);
+                    s_upsert_movie.bind(19, movie.countries);
+                    s_upsert_movie.bind(20, movie.collections);
+                    s_upsert_movie.exec();
                 }
-            } else if (!kairos_id.starts_with(movie_prefix)) {
-                is_cross_ref = true;
+
+                s_movie_mapping.reset();
+                s_movie_mapping.bind(1, movie.movie_id);
+                s_movie_mapping.bind(2, source_id);
+                s_movie_mapping.bind(3, library_id);
+                s_movie_mapping.bind(4, res.ext_id);
+                s_movie_mapping.exec();
             }
-
-            movie.movie_id = kairos_id;
-            live_movie_ids.insert(movie.movie_id);
-
-            if (!is_cross_ref) {
-                s_upsert_movie.reset();
-                s_upsert_movie.bind(1,  movie.movie_id);
-                s_upsert_movie.bind(2,  movie.title);
-                s_upsert_movie.bind(3,  movie.content_rating);
-                s_upsert_movie.bind(4,  movie.file_path);
-                s_upsert_movie.bind(5,  movie.duration_ms);
-                if (movie.year.has_value())            s_upsert_movie.bind(6,  movie.year.value());
-                else                                   s_upsert_movie.bind(6);
-                s_upsert_movie.bind(7,  movie.overview);
-                s_upsert_movie.bind(8,  movie.tagline);
-                s_upsert_movie.bind(9,  movie.studio);
-                s_upsert_movie.bind(10, movie.director);
-                s_upsert_movie.bind(11, movie.genres);
-                s_upsert_movie.bind(12, movie.thumb);
-                s_upsert_movie.bind(13, movie.art);
-                s_upsert_movie.bind(14, movie.imdb_id);
-                s_upsert_movie.bind(15, movie.tmdb_id);
-                if (movie.audience_rating.has_value()) s_upsert_movie.bind(16, movie.audience_rating.value());
-                else                                   s_upsert_movie.bind(16);
-                s_upsert_movie.bind(17, movie.labels);
-                s_upsert_movie.bind(18, movie.actors);
-                s_upsert_movie.bind(19, movie.countries);
-                s_upsert_movie.bind(20, movie.collections);
-                s_upsert_movie.exec();
-            }
-
-            s_movie_mapping.reset();
-            s_movie_mapping.bind(1, movie.movie_id);
-            s_movie_mapping.bind(2, source_id);
-            s_movie_mapping.bind(3, library_id);
-            s_movie_mapping.bind(4, ext_movie_id);
-            s_movie_mapping.exec();
-        }
-        txn.commit();
-        std::cout << "[sync]   wrote movies: "
-                  << batch_end << "/" << movies.size() << std::endl;
+            txn.commit();
+            std::cout << "[sync]   wrote movies: "
+                      << batch_end << "/" << movies.size() << std::endl;
+        } catch (const SQLite::Exception& e) {
+            std::cerr << "[sync] error writing movie batch "
+                      << batch_start << "-" << batch_end
+                      << ": " << e.what() << " (sqlite_errcode=" << e.getExtendedErrorCode() << ") — skipping\n";
         } catch (const std::exception& e) {
             std::cerr << "[sync] error writing movie batch "
                       << batch_start << "-" << batch_end
@@ -790,54 +831,98 @@ void SyncManager::syncMovies(IMediaSource& src,
         }
     }
 
-    std::cout << "[sync]   movies done: " << external_lib_id
+    std::cout << "[sync]   movies done: " << label
               << " (" << elapsedMs(t_write, std::chrono::steady_clock::now()) << "ms)" << std::endl;
+}
 
-    // Stale cleanup runs in its own transaction after all upserts are done.
-    yieldIfRequested();
-    {
-        std::vector<std::string> stale_movies;
-        {
-            SQLite::Statement q(sync_db_,
-                "SELECT kairos_id FROM source_mapping "
-                "WHERE item_type='movie' AND source_id=? AND library_id=?");
-            q.bind(1, source_id); q.bind(2, library_id);
-            while (q.executeStep()) {
-                const std::string kid = q.getColumn(0).getString();
-                if (!live_movie_ids.contains(kid)) stale_movies.push_back(kid);
+// ---------------------------------------------------------------------------
+// Orphan cleanup — runs after all sources complete
+// ---------------------------------------------------------------------------
+
+void SyncManager::runOrphanCleanup(const SyncLiveIds& live) {
+    std::cout << "[sync] orphan cleanup..." << std::endl;
+
+    // Step 1: Remove stale source_mapping entries per source.
+    // A stale entry is one the source didn't report this run.
+    // We process each item type separately so we can batch per source.
+    auto pruneMapping = [&](const std::string& item_type,
+                             const std::unordered_map<std::string,
+                                                       std::unordered_set<std::string>>& by_source) {
+        for (const auto& [src_id, reported] : by_source) {
+            std::vector<std::string> stale;
+            {
+                SQLite::Statement q(sync_db_,
+                    "SELECT kairos_id FROM source_mapping WHERE item_type=? AND source_id=?");
+                q.bind(1, item_type); q.bind(2, src_id);
+                while (q.executeStep()) {
+                    const std::string kid = q.getColumn(0).getString();
+                    if (!reported.count(kid)) stale.push_back(kid);
+                }
+            }
+            if (stale.empty()) continue;
+            try {
+                SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
+                for (const auto& kid : stale) {
+                    SQLite::Statement d(sync_db_,
+                        "DELETE FROM source_mapping "
+                        "WHERE item_type=? AND source_id=? AND kairos_id=?");
+                    d.bind(1, item_type); d.bind(2, src_id); d.bind(3, kid); d.exec();
+                }
+                txn.commit();
+                std::cout << "[sync]   pruned " << stale.size() << " stale "
+                          << item_type << " mapping(s) for source " << src_id << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << "[sync] error pruning " << item_type
+                          << " mappings for " << src_id << ": " << e.what() << '\n';
             }
         }
+    };
 
-        try {
-            SQLite::Transaction txn(sync_db_);
-            for (const auto& kid : stale_movies) {
-                bool other_source_has_it = false;
-                {
-                    SQLite::Statement chk(sync_db_,
-                        "SELECT COUNT(*) FROM source_mapping "
-                        "WHERE item_type='movie' AND kairos_id=? AND source_id!=?");
-                    chk.bind(1, kid); chk.bind(2, source_id);
-                    other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
-                }
-                if (!other_source_has_it) {
-                    SQLite::Statement d(sync_db_, "DELETE FROM movie WHERE movie_id=?");
-                    d.bind(1, kid); d.exec();
-                    std::cout << "[sync]   removed stale movie: " << kid << std::endl;
-                }
-                { SQLite::Statement d(sync_db_,
-                      "DELETE FROM source_mapping WHERE item_type='movie' AND kairos_id=? AND source_id=? AND library_id=?");
-                  d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
-            }
+    pruneMapping("show",    live.by_source_shows);
+    pruneMapping("episode", live.by_source_episodes);
+    pruneMapping("movie",   live.by_source_movies);
 
-            { SQLite::Statement d(sync_db_,
-                  "DELETE FROM source_mapping WHERE item_type='movie' AND source_id=? AND library_id=?"
-                  " AND kairos_id NOT IN (SELECT movie_id FROM movie)");
-              d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
+    // Step 2: Delete media rows that have no remaining source_mapping entry.
+    // Because we removed stale mappings above, a row with no mapping is
+    // genuinely orphaned — no source claims it anymore.
+    try {
+        SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
 
-            txn.commit();
-        } catch (const std::exception& e) {
-            std::cerr << "[sync] error during stale movie cleanup: " << e.what() << " — skipping\n";
-        }
+        // Nullify channel cursor refs before deleting episodes (FK constraint).
+        SQLite::Statement q1(sync_db_,
+            "UPDATE media_cursor SET episode_id = NULL "
+            "WHERE episode_id NOT IN "
+            "(SELECT kairos_id FROM source_mapping WHERE item_type='episode')");
+        q1.exec();
+
+        SQLite::Statement q2(sync_db_,
+            "DELETE FROM episode "
+            "WHERE episode_id NOT IN "
+            "(SELECT kairos_id FROM source_mapping WHERE item_type='episode')");
+        q2.exec();
+
+        SQLite::Statement q3(sync_db_,
+            "DELETE FROM show_season "
+            "WHERE show_id NOT IN "
+            "(SELECT kairos_id FROM source_mapping WHERE item_type='show')");
+        q3.exec();
+
+        SQLite::Statement q4(sync_db_,
+            "DELETE FROM show "
+            "WHERE show_id NOT IN "
+            "(SELECT kairos_id FROM source_mapping WHERE item_type='show')");
+        q4.exec();
+
+        SQLite::Statement q5(sync_db_,
+            "DELETE FROM movie "
+            "WHERE movie_id NOT IN "
+            "(SELECT kairos_id FROM source_mapping WHERE item_type='movie')");
+        q5.exec();
+
+        txn.commit();
+        std::cout << "[sync] orphan cleanup complete" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[sync] error during orphan cleanup: " << e.what() << " — skipping\n";
     }
 }
 
@@ -845,74 +930,12 @@ void SyncManager::syncMovies(IMediaSource& src,
 // Helpers
 // ---------------------------------------------------------------------------
 
-std::string SyncManager::resolveId(const std::string& item_type,
-                                    const std::string& source_id,
-                                    const std::string& external_id) const {
-    SQLite::Statement q(sync_db_,
-        "SELECT kairos_id FROM source_mapping "
-        "WHERE item_type = ? AND source_id = ? AND external_id = ?");
-    q.bind(1, item_type);
-    q.bind(2, source_id);
-    q.bind(3, external_id);
-    if (q.executeStep())
-        return q.getColumn(0).getString();
-    return source_id + ":" + external_id; // deterministic, no UUID needed
-}
-
-std::string SyncManager::resolveByFilePath(const std::string& item_type,
-                                            const std::string& file_path) const {
-    if (file_path.empty()) return "";
-    const bool is_ep = (item_type == "episode");
-    const std::string col = is_ep ? "episode_id" : "movie_id";
-    const std::string tbl = is_ep ? "episode"    : "movie";
-    SQLite::Statement q(sync_db_,
-        "SELECT " + col + " FROM " + tbl + " WHERE file_path = ? LIMIT 1");
-    q.bind(1, file_path);
-    return q.executeStep() ? q.getColumn(0).getString() : "";
-}
-
-std::string SyncManager::resolveByTitle(const std::string& item_type,
-                                         const std::string& title) const {
-    if (title.empty()) return "";
-    const bool is_show = (item_type == "show");
-    const std::string col = is_show ? "show_id" : "movie_id";
-    const std::string tbl = is_show ? "show"    : "movie";
-    SQLite::Statement q(sync_db_,
-        "SELECT " + col + " FROM " + tbl + " WHERE LOWER(title) = LOWER(?) LIMIT 1");
-    q.bind(1, title);
-    return q.executeStep() ? q.getColumn(0).getString() : "";
-}
-
-void SyncManager::upsertMapping(const std::string& item_type,
-                                 const std::string& kairos_id,
-                                 const std::string& source_id,
-                                 const std::string& library_id,
-                                 const std::string& external_id) {
-    SQLite::Statement s(sync_db_, R"(
-        INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
-        VALUES (?,?,?,?,?)
-        ON CONFLICT(item_type, kairos_id, source_id) DO UPDATE SET
-            library_id  = excluded.library_id,
-            external_id = excluded.external_id
-    )");
-    s.bind(1, item_type);
-    s.bind(2, kairos_id);
-    s.bind(3, source_id);
-    s.bind(4, library_id);
-    s.bind(5, external_id);
-    s.exec();
-}
-
 std::vector<std::string> SyncManager::sourceIds() const {
     std::vector<std::string> ids;
     ids.reserve(sources_.size());
     for (const auto& s : sources_) ids.push_back(s->sourceId());
     return ids;
 }
-
-// ---------------------------------------------------------------------------
-// Coordinator yield
-// ---------------------------------------------------------------------------
 
 void SyncManager::yieldIfRequested() {
     if (!yield_requested_.load(std::memory_order_relaxed)) return;
@@ -943,7 +966,6 @@ void SyncManager::triggerPlexLinkSync() {
 }
 
 void SyncManager::syncPlexLinks(const std::string& source_id) {
-    // Only Plex sources have playlists/collections
     std::string base_url, source_type;
     {
         SQLite::Statement sq(sync_db_,
@@ -1014,7 +1036,7 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
             const std::string fk_col   = (link.list_type == "playlist") ? "playlist_id"    : "filler_list_id";
             const std::string item_tbl = (link.list_type == "playlist") ? "playlist_item"  : "filler_list_item";
 
-            SQLite::Transaction txn(sync_db_);
+            SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
             SQLite::Statement del(sync_db_,
                 "DELETE FROM " + item_tbl + " WHERE " + fk_col + " = ?");
             del.bind(1, link.list_id); del.exec();
@@ -1056,7 +1078,6 @@ IMediaSource* SyncManager::findSource(const std::string& source_id) const {
 std::unique_ptr<IMediaSource> SyncManager::buildSource(const std::string& source_id,
                                                        const std::string& source_type,
                                                        const std::string& base_url) const {
-    // Conf file takes precedence; env vars are the fallback for manual setups
     std::string token   = conf_.token(source_id);
     std::string user_id = conf_.userId(source_id);
     if (token.empty())   token   = envVar("KAIROS_TOKEN_",   source_id);
@@ -1092,7 +1113,6 @@ void SyncManager::syncItemChapters(IMediaSource& src,
                                     const std::string& file_path) {
     ChapterRepository repo(db_);
 
-    // Typed markers (intro, credits) from source API — highest priority.
     if (!external_id.empty()) {
         auto intro = src.fetchIntroMarkers(external_id);
         if (!intro.empty())
@@ -1103,7 +1123,6 @@ void SyncManager::syncItemChapters(IMediaSource& src,
             repo.syncChapters(media_type, kairos_id, "plex_chapters", std::move(source_ch));
     }
 
-    // File-embedded chapters via ffprobe.
     if (!file_path.empty()) {
         auto file_ch = probeChapters(conf_.applyPathMap(file_path));
         if (!file_ch.empty())
@@ -1120,11 +1139,16 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
 
     const auto t_ch_start = std::chrono::steady_clock::now();
     std::cout << "[sync] chapter sync (file): " << source_id << std::endl;
-    ChapterRepository repo(db_);
 
-    int ep_checked = 0, ep_skipped_duration = 0, ep_skipped_missing = 0, ep_with_chapters = 0;
+    // ── Collect items to probe — close cursor before parallel workers start ──
+    struct ProbeItem {
+        std::string kairos_id;
+        std::string media_type;
+        std::string mapped_path;
+        std::string show_title; // for logging
+    };
+    std::vector<ProbeItem> items;
 
-    // Episodes
     {
         SQLite::Statement q(sync_db_, R"(
             SELECT sm.kairos_id, e.file_path, e.show_id, sh.title, e.duration_ms
@@ -1135,56 +1159,20 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
             ORDER BY e.show_id
         )");
         q.bind(1, source_id);
-        std::string cur_show_id;
         while (q.executeStep()) {
-            const std::string kairos_id  = q.getColumn(0).getString();
-            const std::string file_path  = q.getColumn(1).getString();
-            const std::string show_id    = q.getColumn(2).getString();
-            const std::string show_title = q.getColumn(3).getString();
-            const int64_t     duration   = q.getColumn(4).getInt64();
-            if (show_id != cur_show_id) {
-                cur_show_id = show_id;
-                std::cout << "[sync]   checking chapters: \"" << show_title << "\"" << std::endl;
-            }
-            ++ep_checked;
-
-            // Skip files that failed duration probing — ffprobe can't read them.
-            if (file_path.empty() || duration == 0) {
-                ++ep_skipped_duration;
-                DLOG << "[sync]     skip (no path/duration=0): kairos_id=" << kairos_id
-                     << "  path=" << file_path << "  duration=" << duration << '\n';
-                continue;
-            }
-            const std::string mapped_path = conf_.applyPathMap(file_path);
-            const bool exists = std::filesystem::exists(mapped_path);
-            DLOG << "[sync]     ep kairos_id=" << kairos_id
-                 << "\n            src:    " << file_path
-                 << "\n            mapped: " << mapped_path
-                 << "\n            exists: " << (exists ? "yes" : "NO")
-                 << "  duration=" << duration << "ms\n";
-            if (!exists) {
-                ++ep_skipped_missing;
-                continue;
-            }
-            const auto t_probe = std::chrono::steady_clock::now();
-            auto chapters = probeChapters(mapped_path);
-            DLOG << "[sync]     probe took " << elapsedMs(t_probe, std::chrono::steady_clock::now())
-                 << "ms → " << chapters.size() << " chapter(s)\n";
-            if (!chapters.empty()) {
-                ++ep_with_chapters;
-                repo.syncChapters("episode", kairos_id, "file", std::move(chapters));
-            }
+            const std::string file_path = q.getColumn(1).getString();
+            const int64_t     duration  = q.getColumn(4).getInt64();
+            if (file_path.empty() || duration == 0) continue;
+            const std::string mapped = conf_.applyPathMap(file_path);
+            if (!std::filesystem::exists(mapped)) continue;
+            items.push_back({
+                q.getColumn(0).getString(),
+                "episode",
+                mapped,
+                q.getColumn(3).getString()
+            });
         }
     }
-
-    DLOG << "[sync] episode chapter summary: checked=" << ep_checked
-         << " skipped_duration=" << ep_skipped_duration
-         << " skipped_missing=" << ep_skipped_missing
-         << " with_chapters=" << ep_with_chapters << '\n';
-
-    int mv_checked = 0, mv_skipped_missing = 0, mv_with_chapters = 0;
-
-    // Movies
     {
         SQLite::Statement q(sync_db_, R"(
             SELECT sm.kairos_id, m.file_path
@@ -1194,35 +1182,56 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
         )");
         q.bind(1, source_id);
         while (q.executeStep()) {
-            const std::string kairos_id = q.getColumn(0).getString();
             const std::string file_path = q.getColumn(1).getString();
             if (file_path.empty()) continue;
-            ++mv_checked;
-            const std::string mapped_path = conf_.applyPathMap(file_path);
-            const bool exists = std::filesystem::exists(mapped_path);
-            DLOG << "[sync]   movie kairos_id=" << kairos_id
-                 << "\n           src:    " << file_path
-                 << "\n           mapped: " << mapped_path
-                 << "\n           exists: " << (exists ? "yes" : "NO") << '\n';
-            if (!exists) {
-                ++mv_skipped_missing;
-                continue;
-            }
-            const auto t_probe = std::chrono::steady_clock::now();
-            auto chapters = probeChapters(mapped_path);
-            DLOG << "[sync]   probe took " << elapsedMs(t_probe, std::chrono::steady_clock::now())
-                 << "ms → " << chapters.size() << " chapter(s)\n";
-            if (!chapters.empty()) {
-                ++mv_with_chapters;
-                repo.syncChapters("movie", kairos_id, "file", std::move(chapters));
-            }
+            const std::string mapped = conf_.applyPathMap(file_path);
+            if (!std::filesystem::exists(mapped)) continue;
+            items.push_back({q.getColumn(0).getString(), "movie", mapped, ""});
         }
     }
 
-    DLOG << "[sync] movie chapter summary: checked=" << mv_checked
-         << " skipped_missing=" << mv_skipped_missing
-         << " with_chapters=" << mv_with_chapters << '\n';
+    if (items.empty()) {
+        std::cout << "[sync] chapter sync done: " << source_id << " (nothing to probe)" << std::endl;
+        return;
+    }
+
+    // ── Parallel ffprobe ─────────────────────────────────────────────────────
+    struct ChapterResult {
+        std::string kairos_id;
+        std::string media_type;
+        std::vector<Chapter> chapters;
+    };
+    std::vector<ChapterResult> results(items.size());
+
+    {
+        std::atomic<size_t> next{0};
+        const int worker_count = std::min<int>(getThreadCount(),
+                                                static_cast<int>(items.size()));
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<size_t>(worker_count));
+        for (int w = 0; w < worker_count; ++w) {
+            workers.emplace_back([&]() {
+                for (size_t i = next.fetch_add(1); i < items.size(); i = next.fetch_add(1)) {
+                    auto ch = probeChapters(items[i].mapped_path);
+                    if (!ch.empty())
+                        results[i] = {items[i].kairos_id, items[i].media_type, std::move(ch)};
+                }
+            });
+        }
+        for (auto& t : workers) t.join();
+    }
+
+    // ── Write ────────────────────────────────────────────────────────────────
+    ChapterRepository repo(db_);
+    int written = 0;
+    for (auto& res : results) {
+        if (!res.chapters.empty()) {
+            repo.syncChapters(res.media_type, res.kairos_id, "file", std::move(res.chapters));
+            ++written;
+        }
+    }
 
     std::cout << "[sync] chapter sync done: " << source_id
-              << " (" << elapsedMs(t_ch_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
+              << " (" << written << " item(s) with chapters, "
+              << elapsedMs(t_ch_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }

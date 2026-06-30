@@ -56,6 +56,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	// ── Update ────────────────────────────────────────────────────────────────
 
 	svr.Patch("/api/chapters/:id", [this](const Req& req, Res& res) {
+		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
 		json body;
 		try { body = json::parse(req.body); }
 		catch (...) { route::err(res, 400, "invalid JSON"); return; }
@@ -66,6 +67,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	// ── Delete ────────────────────────────────────────────────────────────────
 
 	svr.Delete("/api/chapters/:id", [this](const Req& req, Res& res) {
+		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
 		repo_.remove(req.path_params.at("id"));
 		res.status = 204;
 	});

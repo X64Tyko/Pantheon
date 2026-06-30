@@ -5,6 +5,7 @@
 
 class ConfStore;
 class Database;
+class SyncManager;
 struct ServiceContext;
 
 class ContentService : public IKairosService {
@@ -13,8 +14,9 @@ public:
 	void registerRoutes(httplib::Server& svr) override;
 
 private:
-	Database&  db_;
-	ConfStore& conf_;
+	Database&     db_;
+	ConfStore&    conf_;
+	SyncManager&  sync_;
 
 	void proxyImage(const httplib::Request& req, const std::string& imgPath,
 	                const std::string& sourceId, httplib::Response& res);
