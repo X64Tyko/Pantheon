@@ -1381,16 +1381,18 @@ void Database::configure(SQLite::Database& db) const {
     db.exec("PRAGMA foreign_keys = ON");
     db.exec("PRAGMA synchronous  = NORMAL");
     db.exec("PRAGMA cache_size   = -8000");
-    // Allow up to 5 s of retries before returning SQLITE_BUSY.  With separate
-    // connections (sync thread vs HTTP thread pool) this is the primary
-    // mechanism that lets HTTP writes proceed as soon as the sync connection
-    // releases a per-show write transaction.
     db.exec("PRAGMA busy_timeout = 5000");
 }
 
-SQLite::Database Database::openConnection() const {
+SQLite::Database Database::openConnection(int busy_timeout_ms) const {
     SQLite::Database conn(path_, SQLite::OPEN_READWRITE);
-    configure(conn);
+    // Don't re-issue journal_mode=WAL on a secondary connection: the mode is
+    // already set by the primary, and this pragma briefly requests a lock even
+    // when it's a no-op — which can race with an active write transaction.
+    conn.exec("PRAGMA foreign_keys = ON");
+    conn.exec("PRAGMA synchronous  = NORMAL");
+    conn.exec("PRAGMA cache_size   = -8000");
+    conn.exec("PRAGMA busy_timeout = " + std::to_string(busy_timeout_ms));
     return conn;
 }
 

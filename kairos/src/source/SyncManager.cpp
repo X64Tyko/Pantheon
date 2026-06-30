@@ -27,7 +27,7 @@
 using json = nlohmann::json;
 
 SyncManager::SyncManager(Database& db, ConfStore& conf)
-    : db_(db), conf_(conf), sync_db_(db.openConnection()) {}
+    : db_(db), conf_(conf), sync_db_(db.openConnection(60000)) {}
 
 // ---------------------------------------------------------------------------
 // Startup
@@ -571,7 +571,7 @@ void SyncManager::syncShows(IMediaSource& src,
               << " (" << elapsedMs(t_write, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 
     // Stale show cleanup runs outside per-show transactions.
-    {
+    try {
         SQLite::Transaction txn(sync_db_);
 
         std::vector<std::string> stale_shows;
@@ -620,6 +620,8 @@ void SyncManager::syncShows(IMediaSource& src,
           d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
 
         txn.commit();
+    } catch (const std::exception& e) {
+        std::cerr << "[sync] error during stale show cleanup: " << e.what() << " — skipping\n";
     }
 }
 
@@ -715,6 +717,7 @@ void SyncManager::syncMovies(IMediaSource& src,
         yieldIfRequested();
         const size_t batch_end = std::min(batch_start + kMovieBatchSize, movies.size());
 
+        try {
         SQLite::Transaction txn(sync_db_);
         for (size_t mi = batch_start; mi < batch_end; ++mi) {
             auto& movie = movies[mi];
@@ -780,6 +783,11 @@ void SyncManager::syncMovies(IMediaSource& src,
         txn.commit();
         std::cout << "[sync]   wrote movies: "
                   << batch_end << "/" << movies.size() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] error writing movie batch "
+                      << batch_start << "-" << batch_end
+                      << ": " << e.what() << " — skipping\n";
+        }
     }
 
     std::cout << "[sync]   movies done: " << external_lib_id
@@ -800,32 +808,36 @@ void SyncManager::syncMovies(IMediaSource& src,
             }
         }
 
-        SQLite::Transaction txn(sync_db_);
-        for (const auto& kid : stale_movies) {
-            bool other_source_has_it = false;
-            {
-                SQLite::Statement chk(sync_db_,
-                    "SELECT COUNT(*) FROM source_mapping "
-                    "WHERE item_type='movie' AND kairos_id=? AND source_id!=?");
-                chk.bind(1, kid); chk.bind(2, source_id);
-                other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
+        try {
+            SQLite::Transaction txn(sync_db_);
+            for (const auto& kid : stale_movies) {
+                bool other_source_has_it = false;
+                {
+                    SQLite::Statement chk(sync_db_,
+                        "SELECT COUNT(*) FROM source_mapping "
+                        "WHERE item_type='movie' AND kairos_id=? AND source_id!=?");
+                    chk.bind(1, kid); chk.bind(2, source_id);
+                    other_source_has_it = chk.executeStep() && chk.getColumn(0).getInt() > 0;
+                }
+                if (!other_source_has_it) {
+                    SQLite::Statement d(sync_db_, "DELETE FROM movie WHERE movie_id=?");
+                    d.bind(1, kid); d.exec();
+                    std::cout << "[sync]   removed stale movie: " << kid << std::endl;
+                }
+                { SQLite::Statement d(sync_db_,
+                      "DELETE FROM source_mapping WHERE item_type='movie' AND kairos_id=? AND source_id=? AND library_id=?");
+                  d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
             }
-            if (!other_source_has_it) {
-                SQLite::Statement d(sync_db_, "DELETE FROM movie WHERE movie_id=?");
-                d.bind(1, kid); d.exec();
-                std::cout << "[sync]   removed stale movie: " << kid << std::endl;
-            }
+
             { SQLite::Statement d(sync_db_,
-                  "DELETE FROM source_mapping WHERE item_type='movie' AND kairos_id=? AND source_id=? AND library_id=?");
-              d.bind(1, kid); d.bind(2, source_id); d.bind(3, library_id); d.exec(); }
+                  "DELETE FROM source_mapping WHERE item_type='movie' AND source_id=? AND library_id=?"
+                  " AND kairos_id NOT IN (SELECT movie_id FROM movie)");
+              d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
+
+            txn.commit();
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] error during stale movie cleanup: " << e.what() << " — skipping\n";
         }
-
-        { SQLite::Statement d(sync_db_,
-              "DELETE FROM source_mapping WHERE item_type='movie' AND source_id=? AND library_id=?"
-              " AND kairos_id NOT IN (SELECT movie_id FROM movie)");
-          d.bind(1, source_id); d.bind(2, library_id); d.exec(); }
-
-        txn.commit();
     }
 }
 
