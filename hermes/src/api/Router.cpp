@@ -262,13 +262,20 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
     });
 
     // ── MPEG-TS live stream ───────────────────────────────────────────────────
+    // DVR clients (Plex, Jellyfin) send Range headers even for live streams.
+    // httplib's range_error check fires after the handler and returns 416
+    // whenever the chunked content provider has no content-length (always for
+    // live streams). The Request object is non-const internally — clearing
+    // ranges here prevents the spurious 416 while keeping chunked encoding.
     svr.Get(R"(/stream/channels/([^/.]+)$)", [&broadcasters](
             const httplib::Request& req, httplib::Response& res) {
+        const_cast<httplib::Request&>(req).ranges.clear();
         handleStream(req.matches[1], broadcasters, res);
     });
 
     svr.Get(R"(/stream/channels/([^/]+)\.ts$)", [&broadcasters](
             const httplib::Request& req, httplib::Response& res) {
+        const_cast<httplib::Request&>(req).ranges.clear();
         handleStream(req.matches[1], broadcasters, res);
     });
 
