@@ -83,7 +83,7 @@ void ChannelBroadcaster::run() {
             std::cerr << "[hermes] channel " << id_ << " stream error: "
                       << httplib::to_string(result.error()) << "\n";
         } else {
-            std::cerr << "[hermes] channel " << id_ << " Hephaestus returned non-200\n";
+            std::cerr << "[hermes] channel " << id_ << " Hephaestus returned " << result->status << "\n";
         }
 
         if (attempt < MAX_ATTEMPTS && !stop_requested_.load()) {

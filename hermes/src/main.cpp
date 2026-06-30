@@ -53,6 +53,15 @@ int main(int argc, char* argv[]) {
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(32); };
 
+	// Log any 4XX/5XX response so we don't have to rely on client-side errors                      
+	// to discover Hermes returning unexpected status codes.                                        
+	  svr.set_logger([](const httplib::Request& req, const httplib::Response& res) {                  
+	  if (res.status >= 400) {                                                                    
+	  std::cerr << "[hermes] " << req.method << " " << req.path                               
+	       << " → " << res.status << "\n";                                               
+		}                                                                                           
+	}); 
+	
     registerRoutes(svr, broadcasters, kairos, log_buffer, cfg);
 
     // Relay upstream log streams so the Hades UI sees all service logs via
