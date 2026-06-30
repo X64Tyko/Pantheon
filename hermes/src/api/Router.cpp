@@ -1,5 +1,6 @@
 #include "Router.h"
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include <string>
 
 using json = nlohmann::json;
@@ -13,6 +14,8 @@ static std::string baseUrl(const httplib::Request& req) {
 static void handleStream(const std::string& channel_id,
                           BroadcasterManager& broadcasters,
                           httplib::Response& res) {
+    std::cout << "[hermes] stream request: channel=" << channel_id << "\n";
+
     auto bc = broadcasters.getOrCreate(channel_id);
     auto sink = bc->addClient();
 
@@ -147,7 +150,7 @@ static void proxyRequest(const std::string& upstream_base,
 }
 
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
-                    KairosClient& kairos, const Config& cfg) {
+                    KairosClient& kairos, LogBuffer& logs, const Config& cfg) {
 
     // ── Health ────────────────────────────────────────────────────────────────
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
@@ -156,9 +159,45 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
             "application/json");
     });
 
-    // ── Log stream (SSE) — proxied from Kairos ───────────────────────────────
-    svr.Get("/api/logs/stream", [&cfg](const httplib::Request& req, httplib::Response& res) {
-        proxyStream(cfg.kairos_url, req, res);
+    // ── Log stream (SSE) — Hermes's own log buffer ───────────────────────────
+    svr.Get("/api/logs/stream", [&logs](const httplib::Request&, httplib::Response& res) {
+        res.set_header("Cache-Control",     "no-cache");
+        res.set_header("Connection",        "keep-alive");
+        res.set_header("X-Accel-Buffering", "no");
+        res.set_header("Access-Control-Allow-Origin", "*");
+
+        res.set_chunked_content_provider("text/event-stream",
+            [&logs, cur_seq = uint64_t{0}, sent_init = false]
+            (size_t, httplib::DataSink& sink) mutable -> bool {
+
+                if (!sent_init) {
+                    sent_init = true;
+                    auto [lines, seq] = logs.recent(200);
+                    cur_seq = seq;
+                    for (const auto& line : lines) {
+                        std::string ev = "data:" + line + "\n\n";
+                        if (!sink.write(ev.data(), ev.size())) return false;
+                    }
+                    return true;
+                }
+
+                auto [new_lines, new_seq] =
+                    logs.waitAfter(cur_seq, std::chrono::milliseconds{25'000});
+
+                if (!sink.is_writable()) return false;
+
+                if (new_lines.empty()) {
+                    static const std::string ping = ": ping\n\n";
+                    return sink.write(ping.data(), ping.size());
+                }
+
+                cur_seq = new_seq;
+                for (const auto& line : new_lines) {
+                    std::string ev = "data:" + line + "\n\n";
+                    if (!sink.write(ev.data(), ev.size())) return false;
+                }
+                return true;
+            });
     });
 
     // ── HDHomeRun device emulation ────────────────────────────────────────────

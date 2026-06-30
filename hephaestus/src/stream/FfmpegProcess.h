@@ -12,6 +12,7 @@ class FfmpegProcess {
     std::vector<std::string> args;
     DataCallback on_data;
     ExitCallback on_exit;
+    bool         log_stderr;
 
     pid_t pid        = -1;
     int   stdout_fd  = -1;
@@ -21,7 +22,8 @@ class FfmpegProcess {
     std::atomic<bool> killed{false};
 
 public:
-    FfmpegProcess(std::vector<std::string> args, DataCallback on_data, ExitCallback on_exit);
+    FfmpegProcess(std::vector<std::string> args, DataCallback on_data, ExitCallback on_exit,
+                  bool log_stderr = false);
     ~FfmpegProcess();
 
     bool start();

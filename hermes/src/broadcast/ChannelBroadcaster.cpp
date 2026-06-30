@@ -15,11 +15,10 @@ std::shared_ptr<ChannelBroadcaster::Sink> ChannelBroadcaster::addClient() {
     std::lock_guard lock(sinks_mtx_);
     ++stop_token_;  // cancel any pending linger
 
-    // Join the old thread if it exited cleanly (dead but not yet joined).
-    if (reader_.joinable() && dead_.load()) {
-        reader_.join();
-    }
-
+    // Do NOT join here: broadcastDone() also acquires sinks_mtx_, so joining
+    // while holding this lock deadlocks. The destructor handles the final join.
+    // getOrCreate() creates a fresh broadcaster whenever isDead() is true, so
+    // addClient() is never called on a dead broadcaster under normal operation.
     if (!reader_.joinable()) {
         stop_requested_.store(false);
         dead_.store(false);
@@ -94,8 +93,12 @@ void ChannelBroadcaster::run() {
         }
     }
 
-    broadcastDone();
+    // Set dead_ BEFORE broadcastDone so that getOrCreate sees this broadcaster
+    // as dead and creates a fresh one for any concurrent incoming request. If we
+    // set dead_ after, getOrCreate can return this dying broadcaster, addClient
+    // adds a sink that broadcastDone already skipped, and that sink hangs forever.
     dead_.store(true);
+    broadcastDone();
     std::cout << "[hermes] broadcaster for channel " << id_ << " exited\n";
 }
 
