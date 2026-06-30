@@ -477,12 +477,12 @@ void appendJsonIn(const std::string& tbl, const std::string& col, const std::str
     auto parts = splitSemi(raw);
     if (parts.empty()) return;
     if (parts.size() == 1) {
-        extras += " AND EXISTS (SELECT 1 FROM json_each(" + tbl + "." + col + ")"
+        extras += " AND EXISTS (SELECT 1 FROM json_each(NULLIF(" + tbl + "." + col + ",''))"
                   " WHERE json_each.value = ?)";
     } else {
         std::string ph;
         for (size_t i = 0; i < parts.size(); ++i) ph += (i ? ",?" : "?");
-        extras += " AND EXISTS (SELECT 1 FROM json_each(" + tbl + "." + col + ")"
+        extras += " AND EXISTS (SELECT 1 FROM json_each(NULLIF(" + tbl + "." + col + ",''))"
                   " WHERE json_each.value IN (" + ph + "))";
     }
     for (auto& p : parts) vals.push_back(p);
@@ -544,8 +544,8 @@ std::vector<std::string> ContentRepository::getMetadataValues(const std::string&
     };
 
     if (field == "genre") {
-        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.genres) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
-        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.genres) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(NULLIF(s.genres,'')) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.genres,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
     } else if (field == "studio") {
         if (type != "movie") collect("SELECT DISTINCT studio FROM show s WHERE studio != ''"  + show_lib  + " ORDER BY studio", lib);
         if (type != "show")  collect("SELECT DISTINCT studio FROM movie m WHERE studio != ''" + movie_lib + " ORDER BY studio", lib);
@@ -555,19 +555,19 @@ std::vector<std::string> ContentRepository::getMetadataValues(const std::string&
         if (type != "movie") collect("SELECT DISTINCT content_rating FROM show s WHERE content_rating != ''"  + show_lib  + " ORDER BY content_rating", lib);
         if (type != "show")  collect("SELECT DISTINCT content_rating FROM movie m WHERE content_rating != ''" + movie_lib + " ORDER BY content_rating", lib);
     } else if (field == "label") {
-        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.labels) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
-        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.labels) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(NULLIF(s.labels,'')) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.labels,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
     } else if (field == "network") {
         if (type != "movie") collect("SELECT DISTINCT network FROM show s WHERE network != ''" + show_lib + " ORDER BY network", lib);
     } else if (field == "actor") {
-        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.actors) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
-        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.actors) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(NULLIF(s.actors,'')) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.actors,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
     } else if (field == "country") {
-        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.countries) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
-        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.countries) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(NULLIF(s.countries,'')) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.countries,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
     } else if (field == "collection") {
-        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(s.collections) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
-        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(m.collections) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(NULLIF(s.collections,'')) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.collections,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
     }
 
     std::sort(values.begin(), values.end());
@@ -579,9 +579,9 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
     std::vector<std::string> extra_vals;
     if (!p.q.empty()) {
         extras += " AND (s.title LIKE '%'||?||'%' OR s.network LIKE '%'||?||'%' OR s.studio LIKE '%'||?||'%'"
-                  " OR EXISTS (SELECT 1 FROM json_each(s.labels) je WHERE je.value LIKE '%'||?||'%')"
-                  " OR EXISTS (SELECT 1 FROM json_each(s.genres) je WHERE je.value LIKE '%'||?||'%')"
-                  " OR EXISTS (SELECT 1 FROM json_each(s.actors) je WHERE je.value LIKE '%'||?||'%'))";
+                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(s.labels,'')) je WHERE je.value LIKE '%'||?||'%')"
+                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(s.genres,'')) je WHERE je.value LIKE '%'||?||'%')"
+                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(s.actors,'')) je WHERE je.value LIKE '%'||?||'%'))";
         for (int i = 0; i < 6; ++i) extra_vals.push_back(p.q);
     }
     if (!p.genre.empty())        appendJsonIn("s", "genres",      p.genre,      extras, extra_vals);
@@ -667,9 +667,9 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     std::vector<std::string> extra_vals;
     if (!p.q.empty()) {
         extras += " AND (m.title LIKE '%'||?||'%' OR m.studio LIKE '%'||?||'%'"
-                  " OR EXISTS (SELECT 1 FROM json_each(m.labels) je WHERE je.value LIKE '%'||?||'%')"
-                  " OR EXISTS (SELECT 1 FROM json_each(m.genres) je WHERE je.value LIKE '%'||?||'%')"
-                  " OR EXISTS (SELECT 1 FROM json_each(m.actors) je WHERE je.value LIKE '%'||?||'%'))";
+                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(m.labels,'')) je WHERE je.value LIKE '%'||?||'%')"
+                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(m.genres,'')) je WHERE je.value LIKE '%'||?||'%')"
+                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(m.actors,'')) je WHERE je.value LIKE '%'||?||'%'))";
         for (int i = 0; i < 5; ++i) extra_vals.push_back(p.q);
     }
     if (!p.genre.empty())          appendJsonIn("m", "genres",      p.genre,         extras, extra_vals);

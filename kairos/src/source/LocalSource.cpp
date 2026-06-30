@@ -213,8 +213,13 @@ std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
         if (!entry.is_directory() || isHidden(entry.path())) continue;
         auto [title, year] = parseTitle(entry.path().filename().string());
         Show show;
-        show.show_id = entry.path().string(); // external key; SyncManager resolves
-        show.title   = title;
+        show.show_id     = entry.path().string(); // external key; SyncManager resolves
+        show.title       = title;
+        show.genres      = "[]";
+        show.labels      = "[]";
+        show.actors      = "[]";
+        show.countries   = "[]";
+        show.collections = "[]";
         if (year) show.year = year;
         result.push_back(std::move(show));
     }
@@ -242,17 +247,27 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
             if (vfiles.empty()) continue;
             auto [title, year] = parseTitle(p.filename().string());
             Movie movie;
-            movie.movie_id  = p.string();
-            movie.title     = title;
-            movie.file_path = vfiles.front().string();
+            movie.movie_id    = p.string();
+            movie.title       = title;
+            movie.file_path   = vfiles.front().string();
+            movie.genres      = "[]";
+            movie.labels      = "[]";
+            movie.actors      = "[]";
+            movie.countries   = "[]";
+            movie.collections = "[]";
             if (year) movie.year = year;
             result.push_back(std::move(movie));
         } else if (isVideo(p)) {
             auto [title, year] = parseTitle(p.stem().string());
             Movie movie;
-            movie.movie_id  = p.string();
-            movie.title     = title;
-            movie.file_path = p.string();
+            movie.movie_id    = p.string();
+            movie.title       = title;
+            movie.file_path   = p.string();
+            movie.genres      = "[]";
+            movie.labels      = "[]";
+            movie.actors      = "[]";
+            movie.countries   = "[]";
+            movie.collections = "[]";
             if (year) movie.year = year;
             result.push_back(std::move(movie));
         }

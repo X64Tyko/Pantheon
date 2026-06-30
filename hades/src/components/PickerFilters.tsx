@@ -73,9 +73,11 @@ const filterValCache = new Map<string, Promise<string[]>>()
 
 function fetchFilterValues(field: string): Promise<string[]> {
   if (!filterValCache.has(field)) {
-    filterValCache.set(field, api.getFilterValues(field).catch(() => []))
+    const p = api.getFilterValues(field)
+    filterValCache.set(field, p)
+    p.catch(() => filterValCache.delete(field))
   }
-  return filterValCache.get(field)!
+  return filterValCache.get(field)!.catch(() => [])
 }
 
 // Multi-value combobox: values separated by ';', suggestions fetched from API.
