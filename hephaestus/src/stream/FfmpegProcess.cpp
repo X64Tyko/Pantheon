@@ -7,10 +7,12 @@
 
 FfmpegProcess::FfmpegProcess(std::vector<std::string> args,
                               DataCallback on_data,
-                              ExitCallback on_exit)
+                              ExitCallback on_exit,
+                              bool log_stderr)
     : args(std::move(args))
     , on_data(std::move(on_data))
-    , on_exit(std::move(on_exit)) {}
+    , on_exit(std::move(on_exit))
+    , log_stderr(log_stderr) {}
 
 FfmpegProcess::~FfmpegProcess() {
     kill();
@@ -56,15 +58,16 @@ bool FfmpegProcess::start() {
     stdout_fd = out_pipe[0];
     stderr_fd = err_pipe[0];
 
-    // Pump ffmpeg stderr → std::cerr line by line.
-    // LogTee (installed in main) captures every std::cerr line into LogBuffer,
-    // so ffmpeg's output reaches the /api/logs/stream endpoint automatically.
+    // Drain ffmpeg stderr to avoid blocking the child process. When ffmpeg_debug_logs
+    // is enabled (HEPH_FFMPEG_DEBUG=1) lines are emitted to std::cerr, which is
+    // captured by the LogTee in main and forwarded to /api/logs/stream in Hades.
     stderr_thread = std::thread([this] {
         char buf[4096];
         std::string partial;
         while (true) {
             ssize_t n = read(stderr_fd, buf, sizeof(buf));
             if (n <= 0) break;
+            if (!log_stderr) continue; // drain without logging
             for (ssize_t i = 0; i < n; ++i) {
                 if (buf[i] == '\n') {
                     if (!partial.empty())
@@ -75,7 +78,8 @@ bool FfmpegProcess::start() {
                 }
             }
         }
-        if (!partial.empty()) std::cerr << "[ffmpeg] " << partial << "\n";
+        if (log_stderr && !partial.empty())
+            std::cerr << "[ffmpeg] " << partial << "\n";
         // stderr_fd closed by kill()
     });
 

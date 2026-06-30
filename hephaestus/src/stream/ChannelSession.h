@@ -25,13 +25,14 @@ struct ClientSink {
 enum class HwAccel { none, nvidia, amd };
 
 struct StreamOptions {
-    std::string ffprobe_path  = "ffprobe";
-    std::string audio_lang    = "eng";
-    std::string subtitle_lang = "";   // empty = no subtitle mapping
-    bool        loudnorm      = false;
-    int         linger_secs   = 60;
-    HwAccel     hw_accel      = HwAccel::none;
-    std::string vaapi_device  = "/dev/dri/renderD128";
+    std::string ffprobe_path      = "ffprobe";
+    std::string audio_lang        = "eng";
+    std::string subtitle_lang     = "";   // empty = no subtitle mapping
+    bool        loudnorm          = false;
+    int         linger_secs       = 60;
+    HwAccel     hw_accel          = HwAccel::none;
+    std::string vaapi_device      = "/dev/dri/renderD128";
+    bool        ffmpeg_debug_logs = false; // pipe ffmpeg stderr into the log stream
 };
 
 class ChannelSession {

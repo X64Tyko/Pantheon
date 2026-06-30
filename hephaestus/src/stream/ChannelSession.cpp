@@ -228,7 +228,8 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
     ffmpeg = std::make_unique<FfmpegProcess>(
         std::move(args),
         [this](const uint8_t* d, size_t l) { onData(d, l); },
-        [this](int code) { onExit(code); }
+        [this](int code) { onExit(code); },
+        opts.ffmpeg_debug_logs
     );
 
     if (!ffmpeg->start()) {
