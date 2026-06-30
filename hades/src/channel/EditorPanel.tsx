@@ -171,7 +171,7 @@ export const EditorPanel = observer(function EditorPanel({ channelId, store }: {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 12px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
         <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em' }}>
-          {m.name} Block
+          <input type="text" value={d.name != '' ? d.name : m.name + ' Block'} onChange={e => store.setBlockName(e.target.value)} />
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button

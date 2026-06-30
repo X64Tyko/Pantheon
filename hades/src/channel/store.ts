@@ -579,6 +579,12 @@ export class ChannelDetailStore {
     const next = dir > 0 ? this.pxPerHour * 1.25 : this.pxPerHour / 1.25
     this.pxPerHour = Math.max(22, Math.min(96, Math.round(next)))
   }
+  
+  setBlockName(blockName: string) {
+    if (this.editing) {
+        this.draft.name = blockName
+    }
+  }
 
   // Saves the current block editor state to the in-memory draft (no DB writes).
   save(channelId: string) {
