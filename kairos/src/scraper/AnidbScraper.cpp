@@ -472,13 +472,13 @@ std::vector<Show> AnidbScraper::searchShows(const std::string& title, int year) 
     return out;
 }
 
-std::optional<Show> AnidbScraper::fetchShow(const std::string& external_id) {
+std::optional<Show> AnidbScraper::fetchShow(const std::string& external_id, const std::string&) {
     auto xml = fetchAnimeXml(external_id);
     if (xml.empty()) return std::nullopt;
     return showFromXml(xml, external_id);
 }
 
-std::vector<Episode> AnidbScraper::fetchEpisodes(const std::string& external_id) {
+std::vector<Episode> AnidbScraper::fetchEpisodes(const std::string& external_id, const std::string&) {
     auto xml = fetchAnimeXml(external_id);
     if (xml.empty()) return {};
     return episodesFromXml(xml, external_id);
@@ -499,7 +499,7 @@ std::vector<Movie> AnidbScraper::searchMovies(const std::string& title, int year
     return out;
 }
 
-std::optional<Movie> AnidbScraper::fetchMovie(const std::string& external_id) {
+std::optional<Movie> AnidbScraper::fetchMovie(const std::string& external_id, const std::string&) {
     auto xml = fetchAnimeXml(external_id);
     if (xml.empty()) return std::nullopt;
     return movieFromXml(xml, external_id);

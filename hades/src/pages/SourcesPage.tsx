@@ -107,7 +107,11 @@ export default observer(function SourcesPage() {
 
   // ── Add-library form ───────────────────────────────────────────────────────
   const [showAddLib, setShowAddLib] = useState(false)
-  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb' })
+  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '' })
+
+  // ── Library edit state ─────────────────────────────────────────────────────
+  const [editingLib, setEditingLib] = useState<string | null>(null)
+  const [editForm, setEditForm]     = useState({ display_name: '', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '' })
 
   // ── Local folder browser ───────────────────────────────────────────────────
   const [localBrowsePath,    setLocalBrowsePath]   = useState('')
@@ -127,10 +131,22 @@ export default observer(function SourcesPage() {
 
   const addLib = async () => {
     if (!store.selectedId) return
-    await store.addLibrary(store.selectedId, libForm.external_lib_id, libForm.display_name, libForm.library_type, libForm.preferred_scraper)
+    await store.addLibrary(store.selectedId, libForm.external_lib_id, libForm.display_name, libForm.library_type, libForm.preferred_scraper, libForm.preferred_language)
     setShowAddLib(false)
-    setLibForm({ external_lib_id: '', display_name: '', library_type: 'show', preferred_scraper: '' })
+    setLibForm({ external_lib_id: '', display_name: '', library_type: 'show', preferred_scraper: '', preferred_language: '' })
     setLocalBrowsePath(''); setLocalEntries([])
+  }
+
+  const openEditLib = (lib: { library_id: string; display_name: string; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string }) => {
+    setEditingLib(lib.library_id)
+    setEditForm({ display_name: lib.display_name, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '' })
+    setConfirmLib(null)
+  }
+
+  const saveEditLib = async () => {
+    if (!store.selectedId || !editingLib) return
+    await store.updateLibrary(store.selectedId, editingLib, editForm)
+    setEditingLib(null)
   }
 
   // ── Credential editor ──────────────────────────────────────────────────────
@@ -150,7 +166,7 @@ export default observer(function SourcesPage() {
   const [pmTo, setPmTo]           = useState('')
   const [showAddPm, setShowAddPm] = useState(false)
 
-  useEffect(() => { setEditingCreds(false); setCredToken(''); setCredUserId('') }, [store.selectedId])
+  useEffect(() => { setEditingCreds(false); setCredToken(''); setCredUserId(''); setEditingLib(null) }, [store.selectedId])
   useEffect(() => {
     if (!store.selectedId) { setPathMaps([]); setSample(null); return }
     api.getPathMaps(store.selectedId).then(setPathMaps).catch(() => setPathMaps([]))
@@ -570,7 +586,7 @@ export default observer(function SourcesPage() {
                                 <button
                                   type="button"
                                   className="flex-1 text-left min-w-0"
-                                  onClick={() => setLibForm({ external_lib_id: e.external_lib_id, display_name: e.name, library_type: e.type as any, preferred_scraper: '' })}
+                                  onClick={() => setLibForm({ external_lib_id: e.external_lib_id, display_name: e.name, library_type: e.type as any, preferred_scraper: '', preferred_language: '' })}
                                 >
                                   <span className="text-xs text-zinc-200 truncate block">{e.name}</span>
                                 </button>
@@ -593,7 +609,7 @@ export default observer(function SourcesPage() {
                         value={libForm.external_lib_id}
                         onChange={e => {
                           const lib = store.available.find(l => l.external_lib_id === e.target.value)
-                          setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any, preferred_scraper: '' })
+                          setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any, preferred_scraper: '', preferred_language: '' })
                         }}
                         className="input w-full"
                       >
@@ -647,6 +663,23 @@ export default observer(function SourcesPage() {
                     <option value="tvdb">TVDB</option>
                     <option value="anidb">AniDB</option>
                   </select>
+                  <select
+                    value={libForm.preferred_language}
+                    onChange={e => setLibForm({ ...libForm, preferred_language: e.target.value })}
+                    className="input w-full"
+                  >
+                    <option value="">Language — scraper default</option>
+                    <option value="en">English</option>
+                    <option value="ja">Japanese</option>
+                    <option value="ko">Korean</option>
+                    <option value="zh">Chinese</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="es">Spanish</option>
+                    <option value="it">Italian</option>
+                    <option value="pt">Portuguese</option>
+                    <option value="ru">Russian</option>
+                  </select>
                   <div className="flex gap-2">
                     <button
                       onClick={addLib}
@@ -663,44 +696,103 @@ export default observer(function SourcesPage() {
                 <p className="text-zinc-600 text-sm">No libraries added yet.</p>
               )}
               {store.libraries.map(lib => (
-                <div key={lib.library_id}
-                     className="flex items-center justify-between card px-3 py-2.5">
-                  <div className="flex-1 min-w-0 mr-3">
-                    <div className="text-sm text-zinc-200">{lib.display_name}</div>
-                    <div className="text-xs text-zinc-600 mt-0.5">
-                      {lib.library_type} · id: {lib.external_lib_id}
+                <div key={lib.library_id} className="card px-3 py-2.5 space-y-2">
+                  {/* Header row — always visible */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0 mr-3">
+                      <div className="text-sm text-zinc-200">{lib.display_name}</div>
+                      <div className="text-xs text-zinc-600 mt-0.5 flex items-center gap-1.5">
+                        <span>{lib.library_type}</span>
+                        <span>·</span>
+                        <span>id: {lib.external_lib_id}</span>
+                        {lib.preferred_scraper && (
+                          <><span>·</span><span className="text-zinc-500">{lib.preferred_scraper}</span></>
+                        )}
+                        {lib.preferred_language && (
+                          <><span>·</span><span className="text-zinc-500">{lib.preferred_language}</span></>
+                        )}
+                      </div>
                     </div>
-                    <select
-                      value={lib.preferred_scraper ?? ''}
-                      onChange={e => store.updatePreferredScraper(store.selectedId!, lib.library_id, e.target.value as any)}
-                      className="input text-[10px] mt-1.5 py-0.5 h-6 w-full"
-                      title="Preferred scraper for this library"
-                    >
-                      <option value="">Auto (all enabled scrapers)</option>
-                      <option value="tmdb">TMDB</option>
-                      <option value="tvdb">TVDB</option>
-                      <option value="anidb">AniDB</option>
-                    </select>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {editingLib !== lib.library_id && confirmLib !== lib.library_id && (
+                        <button
+                          onClick={() => openEditLib(lib)}
+                          className="px-2 py-0.5 rounded text-xs bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+                        >Edit</button>
+                      )}
+                      {confirmLib === lib.library_id ? (
+                        <span className="flex items-center gap-1.5 text-xs">
+                          <span className="text-red-400 shrink-0">Sure?</span>
+                          <button
+                            onClick={() => { store.removeLibrary(store.selectedId!, lib.library_id); setConfirmLib(null) }}
+                            className="px-2 py-0.5 rounded bg-red-900/60 border border-red-700/50 text-red-300 hover:bg-red-800/60 transition-colors"
+                          >Yes</button>
+                          <button
+                            onClick={() => setConfirmLib(null)}
+                            className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+                          >No</button>
+                        </span>
+                      ) : editingLib !== lib.library_id ? (
+                        <button
+                          onClick={() => { setConfirmLib(lib.library_id); setEditingLib(null) }}
+                          className="btn-danger"
+                        >Remove</button>
+                      ) : null}
+                    </div>
                   </div>
-                  {confirmLib === lib.library_id ? (
-                    <span className="flex items-center gap-1.5 text-xs">
-                      <span className="text-red-400 shrink-0">Sure?</span>
-                      <button
-                        onClick={() => { store.removeLibrary(store.selectedId!, lib.library_id); setConfirmLib(null) }}
-                        className="px-2 py-0.5 rounded bg-red-900/60 border border-red-700/50 text-red-300 hover:bg-red-800/60 transition-colors"
-                      >Yes</button>
-                      <button
-                        onClick={() => setConfirmLib(null)}
-                        className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
-                      >No</button>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmLib(lib.library_id)}
-                      className="btn-danger"
-                    >
-                      Remove
-                    </button>
+
+                  {/* Inline edit form — expands when this library is being edited */}
+                  {editingLib === lib.library_id && (
+                    <div className="space-y-1.5 pt-1 border-t border-zinc-700/40">
+                      <input
+                        value={editForm.display_name}
+                        onChange={e => setEditForm({ ...editForm, display_name: e.target.value })}
+                        placeholder="Display name"
+                        className="input w-full text-sm"
+                      />
+                      <select
+                        value={editForm.preferred_scraper}
+                        onChange={e => setEditForm({ ...editForm, preferred_scraper: e.target.value as any })}
+                        className="input w-full text-sm"
+                      >
+                        <option value="">Scraper — auto (all enabled)</option>
+                        <option value="tmdb">TMDB</option>
+                        <option value="tvdb">TVDB</option>
+                        <option value="anidb">AniDB</option>
+                      </select>
+                      <select
+                        value={editForm.preferred_language}
+                        onChange={e => setEditForm({ ...editForm, preferred_language: e.target.value })}
+                        className="input w-full text-sm"
+                      >
+                        <option value="">Language — scraper default</option>
+                        <option value="en">English</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="zh">Chinese</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="es">Spanish</option>
+                        <option value="it">Italian</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="ru">Russian</option>
+                      </select>
+                      <div className="flex gap-2 pt-0.5">
+                        <button
+                          onClick={saveEditLib}
+                          disabled={!editForm.display_name}
+                          className="btn-primary text-xs disabled:opacity-40"
+                        >Save</button>
+                        <button
+                          onClick={() => setEditingLib(null)}
+                          className="btn-ghost text-xs"
+                        >Cancel</button>
+                        <button
+                          onClick={() => { setEditingLib(null); setConfirmLib(lib.library_id) }}
+                          className="btn-danger text-xs ml-auto"
+                        >Remove</button>
+                      </div>
+                    </div>
                   )}
                 </div>
               ))}

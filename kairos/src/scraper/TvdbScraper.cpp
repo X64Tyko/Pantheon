@@ -83,14 +83,25 @@ static std::string genreArray(const json& genres) {
     return arr.dump();
 }
 
-// Find an English (or fallback) translation name.
-static std::string translatedName(const json& translations, const std::string& fallback) {
-    if (translations.contains("nameTranslations") && translations["nameTranslations"].is_array()) {
-        for (const auto& t : translations["nameTranslations"]) {
-            if (safeStr(t, "language") == "eng") return safeStr(t, "name", fallback);
-        }
-    }
-    return fallback;
+// ISO 639-1 (2-letter) → ISO 639-2B (3-letter) for the TVDB translations API.
+static std::string toLang3(const std::string& lang) {
+    if (lang == "en") return "eng";
+    if (lang == "ja") return "jpn";
+    if (lang == "ko") return "kor";
+    if (lang == "zh") return "zho";
+    if (lang == "fr") return "fra";
+    if (lang == "de") return "deu";
+    if (lang == "es") return "spa";
+    if (lang == "it") return "ita";
+    if (lang == "pt") return "por";
+    if (lang == "ru") return "rus";
+    if (lang == "ar") return "ara";
+    if (lang == "nl") return "nld";
+    if (lang == "pl") return "pol";
+    if (lang == "sv") return "swe";
+    if (lang == "tr") return "tur";
+    if (lang.size() == 3) return lang;  // already 3-letter, pass through
+    return "eng";
 }
 
 Show TvdbScraper::showFromJson(const json& j) {
@@ -218,7 +229,7 @@ std::vector<Show> TvdbScraper::searchShows(const std::string& title, int year) {
     }
 }
 
-std::optional<Show> TvdbScraper::fetchShow(const std::string& external_id) {
+std::optional<Show> TvdbScraper::fetchShow(const std::string& external_id, const std::string& lang) {
     std::string path = "/v4/series/" + external_id
         + "/extended?meta=episodes&short=true";
 
@@ -227,22 +238,44 @@ std::optional<Show> TvdbScraper::fetchShow(const std::string& external_id) {
         std::cerr << "[tvdb] fetchShow " << external_id << " failed: " << (res ? res->status : 0) << "\n";
         return std::nullopt;
     }
+    std::optional<Show> show;
     try {
         auto j = json::parse(res->body);
         if (j.value("status", "") != "success") return std::nullopt;
-        return showFromJson(j["data"]);
+        show = showFromJson(j["data"]);
     } catch (const std::exception& e) {
         std::cerr << "[tvdb] fetchShow parse: " << e.what() << "\n";
         return std::nullopt;
     }
+
+    // Override name and overview with the requested language's translation.
+    const std::string lang3 = toLang3(lang.empty() ? language_ : lang);
+    if (lang3 != "eng" && show) {
+        auto tr = get("/v4/series/" + external_id + "/translations/" + lang3);
+        if (tr && tr->status == 200) {
+            try {
+                auto tj = json::parse(tr->body);
+                if (tj.value("status", "") == "success" && tj.contains("data")) {
+                    const auto& d = tj["data"];
+                    std::string name = safeStr(d, "name");
+                    std::string overview = safeStr(d, "overview");
+                    if (!name.empty())     show->title    = name;
+                    if (!overview.empty()) show->overview = overview;
+                }
+            } catch (...) {}
+        }
+    }
+    return show;
 }
 
-std::vector<Episode> TvdbScraper::fetchEpisodes(const std::string& external_id) {
+std::vector<Episode> TvdbScraper::fetchEpisodes(const std::string& external_id, const std::string& lang) {
+    const std::string lang3 = toLang3(lang.empty() ? language_ : lang);
     std::vector<Episode> out;
     int page = 0;
     while (true) {
         std::string path = "/v4/series/" + external_id
-            + "/episodes/official?page=" + std::to_string(page);
+            + "/episodes/official?page=" + std::to_string(page)
+            + "&lang=" + lang3;
         auto res = get(path);
         if (!res || res->status != 200) break;
 
@@ -289,19 +322,38 @@ std::vector<Movie> TvdbScraper::searchMovies(const std::string& title, int year)
     }
 }
 
-std::optional<Movie> TvdbScraper::fetchMovie(const std::string& external_id) {
+std::optional<Movie> TvdbScraper::fetchMovie(const std::string& external_id, const std::string& lang) {
     std::string path = "/v4/movies/" + external_id + "/extended";
     auto res = get(path);
     if (!res || res->status != 200) {
         std::cerr << "[tvdb] fetchMovie " << external_id << " failed: " << (res ? res->status : 0) << "\n";
         return std::nullopt;
     }
+    std::optional<Movie> movie;
     try {
         auto j = json::parse(res->body);
         if (j.value("status", "") != "success") return std::nullopt;
-        return movieFromJson(j["data"]);
+        movie = movieFromJson(j["data"]);
     } catch (const std::exception& e) {
         std::cerr << "[tvdb] fetchMovie parse: " << e.what() << "\n";
         return std::nullopt;
     }
+
+    const std::string lang3 = toLang3(lang.empty() ? language_ : lang);
+    if (lang3 != "eng" && movie) {
+        auto tr = get("/v4/movies/" + external_id + "/translations/" + lang3);
+        if (tr && tr->status == 200) {
+            try {
+                auto tj = json::parse(tr->body);
+                if (tj.value("status", "") == "success" && tj.contains("data")) {
+                    const auto& d = tj["data"];
+                    std::string name     = safeStr(d, "name");
+                    std::string overview = safeStr(d, "overview");
+                    if (!name.empty())     movie->title    = name;
+                    if (!overview.empty()) movie->overview = overview;
+                }
+            } catch (...) {}
+        }
+    }
+    return movie;
 }

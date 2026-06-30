@@ -139,9 +139,13 @@ export default observer(function ReviewPage() {
   useEffect(() => { fetchQueue() }, [fetchQueue])
 
   const handleAccept = async (candidate_id: string) => {
+    const kairosId = selectedQueue?.kairos_id
     await api.acceptCandidate(candidate_id)
-    fetchQueue()
-    setSelectedQueue(null)
+    const updated = await api.getReviewQueue({ status: queueFilter, limit: 48 })
+    setQueueItems(updated.items)
+    setQueueTotal(updated.total)
+    const refreshed = kairosId ? updated.items.find(i => i.kairos_id === kairosId) : null
+    setSelectedQueue(refreshed ?? null)
   }
 
   const handleReject = async (candidate_id: string) => {
@@ -263,6 +267,7 @@ export default observer(function ReviewPage() {
       {tab === 'queue' && (
         selectedQueue
           ? <CandidatePanel
+              key={selectedQueue.kairos_id}
               item={selectedQueue}
               onAccept={handleAccept}
               onReject={handleReject}

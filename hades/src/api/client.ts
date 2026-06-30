@@ -74,9 +74,9 @@ export const api = {
   getAvailableLibs: (sourceId: string)                  => request<LibraryInfo[]>('GET',    `/sources/${sourceId}/libraries/available`),
   browseLocalDir:   (sourceId: string, path: string)    => request<LibraryInfo[]>('GET',    `/sources/${sourceId}/fs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   getLibraries:     (sourceId: string)                  => request<Library[]>    ('GET',    `/sources/${sourceId}/libraries`),
-  addLibrary:       (sourceId: string, b: Pick<Library, 'external_lib_id'|'display_name'|'library_type'|'preferred_scraper'>) =>
+  addLibrary:       (sourceId: string, b: Pick<Library, 'external_lib_id'|'display_name'|'library_type'|'preferred_scraper'|'preferred_language'>) =>
                                                         request<{library_id: string}>('POST', `/sources/${sourceId}/libraries`, b),
-  patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'preferred_scraper'>>) =>
+  patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'preferred_scraper'|'preferred_language'>>) =>
                                                         request<void>('PATCH', `/sources/${sourceId}/libraries/${lid}`, b),
   removeLibrary:    (sourceId: string, lid: string)     => request<void>         ('DELETE', `/sources/${sourceId}/libraries/${lid}`),
   triggerSync:      (sourceId: string)                  => request<{status: string}>('POST', `/sources/${sourceId}/sync`),

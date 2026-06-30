@@ -29,10 +29,13 @@ public:
                               const std::string& external_lib_id,
                               const std::string& display_name,
                               const std::string& library_type,
-                              const std::string& preferred_scraper = "");
+                              const std::string& preferred_scraper = "",
+                              const std::string& preferred_language = "");
 
-    void updateLibraryPreferredScraper(const std::string& library_id,
-                                        const std::string& preferred_scraper);
+    void updateLibrary(const std::string& library_id,
+                       const std::string& display_name,
+                       const std::string& preferred_scraper,
+                       const std::string& preferred_language);
 
     void removeLibrary(const std::string& library_id);
 

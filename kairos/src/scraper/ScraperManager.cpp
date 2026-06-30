@@ -116,8 +116,10 @@ std::string extractShowFolder(const fs::path& p) {
     return is_season ? parent.parent_path().filename().string() : pname;
 }
 
-// Minimum folder/title similarity to trust a Plex-supplied external ID.
-constexpr double kFolderTitleThreshold = 0.80;
+// Minimum folder/title similarity to trust a source-supplied external ID.
+// Near-identical names only: a mismatch here means the source metadata is
+// likely wrong and we should re-scrape using the folder name instead.
+constexpr double kFolderTitleThreshold = 0.95;
 
 } // namespace
 
@@ -314,13 +316,11 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
                                 int year, const std::string& tmdb_id,
                                 const std::string& tvdb_id,
                                 const std::string& preferred_scraper) {
-    // Items with existing external IDs (set by Plex/Jellyfin) are trusted for the
-    // metadata match, but we still validate that the episode files actually resolve
-    // to a real folder on disk after path mapping.
-    if (!tmdb_id.empty() || !tvdb_id.empty()) {
-        bool has_paths  = false;
-        bool path_ok    = false;
-        bool name_ok    = true;
+    // Resolve the effective search title. When the on-disk folder name disagrees
+    // with the source-provided title, the folder is more trustworthy.
+    std::string search_title = title;
+    bool has_paths = false, path_ok = false;
+    {
         SQLite::Statement ep(db_.get(),
             "SELECT file_path FROM episode WHERE show_id = ? AND file_path != '' LIMIT 5");
         ep.bind(1, kairos_id);
@@ -329,36 +329,39 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
             std::string mapped = conf_.applyPathMap(ep.getColumn(0).getString());
             if (!folderExists(mapped)) continue;
             path_ok = true;
-            std::string folder = extractShowFolder(fs::path(mapped));
-            double sim = titleSimilarity(title, stripFolderYear(folder));
-            if (sim < kFolderTitleThreshold) {
-                name_ok = false;
-                std::cout << "[scraper]   \"" << title << "\" → uncertain"
+            std::string folder  = extractShowFolder(fs::path(mapped));
+            std::string stripped = stripFolderYear(folder);
+            double sim = titleSimilarity(title, stripped);
+            if (sim < kFolderTitleThreshold && !stripped.empty()) {
+                search_title = stripped;
+                std::cout << "[scraper]   \"" << title << "\" folder mismatch"
                           << " (folder: \"" << folder << "\", sim="
-                          << std::fixed << std::setprecision(2) << sim << ")\n";
+                          << std::fixed << std::setprecision(2) << sim
+                          << ") — searching as \"" << search_title << "\"\n";
             }
         }
-        auto storePlexShowCandidate = [&]() {
+    }
+
+    // Items with existing external IDs are trusted only when the folder name
+    // agrees with the source title. A mismatch falls through to a fresh search.
+    if (!tmdb_id.empty() || !tvdb_id.empty()) {
+        if (has_paths && !path_ok) {
+            std::cout << "[scraper]   \"" << title << "\" → uncertain (path missing)\n";
             std::string src = !tmdb_id.empty() ? "tmdb" : "tvdb";
             std::string eid = !tmdb_id.empty() ? tmdb_id : tvdb_id;
             storeCandidate("show", kairos_id, src, eid, title, year, 1.0, "", "");
-        };
-        if (has_paths && !path_ok) {
-            std::cout << "[scraper]   \"" << title << "\" → uncertain (path missing)\n";
-            storePlexShowCandidate();
             setMatchStatus("show", kairos_id, "uncertain", 1.0);
-        } else if (!name_ok) {
-            storePlexShowCandidate();
-            setMatchStatus("show", kairos_id, "uncertain", 1.0);
-        } else {
+            return;
+        }
+        if (search_title == title) {
             std::cout << "[scraper]   \"" << title << "\" → matched\n";
             setMatchStatus("show", kairos_id, "matched", 1.0);
+            return;
         }
-        return;
+        // Folder mismatch: ignore the provided ID and search with the folder name.
     }
 
-    // No external IDs → search scrapers
-    if (title.empty()) {
+    if (search_title.empty()) {
         std::cout << "[scraper]   (no title, id=" << kairos_id << ") → unmatched\n";
         setMatchStatus("show", kairos_id, "unmatched", 0.0);
         return;
@@ -369,7 +372,7 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
 
     auto collect = [&](const std::string& source, std::vector<Show> results) {
         for (auto& r : results) {
-            double sc = computeScore(title, year, r.title,
+            double sc = computeScore(search_title, year, r.title,
                                      r.year.has_value() ? r.year.value() : 0);
             std::string ext;
             if (source == "tmdb")       ext = r.tmdb_id;
@@ -390,28 +393,28 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
             DLOG << "[scraper]     " << src << " candidate: \"" << r.title << "\""
                  << " (" << (r.year.has_value() ? r.year.value() : 0) << ")"
                  << " score=" << std::fixed << std::setprecision(3)
-                 << computeScore(title, year, r.title, r.year.has_value() ? r.year.value() : 0)
+                 << computeScore(search_title, year, r.title, r.year.has_value() ? r.year.value() : 0)
                  << '\n';
         collect(src, std::move(results));
     };
     if (tmdb_ && wantScraper("tmdb")) {
-        DLOG << "[scraper]   querying tmdb for show \"" << title << "\" year=" << year << '\n';
+        DLOG << "[scraper]   querying tmdb for show \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
-        auto results = tmdb_->searchShows(title, year);
+        auto results = tmdb_->searchShows(search_title, year);
         DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearch("tmdb", std::move(results));
     }
     if (tvdb_ && wantScraper("tvdb")) {
-        DLOG << "[scraper]   querying tvdb for show \"" << title << "\" year=" << year << '\n';
+        DLOG << "[scraper]   querying tvdb for show \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
-        auto results = tvdb_->searchShows(title, year);
+        auto results = tvdb_->searchShows(search_title, year);
         DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearch("tvdb", std::move(results));
     }
     if (anidb_ && wantScraper("anidb")) {
-        DLOG << "[scraper]   querying anidb for show \"" << title << "\" year=" << year << '\n';
+        DLOG << "[scraper]   querying anidb for show \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
-        auto results = anidb_->searchShows(title, year);
+        auto results = anidb_->searchShows(search_title, year);
         DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearch("anidb", std::move(results));
     }
@@ -424,12 +427,12 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
     }
 
     if (candidates.empty()) {
-        std::cout << "[scraper]   \"" << title << "\" → unmatched\n";
+        std::cout << "[scraper]   \"" << search_title << "\" → unmatched\n";
         setMatchStatus("show", kairos_id, "unmatched", 0.0);
     } else if (best >= threshold()) {
         const auto& best_c = *std::max_element(candidates.begin(), candidates.end(),
             [](const Cand& a, const Cand& b){ return a.score < b.score; });
-        std::cout << "[scraper]   \"" << title << "\" → matched"
+        std::cout << "[scraper]   \"" << search_title << "\" → matched"
                   << " (" << best_c.source << ", "
                   << std::fixed << std::setprecision(2) << best << ")\n";
         std::string cid = candidateKey("show", kairos_id, best_c.source, best_c.ext_id);
@@ -438,7 +441,7 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
         upd.bind(1, cid); upd.exec();
         setMatchStatus("show", kairos_id, "matched", best);
     } else {
-        std::cout << "[scraper]   \"" << title << "\" → uncertain"
+        std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
                   << " (" << std::fixed << std::setprecision(2) << best << ")\n";
         setMatchStatus("show", kairos_id, "uncertain", best);
     }
@@ -448,32 +451,42 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
                                  int year, const std::string& tmdb_id,
                                  const std::string& file_path,
                                  const std::string& preferred_scraper) {
-    if (!tmdb_id.empty()) {
-        if (!file_path.empty()) {
-            std::string mapped = conf_.applyPathMap(file_path);
-            if (!folderExists(mapped)) {
+    // Resolve the effective search title. When the on-disk folder name disagrees
+    // with the source-provided title, the folder is more trustworthy.
+    std::string search_title = title;
+    if (!file_path.empty()) {
+        std::string mapped = conf_.applyPathMap(file_path);
+        if (!folderExists(mapped)) {
+            if (!tmdb_id.empty()) {
                 std::cout << "[scraper]   \"" << title << "\" → uncertain (path missing)\n";
                 storeCandidate("movie", kairos_id, "tmdb", tmdb_id, title, year, 1.0, "", "");
                 setMatchStatus("movie", kairos_id, "uncertain", 1.0);
                 return;
             }
+        } else {
             std::string folder = stripFolderYear(fs::path(mapped).parent_path().filename().string());
-            double sim = titleSimilarity(title, folder);
-            if (sim < kFolderTitleThreshold) {
-                std::cout << "[scraper]   \"" << title << "\" → uncertain"
-                          << " (folder: \"" << folder << "\", sim="
-                          << std::fixed << std::setprecision(2) << sim << ")\n";
-                storeCandidate("movie", kairos_id, "tmdb", tmdb_id, title, year, 1.0, "", "");
-                setMatchStatus("movie", kairos_id, "uncertain", 1.0);
-                return;
+            if (!folder.empty()) {
+                double sim = titleSimilarity(title, folder);
+                if (sim < kFolderTitleThreshold) {
+                    search_title = folder;
+                    std::cout << "[scraper]   \"" << title << "\" folder mismatch"
+                              << " (folder: \"" << folder << "\", sim="
+                              << std::fixed << std::setprecision(2) << sim
+                              << ") — searching as \"" << search_title << "\"\n";
+                }
             }
         }
+    }
+
+    if (!tmdb_id.empty() && search_title == title) {
+        // Folder matched (or no file path to check) — trust the provided ID.
         std::cout << "[scraper]   \"" << title << "\" → matched\n";
         setMatchStatus("movie", kairos_id, "matched", 1.0);
         return;
     }
 
-    if (title.empty()) {
+    // Search path: no trusted ID, or folder mismatch disqualified the provided ID.
+    if (search_title.empty()) {
         std::cout << "[scraper]   (no title, id=" << kairos_id << ") → unmatched\n";
         setMatchStatus("movie", kairos_id, "unmatched", 0.0);
         return;
@@ -484,7 +497,7 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
 
     auto collect = [&](const std::string& source, std::vector<Movie> results) {
         for (auto& r : results) {
-            double sc = computeScore(title, year, r.title,
+            double sc = computeScore(search_title, year, r.title,
                                      r.year.has_value() ? r.year.value() : 0);
             std::string ext;
             if (source == "tmdb")       ext = r.tmdb_id;
@@ -505,28 +518,28 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
             DLOG << "[scraper]     " << src << " candidate: \"" << r.title << "\""
                  << " (" << (r.year.has_value() ? r.year.value() : 0) << ")"
                  << " score=" << std::fixed << std::setprecision(3)
-                 << computeScore(title, year, r.title, r.year.has_value() ? r.year.value() : 0)
+                 << computeScore(search_title, year, r.title, r.year.has_value() ? r.year.value() : 0)
                  << '\n';
         collect(src, std::move(results));
     };
     if (tmdb_ && wantScraper("tmdb")) {
-        DLOG << "[scraper]   querying tmdb for movie \"" << title << "\" year=" << year << '\n';
+        DLOG << "[scraper]   querying tmdb for movie \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
-        auto results = tmdb_->searchMovies(title, year);
+        auto results = tmdb_->searchMovies(search_title, year);
         DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearchM("tmdb", std::move(results));
     }
     if (tvdb_ && wantScraper("tvdb")) {
-        DLOG << "[scraper]   querying tvdb for movie \"" << title << "\" year=" << year << '\n';
+        DLOG << "[scraper]   querying tvdb for movie \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
-        auto results = tvdb_->searchMovies(title, year);
+        auto results = tvdb_->searchMovies(search_title, year);
         DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearchM("tvdb", std::move(results));
     }
     if (anidb_ && wantScraper("anidb")) {
-        DLOG << "[scraper]   querying anidb for movie \"" << title << "\" year=" << year << '\n';
+        DLOG << "[scraper]   querying anidb for movie \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
-        auto results = anidb_->searchMovies(title, year);
+        auto results = anidb_->searchMovies(search_title, year);
         DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearchM("anidb", std::move(results));
     }
@@ -539,12 +552,12 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
     }
 
     if (candidates.empty()) {
-        std::cout << "[scraper]   \"" << title << "\" → unmatched\n";
+        std::cout << "[scraper]   \"" << search_title << "\" → unmatched\n";
         setMatchStatus("movie", kairos_id, "unmatched", 0.0);
     } else if (best >= threshold()) {
         const auto& best_c = *std::max_element(candidates.begin(), candidates.end(),
             [](const Cand& a, const Cand& b){ return a.score < b.score; });
-        std::cout << "[scraper]   \"" << title << "\" → matched"
+        std::cout << "[scraper]   \"" << search_title << "\" → matched"
                   << " (" << best_c.source << ", "
                   << std::fixed << std::setprecision(2) << best << ")\n";
         std::string cid = candidateKey("movie", kairos_id, best_c.source, best_c.ext_id);
@@ -553,7 +566,7 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
         upd.bind(1, cid); upd.exec();
         setMatchStatus("movie", kairos_id, "matched", best);
     } else {
-        std::cout << "[scraper]   \"" << title << "\" → uncertain"
+        std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
                   << " (" << std::fixed << std::setprecision(2) << best << ")\n";
         setMatchStatus("movie", kairos_id, "uncertain", best);
     }
@@ -627,10 +640,34 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
     setMatchStatus(item_type, kairos_id, "matched", score);
     txn.commit();
 
+    // Resolve effective metadata language: item-level override → library default → "".
+    // Empty string tells each scraper to use its own configured default.
+    std::string language;
+    {
+        const std::string lang_sql = item_type == "show" ? R"(
+            SELECT COALESCE(NULLIF(s.preferred_language,''),
+                            NULLIF(ml.preferred_language,''), '')
+            FROM show s
+            LEFT JOIN source_mapping sm ON sm.kairos_id = s.show_id AND sm.item_type = 'show'
+            LEFT JOIN media_library ml ON ml.library_id = sm.library_id
+            WHERE s.show_id = ? LIMIT 1
+        )" : R"(
+            SELECT COALESCE(NULLIF(m.preferred_language,''),
+                            NULLIF(ml.preferred_language,''), '')
+            FROM movie m
+            LEFT JOIN source_mapping sm ON sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
+            LEFT JOIN media_library ml ON ml.library_id = sm.library_id
+            WHERE m.movie_id = ? LIMIT 1
+        )";
+        SQLite::Statement lq(db_.get(), lang_sql);
+        lq.bind(1, kairos_id);
+        if (lq.executeStep()) language = lq.getColumn(0).getString();
+    }
+
     // Best-effort: fetch and apply full metadata from the scraper
     if (source == "anidb" && anidb_) {
         if (item_type == "show") {
-            auto show = anidb_->fetchShow(external_id);
+            auto show = anidb_->fetchShow(external_id, language);
             if (show) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE show SET
@@ -646,7 +683,7 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 app.exec();
             }
         } else if (item_type == "movie") {
-            auto movie = anidb_->fetchMovie(external_id);
+            auto movie = anidb_->fetchMovie(external_id, language);
             if (movie) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE movie SET
@@ -662,7 +699,7 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
     }
     if (source == "tmdb" && tmdb_) {
         if (item_type == "show") {
-            auto show = tmdb_->fetchShow(external_id);
+            auto show = tmdb_->fetchShow(external_id, language);
             if (show) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE show SET
@@ -684,7 +721,7 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 app.exec();
             }
         } else if (item_type == "movie") {
-            auto movie = tmdb_->fetchMovie(external_id);
+            auto movie = tmdb_->fetchMovie(external_id, language);
             if (movie) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE movie SET
@@ -700,6 +737,65 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 app.bind(3, movie->overview); app.bind(4, movie->genres);
                 app.bind(5, movie->studio);  app.bind(6, movie->director);
                 app.bind(7, kairos_id);
+                app.exec();
+            }
+        }
+    }
+    if (source == "tvdb" && tvdb_) {
+        if (item_type == "show") {
+            auto show = tvdb_->fetchShow(external_id, language);
+            if (show) {
+                SQLite::Statement app(db_.get(), R"(
+                    UPDATE show SET
+                        tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE ? END,
+                        tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE COALESCE(NULLIF(?,  ''), tmdb_id)  END,
+                        imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE COALESCE(NULLIF(?,  ''), imdb_id)  END,
+                        overview                = CASE WHEN locked THEN overview                ELSE ? END,
+                        status                  = CASE WHEN locked THEN status                  ELSE ? END,
+                        genres                  = CASE WHEN locked THEN genres                  ELSE ? END,
+                        network                 = CASE WHEN locked THEN network                 ELSE ? END,
+                        originally_available_at = CASE WHEN locked THEN originally_available_at ELSE ? END,
+                        year                    = CASE WHEN locked THEN year                    ELSE ? END,
+                        thumb                   = CASE WHEN locked THEN thumb                   ELSE ? END
+                    WHERE show_id = ?
+                )");
+                app.bind(1,  show->tvdb_id);
+                app.bind(2,  show->tmdb_id);
+                app.bind(3,  show->imdb_id);
+                app.bind(4,  show->overview);
+                app.bind(5,  show->status);
+                app.bind(6,  show->genres);
+                app.bind(7,  show->network);
+                app.bind(8,  show->originally_available_at);
+                if (show->year.has_value()) app.bind(9, show->year.value());
+                else                        app.bind(9);
+                app.bind(10, show->thumb);
+                app.bind(11, kairos_id);
+                app.exec();
+            }
+        } else if (item_type == "movie") {
+            auto movie = tvdb_->fetchMovie(external_id, language);
+            if (movie) {
+                SQLite::Statement app(db_.get(), R"(
+                    UPDATE movie SET
+                        tmdb_id  = CASE WHEN locked THEN tmdb_id  ELSE COALESCE(NULLIF(?,  ''), tmdb_id)  END,
+                        imdb_id  = CASE WHEN locked THEN imdb_id  ELSE COALESCE(NULLIF(?,  ''), imdb_id)  END,
+                        overview = CASE WHEN locked THEN overview ELSE ? END,
+                        genres   = CASE WHEN locked THEN genres   ELSE ? END,
+                        studio   = CASE WHEN locked THEN studio   ELSE ? END,
+                        year     = CASE WHEN locked THEN year     ELSE ? END,
+                        thumb    = CASE WHEN locked THEN thumb    ELSE ? END
+                    WHERE movie_id = ?
+                )");
+                app.bind(1, movie->tmdb_id);
+                app.bind(2, movie->imdb_id);
+                app.bind(3, movie->overview);
+                app.bind(4, movie->genres);
+                app.bind(5, movie->studio);
+                if (movie->year.has_value()) app.bind(6, movie->year.value());
+                else                         app.bind(6);
+                app.bind(7, movie->thumb);
+                app.bind(8, kairos_id);
                 app.exec();
             }
         }

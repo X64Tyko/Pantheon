@@ -209,10 +209,10 @@ std::vector<Show> TmdbScraper::searchShows(const std::string& title, int year) {
     }
 }
 
-std::optional<Show> TmdbScraper::fetchShow(const std::string& external_id) {
+std::optional<Show> TmdbScraper::fetchShow(const std::string& external_id, const std::string& lang) {
     std::string path = "/3/tv/" + external_id
         + "?api_key=" + api_key_
-        + "&language=" + language_
+        + "&language=" + (lang.empty() ? language_ : lang)
         + "&append_to_response=external_ids,content_ratings";
 
     auto res = get(path);
@@ -230,10 +230,11 @@ std::optional<Show> TmdbScraper::fetchShow(const std::string& external_id) {
     }
 }
 
-std::vector<Episode> TmdbScraper::fetchEpisodes(const std::string& external_id) {
+std::vector<Episode> TmdbScraper::fetchEpisodes(const std::string& external_id, const std::string& lang) {
+    const std::string& eff_lang = lang.empty() ? language_ : lang;
     // First fetch show to get season list
     std::string show_path = "/3/tv/" + external_id
-        + "?api_key=" + api_key_ + "&language=" + language_;
+        + "?api_key=" + api_key_ + "&language=" + eff_lang;
     auto show_res = get(show_path);
     if (!show_res || show_res->status != 200) return {};
 
@@ -249,7 +250,7 @@ std::vector<Episode> TmdbScraper::fetchEpisodes(const std::string& external_id) 
     std::vector<Episode> out;
     for (int season : season_nums) {
         std::string path = "/3/tv/" + external_id + "/season/" + std::to_string(season)
-            + "?api_key=" + api_key_ + "&language=" + language_;
+            + "?api_key=" + api_key_ + "&language=" + eff_lang;
         auto res = get(path);
         if (!res || res->status != 200) continue;
 
@@ -293,10 +294,10 @@ std::vector<Movie> TmdbScraper::searchMovies(const std::string& title, int year)
     }
 }
 
-std::optional<Movie> TmdbScraper::fetchMovie(const std::string& external_id) {
+std::optional<Movie> TmdbScraper::fetchMovie(const std::string& external_id, const std::string& lang) {
     std::string path = "/3/movie/" + external_id
         + "?api_key=" + api_key_
-        + "&language=" + language_
+        + "&language=" + (lang.empty() ? language_ : lang)
         + "&append_to_response=external_ids,release_dates,credits";
 
     auto res = get(path);

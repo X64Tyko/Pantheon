@@ -44,13 +44,14 @@ export interface PagedResult<T> {
 }
 
 export interface Library {
-  library_id:        string
-  source_id:         string
-  external_lib_id:   string
-  display_name:      string
-  library_type:      'show' | 'movie' | 'mixed' | 'music' | 'photo'
-  preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'
-  enabled:           boolean
+  library_id:          string
+  source_id:           string
+  external_lib_id:     string
+  display_name:        string
+  library_type:        'show' | 'movie' | 'mixed' | 'music' | 'photo'
+  preferred_scraper:   '' | 'tmdb' | 'tvdb' | 'anidb'
+  preferred_language:  string
+  enabled:             boolean
 }
 
 export type AdvanceMode = 'scheduled' | 'on_play'

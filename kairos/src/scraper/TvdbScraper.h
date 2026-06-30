@@ -11,12 +11,12 @@ public:
 
     std::string sourceName() const override { return "tvdb"; }
 
-    std::vector<Show>    searchShows  (const std::string& title, int year = 0) override;
-    std::optional<Show>  fetchShow    (const std::string& external_id)         override;
-    std::vector<Episode> fetchEpisodes(const std::string& external_id)         override;
+    std::vector<Show>    searchShows  (const std::string& title, int year = 0)                        override;
+    std::optional<Show>  fetchShow    (const std::string& external_id, const std::string& lang = "") override;
+    std::vector<Episode> fetchEpisodes(const std::string& external_id, const std::string& lang = "") override;
 
-    std::vector<Movie>   searchMovies (const std::string& title, int year = 0) override;
-    std::optional<Movie> fetchMovie   (const std::string& external_id)         override;
+    std::vector<Movie>   searchMovies (const std::string& title, int year = 0)                        override;
+    std::optional<Movie> fetchMovie   (const std::string& external_id, const std::string& lang = "") override;
 
 private:
     bool        ensureToken();

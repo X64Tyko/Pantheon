@@ -46,33 +46,52 @@ bool ChannelBroadcaster::hasClients() const {
 }
 
 void ChannelBroadcaster::run() {
-    httplib::Client cli(heph_url_);
-    cli.set_connection_timeout(5, 0);
-    cli.set_read_timeout(30, 0);
-
     std::string path = "/stream/channels/" + id_;
-    std::cout << "[hermes] connecting to " << heph_url_ << path << "\n";
 
-    // Check the response status before streaming.
-    bool status_ok = false;
-    auto result = cli.Get(
-        path,
-        [&status_ok](const httplib::Response& resp) {
-            status_ok = (resp.status == 200);
-            return status_ok;
-        },
-        [this](const char* data, size_t len) {
-            if (stop_requested_.load()) return false;
-            broadcast(data, len);
-            return true;
+    static constexpr int MAX_ATTEMPTS  = 5;
+    static constexpr int RETRY_BASE_MS = 500; // backoff: 500 ms, 1 s, 1.5 s, 2 s
+
+    for (int attempt = 1; attempt <= MAX_ATTEMPTS; ++attempt) {
+        if (stop_requested_.load()) break;
+
+        httplib::Client cli(heph_url_);
+        cli.set_connection_timeout(5, 0);
+        cli.set_read_timeout(30, 0);
+
+        if (attempt == 1)
+            std::cout << "[hermes] connecting to " << heph_url_ << path << "\n";
+        else
+            std::cerr << "[hermes] channel " << id_ << " retry " << attempt
+                      << " → " << heph_url_ << path << "\n";
+
+        bool status_ok = false;
+        auto result = cli.Get(
+            path,
+            [&status_ok](const httplib::Response& resp) {
+                status_ok = (resp.status == 200);
+                return status_ok;
+            },
+            [this](const char* data, size_t len) {
+                if (stop_requested_.load()) return false;
+                broadcast(data, len);
+                return true;
+            }
+        );
+
+        if (status_ok) break; // stream ran (or was intentionally stopped mid-stream)
+
+        if (!result || result.error() != httplib::Error::Success) {
+            std::cerr << "[hermes] channel " << id_ << " stream error: "
+                      << httplib::to_string(result.error()) << "\n";
+        } else {
+            std::cerr << "[hermes] channel " << id_ << " Hephaestus returned non-200\n";
         }
-    );
 
-    if (!result || result.error() != httplib::Error::Success) {
-        std::cerr << "[hermes] channel " << id_ << " stream error: "
-                  << httplib::to_string(result.error()) << "\n";
-    } else if (!status_ok) {
-        std::cerr << "[hermes] channel " << id_ << " Hephaestus returned non-200\n";
+        if (attempt < MAX_ATTEMPTS && !stop_requested_.load()) {
+            int delay_ms = RETRY_BASE_MS * attempt;
+            std::cerr << "[hermes] channel " << id_ << " retrying in " << delay_ms << " ms\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+        }
     }
 
     broadcastDone();

@@ -14,8 +14,9 @@ struct MediaLibraryConfig {
     std::string source_id;
     std::string external_lib_id;
     std::string display_name;
-    std::string library_type;       // "show" | "movie" | "mixed" | "music" | "photo"
-    std::string preferred_scraper;  // "" | "tmdb" | "tvdb" | "anidb"
+    std::string library_type;         // "show" | "movie" | "mixed" | "music" | "photo"
+    std::string preferred_scraper;    // "" | "tmdb" | "tvdb" | "anidb"
+    std::string preferred_language;   // ISO 639-1 e.g. "en", "ja"; empty = scraper default
     bool        enabled = true;
 };
 

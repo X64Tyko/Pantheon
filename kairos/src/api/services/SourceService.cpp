@@ -6,6 +6,7 @@
 #include "../../source/IMediaSource.h"
 #include "../../source/LocalSource.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <algorithm>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <httplib.h>
@@ -201,6 +202,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			                  {"external_lib_id", lib.external_lib_id},
 			                  {"display_name", lib.display_name}, {"library_type", lib.library_type},
 			                  {"preferred_scraper", lib.preferred_scraper},
+			                  {"preferred_language", lib.preferred_language},
 			                  {"enabled", lib.enabled}});
 		route::ok(res, result.dump());
 	});
@@ -213,11 +215,13 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			std::string display_name       = b.value("display_name",       "");
 			std::string library_type       = b.value("library_type",       "show");
 			std::string preferred_scraper  = b.value("preferred_scraper",  "");
+			std::string preferred_language = b.value("preferred_language", "");
 			if (external_lib_id.empty() || display_name.empty()) {
 				route::err(res, 400, "external_lib_id and display_name required"); return;
 			}
 			std::string library_id = SourceRepository(db_).createLibrary(
-				source_id, external_lib_id, display_name, library_type, preferred_scraper);
+				source_id, external_lib_id, display_name, library_type,
+				preferred_scraper, preferred_language);
 			res.status = 201;
 			route::ok(res, json{{"library_id", library_id}}.dump());
 		} catch (const SQLite::Exception& e) {
@@ -233,10 +237,16 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		auto lid = req.path_params.at("lid");
 		try {
 			auto b = json::parse(req.body);
-			if (b.contains("preferred_scraper")) {
-				SourceRepository(db_).updateLibraryPreferredScraper(
-					lid, b["preferred_scraper"].get<std::string>());
-			}
+			SourceRepository repo(db_);
+			// Fetch current values so we can apply a partial update.
+			auto libs = repo.listLibraries(req.path_params.at("id"));
+			auto it = std::find_if(libs.begin(), libs.end(),
+				[&lid](const MediaLibraryConfig& l){ return l.library_id == lid; });
+			if (it == libs.end()) { route::err(res, 404, "library not found"); return; }
+			std::string display_name      = b.value("display_name",      it->display_name);
+			std::string preferred_scraper = b.value("preferred_scraper", it->preferred_scraper);
+			std::string preferred_language= b.value("preferred_language",it->preferred_language);
+			repo.updateLibrary(lid, display_name, preferred_scraper, preferred_language);
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const json::exception& e) {
 			route::err(res, 400, e.what());

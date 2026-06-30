@@ -1354,6 +1354,13 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE channel ADD COLUMN subtitle_lang TEXT NOT NULL DEFAULT '';
 )SQL" }
 
+// ── v54: preferred metadata language per library and per item ────────────────
+,{ 54, R"SQL(
+    ALTER TABLE media_library ADD COLUMN preferred_language TEXT NOT NULL DEFAULT '';
+    ALTER TABLE show          ADD COLUMN preferred_language TEXT NOT NULL DEFAULT '';
+    ALTER TABLE movie         ADD COLUMN preferred_language TEXT NOT NULL DEFAULT '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

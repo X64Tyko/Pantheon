@@ -58,19 +58,21 @@ void SourceRepository::removeSource(const std::string& source_id) {
 
 std::vector<MediaLibraryConfig> SourceRepository::listLibraries(const std::string& source_id) {
     SQLite::Statement q(db_.get(),
-        "SELECT library_id, external_lib_id, display_name, library_type, enabled, preferred_scraper "
+        "SELECT library_id, external_lib_id, display_name, library_type, enabled, "
+        "       preferred_scraper, preferred_language "
         "FROM media_library WHERE source_id = ? ORDER BY display_name");
     q.bind(1, source_id);
     std::vector<MediaLibraryConfig> result;
     while (q.executeStep()) {
         MediaLibraryConfig lib;
-        lib.library_id         = q.getColumn(0).getString();
-        lib.source_id          = source_id;
-        lib.external_lib_id    = q.getColumn(1).getString();
-        lib.display_name       = q.getColumn(2).getString();
-        lib.library_type       = q.getColumn(3).getString();
-        lib.enabled            = q.getColumn(4).getInt() != 0;
-        lib.preferred_scraper  = q.getColumn(5).getString();
+        lib.library_id          = q.getColumn(0).getString();
+        lib.source_id           = source_id;
+        lib.external_lib_id     = q.getColumn(1).getString();
+        lib.display_name        = q.getColumn(2).getString();
+        lib.library_type        = q.getColumn(3).getString();
+        lib.enabled             = q.getColumn(4).getInt() != 0;
+        lib.preferred_scraper   = q.getColumn(5).getString();
+        lib.preferred_language  = q.getColumn(6).getString();
         result.push_back(std::move(lib));
     }
     return result;
@@ -80,24 +82,34 @@ std::string SourceRepository::createLibrary(const std::string& source_id,
                                              const std::string& external_lib_id,
                                              const std::string& display_name,
                                              const std::string& library_type,
-                                             const std::string& preferred_scraper) {
+                                             const std::string& preferred_scraper,
+                                             const std::string& preferred_language) {
     std::string library_id = generateId();
     SQLite::Statement s(db_.get(),
         "INSERT INTO media_library "
-        "(library_id, source_id, external_lib_id, display_name, library_type, preferred_scraper) "
-        "VALUES (?,?,?,?,?,?)");
+        "(library_id, source_id, external_lib_id, display_name, library_type, "
+        " preferred_scraper, preferred_language) "
+        "VALUES (?,?,?,?,?,?,?)");
     s.bind(1, library_id); s.bind(2, source_id);
     s.bind(3, external_lib_id); s.bind(4, display_name);
     s.bind(5, library_type);   s.bind(6, preferred_scraper);
+    s.bind(7, preferred_language);
     s.exec();
     return library_id;
 }
 
-void SourceRepository::updateLibraryPreferredScraper(const std::string& library_id,
-                                                      const std::string& preferred_scraper) {
+void SourceRepository::updateLibrary(const std::string& library_id,
+                                      const std::string& display_name,
+                                      const std::string& preferred_scraper,
+                                      const std::string& preferred_language) {
     SQLite::Statement s(db_.get(),
-        "UPDATE media_library SET preferred_scraper = ? WHERE library_id = ?");
-    s.bind(1, preferred_scraper); s.bind(2, library_id);
+        "UPDATE media_library "
+        "SET display_name = ?, preferred_scraper = ?, preferred_language = ? "
+        "WHERE library_id = ?");
+    s.bind(1, display_name);
+    s.bind(2, preferred_scraper);
+    s.bind(3, preferred_language);
+    s.bind(4, library_id);
     s.exec();
 }
 
