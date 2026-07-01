@@ -71,7 +71,7 @@ export interface Channel {
   offline_audio_type?:      'episode' | 'movie' | ''
   offline_audio_title?:     string
   logo_path?:               string
-  anchor_hashes?:           Record<string, number>
+  anchor_hashes?:           Record<string, AnchorSnapshot>
   audio_lang?:              string  // e.g. "eng"; empty = use global default
   subtitle_lang?:           string  // e.g. "eng"; empty = no subtitle
   stream_resolution?:       'source' | '1080p' | '720p' | '480p'
@@ -79,9 +79,15 @@ export interface Channel {
   stream_audio_bitrate?:    number  // kbps; default 192
 }
 
+export interface AnchorSnapshot {
+  rng:          string
+  cursors:      unknown[]
+  block_states: unknown[]
+}
+
 export interface EpgPreviewResponse {
   programs: EpgProgram[]
-  anchors:  Record<string, number>
+  anchors:  Record<string, AnchorSnapshot>
 }
 
 export interface MediaLanguages {

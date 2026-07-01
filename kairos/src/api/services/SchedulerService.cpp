@@ -13,7 +13,6 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <chrono>
 #include <ctime>
-#include <map>
 #include <mutex>
 #include <set>
 
@@ -343,7 +342,6 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 		}
 
 		json arr = json::array();
-		std::map<std::time_t, int> anchor_counts;
 
 		// Emit filler items as item_type="filler" so the frontend's mergeFiller()
 		// can combine consecutive filler clips into a single visual block.
@@ -372,29 +370,15 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 				j["episode_num"] = item.episode_num;
 			}
 			arr.push_back(j);
-
-			if (has_blocks && !item.is_filler) {
-				std::time_t days = ws / 86400;
-				std::time_t dow  = (days + 3) % 7;
-				std::time_t anch = (days - dow) * 86400;
-				anchor_counts[anch]++;
-			}
 		}
 
+		// Anchors are always the RNG + cursor-state snapshot per Monday.
 		json anchors_j = json::object();
-		if (!has_blocks) {
-			if (auto ah = ChannelRepository(db_).getAnchorHashes(channel_id)) {
-				try { anchors_j = json::parse(*ah); } catch (...) {}
-			}
-			for (auto& [ts, snap_str] : gr.anchors) {
-				try { anchors_j[std::to_string(ts)] = json::parse(snap_str); } catch (...) {}
-			}
-		} else {
-			int cumulative = req_seed;
-			for (auto& [anch, cnt] : anchor_counts) {
-				cumulative += cnt;
-				anchors_j[std::to_string(anch)] = cumulative;
-			}
+		if (auto ah = ChannelRepository(db_).getAnchorHashes(channel_id)) {
+			try { anchors_j = json::parse(*ah); } catch (...) {}
+		}
+		for (auto& [ts, snap_str] : gr.anchors) {
+			try { anchors_j[std::to_string(ts)] = json::parse(snap_str); } catch (...) {}
 		}
 
 		json divs_j = json::array();

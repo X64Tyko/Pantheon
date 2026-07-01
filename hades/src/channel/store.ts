@@ -7,7 +7,7 @@ import { FIELD_DEFS } from '../components/PickerFilters'
 import type { FilterRule } from '../components/PickerFilters'
 import type { BlockDraft, LimitMode, PickerTab } from './types'
 import type {
-  AdvanceMode, Advancement, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
+  AdvanceMode, Advancement, AnchorSnapshot, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
   EpisodeOrder, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, FillerEntry, FillerEntryAdvancement,
   FillerSelectionMode, LibraryWithSource, Movie, NoHistoryBehavior, Playlist,
   PlaylistMode, PlayStyle, Show, StartScope, TimeslotSlot, TimeslotQueueEntry,
@@ -116,8 +116,8 @@ export class ChannelDetailStore {
 
   epgItems:   EpgProgram[]            = []
   epgLoading: boolean                 = false
-  confirmedAnchors: Record<string, number> = {}
-  previewAnchors:   Record<string, number> = {}
+  confirmedAnchors: Record<string, AnchorSnapshot> = {}
+  previewAnchors:   Record<string, AnchorSnapshot> = {}
 
   channelDraft: {
     name:                string
@@ -152,13 +152,13 @@ export class ChannelDetailStore {
 
   get isDirty(): boolean { return this.channelDirty || this.blocksDirty }
 
+  // Only flags weeks that are confirmed AND recomputed with a different
+  // snapshot. Weeks the preview looks ahead into that aren't confirmed yet
+  // are just unextended horizon, not a pending change.
   get scheduleChanged(): boolean {
     const pa = this.previewAnchors
     const ca = this.confirmedAnchors
-    const paKeys = Object.keys(pa)
-    const caKeys = Object.keys(ca)
-    if (paKeys.length !== caKeys.length) return true
-    return paKeys.some(k => pa[k] !== ca[k])
+    return Object.keys(pa).some(k => k in ca && JSON.stringify(pa[k]) !== JSON.stringify(ca[k]))
   }
 
   initChannelDraft(channel: Channel) {
