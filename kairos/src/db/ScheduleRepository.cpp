@@ -56,6 +56,11 @@ ScheduleRepository::getNowProgram(const std::string& channel_id, int64_t at_sec)
 
 std::optional<FillerFallbackRow>
 ScheduleRepository::getChannelFillerFallback(const std::string& channel_id) {
+    // Prefer the least-recently-played eligible clip (never-played first, tie-broken
+    // by RANDOM()) instead of a bare RANDOM() pick. Plain RANDOM() has no memory of
+    // what just aired, so callers that re-query on every filler-to-filler transition
+    // (Hephaestus does this once per short filler clip) would otherwise reroll the
+    // same small pool constantly and repeat clips back-to-back.
     SQLite::Statement q(db_.get(), R"(
         SELECT fi.item_type, fi.item_id,
                COALESCE(e.file_path, m.file_path, '') AS file_path,
@@ -65,12 +70,19 @@ ScheduleRepository::getChannelFillerFallback(const std::string& channel_id) {
         JOIN filler_list_item fi ON fi.filler_list_id = cfe.filler_list_id
         LEFT JOIN episode e ON fi.item_type='episode' AND fi.item_id=e.episode_id
         LEFT JOIN movie   m ON fi.item_type='movie'   AND fi.item_id=m.movie_id
+        LEFT JOIN (
+            SELECT item_id, MAX(aired_at) AS last_aired
+            FROM play_history
+            WHERE channel_id = ?
+            GROUP BY item_id
+        ) ph ON ph.item_id = fi.item_id
         WHERE cfe.channel_id = ?
           AND (e.file_path IS NOT NULL OR m.file_path IS NOT NULL)
-        ORDER BY RANDOM()
+        ORDER BY COALESCE(ph.last_aired, 0) ASC, RANDOM()
         LIMIT 1
     )");
     q.bind(1, channel_id);
+    q.bind(2, channel_id);
     if (!q.executeStep()) return std::nullopt;
 
     FillerFallbackRow r;
@@ -79,6 +91,8 @@ ScheduleRepository::getChannelFillerFallback(const std::string& channel_id) {
     r.file_path   = q.getColumn(2).getString();
     r.title       = q.getColumn(3).getString();
     r.duration_ms = q.getColumn(4).getInt64();
+
+    recordPlayHistory(r.item_type, r.item_id, channel_id, "");
     return r;
 }
 

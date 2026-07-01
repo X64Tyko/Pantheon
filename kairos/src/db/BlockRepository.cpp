@@ -13,8 +13,8 @@ std::vector<Block> BlockRepository::loadBlocks(const std::string& channel_id) {
         SELECT block_id, block_type, day_mask, start_time, end_time,
                program_count, priority, play_style, advancement, cursor_scope,
                late_start_mins, align_to_mins, inter_filler, early_start_secs,
-               filler_selection, smart_pct, start_scope, no_history_behavior,
-               max_consecutive_episodes,
+               filler_selection, smart_pct, rerun_min_time_mins, start_scope,
+               no_history_behavior, max_consecutive_episodes,
                intro_content_type, intro_content_id,
                outro_content_type, outro_content_id,
                interstitial_content_type, interstitial_content_id, interstitial_every_n,
@@ -43,17 +43,18 @@ std::vector<Block> BlockRepository::loadBlocks(const std::string& channel_id) {
         b.early_start_secs   = q.getColumn(13).getInt();
         b.filler_selection   = q.getColumn(14).getString();
         b.smart_pct                = q.getColumn(15).getInt();
-        b.start_scope              = q.getColumn(16).getString();
-        b.no_history_behavior      = parseNoHistoryBehavior(q.getColumn(17).getString());
-        b.max_consecutive_episodes = q.getColumn(18).getInt();
-        b.intro_content_type       = q.getColumn(19).getString();
-        b.intro_content_id         = q.getColumn(20).getString();
-        b.outro_content_type       = q.getColumn(21).getString();
-        b.outro_content_id         = q.getColumn(22).getString();
-        b.interstitial_content_type = q.getColumn(23).getString();
-        b.interstitial_content_id   = q.getColumn(24).getString();
-        b.interstitial_every_n      = q.getColumn(25).getInt();
-        b.snap_to_group_start       = q.getColumn(26).getInt() != 0;
+        b.rerun_min_time_mins      = q.getColumn(16).getInt();
+        b.start_scope              = q.getColumn(17).getString();
+        b.no_history_behavior      = parseNoHistoryBehavior(q.getColumn(18).getString());
+        b.max_consecutive_episodes = q.getColumn(19).getInt();
+        b.intro_content_type       = q.getColumn(20).getString();
+        b.intro_content_id         = q.getColumn(21).getString();
+        b.outro_content_type       = q.getColumn(22).getString();
+        b.outro_content_id         = q.getColumn(23).getString();
+        b.interstitial_content_type = q.getColumn(24).getString();
+        b.interstitial_content_id   = q.getColumn(25).getString();
+        b.interstitial_every_n      = q.getColumn(26).getInt();
+        b.snap_to_group_start       = q.getColumn(27).getInt() != 0;
         // column 27: name (not stored in Block struct — kept for Router use)
 
         {

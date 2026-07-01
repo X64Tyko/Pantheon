@@ -32,6 +32,7 @@ struct PlayRecord {
     std::string channel_id;
     std::string item_type;  // "episode" | "movie"
     std::string item_id;
+    std::string show_id;    // populated for episodes; empty for movies
     std::string block_id;
     std::time_t aired_at = 0;
 };
@@ -48,9 +49,16 @@ public:
     // ── Media cursors ─────────────────────────────────────────────────────────
     int  getCursorPos(const std::string& content_type, const std::string& content_id,
                       const std::string& scope, const std::string& scope_id) const;
+    // Returns the episode_id stored alongside the cursor position, or "" if not set.
+    // Used to reconcile the integer position after the episode list changes (sync).
+    std::string getCursorEpisodeId(const std::string& content_type, const std::string& content_id,
+                                    const std::string& scope, const std::string& scope_id) const;
     void setCursorPos(const std::string& content_type, const std::string& content_id,
                       const std::string& scope, const std::string& scope_id,
                       int pos, const std::string& episode_id = "");
+
+    bool hasCursor(const std::string& content_type, const std::string& content_id,
+                   const std::string& scope, const std::string& scope_id) const;
 
     // ── Block state ───────────────────────────────────────────────────────────
     int  getContentPosition(const std::string& block_id) const;
@@ -82,8 +90,8 @@ public:
     // Accumulates items scheduled during this projection pass.
     // Written to play_history (is_scheduled=1) by EPGMaterializer::commit(), not during project().
     void addPlayRecord(const std::string& channel_id, const std::string& item_type,
-                       const std::string& item_id, const std::string& block_id,
-                       std::time_t aired_at);
+                       const std::string& item_id, const std::string& show_id,
+                       const std::string& block_id, std::time_t aired_at);
     const std::vector<PlayRecord>& playRecords() const { return play_records_; }
 
     // ── DB I/O ────────────────────────────────────────────────────────────────

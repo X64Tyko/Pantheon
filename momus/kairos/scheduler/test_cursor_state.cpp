@@ -171,9 +171,9 @@ TEST_F(CursorStateTest, PlayRecords_InitiallyEmpty) {
 
 TEST_F(CursorStateTest, AddPlayRecord_Accumulates) {
     CursorState state;
-    state.addPlayRecord("c1", "episode", "e1", "", 1000);
-    state.addPlayRecord("c1", "episode", "e2", "", 2000);
-    state.addPlayRecord("c1", "movie",   "m1", "", 3000);
+    state.addPlayRecord("c1", "episode", "e1", "", "", 1000);
+    state.addPlayRecord("c1", "episode", "e2", "", "", 2000);
+    state.addPlayRecord("c1", "movie",   "m1", "", "", 3000);
     ASSERT_EQ(state.playRecords().size(), 3u);
     EXPECT_EQ(state.playRecords()[0].item_type,  "episode");
     EXPECT_EQ(state.playRecords()[0].item_id,    "e1");

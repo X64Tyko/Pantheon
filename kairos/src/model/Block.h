@@ -132,6 +132,7 @@ struct Block {
     int                        early_start_secs    = 0;
     std::string                filler_selection    = "round_robin";
     int                        smart_pct                  = 30; // cooldown threshold % for smart modes
+    int                        rerun_min_time_mins        = 0;  // 0 = no culling
     int                        max_consecutive_episodes   = 0;  // 0 = unlimited
     std::string                start_scope         = "block"; // "block" | "episode"
     NoHistoryBehavior          no_history_behavior = NoHistoryBehavior::Normal;

@@ -4,7 +4,6 @@
 #include "../db/CursorRepository.h"
 #include "../db/Database.h"
 #include "../db/ScheduleRepository.h"
-#include "../db/TimeslotRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -98,6 +97,9 @@ RuleEngine::RuleEngine(Database& db) : db_(db), blocks_(db), content_(db) {}
 // ── Static helpers ────────────────────────────────────────────────────────────
 
 std::string RuleEngine::scopeStr(const Block& b) {
+    if (isRerunMode(b) && b.cursor_scope == CursorScope::Block) {
+        return "channel";
+    }
     switch (b.cursor_scope) {
         case CursorScope::Global:  return "global";
         case CursorScope::Channel: return "channel";
@@ -107,6 +109,9 @@ std::string RuleEngine::scopeStr(const Block& b) {
 }
 
 std::string RuleEngine::scopeId(const Block& b, const std::string& channel_id) {
+    if (isRerunMode(b) && b.cursor_scope == CursorScope::Block) {
+        return channel_id;
+    }
     switch (b.cursor_scope) {
         case CursorScope::Global:  return "";
         case CursorScope::Channel: return channel_id;
@@ -211,9 +216,26 @@ int RuleEngine::selectWeighted(const Block& block, Xoshiro256& rng) {
     return static_cast<int>(block.content.size()) - 1;
 }
 
+int RuleEngine::selectWeightedExcluding(const Block& block, int exclude_idx, Xoshiro256& rng) {
+    int total = 0;
+    for (int i = 0; i < (int)block.content.size(); ++i)
+        if (i != exclude_idx) total += std::max(1, block.content[i].weight);
+    if (total <= 0) return selectWeighted(block, rng);
+    std::uniform_int_distribution<int> dist(0, total - 1);
+    int r = dist(rng);
+    for (int i = 0; i < (int)block.content.size(); ++i) {
+        if (i == exclude_idx) continue;
+        r -= std::max(1, block.content[i].weight);
+        if (r < 0) return i;
+    }
+    return selectWeighted(block, rng);
+}
+
 int RuleEngine::selectWeightedSmartCooldown(
     const Block& block, const std::string& channel_id,
-    int smart_pct, std::time_t before_time, Xoshiro256& rng)
+    int smart_pct, std::time_t before_time,
+    const std::vector<PlayRecord>& play_records,
+    Xoshiro256& rng)
 {
     int n = static_cast<int>(block.content.size());
     if (n <= 1 || smart_pct <= 0) return selectWeighted(block, rng);
@@ -226,6 +248,23 @@ int RuleEngine::selectWeightedSmartCooldown(
     if (hot_count == 0) return selectWeighted(block, rng);
 
     auto hot_ids = content_.getHotMovieIds(channel_id, before_time, hot_count);
+
+    // Also check in-pass records so items projected this run are considered hot.
+    if (static_cast<int>(hot_ids.size()) < hot_count) {
+        std::vector<std::pair<std::string, std::time_t>> pass_hot;
+        for (const auto& pr : play_records) {
+            if (pr.item_type == "movie" && pr.aired_at < before_time)
+                pass_hot.push_back({pr.item_id, pr.aired_at});
+        }
+        std::sort(pass_hot.begin(), pass_hot.end(), [](auto& a, auto& b) {
+            return a.second > b.second; // newest first
+        });
+        for (const auto& ph : pass_hot) {
+            hot_ids.insert(ph.first);
+            if (static_cast<int>(hot_ids.size()) >= hot_count) break;
+        }
+    }
+
     if (hot_ids.empty()) return selectWeighted(block, rng);
 
     int total = 0;
@@ -248,13 +287,31 @@ std::vector<Episode> RuleEngine::smartShufflePool(
     const std::string& show_id,
     const std::string& channel_id,
     int smart_pct,
-    std::time_t before_time)
+    std::time_t before_time,
+    const std::vector<PlayRecord>& play_records)
 {
     int n = static_cast<int>(all.size());
     int hot_count = std::max(0, n * smart_pct / 100);
     if (hot_count == 0 || all.empty()) return all;
 
     auto hot_ids = content_.getHotEpisodeIds(channel_id, before_time, show_id, hot_count);
+
+    // Also check in-pass records so items projected this run are considered hot.
+    if (static_cast<int>(hot_ids.size()) < hot_count) {
+        std::vector<std::pair<std::string, std::time_t>> pass_hot;
+        for (const auto& pr : play_records) {
+            if (pr.item_type == "episode" && pr.show_id == show_id && pr.aired_at < before_time)
+                pass_hot.push_back({pr.item_id, pr.aired_at});
+        }
+        std::sort(pass_hot.begin(), pass_hot.end(), [](auto& a, auto& b) {
+            return a.second > b.second; // newest first
+        });
+        for (const auto& ph : pass_hot) {
+            hot_ids.insert(ph.first);
+            if (static_cast<int>(hot_ids.size()) >= hot_count) break;
+        }
+    }
+
     if (hot_ids.empty()) return all;
 
     std::vector<Episode> filtered;
@@ -412,23 +469,294 @@ std::optional<ScheduledItem> RuleEngine::nextItem(const std::string& channel_id,
     // Peek-only: advance happens in a copy that is never persisted.
     CursorState state = CursorRepository(db_).load(channel_id);
     Xoshiro256 dummy_rng(0);
-    return advanceAndGet(channel_id, block, before_time, state, dummy_rng);
+    int sel = pickNextContent(channel_id, block, before_time, state, {}, dummy_rng);
+    if (sel < 0) return std::nullopt;
+    return advanceAndGet(channel_id, block, sel, before_time, state, {}, dummy_rng);
 }
 
-// ── advanceAndGet: select + advance in one pass ───────────────────────────────
-// Queries the episode pool once and both selects the current item and advances
-// all cursor state in CursorState. Returns nullopt (without advancing) when no
-// item is available. Replaces the old nextItem(private)+advanceCursors pair.
+// ── Episode pool and selection helpers ───────────────────────────────────────
+
+// Returns the rerun pool for a show based on in-memory cursor state.
+// - If a "show_rerun" cursor exists the show has completed its first run → full episode list.
+// - If only a "show" cursor exists the show is mid first-run → episodes up to cursor position.
+// - No cursor → DB play_history fallback (channel loaded before first projection).
+// For Smart advancement the pool is then filtered by smart_pct recency cooldown.
+std::vector<Episode> RuleEngine::getAvailableEpisodesForShow(
+    const std::string& channel_id, const Block& block,
+    const BlockContent& entry, std::time_t before_time,
+    const CursorState& state, const std::vector<PlayRecord>& pass_records)
+{
+    const bool global   = (block.cursor_scope == CursorScope::Global);
+    const auto scope    = scopeStr(block);
+    const auto scope_id = scopeId(block, channel_id);
+
+    std::vector<Episode> eps;
+
+    if (state.hasCursor("show_rerun", entry.content_id, scope, scope_id)) {
+        // Rerun phase: all episodes have been seen at least once.
+        eps = getEpisodes(entry.content_id, entry.season_filter,
+                          entry.include_specials, entry.episode_order);
+    } else if (state.hasCursor("show", entry.content_id, scope, scope_id)) {
+        // First-run in progress: episodes scheduled so far sit before the cursor.
+        auto all = getEpisodes(entry.content_id, entry.season_filter,
+                               entry.include_specials, entry.episode_order);
+        int cp = state.getCursorPos("show", entry.content_id, scope, scope_id);
+        for (int i = 0; i < cp && i < (int)all.size(); ++i)
+            eps.push_back(all[i]);
+    } else {
+        // No in-memory cursor: fall back to DB play_history (pre-projection channel state).
+        eps = (block.advancement == Advancement::Smart)
+            ? getPlayedEpisodesWithCooldown(entry.content_id, channel_id, entry.season_filter,
+                                            block.smart_pct, before_time, global, entry.include_specials)
+            : getPlayedEpisodes(entry.content_id, channel_id, entry.season_filter,
+                                before_time, global, entry.include_specials, entry.episode_order);
+    }
+
+    if (block.advancement == Advancement::Smart && block.smart_pct > 0 && !eps.empty())
+        eps = smartShufflePool(eps, entry.content_id, channel_id,
+                               block.smart_pct, before_time, pass_records);
+    return eps;
+}
+
+// ── Rerun-block seed cursors ─────────────────────────────────────────────────
+
+std::optional<RuleEngine::SeedCursor> RuleEngine::seedFromRealHistory(
+    const std::vector<Episode>& played, const std::vector<Episode>& all,
+    bool snap_to_group_start, Xoshiro256& rng)
+{
+    if (played.empty() || all.empty()) return std::nullopt;
+
+    if (played.size() >= all.size()) {
+        // Full catalog has aired at least once: seed straight into rerun mode.
+        std::uniform_int_distribution<int> dist(0, static_cast<int>(all.size()) - 1);
+        int sp = dist(rng);
+        int sn = snap_to_group_start ? snapToGroupStart(all[sp].episode_id, all) : -1;
+        int fp = sn >= 0 ? sn : sp;
+        return SeedCursor{"show_rerun", fp, all[fp].episode_id};
+    }
+    // Partial history: still mid first-run. The "show" cursor is a prefix count —
+    // getAvailableEpisodesForShow reads all[0..cp) back as the played pool — so cp
+    // must be the real aired count, not a random guess.
+    int cp = static_cast<int>(played.size());
+    return SeedCursor{"show", cp, all[cp].episode_id};
+}
+
+std::optional<RuleEngine::SeedCursor> RuleEngine::getContentNormalHistory(
+    const std::vector<Episode>& played, const std::vector<Episode>& all,
+    bool snap_to_group_start, Xoshiro256& rng)
+{
+    if (auto seed = seedFromRealHistory(played, all, snap_to_group_start, rng)) return seed;
+    if (all.empty()) return std::nullopt;
+    std::uniform_int_distribution<int> dist(0, static_cast<int>(all.size()) - 1);
+    int pos = dist(rng);
+    return SeedCursor{"show", pos, all[pos].episode_id};
+}
+
+std::optional<RuleEngine::SeedCursor> RuleEngine::getContentFallbackHistory(
+    const std::vector<Episode>& played, const std::vector<Episode>& all,
+    bool snap_to_group_start, Xoshiro256& rng)
+{
+    if (auto seed = seedFromRealHistory(played, all, snap_to_group_start, rng)) return seed;
+    if (all.empty()) return std::nullopt;
+    std::uniform_int_distribution<int> dist(0, static_cast<int>(all.size()) - 1);
+    int sp = dist(rng);
+    int sn = snap_to_group_start ? snapToGroupStart(all[sp].episode_id, all) : -1;
+    int fp = sn >= 0 ? sn : sp;
+    return SeedCursor{"show_rerun", fp, all[fp].episode_id};
+}
+
+std::optional<RuleEngine::SeedCursor> RuleEngine::getContentSkipHistory(
+    const std::vector<Episode>& played, const std::vector<Episode>& all,
+    bool snap_to_group_start, Xoshiro256& rng)
+{
+    return seedFromRealHistory(played, all, snap_to_group_start, rng);
+}
+
+std::optional<RuleEngine::SeedCursor> RuleEngine::getContentExcludeHistory(
+    const std::vector<Episode>& played, const std::vector<Episode>& all,
+    bool snap_to_group_start, Xoshiro256& rng)
+{
+    return seedFromRealHistory(played, all, snap_to_group_start, rng);
+}
+
+// Selects and schedules the next episode for a rerun-mode show, advancing cursors.
+// Normal mode: sequential first-run through all_eps, then rerun shuffle from pool.
+// All other modes: rerun shuffle from pool (pool resolved by caller per no_history_behavior).
+// Returns nullopt only when the pool is empty and we are past the first-run phase.
+std::optional<ScheduledItem> RuleEngine::selectNextEpisode(
+    const std::string& channel_id, const Block& block,
+    const BlockContent& entry, const std::vector<Episode>& all_eps,
+    const std::vector<Episode>& rerun_pool, CursorState& state)
+{
+    const auto scope    = scopeStr(block);
+    const auto scope_id = scopeId(block, channel_id);
+
+    if (block.no_history_behavior == NoHistoryBehavior::Normal &&
+        !state.hasCursor("show_rerun", entry.content_id, scope, scope_id))
+    {
+        // First-run: advance sequentially through all_eps.
+        int seq_pos  = state.getCursorPos("show", entry.content_id, scope, scope_id);
+        auto item    = itemFromShow(channel_id, block.block_id, all_eps, seq_pos,
+                                   showTitle(entry.content_id));
+        int next_pos = seq_pos + 1;
+        if (next_pos >= (int)all_eps.size()) {
+            // First run complete: arm the rerun cursor so the next call enters rerun phase.
+            state.setCursorPos("show_rerun", entry.content_id, scope, scope_id,
+                               0, all_eps[0].episode_id);
+            next_pos = 0;
+        }
+        state.setCursorPos("show", entry.content_id, scope, scope_id,
+                           next_pos, all_eps[next_pos].episode_id);
+        return item;
+    }
+
+    // Rerun shuffle phase (Normal post-first-run, FallbackAll, Exclude, Skip).
+    if (rerun_pool.empty()) return std::nullopt;
+
+    int  pos  = state.getCursorPos("show_rerun", entry.content_id, scope, scope_id);
+    auto perm = groupedShufflePermutation(entry.content_id + block.block_id, rerun_pool);
+    auto item = itemFromShow(channel_id, block.block_id, rerun_pool,
+                             perm[pos % (int)perm.size()],
+                             showTitle(entry.content_id));
+    int next_pos = (pos + 1) % (int)rerun_pool.size();
+    state.setCursorPos("show_rerun", entry.content_id, scope, scope_id,
+                       next_pos, rerun_pool[next_pos].episode_id);
+    return item;
+}
+
+// ── pickNextContent: block-level content selection ────────────────────────────
+// Determines which content entry to play this call, updates block position state,
+// and seeds show_rerun cursors on show transitions. Returns the content index,
+// or -1 if Exclude mode exhausted all eligible entries.
+
+int RuleEngine::pickNextContent(
+    const std::string& channel_id, const Block& block,
+    std::time_t before_time, CursorState& state,
+    const std::vector<PlayRecord>& pass_records, Xoshiro256& rng)
+{
+    if (block.content.empty()) return 0;
+
+    const int   n           = static_cast<int>(block.content.size());
+    const int   content_pos = state.getContentPosition(block.block_id) % n;
+    const auto& cur_entry   = block.content[content_pos];
+
+    const std::string scope    = scopeStr(block);
+    const std::string scope_id = scopeId(block, channel_id);
+
+    const bool is_rerun = isRerunMode(block);
+    const bool is_first = !state.hasBlockPosition(block.block_id);
+
+    // Only rerun shows and non-rerun Sequential shows track run counts.
+    const bool has_runs = is_rerun ||
+        (cur_entry.content_type == "show" && block.advancement == Advancement::Sequential);
+
+    const int  runs_left   = has_runs ? state.getRunsRemaining(block.block_id) : 0;
+    const int  consecutive = state.getConsecutiveCount(block.block_id) + 1;
+    const bool limit_hit   = block.max_consecutive_episodes > 0 &&
+                             consecutive >= block.max_consecutive_episodes;
+    const bool should_advance = !is_first && (!has_runs || runs_left == 0 || limit_hit);
+
+    int sel = content_pos;
+
+    if (should_advance) {
+        if (is_rerun && block.no_history_behavior == NoHistoryBehavior::Exclude) {
+            std::vector<int> eligible;
+            int total_w = 0;
+            for (int i = 0; i < n; ++i) {
+                if (limit_hit && i == content_pos) continue;
+                const auto& c = block.content[i];
+                if (c.content_type == "show") {
+                    auto pool = getAvailableEpisodesForShow(channel_id, block, c,
+                                                            before_time, state, pass_records);
+                    if (pool.empty()) continue;
+                }
+                eligible.push_back(i);
+                total_w += std::max(1, c.weight);
+            }
+            if (eligible.empty()) {
+                state.setBlockPosition(block.block_id, 0, 0, 0);
+                return -1;
+            }
+            std::uniform_int_distribution<int> dist(0, total_w - 1);
+            int r = dist(rng);
+            sel = eligible.back();
+            for (int idx : eligible) {
+                r -= std::max(1, block.content[idx].weight);
+                if (r < 0) { sel = idx; break; }
+            }
+        } else if (block.advancement == Advancement::Sequential) {
+            sel = (content_pos + 1) % n;
+        } else if (block.advancement == Advancement::Smart && block.smart_pct > 0) {
+            sel = selectWeightedSmartCooldown(block, channel_id, block.smart_pct,
+                                              before_time, pass_records, rng);
+            if (limit_hit && sel == content_pos && n > 1)
+                sel = selectWeightedExcluding(block, content_pos, rng);
+        } else {
+            sel = selectWeighted(block, rng);
+            if (sel == content_pos && limit_hit && n > 1)
+                sel = selectWeightedExcluding(block, content_pos, rng);
+        }
+    }
+
+    const auto& sel_entry = block.content[sel];
+    const bool  same      = (sel == content_pos) && !is_first;
+
+    // Seed show_rerun cursor on show transition in rerun mode.
+    if (is_rerun && !same && sel_entry.content_type == "show") {
+        const bool in_first_run = block.no_history_behavior == NoHistoryBehavior::Normal &&
+                                  !state.hasCursor("show_rerun", sel_entry.content_id, scope, scope_id);
+        if (!in_first_run) {
+            auto rerun_pool = getAvailableEpisodesForShow(channel_id, block, sel_entry,
+                                                          before_time, state, pass_records);
+            if (rerun_pool.empty() && block.no_history_behavior == NoHistoryBehavior::FallbackAll)
+                rerun_pool = getEpisodes(sel_entry.content_id, sel_entry.season_filter,
+                                         sel_entry.include_specials, sel_entry.episode_order);
+            if (!rerun_pool.empty()) {
+                std::uniform_int_distribution<int> rdist(0, (int)rerun_pool.size() - 1);
+                int start       = rdist(rng);
+                int snap        = block.snap_to_group_start
+                    ? snapToGroupStart(rerun_pool[start].episode_id, rerun_pool) : -1;
+                int final_start = snap >= 0 ? snap : start;
+                state.setCursorPos("show_rerun", sel_entry.content_id, scope, scope_id,
+                                   final_start, rerun_pool[final_start].episode_id);
+            }
+        }
+    }
+
+    // Update block state.
+    const bool sel_has_runs = is_rerun ||
+        (sel_entry.content_type == "show" && block.advancement == Advancement::Sequential);
+
+    const int next_run = !sel_has_runs ? 0
+        : is_rerun ? std::max(1, sel_entry.run_count) - 1
+        : std::max(1, sel_entry.weight) - 1;
+
+    if (!same) {
+        state.setBlockPosition(block.block_id, sel, next_run, 0);
+    } else {
+        const int new_runs = (!is_first && !should_advance) ? runs_left - 1 : next_run;
+        state.setBlockPosition(block.block_id, sel, new_runs, consecutive);
+    }
+
+    return sel;
+}
+
+// ── advanceAndGet: episode/item advancement for a pre-selected content entry ──
+// content_idx is the index returned by pickNextContent. Handles only episode-level
+// cursor advancement. Returns nullopt when no item is available.
 
 std::optional<ScheduledItem> RuleEngine::advanceAndGet(
     const std::string& channel_id, const Block& block,
-    std::time_t before_time, CursorState& state, Xoshiro256& rng)
+    int content_idx,
+    std::time_t before_time, CursorState& state,
+    const std::vector<PlayRecord>& pass_records,
+    Xoshiro256& rng)
 {
     if (block.content.empty()) return std::nullopt;
 
-    const int   n   = static_cast<int>(block.content.size());
-    const int   content_pos  = state.getContentPosition(block.block_id) % n;
-    const auto& entry  = block.content[content_pos];
+    const int   n           = static_cast<int>(block.content.size());
+    const int   content_pos = content_idx % n;
+    const auto& entry       = block.content[content_pos];
 
     std::optional<ScheduledItem> item;
 
@@ -438,199 +766,24 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
         const std::string scope_id = scopeId(block, channel_id);
 
         if (isRerunMode(block)) {
-            bool global = (block.cursor_scope == CursorScope::Global);
-            auto eps = (block.advancement == Advancement::Smart)
-                ? getPlayedEpisodesWithCooldown(entry.content_id, channel_id, entry.season_filter,
-                                                block.smart_pct, before_time, global, entry.include_specials)
-                : getPlayedEpisodes(entry.content_id, channel_id, entry.season_filter,
-                                    before_time, global, entry.include_specials, entry.episode_order);
+            // Episode pool — show was selected and transition-seeded by pickNextContent.
+            const bool in_first_run = block.no_history_behavior == NoHistoryBehavior::Normal &&
+                                      !state.hasCursor("show_rerun", entry.content_id, scope, scope_id);
 
-            if (block.no_history_behavior == NoHistoryBehavior::Normal) {
-                auto all = getEpisodes(entry.content_id, entry.season_filter,
-                                       entry.include_specials, entry.episode_order);
-                if (all.empty()) return std::nullopt;
-                int seq_pos = state.getCursorPos("show", entry.content_id, scope, scope_id);
-
-                if (block.advancement == Advancement::Smart) {
-                    item = itemFromShow(channel_id, block.block_id, all,
-                                        seq_pos, showTitle(entry.content_id));
-                    int next_pos = (seq_pos + 1) % static_cast<int>(all.size());
-                    if (!eps.empty()) {
-                        std::unordered_set<std::string> aired;
-                        aired.reserve(eps.size());
-                        for (const auto& e : eps) aired.insert(e.episode_id);
-                        if (!aired.contains(all[next_pos].episode_id)) next_pos = 0;
-                    }
-                    state.setCursorPos("show", entry.content_id, scope, scope_id,
-                                       next_pos, all[next_pos].episode_id);
-                } else if (eps.empty() || seq_pos >= static_cast<int>(eps.size())) {
-                    // RerunShuffle first-run
-                    item = itemFromShow(channel_id, block.block_id, all,
-                                        seq_pos, showTitle(entry.content_id));
-                    int next_pos = (seq_pos + 1) % static_cast<int>(all.size());
-                    state.setCursorPos("show", entry.content_id, scope, scope_id,
-                                       next_pos, all[next_pos].episode_id);
-                } else {
-                    // RerunShuffle first-run done: enter rerun shuffle pool
-                    int pos   = state.getCursorPos("show_rerun", entry.content_id, scope, scope_id);
-                    auto perm = groupedShufflePermutation(entry.content_id + block.block_id, eps);
-                    item = itemFromShow(channel_id, block.block_id, eps,
-                                        perm[pos % static_cast<int>(perm.size())],
-                                        showTitle(entry.content_id));
-                    int next_pos = (pos + 1) % static_cast<int>(eps.size());
-                    state.setCursorPos("show_rerun", entry.content_id, scope, scope_id,
-                                       next_pos, eps[next_pos].episode_id);
-                }
-            } else if (!eps.empty()) {
-                int pos   = state.getCursorPos("show_rerun", entry.content_id, scope, scope_id);
-                auto perm = groupedShufflePermutation(entry.content_id + block.block_id, eps);
-                item = itemFromShow(channel_id, block.block_id, eps,
-                                    perm[pos % static_cast<int>(perm.size())],
-                                    showTitle(entry.content_id));
-                int next_pos = (pos + 1) % static_cast<int>(eps.size());
-                state.setCursorPos("show_rerun", entry.content_id, scope, scope_id,
-                                   next_pos, eps[next_pos].episode_id);
-            } else if (block.no_history_behavior == NoHistoryBehavior::FallbackAll) {
-                auto all = getEpisodes(entry.content_id, entry.season_filter,
-                                       entry.include_specials, entry.episode_order);
-                if (!all.empty()) {
-                    int pos   = state.getCursorPos("show_rerun", entry.content_id, scope, scope_id);
-                    auto perm = groupedShufflePermutation(entry.content_id + block.block_id, all);
-                    item = itemFromShow(channel_id, block.block_id, all,
-                                        perm[pos % static_cast<int>(perm.size())],
-                                        showTitle(entry.content_id));
-                    int next_pos = (pos + 1) % static_cast<int>(all.size());
-                    state.setCursorPos("show_rerun", entry.content_id, scope, scope_id,
-                                       next_pos, all[next_pos].episode_id);
-                }
+            std::vector<Episode> rerun_pool;
+            if (!in_first_run) {
+                rerun_pool = getAvailableEpisodesForShow(channel_id, block, entry,
+                                                         before_time, state, pass_records);
+                if (rerun_pool.empty() && block.no_history_behavior == NoHistoryBehavior::FallbackAll)
+                    rerun_pool = getEpisodes(entry.content_id, entry.season_filter,
+                                             entry.include_specials, entry.episode_order);
             }
-            // else Skip: item stays nullopt, no cursor advance
 
-            // ── Block-level show selection ────────────────────────────────────────
-            int runs_remaining = state.getRunsRemaining(block.block_id);
-            int consecutive   = state.getConsecutiveCount(block.block_id) + 1;
+            auto all_eps = getEpisodes(entry.content_id, entry.season_filter,
+                                       entry.include_specials, entry.episode_order);
+            if (all_eps.empty()) return std::nullopt;
 
-            if (runs_remaining <= 1) {
-                int next_sel = -1; // -1: Exclude path cleared eligible list, skip selection
-                if (block.no_history_behavior == NoHistoryBehavior::Exclude) {
-                    std::vector<int> eligible;
-                    int total_w = 0;
-                    for (int i = 0; i < n; i++) {
-                        const auto& c_entry = block.content[i];
-                        if (c_entry.content_type == "show") {
-                            auto ceps = (block.advancement == Advancement::Smart)
-                                ? getPlayedEpisodesWithCooldown(c_entry.content_id, channel_id,
-                                    c_entry.season_filter, block.smart_pct, before_time,
-                                    global, c_entry.include_specials)
-                                : getPlayedEpisodes(c_entry.content_id, channel_id, c_entry.season_filter,
-                                    before_time, global, c_entry.include_specials, c_entry.episode_order);
-                            if (ceps.empty()) continue;
-                        }
-                        eligible.push_back(i);
-                        total_w += std::max(1, c_entry.weight);
-                    }
-                    if (eligible.empty()) {
-                        state.setBlockPosition(block.block_id, 0, 0, 0);
-                    } else {
-                        std::uniform_int_distribution<int> dist(0, total_w - 1);
-                        int r = dist(rng);
-                        next_sel = eligible.back();
-                        for (int idx : eligible) {
-                            r -= std::max(1, block.content[idx].weight);
-                            if (r < 0) { next_sel = idx; break; }
-                        }
-                    }
-                } else {
-                    next_sel = selectWeighted(block, rng);
-                }
-
-                if (next_sel >= 0) {
-                    bool same_show = (next_sel == content_pos);
-                    bool limit_hit = (block.max_consecutive_episodes > 0 &&
-                                      consecutive >= block.max_consecutive_episodes);
-                    if (same_show && limit_hit && n > 1) {
-                        int total_w = 0;
-                        for (int i = 0; i < n; ++i)
-                            if (i != content_pos) total_w += std::max(1, block.content[i].weight);
-                        if (total_w > 0) {
-                            std::uniform_int_distribution<int> dist(0, total_w - 1);
-                            int r = dist(rng);
-                            for (int i = 0; i < n; ++i) {
-                                if (i == content_pos) continue;
-                                r -= std::max(1, block.content[i].weight);
-                                if (r < 0) { next_sel = i; break; }
-                            }
-                            same_show = false;
-                        }
-                    }
-                    const auto& next_entry  = block.content[next_sel];
-                    int         next_run = std::max(1, next_entry.run_count);
-                    if (!same_show || limit_hit) {
-                        if (block.advancement == Advancement::Smart &&
-                            block.no_history_behavior == NoHistoryBehavior::Normal) {
-                            auto all_next = getEpisodes(next_entry.content_id, next_entry.season_filter,
-                                                        next_entry.include_specials, next_entry.episode_order);
-                            if (!all_next.empty()) {
-                                auto next_eps = getPlayedEpisodesWithCooldown(
-                                    next_entry.content_id, channel_id, next_entry.season_filter,
-                                    block.smart_pct, before_time, global, next_entry.include_specials);
-                                if (next_eps.empty()) {
-                                    // No premiers: random entry into full catalog + snap (hook behavior).
-                                    // Part 1 plays before Part 2 even when Part 2 is the random pick.
-                                    std::uniform_int_distribution<int> dist(0, static_cast<int>(all_next.size()) - 1);
-                                    int start = dist(rng);
-                                    int snap  = block.snap_to_group_start
-                                        ? snapToGroupStart(all_next[start].episode_id, all_next) : -1;
-                                    int final_pos = (snap >= 0) ? snap : start;
-                                    state.setCursorPos("show", next_entry.content_id, scope, scope_id,
-                                                       final_pos, all_next[final_pos].episode_id);
-                                } else {
-                                    // Has premiers: pick from played pool. Snap to Part 1 only if
-                                    // Part 1 is also in the pool (snapToGroupStart returns -1 otherwise).
-                                    std::uniform_int_distribution<int> dist(0, static_cast<int>(next_eps.size()) - 1);
-                                    int start = dist(rng);
-                                    int snap_in_pool = block.snap_to_group_start
-                                        ? snapToGroupStart(next_eps[start].episode_id, next_eps) : -1;
-                                    const std::string& target_id = (snap_in_pool >= 0)
-                                        ? next_eps[snap_in_pool].episode_id : next_eps[start].episode_id;
-                                    int pos_in_all = 0;
-                                    for (int i = 0; i < (int)all_next.size(); ++i)
-                                        if (all_next[i].episode_id == target_id) { pos_in_all = i; break; }
-                                    state.setCursorPos("show", next_entry.content_id, scope, scope_id,
-                                                       pos_in_all, all_next[pos_in_all].episode_id);
-                                }
-                            }
-                        } else {
-                            auto next_eps = (block.advancement == Advancement::Smart)
-                                ? getPlayedEpisodesWithCooldown(next_entry.content_id, channel_id,
-                                    next_entry.season_filter, block.smart_pct, before_time,
-                                    global, next_entry.include_specials)
-                                : getPlayedEpisodes(next_entry.content_id, channel_id, next_entry.season_filter,
-                                    before_time, global, next_entry.include_specials, next_entry.episode_order);
-                            if (next_eps.empty() && block.no_history_behavior == NoHistoryBehavior::FallbackAll)
-                                next_eps = getEpisodes(next_entry.content_id, next_entry.season_filter,
-                                                       next_entry.include_specials, next_entry.episode_order);
-                            if (!next_eps.empty()) {
-                                std::uniform_int_distribution<int> dist(0, static_cast<int>(next_eps.size()) - 1);
-                                int start = dist(rng);
-                                int snap = block.snap_to_group_start
-                                    ? snapToGroupStart(next_eps[start].episode_id, next_eps) : -1;
-                                int final_start = (snap >= 0) ? snap : start;
-                                state.setCursorPos("show_rerun", next_entry.content_id, scope, scope_id,
-                                                   final_start, next_eps[final_start].episode_id);
-                            }
-                        }
-                        state.setBlockPosition(block.block_id, next_sel, next_run, 0);
-                    } else {
-                        state.setBlockPosition(block.block_id, next_sel, next_run, consecutive);
-                    }
-                }
-            } else {
-                state.setBlockPosition(block.block_id,
-                                       state.getContentPosition(block.block_id),
-                                       runs_remaining - 1, consecutive);
-            }
-            // Rerun show falls through to global content-pos advance below.
+            return selectNextEpisode(channel_id, block, entry, all_eps, rerun_pool, state);
 
         } else {
             // ── Non-rerun show (Sequential / Shuffle / SmartShuffle) ───────────────
@@ -641,9 +794,32 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
             int pos = state.getCursorPos("show", entry.content_id, scope, scope_id);
             int next_pos;
 
+            // For sequential mode: reconcile the integer cursor position against the
+            // stored episode_id. If the episode list changed since the cursor was last
+            // saved (e.g. a sync added episodes), the integer position may point to the
+            // wrong episode. Find the stored episode_id and resume from there.
+            if (block.advancement == Advancement::Sequential) {
+                const std::string stored_ep_id =
+                    state.getCursorEpisodeId("show", entry.content_id, scope, scope_id);
+                if (!stored_ep_id.empty()) {
+                    int n = static_cast<int>(all_eps.size());
+                    int safe_pos = pos % n;
+                    if (all_eps[safe_pos].episode_id != stored_ep_id) {
+                        // Episode list changed: search for the episode we meant to pick.
+                        for (int i = 0; i < n; ++i) {
+                            if (all_eps[i].episode_id == stored_ep_id) {
+                                pos = i;
+                                break;
+                            }
+                        }
+                        // If not found (episode removed), pos stays at safe_pos (best effort).
+                    }
+                }
+            }
+
             if (block.advancement == Advancement::Smart && block.smart_pct > 0) {
                 auto eps  = smartShufflePool(all_eps, entry.content_id, channel_id,
-                                             block.smart_pct, before_time);
+                                             block.smart_pct, before_time, state.playRecords());
                 auto perm = shufflePermutation(entry.content_id + block.block_id,
                                                static_cast<int>(eps.size()));
                 item     = itemFromShow(channel_id, block.block_id, eps,
@@ -666,22 +842,7 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
             }
             std::string ep_id = all_eps[next_pos % static_cast<int>(all_eps.size())].episode_id;
             state.setCursorPos("show", entry.content_id, scope, scope_id, next_pos, ep_id);
-
-            if (block.advancement == Advancement::Shuffle ||
-                block.advancement == Advancement::Smart) {
-                state.setContentPosition(block.block_id, selectWeighted(block, rng));
-            } else {
-                int runs_remaining = state.getRunsRemaining(block.block_id);
-                if (runs_remaining == 0) runs_remaining = std::max(1, entry.weight);
-                if (runs_remaining <= 1) {
-                    int next_content_pos   = (content_pos + 1) % n;
-                    int next_runs = std::max(1, block.content[next_content_pos].weight);
-                    state.setBlockPosition(block.block_id, next_content_pos, next_runs, 0);
-                } else {
-                    state.setBlockPosition(block.block_id, content_pos, runs_remaining - 1, 0);
-                }
-            }
-            return item; // Non-rerun show: skip global content-pos advance
+            return item; // Block position managed by pickNextContent
 
         }
 
@@ -714,11 +875,26 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
             const std::string& show_id = shows[show_idx];
 
             if (isRerunMode(block)) {
-                bool global = (block.cursor_scope == CursorScope::Global);
-                auto eps = (block.advancement == Advancement::Smart)
-                    ? getPlayedEpisodesWithCooldown(show_id, channel_id, std::nullopt,
-                                                    block.smart_pct, before_time, global)
-                    : getPlayedEpisodes(show_id, channel_id, std::nullopt, before_time, global);
+                const bool global = (block.cursor_scope == CursorScope::Global);
+                auto eps = [&]() -> std::vector<Episode> {
+                    if (state.hasCursor("show_rerun", show_id, scope, scope_id))
+                        return getEpisodes(show_id, std::nullopt);
+                    if (state.hasCursor("show", show_id, scope, scope_id)) {
+                        auto all = getEpisodes(show_id, std::nullopt);
+                        int cp = state.getCursorPos("show", show_id, scope, scope_id);
+                        std::vector<Episode> partial;
+                        for (int i = 0; i < cp && i < (int)all.size(); ++i)
+                            partial.push_back(all[i]);
+                        return partial;
+                    }
+                    return (block.advancement == Advancement::Smart)
+                        ? getPlayedEpisodesWithCooldown(show_id, channel_id, std::nullopt,
+                                                        block.smart_pct, before_time, global)
+                        : getPlayedEpisodes(show_id, channel_id, std::nullopt, before_time, global);
+                }();
+                if (block.advancement == Advancement::Smart && block.smart_pct > 0 && !eps.empty())
+                    eps = smartShufflePool(eps, show_id, channel_id,
+                                           block.smart_pct, before_time, pass_records);
                 if (eps.empty() && block.no_history_behavior == NoHistoryBehavior::FallbackAll)
                     eps = getEpisodes(show_id, std::nullopt);
 
@@ -743,49 +919,6 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
                                        next_pos, eps[next_pos].episode_id);
                 }
 
-                int runs_remaining = state.getRunsRemaining(block.block_id);
-                int consecutive   = state.getConsecutiveCount(block.block_id) + 1;
-
-                if (runs_remaining <= 1) {
-                    int next_idx;
-                    if (n_shows == 1) {
-                        next_idx = 0;
-                    } else {
-                        std::uniform_int_distribution<int> dist(0, n_shows - 2);
-                        int r = dist(rng);
-                        next_idx = (r >= show_idx) ? r + 1 : r;
-                    }
-                    bool same_show = (next_idx == show_idx);
-                    bool limit_hit = (block.max_consecutive_episodes > 0 &&
-                                      consecutive >= block.max_consecutive_episodes);
-                    int next_run = std::max(1, entry.run_count);
-                    if (!same_show || limit_hit) {
-                        const std::string& next_show = shows[next_idx];
-                        auto next_eps = (block.advancement == Advancement::Smart)
-                            ? getPlayedEpisodesWithCooldown(next_show, channel_id, std::nullopt,
-                                                            block.smart_pct, before_time, global)
-                            : getPlayedEpisodes(next_show, channel_id, std::nullopt,
-                                                before_time, global);
-                        if (next_eps.empty() && block.no_history_behavior == NoHistoryBehavior::FallbackAll)
-                            next_eps = getEpisodes(next_show, std::nullopt);
-                        if (!next_eps.empty()) {
-                            std::uniform_int_distribution<int> rdist(0, static_cast<int>(next_eps.size()) - 1);
-                            int start = rdist(rng);
-                            int snap  = block.snap_to_group_start
-                                ? snapToGroupStart(next_eps[start].episode_id, next_eps) : -1;
-                            int final_start = (snap >= 0) ? snap : start;
-                            state.setCursorPos("show_rerun", next_show, scope, scope_id,
-                                               final_start, next_eps[final_start].episode_id);
-                        }
-                        state.setCursorPos("playlist", entry.content_id, scope, scope_id, next_idx);
-                        state.setBlockPosition(block.block_id, content_pos, next_run, 0);
-                    } else {
-                        state.setCursorPos("playlist", entry.content_id, scope, scope_id, next_idx);
-                        state.setBlockPosition(block.block_id, content_pos, next_run, consecutive);
-                    }
-                } else {
-                    state.setBlockPosition(block.block_id, content_pos, runs_remaining - 1, consecutive);
-                }
             } else {
                 // Non-rerun show_collection
                 auto pl_eps = getPlaylistShowEpisodes(entry.content_id, show_id);
@@ -794,7 +927,7 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
                     int next_pos;
                     if (block.advancement == Advancement::Smart && block.smart_pct > 0) {
                         auto filt = smartShufflePool(pl_eps, show_id, channel_id,
-                                                      block.smart_pct, before_time);
+                                                      block.smart_pct, before_time, state.playRecords());
                         auto perm = shufflePermutation(show_id + block.block_id,
                                                        static_cast<int>(filt.size()));
                         item     = itemFromShow(channel_id, block.block_id, filt,
@@ -818,24 +951,57 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
                     std::string ep_id = pl_eps[next_pos % static_cast<int>(pl_eps.size())].episode_id;
                     state.setCursorPos("show", show_id, scope, scope_id, next_pos, ep_id);
                 }
-                if (block.advancement == Advancement::Shuffle ||
-                    block.advancement == Advancement::Smart) {
-                    std::uniform_int_distribution<int> dist(0, n_shows - 1);
-                    state.setCursorPos("playlist", entry.content_id, scope, scope_id, dist(rng));
-                } else {
-                    int runs_remaining = state.getRunsRemaining(block.block_id);
-                    if (runs_remaining == 0) runs_remaining = std::max(1, entry.weight);
-                    if (runs_remaining <= 1) {
-                        int next_idx  = (show_idx + 1) % n_shows;
-                        int next_runs = std::max(1, entry.weight);
-                        state.setCursorPos("playlist", entry.content_id, scope, scope_id, next_idx);
-                        state.setBlockPosition(block.block_id, content_pos, next_runs, 0);
-                    } else {
-                        state.setBlockPosition(block.block_id, content_pos, runs_remaining - 1, 0);
+            }
+
+            // Rotate within collection — always advance to next show.
+            // Block-level content cycling is handled by pickNextContent.
+            int next_idx;
+            if (n_shows == 1) {
+                next_idx = 0;
+            } else if (block.advancement == Advancement::Shuffle ||
+                       block.advancement == Advancement::Smart) {
+                std::uniform_int_distribution<int> dist(0, n_shows - 1);
+                next_idx = dist(rng);
+            } else {
+                next_idx = (show_idx + 1) % n_shows;
+            }
+
+            if (isRerunMode(block) && next_idx != show_idx) {
+                // Seed the next show's rerun cursor at a random start position.
+                const bool global = (block.cursor_scope == CursorScope::Global);
+                const std::string& next_show = shows[next_idx];
+                auto next_eps = [&]() -> std::vector<Episode> {
+                    if (state.hasCursor("show_rerun", next_show, scope, scope_id))
+                        return getEpisodes(next_show, std::nullopt);
+                    if (state.hasCursor("show", next_show, scope, scope_id)) {
+                        auto all = getEpisodes(next_show, std::nullopt);
+                        int cp = state.getCursorPos("show", next_show, scope, scope_id);
+                        std::vector<Episode> partial;
+                        for (int i = 0; i < cp && i < (int)all.size(); ++i)
+                            partial.push_back(all[i]);
+                        return partial;
                     }
+                    return (block.advancement == Advancement::Smart)
+                        ? getPlayedEpisodesWithCooldown(next_show, channel_id, std::nullopt,
+                                                        block.smart_pct, before_time, global)
+                        : getPlayedEpisodes(next_show, channel_id, std::nullopt, before_time, global);
+                }();
+                if (block.advancement == Advancement::Smart && block.smart_pct > 0 && !next_eps.empty())
+                    next_eps = smartShufflePool(next_eps, next_show, channel_id,
+                                                block.smart_pct, before_time, pass_records);
+                if (next_eps.empty() && block.no_history_behavior == NoHistoryBehavior::FallbackAll)
+                    next_eps = getEpisodes(next_show, std::nullopt);
+                if (!next_eps.empty()) {
+                    std::uniform_int_distribution<int> rdist(0, static_cast<int>(next_eps.size()) - 1);
+                    int start = rdist(rng);
+                    int snap  = block.snap_to_group_start
+                        ? snapToGroupStart(next_eps[start].episode_id, next_eps) : -1;
+                    int final_start = (snap >= 0) ? snap : start;
+                    state.setCursorPos("show_rerun", next_show, scope, scope_id,
+                                       final_start, next_eps[final_start].episode_id);
                 }
             }
-            // show_collection: fall through to global content-pos advance
+            state.setCursorPos("playlist", entry.content_id, scope, scope_id, next_idx);
 
         } else {
             // ── Flat playlist / filler_list ───────────────────────────────────────
@@ -862,33 +1028,11 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
                 m.block_id   = block.block_id;
                 item = std::move(m);
             }
-            bool is_fl = (entry.content_type == "filler_list");
-            const char* cnt_sql = is_fl
-                ? "SELECT COUNT(*) FROM filler_list_item WHERE filler_list_id=?"
-                : "SELECT COUNT(*) FROM playlist_item     WHERE playlist_id=?";
-            SQLite::Statement q_cnt(db_.get(), cnt_sql);
-            q_cnt.bind(1, entry.content_id);
-            if (q_cnt.executeStep()) {
-                int list_size = q_cnt.getColumn(0).getInt();
-                if (list_size > 0)
-                    state.setCursorPos(entry.content_type, entry.content_id, scope, scope_id,
-                                       (pos + 1) % list_size);
-            }
+            state.setCursorPos(entry.content_type, entry.content_id, scope, scope_id,
+                               (pos + 1) % static_cast<int>(list_items.size()));
         }
     }
 
-    // ── Global content-position advance ──────────────────────────────────────────
-    // Runs for: movie, episode, flat playlist/filler, show_collection, and rerun show.
-    // Non-rerun show returns early above to manage its own content-pos advance.
-    if (block.advancement == Advancement::Smart && block.smart_pct > 0) {
-        state.setContentPosition(block.block_id,
-            selectWeightedSmartCooldown(block, channel_id, block.smart_pct, before_time, rng));
-    } else if (block.advancement == Advancement::Shuffle ||
-               block.advancement == Advancement::Smart) {
-        state.setContentPosition(block.block_id, selectWeighted(block, rng));
-    } else {
-        state.setContentPosition(block.block_id, (content_pos + 1) % n);
-    }
     return item;
 }
 
@@ -901,6 +1045,7 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     int64_t max_ms,
     CursorState& state,
     Xoshiro256& rng,
+    const std::vector<PlayRecord>& pass_records,
     std::time_t before_time)
 {
     if (pool.empty()) return std::nullopt;
@@ -998,6 +1143,16 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     // Sized advancement already applies LRU directly; this covers the other two modes.
     if (fe.advancement != "sized" && block.smart_pct > 0 && before_time > 0) {
         auto lp    = content_.getLastPlayedMap(channel_id, before_time);
+        
+        // Augment last-played map with in-pass records.
+        for (const auto& pr : pass_records) {
+            if (pr.channel_id == channel_id && pr.aired_at < before_time) {
+                auto it = lp.find(pr.item_id);
+                if (it == lp.end() || pr.aired_at > it->second)
+                    lp[pr.item_id] = pr.aired_at;
+            }
+        }
+
         int  hot_n = std::max(0, static_cast<int>(items.size()) * block.smart_pct / 100);
         if (hot_n > 0 && !lp.empty()) {
             std::vector<int64_t> ts;
@@ -1185,20 +1340,21 @@ bool RuleEngine::scheduleBlock(
             pass.anchor_next_monday += 7 * 86400;
         }
 
-        // Determine whether the current content entry is a show type BEFORE advancing
-        // the cursor. Only show-type entries should update last_show_id — filler_list,
-        // playlist, movie, and episode entries must not, otherwise an interstitial bumper
-        // fires between consecutive episodes of the same show (e.g. two Owl House episodes
-        // separated by inter-filler) because a filler_list item's show_id pollutes the
-        // tracker, making the next same-show episode look like a show transition.
-        const bool content_entry_is_show = [&]() -> bool {
-            if (block.content.empty()) return false;
-            int cp = ctx.state.getContentPosition(block.block_id);
-            return block.content[cp % static_cast<int>(block.content.size())].content_type == "show";
-        }();
+        int sel = pickNextContent(ctx.channel_id, block, pass.t, ctx.state, pass.play_records, ctx.rng);
+
+        // Determine whether the selected content entry is a show type. Only show-type
+        // entries should update last_show_id — filler_list, playlist, movie, and episode
+        // entries must not, otherwise an interstitial bumper fires between consecutive
+        // episodes of the same show (e.g. two Owl House episodes separated by inter-filler)
+        // because a filler_list item's show_id pollutes the tracker, making the next
+        // same-show episode look like a show transition.
+        const bool content_entry_is_show = sel >= 0 && !block.content.empty() &&
+            block.content[sel % static_cast<int>(block.content.size())].content_type == "show";
 
         CursorState snap = ctx.state;
-        auto item_opt = advanceAndGet(ctx.channel_id, block, pass.t, ctx.state, ctx.rng);
+        auto item_opt = (sel >= 0)
+            ? advanceAndGet(ctx.channel_id, block, sel, pass.t, ctx.state, pass.play_records, ctx.rng)
+            : std::nullopt;
 
         if (item_opt && !block.interstitial_content_id.empty() &&
             block.interstitial_every_n > 0 &&
@@ -1217,7 +1373,7 @@ bool RuleEngine::scheduleBlock(
             const auto& pool = block.filler_entries.empty() ? ctx.channel_filler
                                                             : block.filler_entries;
             if (!pool.empty())
-                if (auto fi = pickFillerSim(ctx.channel_id, block, pool, 0, ctx.state, ctx.rng, pass.t)) {
+                if (auto fi = pickFillerSim(ctx.channel_id, block, pool, 0, ctx.state, ctx.rng, pass.play_records, pass.t)) {
                     item_opt           = std::move(fi);
                     is_fallback_filler = true;
                 }
@@ -1283,8 +1439,20 @@ bool RuleEngine::scheduleBlock(
         pass.t += dur_ms / 1000;
         const std::time_t t_prog_end = pass.t;
 
-        if (!is_fallback_filler)
-            pass.play_records.push_back({ctx.channel_id, ph_type, ph_id, block.block_id, ph_at});
+        if (!is_fallback_filler) {
+            pass.play_records.push_back({ctx.channel_id, ph_type, ph_id, ph_show, block.block_id, ph_at});
+            ctx.state.addPlayRecord(ctx.channel_id, ph_type, ph_id, ph_show, block.block_id, ph_at);
+
+            // Cull pass.play_records based on rerun_min_time_mins.
+            int effective_min = block.rerun_min_time_mins > 0 ? block.rerun_min_time_mins : ctx.rerun_min_time_mins;
+            if (effective_min > 0) {
+                std::time_t threshold = pass.t - static_cast<std::time_t>(effective_min) * 60;
+                pass.play_records.erase(
+                    std::remove_if(pass.play_records.begin(), pass.play_records.end(),
+                                   [&](const PlayRecord& pr) { return pr.aired_at < threshold; }),
+                    pass.play_records.end());
+            }
+        }
 
         if (!is_fallback_filler && !ctx.between_bumpers.empty()) {
             ++pass.channel_prog_count;
@@ -1318,7 +1486,7 @@ bool RuleEngine::scheduleBlock(
                     while (pass.t < fill_target) {
                         int64_t rem_ms = (fill_target - pass.t) * 1000;
                         int64_t max_ms = (late_boundary - pass.t) * 1000;
-                        auto fi = pickFillerSim(ctx.channel_id, block, pool, rem_ms, ctx.state, ctx.rng, pass.t);
+                        auto fi = pickFillerSim(ctx.channel_id, block, pool, rem_ms, ctx.state, ctx.rng, pass.play_records, pass.t);
                         if (!fi || fi->duration_ms <= 0 || fi->duration_ms > max_ms) break;
                         fi->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
                         fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;
@@ -1430,7 +1598,11 @@ void RuleEngine::projectDay(
                     if (cand > pass.t && cand < jump) jump = cand;
                 }
             }
-            pass.t = jump;
+            // No block covers this stretch — materialize channel-level filler into the
+            // gap via the same deterministic path as block-internal filler (rotation,
+            // smart_pct cooldown), instead of leaving it unscheduled for the live "/now"
+            // path to fill ad hoc with an ungoverned random pick.
+            fillToTime(ctx, ctx.gap_block, jump, pass);
             pass.prev_block_id.clear();
             continue;
         }
@@ -1480,26 +1652,9 @@ void RuleEngine::projectDay(
                     bool global    = (block.cursor_scope == CursorScope::Global);
                     int  sel       = selectWeighted(block, ctx.rng);
                     const auto& sel_bc = block.content[sel];
-                    auto eps = (block.advancement == Advancement::Smart)
-                        ? getPlayedEpisodesWithCooldown(sel_bc.content_id, ctx.channel_id,
-                            sel_bc.season_filter, block.smart_pct, pass.t, global, sel_bc.include_specials)
-                        : getPlayedEpisodes(sel_bc.content_id, ctx.channel_id, sel_bc.season_filter,
-                            pass.t, global, sel_bc.include_specials, sel_bc.episode_order);
-                    if (eps.empty() && block.no_history_behavior == NoHistoryBehavior::FallbackAll)
-                        eps = getEpisodes(sel_bc.content_id, sel_bc.season_filter,
-                                          sel_bc.include_specials, sel_bc.episode_order);
-                    if (!eps.empty()) {
-                        std::uniform_int_distribution<int> dist(0, (int)eps.size() - 1);
-                        int sp = dist(ctx.rng);
-                        int sn = block.snap_to_group_start
-                            ? snapToGroupStart(eps[sp].episode_id, eps) : -1;
-                        int fp = (sn >= 0) ? sn : sp;
-                        ctx.state.setCursorPos("show_rerun", sel_bc.content_id,
-                                               scopeStr(block), scopeId(block, ctx.channel_id),
-                                               fp, eps[fp].episode_id);
-                    }
                     ctx.state.setBlockPosition(block.block_id, sel,
                                                std::max(1, sel_bc.run_count), 0);
+
                     std::string sc = scopeStr(block), sc_id = scopeId(block, ctx.channel_id);
                     for (const auto& bc : block.content) {
                         if (bc.content_type != "show") continue;
@@ -1508,16 +1663,27 @@ void RuleEngine::projectDay(
                                 bc.season_filter, block.smart_pct, pass.t, global, bc.include_specials)
                             : getPlayedEpisodes(bc.content_id, ctx.channel_id, bc.season_filter,
                                 pass.t, global, bc.include_specials, bc.episode_order);
-                        if (!played.empty()) continue;
                         auto all = getEpisodes(bc.content_id, bc.season_filter,
                                                bc.include_specials, bc.episode_order);
-                        if (all.empty()) continue;
-                        int pos = static_cast<int>(ctx.rng() % all.size());
-                        int sn2 = block.snap_to_group_start
-                            ? snapToGroupStart(all[pos].episode_id, all) : -1;
-                        int fp2 = (sn2 >= 0) ? sn2 : pos;
-                        ctx.state.setCursorPos("show", bc.content_id, sc, sc_id,
-                                               fp2, all[fp2].episode_id);
+
+                        std::optional<SeedCursor> seed;
+                        switch (block.no_history_behavior) {
+                            case NoHistoryBehavior::Normal:
+                                seed = getContentNormalHistory(played, all, block.snap_to_group_start, ctx.rng);
+                                break;
+                            case NoHistoryBehavior::FallbackAll:
+                                seed = getContentFallbackHistory(played, all, block.snap_to_group_start, ctx.rng);
+                                break;
+                            case NoHistoryBehavior::Exclude:
+                                seed = getContentExcludeHistory(played, all, block.snap_to_group_start, ctx.rng);
+                                break;
+                            case NoHistoryBehavior::Skip:
+                                seed = getContentSkipHistory(played, all, block.snap_to_group_start, ctx.rng);
+                                break;
+                        }
+                        if (seed)
+                            ctx.state.setCursorPos(seed->content_type, bc.content_id, sc, sc_id,
+                                                   seed->position, seed->episode_id);
                     }
                 } else {
                     std::string sc = scopeStr(block), sc_id = scopeId(block, ctx.channel_id);
@@ -1625,9 +1791,24 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                                        bq.getColumn(3).getInt()});
     }
 
+    int rerun_min = 0;
+    std::string gap_filler_selection = "round_robin";
+    {
+        SQLite::Statement sq(db_.get(),
+            "SELECT rerun_min_time_mins, default_filler_selection FROM channel WHERE channel_id = ?");
+        sq.bind(1, channel_id);
+        if (sq.executeStep()) {
+            rerun_min             = sq.getColumn(0).getInt();
+            gap_filler_selection  = sq.getColumn(1).getString();
+        }
+    }
+
+    Block gap_block;
+    gap_block.filler_selection = gap_filler_selection;
+
     ProjectContext ctx{
         channel_id, blocks, channel_filler, between_bumpers,
-        tz, start, result, state, rng, anchors_out
+        tz, start, rerun_min, result, state, rng, anchors_out, gap_block
     };
 
     ProjectPassState pass;
@@ -1682,7 +1863,7 @@ void RuleEngine::fillToTime(const ProjectContext& ctx,
     int guard = 0;
     while (pass.t < target && guard++ < 2000) {
         int64_t max_ms = (target - pass.t) * 1000;
-        auto fi = pickFillerSim(ctx.channel_id, block, pool, max_ms, ctx.state, ctx.rng, pass.t);
+        auto fi = pickFillerSim(ctx.channel_id, block, pool, max_ms, ctx.state, ctx.rng, pass.play_records, pass.t);
         if (!fi || fi->duration_ms <= 0 || fi->duration_ms > max_ms) break;
         fi->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
         fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;
@@ -1694,147 +1875,6 @@ void RuleEngine::fillToTime(const ProjectContext& ctx,
         pass.t += dur / 1000;
     }
     if (pass.t < target) pass.t = target;
-}
-
-std::optional<ScheduledItem> RuleEngine::pickSlotEpisode(
-    const std::string& channel_id,
-    const std::string& block_id,
-    const TimeslotQueueEntry& entry,
-    int episode_pos)
-{
-    if (entry.content_type == "show") {
-        auto eps = getEpisodes(entry.content_id, std::nullopt, false, "season");
-        if (eps.empty() || episode_pos >= static_cast<int>(eps.size()))
-            return std::nullopt;
-        return itemFromShow(channel_id, block_id, eps, episode_pos, showTitle(entry.content_id));
-    }
-    if (entry.content_type == "movie") {
-        if (episode_pos > 0) return std::nullopt; // one-shot
-        auto m = getMovie(entry.content_id);
-        if (!m) return std::nullopt;
-        auto mi = movieItem(*m);
-        mi.channel_id = channel_id;
-        mi.block_id   = block_id;
-        return mi;
-    }
-    return std::nullopt;
-}
-
-void RuleEngine::scheduleTimeslotSlot(
-    const ProjectContext& ctx,
-    const Block& block,
-    const TimeslotSlot& slot,
-    std::time_t slot_end,
-    ProjectPassState& pass)
-{
-    if (slot.queue.empty()) return;
-
-    auto sc = ctx.state.getSlotCursor(slot.slot_id);
-
-    // Current date as "YYYY-MM-DD" string for premiere_date comparisons.
-    char date_buf[11];
-    {
-        auto tm_now = toChannelTZ(pass.t, ctx.tz);
-        snprintf(date_buf, sizeof(date_buf), "%04d-%02d-%02d",
-                 tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday);
-    }
-    const std::string today_str = date_buf;
-
-    // Each slot plays exactly one program; filler/bumpers cover the remaining slot time.
-    // The guard loop exists only to skip exhausted queue entries, not to pack episodes.
-    int guard = 0;
-    while (guard++ < 5000) {
-        if (sc.queue_pos >= static_cast<int>(slot.queue.size())) break;
-        const auto& entry = slot.queue[sc.queue_pos];
-
-        // Premiere guard: if this entry hasn't arrived yet, apply pre_premiere_behavior.
-        if (!entry.premiere_date.empty() && entry.premiere_date > today_str) {
-            if (entry.pre_premiere_behavior == "skip") {
-                pass.t = slot_end;
-                break;
-            }
-            if (entry.pre_premiere_behavior == "filler") break; // fall through to filler
-            // "replay_previous": wrap episode_pos within the PREVIOUS queue item.
-            if (sc.queue_pos > 0) {
-                const auto& prev = slot.queue[sc.queue_pos - 1];
-                int prev_count = 0;
-                if (prev.content_type == "show") {
-                    auto eps = getEpisodes(prev.content_id, std::nullopt, false, "season");
-                    prev_count = static_cast<int>(eps.size());
-                } else if (prev.content_type == "movie") {
-                    prev_count = 1;
-                }
-                if (prev_count > 0) sc.episode_pos = sc.episode_pos % prev_count;
-                const auto& eff_entry = prev;
-                auto item = pickSlotEpisode(ctx.channel_id, block.block_id, eff_entry, sc.episode_pos);
-                if (!item) break;
-                int64_t dur_ms = item->duration_ms;
-                if (slot.overflow == SlotOverflow::Cutoff) {
-                    int64_t rem = (slot_end - pass.t) * 1000;
-                    if (rem <= 0) break;
-                    dur_ms = std::min(dur_ms, rem);
-                }
-                item->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
-                item->wall_clock_end_ms   = item->wall_clock_start_ms + dur_ms;
-                item->cursor_json         = "{}";
-                item->channel_id          = ctx.channel_id;
-                item->block_id            = block.block_id;
-                pass.play_records.push_back({ctx.channel_id, item->item_type, item->item_id, block.block_id, pass.t});
-                ctx.result.push_back(std::move(*item));
-                pass.t += dur_ms / 1000;
-                sc.episode_pos++;
-                ctx.state.setSlotCursor(slot.slot_id, sc.queue_pos, sc.episode_pos);
-            }
-            break; // stop content; filler fills the rest of the slot
-        }
-
-        auto item = pickSlotEpisode(ctx.channel_id, block.block_id, entry, sc.episode_pos);
-        if (!item) {
-            // Queue item exhausted — only remove from DB if the show has finished airing
-            // (last episode aired_at is in the past). Ongoing shows hold and fill with filler.
-            bool is_complete = false;
-            if (entry.content_type == "show") {
-                SQLite::Statement aq(db_.get(),
-                    "SELECT COALESCE(strftime('%s', MAX(air_date)), 0) FROM episode WHERE show_id=?");
-                aq.bind(1, entry.content_id);
-                if (aq.executeStep()) {
-                    int64_t last_aired = aq.getColumn(0).getInt64();
-                    is_complete = last_aired > 0 && last_aired < static_cast<int64_t>(pass.t);
-                }
-            } else {
-                is_complete = true; // movies are always complete
-            }
-
-            if (is_complete) {
-                TimeslotRepository(db_).removeExhaustedQueueEntry(entry.entry_id, slot.slot_id);
-                // sc.queue_pos unchanged: next entry has shifted down to this index.
-                sc.episode_pos = 0;
-                ctx.state.setSlotCursor(slot.slot_id, sc.queue_pos, sc.episode_pos);
-            }
-            // Whether removed or holding, stop content for this slot occurrence.
-            break;
-        }
-
-        int64_t dur_ms = item->duration_ms;
-        if (slot.overflow == SlotOverflow::Cutoff) {
-            int64_t rem = (slot_end - pass.t) * 1000;
-            if (rem <= 0) break;
-            dur_ms = std::min(dur_ms, rem);
-        }
-
-        item->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
-        item->wall_clock_end_ms   = item->wall_clock_start_ms + dur_ms;
-        item->cursor_json         = "{}";
-        item->channel_id          = ctx.channel_id;
-        item->block_id            = block.block_id;
-        pass.play_records.push_back({ctx.channel_id, item->item_type, item->item_id, block.block_id, pass.t});
-        ctx.result.push_back(std::move(*item));
-        pass.t += dur_ms / 1000;
-
-        sc.episode_pos++;
-        ctx.state.setSlotCursor(slot.slot_id, sc.queue_pos, sc.episode_pos);
-        break; // one program per slot; scheduleTimeslotBlock fills the remainder
-    }
 }
 
 bool RuleEngine::scheduleTimeslotBlock(
@@ -1903,7 +1943,42 @@ bool RuleEngine::scheduleTimeslotBlock(
         }
 
         // Schedule content.
-        scheduleTimeslotSlot(ctx, block, slot, slot_end, pass);
+        auto sc = ctx.state.getSlotCursor(slot.slot_id);
+        int sel_ts = pickNextContent(ctx.channel_id, block, pass.t, ctx.state, pass.play_records, ctx.rng);
+        auto item_opt = (sel_ts >= 0)
+            ? advanceAndGet(ctx.channel_id, block, sel_ts, pass.t, ctx.state, pass.play_records, ctx.rng)
+            : std::nullopt;
+        if (item_opt) {
+            int64_t dur_ms = item_opt->duration_ms;
+            if (slot.overflow == SlotOverflow::Cutoff) {
+                int64_t rem = (slot_end - pass.t) * 1000;
+                if (rem > 0) dur_ms = std::min(dur_ms, rem);
+            }
+            item_opt->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
+            item_opt->wall_clock_end_ms   = item_opt->wall_clock_start_ms + dur_ms;
+            item_opt->cursor_json         = "{}";
+            item_opt->channel_id          = ctx.channel_id;
+            item_opt->block_id            = block.block_id;
+            pass.play_records.push_back({ctx.channel_id, item_opt->item_type, item_opt->item_id, item_opt->show_id, block.block_id, pass.t});
+            ctx.state.addPlayRecord(ctx.channel_id, item_opt->item_type, item_opt->item_id, item_opt->show_id, block.block_id, pass.t);
+
+            // Cull pass.play_records based on rerun_min_time_mins.
+            int effective_min = block.rerun_min_time_mins > 0 ? block.rerun_min_time_mins : ctx.rerun_min_time_mins;
+            if (effective_min > 0) {
+                std::time_t threshold = pass.t - static_cast<std::time_t>(effective_min) * 60;
+                pass.play_records.erase(
+                    std::remove_if(pass.play_records.begin(), pass.play_records.end(),
+                                   [&](const PlayRecord& pr) { return pr.aired_at < threshold; }),
+                    pass.play_records.end());
+            }
+            ctx.result.push_back(std::move(*item_opt));
+            pass.t += dur_ms / 1000;
+
+            sc.episode_pos++;
+            ctx.state.setSlotCursor(slot.slot_id, sc.queue_pos, sc.episode_pos);
+        } else {
+            if (slot.overflow == SlotOverflow::Cutoff) pass.t = slot_end;
+        }
 
         // After content: fill remainder of slot with filler (cutoff mode),
         // or leave pass.t where it is (finish mode — episode ran over).
@@ -1946,7 +2021,8 @@ void RuleEngine::markPlayed(const std::string& channel_id, const std::string& bl
             CursorState cs = CursorRepository(db_).load(channel_id);
             Xoshiro256 rng(std::hash<std::string>{}(channel_id + block_id)
                            ^ static_cast<uint64_t>(std::time(nullptr)));
-            advanceAndGet(channel_id, *b, std::time(nullptr), cs, rng);
+            int sel = pickNextContent(channel_id, *b, std::time(nullptr), cs, {}, rng);
+            if (sel >= 0) advanceAndGet(channel_id, *b, sel, std::time(nullptr), cs, {}, rng);
             CursorRepository(db_).apply(channel_id, cs);
         }
     }

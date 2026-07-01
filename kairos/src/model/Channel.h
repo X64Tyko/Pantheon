@@ -8,6 +8,7 @@ struct Channel {
     std::string timezone                 = "UTC";
     std::string advance_mode             = "scheduled";
     std::string default_filler_selection = "round_robin";
+    int         rerun_min_time_mins        = 0;
     int         seed                     = 12345;
     std::string offline_video_path;
     std::string offline_image_path;

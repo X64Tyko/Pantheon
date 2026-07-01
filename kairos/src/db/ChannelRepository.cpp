@@ -25,26 +25,27 @@ Channel ChannelRepository::rowToChannel(SQLite::Statement& q) {
 	c.number                   = q.getColumn(2).getInt();
 	c.timezone                 = q.getColumn(3).getString();
 	c.default_filler_selection = q.getColumn(4).getString();
-	c.seed                     = q.getColumn(5).getInt();
-	c.advance_mode             = q.getColumn(6).getString();
-	c.offline_video_path       = q.getColumn(7).getString();
-	c.offline_image_path       = q.getColumn(8).getString();
-	c.offline_audio_id         = q.getColumn(9).getString();
-	c.offline_audio_type       = q.getColumn(10).getString();
-	c.offline_audio_title      = q.getColumn(11).getString();
-	c.logo_path                = q.getColumn(12).getString();
-	if (!q.getColumn(13).isNull()) c.anchor_hashes = q.getColumn(13).getString();
-	c.audio_lang               = q.getColumn(14).getString();
-	c.subtitle_lang            = q.getColumn(15).getString();
-	c.stream_resolution        = q.getColumn(16).getString();
-	c.stream_video_bitrate     = q.getColumn(17).getInt();
-	c.stream_audio_bitrate     = q.getColumn(18).getInt();
+	c.rerun_min_time_mins      = q.getColumn(5).getInt();
+	c.seed                     = q.getColumn(6).getInt();
+	c.advance_mode             = q.getColumn(7).getString();
+	c.offline_video_path       = q.getColumn(8).getString();
+	c.offline_image_path       = q.getColumn(9).getString();
+	c.offline_audio_id         = q.getColumn(10).getString();
+	c.offline_audio_type       = q.getColumn(11).getString();
+	c.offline_audio_title      = q.getColumn(12).getString();
+	c.logo_path                = q.getColumn(13).getString();
+	if (!q.getColumn(14).isNull()) c.anchor_hashes = q.getColumn(14).getString();
+	c.audio_lang               = q.getColumn(15).getString();
+	c.subtitle_lang            = q.getColumn(16).getString();
+	c.stream_resolution        = q.getColumn(17).getString();
+	c.stream_video_bitrate     = q.getColumn(18).getInt();
+	c.stream_audio_bitrate     = q.getColumn(19).getInt();
 	return c;
 }
 
 std::vector<Channel> ChannelRepository::listChannels() {
 	SQLite::Statement q(db_.get(),
-		"SELECT channel_id, name, number, timezone, default_filler_selection, seed, advance_mode, "
+		"SELECT channel_id, name, number, timezone, default_filler_selection, rerun_min_time_mins, seed, advance_mode, "
 		"       offline_video_path, offline_image_path, offline_audio_id, offline_audio_type, "
 		"       offline_audio_title, logo_path, anchor_hashes, audio_lang, subtitle_lang, "
 		"       stream_resolution, stream_video_bitrate, stream_audio_bitrate "
@@ -56,7 +57,7 @@ std::vector<Channel> ChannelRepository::listChannels() {
 
 std::optional<Channel> ChannelRepository::findById(const std::string& channel_id) {
 	SQLite::Statement q(db_.get(),
-		"SELECT channel_id, name, number, timezone, default_filler_selection, seed, advance_mode, "
+		"SELECT channel_id, name, number, timezone, default_filler_selection, rerun_min_time_mins, seed, advance_mode, "
 		"       offline_video_path, offline_image_path, offline_audio_id, offline_audio_type, "
 		"       offline_audio_title, logo_path, anchor_hashes, audio_lang, subtitle_lang, "
 		"       stream_resolution, stream_video_bitrate, stream_audio_bitrate "

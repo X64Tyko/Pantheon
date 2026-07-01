@@ -121,6 +121,8 @@ private:
 
     // Weighted random selection of a content-item index from a block's content list.
     static int selectWeighted(const Block& block, Xoshiro256& rng);
+    // Like selectWeighted but skips exclude_idx. Falls back to selectWeighted if all excluded.
+    static int selectWeightedExcluding(const Block& block, int exclude_idx, Xoshiro256& rng);
 
     // Weighted content-entry selection with movie-level recency cooldown. Excludes the
     // n*smart_pct/100 most-recently-played movie entries from the weighted draw.
@@ -128,14 +130,17 @@ private:
     // selectWeighted. (Show content uses smart_pct at the episode-pool level via
     // smartShufflePool; the block-selection level always sees the full show list.)
     int selectWeightedSmartCooldown(const Block& block, const std::string& channel_id,
-                                    int smart_pct, std::time_t before_time, Xoshiro256& rng);
+                                    int smart_pct, std::time_t before_time,
+                                    const std::vector<PlayRecord>& play_records,
+                                    Xoshiro256& rng);
 
     // For SmartShuffle show blocks: filters `all` to exclude the most recently played
     // smart_pct% of episodes. Falls back to `all` if every episode is hot.
     std::vector<Episode> smartShufflePool(const std::vector<Episode>& all,
                                           const std::string& show_id,
                                           const std::string& channel_id,
-                                          int smart_pct, std::time_t before_time);
+                                          int smart_pct, std::time_t before_time,
+                                          const std::vector<PlayRecord>& play_records);
 
     // Given an episode_id, snap back to Part 1 of its multipart group (if any).
     int snapToGroupStart(const std::string& episode_id, const std::vector<Episode>& eps);
@@ -149,15 +154,75 @@ private:
     std::vector<int> groupedShufflePermutation(const std::string& seed_str,
                                                const std::vector<Episode>& eps);
 
-    static std::string scopeStr(const Block& b);
-    static std::string scopeId(const Block& b, const std::string& channel_id);
+    // Get the aired episodes for a show, prioritizing memory cursors.
+    std::vector<Episode> getAvailableEpisodesForShow(const std::string& channel_id, const Block& block,
+                                                     const BlockContent& entry, std::time_t before_time,
+                                                     const CursorState& state, const std::vector<PlayRecord>& pass_records);
 
-    // Select the next item from block AND advance cursor state atomically.
-    // Episode pool is queried once; returns nullopt without advancing if no item available.
+    // ── Rerun-block seed cursors (once-per-block-per-day init in projectDay) ──────
+    //
+    // Decides what starting cursor, if any, to seed for one show content entry that
+    // has no persisted block position yet. `played` is that show's real play history
+    // (episode_order applied, already scoped/cooled by the caller); `all` is its full
+    // episode catalog. Returns nullopt to mean "leave this show genuinely unseeded" —
+    // callers must never fabricate a cursor to paper over that.
+    //
+    // Split one function per no_history_behavior (rather than a single branchy block)
+    // so a new behavior is one new function + one switch case, without touching the
+    // others or the shared real-history math.
+    struct SeedCursor { std::string content_type; int position = 0; std::string episode_id; };
+
+    // Shared by every behavior: if `played` is non-empty, resume first-run right after
+    // it (or flip to full rerun mode once `played` covers the whole catalog). Returns
+    // nullopt when there is no real history to seed from.
+    std::optional<SeedCursor> seedFromRealHistory(const std::vector<Episode>& played,
+                                                  const std::vector<Episode>& all,
+                                                  bool snap_to_group_start, Xoshiro256& rng);
+
+    // Normal: optimistic either way — real history resumes first-run; no history at
+    // all still gets a random first-run starting point (channel seed diversity).
+    std::optional<SeedCursor> getContentNormalHistory(const std::vector<Episode>& played,
+                                                       const std::vector<Episode>& all,
+                                                       bool snap_to_group_start, Xoshiro256& rng);
+    // FallbackAll: no real history means the whole catalog is already a legitimate
+    // rerun pool, so seed straight into rerun mode instead of a first-run position.
+    std::optional<SeedCursor> getContentFallbackHistory(const std::vector<Episode>& played,
+                                                         const std::vector<Episode>& all,
+                                                         bool snap_to_group_start, Xoshiro256& rng);
+    // Skip: no real history means this slot should be skipped entirely — never
+    // fabricate a cursor; leave the show unseeded so the empty-pool path takes over.
+    std::optional<SeedCursor> getContentSkipHistory(const std::vector<Episode>& played,
+                                                     const std::vector<Episode>& all,
+                                                     bool snap_to_group_start, Xoshiro256& rng);
+    // Exclude: same contract as Skip — no real history must stay unseeded so
+    // pickNextContent's weighted-selection pool can leave this show out.
+    std::optional<SeedCursor> getContentExcludeHistory(const std::vector<Episode>& played,
+                                                        const std::vector<Episode>& all,
+                                                        bool snap_to_group_start, Xoshiro256& rng);
+
+    // Select the next episode from a pool based on advancement and history behavior.
+    std::optional<ScheduledItem> selectNextEpisode(const std::string& channel_id, const Block& block,
+                                                   const BlockContent& entry, const std::vector<Episode>& all_eps,
+                                                   const std::vector<Episode>& rerun_pool, CursorState& state);
+    // Selects the content index to play for this call, updates block position state.
+    // Returns -1 only when Exclude mode finds no eligible content.
+    int pickNextContent(const std::string& channel_id, const Block& block,
+                        std::time_t before_time, CursorState& state,
+                        const std::vector<PlayRecord>& pass_records, Xoshiro256& rng);
+
+    // Episode/item advancement for a pre-selected content entry. content_idx is the
+    // index into block.content returned by pickNextContent. Returns nullopt when no
+    // item is available (empty pool, empty show, etc.) without advancing.
     std::optional<ScheduledItem> advanceAndGet(const std::string& channel_id,
                                                const Block& block,
+                                               int content_idx,
                                                std::time_t before_time,
-                                               CursorState& state, Xoshiro256& rng);
+                                               CursorState& state,
+                                               const std::vector<PlayRecord>& pass_records,
+                                               Xoshiro256& rng);
+
+    static std::string scopeStr(const Block& b);
+    static std::string scopeId(const Block& b, const std::string& channel_id);
 
     std::string channelTimezone(const std::string& channel_id);
     std::string channelAdvanceMode(const std::string& channel_id);
@@ -174,10 +239,16 @@ private:
         const std::vector<BetweenBumper>&    between_bumpers;
         const std::string&                   tz;
         std::time_t                          proj_start;
+        int                                  rerun_min_time_mins = 0;
         std::vector<ScheduledItem>&          result;
         CursorState&                         state;
         Xoshiro256&                          rng;
         std::map<std::time_t,std::string>*   anchors_out;
+        // Synthetic block (empty block_id, channel's default_filler_selection) used to
+        // materialize channel_filler into stretches no real block covers — keeps those
+        // gaps inside the deterministic engine (rotation, smart_pct cooldown) instead of
+        // leaving a hole for the live "/now" path to fill with an ungoverned random pick.
+        const Block&                         gap_block;
     };
 
     // Mutable state that survives across day boundaries within a projection pass.
@@ -218,17 +289,6 @@ private:
                                int window_late_start_mins,
                                std::time_t day_start,
                                ProjectPassState& pass);
-
-    void scheduleTimeslotSlot(const ProjectContext& ctx,
-                              const Block& block,
-                              const TimeslotSlot& slot,
-                              std::time_t slot_end,
-                              ProjectPassState& pass);
-
-    std::optional<ScheduledItem> pickSlotEpisode(const std::string& channel_id,
-                                                  const std::string& block_id,
-                                                  const TimeslotQueueEntry& entry,
-                                                  int episode_pos);
 
     // Fill pass.t → target with sized filler; advance pass.t to target if no filler fits.
     void fillToTime(const ProjectContext& ctx,
@@ -280,6 +340,7 @@ private:
                                                int64_t max_ms,
                                                CursorState& state,
                                                Xoshiro256& rng,
+                                               const std::vector<PlayRecord>& pass_records,
                                                std::time_t before_time = 0);
 
     Database&         db_;

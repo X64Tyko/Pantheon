@@ -567,9 +567,13 @@ TEST_F(RuleEngineTest, GlobalScope_RerunBlockSchedulesEpisodesPlayedOnOtherChann
 TEST_F(RuleEngineTest, ChannelScope_RerunCursorUsesChannelScopedKey) {
     // With cursor_scope=channel the rerun cursor key should be ("show_rerun", s1, "channel", c1).
     // project() stores cursor state in CursorState; applyToDB() persists it so we can verify.
+    // All 3 episodes must have real history for the seed step to consider the show's
+    // first run complete and seed a show_rerun cursor rather than a first-run "show" one.
     auto& raw = db.get();
-    raw.exec("INSERT INTO play_history (channel_id,item_type,item_id,aired_at,is_scheduled)"
-             " VALUES ('c1','episode','e1'," + std::to_string(kMonNoon - 3600) + ",1)");
+    for (const char* ep : {"e1", "e2", "e3"})
+        raw.exec("INSERT INTO play_history (channel_id,item_type,item_id,aired_at,is_scheduled)"
+                 " VALUES ('c1','episode','" + std::string(ep) + "',"
+                 + std::to_string(kMonNoon - 3600) + ",1)");
 
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");

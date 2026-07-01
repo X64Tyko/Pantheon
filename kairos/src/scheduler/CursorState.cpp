@@ -28,6 +28,12 @@ int CursorState::getCursorPos(const std::string& ct, const std::string& cid,
     return it != cursors_.end() ? it->second.position : 0;
 }
 
+std::string CursorState::getCursorEpisodeId(const std::string& ct, const std::string& cid,
+                                              const std::string& scope, const std::string& scope_id) const {
+    auto it = cursors_.find(cursorKey(ct, cid, scope, scope_id));
+    return it != cursors_.end() ? it->second.episode_id : "";
+}
+
 void CursorState::setCursorPos(const std::string& ct, const std::string& cid,
                                 const std::string& scope, const std::string& scope_id,
                                 int pos, const std::string& episode_id) {
@@ -38,6 +44,11 @@ void CursorState::setCursorPos(const std::string& ct, const std::string& cid,
     entry.scope_id      = scope_id;
     entry.position      = pos;
     entry.episode_id    = episode_id;
+}
+
+bool CursorState::hasCursor(const std::string& ct, const std::string& cid,
+                            const std::string& scope, const std::string& scope_id) const {
+    return cursors_.contains(cursorKey(ct, cid, scope, scope_id));
 }
 
 // ── Block state accessors ─────────────────────────────────────────────────────
@@ -105,9 +116,9 @@ bool CursorState::hasSlotCursor(const std::string& slot_id) const {
 // ── Play history ──────────────────────────────────────────────────────────────
 
 void CursorState::addPlayRecord(const std::string& channel_id, const std::string& item_type,
-                                 const std::string& item_id, const std::string& block_id,
-                                 std::time_t aired_at) {
-    play_records_.push_back({channel_id, item_type, item_id, block_id, aired_at});
+                                 const std::string& item_id, const std::string& show_id,
+                                 const std::string& block_id, std::time_t aired_at) {
+    play_records_.push_back({channel_id, item_type, item_id, show_id, block_id, aired_at});
 }
 
 // ── DB I/O ────────────────────────────────────────────────────────────────────

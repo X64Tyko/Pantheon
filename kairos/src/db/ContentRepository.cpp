@@ -78,6 +78,11 @@ std::vector<Episode> ContentRepository::getPlayedEpisodes(const std::string& sho
         " FROM episode e WHERE e.show_id = ?";
     if (season)                       sql += " AND e.season = ?";
     if (!season && !include_specials) sql += " AND e.season != 0";
+    // aired_at < before_time already excludes scheduled-but-not-yet-aired rows —
+    // no separate is_scheduled filter needed. Most channels run in 'scheduled' mode,
+    // where is_scheduled=1 rows (written by EPGMaterializer::commit()) are the only
+    // play_history ever gets; requiring is_scheduled=0 here would make the rerun pool
+    // never see them.
     sql += " AND EXISTS (SELECT 1 FROM play_history ph"
            " WHERE ph.item_type='episode' AND ph.item_id=e.episode_id";
     if (!global_scope) sql += " AND ph.channel_id=?";

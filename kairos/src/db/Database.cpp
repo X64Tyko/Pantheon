@@ -1368,6 +1368,12 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE channel ADD COLUMN stream_audio_bitrate  INTEGER NOT NULL DEFAULT 192;
 )SQL" }
 
+// ── v56: rerun cooldown (min minutes before a repeat play is eligible) ───────
+,{ 56, R"SQL(
+    ALTER TABLE channel ADD COLUMN rerun_min_time_mins INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE block   ADD COLUMN rerun_min_time_mins INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace
