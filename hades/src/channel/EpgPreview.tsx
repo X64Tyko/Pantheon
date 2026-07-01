@@ -57,7 +57,7 @@ export function computeEpg(blocks: Block[], dayIdx: number): EpgSeg[] {
   return segs
 }
 
-function msToTzMins(ms: number, tz: string): number {
+export function msToTzMins(ms: number, tz: string): number {
   try {
     const d = new Date(ms)
     if (isNaN(d.getTime())) return 0
@@ -75,7 +75,7 @@ function msToTzMins(ms: number, tz: string): number {
 }
 
 // Returns 'YYYY-MM-DD' for a timestamp in the given timezone.
-function localDateStr(ms: number, tz: string): string {
+export function localDateStr(ms: number, tz: string): string {
   try {
     const p = new Intl.DateTimeFormat('en-US', {
       timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -90,7 +90,7 @@ function localDateStr(ms: number, tz: string): string {
 }
 
 // Merge consecutive filler items into a single visual segment.
-function mergeFiller(items: EpgProgram[]): EpgProgram[] {
+export function mergeFiller(items: EpgProgram[]): EpgProgram[] {
   const out: EpgProgram[] = []
   for (const item of items) {
     const last = out[out.length - 1]

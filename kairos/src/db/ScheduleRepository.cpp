@@ -171,26 +171,45 @@ ScheduleRepository::getNextProgram(const std::string& channel_id, int64_t now_se
 std::vector<EpgProgramRow>
 ScheduleRepository::getEpgPrograms(const std::string& channel_id,
                                     int64_t from_sec, int64_t to_sec) {
+    // Filler items are excluded from the live EPG response. Each content item's
+    // wall_clock_end is extended to the next content item's start (absorbing the
+    // filler gap), matching the XMLTV output. The +7200s cap prevents runaway
+    // expansion across long inter-block gaps.
     SQLite::Statement q(db_.get(), R"(
-        SELECT sp.item_type, sp.item_id, COALESCE(sp.block_id, ''),
-               sp.wall_clock_start, sp.wall_clock_end, sp.status,
-               COALESCE(e.title, m.title, '')       AS item_title,
-               COALESCE(s.title, '')                AS show_title,
-               COALESCE(e.show_id, '')              AS show_id,
-               COALESCE(e.season,  0)               AS season,
-               COALESCE(e.episode, 0)               AS ep_num,
+        WITH content AS (
+            SELECT sp.item_type, sp.item_id, COALESCE(sp.block_id, '') AS block_id,
+                   sp.wall_clock_start, sp.wall_clock_end, sp.status,
+                   LEAD(sp.wall_clock_start) OVER (
+                       PARTITION BY sp.channel_id ORDER BY sp.wall_clock_start
+                   ) AS next_content_start
+            FROM scheduled_program sp
+            WHERE sp.channel_id = ?
+              AND sp.is_filler  = 0
+              AND sp.wall_clock_end   >  ?
+              AND sp.wall_clock_start <  ?
+              AND sp.status != 'skipped'
+        )
+        SELECT c.item_type, c.item_id, c.block_id,
+               c.wall_clock_start,
+               CASE WHEN c.next_content_start IS NOT NULL
+                         AND c.next_content_start <= c.wall_clock_end + 7200
+                    THEN c.next_content_start
+                    ELSE c.wall_clock_end
+               END AS wall_clock_end,
+               c.status,
+               COALESCE(e.title, m.title, '')         AS item_title,
+               COALESCE(s.title, '')                  AS show_title,
+               COALESCE(e.show_id, '')                AS show_id,
+               COALESCE(e.season,  0)                 AS season,
+               COALESCE(e.episode, 0)                 AS ep_num,
                COALESCE(e.file_path, m.file_path, '') AS file_path,
                COALESCE(e.duration_ms, m.duration_ms,
-                        (sp.wall_clock_end - sp.wall_clock_start) * 1000) AS duration_ms
-        FROM scheduled_program sp
-        LEFT JOIN episode e ON sp.item_type='episode' AND sp.item_id=e.episode_id
-        LEFT JOIN show    s ON sp.item_type='episode' AND e.show_id=s.show_id
-        LEFT JOIN movie   m ON sp.item_type='movie'   AND sp.item_id=m.movie_id
-        WHERE sp.channel_id=?
-          AND sp.wall_clock_end   >  ?
-          AND sp.wall_clock_start <  ?
-          AND sp.status != 'skipped'
-        ORDER BY sp.wall_clock_start
+                        (c.wall_clock_end - c.wall_clock_start) * 1000) AS duration_ms
+        FROM content c
+        LEFT JOIN episode e ON c.item_type = 'episode' AND c.item_id = e.episode_id
+        LEFT JOIN show    s ON c.item_type = 'episode' AND e.show_id  = s.show_id
+        LEFT JOIN movie   m ON c.item_type = 'movie'   AND c.item_id  = m.movie_id
+        ORDER BY c.wall_clock_start
     )");
     q.bind(1, channel_id);
     q.bind(2, from_sec);

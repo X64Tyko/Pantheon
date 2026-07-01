@@ -345,6 +345,10 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 		json arr = json::array();
 		std::map<std::time_t, int> anchor_counts;
 
+		// Emit filler items as item_type="filler" so the frontend's mergeFiller()
+		// can combine consecutive filler clips into a single visual block.
+		// Non-filler items keep their original times; no extension is applied here —
+		// extension is only done for the committed schedule (live EPG / XMLTV).
 		for (const auto& item : gr.items) {
 			std::time_t ws = item.wall_clock_start_ms / 1000;
 			std::time_t we = item.wall_clock_end_ms   / 1000;
@@ -352,7 +356,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 			if (ws >= horizon) break;
 
 			json j = {
-				{"item_type",           item.item_type},
+				{"item_type",           item.is_filler ? "filler" : item.item_type},
 				{"item_id",             item.item_id},
 				{"block_id",            item.block_id},
 				{"wall_clock_start_ms", item.wall_clock_start_ms},
@@ -442,8 +446,14 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 		auto now = std::time(nullptr);
 		materializer_.ensureScheduled(channel_id, now, hours);
 
+		// Optional `from` param (Unix seconds) lets callers query from an
+		// earlier point (e.g. today's local midnight) to show a full-day strip.
+		int64_t from_sec = static_cast<int64_t>(now);
+		if (req.has_param("from")) {
+			try { from_sec = std::stoll(req.get_param_value("from")); } catch (...) {}
+		}
 		auto horizon = static_cast<int64_t>(now + hours * 3600LL);
-		auto rows = ScheduleRepository(db_).getEpgPrograms(channel_id, now, horizon);
+		auto rows = ScheduleRepository(db_).getEpgPrograms(channel_id, from_sec, horizon);
 
 		json arr = json::array();
 		for (const auto& r : rows) {

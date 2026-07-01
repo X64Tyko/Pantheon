@@ -25,6 +25,10 @@ JellyfinBaseSource::JellyfinBaseSource(
     client_.set_default_headers({{auth_header_, token_}, {"Accept", "application/json"}});
     client_.set_connection_timeout(10);
     client_.set_read_timeout(30);
+    // Self-hosted Jellyfin/Emby servers commonly use self-signed or LAN certificates.
+    // Follow redirects to handle HTTP→HTTPS forwarding rules.
+    client_.enable_server_certificate_verification(false);
+    client_.set_follow_location(true);
 }
 
 httplib::Result JellyfinBaseSource::get(const std::string& path) {

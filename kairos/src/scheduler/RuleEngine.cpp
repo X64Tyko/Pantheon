@@ -1185,6 +1185,18 @@ bool RuleEngine::scheduleBlock(
             pass.anchor_next_monday += 7 * 86400;
         }
 
+        // Determine whether the current content entry is a show type BEFORE advancing
+        // the cursor. Only show-type entries should update last_show_id — filler_list,
+        // playlist, movie, and episode entries must not, otherwise an interstitial bumper
+        // fires between consecutive episodes of the same show (e.g. two Owl House episodes
+        // separated by inter-filler) because a filler_list item's show_id pollutes the
+        // tracker, making the next same-show episode look like a show transition.
+        const bool content_entry_is_show = [&]() -> bool {
+            if (block.content.empty()) return false;
+            int cp = ctx.state.getContentPosition(block.block_id);
+            return block.content[cp % static_cast<int>(block.content.size())].content_type == "show";
+        }();
+
         CursorState snap = ctx.state;
         auto item_opt = advanceAndGet(ctx.channel_id, block, pass.t, ctx.state, ctx.rng);
 
@@ -1266,7 +1278,7 @@ bool RuleEngine::scheduleBlock(
         const std::time_t ph_at   = pass.t;
         const std::string ph_show = item.show_id;
 
-        if (!is_fallback_filler) pass.last_show_id = item.show_id;
+        if (!is_fallback_filler && content_entry_is_show) pass.last_show_id = item.show_id;
         ctx.result.push_back(std::move(item));
         pass.t += dur_ms / 1000;
         const std::time_t t_prog_end = pass.t;

@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { channelStore } from '../stores'
 import { api } from '../api/client'
-import type { Block, Channel, ChannelExport, ExportDepth, ImportPreviewResult } from '../api/types'
+import type { Channel, ChannelExport, EpgProgram, ExportDepth, ImportPreviewResult } from '../api/types'
 import { BLOCK_META, DAYS } from '../channel/constants'
-import { computeEpg } from '../channel/EpgPreview'
 import { todayEpgDay } from '../channel/utils'
+import { msToTzMins, mergeFiller, localDateStr } from '../channel/EpgPreview'
 import ArrAddModal from '../components/ArrAddModal'
 
 function triggerJsonDownload(data: object, filename: string) {
@@ -463,17 +463,52 @@ function ImportPreview({ data, name, number, timezone, preview, importing, onCha
 // ── Channel guide strip ───────────────────────────────────────────────────────
 
 function ChannelGuideStrip({ channelId, timezone }: { channelId: string; timezone: string }) {
-  const [blocks, setBlocks] = useState<Block[] | null>(null)
+  const [programs, setPrograms] = useState<EpgProgram[] | null>(null)
+
+  const tz = timezone || 'UTC'
 
   useEffect(() => {
-    api.getBlocks(channelId).then(setBlocks).catch(() => setBlocks([]))
-  }, [channelId])
+    // Query from today's local midnight so the full-day strip is populated even
+    // for programs that have already aired. msToTzMins gives minutes-since-midnight
+    // in the channel timezone, letting us back-calculate local midnight as a Unix sec.
+    const nowMs = Date.now()
+    const minutesSinceMidnight = msToTzMins(nowMs, tz)
+    const midnightUnixSec = Math.floor(nowMs / 1000) - minutesSinceMidnight * 60
+    api.getChannelEpg(channelId, 24, midnightUnixSec).then(setPrograms).catch(() => setPrograms([]))
+  }, [channelId, tz])
 
   const todayIdx = todayEpgDay(timezone)
   const dayLabel = DAYS[todayIdx][1]
+  const todayDate = localDateStr(Date.now(), tz)
 
-  const segs = blocks ? computeEpg(blocks, todayIdx) : []
-  const blockCount = blocks ? blocks.filter(b => (b.day_mask & [2, 4, 8, 16, 32, 64, 1][todayIdx]) !== 0).length : 0
+  // Filter and merge filler for today only. Live EPG already has filler stripped
+  // and end-times extended (is_filler=0 filter + LEAD), so no filler items
+  // will appear here — this is just for safety.
+  const todayItems = programs
+    ? mergeFiller(programs.filter(p => localDateStr(p.wall_clock_start_ms, tz) === todayDate))
+    : []
+
+  const nowMins = msToTzMins(Date.now(), tz)
+
+  const segs = todayItems.flatMap(item => {
+    let startMins = msToTzMins(item.wall_clock_start_ms, tz)
+    let endMins   = msToTzMins(item.wall_clock_end_ms, tz)
+    if (endMins <= startMins) endMins = 1440
+    endMins = Math.min(endMins, 1440)
+    const isFiller = item.item_type === 'filler'
+    const isEp     = item.item_type === 'episode' && !!item.show_title
+    const meta     = isFiller ? BLOCK_META.filler : BLOCK_META.episode
+    const aired    = endMins <= nowMins
+    return [{
+      leftPct:  startMins / 1440 * 100,
+      widthPct: Math.max((endMins - startMins) / 1440 * 100, 0.2),
+      bg:       meta.bg,
+      time:     `${String(Math.floor(startMins / 60)).padStart(2, '0')}:${String(startMins % 60).padStart(2, '0')}`,
+      title:    isEp ? item.show_title! : isFiller ? 'Filler' : item.title,
+      subtitle: isEp ? item.title : undefined,
+      faded:    isFiller || aired,
+    }]
+  })
 
   return (
     <div style={{ marginTop: 10 }}>
@@ -481,15 +516,15 @@ function ChannelGuideStrip({ channelId, timezone }: { channelId: string; timezon
         <span style={{ fontSize: 9, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
           {dayLabel}
         </span>
-        {blocks && (
+        {programs && (
           <span style={{ fontSize: 9, color: 'var(--hds-txt-3)' }}>
-            {blockCount === 0 ? 'no blocks' : `${blockCount} block${blockCount !== 1 ? 's' : ''}`}
+            {todayItems.length === 0 ? 'no programs' : `${todayItems.length} program${todayItems.length !== 1 ? 's' : ''}`}
           </span>
         )}
       </div>
       <div style={{ borderRadius: 6, border: '1px solid var(--hds-line-s)', overflow: 'hidden' }}>
         <div style={{ position: 'relative', height: 44, background: 'oklch(0.13 0.014 286)' }}>
-          {!blocks && (
+          {!programs && (
             <div style={{ position: 'absolute', inset: 0, background: 'oklch(0.16 0.014 286)', animation: 'pulse 1.5s ease-in-out infinite' }} />
           )}
           {segs.map((s, i) => (
@@ -512,11 +547,25 @@ function ChannelGuideStrip({ channelId, timezone }: { channelId: string; timezon
               <div style={{ fontSize: 10.5, fontWeight: 700, color: s.faded ? 'var(--hds-txt-3)' : 'var(--hds-txt)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 3, lineHeight: 1.2 }}>
                 {s.title}
               </div>
+              {s.subtitle && (
+                <div style={{ fontSize: 9, color: 'var(--hds-txt-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
+                  {s.subtitle}
+                </div>
+              )}
             </div>
           ))}
-          {blocks && segs.length === 0 && (
+          {/* Now indicator */}
+          {programs && segs.length > 0 && (
+            <div style={{
+              position: 'absolute', top: 0, bottom: 0, width: 2,
+              left: `${nowMins / 1440 * 100}%`,
+              background: 'oklch(0.85 0.18 50 / 0.9)',
+              pointerEvents: 'none',
+            }} />
+          )}
+          {programs && segs.length === 0 && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>
-              No blocks scheduled for today
+              No programs scheduled for today
             </div>
           )}
         </div>

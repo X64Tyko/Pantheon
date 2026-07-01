@@ -182,8 +182,13 @@ export const api = {
                        request<void>       ('DELETE', `/channels/${channelId}/blocks/${blockId}/filler/${entryId}`),
 
   // Channel EPG — cache-backed (used by XMLTV/m3u generation)
-  getChannelEpg: (channelId: string, hours?: number) =>
-    request<EpgProgram[]>('GET', `/channels/${channelId}/epg${hours != null ? `?hours=${hours}` : ''}`),
+  getChannelEpg: (channelId: string, hours?: number, from?: number) => {
+    const params = new URLSearchParams()
+    if (hours != null) params.set('hours', String(hours))
+    if (from  != null) params.set('from',  String(from))
+    const qs = params.toString()
+    return request<EpgProgram[]>('GET', `/channels/${channelId}/epg${qs ? `?${qs}` : ''}`)
+  },
   clearChannelEpgCache: (channelId: string) =>
     request<{ ok: boolean }>('POST', `/channels/${channelId}/epg/clear`),
   // EPG preview — POST with optional seed, hours, and draft blocks.
