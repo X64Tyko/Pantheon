@@ -21,7 +21,8 @@ public:
 
     std::vector<KairosChannel> getChannels();
 
-    // Fetches the live stream_buffer_size from Kairos's /api/config/settings.
+    // Fetches the live stream_buffer_size from Kairos's /api/config/settings,
+    // in KB (matching the Hades UI unit) — callers must convert to bytes.
     // Returns nullopt on any failure so callers can fall back to a local default.
     std::optional<int> getBufferSize();
 };

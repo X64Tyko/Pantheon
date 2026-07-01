@@ -33,6 +33,12 @@ static std::vector<std::string> buildArgs(
     // Reduce startup latency / buffer
     a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt", "-flags", "low_delay"});
 
+    // Pace input reads to the source's native frame rate. Without this ffmpeg
+    // transcodes as fast as the CPU/GPU allows (often many times real-time),
+    // exits almost immediately, and the session races through the entire
+    // schedule instead of simulating a live broadcast.
+    a.push_back("-re");
+
     // AMD VAAPI: expose the render node before -i so the encoder can find it
     if (hw_accel == HwAccel::amd)
         a.insert(a.end(), {"-vaapi_device", vaapi_device});

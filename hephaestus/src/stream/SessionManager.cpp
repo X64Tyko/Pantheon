@@ -23,7 +23,7 @@ std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& c
     // Pick up any live changes to the buffer size setting from Kairos so new
     // sessions reflect the latest value without requiring a Hephaestus restart.
     // Falls back to the local/startup default if Kairos is unreachable.
-    if (auto bs = kairos.getBufferSize()) opts.buffer_size = *bs;
+    if (auto bs = kairos.getBufferSize()) opts.buffer_size = *bs * 1024; // KB -> bytes
 
     // Create and start a new session
     auto session = std::make_shared<ChannelSession>(channelId, kairos, ffmpeg_path, opts);

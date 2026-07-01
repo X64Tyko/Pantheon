@@ -30,7 +30,7 @@ int main(int argc, char* argv[]) {
     // --buffer-size/BUF_SIZE config above remains the fallback if Kairos is
     // unreachable). SessionManager re-checks this on every new session so
     // later changes made in Hades don't require a Hephaestus restart.
-    if (auto bs = kairos.getBufferSize()) stream_opts.buffer_size = *bs;
+    if (auto bs = kairos.getBufferSize()) stream_opts.buffer_size = *bs * 1024; // KB -> bytes
 
     SessionManager sessions(kairos, cfg.ffmpeg_path, stream_opts);
 
