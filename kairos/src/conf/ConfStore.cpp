@@ -3,6 +3,8 @@
 #include <iostream>
 #include <sstream>
 
+#include "scheduler/RuntimeFlags.h"
+
 // ---------------------------------------------------------------------------
 // Format example (kairos.conf):
 //
@@ -95,6 +97,12 @@ void ConfStore::parseLocked(const std::string& text) {
             if (key == "image_cache_ttl_hours") {
                 try { image_cache_ttl_hours_ = std::stoi(val); } catch (...) {}
             }
+        	if (key == "stream_buffer_size") {
+        		try {
+        			buffer_size_ = std::stoi(val);
+        			g_buffer_size.store(buffer_size_ / 1024);
+        		} catch (...) {}
+        	}
             continue;
         }
         if (key == "token")   entries_[section].token   = val;
@@ -222,16 +230,32 @@ void ConfStore::setImageCacheTtlHours(int hours) {
     mtime_ = std::filesystem::last_write_time(path_, ec);
 }
 
-void ConfStore::saveLocked() const {
-    std::ofstream f(path_);
-    f << "# Kairos credentials — do not commit\n"
-      << "# Managed by Hades UI\n\n";
-    if (!download_path_.empty() || image_cache_ttl_hours_ != 2) {
+int ConfStore::getBufferSize() const
+{
+	std::lock_guard lock(mu_);
+	return buffer_size_ / 1024; // Convert to KB
+}
+
+void ConfStore::setBufferSize(int size)
+{
+	std::lock_guard lock(mu_);
+	g_buffer_size.store(size);
+	if (size >= 1024) buffer_size_ = size * 1024; // Convert to B
+}
+
+void ConfStore::saveLocked() const
+{
+	std::ofstream f(path_);
+	f << "# Kairos credentials — do not commit\n"
+	  << "# Managed by Hades UI\n\n";
+	if (!download_path_.empty() || image_cache_ttl_hours_ != 2 || buffer_size_ != 1048576) {
         f << "[_global]\n";
         if (!download_path_.empty())
             f << "download_path = " << download_path_ << "\n";
         if (image_cache_ttl_hours_ != 2)
             f << "image_cache_ttl_hours = " << image_cache_ttl_hours_ << "\n";
+		if (buffer_size_ != 1048576)
+			f << "stream_buffer_size = " << buffer_size_ << "\n";
         f << "\n";
     }
     for (const auto& [sid, e] : entries_) {

@@ -22,8 +22,15 @@ int main(int argc, char* argv[]) {
     stream_opts.loudnorm          = cfg.loudnorm;
     stream_opts.ffmpeg_debug_logs = cfg.ffmpeg_debug_logs;
     stream_opts.linger_secs       = cfg.session_linger_secs;
+    stream_opts.buffer_size       = cfg.stream_buffer_size;
     stream_opts.hw_accel     = cfg.hw_accel;
     stream_opts.vaapi_device = cfg.vaapi_device;
+
+    // Seed the buffer size from Kairos's persisted setting at startup (the
+    // --buffer-size/BUF_SIZE config above remains the fallback if Kairos is
+    // unreachable). SessionManager re-checks this on every new session so
+    // later changes made in Hades don't require a Hephaestus restart.
+    if (auto bs = kairos.getBufferSize()) stream_opts.buffer_size = *bs;
 
     SessionManager sessions(kairos, cfg.ffmpeg_path, stream_opts);
 

@@ -30,6 +30,7 @@ struct StreamOptions {
     std::string subtitle_lang     = "";   // empty = no subtitle mapping
     bool        loudnorm          = false;
     int         linger_secs       = 60;
+	int		buffer_size		  = 1048576; // 1024 KB
     HwAccel     hw_accel          = HwAccel::none;
     std::string vaapi_device      = "/dev/dri/renderD128";
     bool        ffmpeg_debug_logs = false; // pipe ffmpeg stderr into the log stream

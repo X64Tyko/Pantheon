@@ -12,6 +12,7 @@ struct Config {
     bool        loudnorm          = false;
     bool        ffmpeg_debug_logs = false; // pipe ffmpeg stderr into /api/logs/stream
     int         session_linger_secs = 60; // keep session alive after last client disconnects
+	int		stream_buffer_size = 1048576; // 1024 KB
     HwAccel     hw_accel      = HwAccel::none;
     std::string vaapi_device  = "/dev/dri/renderD128";
 
@@ -40,6 +41,7 @@ inline Config parseConfig(int argc, char* argv[]) {
         else if (k == "--loudnorm")      { cfg.loudnorm = (v != "0" && v != "false"); ++i; }
         else if (k == "--ffmpeg-debug")  { cfg.ffmpeg_debug_logs = (v != "0" && v != "false"); ++i; }
         else if (k == "--linger")        { cfg.session_linger_secs = std::stoi(v); ++i; }
+    	else if (k == "--buffer-size")   { cfg.stream_buffer_size = std::stoi(v); ++i; }
         else if (k == "--hw-accel")      { cfg.hw_accel = parseHwAccel(v);        ++i; }
         else if (k == "--vaapi-device")  { cfg.vaapi_device = v;                  ++i; }
         else if (k == "--device-id")     { cfg.hdhr_device_id = v;                ++i; }
@@ -51,6 +53,7 @@ inline Config parseConfig(int argc, char* argv[]) {
     if (auto* p = getenv("FFPROBE_PATH"))    cfg.ffprobe_path = p;
     if (auto* p = getenv("HEPH_LOUDNORM"))      cfg.loudnorm          = (std::string(p) != "0");
     if (auto* p = getenv("HEPH_FFMPEG_DEBUG"))  cfg.ffmpeg_debug_logs = (std::string(p) != "0");
+	if (auto* p = getenv("BUF_SIZE"))  { int bs = std::stoi(p); cfg.stream_buffer_size = std::max(0, bs); }
     if (auto* p = getenv("HEPH_HW_ACCEL"))   cfg.hw_accel     = parseHwAccel(p);
     if (auto* p = getenv("HEPH_VAAPI_DEV"))  cfg.vaapi_device = p;
     return cfg;

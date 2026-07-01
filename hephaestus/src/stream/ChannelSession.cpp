@@ -243,6 +243,7 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
         std::move(args),
         [this](const uint8_t* d, size_t l) { onData(d, l); },
         [this](int code) { onExit(code); },
+        opts.buffer_size,
         opts.ffmpeg_debug_logs
     );
 

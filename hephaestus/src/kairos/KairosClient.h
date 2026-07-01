@@ -20,4 +20,8 @@ public:
                     int64_t durationActualMs);
 
     std::vector<KairosChannel> getChannels();
+
+    // Fetches the live stream_buffer_size from Kairos's /api/config/settings.
+    // Returns nullopt on any failure so callers can fall back to a local default.
+    std::optional<int> getBufferSize();
 };

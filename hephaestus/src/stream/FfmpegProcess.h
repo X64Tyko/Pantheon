@@ -17,13 +17,14 @@ class FfmpegProcess {
     pid_t pid        = -1;
     int   stdout_fd  = -1;
     int   stderr_fd  = -1;
+	int buffer_size = 1048576; // 1024 KB
     std::thread      reader_thread;
     std::thread      stderr_thread;
     std::atomic<bool> killed{false};
 
 public:
     FfmpegProcess(std::vector<std::string> args, DataCallback on_data, ExitCallback on_exit,
-                  bool log_stderr = false);
+                  int buffer_size, bool log_stderr = false);
     ~FfmpegProcess();
 
     bool start();

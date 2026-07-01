@@ -3,6 +3,10 @@ set -e
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 build="$root/cmake-build-debug"
 
+# ── Build Hades ─────────────────────────────────────────────────────────────────
+echo '[dev] building Hades'
+cd ./hades && pnpm build && cd ../
+
 # ── Build C++ ─────────────────────────────────────────────────────────────────
 echo '[dev] building all targets ...'
 cmake --build "$build"

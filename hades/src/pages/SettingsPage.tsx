@@ -7,6 +7,7 @@ interface Settings {
   epg_debug:             boolean
   sync_debug:            boolean
   sync_threads:          number
+  stream_buffer_size:    number
   image_cache_ttl_hours: number
 }
 
@@ -70,6 +71,8 @@ export default function SettingsPage() {
   const [clearMsg, setClearMsg]   = useState<string | null>(null)
   const [error,    setError]      = useState<string | null>(null)
   const [threads,  setThreads]    = useState('')
+  const [bufferSize, setBufferSize] = useState('')
+  
 
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetting,     setResetting]     = useState(false)
@@ -90,6 +93,7 @@ export default function SettingsPage() {
     api.getSettings().then(s => {
       setSettings(s)
       setThreads(String(s.sync_threads))
+      setBufferSize(String(s.stream_buffer_size))
     }).catch(() => setError('Failed to load settings'))
     api.getArrConfig().then(setArr).catch(() => {})
     api.getScraperSettings().then(setScraperSettings).catch(() => {})
@@ -107,6 +111,7 @@ export default function SettingsPage() {
       const next = await api.updateSettings(update)
       setSettings(next)
       setThreads(String(next.sync_threads))
+      setBufferSize(String(next.stream_buffer_size))
       // Keep statusStore in sync immediately so the debug banner reflects the change.
       if ('sync_debug' in update) statusStore.syncDebug = next.sync_debug
       if ('epg_debug'  in update) statusStore.epgDebug  = next.epg_debug
@@ -122,6 +127,12 @@ export default function SettingsPage() {
     if (!isNaN(n) && n >= 1 && n <= 32) patch({ sync_threads: n })
     else setThreads(settings ? String(settings.sync_threads) : '6')
   }
+
+const applyBuffer = () => {
+    const n = parseInt(bufferSize, 10)
+    if (!isNaN(n) && n >= 1024) patch({ stream_buffer_size: n })
+    else setBufferSize(settings ? String(settings.stream_buffer_size) : '1024')
+}
 
   const resetLibrary = async () => {
     setResetting(true)
@@ -193,7 +204,7 @@ export default function SettingsPage() {
   const anidb = scraperSettings?.configs.find(c => c.source === 'anidb')
 
   return (
-    <div style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div style={{ maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 24 }}>
       <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--hds-txt)', margin: 0 }}>Settings</h1>
 
       {error && (
@@ -292,6 +303,28 @@ export default function SettingsPage() {
         )}
       </Section>
 
+        <Section title="Stream Settings">
+            <SettingRow
+                label="Stream Buffer Size (KB)"
+                hint="Size of the stream buffer while watching streaming channels. (Requires Restart)"
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                        type="number" min={1024}
+                        value={bufferSize}
+                        onChange={e => setBufferSize(e.target.value)}
+                        onBlur={applyBuffer}
+                        onKeyDown={e => e.key === 'Enter' && applyBuffer()}
+                        disabled={!settings || saving}
+                        style={{
+                            ...inputStyle, width: 120, textAlign: 'right',
+                        }}
+                    />
+                    <text>KB</text>
+                </div>
+            </SettingRow>
+        </Section>
+
       <Section title="Sonarr">
         <ArrField label="URL" hint="e.g. http://sonarr:8989" value={arr.sonarr_url}
           onChange={v => setArr(a => ({ ...a, sonarr_url: v }))} />
@@ -323,7 +356,7 @@ export default function SettingsPage() {
             fontFamily: "'JetBrains Mono', monospace", opacity: arrSave === 'saving' ? 0.6 : 1,
           }}
         >
-          {arrSave === 'saving' ? 'Saving…' : arrSave === 'ok' ? 'Saved' : arrSave === 'err' ? 'Error' : 'Save Arr Settings'}
+          {arrSave === 'saving' ? 'Saving…' : arrSave === 'ok' ? 'Saved' : arrSave === 'err' ? 'Error' : 'Save Settings'}
         </button>
         <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>
           Used when adding missing media from the import preview.

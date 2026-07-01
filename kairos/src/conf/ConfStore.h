@@ -38,6 +38,8 @@ public:
 
     int  getImageCacheTtlHours() const;
     void setImageCacheTtlHours(int hours);
+	int  getBufferSize() const;
+	void setBufferSize(int size);
 
     // Rewrite a file path by applying the first matching path_map prefix across
     // all configured sources. Returns the path unchanged if no mapping matches.
@@ -67,6 +69,7 @@ private:
     std::filesystem::file_time_type          mtime_{};
     std::unordered_map<std::string, Entry>   entries_;
     std::string                              download_path_;
+	int buffer_size_ = 1048576; // 1024 KB
     int                                      image_cache_ttl_hours_ = 2;
     mutable std::mutex                       mu_;
 

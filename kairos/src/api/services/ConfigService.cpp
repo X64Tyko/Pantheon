@@ -31,6 +31,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			{"epg_debug",              g_epg_debug.load()},
 			{"sync_debug",             g_debug_logging.load()},
 			{"sync_threads",           sync_.getThreadCount()},
+			{"stream_buffer_size",           g_buffer_size.load()},
 			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
 		};
 	};
@@ -56,6 +57,13 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("sync_threads") && b["sync_threads"].is_number_integer()) {
 				int n = b["sync_threads"].get<int>();
 				if (n >= 1 && n <= 32) sync_.setThreadCount(n);
+			}
+			if (b.contains("stream_buffer_size") && b["stream_buffer_size"].is_number_integer()) {
+				int n = b["stream_buffer_size"].get<int>();
+				if (n >= 1024) {
+					g_buffer_size.store(n);
+					conf_.setBufferSize(n);
+				}
 			}
 			if (b.contains("image_cache_ttl_hours") && b["image_cache_ttl_hours"].is_number_integer()) {
 				int h = b["image_cache_ttl_hours"].get<int>();

@@ -8,10 +8,12 @@
 FfmpegProcess::FfmpegProcess(std::vector<std::string> args,
                               DataCallback on_data,
                               ExitCallback on_exit,
+                              int buf_size,
                               bool log_stderr)
     : args(std::move(args))
     , on_data(std::move(on_data))
     , on_exit(std::move(on_exit))
+	, buffer_size(buf_size)
     , log_stderr(log_stderr) {}
 
 FfmpegProcess::~FfmpegProcess() {
@@ -84,12 +86,14 @@ bool FfmpegProcess::start() {
     });
 
     reader_thread = std::thread([this] {
-        uint8_t buf[65536];
+        uint8_t* buf = new uint8_t[buffer_size];
         while (true) {
-            ssize_t n = read(stdout_fd, buf, sizeof(buf));
+            ssize_t n = read(stdout_fd, buf, buffer_size);
             if (n <= 0) break;
             if (on_data) on_data(buf, static_cast<size_t>(n));
         }
+    	
+    	delete[] buf;
         // stdout_fd closed by kill() — reader thread must not close it to
         // avoid a double-close race.
 

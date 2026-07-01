@@ -103,3 +103,23 @@ std::vector<KairosChannel> KairosClient::getChannels() {
         return {};
     }
 }
+
+std::optional<int> KairosClient::getBufferSize() {
+    auto cli = makeClient(base_url);
+    auto res = cli.Get("/api/config/settings");
+    if (!res || res->status != 200) {
+        std::cerr << "[kairos] GET /api/config/settings -> "
+                  << (res ? std::to_string(res->status) : "no response") << "\n";
+        return std::nullopt;
+    }
+    try {
+        auto j = json::parse(res->body);
+        if (j.contains("stream_buffer_size") && j["stream_buffer_size"].is_number_integer()) {
+            return j["stream_buffer_size"].get<int>();
+        }
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        std::cerr << "[kairos] getBufferSize JSON parse error: " << e.what() << "\n";
+        return std::nullopt;
+    }
+}
