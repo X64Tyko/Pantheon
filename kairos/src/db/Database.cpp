@@ -1374,6 +1374,22 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE block   ADD COLUMN rerun_min_time_mins INTEGER NOT NULL DEFAULT 0;
 )SQL" }
 
+// ── v57: filler play history — filler picks were never recorded anywhere,
+//         so the "sized" LRU pick and smart_pct cooldown in pickFillerSim had
+//         no recency data to work with and always fell back to the same clip.
+//         Kept separate from play_history so filler plays never pollute the
+//         content-side rerun/smart cooldown queries (getHotMovieIds etc).
+,{ 57, R"SQL(
+    CREATE TABLE filler_play_history (
+        history_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id     TEXT    NOT NULL,
+        channel_id  TEXT    NOT NULL REFERENCES channel(channel_id) ON DELETE CASCADE,
+        block_id    TEXT    REFERENCES block(block_id) ON DELETE SET NULL,
+        aired_at    INTEGER NOT NULL
+    );
+    CREATE INDEX idx_filler_history_channel ON filler_play_history(channel_id, aired_at DESC);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

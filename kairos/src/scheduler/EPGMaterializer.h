@@ -27,6 +27,7 @@ struct GenerateResult {
     CursorState                          cursor_state;
     std::map<std::time_t, std::string>   anchors;
     std::vector<PlayRecord>              play_records;
+    std::vector<PlayRecord>              filler_records;
 };
 
 class EPGMaterializer {

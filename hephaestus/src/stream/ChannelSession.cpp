@@ -3,12 +3,22 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <future>
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
 
 using clock_t_ = std::chrono::system_clock;
 using steady_  = std::chrono::steady_clock;
+
+// How long start() waits for the initial /now lookup before falling back to
+// the splash. Kairos normally answers in low single-digit ms — far faster
+// than ffmpeg can fork/exec/init — so unconditionally spawning the splash
+// first (the original design) meant it was always killed and replaced before
+// it ever produced a frame: zero visible benefit, plus a wasted spawn. Only
+// engage the splash for genuine cold-start/network slowness, which is what
+// Hermes's ChannelBroadcaster retry/backoff already budgets several seconds for.
+static constexpr auto kFastPathBudget = std::chrono::milliseconds(250);
 
 static int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -250,26 +260,42 @@ std::optional<double> ChannelSession::computeSpeed(int64_t rawDriftMs, int64_t d
 
 bool ChannelSession::start() {
     active    = true;
-    in_splash = true;
+    in_splash = false;
 
-    // Show this channel's logo (or the bundled default) immediately so the
-    // client gets bytes right away, instead of blocking on the Kairos /now
-    // round-trip + ffprobe + real ffmpeg startup below. resolveRealContent()
-    // swaps over to the real item once it's ready.
-    spawnOffline(KairosNowResponse{});
+    // Kick off the /now lookup on its own thread and give it a short budget
+    // to answer before deciding whether to show the splash at all.
+    int64_t at = nowMs();
+    auto prom = std::make_shared<std::promise<std::optional<KairosNowResponse>>>();
+    std::future<std::optional<KairosNowResponse>> fut = prom->get_future();
+    std::thread([this, prom, at] {
+        prom->set_value(kairos.getNow(channel_id, at));
+    }).detach();
 
-    std::thread([this] { resolveRealContent(); }).detach();
+    if (fut.wait_for(kFastPathBudget) == std::future_status::ready) {
+        // Fast path (the common case): apply the already-resolved item directly,
+        // never touching the splash.
+        applyResolvedItem(fut.get(), at);
+    } else {
+        // Kairos hasn't answered within budget (cold start / network blip) — show
+        // the splash now so the client gets bytes immediately, and swap over once
+        // the lookup (still in flight on its own thread) finally completes.
+        in_splash = true;
+        spawnOffline(KairosNowResponse{});
+        std::thread([this, fut = std::move(fut), at]() mutable {
+            applyResolvedItem(fut.get(), at);
+        }).detach();
+    }
+
     return active.load();
 }
 
-// Looks up the real current item and swaps the session's ffmpeg process over
-// to it, replacing whatever the connect-time splash spawned. Runs on its own
-// thread so start() can return immediately (see start()'s comment).
-void ChannelSession::resolveRealContent() {
-    int64_t at = nowMs();
-    auto item = kairos.getNow(channel_id, at);
+void ChannelSession::applyResolvedItem(std::optional<KairosNowResponse> item, int64_t at) {
     if (!item) {
-        std::cerr << "[session:" << channel_id << "] /now failed at startup, staying on splash\n";
+        std::cerr << "[session:" << channel_id << "] /now failed at startup\n";
+        if (!in_splash.load()) {
+            in_splash = true;
+            spawnOffline(KairosNowResponse{});
+        }
         return;
     }
 
@@ -351,8 +377,8 @@ void ChannelSession::onExit(int code) {
 
     if (in_splash.load()) {
         // The splash loops forever and should never exit on its own; if it
-        // does, just respawn it — resolveRealContent() is still running
-        // independently and will swap over once the real item is ready.
+        // does, just respawn it — the background /now lookup from start() is
+        // still running independently and will swap over once it's ready.
         std::thread([this] { spawnOffline(KairosNowResponse{}); }).detach();
         return;
     }

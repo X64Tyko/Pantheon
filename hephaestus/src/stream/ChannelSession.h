@@ -68,7 +68,11 @@ class ChannelSession {
     void onData(const uint8_t* data, size_t len);
     void onExit(int code);
     void transition();
-    void resolveRealContent();
+    // Applies a resolved /now lookup (or its absence, on failure): computes
+    // start offset/speed and spawns ffmpeg for it, or falls back to the
+    // splash. Shared by start()'s fast (answered before kFastPathBudget) and
+    // slow (answered later, on its own thread) paths.
+    void applyResolvedItem(std::optional<KairosNowResponse> item, int64_t at);
     void spawnFfmpeg(const KairosNowResponse& item, int64_t startOffsetMs, double speed = 1.0);
     void spawnOffline(const KairosNowResponse& item);
     void launchFfmpeg(std::vector<std::string> args, const char* what);

@@ -424,3 +424,17 @@ void ScheduleRepository::recordScheduledPlayHistory(const std::string& item_type
     q.bind(5, static_cast<int64_t>(aired_at));
     q.exec();
 }
+
+void ScheduleRepository::recordScheduledFillerHistory(const std::string& item_id,
+                                                       const std::string& channel_id,
+                                                       const std::string& block_id,
+                                                       std::time_t aired_at) {
+    SQLite::Statement q(db_.get(), R"(
+        INSERT INTO filler_play_history (item_id, channel_id, block_id, aired_at)
+        VALUES (?,?,?,?)
+    )");
+    q.bind(1, item_id); q.bind(2, channel_id);
+    if (block_id.empty()) q.bind(3); else q.bind(3, block_id);
+    q.bind(4, static_cast<int64_t>(aired_at));
+    q.exec();
+}

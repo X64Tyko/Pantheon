@@ -1109,6 +1109,15 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
         // Prefer the least recently played eligible clip (never-played first).
         auto last_played = content_.getLastPlayedMap(channel_id, before_time);
 
+        // Augment with in-pass picks: persisted history only reflects prior project()
+        // calls, not clips already chosen earlier in this same gap/pass.
+        for (const auto& pr : pass_records) {
+            if (pr.channel_id != channel_id || pr.aired_at >= before_time) continue;
+            auto it = last_played.find(pr.item_id);
+            if (it == last_played.end() || pr.aired_at > it->second)
+                last_played[pr.item_id] = pr.aired_at;
+        }
+
         item_idx = eligible[0];
         int64_t oldest = last_played.contains(items[eligible[0]].id)
                        ? last_played.at(items[eligible[0]].id) : -1;
@@ -1373,7 +1382,7 @@ bool RuleEngine::scheduleBlock(
             const auto& pool = block.filler_entries.empty() ? ctx.channel_filler
                                                             : block.filler_entries;
             if (!pool.empty())
-                if (auto fi = pickFillerSim(ctx.channel_id, block, pool, 0, ctx.state, ctx.rng, pass.play_records, pass.t)) {
+                if (auto fi = pickFillerSim(ctx.channel_id, block, pool, 0, ctx.state, ctx.rng, pass.filler_records, pass.t)) {
                     item_opt           = std::move(fi);
                     is_fallback_filler = true;
                 }
@@ -1452,6 +1461,8 @@ bool RuleEngine::scheduleBlock(
                                    [&](const PlayRecord& pr) { return pr.aired_at < threshold; }),
                     pass.play_records.end());
             }
+        } else {
+            pass.filler_records.push_back({ctx.channel_id, ph_type, ph_id, ph_show, block.block_id, ph_at});
         }
 
         if (!is_fallback_filler && !ctx.between_bumpers.empty()) {
@@ -1486,7 +1497,7 @@ bool RuleEngine::scheduleBlock(
                     while (pass.t < fill_target) {
                         int64_t rem_ms = (fill_target - pass.t) * 1000;
                         int64_t max_ms = (late_boundary - pass.t) * 1000;
-                        auto fi = pickFillerSim(ctx.channel_id, block, pool, rem_ms, ctx.state, ctx.rng, pass.play_records, pass.t);
+                        auto fi = pickFillerSim(ctx.channel_id, block, pool, rem_ms, ctx.state, ctx.rng, pass.filler_records, pass.t);
                         if (!fi || fi->duration_ms <= 0 || fi->duration_ms > max_ms) break;
                         fi->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
                         fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;
@@ -1494,6 +1505,7 @@ bool RuleEngine::scheduleBlock(
                         fi->channel_id          = ctx.channel_id;
                         fi->block_id            = block.block_id;
                         const int64_t fi_dur    = fi->duration_ms;
+                        pass.filler_records.push_back({ctx.channel_id, fi->item_type, fi->item_id, fi->show_id, block.block_id, pass.t});
                         ctx.result.push_back(std::move(*fi));
                         pass.t += fi_dur / 1000;
                         std::time_t pb2 = (pass.t / step) * step, nb2 = pb2 + step;
@@ -1743,7 +1755,8 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                                                 CursorState& state,
                                                 Xoshiro256& rng,
                                                 std::map<std::time_t, std::string>* anchors_out,
-                                                std::vector<PlayRecord>* play_records_out) {
+                                                std::vector<PlayRecord>* play_records_out,
+                                                std::vector<PlayRecord>* filler_records_out) {
     std::vector<ScheduledItem> result;
     auto blocks = loadBlocks(channel_id);
 
@@ -1847,6 +1860,7 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
                   << (result.empty() ? " (EMPTY — no content scheduled)" : "") << '\n';
 
     if (play_records_out) *play_records_out = std::move(pass.play_records);
+    if (filler_records_out) *filler_records_out = std::move(pass.filler_records);
     return result;
 }
 
@@ -1863,7 +1877,7 @@ void RuleEngine::fillToTime(const ProjectContext& ctx,
     int guard = 0;
     while (pass.t < target && guard++ < 2000) {
         int64_t max_ms = (target - pass.t) * 1000;
-        auto fi = pickFillerSim(ctx.channel_id, block, pool, max_ms, ctx.state, ctx.rng, pass.play_records, pass.t);
+        auto fi = pickFillerSim(ctx.channel_id, block, pool, max_ms, ctx.state, ctx.rng, pass.filler_records, pass.t);
         if (!fi || fi->duration_ms <= 0 || fi->duration_ms > max_ms) break;
         fi->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
         fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;
@@ -1871,6 +1885,7 @@ void RuleEngine::fillToTime(const ProjectContext& ctx,
         fi->channel_id          = ctx.channel_id;
         fi->block_id            = block.block_id;
         int64_t dur = fi->duration_ms;
+        pass.filler_records.push_back({ctx.channel_id, fi->item_type, fi->item_id, fi->show_id, block.block_id, pass.t});
         ctx.result.push_back(std::move(*fi));
         pass.t += dur / 1000;
     }

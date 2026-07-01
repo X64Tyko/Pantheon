@@ -101,7 +101,7 @@ GenerateResult EPGMaterializer::generate(
 
     const int proj_hours = static_cast<int>((horizon - week_monday) / 3600) + 2;
     result.items = engine_.project(channel_id, week_monday, proj_hours, cs, rng,
-                                   &result.anchors, &result.play_records);
+                                   &result.anchors, &result.play_records, &result.filler_records);
     result.cursor_state = std::move(cs);
 
     // Detect divergences: new items that differ from what is currently committed.
@@ -203,6 +203,8 @@ void EPGMaterializer::commit(
     ScheduleRepository sched_repo(db_);
     for (const auto& r : result.play_records)
         sched_repo.recordScheduledPlayHistory(r.item_type, r.item_id, r.channel_id, r.block_id, r.aired_at);
+    for (const auto& r : result.filler_records)
+        sched_repo.recordScheduledFillerHistory(r.item_id, r.channel_id, r.block_id, r.aired_at);
 
     db_.get().exec("RELEASE SAVEPOINT sp_commit");
     persistAnchors();

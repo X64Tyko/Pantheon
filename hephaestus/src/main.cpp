@@ -27,12 +27,10 @@ int main(int argc, char* argv[]) {
     stream_opts.vaapi_device = cfg.vaapi_device;
     stream_opts.default_logo_path = cfg.default_logo_path;
 
-    // Seed the buffer size from Kairos's persisted setting at startup (the
-    // --buffer-size/BUF_SIZE config above remains the fallback if Kairos is
-    // unreachable). SessionManager re-checks this on every new session so
-    // later changes made in Hades don't require a Hephaestus restart.
-    if (auto bs = kairos.getBufferSize()) stream_opts.buffer_size = *bs * 1024; // KB -> bytes
-
+    // stream_opts.buffer_size (from --buffer-size/BUF_SIZE above) is the fallback
+    // if Kairos is unreachable — SessionManager fetches the persisted Kairos
+    // setting itself (and keeps it fresh in the background) so later changes
+    // made in Hades don't require a Hephaestus restart.
     SessionManager sessions(kairos, cfg.ffmpeg_path, stream_opts);
 
     httplib::Server svr;
