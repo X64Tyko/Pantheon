@@ -67,12 +67,18 @@ public:
     // anchors_out: if non-null, receives {week_monday_ts -> JSON snapshot} for each
     //      Monday midnight boundary crossed. JSON contains rng state + serialized
     //      CursorState for deterministic weekly rebuilds.
+    // filler_records_out: filler picks (fallback filler, inter-episode alignment
+    // filler, and gap filler) are buffered separately from play_records_out so
+    // EPGMaterializer::commit() can persist them to filler_play_history — kept
+    // apart from play_history so filler plays never influence content-side
+    // rerun/smart cooldown (getHotMovieIds/getHotEpisodeIds).
     std::vector<ScheduledItem> project(const std::string& channel_id,
                                         std::time_t start, int horizon_hours,
                                         CursorState& state,
                                         Xoshiro256& rng,
                                         std::map<std::time_t, std::string>* anchors_out = nullptr,
-                                        std::vector<PlayRecord>* play_records_out = nullptr);
+                                        std::vector<PlayRecord>* play_records_out = nullptr,
+                                        std::vector<PlayRecord>* filler_records_out = nullptr);
 
     // Convenience overload for callers that don't manage CursorState externally
     // (tests, one-shot previews). Starts with a fresh empty state and discards it.
@@ -260,6 +266,7 @@ private:
         std::unordered_map<std::string, int> transition_counts;
         int                                  channel_prog_count = 0;
         std::vector<PlayRecord>              play_records;
+        std::vector<PlayRecord>              filler_records;
     };
 
     // Three-layer projection core.

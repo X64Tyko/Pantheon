@@ -433,9 +433,11 @@ ContentRepository::getHotEpisodeIds(const std::string& channel_id,
 std::unordered_map<std::string, int64_t>
 ContentRepository::getLastPlayedMap(const std::string& channel_id,
                                      std::time_t before_time) {
+    // filler_play_history, not play_history: filler picks are tracked separately so
+    // they never pollute getHotMovieIds/getHotEpisodeIds (content-side cooldown).
     const char* sql = (before_time > 0)
-        ? "SELECT item_id, MAX(aired_at) FROM play_history WHERE channel_id=? AND aired_at<=? GROUP BY item_id"
-        : "SELECT item_id, MAX(aired_at) FROM play_history WHERE channel_id=? GROUP BY item_id";
+        ? "SELECT item_id, MAX(aired_at) FROM filler_play_history WHERE channel_id=? AND aired_at<=? GROUP BY item_id"
+        : "SELECT item_id, MAX(aired_at) FROM filler_play_history WHERE channel_id=? GROUP BY item_id";
     SQLite::Statement q(db_.get(), sql);
     q.bind(1, channel_id);
     if (before_time > 0) q.bind(2, static_cast<int64_t>(before_time));
