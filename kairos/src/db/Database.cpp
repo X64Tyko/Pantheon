@@ -1361,6 +1361,13 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE movie         ADD COLUMN preferred_language TEXT NOT NULL DEFAULT '';
 )SQL" }
 
+// ── v55: per-channel transcode quality settings ───────────────────────────────
+,{ 55, R"SQL(
+    ALTER TABLE channel ADD COLUMN stream_resolution     TEXT    NOT NULL DEFAULT 'source';
+    ALTER TABLE channel ADD COLUMN stream_video_bitrate  INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE channel ADD COLUMN stream_audio_bitrate  INTEGER NOT NULL DEFAULT 192;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

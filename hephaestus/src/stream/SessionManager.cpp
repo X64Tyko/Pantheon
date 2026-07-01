@@ -10,12 +10,15 @@ std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& c
     auto it = sessions.find(channelId);
     if (it != sessions.end() && it->second->isActive()) return it->second;
 
-    // Apply per-channel language overrides from Kairos channel config
+    // Apply per-channel language overrides and transcode quality from Kairos channel config
     StreamOptions opts = stream_opts;
     for (const auto& ch : kairos.getChannels()) {
         if (ch.channel_id == channelId) {
             if (!ch.audio_lang.empty())    opts.audio_lang    = ch.audio_lang;
             if (!ch.subtitle_lang.empty()) opts.subtitle_lang = ch.subtitle_lang;
+            opts.max_resolution      = ch.stream_resolution;
+            opts.video_bitrate_kbps  = ch.stream_video_bitrate;
+            opts.audio_bitrate_kbps  = ch.stream_audio_bitrate > 0 ? ch.stream_audio_bitrate : 192;
             break;
         }
     }

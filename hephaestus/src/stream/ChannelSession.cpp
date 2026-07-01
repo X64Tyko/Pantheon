@@ -15,6 +15,19 @@ static int64_t nowMs() {
         clock_t_::now().time_since_epoch()).count();
 }
 
+// Drift-to-speed correction tuning. Kept conservative/near-imperceptible:
+// only ever nudge playback by up to 2%, and only attempt it when the drift
+// is small enough that a 2% nudge over the item's own duration is actually
+// enough to close it — otherwise fall back to seeking/skipping content.
+static constexpr double kMinSpeed = 0.98;
+static constexpr double kMaxSpeed = 1.02;
+
+static std::string fmtSpeed(double speed) {
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(4) << speed;
+    return ss.str();
+}
+
 // ── ffmpeg arg construction ───────────────────────────────────────────────────
 
 static std::vector<std::string> buildArgs(
@@ -25,7 +38,11 @@ static std::vector<std::string> buildArgs(
     int subtitleTrackIndex,
     bool loudnorm,
     HwAccel hw_accel,
-    const std::string& vaapi_device)
+    const std::string& vaapi_device,
+    double speed = 1.0,
+    const std::string& max_resolution = "source",
+    int video_bitrate_kbps = 0,
+    int audio_bitrate_kbps = 192)
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
@@ -62,28 +79,51 @@ static std::vector<std::string> buildArgs(
     a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
 
     // Video encoder
+    std::vector<std::string> vfParts;
+    // Scale down to the configured max resolution — never upscales.
+    // scale=-2:min(ih,N) keeps aspect ratio (width auto-rounded to even).
+    if (max_resolution == "1080p")     vfParts.push_back("scale=-2:min(ih\\,1080)");
+    else if (max_resolution == "720p") vfParts.push_back("scale=-2:min(ih\\,720)");
+    else if (max_resolution == "480p") vfParts.push_back("scale=-2:min(ih\\,480)");
+    if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
+
     switch (hw_accel) {
         case HwAccel::nvidia:
-            // CPU decode → NVENC encode; works with any input codec
             a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
                                 "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p"});
             break;
         case HwAccel::amd:
-            // CPU decode → upload to VAAPI → h264_vaapi encode
-            a.insert(a.end(), {"-vf", "format=nv12,hwupload",
-                                "-c:v", "h264_vaapi"});
+            // Scale (if any) happens on CPU, then upload to VAAPI
+            vfParts.push_back("format=nv12,hwupload");
+            a.insert(a.end(), {"-c:v", "h264_vaapi"});
             break;
         default:
             a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
                                 "-crf", "23", "-pix_fmt", "yuv420p"});
     }
+    if (!vfParts.empty()) {
+        std::string vf;
+        for (size_t i = 0; i < vfParts.size(); ++i) { if (i) vf += ","; vf += vfParts[i]; }
+        a.insert(a.end(), {"-vf", vf});
+    }
+    // Optional bitrate cap: keeps CRF quality-based encoding but adds an
+    // upper bound, preventing huge spikes on complex/high-res content.
+    if (video_bitrate_kbps > 0) {
+        std::string maxrate = std::to_string(video_bitrate_kbps) + "k";
+        std::string bufsize = std::to_string(video_bitrate_kbps * 2) + "k";
+        a.insert(a.end(), {"-maxrate", maxrate, "-bufsize", bufsize});
+    }
 
     // Audio: AAC
-    if (loudnorm) {
-        a.insert(a.end(), {"-c:a", "aac", "-b:a", "192k",
-                            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11"});
-    } else {
-        a.insert(a.end(), {"-c:a", "aac", "-b:a", "192k"});
+    std::vector<std::string> afParts;
+    if (loudnorm) afParts.push_back("loudnorm=I=-16:TP=-1.5:LRA=11");
+    if (speed != 1.0) afParts.push_back("atempo=" + fmtSpeed(speed));
+
+    a.insert(a.end(), {"-c:a", "aac", "-b:a", std::to_string(audio_bitrate_kbps) + "k"});
+    if (!afParts.empty()) {
+        std::string af;
+        for (size_t i = 0; i < afParts.size(); ++i) { if (i) af += ","; af += afParts[i]; }
+        a.insert(a.end(), {"-af", af});
     }
 
     // Clean MPEG-TS timestamps
@@ -105,6 +145,35 @@ ChannelSession::ChannelSession(std::string channel_id, KairosClient& kairos,
 
 ChannelSession::~ChannelSession() { stop(); }
 
+// Computes how far into `item` playback should start, given true wall-clock
+// time `atMs`. Fillers loop on their own duration; non-fillers clamp to 0.
+int64_t ChannelSession::computeOffset(const KairosNowResponse& item, int64_t atMs) {
+    int64_t rawOffset = std::max(int64_t(0), atMs - item.wall_clock_start_ms);
+    return (item.is_filler && item.duration_ms > 0)
+        ? rawOffset % item.duration_ms
+        : rawOffset;
+}
+
+std::optional<double> ChannelSession::computeSpeed(int64_t rawDriftMs, int64_t durationMs) {
+    if (durationMs <= 0 || rawDriftMs == 0) return std::nullopt;
+
+    // Playing at duration / (duration - drift) means the item takes exactly
+    // (duration - drift) ms of wall-clock time to play `duration` ms of
+    // content — i.e. the gap is fully closed by the time it ends. Positive
+    // drift (running behind schedule) yields speed > 1 (speed up); negative
+    // drift (running ahead) yields speed < 1 (slow down).
+    double speed = static_cast<double>(durationMs) /
+                   static_cast<double>(durationMs - rawDriftMs);
+
+    // Only apply the correction if it's small enough to stay within our
+    // near-imperceptible clamp unclamped — clamping a correction that needed
+    // to be much larger would apply an audible speed change while still
+    // failing to close the gap, which is strictly worse than just seeking.
+    if (speed < kMinSpeed || speed > kMaxSpeed) return std::nullopt;
+
+    return speed;
+}
+
 bool ChannelSession::start() {
     int64_t at = nowMs();
     auto item = kairos.getNow(channel_id, at);
@@ -114,14 +183,25 @@ bool ChannelSession::start() {
     }
 
     // Compute how far into the item we are
-    int64_t rawOffset = std::max(int64_t(0), at - item->wall_clock_start_ms);
-    int64_t startOffset = (item->is_filler && item->duration_ms > 0)
-        ? rawOffset % item->duration_ms
-        : rawOffset;
+    int64_t startOffset = computeOffset(*item, at);
 
-    current_item = *item;
-    item_start   = steady_::now();
-    active       = true;
+    current_item            = *item;
+    item_start               = steady_::now();
+    current_item_offset_ms   = startOffset;
+    active                   = true;
+
+    // Prefer a gentle speed correction (whole item plays start-to-finish,
+    // just slightly faster/slower) over seeking into content when the drift
+    // is small enough to close that way.
+    double speed = 1.0;
+    if (!item->is_filler && item->duration_ms > 0) {
+        int64_t rawDrift = at - item->wall_clock_start_ms;
+        if (auto s = computeSpeed(rawDrift, item->duration_ms)) {
+            speed = *s;
+            startOffset = 0;
+            current_item_offset_ms = 0;
+        }
+    }
 
     // If the offset meets or exceeds the item's known duration, ffmpeg would
     // seek past EOF and exit immediately with code=0, looping indefinitely.
@@ -134,7 +214,7 @@ bool ChannelSession::start() {
         return true;
     }
 
-    spawnFfmpeg(*item, startOffset);
+    spawnFfmpeg(*item, startOffset, speed);
     return active.load();
 }
 
@@ -193,9 +273,20 @@ void ChannelSession::transition() {
     kairos.markPlayed(channel_id, current_item.item_type, current_item.item_id,
                       current_item.block_id, elapsed);
 
-    // Request next item starting at the scheduled end of the completed one.
-    // This is the event-driven improvement over Tunarr's wallClockEndMs timer:
-    // we transition on ffmpeg exit, not on a wall-clock deadline.
+    // The item's *actual* real-time playback duration (elapsed) can drift
+    // from its scheduled duration_ms — rounding, edit lists, VFR content, or
+    // ffprobe estimation error at scheduling time. That drift is proportional
+    // to item length, so it's invisible on short fillers but can be several
+    // seconds off after a long movie/episode. Anchor "true now" on the actual
+    // elapsed play time (including whatever offset the current item itself
+    // started at, so drift keeps accumulating correctly across repeated
+    // transitions instead of resetting each time) rather than trusting
+    // wall_clock_end_ms verbatim.
+    int64_t actualNowMs = current_item.wall_clock_start_ms + current_item_offset_ms + elapsed;
+
+    // Look up the next item using the *scheduled* end time (not actualNowMs)
+    // so we request it deterministically and never skip ahead into real
+    // programming due to drift — only the resulting offset is drift-corrected.
     auto next = kairos.getNow(channel_id, current_item.wall_clock_end_ms);
     if (!next) {
         // Fallback: try current wall clock
@@ -208,12 +299,58 @@ void ChannelSession::transition() {
         return;
     }
 
-    current_item = *next;
-    item_start   = steady_::now();
-    spawnFfmpeg(*next, 0); // next item always starts from the beginning
+    // If we've fallen far enough behind that we've already blown past an
+    // entire filler's scheduled window, skip it outright instead of starting
+    // partway into a "random" repeat of it (fillers are low-stakes/
+    // interchangeable padding — unlike real programming, dropping one
+    // entirely is the better trade for clawing back accumulated drift).
+    // Never skips a non-filler item this way — only ever advances past
+    // fillers whose entire window has already elapsed.
+    int guard = 0;
+    while (next->is_filler && next->duration_ms > 0 &&
+           actualNowMs >= next->wall_clock_end_ms && ++guard < 64) {
+        auto after = kairos.getNow(channel_id, next->wall_clock_end_ms);
+        if (!after) break;
+        next = after;
+    }
+
+    int64_t startOffset = computeOffset(*next, actualNowMs);
+
+    current_item            = *next;
+    item_start               = steady_::now();
+    current_item_offset_ms   = startOffset;
+
+    // Prefer a gentle speed correction over seeking into content when the
+    // drift is small enough to close over the course of the whole item —
+    // avoids ever cutting off the beginning of real programming just to
+    // stay synced. Fillers are excluded: their own loop-offset/skip logic
+    // already absorbs drift, and their short duration makes any speed nudge
+    // both less effective and more perceptible.
+    double speed = 1.0;
+    if (!next->is_filler && next->duration_ms > 0) {
+        int64_t rawDrift = actualNowMs - next->wall_clock_start_ms;
+        if (auto s = computeSpeed(rawDrift, next->duration_ms)) {
+            speed = *s;
+            startOffset = 0;
+            current_item_offset_ms = 0;
+        }
+    }
+
+    // Same EOF-seek guard as start(): if drift pushed us past this item's
+    // duration too, skip straight to the one after it instead of spawning
+    // ffmpeg with an offset past EOF.
+    if (!next->is_filler && next->duration_ms > 0 && startOffset >= next->duration_ms) {
+        std::cerr << "[session:" << channel_id << "] transition offset " << startOffset
+                  << "ms >= duration " << next->duration_ms << "ms for \""
+                  << next->file_path << "\", skipping to next item\n";
+        std::thread([this] { transition(); }).detach();
+        return;
+    }
+
+    spawnFfmpeg(*next, startOffset, speed);
 }
 
-void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOffsetMs) {
+void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOffsetMs, double speed) {
     if (item.file_path.empty()) {
         std::cerr << "[session:" << channel_id << "] item has no file_path, skipping\n";
         active = false;
@@ -222,7 +359,10 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
     }
 
     std::cout << "[session:" << channel_id << "] spawning ffmpeg: \""
-              << item.file_path << "\" offset=" << startOffsetMs << "ms\n";
+              << item.file_path << "\" offset=" << startOffsetMs << "ms";
+    if (speed != 1.0)
+        std::cout << " speed=" << speed;
+    std::cout << "\n";
 
     // Audio + subtitle track selection via ffprobe
     int audioTrack    = 0;
@@ -238,7 +378,8 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
     }
 
     auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack,
-                          opts.loudnorm, opts.hw_accel, opts.vaapi_device);
+                          opts.loudnorm, opts.hw_accel, opts.vaapi_device, speed,
+                          opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps);
 
     std::lock_guard<std::mutex> lock(ffmpeg_mtx);
     // Re-check active after acquiring the mutex: stop() may have run between

@@ -193,6 +193,52 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         </div>
         </CardSection>
 
+        <CardSection title="TRANSCODE QUALITY" summary="Per-channel resolution and bitrate limits">
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>MAX RESOLUTION</div>
+          <select
+            value={store.channelDraft.stream_resolution ?? 'source'}
+            onChange={e => store.setChannelDraft({ stream_resolution: e.target.value as 'source' | '1080p' | '720p' | '480p' })}
+            style={{ ...inputStyle, cursor: 'pointer' }}
+          >
+            <option value="source">Source (no scaling)</option>
+            <option value="1080p">1080p</option>
+            <option value="720p">720p</option>
+            <option value="480p">480p</option>
+          </select>
+          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+            Scales down only — never upscales. Useful for SD-only channels.
+          </div>
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>VIDEO BITRATE CAP (kbps)</div>
+          <input
+            type="number"
+            min={0}
+            step={100}
+            value={store.channelDraft.stream_video_bitrate ?? 0}
+            onChange={e => store.setChannelDraft({ stream_video_bitrate: Math.max(0, +e.target.value || 0) })}
+            style={inputStyle}
+            placeholder="0 = CRF auto (no cap)"
+          />
+          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+            0 = quality-based (CRF). Set a value to cap bandwidth, e.g. 3000 for ~3 Mbps.
+          </div>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>AUDIO BITRATE (kbps)</div>
+          <input
+            type="number"
+            min={64}
+            max={320}
+            step={32}
+            value={store.channelDraft.stream_audio_bitrate ?? 192}
+            onChange={e => store.setChannelDraft({ stream_audio_bitrate: Math.max(64, Math.min(320, +e.target.value || 192)) })}
+            style={inputStyle}
+          />
+        </div>
+        </CardSection>
+
         <CardSection title="OFFLINE FALLBACK" summary="Served when no content is scheduled">
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>VIDEO (looping)</div>

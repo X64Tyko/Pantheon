@@ -18,4 +18,8 @@ struct Channel {
     std::string anchor_hashes;  // JSON blob, may be empty
     std::string audio_lang;     // preferred audio language, e.g. "eng"; empty = default
     std::string subtitle_lang;  // preferred subtitle language; empty = none
+    // Per-channel transcode quality settings (Hephaestus)
+    std::string stream_resolution    = "source"; // "source"|"1080p"|"720p"|"480p"
+    int         stream_video_bitrate = 0;        // kbps; 0 = CRF/CQ auto
+    int         stream_audio_bitrate = 192;      // kbps
 };

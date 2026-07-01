@@ -36,6 +36,9 @@ Channel ChannelRepository::rowToChannel(SQLite::Statement& q) {
 	if (!q.getColumn(13).isNull()) c.anchor_hashes = q.getColumn(13).getString();
 	c.audio_lang               = q.getColumn(14).getString();
 	c.subtitle_lang            = q.getColumn(15).getString();
+	c.stream_resolution        = q.getColumn(16).getString();
+	c.stream_video_bitrate     = q.getColumn(17).getInt();
+	c.stream_audio_bitrate     = q.getColumn(18).getInt();
 	return c;
 }
 
@@ -43,7 +46,8 @@ std::vector<Channel> ChannelRepository::listChannels() {
 	SQLite::Statement q(db_.get(),
 		"SELECT channel_id, name, number, timezone, default_filler_selection, seed, advance_mode, "
 		"       offline_video_path, offline_image_path, offline_audio_id, offline_audio_type, "
-		"       offline_audio_title, logo_path, anchor_hashes, audio_lang, subtitle_lang "
+		"       offline_audio_title, logo_path, anchor_hashes, audio_lang, subtitle_lang, "
+		"       stream_resolution, stream_video_bitrate, stream_audio_bitrate "
 		"FROM channel ORDER BY number");
 	std::vector<Channel> result;
 	while (q.executeStep()) result.push_back(rowToChannel(q));
@@ -54,7 +58,8 @@ std::optional<Channel> ChannelRepository::findById(const std::string& channel_id
 	SQLite::Statement q(db_.get(),
 		"SELECT channel_id, name, number, timezone, default_filler_selection, seed, advance_mode, "
 		"       offline_video_path, offline_image_path, offline_audio_id, offline_audio_type, "
-		"       offline_audio_title, logo_path, anchor_hashes, audio_lang, subtitle_lang "
+		"       offline_audio_title, logo_path, anchor_hashes, audio_lang, subtitle_lang, "
+		"       stream_resolution, stream_video_bitrate, stream_audio_bitrate "
 		"FROM channel WHERE channel_id = ?");
 	q.bind(1, channel_id);
 	if (!q.executeStep()) return std::nullopt;

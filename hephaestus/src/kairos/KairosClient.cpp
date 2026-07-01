@@ -93,8 +93,11 @@ std::vector<KairosChannel> KairosClient::getChannels() {
             ch.channel_id    = item.value("channel_id",   "");
             ch.name          = item.value("name",         "");
             ch.number        = item.value("number",       0);
-            ch.audio_lang    = item.value("audio_lang",   "");
-            ch.subtitle_lang = item.value("subtitle_lang","");
+            ch.audio_lang             = item.value("audio_lang",            "");
+            ch.subtitle_lang          = item.value("subtitle_lang",         "");
+            ch.stream_resolution      = item.value("stream_resolution",     "source");
+            ch.stream_video_bitrate   = item.value("stream_video_bitrate",  0);
+            ch.stream_audio_bitrate   = item.value("stream_audio_bitrate",  192);
             if (!ch.channel_id.empty()) channels.push_back(std::move(ch));
         }
         return channels;

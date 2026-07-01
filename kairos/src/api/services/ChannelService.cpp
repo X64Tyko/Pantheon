@@ -43,6 +43,9 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 					{"logo_path",                c.logo_path},
 					{"audio_lang",               c.audio_lang},
 					{"subtitle_lang",            c.subtitle_lang},
+					{"stream_resolution",        c.stream_resolution},
+					{"stream_video_bitrate",     c.stream_video_bitrate},
+					{"stream_audio_bitrate",     c.stream_audio_bitrate},
 				};
 				if (!c.anchor_hashes.empty()) {
 					try { channel["anchor_hashes"] = json::parse(c.anchor_hashes); } catch (...) {}
@@ -108,6 +111,15 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("logo_path"))                upd("logo_path",                b["logo_path"]);
 			if (b.contains("audio_lang"))               upd("audio_lang",               b["audio_lang"]);
 			if (b.contains("subtitle_lang"))            upd("subtitle_lang",            b["subtitle_lang"]);
+			if (b.contains("stream_resolution")) {
+				std::string resolution = b["stream_resolution"].get<std::string>();
+				if (resolution != "source" && resolution != "1080p" && resolution != "720p" && resolution != "480p") {
+					route::err(res, 400, "stream_resolution must be source|1080p|720p|480p"); return;
+				}
+				upd("stream_resolution", resolution);
+			}
+			if (b.contains("stream_video_bitrate"))     updI("stream_video_bitrate",    b["stream_video_bitrate"].get<int>());
+			if (b.contains("stream_audio_bitrate"))     updI("stream_audio_bitrate",    b["stream_audio_bitrate"].get<int>());
 			if (b.contains("seed"))                     updI("seed",                    b["seed"].get<int>());
 			if (b.contains("anchor_hashes")) {
 				std::string ah = b["anchor_hashes"].is_string()

@@ -74,6 +74,9 @@ export interface Channel {
   anchor_hashes?:           Record<string, number>
   audio_lang?:              string  // e.g. "eng"; empty = use global default
   subtitle_lang?:           string  // e.g. "eng"; empty = no subtitle
+  stream_resolution?:       'source' | '1080p' | '720p' | '480p'
+  stream_video_bitrate?:    number  // kbps; 0 = CRF/CQ auto
+  stream_audio_bitrate?:    number  // kbps; default 192
 }
 
 export interface EpgPreviewResponse {

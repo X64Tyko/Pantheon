@@ -27,4 +27,8 @@ struct KairosChannel {
     int         number = 0;
     std::string audio_lang;    // overrides global --audio-lang when non-empty
     std::string subtitle_lang; // empty = no subtitle mapping
+    // Per-channel transcode quality (mirrors channel.stream_* DB columns)
+    std::string stream_resolution    = "source"; // "source"|"1080p"|"720p"|"480p"
+    int         stream_video_bitrate = 0;        // kbps; 0 = CRF/CQ auto
+    int         stream_audio_bitrate = 192;      // kbps
 };
