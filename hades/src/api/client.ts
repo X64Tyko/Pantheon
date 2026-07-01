@@ -253,6 +253,8 @@ export const api = {
   updateShow:     (id: string, b: Partial<ShowDetail>)  => request<void>      ('PATCH', `/shows/${id}`, b),
   getMovie:       (id: string)                          => request<MovieDetail>('GET',  `/movies/${id}`),
   updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
+  getShowLanguages:  (id: string) => request<MediaLanguages>('GET', `/shows/${id}/languages`),
+  getMovieLanguages: (id: string) => request<MediaLanguages>('GET', `/movies/${id}/languages`),
 
   // Channel bumpers
   getBumpers:    (channelId: string)                                                           => request<ChannelBumper[]>('GET',    `/channels/${channelId}/bumpers`),

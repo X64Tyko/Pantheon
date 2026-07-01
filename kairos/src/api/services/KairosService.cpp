@@ -1,4 +1,5 @@
 #include "KairosService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../db/BlockRepository.h"
 #include "../../db/GroupRepository.h"
@@ -137,6 +138,7 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/shows/:id/groups", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto show_id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -153,6 +155,7 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/shows/:id/groups/:gid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto gid = req.path_params.at("gid");
 		try {
 			BlockRepository(db_).removeEpisodeGroup(gid);
@@ -164,6 +167,7 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/shows/:id/groups/:gid/members", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto gid = req.path_params.at("gid");
 		try {
 			auto b = json::parse(req.body);
@@ -183,6 +187,7 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/shows/:id/groups/:gid/members/:mid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto mid_str = req.path_params.at("mid");
 		try {
 			int mid = std::stoi(mid_str);

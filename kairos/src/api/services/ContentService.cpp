@@ -1,18 +1,24 @@
 #include "ContentService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../ServiceContext.h"
 #include "../../conf/ConfStore.h"
 #include "../../db/ContentRepository.h"
+#include "../../db/Database.h"
+#include "../../source/MediaProbe.h"
 #include "../../source/SyncManager.h"
 #include <nlohmann/json.hpp>
 #include <httplib.h>
+#include <SQLiteCpp/SQLiteCpp.h>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <iomanip>
 #include <ctime>
 #include <sys/stat.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using json = nlohmann::json;
@@ -32,6 +38,37 @@ static std::string imgCacheKey(const std::string& sourceId, const std::string& i
 
 ContentService::ContentService(const ServiceContext& ctx)
 	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync) {}
+
+namespace {
+
+// Per-item language probe results are cached in-memory since ffprobe is
+// relatively expensive and a given file's language tracks never change.
+struct ItemLangCache {
+	std::mutex mtx;
+	std::unordered_map<std::string, nlohmann::json> data;
+};
+ItemLangCache g_item_lang_cache;
+
+nlohmann::json probeLanguagesCached(const std::string& cacheKey, const std::string& filePath, ConfStore& conf) {
+	{
+		std::lock_guard<std::mutex> lk(g_item_lang_cache.mtx);
+		auto it = g_item_lang_cache.data.find(cacheKey);
+		if (it != g_item_lang_cache.data.end()) return it->second;
+	}
+
+	nlohmann::json result = {{"audio", nlohmann::json::array()}, {"subtitle", nlohmann::json::array()}};
+	if (!filePath.empty()) {
+		auto langs = probeStreamLanguages(conf.applyPathMap(filePath));
+		for (auto& l : langs.audio)    result["audio"].push_back(l);
+		for (auto& l : langs.subtitle) result["subtitle"].push_back(l);
+	}
+
+	std::lock_guard<std::mutex> lk(g_item_lang_cache.mtx);
+	g_item_lang_cache.data[cacheKey] = result;
+	return result;
+}
+
+} // namespace
 
 void ContentService::proxyImage(const Req& req,
                                  const std::string& imgPath,
@@ -233,6 +270,23 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, json{{"seasons", seasons}}.dump());
 	});
 
+	// Audio/subtitle languages, probed from one representative episode file
+	// and cached in-memory (ffprobe is too slow to run per list render).
+	svr.Get("/api/shows/:id/languages", [this](const Req& req, Res& res) {
+		auto id = req.path_params.at("id");
+		std::string path;
+		try {
+			SQLite::Statement q(db_.get(),
+				"SELECT file_path FROM episode WHERE show_id = ? AND file_path != '' "
+				"ORDER BY season, episode LIMIT 1");
+			q.bind(1, id);
+			if (q.executeStep()) path = q.getColumn(0).getString();
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/shows/" + id + "/languages", e);
+		}
+		route::ok(res, probeLanguagesCached("show:" + id, path, conf_).dump());
+	});
+
 	svr.Get("/api/episodes", [this](const Req& req, Res& res) {
 		int         limit   = 50, offset = 0, season_v = -1;
 		std::string show_id, search_q;
@@ -345,6 +399,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/shows/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
 		auto id = req.path_params.at("id");
 		try {
@@ -438,6 +493,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/movies/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
 		auto id = req.path_params.at("id");
 		try {
@@ -480,5 +536,18 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		auto item = ContentRepository(db_).getMovieArt(id);
 		if (!item) { res.status = 404; return; }
 		proxyImage(req, item->image_path, item->source_id, res);
+	});
+
+	svr.Get("/api/movies/:id/languages", [this](const Req& req, Res& res) {
+		auto id = req.path_params.at("id");
+		std::string path;
+		try {
+			SQLite::Statement q(db_.get(), "SELECT file_path FROM movie WHERE movie_id = ?");
+			q.bind(1, id);
+			if (q.executeStep()) path = q.getColumn(0).getString();
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/movies/" + id + "/languages", e);
+		}
+		route::ok(res, probeLanguagesCached("movie:" + id, path, conf_).dump());
 	});
 }

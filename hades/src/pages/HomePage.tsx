@@ -1,9 +1,12 @@
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, mediaUrl } from '../api/client'
 import type { Channel, Show, Movie, ShowDetail, MovieDetail, ScraperStats } from '../api/types'
-import { MatchBadge } from '../components/media/MatchBadge'
+import { MediaDetailHero } from '../components/media/MediaDetailHero'
+import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { ghostBtnStyle, goldBtnStyle } from '../channel/styles'
+
+const SCROLL_KEY = 'home'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -17,9 +20,6 @@ function proxyArt(item: Show | Movie) {
   if (!item.art) return undefined
   return mediaUrl(isShow(item) ? `/api/shows/${item.show_id}/art` : `/api/movies/${item.movie_id}/art`)
 }
-function proxyThumbById(type: 'show' | 'movie', id: string) {
-  return mediaUrl(type === 'show' ? `/api/shows/${id}/thumb` : `/api/movies/${id}/thumb`)
-}
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ export default function HomePage() {
   const navigate = useNavigate()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const savedScrollY       = useRef(0)
+  const restoredScrollRef  = useRef(false)
   const allItemsRef        = useRef<Map<string, Show | Movie>>(new Map())
 
   // Data
@@ -46,11 +47,9 @@ export default function HomePage() {
   const heroIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Detail view
-  const [detailOpen,    setDetailOpen]    = useState(false)
-  const [detailId,      setDetailId]      = useState<string | null>(null)
-  const [detailType,    setDetailType]    = useState<'show' | 'movie' | null>(null)
-  const [detailData,    setDetailData]    = useState<ShowDetail | MovieDetail | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [detailId,   setDetailId]   = useState<string | null>(null)
+  const [detailType, setDetailType] = useState<'show' | 'movie' | null>(null)
 
   // Crossfade
   const [transitioning, setTransitioning] = useState(false)
@@ -106,7 +105,13 @@ export default function HomePage() {
       heroCandidates.current = withArt
       const first = withArt[0] ?? sr.items[0]
       if (first) { heroIdx.current = 0; setHeroItem(first); loadHeroDetail(first) }
-    }).finally(() => setLoading(false))
+    }).finally(() => {
+      setLoading(false)
+      if (!restoredScrollRef.current) {
+        restoredScrollRef.current = true
+        setTimeout(() => scrollContainerRef.current?.scrollTo({ top: getScrollPos(SCROLL_KEY) }), 32)
+      }
+    })
   }, [])
 
   useEffect(() => {
@@ -119,12 +124,6 @@ export default function HomePage() {
   const openDetail = (id: string, type: 'show' | 'movie') => {
     if (heroIntervalRef.current) clearInterval(heroIntervalRef.current)
     savedScrollY.current = scrollContainerRef.current?.scrollTop ?? 0
-
-    // Start loading detail immediately (async, arrives later)
-    setDetailData(null)
-    setDetailLoading(true)
-    const p = type === 'show' ? api.getShow(id) : api.getMovie(id)
-    p.then(d => setDetailData(d)).finally(() => setDetailLoading(false))
 
     // Transition hero to selected item's backdrop (if it has one)
     const listItem = allItemsRef.current.get(id)
@@ -159,7 +158,6 @@ export default function HomePage() {
       setDetailOpen(false)
       setDetailId(null)
       setDetailType(null)
-      setDetailData(null)
       setTransitioning(false)
       // Restore scroll after content mounts
       setTimeout(() => {
@@ -174,6 +172,7 @@ export default function HomePage() {
     <div style={{ height: '100%', overflow: 'hidden' }}>
       <div
         ref={scrollContainerRef}
+        onScroll={e => saveScrollPos(SCROLL_KEY, e.currentTarget.scrollTop)}
         style={{ height: '100%', overflowY: 'auto', background: 'var(--hds-bg)' }}
         className="scrollbar-dark"
       >
@@ -208,12 +207,11 @@ export default function HomePage() {
           minHeight: '40vh',
         }}>
           {detailOpen && detailId && detailType ? (
-            <InlineDetail
+            <MediaDetailHero
               id={detailId}
-              type={detailType}
-              data={detailData}
-              loading={detailLoading}
+              content_type={detailType}
               onBack={closeDetail}
+              showBackdrop={false}
             />
           ) : (
             <Shelves
@@ -382,187 +380,6 @@ function EmptyHero({ onGoToSources }: { onGoToSources: () => void }) {
         No content yet
       </div>
       <button style={ghostBtnStyle} onClick={onGoToSources}>Add a Source →</button>
-    </div>
-  )
-}
-
-// ── Inline detail ─────────────────────────────────────────────────────────────
-
-function InlineDetail({
-  id, type, data, loading, onBack,
-}: {
-  id:      string
-  type:    'show' | 'movie'
-  data:    ShowDetail | MovieDetail | null
-  loading: boolean
-  onBack:  () => void
-}) {
-  const show  = data && 'show_id'  in data ? data as ShowDetail  : null
-  const movie = data && 'movie_id' in data ? data as MovieDetail : null
-
-  return (
-    <div style={{ padding: '0 48px 48px' }}>
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: 'none', border: 'none', cursor: 'pointer',
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-          color: 'var(--hds-txt-3)', padding: '18px 0 20px',
-          letterSpacing: '0.06em',
-          transition: 'color .12s',
-        }}
-        onMouseEnter={e => (e.currentTarget.style.color = 'var(--hds-txt)')}
-        onMouseLeave={e => (e.currentTarget.style.color = 'var(--hds-txt-3)')}
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9 2L4 7l5 5" />
-        </svg>
-        Back
-      </button>
-
-      {loading && !data ? (
-        <div style={{ display: 'flex', gap: 32 }}>
-          <div className="hds-skeleton" style={{ width: 160, height: 240, borderRadius: 10, flexShrink: 0 }} />
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {[220, 100, 80, 300, 260, 200].map((w, i) => (
-              <div key={i} className="hds-skeleton" style={{ height: 14, borderRadius: 4, width: w }} />
-            ))}
-          </div>
-        </div>
-      ) : data ? (
-        <div style={{ display: 'flex', gap: 36, alignItems: 'flex-start', maxWidth: 900 }}>
-          {/* Poster */}
-          <div style={{
-            width: 160, height: 240, borderRadius: 10, overflow: 'hidden', flexShrink: 0,
-            background: 'var(--hds-bg-3)',
-            boxShadow: '0 8px 32px oklch(0 0 0 / 0.5)',
-          }}>
-            <img
-              src={proxyThumbById(type, id)}
-              alt={data.title}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-            />
-          </div>
-
-          {/* Info */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h2 style={{
-              fontFamily: "'Chakra Petch', sans-serif", fontSize: 26, fontWeight: 700,
-              color: 'var(--hds-txt)', margin: '0 0 12px', lineHeight: 1.15,
-            }}>{data.title}</h2>
-
-            {/* Meta chips */}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-              {data.year && <Chip>{data.year}</Chip>}
-              {data.content_rating && <Chip>{data.content_rating}</Chip>}
-              {data.audience_rating != null && (
-                <Chip accent="gold">★ {data.audience_rating.toFixed(1)}</Chip>
-              )}
-              <Chip>{type === 'show' ? 'series' : 'film'}</Chip>
-            </div>
-
-            {/* Genres */}
-            {data.genres.length > 0 && (
-              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 16 }}>
-                {data.genres.map(g => (
-                  <span key={g} style={{
-                    fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                    padding: '3px 10px', borderRadius: 12,
-                    background: 'var(--hds-glass)', border: '1px solid var(--hds-glass-border)',
-                    color: 'var(--hds-txt-2)', letterSpacing: '0.05em',
-                  }}>{g}</span>
-                ))}
-              </div>
-            )}
-
-            {/* Overview */}
-            {data.overview && (
-              <p style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 11, lineHeight: 1.75,
-                color: 'var(--hds-txt-2)', margin: '0 0 20px',
-              }}>{data.overview}</p>
-            )}
-
-            {/* Show: seasons */}
-            {show && show.seasons.length > 0 && (
-              <div style={{ marginBottom: 20 }}>
-                <div style={{
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                  letterSpacing: '0.1em', color: 'var(--hds-txt-3)', marginBottom: 10,
-                }}>SEASONS</div>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-                  gap: 8,
-                }}>
-                  {show.seasons.map(s => (
-                    <div key={s.number} style={{
-                      padding: '8px 12px', borderRadius: 7,
-                      border: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    }}>
-                      <span style={{
-                        fontFamily: "'Chakra Petch', sans-serif", fontSize: 11,
-                        color: 'var(--hds-txt-2)', fontWeight: 500,
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
-                      }}>{s.name || `Season ${s.number}`}</span>
-                      <span style={{
-                        fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-                        color: 'var(--hds-txt-3)', flexShrink: 0, marginLeft: 6,
-                      }}>S{String(s.number).padStart(2, '0')}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Movie: credits */}
-            {movie && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 20 }}>
-                {movie.director && <MetaRow label="Director">{movie.director}</MetaRow>}
-                {movie.studio   && <MetaRow label="Studio">{movie.studio}</MetaRow>}
-                {movie.duration_ms > 0 && (
-                  <MetaRow label="Runtime">{Math.round(movie.duration_ms / 60000)} min</MetaRow>
-                )}
-              </div>
-            )}
-
-            {/* Show: studio */}
-            {show?.studio && <MetaRow label="Studio">{show.studio}</MetaRow>}
-
-            {/* Match status */}
-            {data.locked && (
-              <div style={{ marginTop: 8 }}>
-                <MatchBadge status="matched" size="sm" />
-              </div>
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function Chip({ children, accent }: { children: ReactNode; accent?: 'gold' }) {
-  return (
-    <span style={{
-      fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-      padding: '3px 9px', borderRadius: 10,
-      border: '1px solid var(--hds-line-s)',
-      color: accent === 'gold' ? 'var(--hds-gold)' : 'var(--hds-txt-3)',
-      borderColor: accent === 'gold' ? 'oklch(0.83 0.13 84 / 0.35)' : undefined,
-    }}>{children}</span>
-  )
-}
-
-function MetaRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
-      <span style={{ color: 'var(--hds-txt-2)' }}>{label}</span>
-      {' · '}{children}
     </div>
   )
 }

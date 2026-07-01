@@ -8,7 +8,6 @@ import Layout                 from './components/Layout'
 import ActivityPage           from './pages/ActivityPage'
 import ChannelDetailPage      from './pages/ChannelDetailPage'
 import ChannelsPage           from './pages/ChannelsPage'
-import ContentPage            from './pages/ContentPage'
 import DownloadPage           from './pages/DownloadPage'
 import FillerPage             from './pages/FillerPage'
 import HomePage               from './pages/HomePage'
@@ -34,7 +33,6 @@ export default function App() {
             <Route path="sources"      element={<SourcesPage />} />
             <Route path="channels"     element={<ChannelsPage />} />
             <Route path="channels/:id" element={<ChannelDetailPage />} />
-            <Route path="content"      element={<ContentPage />} />
             <Route path="playlists"    element={<PlaylistPage />} />
             <Route path="filler"       element={<FillerPage />} />
             <Route path="downloads"    element={<DownloadPage />} />

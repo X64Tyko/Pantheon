@@ -1,15 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { libraryStore } from '../stores/LibraryStore'
 import { useDebounce } from '../hooks/useDebounce'
+import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { SourceSwitcher } from '../components/media/SourceSwitcher'
 import { LibraryFilters } from '../components/media/LibraryFilters'
 import { MediaGrid } from '../components/media/MediaGrid'
 import { MediaDetail } from '../components/media/MediaDetail'
+import { LoadMoreSentinel } from '../channel/BrowserTiles'
 import { filterInputStyle } from '../channel/styles'
 import type { LibraryDensity, ScraperSearchResult } from '../api/types'
 
 const DENSITY_ICONS: Record<LibraryDensity, string> = { minimal: '⊞', standard: '⊟', rich: '≡' }
+const SCROLL_KEY = 'library-grid'
 
 export default observer(function LibraryPage() {
   const store = libraryStore
@@ -17,8 +20,19 @@ export default observer(function LibraryPage() {
   const [rawQ, setRawQ] = useState(store.query)
   const debouncedQ = useDebounce(rawQ, 300)
 
+  const gridScrollRef  = useRef<HTMLDivElement>(null)
+  const savedGridScroll = useRef(0)
+  const restoredRef     = useRef(false)
+  const [transitioning, setTransitioning] = useState(false)
+
+  const detailOpen = !!(store.selectedId || selectedDiscover)
+
   useEffect(() => {
-    store.loadLibraries().then(() => store.fetch())
+    store.loadLibraries().then(() => store.fetch()).then(() => {
+      if (restoredRef.current) return
+      restoredRef.current = true
+      setTimeout(() => gridScrollRef.current?.scrollTo({ top: getScrollPos(SCROLL_KEY) }), 32)
+    })
   }, [])
 
   useEffect(() => { store.setQuery(debouncedQ) }, [debouncedQ])
@@ -28,85 +42,111 @@ export default observer(function LibraryPage() {
     setSelectedDiscover(null)
   }
 
+  const openDetail = (fn: () => void) => {
+    savedGridScroll.current = gridScrollRef.current?.scrollTop ?? 0
+    setTransitioning(true)
+    setTimeout(() => { fn(); setTransitioning(false) }, 200)
+  }
+
+  const closeDetail = () => {
+    setTransitioning(true)
+    setTimeout(() => {
+      store.clearSelection()
+      setSelectedDiscover(null)
+      setTransitioning(false)
+      setTimeout(() => gridScrollRef.current?.scrollTo({ top: savedGridScroll.current }), 32)
+    }, 200)
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--hds-bg)' }}>
-      {/* Top bar */}
-      <div style={{
-        padding: '14px 24px 10px', borderBottom: '1px solid var(--hds-line)',
-        display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
-            style={{ ...filterInputStyle, flex: 1 }}
-            placeholder={store.discoverMode ? 'Search scrapers…' : 'Search library…'}
-            value={rawQ}
-            onChange={e => setRawQ(e.target.value)}
-          />
+      {/* Top bar — hidden while viewing an item's detail hero */}
+      {!detailOpen && (
+        <div style={{
+          padding: '14px 24px 10px', borderBottom: '1px solid var(--hds-line)',
+          display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              style={{ ...filterInputStyle, flex: 1 }}
+              placeholder={store.discoverMode ? 'Search scrapers…' : 'Search library…'}
+              value={rawQ}
+              onChange={e => setRawQ(e.target.value)}
+            />
 
-          <button
-            onClick={handleToggleDiscover}
-            title={store.discoverMode ? 'Switch to Library mode' : 'Switch to Discover mode — search scrapers'}
-            style={{
-              height: 30, padding: '0 12px', borderRadius: 6, cursor: 'pointer',
-              border: `1px solid ${store.discoverMode ? 'oklch(0.65 0.18 220)' : 'var(--hds-line)'}`,
-              background: store.discoverMode ? 'oklch(0.65 0.18 220 / 0.12)' : 'transparent',
-              color: store.discoverMode ? 'oklch(0.65 0.18 220)' : 'var(--hds-txt-3)',
+            <button
+              onClick={handleToggleDiscover}
+              title={store.discoverMode ? 'Switch to Library mode' : 'Switch to Discover mode — search scrapers'}
+              style={{
+                height: 30, padding: '0 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${store.discoverMode ? 'oklch(0.65 0.18 220)' : 'var(--hds-line)'}`,
+                background: store.discoverMode ? 'oklch(0.65 0.18 220 / 0.12)' : 'transparent',
+                color: store.discoverMode ? 'oklch(0.65 0.18 220)' : 'var(--hds-txt-3)',
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                letterSpacing: '0.08em', whiteSpace: 'nowrap',
+                transition: 'border-color .12s, background .12s, color .12s',
+              }}
+            >◎ Discover</button>
+
+            {!store.discoverMode && (
+              <>
+                <div style={{ display: 'flex', gap: 2 }}>
+                  {(['minimal', 'standard', 'rich'] as LibraryDensity[]).map(d => (
+                    <button key={d} onClick={() => store.setDensity(d)} title={d} style={{
+                      width: 30, height: 30,
+                      border: `1px solid ${store.density === d ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+                      background: store.density === d ? 'oklch(0.55 0.14 292 / 0.2)' : 'transparent',
+                      color: store.density === d ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
+                      borderRadius: 6, cursor: 'pointer', fontSize: 14,
+                    }}>{DENSITY_ICONS[d]}</button>
+                  ))}
+                </div>
+                <button onClick={() => store.toggleSidebar()} title="Toggle filters" style={{
+                  width: 30, height: 30,
+                  border: `1px solid ${store.sidebarOpen ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+                  background: store.sidebarOpen ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
+                  color: store.sidebarOpen ? 'var(--hds-violet)' : 'var(--hds-txt-2)',
+                  borderRadius: 6, cursor: 'pointer', fontSize: 12,
+                }}>⊧</button>
+              </>
+            )}
+          </div>
+
+          {!store.discoverMode && <SourceSwitcher libraries={store.libraries} />}
+
+          {store.discoverMode && (
+            <div style={{
               fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-              letterSpacing: '0.08em', whiteSpace: 'nowrap',
-              transition: 'border-color .12s, background .12s, color .12s',
-            }}
-          >◎ Discover</button>
-
-          {!store.discoverMode && (
-            <>
-              <div style={{ display: 'flex', gap: 2 }}>
-                {(['minimal', 'standard', 'rich'] as LibraryDensity[]).map(d => (
-                  <button key={d} onClick={() => store.setDensity(d)} title={d} style={{
-                    width: 30, height: 30,
-                    border: `1px solid ${store.density === d ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-                    background: store.density === d ? 'oklch(0.55 0.14 292 / 0.2)' : 'transparent',
-                    color: store.density === d ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-                    borderRadius: 6, cursor: 'pointer', fontSize: 14,
-                  }}>{DENSITY_ICONS[d]}</button>
-                ))}
-              </div>
-              <button onClick={() => store.toggleSidebar()} title="Toggle filters" style={{
-                width: 30, height: 30,
-                border: `1px solid ${store.sidebarOpen ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-                background: store.sidebarOpen ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-                color: store.sidebarOpen ? 'var(--hds-violet)' : 'var(--hds-txt-2)',
-                borderRadius: 6, cursor: 'pointer', fontSize: 12,
-              }}>⊧</button>
-            </>
+              color: 'oklch(0.65 0.18 220)', letterSpacing: '0.06em',
+            }}>
+              Discover mode — results come from TMDB &amp; TVDB, not your library
+            </div>
           )}
         </div>
-
-        {!store.discoverMode && <SourceSwitcher libraries={store.libraries} />}
-
-        {store.discoverMode && (
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-            color: 'oklch(0.65 0.18 220)', letterSpacing: '0.06em',
-          }}>
-            Discover mode — results come from TMDB &amp; TVDB, not your library
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Content area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {!store.discoverMode && store.sidebarOpen && <LibraryFilters />}
+        {!store.discoverMode && !detailOpen && store.sidebarOpen && <LibraryFilters />}
 
-        <div style={{ flex: 1, overflowY: 'auto' }}>
-          {store.discoverMode ? (
+        <div
+          ref={gridScrollRef}
+          onScroll={e => saveScrollPos(SCROLL_KEY, e.currentTarget.scrollTop)}
+          style={{ flex: 1, overflowY: 'auto', opacity: transitioning ? 0 : 1, transition: 'opacity .2s ease' }}
+        >
+          {detailOpen ? (
+            selectedDiscover ? (
+              <MediaDetail discoverResult={selectedDiscover} onClose={closeDetail} />
+            ) : (
+              <MediaDetail id={store.selectedId!} content_type={store.selectedType!} onClose={closeDetail} />
+            )
+          ) : store.discoverMode ? (
             <DiscoverGrid
               results={store.discoverResults}
               loading={store.discoverLoading}
               query={rawQ}
-              selectedKey={selectedDiscover ? `${selectedDiscover.source}-${selectedDiscover.external_id}` : null}
-              onSelect={r => setSelectedDiscover(
-                prev => prev?.external_id === r.external_id && prev?.source === r.source ? null : r
-              )}
+              selectedKey={null}
+              onSelect={r => openDetail(() => setSelectedDiscover(r))}
             />
           ) : store.loading ? (
             <div style={{
@@ -118,30 +158,20 @@ export default observer(function LibraryPage() {
               ))}
             </div>
           ) : (
-            <MediaGrid
-              shows={store.shows}
-              movies={store.movies}
-              density={store.density}
-              selectedId={store.selectedId}
-              onItemClick={(id, type) => store.selectItem(id, type)}
-            />
+            <>
+              <MediaGrid
+                shows={store.shows}
+                movies={store.movies}
+                density={store.density}
+                selectedId={null}
+                onItemClick={(id, type) => openDetail(() => store.selectItem(id, type))}
+              />
+              {store.shows.length + store.movies.length < store.total && (
+                <LoadMoreSentinel loading={store.loadingMore} onVisible={() => store.loadMore()} />
+              )}
+            </>
           )}
         </div>
-
-        {store.discoverMode && selectedDiscover && (
-          <MediaDetail
-            discoverResult={selectedDiscover}
-            onClose={() => setSelectedDiscover(null)}
-          />
-        )}
-
-        {!store.discoverMode && store.selectedId && store.selectedType && (
-          <MediaDetail
-            id={store.selectedId}
-            content_type={store.selectedType}
-            onClose={() => store.clearSelection()}
-          />
-        )}
       </div>
     </div>
   )

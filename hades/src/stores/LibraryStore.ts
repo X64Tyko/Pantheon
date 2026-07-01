@@ -5,6 +5,7 @@ import type { LibraryDensity } from '../api/types'
 
 const DENSITY_KEY = 'hds-library-density'
 const SIDEBAR_KEY = 'hds-library-sidebar'
+const PAGE_SIZE = 48
 
 class LibraryStore {
   libraries:    LibraryWithSource[] = []
@@ -12,6 +13,7 @@ class LibraryStore {
   movies:       Movie[] = []
   total:        number = 0
   loading:      boolean = false
+  loadingMore:  boolean = false
   page:         number = 0
   query:        string = ''
   contentType:  'show' | 'movie' | 'all' = 'all'
@@ -34,15 +36,19 @@ class LibraryStore {
     runInAction(() => { this.libraries = libs })
   }
 
-  async fetch() {
-    runInAction(() => { this.loading = true })
-    const base = {
-      limit: 48,
-      offset: this.page * 48,
+  private searchParams(page: number) {
+    return {
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
       q: this.query || undefined,
       library_id: this.activeLibId ?? undefined,
       genre: this.filterGenre || undefined,
     }
+  }
+
+  async fetch() {
+    runInAction(() => { this.loading = true })
+    const base = this.searchParams(this.page)
     try {
       const [showRes, movieRes] = await Promise.all([
         this.contentType !== 'movie' ? api.getShows(base) : Promise.resolve({ items: [] as Show[], total: 0 }),
@@ -56,6 +62,28 @@ class LibraryStore {
       })
     } catch {
       runInAction(() => { this.loading = false })
+    }
+  }
+
+  async loadMore() {
+    if (this.loading || this.loadingMore) return
+    if (this.shows.length + this.movies.length >= this.total) return
+    runInAction(() => { this.loadingMore = true })
+    const nextPage = this.page + 1
+    const base = this.searchParams(nextPage)
+    try {
+      const [showRes, movieRes] = await Promise.all([
+        this.contentType !== 'movie' ? api.getShows(base) : Promise.resolve({ items: [] as Show[], total: 0 }),
+        this.contentType !== 'show'  ? api.getMovies(base) : Promise.resolve({ items: [] as Movie[], total: 0 }),
+      ])
+      runInAction(() => {
+        this.shows      = [...this.shows, ...showRes.items]
+        this.movies     = [...this.movies, ...movieRes.items]
+        this.page       = nextPage
+        this.loadingMore = false
+      })
+    } catch {
+      runInAction(() => { this.loadingMore = false })
     }
   }
 

@@ -10,5 +10,4 @@ export const channelStore = new ChannelStore()
 export const systemStore  = new SystemStore()
 export const userStore    = new UserStore()
 
-export { contentStore }  from './ContentStore'
 export { statusStore }   from './StatusStore'
