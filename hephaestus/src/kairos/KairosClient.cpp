@@ -43,10 +43,12 @@ std::optional<KairosNowResponse> KairosClient::getNow(const std::string& channel
             if (j.contains(k) && j[k].is_string()) return j[k].get<std::string>();
             return std::nullopt;
         };
-        r.show_title  = optStr("show_title");
-        r.show_id     = optStr("show_id");
-        r.source_id   = optStr("source_id");
-        r.external_id = optStr("external_id");
+        r.show_title          = optStr("show_title");
+        r.show_id             = optStr("show_id");
+        r.source_id           = optStr("source_id");
+        r.external_id         = optStr("external_id");
+        r.offline_image_path  = optStr("offline_image_path");
+        r.offline_audio_path  = optStr("offline_audio_path");
 
         if (j.contains("season")      && j["season"].is_number())      r.season      = j["season"].get<int>();
         if (j.contains("episode_num") && j["episode_num"].is_number()) r.episode_num = j["episode_num"].get<int>();
@@ -95,6 +97,7 @@ std::vector<KairosChannel> KairosClient::getChannels() {
             ch.number        = item.value("number",       0);
             ch.audio_lang             = item.value("audio_lang",            "");
             ch.subtitle_lang          = item.value("subtitle_lang",         "");
+            ch.logo_path              = item.value("logo_path",             "");
             ch.stream_resolution      = item.value("stream_resolution",     "source");
             ch.stream_video_bitrate   = item.value("stream_video_bitrate",  0);
             ch.stream_audio_bitrate   = item.value("stream_audio_bitrate",  192);

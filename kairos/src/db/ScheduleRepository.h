@@ -19,7 +19,7 @@ struct FillerFallbackRow {
 };
 
 struct OfflineFallbackRow {
-    std::string vid_path, img_path, audio_id, audio_typ;
+    std::string vid_path, img_path, audio_id, audio_typ, logo_path;
 };
 
 struct NextProgramRow {

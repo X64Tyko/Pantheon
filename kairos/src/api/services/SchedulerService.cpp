@@ -211,23 +211,28 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 				}.dump());
 				return;
 			}
-			if (!offline->img_path.empty()) {
-				json j = {
-					{"item_type",           "offline"},
-					{"offline_image_path",  conf_.applyPathMap(offline->img_path)},
-					{"duration_ms",         0},
-					{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
-				};
+
+			// Fall back to the channel's logo when no offline image is configured.
+			// If neither exists, still respond 200 (no image field) rather than
+			// 404ing — Hephaestus supplies its own generic default in that case.
+			const std::string& image = !offline->img_path.empty() ? offline->img_path : offline->logo_path;
+			json j = {
+				{"item_type",           "offline"},
+				{"duration_ms",         0},
+				{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+			};
+			if (!image.empty()) {
+				j["offline_image_path"] = conf_.applyPathMap(image);
 				if (!offline->audio_id.empty() && !offline->audio_typ.empty()) {
 					if (auto ap = sched.getAudioFilePath(offline->audio_typ, offline->audio_id))
 						j["offline_audio_path"] = conf_.applyPathMap(*ap);
 				}
-				route::ok(res, j.dump());
-				return;
 			}
+			route::ok(res, j.dump());
+			return;
 		}
 
-		route::err(res, 404, "no content or fallback configured for this channel");
+		route::err(res, 404, "channel not found");
 	  } catch (const std::exception& e) {
 		route::logErr("GET /api/channels/now", e); route::err(res, 500, e.what());
 	  }

@@ -29,7 +29,8 @@ kairos_pid=$!
 echo '[dev] starting Hephaestus on :8082 ...'
 "$build/hephaestus/hephaestus" \
     --kairos-url http://localhost:8080 \
-    --port 8082 &
+    --port 8082 \
+    --default-logo "$root/hephaestus/assets/default_logo.png" &
 hephaestus_pid=$!
 
 # ── Hermes   :8000 ────────────────────────────────────────────────────────────

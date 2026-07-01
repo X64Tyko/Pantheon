@@ -25,6 +25,7 @@ int main(int argc, char* argv[]) {
     stream_opts.buffer_size       = cfg.stream_buffer_size;
     stream_opts.hw_accel     = cfg.hw_accel;
     stream_opts.vaapi_device = cfg.vaapi_device;
+    stream_opts.default_logo_path = cfg.default_logo_path;
 
     // Seed the buffer size from Kairos's persisted setting at startup (the
     // --buffer-size/BUF_SIZE config above remains the fallback if Kairos is

@@ -100,7 +100,7 @@ std::optional<OfflineFallbackRow>
 ScheduleRepository::getChannelOfflineConfig(const std::string& channel_id) {
     SQLite::Statement q(db_.get(),
         "SELECT offline_video_path, offline_image_path, "
-        "       offline_audio_id, offline_audio_type "
+        "       offline_audio_id, offline_audio_type, logo_path "
         "FROM channel WHERE channel_id = ?");
     q.bind(1, channel_id);
     if (!q.executeStep()) return std::nullopt;
@@ -110,6 +110,7 @@ ScheduleRepository::getChannelOfflineConfig(const std::string& channel_id) {
     r.img_path  = q.getColumn(1).getString();
     r.audio_id  = q.getColumn(2).getString();
     r.audio_typ = q.getColumn(3).getString();
+    r.logo_path = q.getColumn(4).getString();
     return r;
 }
 

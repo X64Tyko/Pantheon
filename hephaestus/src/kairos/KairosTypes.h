@@ -19,6 +19,8 @@ struct KairosNowResponse {
     std::optional<std::string> external_id;
     std::optional<int> season;
     std::optional<int> episode_num;
+    std::optional<std::string> offline_image_path;
+    std::optional<std::string> offline_audio_path;
 };
 
 struct KairosChannel {
@@ -27,6 +29,7 @@ struct KairosChannel {
     int         number = 0;
     std::string audio_lang;    // overrides global --audio-lang when non-empty
     std::string subtitle_lang; // empty = no subtitle mapping
+    std::string logo_path;     // empty = no channel-specific logo configured
     // Per-channel transcode quality (mirrors channel.stream_* DB columns)
     std::string stream_resolution    = "source"; // "source"|"1080p"|"720p"|"480p"
     int         stream_video_bitrate = 0;        // kbps; 0 = CRF/CQ auto

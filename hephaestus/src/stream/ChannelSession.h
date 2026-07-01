@@ -39,6 +39,9 @@ struct StreamOptions {
     std::string max_resolution    = "source"; // "source"|"1080p"|"720p"|"480p"
     int         video_bitrate_kbps = 0;       // 0 = CRF/CQ auto; >0 adds -maxrate cap
     int         audio_bitrate_kbps = 192;     // kbps for -b:a
+    // Offline/splash image fallback
+    std::string logo_path;          // per-channel logo, empty = none configured
+    std::string default_logo_path;  // bundled generic fallback, always set
 };
 
 class ChannelSession {
@@ -60,11 +63,15 @@ class ChannelSession {
     int64_t current_item_offset_ms = 0; // offset into current_item's own file we started at
 
     std::atomic<bool> active{false};
+    std::atomic<bool> in_splash{false}; // true while showing the connect-time logo splash
 
     void onData(const uint8_t* data, size_t len);
     void onExit(int code);
     void transition();
+    void resolveRealContent();
     void spawnFfmpeg(const KairosNowResponse& item, int64_t startOffsetMs, double speed = 1.0);
+    void spawnOffline(const KairosNowResponse& item);
+    void launchFfmpeg(std::vector<std::string> args, const char* what);
     void broadcastDone();
     void scheduleStop();
 

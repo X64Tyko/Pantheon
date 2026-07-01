@@ -10,17 +10,27 @@ std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& c
     auto it = sessions.find(channelId);
     if (it != sessions.end() && it->second->isActive()) return it->second;
 
-    // Apply per-channel language overrides and transcode quality from Kairos channel config
+    // Apply per-channel language overrides and transcode quality from Kairos channel config.
+    // A channel not found in this list is invalid/unknown — since start() now always
+    // succeeds (it falls back to a splash), this existence check is what actually
+    // rejects bogus channel IDs instead of silently serving a logo forever.
     StreamOptions opts = stream_opts;
+    bool found = false;
     for (const auto& ch : kairos.getChannels()) {
         if (ch.channel_id == channelId) {
+            found = true;
             if (!ch.audio_lang.empty())    opts.audio_lang    = ch.audio_lang;
             if (!ch.subtitle_lang.empty()) opts.subtitle_lang = ch.subtitle_lang;
             opts.max_resolution      = ch.stream_resolution;
             opts.video_bitrate_kbps  = ch.stream_video_bitrate;
             opts.audio_bitrate_kbps  = ch.stream_audio_bitrate > 0 ? ch.stream_audio_bitrate : 192;
+            opts.logo_path           = ch.logo_path;
             break;
         }
+    }
+    if (!found) {
+        std::cerr << "[sessions] unknown channel " << channelId << "\n";
+        return nullptr;
     }
 
     // Pick up any live changes to the buffer size setting from Kairos so new

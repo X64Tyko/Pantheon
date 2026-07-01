@@ -30,6 +30,41 @@ static std::string fmtSpeed(double speed) {
 
 // ── ffmpeg arg construction ───────────────────────────────────────────────────
 
+// Video encoder selection, shared by buildArgs() and buildImageArgs(). Appends
+// codec args to `a` and (for AMD, which needs a CPU->VAAPI upload after any
+// scale filter) an extra entry to `vfParts`.
+static void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
+                                  HwAccel hw_accel) {
+    switch (hw_accel) {
+        case HwAccel::nvidia:
+            a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
+                                "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p"});
+            break;
+        case HwAccel::amd:
+            vfParts.push_back("format=nv12,hwupload");
+            a.insert(a.end(), {"-c:v", "h264_vaapi"});
+            break;
+        default:
+            a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
+                                "-crf", "23", "-pix_fmt", "yuv420p"});
+    }
+}
+
+// Audio encoder selection, shared by buildArgs() and buildImageArgs().
+static void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
+                                  int audio_bitrate_kbps) {
+    std::vector<std::string> afParts;
+    if (loudnorm) afParts.push_back("loudnorm=I=-16:TP=-1.5:LRA=11");
+    if (speed != 1.0) afParts.push_back("atempo=" + fmtSpeed(speed));
+
+    a.insert(a.end(), {"-c:a", "aac", "-b:a", std::to_string(audio_bitrate_kbps) + "k"});
+    if (!afParts.empty()) {
+        std::string af;
+        for (size_t i = 0; i < afParts.size(); ++i) { if (i) af += ","; af += afParts[i]; }
+        a.insert(a.end(), {"-af", af});
+    }
+}
+
 static std::vector<std::string> buildArgs(
     const std::string& ffmpeg_path,
     const KairosNowResponse& item,
@@ -87,20 +122,7 @@ static std::vector<std::string> buildArgs(
     else if (max_resolution == "480p") vfParts.push_back("scale=-2:min(ih\\,480)");
     if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
 
-    switch (hw_accel) {
-        case HwAccel::nvidia:
-            a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
-                                "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p"});
-            break;
-        case HwAccel::amd:
-            // Scale (if any) happens on CPU, then upload to VAAPI
-            vfParts.push_back("format=nv12,hwupload");
-            a.insert(a.end(), {"-c:v", "h264_vaapi"});
-            break;
-        default:
-            a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
-                                "-crf", "23", "-pix_fmt", "yuv420p"});
-    }
+    pushVideoEncoderArgs(a, vfParts, hw_accel);
     if (!vfParts.empty()) {
         std::string vf;
         for (size_t i = 0; i < vfParts.size(); ++i) { if (i) vf += ","; vf += vfParts[i]; }
@@ -115,18 +137,70 @@ static std::vector<std::string> buildArgs(
     }
 
     // Audio: AAC
-    std::vector<std::string> afParts;
-    if (loudnorm) afParts.push_back("loudnorm=I=-16:TP=-1.5:LRA=11");
-    if (speed != 1.0) afParts.push_back("atempo=" + fmtSpeed(speed));
-
-    a.insert(a.end(), {"-c:a", "aac", "-b:a", std::to_string(audio_bitrate_kbps) + "k"});
-    if (!afParts.empty()) {
-        std::string af;
-        for (size_t i = 0; i < afParts.size(); ++i) { if (i) af += ","; af += afParts[i]; }
-        a.insert(a.end(), {"-af", af});
-    }
+    pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
 
     // Clean MPEG-TS timestamps
+    a.insert(a.end(), {"-avoid_negative_ts", "make_zero",
+                        "-muxdelay", "0", "-muxpreload", "0"});
+
+    a.insert(a.end(), {"-f", "mpegts", "pipe:1"});
+    return a;
+}
+
+// Loops a still image into an MPEG-TS stream, with either a looped audio
+// track or generated silence. Used for the offline slate and the connect-time
+// splash — neither has a real media file to seek/map into like buildArgs().
+static std::vector<std::string> buildImageArgs(
+    const std::string& ffmpeg_path,
+    const std::string& image_path,
+    const std::string& audio_path, // empty = generate silence
+    HwAccel hw_accel,
+    const std::string& vaapi_device,
+    const std::string& max_resolution,
+    int video_bitrate_kbps,
+    int audio_bitrate_kbps)
+{
+    std::vector<std::string> a;
+    a.push_back(ffmpeg_path);
+
+    a.insert(a.end(), {"-fflags", "+genpts", "-flags", "low_delay"});
+    a.push_back("-re");
+
+    if (hw_accel == HwAccel::amd)
+        a.insert(a.end(), {"-vaapi_device", vaapi_device});
+
+    // Input 0: the image, looped forever. A still image has no frame rate of
+    // its own — pick a normal one so players see a standard CFR stream.
+    a.insert(a.end(), {"-loop", "1", "-framerate", "25", "-i", image_path});
+
+    // Input 1: configured offline audio (looped) or generated silence.
+    if (!audio_path.empty())
+        a.insert(a.end(), {"-stream_loop", "-1", "-i", audio_path});
+    else
+        a.insert(a.end(), {"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"});
+
+    a.insert(a.end(), {"-map", "0:v:0", "-map", "1:a:0"});
+    a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
+
+    std::vector<std::string> vfParts;
+    if (max_resolution == "1080p")     vfParts.push_back("scale=-2:min(ih\\,1080)");
+    else if (max_resolution == "720p") vfParts.push_back("scale=-2:min(ih\\,720)");
+    else if (max_resolution == "480p") vfParts.push_back("scale=-2:min(ih\\,480)");
+
+    pushVideoEncoderArgs(a, vfParts, hw_accel);
+    if (!vfParts.empty()) {
+        std::string vf;
+        for (size_t i = 0; i < vfParts.size(); ++i) { if (i) vf += ","; vf += vfParts[i]; }
+        a.insert(a.end(), {"-vf", vf});
+    }
+    if (video_bitrate_kbps > 0) {
+        std::string maxrate = std::to_string(video_bitrate_kbps) + "k";
+        std::string bufsize = std::to_string(video_bitrate_kbps * 2) + "k";
+        a.insert(a.end(), {"-maxrate", maxrate, "-bufsize", bufsize});
+    }
+
+    pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, audio_bitrate_kbps);
+
     a.insert(a.end(), {"-avoid_negative_ts", "make_zero",
                         "-muxdelay", "0", "-muxpreload", "0"});
 
@@ -175,11 +249,28 @@ std::optional<double> ChannelSession::computeSpeed(int64_t rawDriftMs, int64_t d
 }
 
 bool ChannelSession::start() {
+    active    = true;
+    in_splash = true;
+
+    // Show this channel's logo (or the bundled default) immediately so the
+    // client gets bytes right away, instead of blocking on the Kairos /now
+    // round-trip + ffprobe + real ffmpeg startup below. resolveRealContent()
+    // swaps over to the real item once it's ready.
+    spawnOffline(KairosNowResponse{});
+
+    std::thread([this] { resolveRealContent(); }).detach();
+    return active.load();
+}
+
+// Looks up the real current item and swaps the session's ffmpeg process over
+// to it, replacing whatever the connect-time splash spawned. Runs on its own
+// thread so start() can return immediately (see start()'s comment).
+void ChannelSession::resolveRealContent() {
     int64_t at = nowMs();
     auto item = kairos.getNow(channel_id, at);
     if (!item) {
-        std::cerr << "[session:" << channel_id << "] /now failed at startup\n";
-        return false;
+        std::cerr << "[session:" << channel_id << "] /now failed at startup, staying on splash\n";
+        return;
     }
 
     // Compute how far into the item we are
@@ -188,7 +279,7 @@ bool ChannelSession::start() {
     current_item            = *item;
     item_start               = steady_::now();
     current_item_offset_ms   = startOffset;
-    active                   = true;
+    in_splash                = false;
 
     // Prefer a gentle speed correction (whole item plays start-to-finish,
     // just slightly faster/slower) over seeking into content when the drift
@@ -210,12 +301,11 @@ bool ChannelSession::start() {
         std::cerr << "[session:" << channel_id << "] startup offset " << startOffset
                   << "ms >= duration " << item->duration_ms << "ms for \""
                   << item->file_path << "\", skipping to next item\n";
-        std::thread([this] { transition(); }).detach();
-        return true;
+        transition(); // already off the connect thread, no need to detach again
+        return;
     }
 
     spawnFfmpeg(*item, startOffset, speed);
-    return active.load();
 }
 
 void ChannelSession::stop() {
@@ -258,6 +348,14 @@ void ChannelSession::onExit(int code) {
     if (!active.load()) return; // we were stopped intentionally
 
     std::cerr << "[session:" << channel_id << "] ffmpeg exited (code=" << code << ")\n";
+
+    if (in_splash.load()) {
+        // The splash loops forever and should never exit on its own; if it
+        // does, just respawn it — resolveRealContent() is still running
+        // independently and will swap over once the real item is ready.
+        std::thread([this] { spawnOffline(KairosNowResponse{}); }).detach();
+        return;
+    }
 
     // Natural exit (code 0): item finished cleanly → transition.
     // Unexpected exit (code != 0): also transition to avoid black-screen.
@@ -351,6 +449,11 @@ void ChannelSession::transition() {
 }
 
 void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOffsetMs, double speed) {
+    if (item.item_type == "offline") {
+        spawnOffline(item);
+        return;
+    }
+
     if (item.file_path.empty()) {
         std::cerr << "[session:" << channel_id << "] item has no file_path, skipping\n";
         active = false;
@@ -380,10 +483,42 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
     auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack,
                           opts.loudnorm, opts.hw_accel, opts.vaapi_device, speed,
                           opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps);
+    launchFfmpeg(std::move(args), "ffmpeg");
+}
 
+// Resolves an image to loop for an "offline" item (dead-air slate or connect
+// splash): the item's own offline_image_path, else this channel's logo, else
+// the bundled generic default. Only bails with no stream if all three are
+// unset, which shouldn't happen once default_logo_path is configured.
+void ChannelSession::spawnOffline(const KairosNowResponse& item) {
+    std::string image = item.offline_image_path.value_or("");
+    if (image.empty()) image = opts.logo_path;
+    if (image.empty()) image = opts.default_logo_path;
+
+    if (image.empty()) {
+        std::cerr << "[session:" << channel_id << "] no offline image available, skipping\n";
+        active = false;
+        broadcastDone();
+        return;
+    }
+
+    std::cout << "[session:" << channel_id << "] spawning ffmpeg (offline slate): \"" << image << "\"\n";
+
+    auto args = buildImageArgs(ffmpeg_path, image, item.offline_audio_path.value_or(""),
+                               opts.hw_accel, opts.vaapi_device, opts.max_resolution,
+                               opts.video_bitrate_kbps, opts.audio_bitrate_kbps);
+    launchFfmpeg(std::move(args), "ffmpeg (offline slate)");
+}
+
+// Shared tail of spawnFfmpeg()/spawnOffline(): installs `args` as the
+// session's ffmpeg process, replacing (and killing, via unique_ptr swap) any
+// prior one — this is the same mechanism transition() uses between scheduled
+// items, so it's also what a splash-to-real-content swap uses.
+void ChannelSession::launchFfmpeg(std::vector<std::string> args, const char* what) {
     std::lock_guard<std::mutex> lock(ffmpeg_mtx);
     // Re-check active after acquiring the mutex: stop() may have run between
-    // the probe above and here, leaving active=false and ffmpeg=nullptr.
+    // building args (which can involve an ffprobe call) and here, leaving
+    // active=false and ffmpeg=nullptr.
     if (!active.load()) return;
 
     ffmpeg = std::make_unique<FfmpegProcess>(
@@ -395,7 +530,7 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
     );
 
     if (!ffmpeg->start()) {
-        std::cerr << "[session:" << channel_id << "] failed to spawn ffmpeg\n";
+        std::cerr << "[session:" << channel_id << "] failed to spawn " << what << "\n";
         active = false;
         broadcastDone();
     }

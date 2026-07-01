@@ -15,6 +15,7 @@ struct Config {
 	int		stream_buffer_size = 1048576; // 1024 KB
     HwAccel     hw_accel      = HwAccel::none;
     std::string vaapi_device  = "/dev/dri/renderD128";
+    std::string default_logo_path = "/usr/local/share/hephaestus/assets/default_logo.png";
 
     // HDHomeRun device identity presented to Plex / Emby / Jellyfin
     std::string hdhr_device_id   = "48455048"; // "HEPH" in ASCII hex
@@ -44,6 +45,7 @@ inline Config parseConfig(int argc, char* argv[]) {
     	else if (k == "--buffer-size")   { cfg.stream_buffer_size = std::stoi(v); ++i; }
         else if (k == "--hw-accel")      { cfg.hw_accel = parseHwAccel(v);        ++i; }
         else if (k == "--vaapi-device")  { cfg.vaapi_device = v;                  ++i; }
+        else if (k == "--default-logo")  { cfg.default_logo_path = v;             ++i; }
         else if (k == "--device-id")     { cfg.hdhr_device_id = v;                ++i; }
         else if (k == "--friendly-name") { cfg.hdhr_friendly = v;                 ++i; }
         else if (k == "--tuners")        { cfg.hdhr_tuner_count = std::stoi(v);   ++i; }
@@ -56,5 +58,6 @@ inline Config parseConfig(int argc, char* argv[]) {
 	if (auto* p = getenv("BUF_SIZE"))  { int bs = std::stoi(p); cfg.stream_buffer_size = std::max(0, bs); }
     if (auto* p = getenv("HEPH_HW_ACCEL"))   cfg.hw_accel     = parseHwAccel(p);
     if (auto* p = getenv("HEPH_VAAPI_DEV"))  cfg.vaapi_device = p;
+    if (auto* p = getenv("HEPH_DEFAULT_LOGO")) cfg.default_logo_path = p;
     return cfg;
 }

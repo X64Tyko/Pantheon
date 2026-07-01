@@ -125,8 +125,8 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
 
         <button
           onClick={() => store.saveChannel(channelId)}
-          disabled={store.channelSaving}
-          style={{ width: '100%', padding: '9px 0', border: 'none', borderRadius: 8, background: store.channelDirty ? 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))' : 'var(--hds-bg-3)', color: store.channelDirty ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-3)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: store.channelSaving ? 'default' : 'pointer', marginBottom: 22, opacity: store.channelSaving ? 0.6 : 1, transition: 'background 0.15s, color 0.15s' }}
+          disabled={store.channelSaving || !store.isDirty}
+          style={{ width: '100%', padding: '9px 0', border: 'none', borderRadius: 8, background: store.isDirty ? 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))' : 'var(--hds-bg-3)', color: store.isDirty ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-3)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: store.channelSaving || !store.isDirty ? 'default' : 'pointer', marginBottom: 22, opacity: store.channelSaving ? 0.6 : 1, transition: 'background 0.15s, color 0.15s' }}
         >
           {store.channelSaving ? 'Saving…' : 'Save Channel'}
         </button>

@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/hephaestus /usr/local/bin/hephaestus
+COPY assets/default_logo.png /usr/local/share/hephaestus/assets/default_logo.png
 
 EXPOSE 8082
 ENTRYPOINT ["/usr/local/bin/hephaestus"]
