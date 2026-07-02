@@ -11,11 +11,19 @@ struct Config {
     std::string audio_lang    = "eng";
     bool        loudnorm          = false;
     bool        ffmpeg_debug_logs = false; // pipe ffmpeg stderr into /api/logs/stream
+    // Bumps every spawned ffmpeg's own log level to "-v verbose" and prints
+    // the full resolved command line before every spawn (not just on
+    // failure) — independent of ffmpeg_debug_logs above, which only
+    // controls whether stderr is streamed live vs just tail-captured.
+    bool        verbose_transcode_logs = false;
     int         session_linger_secs = 60; // keep session alive after last client disconnects
 	int		stream_buffer_size = 1048576; // 1024 KB
     HwAccel     hw_accel      = HwAccel::none;
     std::string vaapi_device  = "/dev/dri/renderD128";
     std::string default_logo_path = "/usr/local/share/hephaestus/assets/default_logo.png";
+    // Bundled decode-probe sample clips (probe_h264.mp4/probe_hevc.mp4/
+    // probe_av1.mp4) used by HwProbe::probeHwCapabilities() at startup.
+    std::string hw_probe_assets_dir = "/usr/local/share/hephaestus/assets";
     // Root directory for HLS output (live channel tee output + VOD sessions).
     // Empty disables HLS entirely (legacy MPEG-TS-only behavior).
     std::string hls_root = "/tmp/hephaestus/hls";
@@ -44,11 +52,13 @@ inline Config parseConfig(int argc, char* argv[]) {
         else if (k == "--audio-lang")    { cfg.audio_lang = v;                    ++i; }
         else if (k == "--loudnorm")      { cfg.loudnorm = (v != "0" && v != "false"); ++i; }
         else if (k == "--ffmpeg-debug")  { cfg.ffmpeg_debug_logs = (v != "0" && v != "false"); ++i; }
+        else if (k == "--verbose-transcode") { cfg.verbose_transcode_logs = (v != "0" && v != "false"); ++i; }
         else if (k == "--linger")        { cfg.session_linger_secs = std::stoi(v); ++i; }
     	else if (k == "--buffer-size")   { cfg.stream_buffer_size = std::stoi(v); ++i; }
         else if (k == "--hw-accel")      { cfg.hw_accel = parseHwAccel(v);        ++i; }
         else if (k == "--vaapi-device")  { cfg.vaapi_device = v;                  ++i; }
         else if (k == "--default-logo")  { cfg.default_logo_path = v;             ++i; }
+        else if (k == "--hw-probe-assets") { cfg.hw_probe_assets_dir = v;         ++i; }
         else if (k == "--hls-root")      { cfg.hls_root = v;                     ++i; }
         else if (k == "--device-id")     { cfg.hdhr_device_id = v;                ++i; }
         else if (k == "--friendly-name") { cfg.hdhr_friendly = v;                 ++i; }
@@ -59,10 +69,12 @@ inline Config parseConfig(int argc, char* argv[]) {
     if (auto* p = getenv("FFPROBE_PATH"))    cfg.ffprobe_path = p;
     if (auto* p = getenv("HEPH_LOUDNORM"))      cfg.loudnorm          = (std::string(p) != "0");
     if (auto* p = getenv("HEPH_FFMPEG_DEBUG"))  cfg.ffmpeg_debug_logs = (std::string(p) != "0");
+    if (auto* p = getenv("HEPH_VERBOSE_TRANSCODE")) cfg.verbose_transcode_logs = (std::string(p) != "0");
 	if (auto* p = getenv("BUF_SIZE"))  { int bs = std::stoi(p); cfg.stream_buffer_size = std::max(0, bs); }
     if (auto* p = getenv("HEPH_HW_ACCEL"))   cfg.hw_accel     = parseHwAccel(p);
     if (auto* p = getenv("HEPH_VAAPI_DEV"))  cfg.vaapi_device = p;
     if (auto* p = getenv("HEPH_DEFAULT_LOGO")) cfg.default_logo_path = p;
     if (auto* p = getenv("HEPH_HLS_ROOT"))     cfg.hls_root = p;
+    if (auto* p = getenv("HEPH_HW_PROBE_ASSETS")) cfg.hw_probe_assets_dir = p;
     return cfg;
 }

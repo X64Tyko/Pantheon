@@ -14,6 +14,7 @@ class FfmpegProcess {
     DataCallback on_data;
     ExitCallback on_exit;
     bool         log_stderr;
+    bool         verbose;
 
     pid_t pid        = -1;
     int   stdout_fd  = -1;
@@ -25,13 +26,23 @@ class FfmpegProcess {
 
     // Last few KB of stderr, captured regardless of log_stderr, so a failed
     // exit can always print ffmpeg's actual reason instead of just a code.
+    // Grown when verbose is on (see constructor) — the extra "-v verbose"
+    // ffmpeg detail callers add in that mode is much chattier, and without a
+    // bigger tail the actual failure reason gets pushed out by it.
     std::mutex  stderr_mtx;
     std::string stderr_tail;
-    static constexpr size_t kStderrTailMax = 4000;
+    size_t      stderr_tail_max;
+    static constexpr size_t kStderrTailMaxDefault = 4000;
+    static constexpr size_t kStderrTailMaxVerbose = 32000;
 
 public:
+    // verbose: prints the full joined command line to std::cerr right before
+    // spawning (in addition to the existing on-failure print), and grows the
+    // stderr tail capture so verbose ffmpeg output ("-v verbose", pushed by
+    // callers when their own verbose_transcode_logs option is set) doesn't
+    // crowd out the real failure reason.
     FfmpegProcess(std::vector<std::string> args, DataCallback on_data, ExitCallback on_exit,
-                  int buffer_size, bool log_stderr = false);
+                  int buffer_size, bool log_stderr = false, bool verbose = false);
     ~FfmpegProcess();
 
     bool start();

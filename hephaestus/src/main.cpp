@@ -2,6 +2,8 @@
 #include "api/Router.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
+#include "stream/EncoderArgs.h" // hwAccelName
+#include "stream/HwProbe.h"
 #include "stream/SessionManager.h"
 #include "stream/VodSessionManager.h"
 #include "stream/PreviewSessionManager.h"
@@ -16,6 +18,17 @@ int main(int argc, char* argv[]) {
 
     Config cfg = parseConfig(argc, argv);
 
+    // Verifies the configured GPU backend actually works before any session
+    // is ever built with it, instead of every stream discovering that the
+    // hard way at spawn time. Resolved once, here, and copied into every
+    // *StreamOptions below — sessions never re-probe or retry.
+    HwCapabilities hw_caps = probeHwCapabilities(cfg.hw_accel, cfg.ffmpeg_path,
+                                                  cfg.vaapi_device, cfg.hw_probe_assets_dir);
+    std::cout << "[hephaestus] hw-accel: requested=" << hwAccelName(cfg.hw_accel)
+              << " encode=" << hwAccelName(hw_caps.encode)
+              << " decode=" << hwAccelName(hw_caps.decode)
+              << " decodable_codecs=" << hw_caps.decodable_codecs.size() << "\n";
+
     KairosClient kairos(cfg.kairos_url);
 
     StreamOptions stream_opts;
@@ -23,9 +36,12 @@ int main(int argc, char* argv[]) {
     stream_opts.audio_lang   = cfg.audio_lang;
     stream_opts.loudnorm          = cfg.loudnorm;
     stream_opts.ffmpeg_debug_logs = cfg.ffmpeg_debug_logs;
+    stream_opts.verbose_transcode_logs = cfg.verbose_transcode_logs;
     stream_opts.linger_secs       = cfg.session_linger_secs;
     stream_opts.buffer_size       = cfg.stream_buffer_size;
-    stream_opts.hw_accel     = cfg.hw_accel;
+    stream_opts.hw_accel          = hw_caps.encode;
+    stream_opts.decode_hw_accel   = hw_caps.decode;
+    stream_opts.decodable_codecs  = hw_caps.decodable_codecs;
     stream_opts.vaapi_device = cfg.vaapi_device;
     stream_opts.default_logo_path = cfg.default_logo_path;
     stream_opts.hls_root     = cfg.hls_root;
@@ -41,9 +57,12 @@ int main(int argc, char* argv[]) {
     vod_opts.hls_root          = cfg.hls_root;
     vod_opts.linger_secs       = cfg.session_linger_secs;
     vod_opts.buffer_size       = cfg.stream_buffer_size;
-    vod_opts.hw_accel          = cfg.hw_accel;
+    vod_opts.hw_accel          = hw_caps.encode;
+    vod_opts.decode_hw_accel   = hw_caps.decode;
+    vod_opts.decodable_codecs  = hw_caps.decodable_codecs;
     vod_opts.vaapi_device      = cfg.vaapi_device;
     vod_opts.ffmpeg_debug_logs = cfg.ffmpeg_debug_logs;
+    vod_opts.verbose_transcode_logs = cfg.verbose_transcode_logs;
     VodSessionManager vodSessions(cfg.ffmpeg_path, vod_opts);
 
     PreviewStreamOptions preview_opts;
@@ -52,9 +71,12 @@ int main(int argc, char* argv[]) {
     preview_opts.default_logo_path = cfg.default_logo_path;
     preview_opts.linger_secs       = cfg.session_linger_secs;
     preview_opts.buffer_size       = cfg.stream_buffer_size;
-    preview_opts.hw_accel          = cfg.hw_accel;
+    preview_opts.hw_accel          = hw_caps.encode;
+    preview_opts.decode_hw_accel   = hw_caps.decode;
+    preview_opts.decodable_codecs  = hw_caps.decodable_codecs;
     preview_opts.vaapi_device      = cfg.vaapi_device;
     preview_opts.ffmpeg_debug_logs = cfg.ffmpeg_debug_logs;
+    preview_opts.verbose_transcode_logs = cfg.verbose_transcode_logs;
     PreviewSessionManager previewSessions(cfg.ffmpeg_path, preview_opts, kairos);
 
     httplib::Server svr;

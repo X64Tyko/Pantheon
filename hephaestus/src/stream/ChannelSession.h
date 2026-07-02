@@ -12,6 +12,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <set>
 #include <thread>
 
 // One ClientSink per connected HTTP client. Thread-safe queue the HTTP handler
@@ -33,9 +34,15 @@ struct StreamOptions {
     bool        loudnorm          = false;
     int         linger_secs       = 60;
 	int		buffer_size		  = 1048576; // 1024 KB
-    HwAccel     hw_accel          = HwAccel::none;
+    HwAccel     hw_accel          = HwAccel::none; // resolved encode backend (HwProbe)
+    // Resolved decode backend + which source video codecs it can hwaccel-
+    // decode, from HwProbe::probeHwCapabilities() at startup. Independent of
+    // hw_accel above -- see EncoderArgs.h's pushHwAccelDecodeArgs.
+    HwAccel     decode_hw_accel   = HwAccel::none;
+    std::set<std::string> decodable_codecs;
     std::string vaapi_device      = "/dev/dri/renderD128";
     bool        ffmpeg_debug_logs = false; // pipe ffmpeg stderr into the log stream
+    bool        verbose_transcode_logs = false; // -v verbose + full command line on every spawn
     // Per-channel transcode quality
     std::string max_resolution    = "source"; // "source"|"1080p"|"720p"|"480p"
     int         video_bitrate_kbps = 0;       // 0 = CRF/CQ auto; >0 adds -maxrate cap

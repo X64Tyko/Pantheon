@@ -44,15 +44,19 @@ static std::vector<std::string> buildVodArgs(
     bool subtitleOutput,
     HwAccel hw_accel,
     const std::string& vaapi_device,
+    HwAccel decode_hw_accel,
+    const std::set<std::string>& decodable_codecs,
+    const std::string& source_codec,
+    bool verbose_transcode_logs,
     const std::string& dir)
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
+    pushLogLevelArgs(a, verbose_transcode_logs);
 
     a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt"});
 
-    if (hw_accel == HwAccel::amd)
-        a.insert(a.end(), {"-vaapi_device", vaapi_device});
+    pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
 
     if (positionMs > 0) {
         std::ostringstream ss;
@@ -62,7 +66,7 @@ static std::vector<std::string> buildVodArgs(
 
     // Direct-play is a pure stream copy — nothing gets decoded, so a decode
     // hwaccel would be a pointless no-op at best.
-    if (!directPlay) pushHwAccelDecodeArgs(a, hw_accel);
+    if (!directPlay) pushHwAccelDecodeArgs(a, decode_hw_accel, decodable_codecs, source_codec);
 
     a.push_back("-i"); a.push_back(file_path);
 
@@ -116,12 +120,13 @@ VodSession::~VodSession() { stop(); }
 
 bool VodSession::start(const std::string& file_path, int64_t position_ms,
                         int audio_track, int subtitle_track) {
-    auto info = probeMedia(opts.ffprobe_path, file_path);
+    auto info = probeMediaCached(opts.ffprobe_path, file_path);
     if (!info) {
         std::cerr << "[vod:" << session_id << "] probe failed for \"" << file_path << "\"\n";
         return false;
     }
     media_info = *info;
+    std::string source_codec = media_info.video.empty() ? "" : media_info.video[0].codec;
 
     if (audio_track < 0) audio_track = pickAudioTrack(media_info, "");
     direct_play = isDirectPlayable(media_info, audio_track);
@@ -142,7 +147,9 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
     }
 
     auto args = buildVodArgs(ffmpeg_path, file_path, position_ms, audio_track, subtitle_track,
-                              direct_play, subtitle_output, opts.hw_accel, opts.vaapi_device, d);
+                              direct_play, subtitle_output, opts.hw_accel, opts.vaapi_device,
+                              opts.decode_hw_accel, opts.decodable_codecs, source_codec,
+                              opts.verbose_transcode_logs, d);
 
     std::cerr << "[vod:" << session_id << "] spawning ffmpeg: \"" << file_path << "\""
               << " offset=" << position_ms << "ms direct_play=" << (direct_play ? "yes" : "no") << "\n";
@@ -156,7 +163,8 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
         /*on_data=*/nullptr, // output goes to disk, not stdout — nothing to fan out
         [this](int code) { onExit(code); },
         opts.buffer_size,
-        opts.ffmpeg_debug_logs
+        opts.ffmpeg_debug_logs,
+        opts.verbose_transcode_logs
     );
     if (!ffmpeg->start()) {
         std::cerr << "[vod:" << session_id << "] failed to spawn ffmpeg\n";

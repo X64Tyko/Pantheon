@@ -85,6 +85,10 @@ static std::vector<std::string> buildArgs(
     bool loudnorm,
     HwAccel hw_accel,
     const std::string& vaapi_device,
+    HwAccel decode_hw_accel,
+    const std::set<std::string>& decodable_codecs,
+    const std::string& source_codec,
+    bool verbose_transcode_logs,
     double speed = 1.0,
     const std::string& max_resolution = "source",
     int video_bitrate_kbps = 0,
@@ -93,6 +97,7 @@ static std::vector<std::string> buildArgs(
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
+    pushLogLevelArgs(a, verbose_transcode_logs);
 
     // Reduce startup latency / buffer
     a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt", "-flags", "low_delay"});
@@ -103,9 +108,8 @@ static std::vector<std::string> buildArgs(
     // schedule instead of simulating a live broadcast.
     a.push_back("-re");
 
-    // AMD VAAPI: expose the render node before -i so the encoder can find it
-    if (hw_accel == HwAccel::amd)
-        a.insert(a.end(), {"-vaapi_device", vaapi_device});
+    // AMD VAAPI: expose the render node before -i so the encoder/decoder can find it
+    pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
 
     // Seek before input for fast seek
     if (startOffsetMs > 0) {
@@ -114,7 +118,7 @@ static std::vector<std::string> buildArgs(
         a.push_back("-ss"); a.push_back(ss.str());
     }
 
-    pushHwAccelDecodeArgs(a, hw_accel);
+    pushHwAccelDecodeArgs(a, decode_hw_accel, decodable_codecs, source_codec);
 
     a.push_back("-i"); a.push_back(item.file_path);
 
@@ -130,21 +134,14 @@ static std::vector<std::string> buildArgs(
     // Video encoder
     std::vector<std::string> vfParts;
     // Scale down to the configured max resolution — never upscales.
-    // scale=-2:min(ih,N) keeps aspect ratio (width auto-rounded to even).
-    if (max_resolution == "1080p")     vfParts.push_back("scale=-2:min(ih\\,1080)");
-    else if (max_resolution == "720p") vfParts.push_back("scale=-2:min(ih\\,720)");
-    else if (max_resolution == "480p") vfParts.push_back("scale=-2:min(ih\\,480)");
+    pushScaleFilter(vfParts, resolveMaxHeight(max_resolution));
     if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
 
     pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs);
     pushVideoFilterArgs(a, vfParts);
     // Optional bitrate cap: keeps CRF quality-based encoding but adds an
     // upper bound, preventing huge spikes on complex/high-res content.
-    if (video_bitrate_kbps > 0) {
-        std::string maxrate = std::to_string(video_bitrate_kbps) + "k";
-        std::string bufsize = std::to_string(video_bitrate_kbps * 2) + "k";
-        a.insert(a.end(), {"-maxrate", maxrate, "-bufsize", bufsize});
-    }
+    pushBitrateCapArgs(a, video_bitrate_kbps);
 
     // Audio: AAC
     pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
@@ -165,16 +162,19 @@ static std::vector<std::string> buildImageArgs(
     const std::string& max_resolution,
     int video_bitrate_kbps,
     int audio_bitrate_kbps,
+    bool verbose_transcode_logs,
     const std::string& hls_dir = "")
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
+    pushLogLevelArgs(a, verbose_transcode_logs);
 
     a.insert(a.end(), {"-fflags", "+genpts", "-flags", "low_delay"});
     a.push_back("-re");
 
-    if (hw_accel == HwAccel::amd)
-        a.insert(a.end(), {"-vaapi_device", vaapi_device});
+    // Image loop input never decodes a real file, so only encode-side amd
+    // (not decode) can ever need the device here.
+    pushVaapiDeviceArg(a, hw_accel, HwAccel::none, vaapi_device);
 
     // Input 0: the image, looped forever. A still image has no frame rate of
     // its own — pick a normal one so players see a standard CFR stream.
@@ -190,17 +190,11 @@ static std::vector<std::string> buildImageArgs(
     a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
 
     std::vector<std::string> vfParts;
-    if (max_resolution == "1080p")     vfParts.push_back("scale=-2:min(ih\\,1080)");
-    else if (max_resolution == "720p") vfParts.push_back("scale=-2:min(ih\\,720)");
-    else if (max_resolution == "480p") vfParts.push_back("scale=-2:min(ih\\,480)");
+    pushScaleFilter(vfParts, resolveMaxHeight(max_resolution));
 
     pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs);
     pushVideoFilterArgs(a, vfParts);
-    if (video_bitrate_kbps > 0) {
-        std::string maxrate = std::to_string(video_bitrate_kbps) + "k";
-        std::string bufsize = std::to_string(video_bitrate_kbps * 2) + "k";
-        a.insert(a.end(), {"-maxrate", maxrate, "-bufsize", bufsize});
-    }
+    pushBitrateCapArgs(a, video_bitrate_kbps);
 
     pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, audio_bitrate_kbps);
 
@@ -537,21 +531,29 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
         std::cout << " speed=" << speed;
     std::cout << "\n";
 
-    // Audio + subtitle track selection via ffprobe
+    // Audio + subtitle track selection via ffprobe. Also probe whenever
+    // decode hwaccel is in play (even with no lang preferences set) — the
+    // decode-hwaccel decision below needs this item's source video codec.
     int audioTrack    = 0;
     int subtitleTrack = -1;
-    if (!opts.audio_lang.empty() || !opts.subtitle_lang.empty()) {
-        auto info = probeMedia(opts.ffprobe_path, item.file_path);
+    std::string source_codec;
+    if (!opts.audio_lang.empty() || !opts.subtitle_lang.empty() ||
+        opts.decode_hw_accel != HwAccel::none) {
+        auto info = probeMediaCached(opts.ffprobe_path, item.file_path);
         if (info) {
             if (!opts.audio_lang.empty())
                 audioTrack    = pickAudioTrack(*info, opts.audio_lang);
             if (!opts.subtitle_lang.empty())
                 subtitleTrack = pickSubtitleTrack(*info, opts.subtitle_lang);
+            if (!info->video.empty())
+                source_codec = info->video[0].codec;
         }
     }
 
     auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack,
-                          opts.loudnorm, opts.hw_accel, opts.vaapi_device, speed,
+                          opts.loudnorm, opts.hw_accel, opts.vaapi_device,
+                          opts.decode_hw_accel, opts.decodable_codecs, source_codec,
+                          opts.verbose_transcode_logs, speed,
                           opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
                           hlsDir());
     launchFfmpeg(std::move(args), "ffmpeg");
@@ -577,7 +579,8 @@ void ChannelSession::spawnOffline(const KairosNowResponse& item) {
 
     auto args = buildImageArgs(ffmpeg_path, image, item.offline_audio_path.value_or(""),
                                opts.hw_accel, opts.vaapi_device, opts.max_resolution,
-                               opts.video_bitrate_kbps, opts.audio_bitrate_kbps, hlsDir());
+                               opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
+                               opts.verbose_transcode_logs, hlsDir());
     launchFfmpeg(std::move(args), "ffmpeg (offline slate)");
 }
 
@@ -597,7 +600,8 @@ void ChannelSession::launchFfmpeg(std::vector<std::string> args, const char* wha
         [this](const uint8_t* d, size_t l) { onData(d, l); },
         [this](int code) { onExit(code); },
         opts.buffer_size,
-        opts.ffmpeg_debug_logs
+        opts.ffmpeg_debug_logs,
+        opts.verbose_transcode_logs
     );
 
     if (!ffmpeg->start()) {

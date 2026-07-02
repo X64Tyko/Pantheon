@@ -1,9 +1,11 @@
 #include "PreviewSession.h"
 #include "EncoderArgs.h"
+#include "MediaProbe.h"
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <sstream>
 
 namespace {
@@ -37,19 +39,26 @@ std::vector<std::string> buildPreviewArgs(const std::string& ffmpeg_path,
                                            int64_t startOffsetMs,
                                            HwAccel hw_accel,
                                            const std::string& vaapi_device,
+                                           HwAccel decode_hw_accel,
+                                           const std::set<std::string>& decodable_codecs,
+                                           const std::string& source_codec,
+                                           bool verbose_transcode_logs,
                                            const std::string& dir) {
-    std::vector<std::string> a{ffmpeg_path, "-fflags", "+genpts+discardcorrupt", "-flags", "low_delay", "-re"};
-    if (hw_accel == HwAccel::amd) a.insert(a.end(), {"-vaapi_device", vaapi_device});
+    std::vector<std::string> a{ffmpeg_path};
+    pushLogLevelArgs(a, verbose_transcode_logs);
+    a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt", "-flags", "low_delay", "-re"});
+    pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
     if (startOffsetMs > 0) {
         std::ostringstream ss;
         ss << std::fixed << std::setprecision(3) << (startOffsetMs / 1000.0);
         a.insert(a.end(), {"-ss", ss.str()});
     }
-    pushHwAccelDecodeArgs(a, hw_accel);
+    pushHwAccelDecodeArgs(a, decode_hw_accel, decodable_codecs, source_codec);
     a.insert(a.end(), {"-i", item.file_path});
     a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:0?", "-dn", "-map_chapters", "-1"});
 
-    std::vector<std::string> vfParts{"scale=-2:min(ih\\," + std::to_string(kPreviewMaxHeight) + ")"};
+    std::vector<std::string> vfParts;
+    pushScaleFilter(vfParts, kPreviewMaxHeight);
     pushVideoEncoderArgs(a, vfParts, hw_accel, kPreviewSegmentSecs);
     pushVideoFilterArgs(a, vfParts);
     pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/96);
@@ -62,14 +71,20 @@ std::vector<std::string> buildPreviewImageArgs(const std::string& ffmpeg_path,
                                                 const std::string& image_path,
                                                 HwAccel hw_accel,
                                                 const std::string& vaapi_device,
+                                                bool verbose_transcode_logs,
                                                 const std::string& dir) {
-    std::vector<std::string> a{ffmpeg_path, "-fflags", "+genpts", "-flags", "low_delay", "-re"};
-    if (hw_accel == HwAccel::amd) a.insert(a.end(), {"-vaapi_device", vaapi_device});
+    std::vector<std::string> a{ffmpeg_path};
+    pushLogLevelArgs(a, verbose_transcode_logs);
+    a.insert(a.end(), {"-fflags", "+genpts", "-flags", "low_delay", "-re"});
+    // Image loop input never decodes a real file, so only encode-side amd
+    // (not decode) can ever need the device here.
+    pushVaapiDeviceArg(a, hw_accel, HwAccel::none, vaapi_device);
     a.insert(a.end(), {"-loop", "1", "-framerate", "25", "-i", image_path});
     a.insert(a.end(), {"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"});
     a.insert(a.end(), {"-map", "0:v:0", "-map", "1:a:0", "-dn", "-map_chapters", "-1"});
 
-    std::vector<std::string> vfParts{"scale=-2:min(ih\\," + std::to_string(kPreviewMaxHeight) + ")"};
+    std::vector<std::string> vfParts;
+    pushScaleFilter(vfParts, kPreviewMaxHeight);
     pushVideoEncoderArgs(a, vfParts, hw_accel, kPreviewSegmentSecs);
     pushVideoFilterArgs(a, vfParts);
     pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/96);
@@ -112,14 +127,28 @@ bool PreviewSession::switchChannel(const std::string& channel_id) {
             return false;
         }
         std::cerr << "[preview:" << session_id << "] spawning ffmpeg (offline slate): \"" << image << "\"\n";
-        args = buildPreviewImageArgs(ffmpeg_path, image, opts.hw_accel, opts.vaapi_device, d);
+        args = buildPreviewImageArgs(ffmpeg_path, image, opts.hw_accel, opts.vaapi_device,
+                                      opts.verbose_transcode_logs, d);
     } else if (item->file_path.empty()) {
         std::cerr << "[preview:" << session_id << "] channel " << channel_id << " /now item has no file_path\n";
         return false;
     } else {
         int64_t offset = computeOffset(*item, nowMs());
+        // Only probed when decode hwaccel is actually in play (zero cost on
+        // amd/none backends that never use it). switchChannel() already does
+        // a synchronous kairos.getNow() HTTP round-trip above, so a local
+        // ffprobe call here doesn't change the latency class of this
+        // function — and probeMediaCached makes repeat flips through the
+        // same handful of channels/files free after the first probe.
+        std::string source_codec;
+        if (opts.decode_hw_accel != HwAccel::none) {
+            auto info = probeMediaCached(opts.ffprobe_path, item->file_path);
+            if (info && !info->video.empty()) source_codec = info->video[0].codec;
+        }
         std::cerr << "[preview:" << session_id << "] spawning ffmpeg: \"" << item->file_path << "\" offset=" << offset << "ms\n";
-        args = buildPreviewArgs(ffmpeg_path, *item, offset, opts.hw_accel, opts.vaapi_device, d);
+        args = buildPreviewArgs(ffmpeg_path, *item, offset, opts.hw_accel, opts.vaapi_device,
+                                 opts.decode_hw_accel, opts.decodable_codecs, source_codec,
+                                 opts.verbose_transcode_logs, d);
     }
 
     active = true;
@@ -132,7 +161,8 @@ bool PreviewSession::switchChannel(const std::string& channel_id) {
         /*on_data=*/nullptr,
         [this](int code) { onExit(code); },
         opts.buffer_size,
-        opts.ffmpeg_debug_logs
+        opts.ffmpeg_debug_logs,
+        opts.verbose_transcode_logs
     );
     if (!ffmpeg->start()) {
         std::cerr << "[preview:" << session_id << "] failed to spawn ffmpeg\n";

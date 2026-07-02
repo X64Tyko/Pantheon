@@ -4,7 +4,9 @@
 #include <cstdio>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <unordered_map>
 
 using json = nlohmann::json;
 
@@ -82,6 +84,22 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
         std::cerr << "[probe] JSON parse error: " << e.what() << "\n";
         return std::nullopt;
     }
+}
+
+std::optional<MediaInfo> probeMediaCached(const std::string& ffprobe_path,
+                                           const std::string& file_path) {
+    static std::mutex cache_mtx;
+    static std::unordered_map<std::string, MediaInfo> cache;
+    {
+        std::lock_guard<std::mutex> lock(cache_mtx);
+        auto it = cache.find(file_path);
+        if (it != cache.end()) return it->second;
+    }
+    auto info = probeMedia(ffprobe_path, file_path);
+    if (!info) return std::nullopt;
+    std::lock_guard<std::mutex> lock(cache_mtx);
+    cache.emplace(file_path, *info);
+    return info;
 }
 
 int pickAudioTrack(const MediaInfo& info, const std::string& preferred_lang) {

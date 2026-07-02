@@ -38,6 +38,18 @@ struct MediaInfo {
 std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
                                      const std::string& file_path);
 
+// Thread-safe cache in front of probeMedia(), keyed by file_path. Preview
+// channel-flips re-probe the same handful of files as viewers cycle through
+// channels, and live channel item transitions repeat across playlist loops
+// — both are cases where re-running ffprobe on a file whose streams haven't
+// changed is wasted work. Entries never expire/evict: probe results don't
+// change for a file that isn't itself changing, and cardinality is bounded
+// by how many distinct files get probed during this process's uptime.
+// Failures are deliberately not cached (a transient issue — file mid-write,
+// share hiccup — shouldn't wedge a session into permanent failure).
+std::optional<MediaInfo> probeMediaCached(const std::string& ffprobe_path,
+                                           const std::string& file_path);
+
 // Returns the relative audio index (for -map 0:a:N) of the best matching
 // track: prefers preferred_lang if non-empty, otherwise returns 0.
 int pickAudioTrack(const MediaInfo& info, const std::string& preferred_lang);

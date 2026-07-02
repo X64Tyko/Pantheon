@@ -11,12 +11,15 @@ FfmpegProcess::FfmpegProcess(std::vector<std::string> args,
                               DataCallback on_data,
                               ExitCallback on_exit,
                               int buf_size,
-                              bool log_stderr)
+                              bool log_stderr,
+                              bool verbose)
     : args(std::move(args))
     , on_data(std::move(on_data))
     , on_exit(std::move(on_exit))
+    , log_stderr(log_stderr)
+    , verbose(verbose)
 	, buffer_size(buf_size)
-    , log_stderr(log_stderr) {}
+    , stderr_tail_max(verbose ? kStderrTailMaxVerbose : kStderrTailMaxDefault) {}
 
 FfmpegProcess::~FfmpegProcess() {
     kill();
@@ -25,6 +28,12 @@ FfmpegProcess::~FfmpegProcess() {
 }
 
 bool FfmpegProcess::start() {
+    if (verbose) {
+        std::string cmd;
+        for (auto& a : args) { if (!cmd.empty()) cmd += ' '; cmd += a; }
+        std::cerr << "[ffmpeg] spawning: " << cmd << "\n";
+    }
+
     int out_pipe[2], err_pipe[2];
     if (pipe(out_pipe) == -1) return false;
     if (pipe(err_pipe) == -1) { close(out_pipe[0]); close(out_pipe[1]); return false; }
@@ -76,8 +85,8 @@ bool FfmpegProcess::start() {
             {
                 std::lock_guard<std::mutex> lock(stderr_mtx);
                 stderr_tail.append(buf, static_cast<size_t>(n));
-                if (stderr_tail.size() > kStderrTailMax)
-                    stderr_tail.erase(0, stderr_tail.size() - kStderrTailMax);
+                if (stderr_tail.size() > stderr_tail_max)
+                    stderr_tail.erase(0, stderr_tail.size() - stderr_tail_max);
             }
             if (!log_stderr) continue; // still captured above, just not streamed live
             for (ssize_t i = 0; i < n; ++i) {
