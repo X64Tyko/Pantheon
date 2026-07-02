@@ -66,6 +66,25 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
     }
     a.insert(a.end(), {"-force_key_frames",
                         "expr:gte(t,n_forced*" + std::to_string(keyframeIntervalSecs) + ")"});
+
+    // This pipeline never does real HDR tone-mapping -- every branch above
+    // targets plain 8-bit yuv420p output regardless of source. For an HDR
+    // (BT.2020/PQ) source, ffmpeg's automatic pix_fmt conversion correctly
+    // truncates the bit depth but leaves the *color tags* copied through
+    // from the input, producing output that's structurally SDR (yuv420p,
+    // naively truncated values) while its VUI metadata still claims
+    // BT.2020/SMPTE ST 2084 (PQ) HDR. Confirmed via ffprobe against a real
+    // transcoded segment: pix_fmt=yuv420p but color_transfer=smpte2084,
+    // color_primaries=bt2020, color_space=bt2020nc. Browsers that respect
+    // embedded HDR signaling (common on hardware-accelerated decode paths)
+    // can silently fail to render that mismatch -- no fatal error surfaces
+    // to hls.js/JS, playback just never starts. Explicitly retagging the
+    // output as bt709 makes the declared color space match what the pixel
+    // data actually is (un-tone-mapped SDR-range values), which is what
+    // actually matters for playback; it doesn't make a naively-truncated HDR source
+    // look *correct* (that needs real tone-mapping, e.g. zscale+tonemap,
+    // future work if visual quality on HDR sources matters), only playable.
+    a.insert(a.end(), {"-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"});
 }
 
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
