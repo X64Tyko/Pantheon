@@ -27,7 +27,10 @@ export function GuidePage() {
 
     api.getChannels().then(chs => {
       setChannels(chs)
-      if (chs.length > 0) setFocusedId(chs[0].channel_id)
+      // Preview only starts once the user actually hovers/focuses a column
+      // (see the focusedId effect below) — leave it unset here rather than
+      // defaulting to channels[0], which used to spin up a live encode
+      // session on every homepage load with no user interaction at all.
       Promise.all(chs.map(ch => api.getChannelEpg(ch.channel_id, hours, fromSec).catch(() => [])))
         .then(results => {
           const byChannel: Record<string, EpgProgram[]> = {}
