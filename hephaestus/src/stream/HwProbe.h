@@ -35,8 +35,14 @@ struct HwCapabilities {
 // Two-tier, synchronous, blocking startup probe. Safe to call unconditionally
 // (including requested == HwAccel::none, which returns immediately with no
 // subprocess spawned). assets_dir is where the bundled probe_h264.mp4/
-// probe_hevc.mp4/probe_av1.mp4 decode samples live (see Dockerfile); a
-// missing sample degrades to skipping just that codec's decode probe, never
-// a hard failure.
+// probe_hevc.mp4/probe_hevc_10bit.mp4/probe_av1.mp4/probe_av1_10bit.mp4
+// decode samples live (see Dockerfile); a missing sample degrades to
+// skipping just that codec's decode probe, never a hard failure.
+//
+// verbose_transcode_logs (Config::verbose_transcode_logs) additionally
+// prints a final summary enumerating every resolved (codec, bit depth)
+// combination this backend can hwaccel-decode, on top of the per-test
+// OK/FAILED lines that always print regardless of this flag.
 HwCapabilities probeHwCapabilities(HwAccel requested, const std::string& ffmpeg_path,
-                                    const std::string& vaapi_device, const std::string& assets_dir);
+                                    const std::string& vaapi_device, const std::string& assets_dir,
+                                    bool verbose_transcode_logs);

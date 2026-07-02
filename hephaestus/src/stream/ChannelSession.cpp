@@ -546,7 +546,7 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
             if (!opts.subtitle_lang.empty())
                 subtitleTrack = pickSubtitleTrack(*info, opts.subtitle_lang);
             if (!info->video.empty())
-                source_codec = info->video[0].codec;
+                source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
         }
     }
 

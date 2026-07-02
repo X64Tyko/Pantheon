@@ -16,6 +16,11 @@ const char* hwAccelName(HwAccel hw_accel) {
     }
 }
 
+std::string decodeCodecKey(const std::string& codec, int bit_depth) {
+    if (codec == "h264" || bit_depth <= 8) return codec;
+    return codec + std::to_string(bit_depth);
+}
+
 void pushVaapiDeviceArg(std::vector<std::string>& a, HwAccel encode, HwAccel decode,
                          const std::string& vaapi_device) {
     if (encode == HwAccel::amd || decode == HwAccel::amd)

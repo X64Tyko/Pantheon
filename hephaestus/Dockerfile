@@ -31,10 +31,14 @@ COPY --from=builder /src/build/hephaestus /usr/local/bin/hephaestus
 COPY assets/default_logo.png /usr/local/share/hephaestus/assets/default_logo.png
 
 # Tiny sample clips for HwProbe's decode smoke-test (see
-# src/stream/HwProbe.cpp) -- one per codec that matters for a movie/TV media
-# library (h264/hevc/av1; vp9 deliberately skipped, it's mostly a web/YouTube
-# codec). Generated here via software encode so they always match this
-# image's own ffmpeg build, rather than committed as binaries.
+# src/stream/HwProbe.cpp) -- one per (codec, bit depth) combination that
+# matters for a movie/TV media library: h264 (8-bit only -- its 10-bit High
+# 10 profile is rare enough in practice not to bother), hevc and av1 at both
+# 8-bit and 10-bit (10-bit is close to universal for modern HEVC/AV1
+# libraries -- mandatory for HDR, common even for SDR). vp9 deliberately
+# skipped, it's mostly a web/YouTube codec. Generated here via software
+# encode so they always match this image's own ffmpeg build, rather than
+# committed as binaries.
 #
 # 256x144, not smaller: NVDEC enforces a per-codec minimum decode width
 # (144px for hevc, 128px for av1, confirmed empirically) -- anything smaller
@@ -56,9 +60,17 @@ RUN mkdir -p /usr/local/share/hephaestus/assets && \
         /usr/local/share/hephaestus/assets/probe_hevc.mp4 \
         || echo "[docker] probe_hevc.mp4 generation failed, HwProbe will skip hevc decode probe") && \
     (ffmpeg -y -v error -f lavfi -i testsrc=size=256x144:rate=5:duration=1 \
+        -c:v libx265 -pix_fmt yuv420p10le -tag:v hvc1 \
+        /usr/local/share/hephaestus/assets/probe_hevc_10bit.mp4 \
+        || echo "[docker] probe_hevc_10bit.mp4 generation failed, HwProbe will skip hevc10 decode probe") && \
+    (ffmpeg -y -v error -f lavfi -i testsrc=size=256x144:rate=5:duration=1 \
         -c:v libsvtav1 -pix_fmt yuv420p \
         /usr/local/share/hephaestus/assets/probe_av1.mp4 \
-        || echo "[docker] probe_av1.mp4 generation failed, HwProbe will skip av1 decode probe")
+        || echo "[docker] probe_av1.mp4 generation failed, HwProbe will skip av1 decode probe") && \
+    (ffmpeg -y -v error -f lavfi -i testsrc=size=256x144:rate=5:duration=1 \
+        -c:v libsvtav1 -pix_fmt yuv420p10le \
+        /usr/local/share/hephaestus/assets/probe_av1_10bit.mp4 \
+        || echo "[docker] probe_av1_10bit.mp4 generation failed, HwProbe will skip av110 decode probe")
 
 EXPOSE 8082
 ENTRYPOINT ["/usr/local/bin/hephaestus"]

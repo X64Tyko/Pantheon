@@ -21,6 +21,22 @@ static std::string runCommand(const std::string& cmd) {
     return result;
 }
 
+// ffprobe reports "bits_per_raw_sample" as a JSON string (e.g. "10"), and
+// not every container/muxer populates it reliably — pix_fmt's "10le"/"12le"
+// suffix (e.g. "yuv420p10le") is a solid fallback when it's absent.
+static int parseBitDepth(const json& s) {
+    if (s.contains("bits_per_raw_sample")) {
+        try {
+            auto raw = s["bits_per_raw_sample"].get<std::string>();
+            if (!raw.empty()) return std::stoi(raw);
+        } catch (...) {}
+    }
+    std::string pix_fmt = s.value("pix_fmt", "");
+    if (pix_fmt.find("10le") != std::string::npos || pix_fmt.find("10be") != std::string::npos) return 10;
+    if (pix_fmt.find("12le") != std::string::npos || pix_fmt.find("12be") != std::string::npos) return 12;
+    return 8;
+}
+
 std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
                                      const std::string& file_path) {
     // Shell-escape the file path by wrapping in single quotes (works for paths
@@ -59,6 +75,7 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
                 v.codec        = s.value("codec_name", "");
                 v.width        = s.value("width",  0);
                 v.height       = s.value("height", 0);
+                v.bit_depth    = parseBitDepth(s);
                 info.video.push_back(v);
             } else if (codec_type == "audio") {
                 AudioTrack a;

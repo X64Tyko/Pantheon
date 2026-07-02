@@ -23,7 +23,8 @@ int main(int argc, char* argv[]) {
     // hard way at spawn time. Resolved once, here, and copied into every
     // *StreamOptions below — sessions never re-probe or retry.
     HwCapabilities hw_caps = probeHwCapabilities(cfg.hw_accel, cfg.ffmpeg_path,
-                                                  cfg.vaapi_device, cfg.hw_probe_assets_dir);
+                                                  cfg.vaapi_device, cfg.hw_probe_assets_dir,
+                                                  cfg.verbose_transcode_logs);
     std::cout << "[hephaestus] hw-accel: requested=" << hwAccelName(cfg.hw_accel)
               << " encode=" << hwAccelName(hw_caps.encode)
               << " decode=" << hwAccelName(hw_caps.decode)

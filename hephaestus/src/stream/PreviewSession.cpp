@@ -143,7 +143,8 @@ bool PreviewSession::switchChannel(const std::string& channel_id) {
         std::string source_codec;
         if (opts.decode_hw_accel != HwAccel::none) {
             auto info = probeMediaCached(opts.ffprobe_path, item->file_path);
-            if (info && !info->video.empty()) source_codec = info->video[0].codec;
+            if (info && !info->video.empty())
+                source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
         }
         std::cerr << "[preview:" << session_id << "] spawning ffmpeg: \"" << item->file_path << "\" offset=" << offset << "ms\n";
         args = buildPreviewArgs(ffmpeg_path, *item, offset, opts.hw_accel, opts.vaapi_device,

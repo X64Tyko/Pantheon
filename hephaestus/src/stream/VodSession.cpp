@@ -126,7 +126,8 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
         return false;
     }
     media_info = *info;
-    std::string source_codec = media_info.video.empty() ? "" : media_info.video[0].codec;
+    std::string source_codec = media_info.video.empty() ? "" :
+        decodeCodecKey(media_info.video[0].codec, media_info.video[0].bit_depth);
 
     if (audio_track < 0) audio_track = pickAudioTrack(media_info, "");
     direct_play = isDirectPlayable(media_info, audio_track);

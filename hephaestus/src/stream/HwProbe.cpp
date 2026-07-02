@@ -112,7 +112,8 @@ std::vector<std::string> buildDecodeProbeArgs(HwAccel backend, const std::string
 } // namespace
 
 HwCapabilities probeHwCapabilities(HwAccel requested, const std::string& ffmpeg_path,
-                                    const std::string& vaapi_device, const std::string& assets_dir) {
+                                    const std::string& vaapi_device, const std::string& assets_dir,
+                                    bool verbose_transcode_logs) {
     HwCapabilities caps;
     if (requested == HwAccel::none) return caps;
 
@@ -137,20 +138,50 @@ HwCapabilities probeHwCapabilities(HwAccel requested, const std::string& ffmpeg_
     // cap hit while NVDEC is still free) or the reverse (AMD's existing
     // default). See HwCapabilities's own comments for the full rationale.
     caps.decode = requested;
-    static const std::pair<const char*, const char*> kSamples[] = {
-        {"h264", "probe_h264.mp4"}, {"hevc", "probe_hevc.mp4"}, {"av1", "probe_av1.mp4"},
+    // 10-bit hevc/av1 get their own samples: hardware decode support varies
+    // by bit depth (older NVDEC/VAAPI generations often handle 8-bit HEVC
+    // but not 10-bit), and 10-bit is close to universal for modern HEVC/AV1
+    // media libraries (mandatory for HDR, common even for SDR since it
+    // compresses better) -- an 8-bit-only probe would give a false
+    // "decodable" signal for the 10-bit files that actually dominate. h264's
+    // 10-bit (High 10) profile is rare enough in practice not to bother.
+    static const std::tuple<const char*, int, const char*> kSamples[] = {
+        {"h264", 8,  "probe_h264.mp4"},
+        {"hevc", 8,  "probe_hevc.mp4"},
+        {"hevc", 10, "probe_hevc_10bit.mp4"},
+        {"av1",  8,  "probe_av1.mp4"},
+        {"av1",  10, "probe_av1_10bit.mp4"},
     };
-    for (auto& [codec, filename] : kSamples) {
+    for (auto& [codec, bit_depth, filename] : kSamples) {
         std::string path = assets_dir + "/" + filename;
+        std::string key = decodeCodecKey(codec, bit_depth);
         if (access(path.c_str(), R_OK) != 0) {
             std::cerr << "[hwprobe] decode sample missing: " << path
-                      << " (skipping " << codec << " decode probe)\n";
+                      << " (skipping " << key << " decode probe)\n";
             continue;
         }
         bool ok = runProbe(buildDecodeProbeArgs(requested, ffmpeg_path, vaapi_device, path)).ok;
-        std::cout << "[hwprobe] " << hwAccelName(requested) << " decode " << codec << ": "
+        std::cout << "[hwprobe] " << hwAccelName(requested) << " decode " << key << ": "
                   << (ok ? "OK" : "FAILED") << "\n";
-        if (ok) caps.decodable_codecs.insert(codec);
+        if (ok) caps.decodable_codecs.insert(key);
+    }
+
+    if (verbose_transcode_logs) {
+        std::cout << "[hwprobe] final supported combinations for " << hwAccelName(requested) << ":\n";
+        std::cout << "[hwprobe]   encode: "
+                  << (caps.encode != HwAccel::none ? "h264" : "none (software fallback)") << "\n";
+        std::cout << "[hwprobe]   decode: ";
+        if (caps.decodable_codecs.empty()) {
+            std::cout << "none (software fallback)";
+        } else {
+            bool first = true;
+            for (auto& key : caps.decodable_codecs) {
+                if (!first) std::cout << ", ";
+                std::cout << key;
+                first = false;
+            }
+        }
+        std::cout << "\n";
     }
 
     return caps;

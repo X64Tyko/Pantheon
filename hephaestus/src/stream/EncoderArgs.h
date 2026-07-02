@@ -10,6 +10,21 @@ std::string fmtSpeed(double speed);
 // (HwProbe.cpp, main.cpp) so there's exactly one of these in the codebase.
 const char* hwAccelName(HwAccel hw_accel);
 
+// Builds the composite key used in HwCapabilities::decodable_codecs and the
+// source_codec argument to pushHwAccelDecodeArgs: the codec name alone for
+// 8-bit sources (e.g. "hevc"), or codec name + bit depth for anything higher
+// (e.g. "hevc10") — hardware decode support for HEVC/AV1 varies by bit depth
+// (older NVDEC/VAAPI generations often decode 8-bit HEVC but not 10-bit), so
+// a single "hevc" capable/not-capable answer isn't precise enough. h264 is
+// always keyed as plain "h264" regardless of bit_depth — its 10-bit (High
+// 10) profile is rare enough in practice not to bother distinguishing.
+// The single source of truth for this key: HwProbe.cpp uses it when
+// recording which bundled sample clips decoded successfully, and every
+// session's spawn path uses it when looking up a real source track's
+// bit_depth (MediaProbe's VideoTrack::bit_depth) against that same set —
+// keeping both sides on one function is what guarantees they can't drift.
+std::string decodeCodecKey(const std::string& codec, int bit_depth);
+
 // AMD VAAPI: exposes the render node before -i so the encoder/decoder can
 // find it. Insert if *either* encode or decode resolved to amd — VAAPI
 // decode offload needs the device set up globally the same way encode does.
