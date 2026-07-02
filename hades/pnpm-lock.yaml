@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      hls.js:
+        specifier: ^1.6.16
+        version: 1.6.16
       mobx:
         specifier: ^6.13.5
         version: 6.16.1
@@ -701,6 +704,9 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  hls.js@1.6.16:
+    resolution: {integrity: sha512-VSIRpLfRwlAAdGL4wiTucx2ScRipo0ed1FBatWkyt832jC4CReKstga6yIhYVwGu9LOBjuX9wzmRMeQdBJtzEA==}
 
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
@@ -1563,6 +1569,8 @@ snapshots:
   gensync@1.0.0-beta.2: {}
 
   graceful-fs@4.2.11: {}
+
+  hls.js@1.6.16: {}
 
   jiti@2.7.0: {}
 

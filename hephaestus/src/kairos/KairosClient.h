@@ -21,6 +21,11 @@ public:
 
     std::vector<KairosChannel> getChannels();
 
+    // Resolves a library item (movie/episode) to a playable file for VOD.
+    // contentType must be "movie" or "episode".
+    std::optional<PlaybackInfo> getPlaybackInfo(const std::string& contentType,
+                                                 const std::string& contentId);
+
     // Fetches the live stream_buffer_size from Kairos's /api/config/settings,
     // in KB (matching the Hades UI unit) — callers must convert to bytes.
     // Returns nullopt on any failure so callers can fall back to a local default.

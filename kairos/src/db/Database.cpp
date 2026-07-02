@@ -1390,6 +1390,21 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_filler_history_channel ON filler_play_history(channel_id, aired_at DESC);
 )SQL" }
 
+// ── v58: watch progress for VOD resume / continue-watching. One row per
+//         user+item; upserted by periodic position pings from the player.
+,{ 58, R"SQL(
+    CREATE TABLE watch_progress (
+        user_id      TEXT    NOT NULL REFERENCES user(user_id) ON DELETE CASCADE,
+        content_type TEXT    NOT NULL CHECK(content_type IN ('movie','episode')),
+        content_id   TEXT    NOT NULL,
+        position_ms  INTEGER NOT NULL DEFAULT 0,
+        duration_ms  INTEGER NOT NULL DEFAULT 0,
+        updated_at   INTEGER NOT NULL,
+        PRIMARY KEY (user_id, content_type, content_id)
+    );
+    CREATE INDEX idx_watch_progress_user ON watch_progress(user_id, updated_at DESC);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

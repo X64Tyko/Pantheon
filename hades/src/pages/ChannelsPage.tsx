@@ -208,6 +208,9 @@ export default observer(function ChannelsPage() {
                 </div>
               </div>
               <div className="flex gap-2 items-center">
+                <Link to={`/player/channel/${ch.channel_id}`} className="btn-primary">
+                  Watch
+                </Link>
                 <Link to={`/channels/${ch.channel_id}`} className="btn-secondary">
                   Edit Schedule
                 </Link>

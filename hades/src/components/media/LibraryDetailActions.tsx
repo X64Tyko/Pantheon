@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import type { ArrLookupResult, ArrServiceOptions, ScraperSearchResult } from '../../api/types'
 import { MatchBadge } from './MatchBadge'
 import { goldBtnStyle } from '../../channel/styles'
+import { resolvePlayPath } from '../../player/resolvePlayTarget'
 
 interface LibraryDetailActionsProps {
   id?:             string
@@ -15,9 +17,23 @@ type ArrStep = 'idle' | 'loading' | 'form' | 'adding' | 'done' | 'error'
 
 export function LibraryDetailActions({ id, content_type, discoverResult }: LibraryDetailActionsProps) {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const isAdmin  = user?.role === 'admin'
   const isLibraryItem = !discoverResult && !!id && !!content_type
   const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
+
+  const [playLoading, setPlayLoading] = useState(false)
+
+  const handlePlay = async () => {
+    if (!id) return
+    setPlayLoading(true)
+    try {
+      const path = await resolvePlayPath(contentType, id)
+      if (path) navigate(path)
+    } finally {
+      setPlayLoading(false)
+    }
+  }
 
   // Request state (viewer)
   const [reqStep,      setReqStep]      = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
@@ -118,6 +134,15 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
   if (isLibraryItem) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 420 }}>
+        <button onClick={handlePlay} disabled={playLoading} style={{
+          ...goldBtnStyle, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', gap: 8, opacity: playLoading ? 0.6 : 1,
+          cursor: playLoading ? 'wait' : 'pointer',
+        }}>
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
+          {playLoading ? 'Loading…' : 'Play'}
+        </button>
+
         <div style={{
           padding: '12px 14px', borderRadius: 8,
           background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',

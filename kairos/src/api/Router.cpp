@@ -19,6 +19,7 @@
 #include "services/ChannelService.h"
 #include "services/KairosService.h"
 #include "services/ConfigService.h"
+#include "services/PlaybackService.h"
 #include "services/ContentService.h"
 #include "services/DownloadService.h"
 #include "services/FillerService.h"
@@ -43,6 +44,8 @@ static bool isPublicPath(const std::string& path) {
 	if (path == "/api/channels") return true;
 	if (path == "/api/sources")  return true;
 	if (path.ends_with("/played")) return true;
+	// Hephaestus resolving a library item to a playable file for VOD sessions.
+	if (path.starts_with("/api/playback/")) return true;
 	// Log stream — relayed by Hermes into the unified Hades log view.
 	if (path == "/api/logs/stream") return true;
 	// Image proxy — loaded by <img> tags that cannot send Authorization headers.
@@ -52,6 +55,10 @@ static bool isPublicPath(const std::string& path) {
 	// M3U / XMLTV endpoints — accessed by DVR clients without auth.
 	if (path == "/api/epg.xml" || path == "/api/xmltv.xml" ||
 	    path == "/api/channels.xml" || path == "/api/channels.m3u") return true;
+	// Channel logo — referenced by the <icon>/tvg-logo fields in the XMLTV/M3U
+	// feeds above, so it needs the same no-auth treatment those do (a DVR
+	// client fetching an icon URL has no Kairos session token).
+	if (path.ends_with("/logo")) return true;
 	return false;
 }
 
@@ -102,6 +109,17 @@ void Router::registerRoutes() {
 			res.set_content(R"({"error":"Unauthorized"})", "application/json");
 			return httplib::Server::HandlerResponse::Handled;
 		}
+
+		// Any request tagged as coming through the /tv surface (Hades sets this
+		// header when mounted at /tv; Hermes forwards it) is treated as a viewer
+		// regardless of the underlying account's real role. This is downgrade-only
+		// — it can never grant privilege the token doesn't already have — so it's
+		// safe to trust from any hop. Single choke point: every role check in the
+		// app reads currentUser()->role, including /api/auth/me, so this covers
+		// the whole surface (API responses, not just UI rendering).
+		if (user->role == "admin" && req.get_header_value("X-Pantheon-Surface") == "tv")
+			user->role = "viewer";
+
 		setCurrentUser(std::move(user));
 		return httplib::Server::HandlerResponse::Unhandled;
 	});
@@ -129,6 +147,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<ScraperService>(*scraper_mgr_));
 	services_.push_back(std::make_unique<SchedulerService>(ctx));
 	services_.push_back(std::make_unique<TimeslotService>(ctx));
+	services_.push_back(std::make_unique<PlaybackService>(ctx));
 
 	for (auto& svc : services_) svc->registerRoutes(svr_);
 }

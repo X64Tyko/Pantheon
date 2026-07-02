@@ -80,7 +80,7 @@ static void proxyStream(const std::string& upstream_base,
     if (!q.empty()) path += "?" + q;
 
     httplib::Headers fwd;
-    for (const char* h : {"Authorization", "Cookie", "Accept", "Accept-Language"}) {
+    for (const char* h : {"Authorization", "Cookie", "Accept", "Accept-Language", "X-Pantheon-Surface"}) {
         auto v = req.get_header_value(h);
         if (!v.empty()) fwd.emplace(h, v);
     }
@@ -123,7 +123,7 @@ static void proxyRequest(const std::string& upstream_base,
 
     // Forward headers that upstreams need for auth and content negotiation.
     httplib::Headers fwd;
-    for (const char* h : {"Authorization", "Cookie", "Accept", "Accept-Language"}) {
+    for (const char* h : {"Authorization", "Cookie", "Accept", "Accept-Language", "X-Pantheon-Surface"}) {
         auto v = req.get_header_value(h);
         if (!v.empty()) fwd.emplace(h, v);
     }
@@ -278,6 +278,44 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         const_cast<httplib::Request&>(req).ranges.clear();
         handleStream(req.matches[1], broadcasters, res);
     });
+
+    // ── HLS / VOD proxy — 1:1 pass-through to Hephaestus, no fan-out ──────────
+    // Unlike /stream/channels/:id (MPEG-TS, shared ClientSink fan-out via
+    // handleStream above), HLS manifests/segments/subtitles are finite,
+    // complete HTTP responses that Hephaestus already serves as static
+    // files — proxyRequest's buffered pass-through is the right fit, same as
+    // the Kairos API proxy below. Registered before the Hades catch-all.
+    auto hephaestusProxy = [&cfg](const httplib::Request& req, httplib::Response& res) {
+        proxyRequest(cfg.hephaestus_url, req, res);
+    };
+    svr.Get(R"(/stream/hls/channels/.*)", hephaestusProxy);
+    svr.Get(R"(/stream/vod/.*)",     hephaestusProxy);
+    svr.Get(R"(/stream/preview/.*)", hephaestusProxy);
+
+    // POST /stream/vod|preview/... (start/switch/stop) is the one place on
+    // this router that would otherwise let anyone on the network stream the
+    // private library with no login — unlike /stream/channels/:id (open on
+    // purpose, for HDHomeRun/DVR compatibility) there's no third-party-client
+    // reason for this to be unauthenticated. Hermes has no session store of
+    // its own, so it asks Kairos to validate the caller's token first.
+    auto authedHephaestusProxy = [&cfg](const httplib::Request& req, httplib::Response& res) {
+        auto auth = req.get_header_value("Authorization");
+        httplib::Result r;
+        if (!auth.empty()) {
+            httplib::Client cli(cfg.kairos_url);
+            cli.set_connection_timeout(5);
+            cli.set_read_timeout(5);
+            r = cli.Get("/api/auth/me", httplib::Headers{{"Authorization", auth}});
+        }
+        if (auth.empty() || !r || r->status != 200) {
+            res.status = 401;
+            res.set_content(json{{"error", "Unauthorized"}}.dump(), "application/json");
+            return;
+        }
+        proxyRequest(cfg.hephaestus_url, req, res);
+    };
+    svr.Post(R"(/stream/vod/.*)",     authedHephaestusProxy);
+    svr.Post(R"(/stream/preview/.*)", authedHephaestusProxy);
 
     // ── M3U playlist ──────────────────────────────────────────────────────────
     svr.Get("/playlist.m3u", [&kairos](const httplib::Request& req, httplib::Response& res) {

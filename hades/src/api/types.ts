@@ -186,6 +186,20 @@ export interface Episode {
   thumb:       string
 }
 
+export interface WatchProgress {
+  content_type: 'movie' | 'episode'
+  content_id:   string
+  position_ms:  number
+  duration_ms:  number
+  updated_at:   number
+  title:        string
+  // episode only
+  season?:      number
+  episode?:     number
+  show_id?:     string
+  show_title?:  string
+}
+
 export interface CredentialStatus {
   has_token:   boolean
   has_user_id: boolean
@@ -512,6 +526,8 @@ export interface EpgProgram {
   wall_clock_start_ms: number
   wall_clock_end_ms:   number
   status:              string
+  file_path?:          string
+  overview?:           string
 }
 
 // ── Plex browse (playlists / collections) ────────────────────────────────────

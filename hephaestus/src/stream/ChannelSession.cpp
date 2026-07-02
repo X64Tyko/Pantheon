@@ -1,4 +1,5 @@
 #include "ChannelSession.h"
+#include "EncoderArgs.h"
 #include "MediaProbe.h"
 #include <iostream>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
+#include <filesystem>
 
 using clock_t_ = std::chrono::system_clock;
 using steady_  = std::chrono::steady_clock;
@@ -32,47 +34,46 @@ static int64_t nowMs() {
 static constexpr double kMinSpeed = 0.98;
 static constexpr double kMaxSpeed = 1.02;
 
-static std::string fmtSpeed(double speed) {
-    std::ostringstream ss;
-    ss << std::fixed << std::setprecision(4) << speed;
-    return ss.str();
-}
+// Shared by appendOutputArgs' -hls_time and pushVideoEncoderArgs'
+// -force_key_frames so the two can never drift apart the way they did
+// before (HLS can only cut a segment at a keyframe, so a keyframe interval
+// looser than -hls_time silently overrides it).
+static constexpr int kLiveHlsSegmentSecs = 2;
 
 // ── ffmpeg arg construction ───────────────────────────────────────────────────
+// pushVideoEncoderArgs()/pushAudioEncoderArgs()/fmtSpeed() live in
+// EncoderArgs.h/.cpp so VodSession can share them too.
 
-// Video encoder selection, shared by buildArgs() and buildImageArgs(). Appends
-// codec args to `a` and (for AMD, which needs a CPU->VAAPI upload after any
-// scale filter) an extra entry to `vfParts`.
-static void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
-                                  HwAccel hw_accel) {
-    switch (hw_accel) {
-        case HwAccel::nvidia:
-            a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
-                                "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p"});
-            break;
-        case HwAccel::amd:
-            vfParts.push_back("format=nv12,hwupload");
-            a.insert(a.end(), {"-c:v", "h264_vaapi"});
-            break;
-        default:
-            a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
-                                "-crf", "23", "-pix_fmt", "yuv420p"});
+// Appends the final output-format arguments. When hls_dir is non-empty, uses
+// ffmpeg's tee muxer to duplicate the single encode to both the existing
+// MPEG-TS stdout pipe (Hermes fan-out / DVR clients, unchanged) and a rolling
+// HLS segment window on disk (web player). hls_dir must already exist —
+// ffmpeg's hls muxer does not create directories.
+static void appendOutputArgs(std::vector<std::string>& a, const std::string& hls_dir) {
+    if (hls_dir.empty()) {
+        a.insert(a.end(), {"-avoid_negative_ts", "make_zero",
+                            "-muxdelay", "0", "-muxpreload", "0"});
+        a.insert(a.end(), {"-f", "mpegts", "pipe:1"});
+        return;
     }
-}
-
-// Audio encoder selection, shared by buildArgs() and buildImageArgs().
-static void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
-                                  int audio_bitrate_kbps) {
-    std::vector<std::string> afParts;
-    if (loudnorm) afParts.push_back("loudnorm=I=-16:TP=-1.5:LRA=11");
-    if (speed != 1.0) afParts.push_back("atempo=" + fmtSpeed(speed));
-
-    a.insert(a.end(), {"-c:a", "aac", "-b:a", std::to_string(audio_bitrate_kbps) + "k"});
-    if (!afParts.empty()) {
-        std::string af;
-        for (size_t i = 0; i < afParts.size(); ++i) { if (i) af += ","; af += afParts[i]; }
-        a.insert(a.end(), {"-af", af});
-    }
+    // Per-branch muxer options must live inside that branch's [brackets] —
+    // global options placed before -f tee do not propagate into sub-muxers.
+    // muxdelay/muxpreload are rejected as unknown options inside a tee
+    // bracket (verified against ffmpeg n8.1.1) even though they're valid
+    // top-level mpegts options; avoid_negative_ts alone works.
+    //
+    // hls_time=2 (not the more typical 4-6s): the live encode is paced with
+    // -re, so ffmpeg only closes/flushes segment 0 once hls_time seconds of
+    // real wall-clock content has played — a first-tune-in cold start is
+    // gated on that plus process spawn/codec-init overhead before any HLS
+    // output exists at all. Measured ~4-5s with hls_time=4, which was
+    // routinely losing the race against the client's manifest-load patience
+    // (see Router.cpp's waitForFile). hls_time=2 roughly halves that floor.
+    std::string spec =
+        "[f=mpegts:avoid_negative_ts=make_zero]pipe:1"
+        "|[f=hls:hls_time=" + std::to_string(kLiveHlsSegmentSecs) + ":hls_list_size=6:hls_flags=delete_segments+append_list"
+        ":hls_segment_filename=" + hls_dir + "/seg-%05d.ts]" + hls_dir + "/playlist.m3u8";
+    a.insert(a.end(), {"-f", "tee", spec});
 }
 
 static std::vector<std::string> buildArgs(
@@ -87,7 +88,8 @@ static std::vector<std::string> buildArgs(
     double speed = 1.0,
     const std::string& max_resolution = "source",
     int video_bitrate_kbps = 0,
-    int audio_bitrate_kbps = 192)
+    int audio_bitrate_kbps = 192,
+    const std::string& hls_dir = "")
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
@@ -132,12 +134,8 @@ static std::vector<std::string> buildArgs(
     else if (max_resolution == "480p") vfParts.push_back("scale=-2:min(ih\\,480)");
     if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
 
-    pushVideoEncoderArgs(a, vfParts, hw_accel);
-    if (!vfParts.empty()) {
-        std::string vf;
-        for (size_t i = 0; i < vfParts.size(); ++i) { if (i) vf += ","; vf += vfParts[i]; }
-        a.insert(a.end(), {"-vf", vf});
-    }
+    pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs);
+    pushVideoFilterArgs(a, vfParts);
     // Optional bitrate cap: keeps CRF quality-based encoding but adds an
     // upper bound, preventing huge spikes on complex/high-res content.
     if (video_bitrate_kbps > 0) {
@@ -149,11 +147,7 @@ static std::vector<std::string> buildArgs(
     // Audio: AAC
     pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
 
-    // Clean MPEG-TS timestamps
-    a.insert(a.end(), {"-avoid_negative_ts", "make_zero",
-                        "-muxdelay", "0", "-muxpreload", "0"});
-
-    a.insert(a.end(), {"-f", "mpegts", "pipe:1"});
+    appendOutputArgs(a, hls_dir);
     return a;
 }
 
@@ -168,7 +162,8 @@ static std::vector<std::string> buildImageArgs(
     const std::string& vaapi_device,
     const std::string& max_resolution,
     int video_bitrate_kbps,
-    int audio_bitrate_kbps)
+    int audio_bitrate_kbps,
+    const std::string& hls_dir = "")
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
@@ -197,12 +192,8 @@ static std::vector<std::string> buildImageArgs(
     else if (max_resolution == "720p") vfParts.push_back("scale=-2:min(ih\\,720)");
     else if (max_resolution == "480p") vfParts.push_back("scale=-2:min(ih\\,480)");
 
-    pushVideoEncoderArgs(a, vfParts, hw_accel);
-    if (!vfParts.empty()) {
-        std::string vf;
-        for (size_t i = 0; i < vfParts.size(); ++i) { if (i) vf += ","; vf += vfParts[i]; }
-        a.insert(a.end(), {"-vf", vf});
-    }
+    pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs);
+    pushVideoFilterArgs(a, vfParts);
     if (video_bitrate_kbps > 0) {
         std::string maxrate = std::to_string(video_bitrate_kbps) + "k";
         std::string bufsize = std::to_string(video_bitrate_kbps * 2) + "k";
@@ -211,10 +202,7 @@ static std::vector<std::string> buildImageArgs(
 
     pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, audio_bitrate_kbps);
 
-    a.insert(a.end(), {"-avoid_negative_ts", "make_zero",
-                        "-muxdelay", "0", "-muxpreload", "0"});
-
-    a.insert(a.end(), {"-f", "mpegts", "pipe:1"});
+    appendOutputArgs(a, hls_dir);
     return a;
 }
 
@@ -227,7 +215,41 @@ ChannelSession::ChannelSession(std::string channel_id, KairosClient& kairos,
     , ffmpeg_path(std::move(ffmpeg_path))
     , opts(std::move(opts)) {}
 
-ChannelSession::~ChannelSession() { stop(); }
+ChannelSession::~ChannelSession() {
+    stop();
+    hls_watcher_stop.store(true);
+    if (hls_watcher.joinable()) hls_watcher.join();
+}
+
+std::string ChannelSession::hlsDir() const {
+    if (opts.hls_root.empty()) return "";
+    return opts.hls_root + "/live/" + channel_id;
+}
+
+void ChannelSession::touchHls() {
+    last_hls_touch_ms.store(nowMs());
+}
+
+// True when HLS is disabled, or has never been touched, or hasn't been
+// touched within the linger window — i.e. it's safe to stop on HLS grounds.
+bool ChannelSession::hlsIdle() const {
+    if (opts.hls_root.empty()) return true;
+    int64_t touch = last_hls_touch_ms.load();
+    if (touch == 0) return true;
+    return (nowMs() - touch) > static_cast<int64_t>(opts.linger_secs) * 1000;
+}
+
+// Polls because HLS itself is poll-based — there's no persistent connection
+// to react to the way removeClient() reacts to an MPEG-TS client dropping.
+// Without this, a channel watched only via HLS (zero MPEG-TS ClientSinks)
+// would never trigger scheduleStop() at all and run forever.
+void ChannelSession::hlsWatchLoop() {
+    while (!hls_watcher_stop.load() && active.load()) {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        if (!active.load()) return;
+        if (client_count.load() == 0 && hlsIdle()) { stop(); return; }
+    }
+}
 
 // Computes how far into `item` playback should start, given true wall-clock
 // time `atMs`. Fillers loop on their own duration; non-fillers clamp to 0.
@@ -261,6 +283,19 @@ std::optional<double> ChannelSession::computeSpeed(int64_t rawDriftMs, int64_t d
 bool ChannelSession::start() {
     active    = true;
     in_splash = false;
+
+    auto dir = hlsDir();
+    if (!dir.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec) {
+            std::cerr << "[session:" << channel_id << "] failed to create HLS dir \""
+                      << dir << "\": " << ec.message() << " — HLS output disabled for this session\n";
+            opts.hls_root.clear();
+        } else {
+            hls_watcher = std::thread([this] { hlsWatchLoop(); });
+        }
+    }
 
     // Kick off the /now lookup on its own thread and give it a short budget
     // to answer before deciding whether to show the splash at all.
@@ -336,9 +371,16 @@ void ChannelSession::applyResolvedItem(std::optional<KairosNowResponse> item, in
 
 void ChannelSession::stop() {
     if (!active.exchange(false)) return;
-    std::lock_guard<std::mutex> lock(ffmpeg_mtx);
-    if (ffmpeg) { ffmpeg->kill(); ffmpeg.reset(); }
+    {
+        std::lock_guard<std::mutex> lock(ffmpeg_mtx);
+        if (ffmpeg) { ffmpeg->kill(); ffmpeg.reset(); }
+    }
     broadcastDone();
+    auto dir = hlsDir();
+    if (!dir.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
 }
 
 void ChannelSession::addClient(std::shared_ptr<ClientSink> sink) {
@@ -508,7 +550,8 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
 
     auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack,
                           opts.loudnorm, opts.hw_accel, opts.vaapi_device, speed,
-                          opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps);
+                          opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
+                          hlsDir());
     launchFfmpeg(std::move(args), "ffmpeg");
 }
 
@@ -532,7 +575,7 @@ void ChannelSession::spawnOffline(const KairosNowResponse& item) {
 
     auto args = buildImageArgs(ffmpeg_path, image, item.offline_audio_path.value_or(""),
                                opts.hw_accel, opts.vaapi_device, opts.max_resolution,
-                               opts.video_bitrate_kbps, opts.audio_bitrate_kbps);
+                               opts.video_bitrate_kbps, opts.audio_bitrate_kbps, hlsDir());
     launchFfmpeg(std::move(args), "ffmpeg (offline slate)");
 }
 
@@ -576,7 +619,7 @@ void ChannelSession::scheduleStop() {
     int linger = opts.linger_secs;
     std::thread([this, token, linger] {
         std::this_thread::sleep_for(std::chrono::seconds(linger));
-        if (stop_token.load() == token && client_count.load() == 0) {
+        if (stop_token.load() == token && client_count.load() == 0 && hlsIdle()) {
             std::cerr << "[session:" << channel_id << "] linger expired, stopping\n";
             stop();
         }

@@ -293,15 +293,16 @@ void EPGMaterializer::notifyPlayed(const std::string& channel_id,
 
 // ── XMLTV ─────────────────────────────────────────────────────────────────────
 
-std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
-    struct Chan { std::string id, name; int number; };
+std::string EPGMaterializer::generateXMLTV(int horizon_hours, const std::string& base_url) {
+    struct Chan { std::string id, name, logo_path; int number; };
     std::vector<Chan> channels;
     {
         SQLite::Statement q(db_.get(),
-            "SELECT channel_id, name, number FROM channel ORDER BY number");
+            "SELECT channel_id, name, number, logo_path FROM channel ORDER BY number");
         while (q.executeStep())
             channels.push_back({ q.getColumn(0).getString(),
                                   q.getColumn(1).getString(),
+                                  q.getColumn(3).getString(),
                                   q.getColumn(2).getInt() });
     }
 
@@ -327,8 +328,10 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
 
     for (const auto& ch : channels) {
         xml << "  <channel id=\"kairos-" << ch.number << "\">\n"
-            << "    <display-name>" << xmlEscape(ch.name) << "</display-name>\n"
-            << "  </channel>\n";
+            << "    <display-name>" << xmlEscape(ch.name) << "</display-name>\n";
+        if (!ch.logo_path.empty() && !base_url.empty())
+            xml << "    <icon src=\"" << xmlEscape(base_url + "/api/channels/" + ch.id + "/logo") << "\"/>\n";
+        xml << "  </channel>\n";
     }
 
     for (const auto& ch : channels) {
@@ -426,20 +429,22 @@ std::string EPGMaterializer::generateXMLTV(int horizon_hours) {
 
 std::string EPGMaterializer::generateM3U(const std::string& base_url) {
     SQLite::Statement q(db_.get(),
-        "SELECT channel_id, name, number FROM channel ORDER BY number");
+        "SELECT channel_id, name, number, logo_path FROM channel ORDER BY number");
 
     std::ostringstream m3u;
     m3u << "#EXTM3U\n";
 
     while (q.executeStep()) {
-        std::string id   = q.getColumn(0).getString();
-        std::string name = q.getColumn(1).getString();
-        int         num  = q.getColumn(2).getInt();
+        std::string id        = q.getColumn(0).getString();
+        std::string name      = q.getColumn(1).getString();
+        int         num       = q.getColumn(2).getInt();
+        std::string logo_path = q.getColumn(3).getString();
+        std::string logo_url  = logo_path.empty() ? "" : base_url + "/api/channels/" + id + "/logo";
 
         m3u << "#EXTINF:-1"
-            << " tvg-id=\"kairos-"     << num  << "\""
-            << " tvg-name=\""          << name << "\""
-            << " tvg-logo=\"\""
+            << " tvg-id=\"kairos-"     << num      << "\""
+            << " tvg-name=\""          << name     << "\""
+            << " tvg-logo=\""          << logo_url << "\""
             << " group-title=\"Kairos\""
             << " channel-number=\""    << num  << "\""
             << "," << name << "\n"

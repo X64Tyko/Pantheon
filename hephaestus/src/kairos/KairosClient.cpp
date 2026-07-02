@@ -110,6 +110,29 @@ std::vector<KairosChannel> KairosClient::getChannels() {
     }
 }
 
+std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& contentType,
+                                                            const std::string& contentId) {
+    auto cli = makeClient(base_url);
+    std::string path = "/api/playback/" + contentType + "/" + contentId;
+    auto res = cli.Get(path);
+    if (!res || res->status != 200) {
+        std::cerr << "[kairos] GET " << path << " -> "
+                  << (res ? std::to_string(res->status) : "no response") << "\n";
+        return std::nullopt;
+    }
+    try {
+        auto j = json::parse(res->body);
+        PlaybackInfo info;
+        info.file_path   = j.value("file_path",   "");
+        info.title       = j.value("title",       "");
+        info.duration_ms = j.value("duration_ms", int64_t(0));
+        return info;
+    } catch (const std::exception& e) {
+        std::cerr << "[kairos] getPlaybackInfo JSON parse error: " << e.what() << "\n";
+        return std::nullopt;
+    }
+}
+
 std::optional<int> KairosClient::getBufferSize() {
     auto cli = makeClient(base_url);
     auto res = cli.Get("/api/config/settings");

@@ -219,3 +219,14 @@ body {
   background-size: 200% 100%;
   animation: hds-shimmer 1.4s ease infinite;
 }
+
+/* Guide grid: currently-airing program block */
+.hds-guide-now {
+  background: linear-gradient(120deg,
+    oklch(0.55 0.14 292) 0%,
+    oklch(0.7 0.13 287) 50%,
+    oklch(0.55 0.14 292) 100%
+  );
+  background-size: 200% 100%;
+  animation: hds-shimmer 2.4s ease infinite;
+}

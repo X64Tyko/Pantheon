@@ -58,7 +58,10 @@ public:
     void notifyPlayed(const std::string& channel_id, const std::string& item_id);
 
     // XMLTV XML for all channels. Calls ensureScheduled() then reads the cache.
-    std::string generateXMLTV(int horizon_hours = 24);
+    // base_url (e.g. "http://host:port") is used to build each channel's
+    // <icon src="base_url/api/channels/{id}/logo"/> when it has a logo_path
+    // configured; pass "" to omit icons entirely.
+    std::string generateXMLTV(int horizon_hours = 24, const std::string& base_url = "");
 
     // M3U channel list. Stream URLs point to base_url/channels/{id}/stream.
     std::string generateM3U(const std::string& base_url);

@@ -16,6 +16,9 @@ struct Config {
     HwAccel     hw_accel      = HwAccel::none;
     std::string vaapi_device  = "/dev/dri/renderD128";
     std::string default_logo_path = "/usr/local/share/hephaestus/assets/default_logo.png";
+    // Root directory for HLS output (live channel tee output + VOD sessions).
+    // Empty disables HLS entirely (legacy MPEG-TS-only behavior).
+    std::string hls_root = "/tmp/hephaestus/hls";
 
     // HDHomeRun device identity presented to Plex / Emby / Jellyfin
     std::string hdhr_device_id   = "48455048"; // "HEPH" in ASCII hex
@@ -46,6 +49,7 @@ inline Config parseConfig(int argc, char* argv[]) {
         else if (k == "--hw-accel")      { cfg.hw_accel = parseHwAccel(v);        ++i; }
         else if (k == "--vaapi-device")  { cfg.vaapi_device = v;                  ++i; }
         else if (k == "--default-logo")  { cfg.default_logo_path = v;             ++i; }
+        else if (k == "--hls-root")      { cfg.hls_root = v;                     ++i; }
         else if (k == "--device-id")     { cfg.hdhr_device_id = v;                ++i; }
         else if (k == "--friendly-name") { cfg.hdhr_friendly = v;                 ++i; }
         else if (k == "--tuners")        { cfg.hdhr_tuner_count = std::stoi(v);   ++i; }
@@ -59,5 +63,6 @@ inline Config parseConfig(int argc, char* argv[]) {
     if (auto* p = getenv("HEPH_HW_ACCEL"))   cfg.hw_accel     = parseHwAccel(p);
     if (auto* p = getenv("HEPH_VAAPI_DEV"))  cfg.vaapi_device = p;
     if (auto* p = getenv("HEPH_DEFAULT_LOGO")) cfg.default_logo_path = p;
+    if (auto* p = getenv("HEPH_HLS_ROOT"))     cfg.hls_root = p;
     return cfg;
 }

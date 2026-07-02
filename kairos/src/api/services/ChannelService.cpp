@@ -1,12 +1,14 @@
 #include "ChannelService.h"
 #include "../RouteHelpers.h"
 #include "../ScheduleCache.h"
+#include "../../conf/ConfStore.h"
 #include "../../db/ChannelRepository.h"
 #include "../../db/ChannelSerializer.h"
 #include "../../log/LogBuffer.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
+#include <filesystem>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -146,6 +148,27 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 			route::logErr("DELETE /api/channels/" + id, e);
 			route::err(res, 500, e.what());
 		}
+	});
+
+	// logo_path is a free-text admin field (see ChannelDefaultsPanel.tsx) —
+	// in practice either a local filesystem path or a remote image URL an
+	// admin pasted in directly. Local paths get served as bytes (mirroring
+	// the movie/show/episode thumb pattern); remote URLs get redirected
+	// rather than proxied, since ContentService's fetch-and-cache proxyImage()
+	// is scoped to that service and this doesn't need its CDN-hotlink-bypass
+	// logic — plain image hosts and XMLTV consumers both follow redirects fine.
+	svr.Get("/api/channels/:id/logo", [this](const Req& req, Res& res) {
+		auto id = req.path_params.at("id");
+		auto channel = ChannelRepository(db_).findById(id);
+		if (!channel || channel->logo_path.empty()) { res.status = 404; return; }
+		if (channel->logo_path.rfind("http://", 0) == 0 || channel->logo_path.rfind("https://", 0) == 0) {
+			res.set_redirect(channel->logo_path);
+			return;
+		}
+		auto path = conf_.applyPathMap(channel->logo_path);
+		if (!std::filesystem::exists(path)) { res.status = 404; return; }
+		res.set_header("Cache-Control", "public, max-age=3600");
+		res.set_file_content(path);
 	});
 
 	svr.Get("/api/channels/:id/export", [this](const Req& req, Res& res) {

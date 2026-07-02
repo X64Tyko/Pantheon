@@ -12,6 +12,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <thread>
 
 // One ClientSink per connected HTTP client. Thread-safe queue the HTTP handler
 // thread reads from while the session's reader thread writes to it.
@@ -42,6 +43,10 @@ struct StreamOptions {
     // Offline/splash image fallback
     std::string logo_path;          // per-channel logo, empty = none configured
     std::string default_logo_path;  // bundled generic fallback, always set
+    // HLS output for the web player. Empty = HLS disabled, legacy plain
+    // MPEG-TS pipe:1 output only. When set, the live HLS directory is
+    // "<hls_root>/live/<channel_id>/".
+    std::string hls_root;
 };
 
 class ChannelSession {
@@ -64,6 +69,16 @@ class ChannelSession {
 
     std::atomic<bool> active{false};
     std::atomic<bool> in_splash{false}; // true while showing the connect-time logo splash
+
+    // HLS liveness tracking. HLS has no persistent connection to signal
+    // "viewer disconnected" the way the MPEG-TS ClientSink model does (an
+    // HLS player just polls the playlist) — a background watcher thread and
+    // a last-touch timestamp stand in for that.
+    std::atomic<int64_t> last_hls_touch_ms{0};
+    std::thread          hls_watcher;
+    std::atomic<bool>    hls_watcher_stop{false};
+    void hlsWatchLoop();
+    bool hlsIdle() const;
 
     void onData(const uint8_t* data, size_t len);
     void onExit(int code);
@@ -106,6 +121,13 @@ public:
 
     void addClient(std::shared_ptr<ClientSink> sink);
     void removeClient(std::shared_ptr<ClientSink> sink);
+
+    // Directory ffmpeg writes the live HLS playlist/segments to. Empty when
+    // HLS is disabled (opts.hls_root empty).
+    std::string hlsDir() const;
+    // Called by the HTTP handler on every HLS playlist/segment GET — keeps
+    // the session alive the same way an MPEG-TS client connection does.
+    void touchHls();
 
     bool isActive() const { return active.load(); }
     const std::string& channelId() const { return channel_id; }

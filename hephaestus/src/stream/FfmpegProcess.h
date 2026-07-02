@@ -4,6 +4,7 @@
 #include <functional>
 #include <thread>
 #include <atomic>
+#include <mutex>
 
 using DataCallback = std::function<void(const uint8_t*, size_t)>;
 using ExitCallback = std::function<void(int)>; // exit code; -1 = signalled
@@ -21,6 +22,12 @@ class FfmpegProcess {
     std::thread      reader_thread;
     std::thread      stderr_thread;
     std::atomic<bool> killed{false};
+
+    // Last few KB of stderr, captured regardless of log_stderr, so a failed
+    // exit can always print ffmpeg's actual reason instead of just a code.
+    std::mutex  stderr_mtx;
+    std::string stderr_tail;
+    static constexpr size_t kStderrTailMax = 4000;
 
 public:
     FfmpegProcess(std::vector<std::string> args, DataCallback on_data, ExitCallback on_exit,

@@ -29,7 +29,7 @@ struct NextProgramRow {
 };
 
 struct EpgProgramRow {
-    std::string item_type, item_id, block_id, status, title, show_title, show_id, file_path;
+    std::string item_type, item_id, block_id, status, title, show_title, show_id, file_path, overview;
     int season = 0, episode = 0;
     int64_t wall_clock_start = 0, wall_clock_end = 0, duration_ms = 0;
 };

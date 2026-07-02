@@ -23,6 +23,14 @@ struct KairosNowResponse {
     std::optional<std::string> offline_audio_path;
 };
 
+// Resolved from Kairos's internal /api/playback/:content_type/:id endpoint
+// when starting a VOD session.
+struct PlaybackInfo {
+    std::string file_path;
+    std::string title;
+    int64_t     duration_ms = 0;
+};
+
 struct KairosChannel {
     std::string channel_id;
     std::string name;

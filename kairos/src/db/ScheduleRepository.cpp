@@ -219,7 +219,8 @@ ScheduleRepository::getEpgPrograms(const std::string& channel_id,
                COALESCE(e.episode, 0)                 AS ep_num,
                COALESCE(e.file_path, m.file_path, '') AS file_path,
                COALESCE(e.duration_ms, m.duration_ms,
-                        (c.wall_clock_end - c.wall_clock_start) * 1000) AS duration_ms
+                        (c.wall_clock_end - c.wall_clock_start) * 1000) AS duration_ms,
+               COALESCE(e.overview, m.overview, '')   AS overview
         FROM content c
         LEFT JOIN episode e ON c.item_type = 'episode' AND c.item_id = e.episode_id
         LEFT JOIN show    s ON c.item_type = 'episode' AND e.show_id  = s.show_id
@@ -246,6 +247,7 @@ ScheduleRepository::getEpgPrograms(const std::string& channel_id,
         r.episode          = q.getColumn(10).getInt();
         r.file_path        = q.getColumn(11).getString();
         r.duration_ms      = q.getColumn(12).getInt64();
+        r.overview         = q.getColumn(13).getString();
         rows.push_back(std::move(r));
     }
     return rows;

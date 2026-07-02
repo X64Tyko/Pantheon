@@ -8,7 +8,7 @@ import type {
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
-  Show, ShowDetail, Source, SourceType, User,
+  Show, ShowDetail, Source, SourceType, User, WatchProgress,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -17,6 +17,16 @@ export const TOKEN_KEY = 'kairos_token'
 export function mediaUrl(path: string): string {
   const token = localStorage.getItem(TOKEN_KEY)
   return token ? `${path}?token=${encodeURIComponent(token)}` : path
+}
+
+export function channelLogoUrl(channelId: string): string {
+  return mediaUrl(`/api/channels/${channelId}/logo`)
+}
+
+/** For fetch() calls to Hermes's /stream/* routes, which sit outside request()'s /api prefix. */
+export function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem(TOKEN_KEY)
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -147,6 +157,12 @@ export const api = {
   getEpisodes:    (showId: string, season?: number)     => request<Episode[]>('GET', `/shows/${showId}/episodes${season != null ? '?season=' + season : ''}`),
   getMovies:      (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; actor?: string; sort?: string } = {}) =>
                     request<PagedResult<Movie>>('GET', `/movies?${qs(p)}`),
+
+  // Watch progress
+  getWatchProgress:   (limit?: number)                                     => request<WatchProgress[]>('GET', `/watch-progress${limit != null ? '?limit=' + limit : ''}`),
+  putWatchProgress:   (contentType: 'movie' | 'episode', id: string, b: { position_ms: number; duration_ms: number }) =>
+                        request<{ ok: boolean; watched: boolean }>('PUT', `/watch-progress/${contentType}/${id}`, b),
+  clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
 
   // Blocks
   getBlocks:         (channelId: string)                                          => request<Block[]>('GET', `/channels/${channelId}/blocks`),

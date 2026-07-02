@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { mediaUrl } from '../../api/client'
 import type { Episode } from '../../api/types'
 
@@ -49,6 +50,7 @@ function EpisodeTile({ episode }: { episode: Episode }) {
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = episode.thumb && !imgErr
   const code = `S${String(episode.season).padStart(2, '0')}E${String(episode.episode).padStart(2, '0')}`
+  const navigate = useNavigate()
 
   return (
     <div
@@ -56,11 +58,12 @@ function EpisodeTile({ episode }: { episode: Episode }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        flexShrink: 0, width: 220, borderRadius: 8, overflow: 'hidden',
+        flexShrink: 0, width: 220, borderRadius: 8, overflow: 'hidden', cursor: 'pointer',
         border: `1px solid ${hovered ? 'var(--hds-line-s)' : 'var(--hds-line)'}`,
         background: 'var(--hds-bg-2)', transition: 'border-color .12s, transform .12s',
         transform: hovered ? 'translateY(-2px)' : 'none',
       }}
+      onClick={() => navigate(`/player/episode/${episode.episode_id}`)}
     >
       <div style={{
         aspectRatio: '16/9', width: '100%', position: 'relative', overflow: 'hidden',
@@ -78,6 +81,19 @@ function EpisodeTile({ episode }: { episode: Episode }) {
             position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)',
           }}>{code}</span>
+        )}
+        {hovered && (
+          <span style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'oklch(0 0 0 / 0.35)',
+          }}>
+            <span style={{
+              width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'oklch(1 0 0 / 0.9)', color: 'oklch(0.15 0.02 285)',
+            }}>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
+            </span>
+          </span>
         )}
         <span style={{
           position: 'absolute', top: 6, left: 6,

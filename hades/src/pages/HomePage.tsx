@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, mediaUrl } from '../api/client'
-import type { Channel, Show, Movie, ShowDetail, MovieDetail, ScraperStats } from '../api/types'
+import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress } from '../api/types'
+import { resolvePlayPath } from '../player/resolvePlayTarget'
 import { MediaDetailHero } from '../components/media/MediaDetailHero'
+import { LibraryDetailActions } from '../components/media/LibraryDetailActions'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { ghostBtnStyle, goldBtnStyle } from '../channel/styles'
+
+// Lazy: pulls in hls.js (via the Guide's live preview) that most page loads don't need.
+const GuidePage = lazy(() => import('../guide/GuidePage').then(m => ({ default: m.GuidePage })))
 
 const SCROLL_KEY = 'home'
 
@@ -29,18 +34,20 @@ export default function HomePage() {
   const savedScrollY       = useRef(0)
   const restoredScrollRef  = useRef(false)
   const allItemsRef        = useRef<Map<string, Show | Movie>>(new Map())
+  const guideRef           = useRef<HTMLDivElement>(null)
 
   // Data
-  const [recentShows,  setRecentShows]  = useState<Show[]>([])
-  const [recentMovies, setRecentMovies] = useState<Movie[]>([])
-  const [channels,     setChannels]     = useState<Channel[]>([])
-  const [stats,        setStats]        = useState<ScraperStats | null>(null)
-  const [loading,      setLoading]      = useState(true)
+  const [recentShows,      setRecentShows]      = useState<Show[]>([])
+  const [recentMovies,     setRecentMovies]     = useState<Movie[]>([])
+  const [continueWatching, setContinueWatching] = useState<WatchProgress[]>([])
+  const [stats,            setStats]            = useState<ScraperStats | null>(null)
+  const [loading,          setLoading]          = useState(true)
 
   // Hero
   const heroCandidates    = useRef<(Show | Movie)[]>([])
   const heroIdx           = useRef(0)
   const heroBeforeDetail  = useRef<{ item: Show | Movie; detail: ShowDetail | MovieDetail | null; idx: number } | null>(null)
+  const hoverRestoreRef   = useRef<{ item: Show | Movie; detail: ShowDetail | MovieDetail | null; idx: number } | null>(null)
   const [heroItem,   setHeroItem]   = useState<Show | Movie | null>(null)
   const [heroDetail, setHeroDetail] = useState<ShowDetail | MovieDetail | null>(null)
   const [heroFading, setHeroFading] = useState(false)
@@ -90,13 +97,13 @@ export default function HomePage() {
     Promise.all([
       api.getShows({ limit: 24, sort: 'recently_added' }),
       api.getMovies({ limit: 16, sort: 'recently_added' }),
-      api.getChannels(),
       api.getScraperStats().catch(() => null),
-    ]).then(([sr, mr, chs, st]) => {
+      api.getWatchProgress().catch(() => []),
+    ]).then(([sr, mr, st, cw]) => {
       setRecentShows(sr.items)
       setRecentMovies(mr.items)
-      setChannels(chs)
       setStats(st)
+      setContinueWatching(cw)
 
       sr.items.forEach(s => allItemsRef.current.set(s.show_id, s))
       mr.items.forEach(m => allItemsRef.current.set(m.movie_id, m))
@@ -124,6 +131,9 @@ export default function HomePage() {
   const openDetail = (id: string, type: 'show' | 'movie') => {
     if (heroIntervalRef.current) clearInterval(heroIntervalRef.current)
     savedScrollY.current = scrollContainerRef.current?.scrollTop ?? 0
+    // The shelf row unmounts on detail-open without ever firing its own
+    // mouseleave, so a hover-swap in progress would otherwise be orphaned.
+    hoverRestoreRef.current = null
 
     // Transition hero to selected item's backdrop (if it has one)
     const listItem = allItemsRef.current.get(id)
@@ -166,6 +176,31 @@ export default function HomePage() {
     }, 200)
   }
 
+  // ── Shelf hover → hero swap ──────────────────────────────────────────────────
+  // Row-level leave (not per-card) restores, so moving between adjacent cards
+  // in the same shelf doesn't flicker restore-then-reswap on every card.
+
+  const handleShelfHover = (id: string) => {
+    if (detailOpen) return
+    const item = allItemsRef.current.get(id)
+    if (!item || !item.art) return
+    if (heroIntervalRef.current) clearInterval(heroIntervalRef.current)
+    if (!hoverRestoreRef.current && heroItem) {
+      hoverRestoreRef.current = { item: heroItem, detail: heroDetail, idx: heroIdx.current }
+    }
+    transitionHeroTo(item, null)
+  }
+
+  const handleShelfHoverEnd = () => {
+    if (hoverRestoreRef.current) {
+      const { item, detail, idx } = hoverRestoreRef.current
+      heroIdx.current = idx
+      transitionHeroTo(item, detail)
+      hoverRestoreRef.current = null
+    }
+    if (!detailOpen) startRotation()
+  }
+
   const needsReview = stats ? stats.uncertain + stats.unmatched : 0
 
   return (
@@ -192,6 +227,13 @@ export default function HomePage() {
               isShow(heroItem) ? heroItem.show_id : heroItem.movie_id,
               isShow(heroItem) ? 'show' : 'movie',
             )}
+            onPlay={async () => {
+              const path = await resolvePlayPath(
+                isShow(heroItem) ? 'show' : 'movie',
+                isShow(heroItem) ? heroItem.show_id : heroItem.movie_id,
+              )
+              if (path) navigate(path)
+            }}
             onDotClick={i => { startRotation(); goToHero(i) }}
             onReviewClick={() => navigate('/review')}
           />
@@ -212,16 +254,25 @@ export default function HomePage() {
               content_type={detailType}
               onBack={closeDetail}
               showBackdrop={false}
+              actions={<LibraryDetailActions id={detailId} content_type={detailType} />}
             />
           ) : (
-            <Shelves
-              loading={loading}
-              recentShows={recentShows}
-              recentMovies={recentMovies}
-              channels={channels}
-              onItemClick={openDetail}
-              onNavigate={navigate}
-            />
+            <>
+              <QuickActionsRow onGuideClick={() => guideRef.current?.scrollIntoView({ behavior: 'smooth' })} />
+              <Shelves
+                loading={loading}
+                recentShows={recentShows}
+                recentMovies={recentMovies}
+                continueWatching={continueWatching}
+                onItemClick={openDetail}
+                onNavigate={navigate}
+                onItemHover={handleShelfHover}
+                onRowLeave={handleShelfHoverEnd}
+              />
+              <div ref={guideRef} style={{ padding: '0 24px 48px' }}>
+                <Suspense fallback={null}><GuidePage /></Suspense>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -233,7 +284,7 @@ export default function HomePage() {
 
 function HeroPanel({
   item, detail, fading, detailMode, totalCandidates, currentIdx,
-  reviewCount, onViewDetail, onDotClick, onReviewClick,
+  reviewCount, onViewDetail, onPlay, onDotClick, onReviewClick,
 }: {
   item:            Show | Movie
   detail:          ShowDetail | MovieDetail | null
@@ -243,6 +294,7 @@ function HeroPanel({
   currentIdx:      number
   reviewCount:     number
   onViewDetail:    () => void
+  onPlay:          () => void
   onDotClick:      (i: number) => void
   onReviewClick:   () => void
 }) {
@@ -324,7 +376,16 @@ function HeroPanel({
           }}>{overview}</p>
         )}
 
-        <button style={goldBtnStyle} onClick={onViewDetail}>View Details</button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            style={{ ...goldBtnStyle, display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={onPlay}
+          >
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
+            Play
+          </button>
+          <button style={ghostBtnStyle} onClick={onViewDetail}>View Details</button>
+        </div>
       </div>
 
       {/* Review notification pill */}
@@ -384,17 +445,47 @@ function EmptyHero({ onGoToSources }: { onGoToSources: () => void }) {
   )
 }
 
+// ── Quick actions ────────────────────────────────────────────────────────────
+// A home for jump-to shortcuts — Guide today, more later (user-customizable).
+
+function QuickActionsRow({ onGuideClick }: { onGuideClick: () => void }) {
+  // The hero above bleeds into this area via a negative bottom margin (its
+  // fade-to-background gradient) — paddingTop here has to clear that pull-up
+  // (60px) plus real breathing room on top of it, not just butt up against it.
+  return (
+    <div style={{ padding: '100px 24px 8px' }}>
+      <div style={{
+        display: 'flex', gap: 10, padding: '14px 18px', borderRadius: 12,
+        background: 'var(--hds-glass)', backdropFilter: 'blur(8px)', border: '1px solid var(--hds-glass-border)',
+      }}>
+        <button onClick={onGuideClick} style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 8, cursor: 'pointer',
+          border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
+        }}>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <rect x="1.5" y="2.5" width="11" height="9" rx="1.5" /><path d="M4 11.5h6" />
+          </svg>
+          Guide
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Shelves ───────────────────────────────────────────────────────────────────
 
 function Shelves({
-  loading, recentShows, recentMovies, channels, onItemClick, onNavigate,
+  loading, recentShows, recentMovies, continueWatching, onItemClick, onNavigate, onItemHover, onRowLeave,
 }: {
-  loading:      boolean
-  recentShows:  Show[]
-  recentMovies: Movie[]
-  channels:     Channel[]
-  onItemClick:  (id: string, type: 'show' | 'movie') => void
-  onNavigate:   (path: string) => void
+  loading:          boolean
+  recentShows:      Show[]
+  recentMovies:     Movie[]
+  continueWatching: WatchProgress[]
+  onItemClick:      (id: string, type: 'show' | 'movie') => void
+  onNavigate:       (path: string) => void
+  onItemHover:      (id: string) => void
+  onRowLeave:       () => void
 }) {
   return (
     <div style={{ padding: '20px 0 48px' }}>
@@ -403,6 +494,9 @@ function Shelves({
         <><ShelfSkeleton /><ShelfSkeleton /></>
       ) : (
         <>
+          {continueWatching.length > 0 && (
+            <ContinueWatchingShelf items={continueWatching} onNavigate={onNavigate} />
+          )}
           {recentShows.length > 0 && (
             <Shelf
               title="Recently Added Shows"
@@ -413,6 +507,8 @@ function Shelves({
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
               onViewAll={() => onNavigate('/library')}
+              onItemHover={onItemHover}
+              onRowLeave={onRowLeave}
             />
           )}
           {recentMovies.length > 0 && (
@@ -425,10 +521,9 @@ function Shelves({
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
               onViewAll={() => onNavigate('/library')}
+              onItemHover={onItemHover}
+              onRowLeave={onRowLeave}
             />
-          )}
-          {channels.length > 0 && (
-            <ChannelsSection channels={channels} onChannelClick={id => onNavigate(`/channels/${id}`)} />
           )}
         </>
       )}
@@ -443,11 +538,13 @@ interface ShelfEntry {
   thumb_url?: string; rating?: number; content_type: 'show' | 'movie'
 }
 
-function Shelf({ title, items, onItemClick, onViewAll }: {
+function Shelf({ title, items, onItemClick, onViewAll, onItemHover, onRowLeave }: {
   title:       string
   items:       ShelfEntry[]
   onItemClick: (id: string, type: 'show' | 'movie') => void
   onViewAll?:  () => void
+  onItemHover?: (id: string) => void
+  onRowLeave?:  () => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [showArrows, setShowArrows] = useState(false)
@@ -458,7 +555,7 @@ function Shelf({ title, items, onItemClick, onViewAll }: {
     <div
       style={{ padding: '0 0 8px', marginBottom: 24, position: 'relative' }}
       onMouseEnter={() => setShowArrows(true)}
-      onMouseLeave={() => setShowArrows(false)}
+      onMouseLeave={() => { setShowArrows(false); onRowLeave?.() }}
     >
       <div style={{
         display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
@@ -483,7 +580,11 @@ function Shelf({ title, items, onItemClick, onViewAll }: {
         padding: '8px 24px', scrollbarWidth: 'none',
       }}>
         {items.map(item => (
-          <ShelfCard key={item.id} item={item} onClick={() => onItemClick(item.id, item.content_type)} />
+          <ShelfCard
+            key={item.id} item={item}
+            onClick={() => onItemClick(item.id, item.content_type)}
+            onHover={() => onItemHover?.(item.id)}
+          />
         ))}
       </div>
       {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
@@ -491,7 +592,7 @@ function Shelf({ title, items, onItemClick, onViewAll }: {
   )
 }
 
-function ShelfCard({ item, onClick }: { item: ShelfEntry; onClick: () => void }) {
+function ShelfCard({ item, onClick, onHover }: { item: ShelfEntry; onClick: () => void; onHover?: () => void }) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = item.thumb_url && !imgErr
@@ -499,7 +600,7 @@ function ShelfCard({ item, onClick }: { item: ShelfEntry; onClick: () => void })
   return (
     <div
       onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={() => { setHovered(true); onHover?.() }}
       onMouseLeave={() => setHovered(false)}
       style={{
         flexShrink: 0, width: 150, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
@@ -560,6 +661,109 @@ function ShelfCard({ item, onClick }: { item: ShelfEntry; onClick: () => void })
   )
 }
 
+function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; onNavigate: (path: string) => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [showArrows, setShowArrows] = useState(false)
+  const scroll = (d: 'left' | 'right') =>
+    scrollRef.current?.scrollBy({ left: d === 'right' ? 340 : -340, behavior: 'smooth' })
+
+  return (
+    <div
+      style={{ padding: '0 0 8px', marginBottom: 24, position: 'relative' }}
+      onMouseEnter={() => setShowArrows(true)}
+      onMouseLeave={() => setShowArrows(false)}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', padding: '0 24px', marginBottom: 14 }}>
+        <span style={{
+          fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
+          color: 'var(--hds-txt)', letterSpacing: '0.03em',
+        }}>Continue Watching</span>
+      </div>
+
+      {showArrows && <ShelfArrow side="left" onClick={() => scroll('left')} />}
+      <div ref={scrollRef} style={{
+        display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
+        padding: '8px 24px', scrollbarWidth: 'none',
+      }}>
+        {items.map(p => (
+          <ContinueWatchingCard key={`${p.content_type}:${p.content_id}`} item={p} onNavigate={onNavigate} />
+        ))}
+      </div>
+      {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
+    </div>
+  )
+}
+
+function ContinueWatchingCard({ item, onNavigate }: { item: WatchProgress; onNavigate: (path: string) => void }) {
+  const [hovered, setHovered] = useState(false)
+  const [imgErr,  setImgErr]  = useState(false)
+  const thumbPath = item.content_type === 'movie'
+    ? `/api/movies/${item.content_id}/thumb`
+    : item.show_id ? `/api/shows/${item.show_id}/thumb` : ''
+  const progress = item.duration_ms > 0 ? Math.min(1, item.position_ms / item.duration_ms) : 0
+  const epCode = item.content_type === 'episode'
+    ? `S${String(item.season ?? 0).padStart(2, '0')}E${String(item.episode ?? 0).padStart(2, '0')}`
+    : undefined
+
+  const go = () => onNavigate(`/player/${item.content_type}/${item.content_id}?t=${item.position_ms}`)
+
+  return (
+    <div
+      onClick={go}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        flexShrink: 0, width: 150, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
+        boxShadow: hovered ? '0 0 0 2px var(--hds-violet)' : 'none',
+        transform: hovered ? 'scale(1.04)' : 'scale(1)',
+        transition: 'transform .15s cubic-bezier(0.2,0,0.2,1), box-shadow .15s',
+      }}
+    >
+      <div style={{
+        aspectRatio: '2/3', width: '100%', position: 'relative',
+        background: 'linear-gradient(135deg, oklch(0.18 0.03 287), oklch(0.13 0.02 285))',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+      }}>
+        {thumbPath && !imgErr ? (
+          <img
+            src={mediaUrl(thumbPath)} alt={item.title} onError={() => setImgErr(true)}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        ) : (
+          <span style={{
+            fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700,
+            fontSize: 26, color: 'var(--hds-violet)', opacity: 0.4,
+          }}>
+            {item.title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
+          </span>
+        )}
+        {epCode && (
+          <span style={{
+            position: 'absolute', top: 6, left: 6,
+            background: 'oklch(0 0 0 / 0.6)', borderRadius: 4, padding: '2px 6px',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'oklch(0.9 0.01 285)',
+          }}>{epCode}</span>
+        )}
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'oklch(0 0 0 / 0.5)' }}>
+          <div style={{ height: '100%', width: `${progress * 100}%`, background: 'var(--hds-violet)' }} />
+        </div>
+      </div>
+      <div style={{ padding: '8px 4px 4px' }}>
+        <div style={{
+          fontFamily: "'Chakra Petch', sans-serif", fontSize: 11, fontWeight: 600,
+          color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{item.content_type === 'episode' ? (item.show_title || item.title) : item.title}</div>
+        {item.content_type === 'episode' && (
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 2,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{item.title}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ShelfArrow({ side, onClick }: { side: 'left' | 'right'; onClick: () => void }) {
   return (
     <button onClick={onClick} style={{
@@ -575,60 +779,6 @@ function ShelfArrow({ side, onClick }: { side: 'left' | 'right'; onClick: () => 
   )
 }
 
-// ── Channels section ──────────────────────────────────────────────────────────
-
-function ChannelsSection({ channels, onChannelClick }: {
-  channels:       Channel[]
-  onChannelClick: (id: string) => void
-}) {
-  return (
-    <div style={{ padding: '0 0 8px' }}>
-      <div style={{ padding: '0 24px', marginBottom: 14 }}>
-        <span style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
-          color: 'var(--hds-txt)', letterSpacing: '0.03em',
-        }}>Channels</span>
-      </div>
-      <div style={{
-        display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
-        padding: '8px 24px', scrollbarWidth: 'none',
-      }}>
-        {channels.map(ch => (
-          <ChannelCard key={ch.channel_id} channel={ch} onClick={() => onChannelClick(ch.channel_id)} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function ChannelCard({ channel, onClick }: { channel: Channel; onClick: () => void }) {
-  const [hovered, setHovered] = useState(false)
-  return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        flexShrink: 0, width: 160, height: 90, borderRadius: 10,
-        border: `1px solid ${hovered ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-        background: hovered ? 'var(--hds-bg-3)' : 'var(--hds-bg-2)',
-        cursor: 'pointer', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', gap: 6,
-        transition: 'border-color .14s, background .14s, box-shadow .14s',
-        boxShadow: hovered ? '0 4px 20px oklch(0.55 0.14 292 / 0.2)' : 'none',
-      }}
-    >
-      <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 22, fontWeight: 800,
-        color: hovered ? 'var(--hds-gold)' : 'var(--hds-txt-2)', lineHeight: 1, transition: 'color .14s',
-      }}>{channel.number}</div>
-      <div style={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)',
-        maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}>{channel.name}</div>
-    </button>
-  )
-}
 
 // ── Skeletons ─────────────────────────────────────────────────────────────────
 

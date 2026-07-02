@@ -100,7 +100,9 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 				try { hours = std::stoi(req.get_param_value("hours")); } catch (...) {}
 			}
 			hours = std::max(1, std::min(hours, 72));
-			res.set_content(materializer_.generateXMLTV(hours), "application/xml");
+			std::string host = req.get_header_value("Host");
+			if (host.empty()) host = "localhost:8080";
+			res.set_content(materializer_.generateXMLTV(hours, "http://" + host), "application/xml");
 		} catch (const std::exception& e) {
 			route::logErr("GET xmltv", e);
 			route::err(res, 500, e.what());
@@ -456,6 +458,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 				{"title",               r.title},
 				{"file_path",           r.file_path},
 				{"duration_ms",         r.duration_ms},
+				{"overview",            r.overview},
 			};
 			if (!r.show_title.empty()) {
 				j["show_title"]  = r.show_title;

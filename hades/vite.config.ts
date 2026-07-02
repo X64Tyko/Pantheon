@@ -21,6 +21,13 @@ export default defineConfig({
   build: {
     outDir: './dist',
     emptyOutDir: true,
+    // The default 500kb warning is a raw byte-size check that doesn't know a
+    // chunk is lazily loaded — player/PlayerPage.tsx (hls.js + friends) is
+    // React.lazy()'d in App.tsx specifically so its ~540kb only downloads
+    // when someone opens the player, not on every page load. Bumped just
+    // above that chunk so the warning still fires for anything genuinely
+    // bloating the *eager* bundle.
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
         manualChunks: {
