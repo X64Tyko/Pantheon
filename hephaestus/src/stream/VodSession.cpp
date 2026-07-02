@@ -44,8 +44,7 @@ static std::vector<std::string> buildVodArgs(
     bool subtitleOutput,
     HwAccel hw_accel,
     const std::string& vaapi_device,
-    const std::string& dir,
-    double fps)
+    const std::string& dir)
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
@@ -74,15 +73,28 @@ static std::vector<std::string> buildVodArgs(
         a.insert(a.end(), {"-c:v", "copy", "-c:a", "copy"});
     } else {
         std::vector<std::string> vfParts;
-        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs, fps);
+        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs);
         pushVideoFilterArgs(a, vfParts);
         pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/192);
     }
 
+    // "vod" playlist type holds the entire .m3u8 back and writes it only once
+    // the whole input has finished encoding — fine for a few seconds of test
+    // footage, but for a real ~20+ minute episode/movie transcode it means
+    // playlist.m3u8 doesn't exist until the transcode is entirely done,
+    // nowhere near any reasonable startup timeout. Confirmed via a local
+    // ffmpeg test: segments were written incrementally throughout, but
+    // playlist.m3u8 only appeared at the very end regardless of hardware.
+    // "event" type writes the same never-shrinking, ENDLIST-terminated
+    // playlist, but incrementally — new #EXTINF/segment entries appear as
+    // each segment closes, exactly what "start playback while still
+    // transcoding" needs. hls.js/browsers handle it like VOD once
+    // #EXT-X-ENDLIST appears; Hades' own live-vs-VOD UI logic is driven by
+    // content kind, not this tag, so this is a pure ffmpeg-output change.
     a.insert(a.end(), {
         "-f", "hls",
         "-hls_time", std::to_string(kVodHlsSegmentSecs),
-        "-hls_playlist_type", "vod",
+        "-hls_playlist_type", "event",
         "-hls_list_size", "0",
         "-hls_segment_filename", dir + "/seg-%05d.ts",
         dir + "/playlist.m3u8"
@@ -129,9 +141,8 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
         return false;
     }
 
-    double fps = media_info.video.empty() ? 0 : media_info.video[0].fps;
     auto args = buildVodArgs(ffmpeg_path, file_path, position_ms, audio_track, subtitle_track,
-                              direct_play, subtitle_output, opts.hw_accel, opts.vaapi_device, d, fps);
+                              direct_play, subtitle_output, opts.hw_accel, opts.vaapi_device, d);
 
     std::cerr << "[vod:" << session_id << "] spawning ffmpeg: \"" << file_path << "\""
               << " offset=" << position_ms << "ms direct_play=" << (direct_play ? "yes" : "no") << "\n";
