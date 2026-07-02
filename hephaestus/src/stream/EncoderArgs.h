@@ -23,14 +23,22 @@ void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel hw_accel);
 // which needs a CPU->VAAPI upload after any scale filter) an extra entry to
 // `vfParts`.
 //
-// keyframeIntervalSecs forces a keyframe at that cadence (via
-// -force_key_frames, framerate-independent unlike -g) so the HLS muxer can
+// keyframeIntervalSecs forces a keyframe at that cadence so the HLS muxer can
 // actually cut segments near the caller's -hls_time — without this, x264's
 // default 250-frame GOP (10s at 25fps) silently overrides any -hls_time
 // value, since HLS can only cut segments at keyframes. Must match (or be a
 // divisor of) the -hls_time the caller uses for the tee/hls output.
+//
+// Uses -force_key_frames for software/VAAPI, which libx264 honors reliably.
+// NVENC's ffmpeg wrapper does not reliably respect -force_key_frames (it's a
+// frame-flagging mechanism aimed at software encoders) — confirmed via a
+// real VOD transcode that produced segments indefinitely but never closed
+// one cleanly enough for the HLS muxer to ever write playlist.m3u8. NVENC
+// gets an explicit -g/-keyint_min GOP size instead, computed from fpsHint
+// when known (0 = unknown, falls back to an assumed 30fps so the GOP is
+// still bounded rather than left at NVENC's own multi-second default).
 void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
-                           HwAccel hw_accel, int keyframeIntervalSecs);
+                           HwAccel hw_accel, int keyframeIntervalSecs, double fpsHint = 0);
 
 // Audio encoder selection, shared the same way.
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,

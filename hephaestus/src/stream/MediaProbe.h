@@ -17,6 +17,7 @@ struct VideoTrack {
     std::string codec;             // e.g. "h264", "hevc", "av1"
     int         width  = 0;
     int         height = 0;
+    double      fps    = 0;        // 0 = unknown
 };
 
 struct SubtitleTrack {

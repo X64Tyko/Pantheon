@@ -345,7 +345,13 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
         session->touch();
         auto path = session->dir() + "/playlist.m3u8";
-        if (!waitForFile(path)) { res.status = 503; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
+        // VOD's first segment is kVodHlsSegmentSecs (6s) of real content to
+        // decode+encode, 3x live/preview's 2s segments — on top of the same
+        // fixed CUDA/NVENC cold-start cost they pay, that reliably blew past
+        // the shared 10s budget on real hardware (confirmed via the server
+        // actually finishing and writing the segment, just after the client
+        // had already given up and reported failure).
+        if (!waitForFile(path, 25000)) { res.status = 503; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
         serveHlsFile(path, "application/vnd.apple.mpegurl", res);
     });
 

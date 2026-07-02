@@ -1,6 +1,8 @@
 #include "EncoderArgs.h"
 #include <sstream>
 #include <iomanip>
+#include <cmath>
+#include <algorithm>
 
 std::string fmtSpeed(double speed) {
     std::ostringstream ss;
@@ -13,12 +15,16 @@ void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel hw_accel) {
 }
 
 void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
-                           HwAccel hw_accel, int keyframeIntervalSecs) {
+                           HwAccel hw_accel, int keyframeIntervalSecs, double fpsHint) {
     switch (hw_accel) {
-        case HwAccel::nvidia:
+        case HwAccel::nvidia: {
             a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
                                 "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p"});
+            double fps = fpsHint > 0 ? fpsHint : 30; // unknown source fps — assume 30 rather than leave the GOP unbounded
+            int gop = std::max(1, static_cast<int>(std::lround(fps * keyframeIntervalSecs)));
+            a.insert(a.end(), {"-g", std::to_string(gop), "-keyint_min", std::to_string(gop)});
             break;
+        }
         case HwAccel::amd:
             vfParts.push_back("format=nv12,hwupload");
             a.insert(a.end(), {"-c:v", "h264_vaapi"});
@@ -27,6 +33,9 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
             a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
                                 "-crf", "23", "-pix_fmt", "yuv420p"});
     }
+    // -force_key_frames is reliable for libx264/VAAPI but not NVENC (see
+    // header comment) — still harmless to also set for NVENC, and remains
+    // the primary mechanism for the other two encoders.
     a.insert(a.end(), {"-force_key_frames",
                         "expr:gte(t,n_forced*" + std::to_string(keyframeIntervalSecs) + ")"});
 }

@@ -8,6 +8,17 @@
 
 using json = nlohmann::json;
 
+// ffprobe reports frame rate as a "num/den" string (e.g. "24000/1001").
+static double parseFrameRate(const std::string& s) {
+    auto slash = s.find('/');
+    if (slash == std::string::npos) return 0;
+    try {
+        double num = std::stod(s.substr(0, slash));
+        double den = std::stod(s.substr(slash + 1));
+        return den > 0 ? num / den : 0;
+    } catch (...) { return 0; }
+}
+
 static std::string runCommand(const std::string& cmd) {
     std::array<char, 4096> buf{};
     std::string result;
@@ -57,6 +68,8 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
                 v.codec        = s.value("codec_name", "");
                 v.width        = s.value("width",  0);
                 v.height       = s.value("height", 0);
+                v.fps          = parseFrameRate(s.value("r_frame_rate", ""));
+                if (v.fps <= 0) v.fps = parseFrameRate(s.value("avg_frame_rate", ""));
                 info.video.push_back(v);
             } else if (codec_type == "audio") {
                 AudioTrack a;

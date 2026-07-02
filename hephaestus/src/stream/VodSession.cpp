@@ -44,7 +44,8 @@ static std::vector<std::string> buildVodArgs(
     bool subtitleOutput,
     HwAccel hw_accel,
     const std::string& vaapi_device,
-    const std::string& dir)
+    const std::string& dir,
+    double fps)
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
@@ -73,7 +74,7 @@ static std::vector<std::string> buildVodArgs(
         a.insert(a.end(), {"-c:v", "copy", "-c:a", "copy"});
     } else {
         std::vector<std::string> vfParts;
-        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs);
+        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs, fps);
         pushVideoFilterArgs(a, vfParts);
         pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/192);
     }
@@ -128,8 +129,9 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
         return false;
     }
 
+    double fps = media_info.video.empty() ? 0 : media_info.video[0].fps;
     auto args = buildVodArgs(ffmpeg_path, file_path, position_ms, audio_track, subtitle_track,
-                              direct_play, subtitle_output, opts.hw_accel, opts.vaapi_device, d);
+                              direct_play, subtitle_output, opts.hw_accel, opts.vaapi_device, d, fps);
 
     std::cerr << "[vod:" << session_id << "] spawning ffmpeg: \"" << file_path << "\""
               << " offset=" << position_ms << "ms direct_play=" << (direct_play ? "yes" : "no") << "\n";
