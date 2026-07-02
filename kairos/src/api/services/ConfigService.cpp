@@ -33,6 +33,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			{"sync_threads",           sync_.getThreadCount()},
 			{"stream_buffer_size",           g_buffer_size.load()},
 			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
+			{"verbose_transcode_logs", g_verbose_transcode_logs.load()},
 		};
 	};
 
@@ -68,6 +69,11 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("image_cache_ttl_hours") && b["image_cache_ttl_hours"].is_number_integer()) {
 				int h = b["image_cache_ttl_hours"].get<int>();
 				if (h >= 1 && h <= 720) conf_.setImageCacheTtlHours(h);
+			}
+			if (b.contains("verbose_transcode_logs") && b["verbose_transcode_logs"].is_boolean()) {
+				bool v = b["verbose_transcode_logs"].get<bool>();
+				g_verbose_transcode_logs.store(v);
+				persistFlag("verbose_transcode_logs", v);
 			}
 			route::ok(res, settingsJson().dump());
 		} catch (const std::exception& e) {

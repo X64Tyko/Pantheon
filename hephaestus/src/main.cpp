@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
     vod_opts.vaapi_device      = cfg.vaapi_device;
     vod_opts.ffmpeg_debug_logs = cfg.ffmpeg_debug_logs;
     vod_opts.verbose_transcode_logs = cfg.verbose_transcode_logs;
-    VodSessionManager vodSessions(cfg.ffmpeg_path, vod_opts);
+    VodSessionManager vodSessions(cfg.ffmpeg_path, vod_opts, kairos);
 
     PreviewStreamOptions preview_opts;
     preview_opts.ffprobe_path      = cfg.ffprobe_path;

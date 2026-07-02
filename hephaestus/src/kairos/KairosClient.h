@@ -30,4 +30,9 @@ public:
     // in KB (matching the Hades UI unit) — callers must convert to bytes.
     // Returns nullopt on any failure so callers can fall back to a local default.
     std::optional<int> getBufferSize();
+
+    // Same /api/config/settings blob, plucking verbose_transcode_logs instead
+    // — lets operators flip on full ffmpeg command/-v verbose logging from
+    // the Hades settings page without restarting Hephaestus.
+    std::optional<bool> getVerboseTranscodeLogs();
 };

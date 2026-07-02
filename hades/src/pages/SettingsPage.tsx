@@ -4,11 +4,12 @@ import { statusStore } from '../stores'
 import type { ArrConfig, ScraperSettings, ScraperStats } from '../api/types'
 
 interface Settings {
-  epg_debug:             boolean
-  sync_debug:            boolean
-  sync_threads:          number
-  stream_buffer_size:    number
-  image_cache_ttl_hours: number
+  epg_debug:              boolean
+  sync_debug:             boolean
+  sync_threads:           number
+  stream_buffer_size:     number
+  image_cache_ttl_hours:  number
+  verbose_transcode_logs: boolean
 }
 
 function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -232,6 +233,16 @@ const applyBuffer = () => {
             checked={settings?.epg_debug ?? false}
             disabled={!settings || saving}
             onChange={v => patch({ epg_debug: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Verbose Transcode Logging"
+          hint="Logs full ffmpeg command lines and -v verbose output for every spawned transcode (live channels, VOD, previews) — noisy, enable only when debugging hardware acceleration issues. Applies to new streams within ~15s, no restart needed."
+        >
+          <Toggle
+            checked={settings?.verbose_transcode_logs ?? false}
+            disabled={!settings || saving}
+            onChange={v => patch({ verbose_transcode_logs: v })}
           />
         </SettingRow>
       </Section>

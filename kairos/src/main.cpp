@@ -96,6 +96,7 @@ int main(int argc, char* argv[]) {
     };
     loadFlag("sync_debug", g_debug_logging);
     loadFlag("epg_debug",  g_epg_debug);
+    loadFlag("verbose_transcode_logs", g_verbose_transcode_logs);
 
     // KAIROS_API_THREADS lets operators reserve HTTP capacity independently of
     // the sync worker pool (KAIROS_SYNC_THREADS). Lower sync threads in Docker

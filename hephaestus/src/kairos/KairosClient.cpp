@@ -152,3 +152,23 @@ std::optional<int> KairosClient::getBufferSize() {
         return std::nullopt;
     }
 }
+
+std::optional<bool> KairosClient::getVerboseTranscodeLogs() {
+    auto cli = makeClient(base_url);
+    auto res = cli.Get("/api/config/settings");
+    if (!res || res->status != 200) {
+        std::cerr << "[kairos] GET /api/config/settings -> "
+                  << (res ? std::to_string(res->status) : "no response") << "\n";
+        return std::nullopt;
+    }
+    try {
+        auto j = json::parse(res->body);
+        if (j.contains("verbose_transcode_logs") && j["verbose_transcode_logs"].is_boolean()) {
+            return j["verbose_transcode_logs"].get<bool>();
+        }
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        std::cerr << "[kairos] getVerboseTranscodeLogs JSON parse error: " << e.what() << "\n";
+        return std::nullopt;
+    }
+}

@@ -35,11 +35,13 @@ SessionManager::~SessionManager() {
 void SessionManager::refreshCache() {
     auto channels = kairos.getChannels();
     auto bs       = kairos.getBufferSize();
+    auto verbose  = kairos.getVerboseTranscodeLogs();
     std::lock_guard<std::mutex> lock(cache_mtx);
     // An empty fetch almost always means Kairos was unreachable, not that every
     // channel was deleted — keep the last-known-good list rather than blanking it.
     if (!channels.empty()) cached_channels = std::move(channels);
     if (bs) cached_buffer_size = *bs * 1024; // KB -> bytes
+    if (verbose) cached_verbose_transcode_logs = verbose;
 }
 
 std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& channelId) {
@@ -71,6 +73,7 @@ std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& c
             }
         }
         if (cached_buffer_size > 0) opts.buffer_size = cached_buffer_size;
+        if (cached_verbose_transcode_logs) opts.verbose_transcode_logs = *cached_verbose_transcode_logs;
     }
     if (!found) {
         std::cerr << "[sessions] unknown channel " << channelId << "\n";

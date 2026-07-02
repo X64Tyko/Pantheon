@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 #include <atomic>
 #include <thread>
@@ -23,6 +24,9 @@ class SessionManager {
     std::mutex                 cache_mtx;
     std::vector<KairosChannel> cached_channels;
     int                        cached_buffer_size = 0;
+    // nullopt = not yet fetched (or Kairos unreachable) — keep whatever
+    // Config/--verbose-transcode/HEPH_VERBOSE_TRANSCODE set at startup.
+    std::optional<bool>        cached_verbose_transcode_logs;
     std::atomic<bool>          stop_refresh{false};
     std::thread                refresh_thread;
 

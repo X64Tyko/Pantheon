@@ -11,22 +11,52 @@ static std::string generateSessionId() {
     return ss.str();
 }
 
-VodSessionManager::VodSessionManager(std::string ffmpeg_path, VodStreamOptions opts)
-    : ffmpeg_path(std::move(ffmpeg_path)), opts(std::move(opts)) {
+// Matches SessionManager's kCacheRefreshInterval — see that file's comment
+// for why this is a background poll rather than a per-request fetch.
+static constexpr auto kSettingsRefreshInterval = std::chrono::seconds(15);
+
+VodSessionManager::VodSessionManager(std::string ffmpeg_path, VodStreamOptions opts, KairosClient& kairos)
+    : ffmpeg_path(std::move(ffmpeg_path)), opts(std::move(opts)), kairos(kairos) {
     reaper_thread = std::thread([this] { reapLoop(); });
+    refreshSettings(); // blocking, but only once, at startup
+    settings_refresh_thread = std::thread([this] {
+        while (!stop_settings_refresh.load()) {
+            for (int i = 0; i < 15 && !stop_settings_refresh.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (stop_settings_refresh.load()) break;
+            refreshSettings();
+        }
+    });
 }
 
 VodSessionManager::~VodSessionManager() {
     stop_reaper.store(true);
     if (reaper_thread.joinable()) reaper_thread.join();
+    stop_settings_refresh.store(true);
+    if (settings_refresh_thread.joinable()) settings_refresh_thread.join();
     std::lock_guard<std::mutex> lock(mtx);
     for (auto& [id, s] : sessions) s->stop();
     sessions.clear();
 }
 
+void VodSessionManager::refreshSettings() {
+    auto verbose = kairos.getVerboseTranscodeLogs();
+    auto bs      = kairos.getBufferSize();
+    std::lock_guard<std::mutex> lock(settings_mtx);
+    if (verbose) cached_verbose_transcode_logs = verbose;
+    if (bs) cached_buffer_size = *bs * 1024; // KB -> bytes
+}
+
 std::shared_ptr<VodSession> VodSessionManager::create(const std::string& file_path, int64_t position_ms,
                                                         int audio_track, int subtitle_track) {
-    auto session = std::make_shared<VodSession>(generateSessionId(), ffmpeg_path, opts);
+    VodStreamOptions session_opts = opts;
+    {
+        std::lock_guard<std::mutex> lock(settings_mtx);
+        if (cached_verbose_transcode_logs) session_opts.verbose_transcode_logs = *cached_verbose_transcode_logs;
+        if (cached_buffer_size > 0) session_opts.buffer_size = cached_buffer_size;
+    }
+
+    auto session = std::make_shared<VodSession>(generateSessionId(), ffmpeg_path, session_opts);
     if (!session->start(file_path, position_ms, audio_track, subtitle_track)) return nullptr;
 
     std::lock_guard<std::mutex> lock(mtx);
