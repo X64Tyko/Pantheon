@@ -262,6 +262,26 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
     // ── scheduled mode ───────────────────────────────────────────────────────
     const std::time_t horizon = from + static_cast<std::time_t>(horizon_hours) * 3600;
 
+    // generate() always re-projects the whole week from Monday through
+    // `horizon` (see below), not just this call's small window — cheap early
+    // in the week, increasingly expensive by Thursday/Friday. ensureScheduled
+    // is called on every /now poll (live playback, previews), so without this
+    // check a channel that's already fully scheduled through `horizon` pays
+    // that full re-projection cost on every single poll for no reason —
+    // commit() would just re-INSERT OR IGNORE rows that already exist.
+    {
+        SQLite::Statement chk(db_.get(),
+            "SELECT 1 FROM scheduled_program WHERE channel_id=? AND wall_clock_end >= ? LIMIT 1");
+        chk.bind(1, channel_id);
+        chk.bind(2, static_cast<int64_t>(horizon));
+        if (chk.executeStep()) {
+            if (epgDebug())
+                std::cout << "[epg] ensureScheduled channel=" << channel_id
+                          << " already covers horizon=" << horizon << ", skipping generate()\n";
+            return;
+        }
+    }
+
     if (epgDebug())
         std::cout << "[epg] ensureScheduled channel=" << channel_id
                   << " from=" << from << " horizon_hours=" << horizon_hours << '\n';

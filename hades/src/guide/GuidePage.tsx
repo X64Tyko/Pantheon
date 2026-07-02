@@ -7,7 +7,8 @@ import { GuideGrid } from './GuideGrid'
 import { GuidePreview } from './GuidePreview'
 import { WINDOW_LOOKBACK_MIN, WINDOW_FORWARD_HOURS } from './constants'
 
-const FOCUS_DEBOUNCE_MS = 300
+const FOCUS_DEBOUNCE_MS  = 300
+const HIDDEN_STOP_MS     = 20_000 // grace period before a backgrounded tab's preview is actually torn down
 
 export function GuidePage() {
   const navigate = useNavigate()
@@ -18,7 +19,10 @@ export function GuidePage() {
   const [nowMs,        setNowMs]        = useState(() => Date.now())
 
   const sessionIdRef  = useRef<string | null>(null)
+  const startingRef   = useRef<Promise<string | null> | null>(null) // in-flight startPreview() call, if any
+  const genRef        = useRef(0) // bumped to invalidate in-flight/pending work (hidden, unmount)
   const debounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hiddenStopRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const windowStartMs = useRef(Date.now() - WINDOW_LOOKBACK_MIN * 60_000).current
 
   useEffect(() => {
@@ -46,14 +50,43 @@ export function GuidePage() {
     return () => clearInterval(tick)
   }, [])
 
+  // Only one startPreview() may ever be in flight at a time — sessionIdRef
+  // isn't set until the async call resolves, so without startingRef as a
+  // synchronous guard, a second trigger arriving before a slow cold-start
+  // resolves (rapid re-focus, or a visibility toggle) would fire a second
+  // startPreview() and spawn a second ffmpeg process; only the last one to
+  // resolve would ever get tracked, orphaning the other forever.
+  //
+  // genRef guards the other direction: if we're told to stop (tab hidden)
+  // while a start is still in flight, bumping genRef lets the eventual
+  // resolution recognize it's stale and self-stop instead of resurrecting a
+  // session for a tab nobody's looking at anymore.
   const beginPreview = (channelId: string) => {
-    if (!sessionIdRef.current) {
-      startPreview(channelId).then(res => {
-        sessionIdRef.current = res.session_id
-        setManifestUrl(res.manifest_url)
-      }).catch(() => {})
-    } else {
+    const myGen = genRef.current
+    if (sessionIdRef.current) {
       switchPreview(sessionIdRef.current, channelId).catch(() => {})
+      return
+    }
+    if (startingRef.current) {
+      startingRef.current.then(sid => {
+        if (sid && genRef.current === myGen) switchPreview(sid, channelId).catch(() => {})
+      })
+      return
+    }
+    startingRef.current = startPreview(channelId).then(res => {
+      if (genRef.current !== myGen) { stopPreview(res.session_id); return null }
+      sessionIdRef.current = res.session_id
+      setManifestUrl(res.manifest_url)
+      return res.session_id
+    }).catch(() => null).finally(() => { startingRef.current = null })
+  }
+
+  const stopCurrentPreview = () => {
+    genRef.current++ // invalidate any in-flight startPreview() so it self-stops on resolve
+    if (sessionIdRef.current) {
+      stopPreview(sessionIdRef.current)
+      sessionIdRef.current = null
+      setManifestUrl(null)
     }
   }
 
@@ -62,10 +95,7 @@ export function GuidePage() {
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
     debounceRef.current = setTimeout(() => {
-      // Tab is backgrounded — the visibility effect below owns starting/
-      // stopping the session so a hidden Guide tab doesn't idle-hold a GPU
-      // encoder slot indefinitely.
-      if (document.hidden) return
+      if (document.hidden) return // visibility effect below owns hidden-tab state
       beginPreview(focusedId)
     }, FOCUS_DEBOUNCE_MS)
 
@@ -74,19 +104,25 @@ export function GuidePage() {
   }, [focusedId])
 
   // A backgrounded tab still runs its JS (hls.js keeps polling), so the
-  // session never looks idle to Hephaestus's own reaper — it'll happily hold
-  // a scarce hardware encoder slot forever if we don't explicitly stop it.
+  // session never looks idle to Hephaestus's own reaper and would hold a
+  // scarce hardware encoder slot forever without this. But a bare
+  // stop-on-hidden/start-on-visible churns a brand new ffmpeg process on
+  // every quick alt-tab (e.g. switching to a terminal and back) — so the
+  // stop is debounced with a grace period, cancelled if visibility returns
+  // first, and only actually tears the session down once the tab has been
+  // hidden for a real stretch of time.
   useEffect(() => {
     const onVisibility = () => {
       if (document.hidden) {
         if (debounceRef.current) clearTimeout(debounceRef.current)
-        if (sessionIdRef.current) {
-          stopPreview(sessionIdRef.current)
-          sessionIdRef.current = null
-          setManifestUrl(null)
-        }
-      } else if (focusedId) {
-        beginPreview(focusedId)
+        if (hiddenStopRef.current) clearTimeout(hiddenStopRef.current)
+        hiddenStopRef.current = setTimeout(stopCurrentPreview, HIDDEN_STOP_MS)
+      } else {
+        if (hiddenStopRef.current) { clearTimeout(hiddenStopRef.current); hiddenStopRef.current = null }
+        // Session (or an in-flight start for it) is still alive from before
+        // we were hidden — nothing to do. Only re-start if it was actually
+        // torn down (grace period elapsed while we were away).
+        if (focusedId && !sessionIdRef.current && !startingRef.current) beginPreview(focusedId)
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
@@ -94,7 +130,11 @@ export function GuidePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusedId])
 
-  useEffect(() => () => { if (sessionIdRef.current) stopPreview(sessionIdRef.current) }, [])
+  useEffect(() => () => {
+    if (hiddenStopRef.current) clearTimeout(hiddenStopRef.current)
+    stopCurrentPreview()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const focusedChannel = channels.find(c => c.channel_id === focusedId) ?? null
   const nowProgram = focusedId
