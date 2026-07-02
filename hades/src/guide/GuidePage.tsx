@@ -46,22 +46,52 @@ export function GuidePage() {
     return () => clearInterval(tick)
   }, [])
 
+  const beginPreview = (channelId: string) => {
+    if (!sessionIdRef.current) {
+      startPreview(channelId).then(res => {
+        sessionIdRef.current = res.session_id
+        setManifestUrl(res.manifest_url)
+      }).catch(() => {})
+    } else {
+      switchPreview(sessionIdRef.current, channelId).catch(() => {})
+    }
+  }
+
   useEffect(() => {
     if (!focusedId) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
     debounceRef.current = setTimeout(() => {
-      if (!sessionIdRef.current) {
-        startPreview(focusedId).then(res => {
-          sessionIdRef.current = res.session_id
-          setManifestUrl(res.manifest_url)
-        }).catch(() => {})
-      } else {
-        switchPreview(sessionIdRef.current, focusedId).catch(() => {})
-      }
+      // Tab is backgrounded — the visibility effect below owns starting/
+      // stopping the session so a hidden Guide tab doesn't idle-hold a GPU
+      // encoder slot indefinitely.
+      if (document.hidden) return
+      beginPreview(focusedId)
     }, FOCUS_DEBOUNCE_MS)
 
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedId])
+
+  // A backgrounded tab still runs its JS (hls.js keeps polling), so the
+  // session never looks idle to Hephaestus's own reaper — it'll happily hold
+  // a scarce hardware encoder slot forever if we don't explicitly stop it.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (debounceRef.current) clearTimeout(debounceRef.current)
+        if (sessionIdRef.current) {
+          stopPreview(sessionIdRef.current)
+          sessionIdRef.current = null
+          setManifestUrl(null)
+        }
+      } else if (focusedId) {
+        beginPreview(focusedId)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusedId])
 
   useEffect(() => () => { if (sessionIdRef.current) stopPreview(sessionIdRef.current) }, [])

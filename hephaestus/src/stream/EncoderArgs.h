@@ -5,6 +5,19 @@
 
 std::string fmtSpeed(double speed);
 
+// NVDEC decode offload — insert right before -i. Deliberately just
+// "-hwaccel cuda" without "-hwaccel_output_format cuda": the latter keeps
+// frames as CUDA hw surfaces all the way to the encoder, which needs every
+// downstream -vf filter to be CUDA-aware (scale_cuda, hwdownload/hwupload
+// bridging, etc) and would need real NVENC hardware to verify safely.
+// Plain "-hwaccel cuda" only offloads the decode step; ffmpeg copies frames
+// back to normal system memory afterward, so every existing filter/pix_fmt
+// path (VOD, live, preview) keeps working unmodified. Software decode of a
+// 1080p+ HEVC source was measured pegging 4+ CPU cores for minutes without
+// ever producing a first HLS segment — NVENC encode itself is fast; decode
+// was the actual bottleneck.
+void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel hw_accel);
+
 // Video encoder selection, shared across live-channel, offline-slate, and
 // VOD ffmpeg argument builders. Appends codec args to `a` and (for AMD,
 // which needs a CPU->VAAPI upload after any scale filter) an extra entry to
