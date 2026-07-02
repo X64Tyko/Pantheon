@@ -322,9 +322,16 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         for (auto& t : session->tracks().audio)
             tracks["audio"].push_back({{"index", t.relative_index}, {"codec", t.codec}, {"language", t.language}, {"title", t.title}, {"channels", t.channels}});
         tracks["subtitles"] = json::array();
-        for (auto& t : session->tracks().subtitles)
+        for (auto& t : session->tracks().subtitles) {
+            bool extractable = t.codec == "subrip" || t.codec == "ass" || t.codec == "ssa" ||
+                                t.codec == "mov_text" || t.codec == "webvtt" || t.codec == "text";
+            // Bitmap formats (Blu-ray/DVD/DVB) aren't extractable as text,
+            // but can be burned directly into the video instead — see
+            // VodSession.cpp's isBitmapSubtitleCodec/subtitleBurnIn.
+            bool burnIn = t.codec == "hdmv_pgs_subtitle" || t.codec == "dvd_subtitle" || t.codec == "dvb_subtitle";
             tracks["subtitles"].push_back({{"index", t.relative_index}, {"codec", t.codec}, {"language", t.language}, {"title", t.title},
-                                            {"extractable", t.codec == "subrip" || t.codec == "ass" || t.codec == "ssa" || t.codec == "mov_text" || t.codec == "webvtt" || t.codec == "text"}});
+                                            {"extractable", extractable}, {"burn_in", burnIn}});
+        }
 
         json out = {
             {"session_id",   session->sessionId()},
@@ -333,6 +340,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             {"duration_ms",  info->duration_ms},
             {"title",        info->title},
             {"tracks",       tracks},
+            {"subtitle_burned_in", session->subtitleBurnedIn()},
         };
         if (session->hasSubtitleOutput())
             out["subtitle_url"] = "/stream/vod/" + session->sessionId() + "/subs.vtt";

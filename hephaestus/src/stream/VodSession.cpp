@@ -18,11 +18,18 @@ static int64_t nowMs() {
 static constexpr int kVodHlsSegmentSecs = 6;
 
 // Text-based subtitle codecs ffmpeg can transcode to WebVTT for an HLS
-// sidecar track. Bitmap/graphic formats (PGS, DVD, DVB) aren't extractable
-// this way — out of scope for v1 (see plan).
+// sidecar track.
 static bool isTextSubtitleCodec(const std::string& codec) {
     return codec == "subrip" || codec == "ass" || codec == "ssa" ||
            codec == "mov_text" || codec == "webvtt" || codec == "text";
+}
+
+// Bitmap/graphic subtitle formats (Blu-ray/DVD/DVB) have no text to extract
+// into a sidecar — burn them directly into the video via ffmpeg's overlay
+// filter instead (see buildVodArgs' subtitleBurnIn branch). Mutually
+// exclusive with isTextSubtitleCodec.
+static bool isBitmapSubtitleCodec(const std::string& codec) {
+    return codec == "hdmv_pgs_subtitle" || codec == "dvd_subtitle" || codec == "dvb_subtitle";
 }
 
 // h264/aac is the conservative "every browser can play this without
@@ -42,6 +49,7 @@ static std::vector<std::string> buildVodArgs(
     int subtitleTrack,
     bool directPlay,
     bool subtitleOutput,
+    bool subtitleBurnIn,
     HwAccel hw_accel,
     const std::string& vaapi_device,
     HwAccel decode_hw_accel,
@@ -70,12 +78,33 @@ static std::vector<std::string> buildVodArgs(
 
     a.push_back("-i"); a.push_back(file_path);
 
-    a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:" + std::to_string(audioTrack) + "?"});
-    a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
-
     if (directPlay) {
+        a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:" + std::to_string(audioTrack) + "?"});
+        a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
         a.insert(a.end(), {"-c:v", "copy", "-c:a", "copy"});
+    } else if (subtitleBurnIn) {
+        // Bitmap subtitles (PGS/DVD/DVB) have no text to extract into a
+        // sidecar, so composite them directly onto the video instead —
+        // overlay needs two explicit inputs (video + subtitle stream),
+        // which -vf's single-input shorthand can't express, so this builds
+        // an equivalent -filter_complex graph rather than the usual
+        // -map 0:v:0? + -vf chain. ffmpeg decodes bitmap subtitle streams as
+        // a sequence of timed, transparent-background image frames —
+        // overlay composites them onto matching video frames directly, no
+        // OCR/text extraction involved. Any other video filters (scale,
+        // AMD's hwupload) chain after the overlay in the same linear graph.
+        std::vector<std::string> vfParts;
+        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs);
+        std::string filterComplex = "[0:v:0][0:s:" + std::to_string(subtitleTrack) + "]overlay";
+        for (auto& p : vfParts) filterComplex += "," + p;
+        filterComplex += "[vout]";
+        a.insert(a.end(), {"-filter_complex", filterComplex});
+        a.insert(a.end(), {"-map", "[vout]", "-map", "0:a:" + std::to_string(audioTrack) + "?"});
+        a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
+        pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/192);
     } else {
+        a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:" + std::to_string(audioTrack) + "?"});
+        a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
         std::vector<std::string> vfParts;
         pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs);
         pushVideoFilterArgs(a, vfParts);
@@ -134,12 +163,19 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
     if (audio_track < 0) audio_track = pickAudioTrack(media_info, "");
     direct_play = isDirectPlayable(media_info, audio_track);
 
-    subtitle_output = false;
+    subtitle_output  = false;
+    subtitle_burn_in = false;
     if (subtitle_track >= 0) {
         auto it = std::find_if(media_info.subtitles.begin(), media_info.subtitles.end(),
             [&](const SubtitleTrack& t) { return t.relative_index == subtitle_track; });
-        subtitle_output = it != media_info.subtitles.end() && isTextSubtitleCodec(it->codec);
+        if (it != media_info.subtitles.end()) {
+            subtitle_output  = isTextSubtitleCodec(it->codec);
+            subtitle_burn_in = isBitmapSubtitleCodec(it->codec);
+        }
     }
+    // Burning a subtitle onto the video means decoding and re-encoding it —
+    // direct play (a pure stream copy) is incompatible with that.
+    if (subtitle_burn_in) direct_play = false;
 
     auto d = dir();
     std::error_code ec;
@@ -150,7 +186,7 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
     }
 
     auto args = buildVodArgs(ffmpeg_path, file_path, position_ms, audio_track, subtitle_track,
-                              direct_play, subtitle_output, opts.hw_accel, opts.vaapi_device,
+                              direct_play, subtitle_output, subtitle_burn_in, opts.hw_accel, opts.vaapi_device,
                               opts.decode_hw_accel, opts.decodable_codecs, source_codec,
                               opts.verbose_transcode_logs, d);
 

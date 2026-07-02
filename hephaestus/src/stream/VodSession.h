@@ -57,6 +57,12 @@ public:
     bool directPlay() const { return direct_play; }
     const MediaInfo& tracks() const { return media_info; }
     bool hasSubtitleOutput() const { return subtitle_output; }
+    // True when the selected subtitle track is a bitmap format (PGS/DVD/DVB)
+    // being composited directly onto the video via ffmpeg's overlay filter,
+    // rather than extracted as a WebVTT sidecar (hasSubtitleOutput()/
+    // subtitle_url) — no separate subtitle URL exists for this case, it's
+    // baked into the HLS video segments themselves.
+    bool subtitleBurnedIn() const { return subtitle_burn_in; }
 
     // For the activity/debugging view (ActivityRouter).
     const std::string& filePath() const { return file_path; }
@@ -76,6 +82,7 @@ private:
     std::atomic<int64_t> last_touch_ms{0};
     bool          direct_play     = false;
     bool          subtitle_output = false;
+    bool          subtitle_burn_in = false;
     MediaInfo     media_info;
     std::string   file_path;
     int64_t       started_at_ms = 0;

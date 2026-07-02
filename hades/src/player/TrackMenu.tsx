@@ -46,17 +46,21 @@ export function TrackMenu({
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <button onClick={() => onSelectSubtitle(-1)} style={optionStyle(currentSubtitle < 0)}>Off</button>
-            {(tracks?.subtitles ?? []).map(t => (
-              <button
-                key={t.index}
-                onClick={() => t.extractable && onSelectSubtitle(t.index)}
-                disabled={!t.extractable}
-                style={{ ...optionStyle(t.index === currentSubtitle), ...(t.extractable ? {} : { opacity: 0.4, cursor: 'not-allowed' }) }}
-                title={t.extractable ? undefined : 'This subtitle format is not supported for streaming'}
-              >
-                {t.title || langLabel(t.language)}
-              </button>
-            ))}
+            {(tracks?.subtitles ?? []).map(t => {
+              const selectable = t.extractable || t.burn_in
+              return (
+                <button
+                  key={t.index}
+                  onClick={() => selectable && onSelectSubtitle(t.index)}
+                  disabled={!selectable}
+                  style={{ ...optionStyle(t.index === currentSubtitle), ...(selectable ? {} : { opacity: 0.4, cursor: 'not-allowed' }) }}
+                  title={!selectable ? 'This subtitle format is not supported for streaming' : t.burn_in ? 'Burned into the video — switching tracks will restart playback' : undefined}
+                >
+                  {t.title || langLabel(t.language)}
+                  {t.burn_in && <span style={metaSpanStyle}>burned-in</span>}
+                </button>
+              )
+            })}
           </div>
         )}
       </div>

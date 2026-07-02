@@ -5,7 +5,11 @@ import { authHeaders } from '../api/client'
 
 export interface VodTrackVideo { codec: string; width: number; height: number }
 export interface VodTrackAudio { index: number; codec: string; language: string; title: string; channels: number }
-export interface VodTrackSubtitle { index: number; codec: string; language: string; title: string; extractable: boolean }
+// extractable: text-based (subrip/ass/webvtt/...) — delivered as a WebVTT
+// sidecar (subtitle_url below). burn_in: bitmap-based (PGS/DVD/DVB) —
+// composited directly into the video stream, no separate URL, can't be
+// toggled off without restarting playback on a different track.
+export interface VodTrackSubtitle { index: number; codec: string; language: string; title: string; extractable: boolean; burn_in: boolean }
 export interface VodTracks { video: VodTrackVideo[]; audio: VodTrackAudio[]; subtitles: VodTrackSubtitle[] }
 
 export interface VodStartResponse {
@@ -16,6 +20,7 @@ export interface VodStartResponse {
   duration_ms:   number
   title:         string
   tracks:        VodTracks
+  subtitle_burned_in: boolean
 }
 
 export interface VodStartParams {
