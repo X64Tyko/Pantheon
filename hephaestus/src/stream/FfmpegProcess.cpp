@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <thread>
+#include <chrono>
 
 FfmpegProcess::FfmpegProcess(std::vector<std::string> args,
                               DataCallback on_data,
@@ -140,4 +142,21 @@ void FfmpegProcess::kill() {
     // Closing read ends unblocks the read() calls in reader_thread and stderr_thread
     if (stdout_fd != -1) { close(stdout_fd); stdout_fd = -1; }
     if (stderr_fd != -1) { close(stderr_fd); stderr_fd = -1; }
+
+    // Don't return until the process is actually gone. reader_thread owns
+    // the real waitpid() (reaping happens once its read() unblocks above),
+    // so poll liveness with a signal-0 probe instead of racing it for the
+    // child's exit status. A hardware encoder (NVENC/VAAPI) session isn't
+    // freed until the process really exits, and callers like
+    // PreviewSession::switchChannel() spawn a replacement immediately after
+    // kill() returns, wanting that same limited slot.
+    if (pid > 0) {
+        constexpr int kGraceMs = 2000, kPollMs = 50;
+        int waited = 0;
+        while (waited < kGraceMs && ::kill(pid, 0) == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
+            waited += kPollMs;
+        }
+        if (::kill(pid, 0) == 0) ::kill(pid, SIGKILL);
+    }
 }

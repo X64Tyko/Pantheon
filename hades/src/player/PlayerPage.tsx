@@ -148,7 +148,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
             onError={setPlayerError}
           />
           {buffering && (
-            <div style={overlayStyle}>
+            <div style={{ ...overlayStyle, pointerEvents: 'none' }}>
               <LoadingThrobber percent={bufferPercent} />
             </div>
           )}

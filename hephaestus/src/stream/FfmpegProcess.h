@@ -35,7 +35,13 @@ public:
     ~FfmpegProcess();
 
     bool start();
-    void kill(); // SIGTERM; destructor always cleans up
+    // SIGTERM, then blocks (briefly) until the process is actually gone,
+    // escalating to SIGKILL if it doesn't exit promptly. Callers that kill
+    // one session's ffmpeg and immediately spawn another for the same
+    // limited hardware resource (NVENC/VAAPI session slots) rely on this
+    // returning only once the slot is actually free. Destructor always
+    // cleans up.
+    void kill();
 
     FfmpegProcess(const FfmpegProcess&)            = delete;
     FfmpegProcess& operator=(const FfmpegProcess&) = delete;
