@@ -93,7 +93,15 @@ void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double spe
     if (loudnorm) afParts.push_back("loudnorm=I=-16:TP=-1.5:LRA=11");
     if (speed != 1.0) afParts.push_back("atempo=" + fmtSpeed(speed));
 
-    a.insert(a.end(), {"-c:a", "aac", "-b:a", std::to_string(audio_bitrate_kbps) + "k"});
+    // Force stereo: without an explicit -ac, ffmpeg preserves the source's
+    // channel count (e.g. a 5.1/7.1 theatrical mix), and browsers' MSE
+    // SourceBuffer support for multichannel AAC is far less reliable than
+    // for stereo -- if the audio SourceBuffer never successfully
+    // initializes, playback can stall entirely even though video decodes
+    // fine (MSE generally wants every active SourceBuffer ready before
+    // playback starts). Nothing watching through a browser tab does true
+    // surround passthrough anyway, so downmixing here costs nothing real.
+    a.insert(a.end(), {"-c:a", "aac", "-ac", "2", "-b:a", std::to_string(audio_bitrate_kbps) + "k"});
     if (!afParts.empty()) {
         std::string af;
         for (size_t i = 0; i < afParts.size(); ++i) { if (i) af += ","; af += afParts[i]; }
