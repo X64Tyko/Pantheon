@@ -1,8 +1,17 @@
 import { type ReactNode, useEffect, useState } from 'react'
 import { api, mediaUrl } from '../../api/client'
-import type { Episode, MediaLanguages, ScraperSearchResult, ShowDetail, MovieDetail } from '../../api/types'
+import type { Episode, MediaLanguages, ScraperSearchResult, ShowDetail, MovieDetail, VideoInfo } from '../../api/types'
 import { EpisodeShelf } from './EpisodeShelf'
 import { LanguageChips } from './LanguageChips'
+
+function formatVideoInfo(v: VideoInfo): string | null {
+  if (!v.codec && !v.height) return null
+  const parts: string[] = []
+  if (v.height) parts.push(`${v.height}p`)
+  if (v.codec)  parts.push(v.codec.toUpperCase())
+  if (v.bit_depth && v.bit_depth !== 8) parts.push(`${v.bit_depth}-bit`)
+  return parts.join(' · ')
+}
 
 interface MediaDetailHeroProps {
   id?:             string
@@ -34,20 +43,23 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
   const [loading,   setLoading]   = useState(!discoverResult)
   const [episodes,  setEpisodes]  = useState<Episode[]>([])
   const [languages, setLanguages] = useState<MediaLanguages | null>(null)
+  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
 
   useEffect(() => {
     if (discoverResult) return
     if (!id || !content_type) return
     setLoading(true)
-    setShow(null); setMovie(null); setEpisodes([]); setLanguages(null)
+    setShow(null); setMovie(null); setEpisodes([]); setLanguages(null); setVideoInfo(null)
 
     if (content_type === 'show') {
       api.getShow(id).then(setShow).finally(() => setLoading(false))
       api.getEpisodes(id).then(setEpisodes).catch(() => {})
       api.getShowLanguages(id).then(setLanguages).catch(() => {})
+      api.getShowVideoInfo(id).then(setVideoInfo).catch(() => {})
     } else {
       api.getMovie(id).then(setMovie).finally(() => setLoading(false))
       api.getMovieLanguages(id).then(setLanguages).catch(() => {})
+      api.getMovieVideoInfo(id).then(setVideoInfo).catch(() => {})
     }
   }, [id, content_type, discoverResult])
 
@@ -144,6 +156,9 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
                   </span>
                 )}
                 <span style={metaChip}>{contentType === 'show' ? 'series' : 'film'}</span>
+                {videoInfo && formatVideoInfo(videoInfo) && (
+                  <span style={metaChip}>{formatVideoInfo(videoInfo)}</span>
+                )}
                 {discoverResult && (
                   <span style={{
                     ...metaChip, color: srcColor,

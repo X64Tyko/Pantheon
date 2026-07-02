@@ -42,4 +42,10 @@ public:
 
     // Remove sessions that have been stopped.
     void reap();
+
+    // Snapshot of currently-active sessions, for the activity/debugging view
+    // (ActivityRouter). Copies the shared_ptrs out under the lock rather
+    // than returning a reference, so the caller can inspect them without
+    // holding mtx.
+    std::vector<std::shared_ptr<ChannelSession>> listActive();
 };

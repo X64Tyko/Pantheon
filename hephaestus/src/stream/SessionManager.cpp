@@ -104,3 +104,11 @@ void SessionManager::reap() {
         else ++it;
     }
 }
+
+std::vector<std::shared_ptr<ChannelSession>> SessionManager::listActive() {
+    std::lock_guard<std::mutex> lock(mtx);
+    std::vector<std::shared_ptr<ChannelSession>> out;
+    for (auto& [id, session] : sessions)
+        if (session->isActive()) out.push_back(session);
+    return out;
+}

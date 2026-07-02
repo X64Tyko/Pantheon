@@ -49,3 +49,30 @@ export function stopVodPlayback(sessionId: string) {
 export function liveChannelManifestUrl(channelId: string): string {
   return `/stream/hls/channels/${channelId}/playlist.m3u8`
 }
+
+// Activity page "Now Playing" — see hephaestus/src/api/ActivityRouter.cpp.
+export interface ActivitySession {
+  id:              string
+  kind:            'channel' | 'vod'
+  title:           string
+  file_path:       string
+  hw_accel:        string
+  decode_hw_accel: string
+  started_at_ms:   number
+  direct_play?:    boolean
+}
+
+export async function getActivitySessions(): Promise<ActivitySession[]> {
+  const res = await fetch('/stream/activity/sessions', { headers: authHeaders() })
+  if (!res.ok) throw new Error(`activity sessions: ${res.statusText}`)
+  return res.json()
+}
+
+// Polled, not a live stream — the shared log buffer isn't partitioned per
+// session, so this is a filtered snapshot of the most recent matching lines,
+// not a tail -f. Call on an interval from the UI.
+export async function getSessionLogs(sessionId: string, lines = 300): Promise<string[]> {
+  const res = await fetch(`/stream/activity/sessions/${sessionId}/logs?lines=${lines}`, { headers: authHeaders() })
+  if (!res.ok) throw new Error(`session logs: ${res.statusText}`)
+  return res.json()
+}

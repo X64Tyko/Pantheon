@@ -126,6 +126,8 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
         return false;
     }
     media_info = *info;
+    this->file_path = file_path;
+    started_at_ms   = nowMs();
     std::string source_codec = media_info.video.empty() ? "" :
         decodeCodecKey(media_info.video[0].codec, media_info.video[0].bit_depth);
 

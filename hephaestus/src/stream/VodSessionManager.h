@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 // Keyed by generated session_id, not channel_id — each VOD viewer gets an
 // independent session (unlike SessionManager's per-channel shared sessions).
@@ -25,6 +26,10 @@ public:
                                         int audio_track, int subtitle_track);
     std::shared_ptr<VodSession> get(const std::string& sessionId);
     void stop(const std::string& sessionId);
+
+    // Snapshot of currently-active sessions, for the activity/debugging view
+    // (ActivityRouter).
+    std::vector<std::shared_ptr<VodSession>> listActive();
 
 private:
     std::string      ffmpeg_path;

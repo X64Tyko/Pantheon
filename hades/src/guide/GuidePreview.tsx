@@ -31,6 +31,7 @@ export function GuidePreview({ channel, nowProgram, manifestUrl, onWatch }: Guid
             videoRef={videoRef}
             manifestUrl={manifestUrl}
             subtitleUrl={null}
+            isLive
             autoPlay
             onTimeUpdate={() => {}}
             onEnded={() => {}}

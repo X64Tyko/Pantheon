@@ -82,6 +82,14 @@ void VodSessionManager::stop(const std::string& sessionId) {
     session->stop();
 }
 
+std::vector<std::shared_ptr<VodSession>> VodSessionManager::listActive() {
+    std::lock_guard<std::mutex> lock(mtx);
+    std::vector<std::shared_ptr<VodSession>> out;
+    for (auto& [id, session] : sessions)
+        if (session->isActive()) out.push_back(session);
+    return out;
+}
+
 void VodSessionManager::reapLoop() {
     while (!stop_reaper.load()) {
         for (int i = 0; i < 5 && !stop_reaper.load(); ++i)

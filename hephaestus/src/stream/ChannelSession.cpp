@@ -279,6 +279,7 @@ std::optional<double> ChannelSession::computeSpeed(int64_t rawDriftMs, int64_t d
 bool ChannelSession::start() {
     active    = true;
     in_splash = false;
+    session_start_ms = nowMs();
 
     auto dir = hlsDir();
     if (!dir.empty()) {

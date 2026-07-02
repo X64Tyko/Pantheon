@@ -143,6 +143,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
             videoRef={videoRef}
             manifestUrl={session.manifestUrl}
             subtitleUrl={session.subtitleUrl}
+            isLive={session.isLive}
             onTimeUpdate={(ms) => setCurrentMs(ms)}
             onEnded={() => navigate(-1)}
             onError={setPlayerError}

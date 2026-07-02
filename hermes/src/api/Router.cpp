@@ -317,6 +317,14 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
     svr.Post(R"(/stream/vod/.*)",     authedHephaestusProxy);
     svr.Post(R"(/stream/preview/.*)", authedHephaestusProxy);
 
+    // GET /stream/activity/... (Hades' Activity page "Now Playing" panel) —
+    // authenticated for the same reason as the POST routes above: unlike a
+    // segment/manifest fetch for a stream ID the caller already knows, this
+    // exposes what *other* users are currently watching plus internal file
+    // paths and server log lines, which is a step beyond what an
+    // unauthenticated GET route should hand out.
+    svr.Get(R"(/stream/activity/.*)", authedHephaestusProxy);
+
     // ── M3U playlist ──────────────────────────────────────────────────────────
     svr.Get("/playlist.m3u", [&kairos](const httplib::Request& req, httplib::Response& res) {
         auto base = baseUrl(req);

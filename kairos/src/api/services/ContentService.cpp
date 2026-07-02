@@ -68,6 +68,35 @@ nlohmann::json probeLanguagesCached(const std::string& cacheKey, const std::stri
 	return result;
 }
 
+// Same in-memory-cache-in-front-of-ffprobe shape as probeLanguagesCached
+// above — a file's codec/resolution/bit-depth never change either.
+struct ItemVideoInfoCache {
+	std::mutex mtx;
+	std::unordered_map<std::string, nlohmann::json> data;
+};
+ItemVideoInfoCache g_item_videoinfo_cache;
+
+nlohmann::json probeVideoInfoCached(const std::string& cacheKey, const std::string& filePath, ConfStore& conf) {
+	{
+		std::lock_guard<std::mutex> lk(g_item_videoinfo_cache.mtx);
+		auto it = g_item_videoinfo_cache.data.find(cacheKey);
+		if (it != g_item_videoinfo_cache.data.end()) return it->second;
+	}
+
+	nlohmann::json result = {{"codec", ""}, {"width", 0}, {"height", 0}, {"bit_depth", 8}};
+	if (!filePath.empty()) {
+		auto info = probeVideoInfo(conf.applyPathMap(filePath));
+		result["codec"]     = info.codec;
+		result["width"]     = info.width;
+		result["height"]    = info.height;
+		result["bit_depth"] = info.bit_depth;
+	}
+
+	std::lock_guard<std::mutex> lk(g_item_videoinfo_cache.mtx);
+	g_item_videoinfo_cache.data[cacheKey] = result;
+	return result;
+}
+
 } // namespace
 
 void ContentService::proxyImage(const Req& req,
@@ -285,6 +314,23 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			route::logErr("GET /api/shows/" + id + "/languages", e);
 		}
 		route::ok(res, probeLanguagesCached("show:" + id, path, conf_).dump());
+	});
+
+	// Codec/resolution/bit-depth, probed from the same representative
+	// episode file the languages endpoint uses, same in-memory cache shape.
+	svr.Get("/api/shows/:id/videoinfo", [this](const Req& req, Res& res) {
+		auto id = req.path_params.at("id");
+		std::string path;
+		try {
+			SQLite::Statement q(db_.get(),
+				"SELECT file_path FROM episode WHERE show_id = ? AND file_path != '' "
+				"ORDER BY season, episode LIMIT 1");
+			q.bind(1, id);
+			if (q.executeStep()) path = q.getColumn(0).getString();
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/shows/" + id + "/videoinfo", e);
+		}
+		route::ok(res, probeVideoInfoCached("show:" + id, path, conf_).dump());
 	});
 
 	svr.Get("/api/episodes", [this](const Req& req, Res& res) {
@@ -549,5 +595,18 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			route::logErr("GET /api/movies/" + id + "/languages", e);
 		}
 		route::ok(res, probeLanguagesCached("movie:" + id, path, conf_).dump());
+	});
+
+	svr.Get("/api/movies/:id/videoinfo", [this](const Req& req, Res& res) {
+		auto id = req.path_params.at("id");
+		std::string path;
+		try {
+			SQLite::Statement q(db_.get(), "SELECT file_path FROM movie WHERE movie_id = ?");
+			q.bind(1, id);
+			if (q.executeStep()) path = q.getColumn(0).getString();
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/movies/" + id + "/videoinfo", e);
+		}
+		route::ok(res, probeVideoInfoCached("movie:" + id, path, conf_).dump());
 	});
 }

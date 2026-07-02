@@ -5,13 +5,14 @@ interface VideoPlayerProps {
   videoRef:     RefObject<HTMLVideoElement>
   manifestUrl:  string | null
   subtitleUrl:  string | null
+  isLive:       boolean
   autoPlay?:    boolean
   onTimeUpdate: (currentMs: number, durationMs: number) => void
   onEnded:      () => void
   onError:      (message: string) => void
 }
 
-export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, autoPlay = true, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
+export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPlay = true, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
   useEffect(() => {
     const video = videoRef.current
     if (!video || !manifestUrl) return
@@ -19,7 +20,22 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, autoPlay = tru
     let hls: Hls | null = null
 
     if (Hls.isSupported()) {
-      hls = new Hls()
+      // VOD sessions (movies/episodes) are served as a growing HLS "event"
+      // playlist while Hephaestus is still transcoding (VodSession.cpp) —
+      // no #EXT-X-ENDLIST until the whole file finishes. hls.js decides
+      // "is this live" purely from ENDLIST absence, not the EVENT/live
+      // distinction the HLS spec itself makes, so without this it defaults
+      // to live-edge start behavior (liveSyncDurationCount segments back
+      // from whatever's newest). That's invisible for a fast transcode
+      // where segments arrive well ahead of playback, but for a slow one
+      // the player keeps chasing a moving target it can never quite catch
+      // and stalls indefinitely with no fatal error — "stuck on the
+      // throbber." Forcing startPosition 0 makes VOD always start from the
+      // beginning regardless of how far transcoding has progressed. True
+      // live channels keep hls.js's default (live-edge sync is correct
+      // there — that playlist is a genuinely rolling/deleting window, not
+      // an append-only one).
+      hls = new Hls(isLive ? {} : { startPosition: 0 })
       hls.loadSource(manifestUrl)
       hls.attachMedia(video)
       hls.on(Hls.Events.ERROR, (_evt, data) => {

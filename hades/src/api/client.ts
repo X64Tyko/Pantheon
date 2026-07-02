@@ -3,12 +3,13 @@ import type {
   AuthResponse,
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
   Channel, ContentRequest, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
+  ActivitySession,
   Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, MediaLanguages, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
-  Show, ShowDetail, Source, SourceType, User, WatchProgress,
+  Show, ShowDetail, Source, SourceType, User, VideoInfo, WatchProgress,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -271,6 +272,8 @@ export const api = {
   updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
   getShowLanguages:  (id: string) => request<MediaLanguages>('GET', `/shows/${id}/languages`),
   getMovieLanguages: (id: string) => request<MediaLanguages>('GET', `/movies/${id}/languages`),
+  getShowVideoInfo:  (id: string) => request<VideoInfo>('GET', `/shows/${id}/videoinfo`),
+  getMovieVideoInfo: (id: string) => request<VideoInfo>('GET', `/movies/${id}/videoinfo`),
 
   // Channel bumpers
   getBumpers:    (channelId: string)                                                           => request<ChannelBumper[]>('GET',    `/channels/${channelId}/bumpers`),

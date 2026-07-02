@@ -188,6 +188,71 @@ StreamLanguages probeStreamLanguages(const std::string& file_path) {
     return result;
 }
 
+namespace {
+// ffprobe reports "bits_per_raw_sample" as a JSON string (e.g. "10"), and
+// not every container/muxer populates it reliably — pix_fmt's "10le"/"12le"
+// suffix (e.g. "yuv420p10le") is a solid fallback when it's absent. Same
+// approach as Hephaestus's own MediaProbe (src/stream/MediaProbe.cpp) —
+// kept as a separate copy since these are two different services/binaries,
+// not shared code.
+int parseBitDepth(const json& s) {
+    if (s.contains("bits_per_raw_sample")) {
+        try {
+            auto raw = s["bits_per_raw_sample"].get<std::string>();
+            if (!raw.empty()) return std::stoi(raw);
+        } catch (...) {}
+    }
+    std::string pix_fmt = s.value("pix_fmt", "");
+    if (pix_fmt.find("10le") != std::string::npos || pix_fmt.find("10be") != std::string::npos) return 10;
+    if (pix_fmt.find("12le") != std::string::npos || pix_fmt.find("12be") != std::string::npos) return 12;
+    return 8;
+}
+} // namespace
+
+VideoInfo probeVideoInfo(const std::string& file_path) {
+    const std::string cmd =
+        "timeout -k 2 15 ffprobe -v quiet -print_format json -show_streams "
+        + shellQuote(file_path) + " 2>/dev/null";
+    DLOG << "[probe] videoinfo cmd: " << cmd << '\n';
+    const auto t0 = std::chrono::steady_clock::now();
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        DLOG << "[probe] videoinfo popen failed: " << file_path << '\n';
+        return {};
+    }
+    std::string out;
+    char buf[8192];
+    while (fgets(buf, sizeof(buf), pipe))
+        out += buf;
+    pclose(pipe);
+    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
+    if (out.empty()) {
+        DLOG << "[probe] videoinfo done in " << ms << "ms → no output: " << file_path << '\n';
+        return {};
+    }
+
+    VideoInfo result;
+    try {
+        auto j = json::parse(out);
+        if (!j.contains("streams")) return result;
+        for (const auto& s : j["streams"]) {
+            if (s.value("codec_type", "") != "video") continue;
+            result.codec     = s.value("codec_name", "");
+            result.width     = s.value("width", 0);
+            result.height    = s.value("height", 0);
+            result.bit_depth = parseBitDepth(s);
+            break; // first video stream only
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[probe] videoinfo parse error for " << file_path
+                  << ": " << e.what() << '\n';
+    }
+    DLOG << "[probe] videoinfo done in " << ms << "ms → " << result.codec << " "
+         << result.width << "x" << result.height << " " << result.bit_depth
+         << "-bit: " << file_path << '\n';
+    return result;
+}
+
 int64_t validateDurationMs(int64_t dur, const std::string& file_path) {
     if (dur >= kMinMs && dur <= kMaxMs)
         return dur;

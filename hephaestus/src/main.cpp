@@ -1,4 +1,5 @@
 #include "Config.h"
+#include "api/ActivityRouter.h"
 #include "api/Router.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
@@ -84,6 +85,7 @@ int main(int argc, char* argv[]) {
     svr.new_task_queue = [] { return new httplib::ThreadPool(16); };
 
     registerRoutes(svr, sessions, vodSessions, previewSessions, kairos, log_buffer, cfg);
+    registerActivityRoutes(svr, sessions, vodSessions, log_buffer);
 
     std::cout << "[hephaestus] listening on :" << cfg.port
               << "  kairos=" << cfg.kairos_url

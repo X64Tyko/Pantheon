@@ -95,6 +95,24 @@ export interface MediaLanguages {
   subtitle: string[]
 }
 
+export interface VideoInfo {
+  codec:     string
+  width:     number
+  height:    number
+  bit_depth: number
+}
+
+export interface ActivitySession {
+  id:              string
+  kind:            'channel' | 'vod'
+  title:           string
+  file_path:       string
+  hw_accel:        string
+  decode_hw_accel: string
+  started_at_ms:   number
+  direct_play?:    boolean // vod only
+}
+
 // ── List-view types (minimal) ────────────────────────────────────────────────
 
 export type MatchStatus = 'matched' | 'uncertain' | 'unmatched' | 'unscraped'

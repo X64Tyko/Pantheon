@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { api } from '../api/client'
 import { sourceStore, systemStore, statusStore } from '../stores'
 import type { LogEntry } from '../stores'
+import { NowPlayingPanel } from '../components/activity/NowPlayingPanel'
 
 function tagColor(line: string): string {
   if (/^\[error\]/i.test(line)) return 'text-red-400'
@@ -134,6 +135,8 @@ export default observer(function ActivityPage() {
           </div>
         )}
       </div>
+
+      <NowPlayingPanel />
 
       {/* Log viewer — fills remaining height */}
       <div className="rounded-lg border border-violet-900/50 bg-zinc-900 overflow-hidden"

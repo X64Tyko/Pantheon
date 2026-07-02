@@ -73,6 +73,7 @@ class ChannelSession {
     KairosNowResponse current_item;
     std::chrono::steady_clock::time_point item_start;
     int64_t current_item_offset_ms = 0; // offset into current_item's own file we started at
+    int64_t session_start_ms = 0; // wall-clock start() time, for the activity view
 
     std::atomic<bool> active{false};
     std::atomic<bool> in_splash{false}; // true while showing the connect-time logo splash
@@ -138,4 +139,15 @@ public:
 
     bool isActive() const { return active.load(); }
     const std::string& channelId() const { return channel_id; }
+
+    // Best-effort snapshot for the activity/debugging view (ActivityRouter) —
+    // current_item isn't otherwise synchronized (it's mutated on the
+    // scheduling thread during transition()), so a slightly stale read here
+    // is an accepted tradeoff for a monitoring-only view, not a correctness
+    // path.
+    const std::string& currentTitle() const    { return current_item.title; }
+    const std::string& currentFilePath() const { return current_item.file_path; }
+    HwAccel hwAccel() const       { return opts.hw_accel; }
+    HwAccel decodeHwAccel() const { return opts.decode_hw_accel; }
+    int64_t sessionStartMs() const { return session_start_ms; }
 };

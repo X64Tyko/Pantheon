@@ -58,6 +58,12 @@ public:
     const MediaInfo& tracks() const { return media_info; }
     bool hasSubtitleOutput() const { return subtitle_output; }
 
+    // For the activity/debugging view (ActivityRouter).
+    const std::string& filePath() const { return file_path; }
+    HwAccel hwAccel() const       { return opts.hw_accel; }
+    HwAccel decodeHwAccel() const { return opts.decode_hw_accel; }
+    int64_t startedAtMs() const   { return started_at_ms; }
+
 private:
     std::string   session_id;
     std::string   ffmpeg_path;
@@ -71,6 +77,8 @@ private:
     bool          direct_play     = false;
     bool          subtitle_output = false;
     MediaInfo     media_info;
+    std::string   file_path;
+    int64_t       started_at_ms = 0;
 
     void onExit(int code);
 };

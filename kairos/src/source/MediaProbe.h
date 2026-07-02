@@ -27,3 +27,13 @@ std::vector<Chapter> probeChapters(const std::string& file_path);
 // Returns empty lists if ffprobe fails or the file has no tagged streams.
 struct StreamLanguages { std::vector<std::string> audio, subtitle; };
 StreamLanguages probeStreamLanguages(const std::string& file_path);
+
+// Video codec/resolution/bit-depth of the first video stream, for display on
+// library detail panels (distinct from Hephaestus's own MediaProbe, which
+// serves live transcode-time decisions — this is purely informational).
+// bit_depth defaults to 8 when ffprobe reports neither bits_per_raw_sample
+// nor a pix_fmt with a 10le/12le suffix. Returns a zero-valued struct
+// (empty codec, 0x0, bit_depth 8) if ffprobe fails or the file has no video
+// stream.
+struct VideoInfo { std::string codec; int width = 0, height = 0, bit_depth = 8; };
+VideoInfo probeVideoInfo(const std::string& file_path);

@@ -41,7 +41,20 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
     switch (hw_accel) {
         case HwAccel::nvidia:
             a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
-                                "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p"});
+                                "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p",
+                                // Without this, h264_nvenc can silently treat a
+                                // -force_key_frames request as an ordinary frame
+                                // its own internal GOP logic is still free to
+                                // reorder/skip, falling back to its default
+                                // ~250-frame GOP instead of the caller's
+                                // keyframeIntervalSecs -- HLS segments then land
+                                // at that default interval (e.g. 10.4s at 24fps)
+                                // instead of near -hls_time. Confirmed against a
+                                // real VOD session: #EXTINF was landing at
+                                // exactly 250 frames' worth of playback time.
+                                // -forced-idr makes NVENC emit a true IDR frame
+                                // for every forced keyframe instead.
+                                "-forced-idr", "1"});
             break;
         case HwAccel::amd:
             vfParts.push_back("format=nv12,hwupload");
