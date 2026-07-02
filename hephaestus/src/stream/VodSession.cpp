@@ -60,6 +60,10 @@ static std::vector<std::string> buildVodArgs(
         a.push_back("-ss"); a.push_back(ss.str());
     }
 
+    // Direct-play is a pure stream copy — nothing gets decoded, so a decode
+    // hwaccel would be a pointless no-op at best.
+    if (!directPlay) pushHwAccelDecodeArgs(a, hw_accel);
+
     a.push_back("-i"); a.push_back(file_path);
 
     a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:" + std::to_string(audioTrack) + "?"});

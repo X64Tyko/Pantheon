@@ -45,6 +45,7 @@ std::vector<std::string> buildPreviewArgs(const std::string& ffmpeg_path,
         ss << std::fixed << std::setprecision(3) << (startOffsetMs / 1000.0);
         a.insert(a.end(), {"-ss", ss.str()});
     }
+    pushHwAccelDecodeArgs(a, hw_accel);
     a.insert(a.end(), {"-i", item.file_path});
     a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:0?", "-dn", "-map_chapters", "-1"});
 

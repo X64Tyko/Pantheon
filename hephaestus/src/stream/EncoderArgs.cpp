@@ -8,6 +8,10 @@ std::string fmtSpeed(double speed) {
     return ss.str();
 }
 
+void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel hw_accel) {
+    if (hw_accel == HwAccel::nvidia) a.insert(a.end(), {"-hwaccel", "cuda"});
+}
+
 void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
                            HwAccel hw_accel, int keyframeIntervalSecs) {
     switch (hw_accel) {

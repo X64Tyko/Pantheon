@@ -114,6 +114,8 @@ static std::vector<std::string> buildArgs(
         a.push_back("-ss"); a.push_back(ss.str());
     }
 
+    pushHwAccelDecodeArgs(a, hw_accel);
+
     a.push_back("-i"); a.push_back(item.file_path);
 
     // Stream selection: first video (optional), selected audio track (optional)
