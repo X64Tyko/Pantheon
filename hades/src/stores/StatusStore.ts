@@ -1,7 +1,7 @@
 import { makeAutoObservable, runInAction } from 'mobx'
 import { api } from '../api/client'
 
-class StatusStore {
+export class StatusStore {
   syncing      = false
   matching     = false
   syncDebug    = false

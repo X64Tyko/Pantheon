@@ -239,7 +239,10 @@ describe('SourceStore', () => {
       mockApi.addLibrary.mockResolvedValue({ library_id: 'lib2' })
       mockApi.getLibraries.mockResolvedValue([...LIBS, { ...LIB_1, library_id: 'lib2', external_lib_id: 'extB' }])
       await store.addLibrary('s1', 'extB', 'TV', 'show')
-      expect(mockApi.addLibrary).toHaveBeenCalledWith('s1', { external_lib_id: 'extB', display_name: 'TV', library_type: 'show' })
+      expect(mockApi.addLibrary).toHaveBeenCalledWith('s1', {
+        external_lib_id: 'extB', display_name: 'TV', library_type: 'show',
+        preferred_scraper: '', preferred_language: '',
+      })
       expect(mockApi.getLibraries).toHaveBeenCalledWith('s1')
       expect(store.libraries).toHaveLength(2)
     })

@@ -7,7 +7,7 @@ const DENSITY_KEY = 'hds-library-density'
 const SIDEBAR_KEY = 'hds-library-sidebar'
 const PAGE_SIZE = 48
 
-class LibraryStore {
+export class LibraryStore {
   libraries:    LibraryWithSource[] = []
   shows:        Show[] = []
   movies:       Movie[] = []

@@ -10,6 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    setupFiles: ['../momus/hades/setup.ts'],
     include: ['../momus/hades/**/*.test.ts', '../momus/hades/**/*.test.tsx'],
   },
 })

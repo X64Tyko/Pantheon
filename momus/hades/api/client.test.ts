@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { api } from '@/api/client'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { api, authHeaders, setSurface, TOKEN_KEY } from '@/api/client'
 
 // ---------------------------------------------------------------------------
 // Mock global fetch for all tests in this file
@@ -160,20 +160,21 @@ describe('api client — query string builder (qs)', () => {
 describe('api client — EPG endpoints', () => {
   beforeEach(() => mockFetch.mockReset())
 
-  it('previewChannelEpg builds correct URL with hours and seed', async () => {
+  it('previewChannelEpg POSTs hours and seed in the JSON body, not the URL', async () => {
     respondOk([])
     await api.previewChannelEpg('c1', 4, 42)
-    const [url] = mockFetch.mock.calls[0]
-    expect(url).toContain('/api/channels/c1/epg/preview')
-    expect(url).toContain('hours=4')
-    expect(url).toContain('seed=42')
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('/api/channels/c1/epg/preview')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({ hours: 4, seed: 42 })
   })
 
-  it('previewChannelEpg emits no query string when no params given', async () => {
+  it('previewChannelEpg omits hours/seed/blocks from the body when not given', async () => {
     respondOk([])
     await api.previewChannelEpg('c1')
-    const [url] = mockFetch.mock.calls[0]
+    const [url, opts] = mockFetch.mock.calls[0]
     expect(url).toBe('/api/channels/c1/epg/preview')
+    expect(JSON.parse(opts.body)).toEqual({})
   })
 
   it('getChannelEpg appends hours when provided', async () => {
@@ -181,5 +182,75 @@ describe('api client — EPG endpoints', () => {
     await api.getChannelEpg('c1', 12)
     const [url] = mockFetch.mock.calls[0]
     expect(url).toBe('/api/channels/c1/epg?hours=12')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// authHeaders() / X-Pantheon-Surface — used directly by playbackApi.ts's
+// /stream/* fetches (outside request()'s /api prefix), and folded into every
+// request() call via authHeaders() itself (see client.ts).
+// ---------------------------------------------------------------------------
+
+describe('api client — auth headers and X-Pantheon-Surface', () => {
+  beforeEach(() => mockFetch.mockReset())
+  afterEach(() => {
+    localStorage.removeItem(TOKEN_KEY)
+    setSurface(null) // module-level state — must not leak into other tests
+  })
+
+  it('authHeaders() is empty with no token and no active surface', () => {
+    expect(authHeaders()).toEqual({})
+  })
+
+  it('authHeaders() includes a bearer token when one is stored', () => {
+    localStorage.setItem(TOKEN_KEY, 'tok123')
+    expect(authHeaders()).toEqual({ Authorization: 'Bearer tok123' })
+  })
+
+  it('authHeaders() includes X-Pantheon-Surface once setSurface is called', () => {
+    setSurface('tv')
+    expect(authHeaders()).toMatchObject({ 'X-Pantheon-Surface': 'tv' })
+  })
+
+  it('setSurface(null) clears the header again', () => {
+    setSurface('tv')
+    setSurface(null)
+    expect(authHeaders()).not.toHaveProperty('X-Pantheon-Surface')
+  })
+
+  it('request() sends no Authorization header when no token is set', async () => {
+    respondOk([])
+    await api.getChannels()
+    const [, opts] = mockFetch.mock.calls[0]
+    expect(opts.headers?.Authorization).toBeUndefined()
+  })
+
+  it('request() sends the bearer token once one is stored', async () => {
+    localStorage.setItem(TOKEN_KEY, 'tok123')
+    respondOk([])
+    await api.getChannels()
+    const [, opts] = mockFetch.mock.calls[0]
+    expect(opts.headers.Authorization).toBe('Bearer tok123')
+  })
+
+  it('request() carries X-Pantheon-Surface while the /tv surface is active', async () => {
+    setSurface('tv')
+    respondOk([])
+    await api.getChannels()
+    const [, opts] = mockFetch.mock.calls[0]
+    expect(opts.headers['X-Pantheon-Surface']).toBe('tv')
+  })
+
+  it('dispatches kairos:unauthorized on a 401 response', async () => {
+    const handler = vi.fn()
+    window.addEventListener('kairos:unauthorized', handler)
+    mockFetch.mockResolvedValueOnce({
+      ok: false, status: 401, statusText: 'Unauthorized',
+      text: () => Promise.resolve(JSON.stringify({ error: 'Unauthorized' })),
+      json: () => Promise.resolve({ error: 'Unauthorized' }),
+    })
+    await expect(api.getChannels()).rejects.toThrow()
+    expect(handler).toHaveBeenCalledTimes(1)
+    window.removeEventListener('kairos:unauthorized', handler)
   })
 })
