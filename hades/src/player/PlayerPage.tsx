@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, mediaUrl, channelLogoUrl } from '../api/client'
 import type { Channel } from '../api/types'
 import { usePlaybackSession, type PlaybackTarget } from './usePlaybackSession'
 import { VideoPlayer } from './VideoPlayer'
@@ -8,6 +8,8 @@ import { PlayerControls } from './PlayerControls'
 import { TrackMenu } from './TrackMenu'
 import { SettingsMenu } from './SettingsMenu'
 import { LoadingThrobber } from './LoadingThrobber'
+import { useNavBack } from '../nav/back'
+import { useCastSession } from '../cast/useCastSession'
 
 const TARGET_BUFFER_SECS = 6 // matches the HLS segment length — "fully buffered" for throbber purposes
 
@@ -42,6 +44,8 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const [bufferPercent, setBufferPercent] = useState(0)
 
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const castSession = useCastSession()
+  const isCasting = castSession.connected
 
   useEffect(() => {
     const video = videoRef.current
@@ -95,7 +99,31 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     return () => { if (idleTimer.current) clearTimeout(idleTimer.current) }
   }, [resetIdleTimer])
 
+  useNavBack(useCallback(() => navigate(-1), [navigate]))
+
+  const title = kind === 'channel' ? (liveChannel?.name ?? 'Live TV') : session.title
+
+  // Fires once per connect, not on every manifestUrl change — casting mid-
+  // track-switch isn't supported in v1 (see castMedia.ts), so there's no
+  // "reload the receiver" path to wire up here, only the initial handoff.
+  useEffect(() => {
+    if (!isCasting || !session.manifestUrl) return
+    castSession.load({
+      manifestUrl: session.manifestUrl,
+      isLive:      session.isLive,
+      currentMs,
+      metadata: {
+        title:    title,
+        imageUrl: kind === 'movie' ? mediaUrl(`/api/movies/${targetId}/thumb`)
+                : kind === 'channel' ? channelLogoUrl(targetId)
+                : undefined, // episode: no cheap thumb URL without an extra fetch — v1 scope
+      },
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCasting])
+
   const handleSeek = (ms: number) => {
+    if (isCasting) { castSession.seek(ms); setCurrentMs(ms); return }
     const video = videoRef.current
     if (!video) return
     const targetSec = ms / 1000
@@ -113,8 +141,6 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
   const handleSelectAudio    = (index: number) => session.reload({ positionMs: currentMs, audioTrack: index })
   const handleSelectSubtitle = (index: number) => session.reload({ positionMs: currentMs, subtitleTrack: index })
-
-  const title = kind === 'channel' ? (liveChannel?.name ?? 'Live TV') : session.title
 
   return (
     <div
@@ -139,16 +165,23 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
       {!session.loading && !session.error && session.manifestUrl && (
         <>
-          <VideoPlayer
-            videoRef={videoRef}
-            manifestUrl={session.manifestUrl}
-            subtitleUrl={session.subtitleUrl}
-            isLive={session.isLive}
-            onTimeUpdate={(ms) => setCurrentMs(ms)}
-            onEnded={() => navigate(-1)}
-            onError={setPlayerError}
-          />
-          {buffering && (
+          {isCasting ? (
+            // The local hls.js instance only exists inside VideoPlayer — not
+            // rendering it while casting tears it down via its own unmount
+            // cleanup (hls?.destroy()), same as navigating away normally.
+            <div style={castingBackdropStyle} />
+          ) : (
+            <VideoPlayer
+              videoRef={videoRef}
+              manifestUrl={session.manifestUrl}
+              subtitleUrl={session.subtitleUrl}
+              isLive={session.isLive}
+              onTimeUpdate={(ms) => setCurrentMs(ms)}
+              onEnded={() => navigate(-1)}
+              onError={setPlayerError}
+            />
+          )}
+          {buffering && !isCasting && (
             <div style={{ ...overlayStyle, pointerEvents: 'none' }}>
               <LoadingThrobber percent={bufferPercent} />
             </div>
@@ -158,13 +191,24 @@ export function PlayerPage({ kind }: PlayerPageProps) {
               videoRef={videoRef}
               title={title}
               isLive={session.isLive}
-              currentMs={currentMs}
-              durationMs={session.durationMs}
+              currentMs={isCasting ? castSession.currentMs : currentMs}
+              durationMs={isCasting ? castSession.durationMs : session.durationMs}
               onSeek={handleSeek}
               onBack={() => navigate(-1)}
               onOpenTracks={() => setMenu(m => m === 'tracks' ? null : 'tracks')}
               onOpenSettings={() => setMenu(m => m === 'settings' ? null : 'settings')}
               showSettings={!session.isLive}
+              controlsVisible={controlsVisible}
+              onActivity={resetIdleTimer}
+              cast={{
+                available:  castSession.available,
+                connected:  castSession.connected,
+                deviceName: castSession.deviceName,
+                paused:     castSession.paused,
+                togglePlay: castSession.togglePlay,
+                endSession: castSession.endSession,
+                onRequestCast: () => cast.framework.CastContext.getInstance().requestSession().catch(() => {}),
+              }}
             />
             {menu === 'tracks' && (
               <TrackMenu
@@ -196,6 +240,10 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 // in overlayStyle, a separate absolutely-positioned layer, not here.
 const pageStyle: React.CSSProperties = {
   position: 'fixed', inset: 0, background: '#000', zIndex: 100,
+}
+
+const castingBackdropStyle: React.CSSProperties = {
+  width: '100%', height: '100%', background: '#000',
 }
 
 const overlayStyle: React.CSSProperties = {

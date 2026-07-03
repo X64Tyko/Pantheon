@@ -612,6 +612,11 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
                   LIMIT 1), '') AS source_base_url)";
     const std::string order_clause =
         (p.sort == "recently_added") ? " ORDER BY s.rowid DESC" :
+        (p.sort == "recently_aired") ? R"( ORDER BY (
+                                             SELECT MAX(e2.air_date) FROM episode e2
+                                             WHERE e2.show_id = s.show_id
+                                               AND e2.air_date != '' AND e2.air_date <= date('now')
+                                           ) DESC)" :
         (p.sort == "random")         ? " ORDER BY RANDOM()" :
                                        " ORDER BY s.title";
     const std::string show_select = R"(
@@ -687,6 +692,10 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     if (!p.country.empty())        appendJsonIn("m", "countries",   p.country,       extras, extra_vals);
     if (!p.collection.empty())     appendJsonIn("m", "collections", p.collection,    extras, extra_vals);
     if (!p.studio.empty())         { extras += " AND m.studio LIKE '%' || ? || '%'"; extra_vals.push_back(p.studio); }
+    // recently_released is meaningless for movies the source never gave a
+    // release_date (most commonly AniDB, which doesn't fetch one at all) —
+    // exclude them rather than let them sort to one end of the list.
+    if (p.sort == "recently_released") extras += " AND m.release_date != ''";
 
     auto bindExtras = [&](SQLite::Statement& q, int& idx) {
         for (const auto& v : extra_vals) q.bind(idx++, v);
@@ -698,11 +707,12 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
                   WHERE sm2.kairos_id = m.movie_id AND sm2.item_type = 'movie'
                   LIMIT 1), '') AS source_base_url)";
     const std::string morder =
-        (p.sort == "recently_added") ? " ORDER BY m.rowid DESC" :
-        (p.sort == "random")         ? " ORDER BY RANDOM()" :
-                                       " ORDER BY m.title";
+        (p.sort == "recently_added")    ? " ORDER BY m.rowid DESC" :
+        (p.sort == "recently_released") ? " ORDER BY m.release_date DESC" :
+        (p.sort == "random")            ? " ORDER BY RANDOM()" :
+                                          " ORDER BY m.title";
     const std::string movie_select =
-        "SELECT m.movie_id, m.title, m.content_rating, m.duration_ms, m.year,"
+        "SELECT m.movie_id, m.title, m.content_rating, m.duration_ms, m.year, m.release_date,"
         " m.thumb, m.art, m.audience_rating, m.match_status, m.match_score," + msrc_subq;
 
     auto parseMovieRow = [](SQLite::Statement& q) {
@@ -712,12 +722,13 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         r.content_rating  = q.getColumn(2).getString();
         r.duration_ms     = q.getColumn(3).getInt64();
         if (!q.getColumn(4).isNull()) r.year             = q.getColumn(4).getInt();
-        r.thumb           = q.getColumn(5).getString();
-        r.art             = q.getColumn(6).getString();
-        if (!q.getColumn(7).isNull()) r.audience_rating  = q.getColumn(7).getDouble();
-        r.match_status    = q.getColumn(8).getString();
-        if (!q.getColumn(9).isNull()) r.match_score      = q.getColumn(9).getDouble();
-        r.source_base_url = q.getColumn(10).getString();
+        r.release_date    = q.getColumn(5).getString();
+        r.thumb           = q.getColumn(6).getString();
+        r.art             = q.getColumn(7).getString();
+        if (!q.getColumn(8).isNull()) r.audience_rating  = q.getColumn(8).getDouble();
+        r.match_status    = q.getColumn(9).getString();
+        if (!q.getColumn(10).isNull()) r.match_score     = q.getColumn(10).getDouble();
+        r.source_base_url = q.getColumn(11).getString();
         return r;
     };
 
@@ -827,7 +838,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
         SELECT movie_id, title, content_rating, duration_ms, year,
                overview, tagline, studio, director, genres, thumb, art,
                imdb_id, tmdb_id, audience_rating, locked,
-               labels, actors, countries, collections
+               labels, actors, countries, collections, release_date
         FROM movie WHERE movie_id = ?
     )");
     q.bind(1, movie_id);
@@ -854,6 +865,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     d.actors         = q.getColumn(17).getString();
     d.countries      = q.getColumn(18).getString();
     d.collections    = q.getColumn(19).getString();
+    d.release_date   = q.getColumn(20).getString();
 
     SQLite::Statement sm(db_.get(), R"(
         SELECT sm.external_id, sm.source_id, ms.base_url
@@ -927,6 +939,34 @@ std::vector<EpisodeRow> ContentRepository::listEpisodesForShow(const std::string
         rows.push_back(std::move(r));
     }
     return rows;
+}
+
+// Small, reusable building block — the most recently aired (real-world,
+// not Kairos-channel) episode of a show, excluding blanks (unaired/special
+// episodes commonly have no air_date at all) and future-dated episodes.
+// Used to enrich Home's "Recently Aired" shelf with a jump-straight-to-
+// episode target; the plain recently_aired *sort* on searchShows() above
+// doesn't need this, it only needs the MAX(air_date) for ordering.
+std::optional<EpisodeRow> ContentRepository::getLatestAiredEpisode(const std::string& show_id) {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT episode_id, season, episode, title, duration_ms, overview, air_date, thumb
+        FROM episode
+        WHERE show_id = ? AND air_date != '' AND air_date <= date('now')
+        ORDER BY air_date DESC LIMIT 1
+    )");
+    q.bind(1, show_id);
+    if (!q.executeStep()) return std::nullopt;
+
+    EpisodeRow r;
+    r.episode_id  = q.getColumn(0).getString();
+    r.season      = q.getColumn(1).getInt();
+    r.episode     = q.getColumn(2).getInt();
+    r.title       = q.getColumn(3).getString();
+    r.duration_ms = q.getColumn(4).getInt64();
+    r.overview    = q.getColumn(5).getString();
+    r.air_date    = q.getColumn(6).getString();
+    r.thumb       = q.getColumn(7).getString();
+    return r;
 }
 
 std::vector<SeasonRow> ContentRepository::listSeasons(const std::string& show_id) {

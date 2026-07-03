@@ -10,6 +10,7 @@ import { MediaDetail } from '../components/media/MediaDetail'
 import { LoadMoreSentinel } from '../channel/BrowserTiles'
 import { filterInputStyle } from '../channel/styles'
 import type { LibraryDensity, ScraperSearchResult } from '../api/types'
+import { useFocusable } from '../nav/useFocusable'
 
 const DENSITY_ICONS: Record<LibraryDensity, string> = { minimal: '⊞', standard: '⊟', rich: '≡' }
 const SCROLL_KEY = 'library-grid'
@@ -74,40 +75,16 @@ export default observer(function LibraryPage() {
               onChange={e => setRawQ(e.target.value)}
             />
 
-            <button
-              onClick={handleToggleDiscover}
-              title={store.discoverMode ? 'Switch to Library mode' : 'Switch to Discover mode — search scrapers'}
-              style={{
-                height: 30, padding: '0 12px', borderRadius: 6, cursor: 'pointer',
-                border: `1px solid ${store.discoverMode ? 'oklch(0.65 0.18 220)' : 'var(--hds-line)'}`,
-                background: store.discoverMode ? 'oklch(0.65 0.18 220 / 0.12)' : 'transparent',
-                color: store.discoverMode ? 'oklch(0.65 0.18 220)' : 'var(--hds-txt-3)',
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                letterSpacing: '0.08em', whiteSpace: 'nowrap',
-                transition: 'border-color .12s, background .12s, color .12s',
-              }}
-            >◎ Discover</button>
+            <DiscoverToggleButton discoverMode={store.discoverMode} onClick={handleToggleDiscover} />
 
             {!store.discoverMode && (
               <>
                 <div style={{ display: 'flex', gap: 2 }}>
                   {(['minimal', 'standard', 'rich'] as LibraryDensity[]).map(d => (
-                    <button key={d} onClick={() => store.setDensity(d)} title={d} style={{
-                      width: 30, height: 30,
-                      border: `1px solid ${store.density === d ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-                      background: store.density === d ? 'oklch(0.55 0.14 292 / 0.2)' : 'transparent',
-                      color: store.density === d ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-                      borderRadius: 6, cursor: 'pointer', fontSize: 14,
-                    }}>{DENSITY_ICONS[d]}</button>
+                    <DensityButton key={d} density={d} active={store.density === d} onClick={() => store.setDensity(d)} />
                   ))}
                 </div>
-                <button onClick={() => store.toggleSidebar()} title="Toggle filters" style={{
-                  width: 30, height: 30,
-                  border: `1px solid ${store.sidebarOpen ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-                  background: store.sidebarOpen ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-                  color: store.sidebarOpen ? 'var(--hds-violet)' : 'var(--hds-txt-2)',
-                  borderRadius: 6, cursor: 'pointer', fontSize: 12,
-                }}>⊧</button>
+                <FilterToggleButton open={store.sidebarOpen} onClick={() => store.toggleSidebar()} />
               </>
             )}
           </div>
@@ -176,6 +153,62 @@ export default observer(function LibraryPage() {
     </div>
   )
 })
+
+// ── Top-bar buttons ──────────────────────────────────────────────────────────
+
+function DiscoverToggleButton({ discoverMode, onClick }: { discoverMode: boolean; onClick: () => void }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'library-discover-toggle', onEnterPress: onClick })
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick}
+      title={discoverMode ? 'Switch to Library mode' : 'Switch to Discover mode — search scrapers'}
+      style={{
+        height: 30, padding: '0 12px', borderRadius: 6, cursor: 'pointer',
+        border: `1px solid ${discoverMode ? 'oklch(0.65 0.18 220)' : 'var(--hds-line)'}`,
+        background: discoverMode ? 'oklch(0.65 0.18 220 / 0.12)' : 'transparent',
+        color: discoverMode ? 'oklch(0.65 0.18 220)' : 'var(--hds-txt-3)',
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+        letterSpacing: '0.08em', whiteSpace: 'nowrap',
+        transition: 'border-color .12s, background .12s, color .12s',
+      }}
+    >◎ Discover</button>
+  )
+}
+
+function DensityButton({ density, active, onClick }: { density: LibraryDensity; active: boolean; onClick: () => void }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: `library-density-${density}`, onEnterPress: onClick })
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick} title={density}
+      style={{
+        width: 30, height: 30,
+        border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+        background: active ? 'oklch(0.55 0.14 292 / 0.2)' : 'transparent',
+        color: active ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
+        borderRadius: 6, cursor: 'pointer', fontSize: 14,
+      }}
+    >{DENSITY_ICONS[density]}</button>
+  )
+}
+
+function FilterToggleButton({ open, onClick }: { open: boolean; onClick: () => void }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'library-filter-toggle', onEnterPress: onClick })
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick} title="Toggle filters"
+      style={{
+        width: 30, height: 30,
+        border: `1px solid ${open ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+        background: open ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
+        color: open ? 'var(--hds-violet)' : 'var(--hds-txt-2)',
+        borderRadius: 6, cursor: 'pointer', fontSize: 12,
+      }}
+    >⊧</button>
+  )
+}
 
 // ── Discover grid ─────────────────────────────────────────────────────────────
 
@@ -249,11 +282,17 @@ function DiscoverCard({ result, selected, onClick }: {
   selected: boolean
   onClick:  () => void
 }) {
-  const [hovered, setHovered] = useState(false)
+  const [hoveredState, setHovered] = useState(false)
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({
+    focusKey: `discover-card-${result.source}-${result.external_id}`,
+    onEnterPress: onClick,
+  })
+  const hovered = hoveredState || focused
   const srcColor = result.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
 
   return (
     <div
+      ref={ref} data-tv-focused={focused}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}

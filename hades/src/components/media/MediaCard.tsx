@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { MatchStatus } from './MatchBadge'
 import type { LibraryDensity } from '../../api/types'
+import { useFocusable } from '../../nav/useFocusable'
 
 export interface MediaCardProps {
   id:                string
@@ -42,8 +43,14 @@ export function MediaCard(props: MediaCardProps) {
     density, selected, onClick,
   } = props
 
-  const [hovered, setHovered] = useState(false)
+  const [hoveredState, setHovered] = useState(false)
   const [imgError, setImgError] = useState(false)
+
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({
+    focusKey: `media-card-${content_type}-${id}`,
+    onEnterPress: onClick,
+  })
+  const hovered = hoveredState || focused
 
   const imgUrl = poster_url ?? thumb_url
   const showImg = imgUrl && !imgError
@@ -202,6 +209,7 @@ export function MediaCard(props: MediaCardProps) {
 
   return (
     <div
+      ref={ref} data-tv-focused={focused}
       data-media-id={id}
       style={cardStyle}
       onClick={onClick}

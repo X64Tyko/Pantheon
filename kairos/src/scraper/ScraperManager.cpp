@@ -725,18 +725,20 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
             if (movie) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE movie SET
-                        tmdb_id  = CASE WHEN locked THEN tmdb_id  ELSE ? END,
-                        imdb_id  = CASE WHEN locked THEN imdb_id  ELSE ? END,
-                        overview = CASE WHEN locked THEN overview ELSE ? END,
-                        genres   = CASE WHEN locked THEN genres   ELSE ? END,
-                        studio   = CASE WHEN locked THEN studio   ELSE ? END,
-                        director = CASE WHEN locked THEN director ELSE ? END
+                        tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE ? END,
+                        imdb_id      = CASE WHEN locked THEN imdb_id      ELSE ? END,
+                        overview     = CASE WHEN locked THEN overview     ELSE ? END,
+                        genres       = CASE WHEN locked THEN genres       ELSE ? END,
+                        studio       = CASE WHEN locked THEN studio       ELSE ? END,
+                        director     = CASE WHEN locked THEN director     ELSE ? END,
+                        release_date = CASE WHEN locked THEN release_date ELSE ? END
                     WHERE movie_id = ?
                 )");
                 app.bind(1, movie->tmdb_id); app.bind(2, movie->imdb_id);
                 app.bind(3, movie->overview); app.bind(4, movie->genres);
                 app.bind(5, movie->studio);  app.bind(6, movie->director);
-                app.bind(7, kairos_id);
+                app.bind(7, movie->release_date);
+                app.bind(8, kairos_id);
                 app.exec();
             }
         }
@@ -778,13 +780,14 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
             if (movie) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE movie SET
-                        tmdb_id  = CASE WHEN locked THEN tmdb_id  ELSE COALESCE(NULLIF(?,  ''), tmdb_id)  END,
-                        imdb_id  = CASE WHEN locked THEN imdb_id  ELSE COALESCE(NULLIF(?,  ''), imdb_id)  END,
-                        overview = CASE WHEN locked THEN overview ELSE ? END,
-                        genres   = CASE WHEN locked THEN genres   ELSE ? END,
-                        studio   = CASE WHEN locked THEN studio   ELSE ? END,
-                        year     = CASE WHEN locked THEN year     ELSE ? END,
-                        thumb    = CASE WHEN locked THEN thumb    ELSE ? END
+                        tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE COALESCE(NULLIF(?,  ''), tmdb_id)  END,
+                        imdb_id      = CASE WHEN locked THEN imdb_id      ELSE COALESCE(NULLIF(?,  ''), imdb_id)  END,
+                        overview     = CASE WHEN locked THEN overview     ELSE ? END,
+                        genres       = CASE WHEN locked THEN genres       ELSE ? END,
+                        studio       = CASE WHEN locked THEN studio       ELSE ? END,
+                        year         = CASE WHEN locked THEN year         ELSE ? END,
+                        thumb        = CASE WHEN locked THEN thumb        ELSE ? END,
+                        release_date = CASE WHEN locked THEN release_date ELSE ? END
                     WHERE movie_id = ?
                 )");
                 app.bind(1, movie->tmdb_id);
@@ -795,7 +798,8 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 if (movie->year.has_value()) app.bind(6, movie->year.value());
                 else                         app.bind(6);
                 app.bind(7, movie->thumb);
-                app.bind(8, kairos_id);
+                app.bind(8, movie->release_date);
+                app.bind(9, kairos_id);
                 app.exec();
             }
         }

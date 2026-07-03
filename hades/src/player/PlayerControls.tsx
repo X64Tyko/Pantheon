@@ -1,4 +1,22 @@
 import { useEffect, useState, type RefObject } from 'react'
+import { useFocusable } from '../nav/useFocusable'
+
+const SEEK_STEP_MS = 10_000 // scrub-bar left/right nudge while D-pad focused
+
+// Bundles just the pieces PlayerControls needs to render/drive the Cast
+// button and (once connected) route transport controls to the receiver
+// instead of the local <video> — PlayerPage owns the actual useCastSession()
+// call and the loadMedia() trigger, since those need session data (manifest
+// URL, title, live/VOD) that lives there, not here.
+export interface CastBridge {
+  available:  boolean // SDK usable — hide the button entirely otherwise (e.g. no App ID configured)
+  connected:  boolean
+  deviceName: string | null
+  paused:     boolean
+  togglePlay: () => void
+  endSession: () => void
+  onRequestCast: () => void
+}
 
 interface PlayerControlsProps {
   videoRef:        RefObject<HTMLVideoElement>
@@ -11,6 +29,12 @@ interface PlayerControlsProps {
   onOpenTracks:    () => void
   onOpenSettings:  () => void
   showSettings:    boolean
+  // While hidden (auto-idle), the first D-pad/keyboard press should only
+  // reveal the controls again, not also move focus — standard TV playback
+  // UX. onActivity resets the idle timer on every nav input, visible or not.
+  controlsVisible: boolean
+  onActivity:      () => void
+  cast?:           CastBridge
 }
 
 function fmtTime(ms: number): string {
@@ -26,18 +50,21 @@ function fmtTime(ms: number): string {
 
 export function PlayerControls({
   videoRef, title, isLive, currentMs, durationMs, onSeek, onBack,
-  onOpenTracks, onOpenSettings, showSettings,
+  onOpenTracks, onOpenSettings, showSettings, controlsVisible, onActivity, cast,
 }: PlayerControlsProps) {
-  const [playing, setPlaying] = useState(true)
+  const [playingLocal, setPlayingLocal] = useState(true)
   const [volume,  setVolume]  = useState(1)
   const [muted,   setMuted]   = useState(false)
   const [scrubMs, setScrubMs] = useState<number | null>(null) // non-null while dragging
 
+  const isCasting = cast?.connected ?? false
+  const playing = isCasting ? !cast!.paused : playingLocal
+
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    const onPlay  = () => setPlaying(true)
-    const onPause = () => setPlaying(false)
+    const onPlay  = () => setPlayingLocal(true)
+    const onPause = () => setPlayingLocal(false)
     video.addEventListener('play',  onPlay)
     video.addEventListener('pause', onPause)
     return () => {
@@ -47,6 +74,7 @@ export function PlayerControls({
   }, [videoRef])
 
   const togglePlay = () => {
+    if (isCasting) { cast!.togglePlay(); return }
     const video = videoRef.current
     if (!video) return
     if (video.paused) video.play().catch(() => {})
@@ -79,11 +107,53 @@ export function PlayerControls({
   const displayMs = scrubMs ?? currentMs
   const progress  = durationMs > 0 ? Math.min(1, displayMs / durationMs) : 0
 
+  // Every arrow press resets the idle timer (visible or not); while hidden,
+  // that same first press only reveals the controls (returns false — the
+  // library's "prevent default nav" signal) rather than also moving focus
+  // onto a control nobody could see a moment ago.
+  const guardArrow = (handler?: (direction: string) => boolean) => (direction: string) => {
+    const wasHidden = !controlsVisible
+    onActivity()
+    if (wasHidden) return false
+    return handler ? handler(direction) : true
+  }
+
+  // Each control is a plain focusable leaf — the library's own nearest-
+  // neighbor grid resolution chains them left-right/up-down correctly on its
+  // own (buttons are laid out in a row; the scrub bar sits directly above).
+  // onEnterPress mirrors each button's existing onClick — same handler, both
+  // input paths converge on identical behavior.
+  const back        = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-back',       onEnterPress: onBack,             onArrowPress: guardArrow() })
+  // forceFocus: /player/* routes render outside <Layout> (no sidebar, so its
+  // own forceFocus fallback never mounts here) — without its own fallback, a
+  // direct/refreshed load straight into the player would hit the same
+  // "nothing focused yet, every arrow press no-ops" dead end.
+  const play        = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-play',       onEnterPress: togglePlay,         onArrowPress: guardArrow(), forceFocus: true })
+  const mute         = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-mute',       onEnterPress: toggleMute,         onArrowPress: guardArrow() })
+  const tracks         = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-tracks',     onEnterPress: onOpenTracks,       onArrowPress: guardArrow() })
+  const settings         = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-settings',   onEnterPress: onOpenSettings,     onArrowPress: guardArrow(), focusable: showSettings })
+  const fullscreen         = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-fullscreen', onEnterPress: toggleFullscreen,   onArrowPress: guardArrow() })
+  const castBtn  = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-cast', onEnterPress: () => cast?.onRequestCast(), onArrowPress: guardArrow(), focusable: !!cast?.available && !isCasting })
+  const stopCast = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-stop-cast', onEnterPress: () => cast?.endSession(), onArrowPress: guardArrow(), focusable: isCasting })
+  const scrub = useFocusable<object, HTMLDivElement>({
+    focusKey: 'player-scrub',
+    focusable: !isLive && durationMs > 0,
+    // Prevent default nav (return false) on left/right — nudge position
+    // instead of moving focus to the next control, the same escape hatch a
+    // Guide program block doesn't need but a scrub bar does.
+    onArrowPress: guardArrow(direction => {
+      if (direction !== 'left' && direction !== 'right') return true
+      const delta = direction === 'right' ? SEEK_STEP_MS : -SEEK_STEP_MS
+      onSeek(Math.min(durationMs, Math.max(0, currentMs + delta)))
+      return false
+    }),
+  })
+
   return (
     <div style={wrapStyle}>
       {/* Top bar */}
       <div style={topBarStyle}>
-        <button onClick={onBack} style={iconBtnStyle} aria-label="Back">
+        <button ref={back.ref} data-tv-focused={back.focused} onClick={onBack} style={iconBtnStyle} aria-label="Back">
           <BackIcon />
         </button>
         <span style={titleStyle}>{title}</span>
@@ -93,6 +163,7 @@ export function PlayerControls({
       <div style={bottomBarStyle}>
         {!isLive && (
           <div
+            ref={scrub.ref} data-tv-focused={scrub.focused}
             style={scrubTrackStyle}
             onClick={e => {
               if (durationMs <= 0) return
@@ -106,21 +177,27 @@ export function PlayerControls({
         )}
 
         <div style={controlsRowStyle}>
-          <button onClick={togglePlay} style={iconBtnStyle} aria-label={playing ? 'Pause' : 'Play'}>
+          <button ref={play.ref} data-tv-focused={play.focused} onClick={togglePlay} style={iconBtnStyle} aria-label={playing ? 'Pause' : 'Play'}>
             {playing ? <PauseIcon /> : <PlayIcon />}
           </button>
 
-          <button onClick={toggleMute} style={iconBtnStyle} aria-label={muted ? 'Unmute' : 'Mute'}>
-            {muted || volume === 0 ? <MuteIcon /> : <VolumeIcon />}
-          </button>
-          <input
-            type="range" min={0} max={1} step={0.05}
-            value={muted ? 0 : volume}
-            onChange={e => changeVolume(Number(e.target.value))}
-            style={volumeSliderStyle}
-          />
+          {!isCasting && (
+            <>
+              <button ref={mute.ref} data-tv-focused={mute.focused} onClick={toggleMute} style={iconBtnStyle} aria-label={muted ? 'Unmute' : 'Mute'}>
+                {muted || volume === 0 ? <MuteIcon /> : <VolumeIcon />}
+              </button>
+              <input
+                type="range" min={0} max={1} step={0.05}
+                value={muted ? 0 : volume}
+                onChange={e => changeVolume(Number(e.target.value))}
+                style={volumeSliderStyle}
+              />
+            </>
+          )}
 
-          {isLive ? (
+          {isCasting ? (
+            <span style={castingLabelStyle}>Casting to {cast!.deviceName ?? 'device'}</span>
+          ) : isLive ? (
             <span style={liveBadgeStyle}>● LIVE</span>
           ) : (
             <span style={timeStyle}>{fmtTime(displayMs)} / {fmtTime(durationMs)}</span>
@@ -128,17 +205,30 @@ export function PlayerControls({
 
           <div style={{ flex: 1 }} />
 
-          <button onClick={onOpenTracks} style={iconBtnStyle} aria-label="Audio & Subtitles">
-            <TracksIcon />
-          </button>
-          {showSettings && (
-            <button onClick={onOpenSettings} style={iconBtnStyle} aria-label="Playback info">
-              <SettingsIcon />
+          {isCasting ? (
+            <button ref={stopCast.ref} data-tv-focused={stopCast.focused} onClick={() => cast?.endSession()} style={iconBtnStyle} aria-label="Stop casting">
+              <CastConnectedIcon />
             </button>
+          ) : (
+            <>
+              <button ref={tracks.ref} data-tv-focused={tracks.focused} onClick={onOpenTracks} style={iconBtnStyle} aria-label="Audio & Subtitles">
+                <TracksIcon />
+              </button>
+              {showSettings && (
+                <button ref={settings.ref} data-tv-focused={settings.focused} onClick={onOpenSettings} style={iconBtnStyle} aria-label="Playback info">
+                  <SettingsIcon />
+                </button>
+              )}
+              {cast?.available && (
+                <button ref={castBtn.ref} data-tv-focused={castBtn.focused} onClick={() => cast.onRequestCast()} style={iconBtnStyle} aria-label="Cast">
+                  <CastIcon />
+                </button>
+              )}
+              <button ref={fullscreen.ref} data-tv-focused={fullscreen.focused} onClick={toggleFullscreen} style={iconBtnStyle} aria-label="Fullscreen">
+                <FullscreenIcon />
+              </button>
+            </>
           )}
-          <button onClick={toggleFullscreen} style={iconBtnStyle} aria-label="Fullscreen">
-            <FullscreenIcon />
-          </button>
         </div>
       </div>
     </div>
@@ -198,6 +288,11 @@ const liveBadgeStyle: React.CSSProperties = {
   color: 'var(--hds-match-red, oklch(0.62 0.2 22))', letterSpacing: '0.04em', marginLeft: 4,
 }
 
+const castingLabelStyle: React.CSSProperties = {
+  fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600,
+  color: 'var(--hds-violet)', letterSpacing: '0.02em', marginLeft: 4,
+}
+
 // ── Icons (inline SVG, no icon library dependency) ────────────────────────────
 
 function PlayIcon() {
@@ -223,4 +318,22 @@ function FullscreenIcon() {
 }
 function BackIcon() {
   return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3L4.5 8l5.5 5" /></svg>
+}
+function CastIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x="2" y="2.5" width="14" height="10" rx="1.2" />
+      <path d="M2 15.5a4 4 0 0 0-2-3.5M2 12.5a1.5 1.5 0 0 1 1.5 1.5" fill="none" strokeLinecap="round" />
+      <circle cx="2.3" cy="15.5" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+function CastConnectedIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x="2" y="2.5" width="14" height="10" rx="1.2" fill="var(--hds-violet)" fillOpacity="0.25" />
+      <path d="M2 15.5a4 4 0 0 0-2-3.5M2 12.5a1.5 1.5 0 0 1 1.5 1.5" fill="none" strokeLinecap="round" />
+      <circle cx="2.3" cy="15.5" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  )
 }

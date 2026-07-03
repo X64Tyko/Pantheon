@@ -7,6 +7,11 @@ import { MediaDetailHero } from '../components/media/MediaDetailHero'
 import { LibraryDetailActions } from '../components/media/LibraryDetailActions'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { ghostBtnStyle, goldBtnStyle } from '../channel/styles'
+import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
+import { useFocusable } from '../nav/useFocusable'
+import { libraryStore } from '../stores/LibraryStore'
+
+const HOME_FOCUS_KEY = 'HOME'
 
 // Lazy: pulls in hls.js (via the Guide's live preview) that most page loads don't need.
 const GuidePage = lazy(() => import('../guide/GuidePage').then(m => ({ default: m.GuidePage })))
@@ -39,6 +44,8 @@ export default function HomePage() {
   // Data
   const [recentShows,      setRecentShows]      = useState<Show[]>([])
   const [recentMovies,     setRecentMovies]     = useState<Movie[]>([])
+  const [recentlyReleased, setRecentlyReleased] = useState<Movie[]>([])
+  const [recentlyAired,    setRecentlyAired]    = useState<Show[]>([])
   const [continueWatching, setContinueWatching] = useState<WatchProgress[]>([])
   const [stats,            setStats]            = useState<ScraperStats | null>(null)
   const [loading,          setLoading]          = useState(true)
@@ -97,16 +104,22 @@ export default function HomePage() {
     Promise.all([
       api.getShows({ limit: 24, sort: 'recently_added' }),
       api.getMovies({ limit: 16, sort: 'recently_added' }),
+      api.getMovies({ limit: 16, sort: 'recently_released' }).catch(() => ({ items: [] as Movie[], total: 0 })),
+      api.getShows({ limit: 16, sort: 'recently_aired' }).catch(() => ({ items: [] as Show[], total: 0 })),
       api.getScraperStats().catch(() => null),
       api.getWatchProgress().catch(() => []),
-    ]).then(([sr, mr, st, cw]) => {
+    ]).then(([sr, mr, rr, ra, st, cw]) => {
       setRecentShows(sr.items)
       setRecentMovies(mr.items)
+      setRecentlyReleased(rr.items)
+      setRecentlyAired(ra.items)
       setStats(st)
       setContinueWatching(cw)
 
       sr.items.forEach(s => allItemsRef.current.set(s.show_id, s))
       mr.items.forEach(m => allItemsRef.current.set(m.movie_id, m))
+      rr.items.forEach(m => allItemsRef.current.set(m.movie_id, m))
+      ra.items.forEach(s => allItemsRef.current.set(s.show_id, s))
 
       const withArt = [...sr.items.filter(s => s.art), ...mr.items.filter(m => m.art)]
       heroCandidates.current = withArt
@@ -203,15 +216,25 @@ export default function HomePage() {
 
   const needsReview = stats ? stats.uncertain + stats.unmatched : 0
 
+  // Entering Home fresh focuses the hero Play button; returning (nav away
+  // and back) restores wherever focus last was, via the library's own
+  // lastFocusedChildKey → preferredChildFocusKey → nearest-to-origin
+  // precedence (see getNextFocusKey in the library source) — no manual
+  // "remember position" bookkeeping needed here.
+  const { ref: homeRef, focusKey: homeFocusKey } = useFocusable<object, HTMLDivElement>({
+    focusKey: HOME_FOCUS_KEY,
+    trackChildren: true,
+    saveLastFocusedChild: true,
+    preferredChildFocusKey: 'home-hero-play',
+  })
+
   return (
-    <div style={{ height: '100%', overflow: 'hidden' }}>
-      <div
-        ref={scrollContainerRef}
-        onScroll={e => saveScrollPos(SCROLL_KEY, e.currentTarget.scrollTop)}
-        style={{ height: '100%', overflowY: 'auto', background: 'var(--hds-bg)' }}
-        className="scrollbar-dark"
-      >
-        {/* Hero */}
+    <FocusContext.Provider value={homeFocusKey}>
+    <div ref={homeRef} style={{ height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--hds-bg)' }}>
+      {/* Hero — a fixed, non-scrolling region; only the content below it scrolls.
+          Plain flexbox, not JS-driven, so mouse-wheel/trackpad scrolling gets
+          the same behavior as D-pad nav for free. */}
+      <div style={{ flexShrink: 0 }}>
         {loading ? (
           <div className="hds-skeleton" style={{ height: '62vh', minHeight: 360 }} />
         ) : heroItem ? (
@@ -240,13 +263,21 @@ export default function HomePage() {
         ) : (
           <EmptyHero onGoToSources={() => navigate('/sources')} />
         )}
+      </div>
 
+      <div
+        ref={scrollContainerRef}
+        onScroll={e => saveScrollPos(SCROLL_KEY, e.currentTarget.scrollTop)}
+        style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
+        className="scrollbar-dark"
+      >
         {/* Crossfading content area */}
         <div style={{
           opacity:    transitioning ? 0 : 1,
           transition: 'opacity .2s ease',
-          position: 'relative', zIndex: 2,
-          minHeight: '40vh',
+          position: 'relative',
+          minHeight: '100%',
+          background: 'var(--hds-bg)',
         }}>
           {detailOpen && detailId && detailType ? (
             <MediaDetailHero
@@ -263,6 +294,8 @@ export default function HomePage() {
                 loading={loading}
                 recentShows={recentShows}
                 recentMovies={recentMovies}
+                recentlyReleased={recentlyReleased}
+                recentlyAired={recentlyAired}
                 continueWatching={continueWatching}
                 onItemClick={openDetail}
                 onNavigate={navigate}
@@ -277,6 +310,7 @@ export default function HomePage() {
         </div>
       </div>
     </div>
+    </FocusContext.Provider>
   )
 }
 
@@ -308,12 +342,16 @@ function HeroPanel({
   const overview = detail?.overview ?? ''
   const rating   = detail?.audience_rating ?? item.audience_rating
 
+  const play      = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-play',   onEnterPress: onPlay,       focusable: !detailMode })
+  const viewDetail = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-detail', onEnterPress: onViewDetail, focusable: !detailMode })
+  const review     = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-review', onEnterPress: onReviewClick, focusable: reviewCount > 0 })
+
   return (
     <div style={{
       position: 'relative', height: '62vh', minHeight: 360,
       background: bg, flexShrink: 0,
       opacity: fading ? 0 : 1, transition: 'opacity .26s ease',
-      marginBottom: -60, paddingBottom: 60, overflow: 'visible',
+      overflow: 'hidden',
     }}>
       {/* Side dim — lightens in detail mode */}
       <div style={{
@@ -322,15 +360,12 @@ function HeroPanel({
         opacity: detailMode ? 0.28 : 1,
         transition: 'opacity .5s ease',
       }} />
-      {/* Bottom bleed — always solid */}
+      {/* Bottom fade-to-background — fully contained within this box (Hero is
+          now its own fixed, non-scrolling flex region, not a normal-flow
+          sibling of the scrollable content below it — nothing needs to
+          bleed past its own edge to blend into the next element anymore). */}
       <div style={{
-        position: 'absolute', inset: 0,
-        background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 44%)',
-        paddingBottom: 60, marginBottom: -60,
-      }} />
-      {/* Extended bottom bleed below the hero */}
-      <div style={{
-        position: 'absolute', bottom: -60, left: 0, right: 0, height: 90, zIndex: 1,
+        position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%',
         background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 100%)',
         pointerEvents: 'none',
       }} />
@@ -378,19 +413,21 @@ function HeroPanel({
 
         <div style={{ display: 'flex', gap: 10 }}>
           <button
+            ref={play.ref} data-tv-focused={play.focused}
             style={{ ...goldBtnStyle, display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={onPlay}
           >
             <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
             Play
           </button>
-          <button style={ghostBtnStyle} onClick={onViewDetail}>View Details</button>
+          <button ref={viewDetail.ref} data-tv-focused={viewDetail.focused} style={ghostBtnStyle} onClick={onViewDetail}>View Details</button>
         </div>
       </div>
 
       {/* Review notification pill */}
       {reviewCount > 0 && (
         <button
+          ref={review.ref} data-tv-focused={review.focused}
           onClick={onReviewClick}
           style={{
             position: 'absolute', top: 18, right: 24, zIndex: 3,
@@ -449,16 +486,18 @@ function EmptyHero({ onGoToSources }: { onGoToSources: () => void }) {
 // A home for jump-to shortcuts — Guide today, more later (user-customizable).
 
 function QuickActionsRow({ onGuideClick }: { onGuideClick: () => void }) {
-  // The hero above bleeds into this area via a negative bottom margin (its
-  // fade-to-background gradient) — paddingTop here has to clear that pull-up
-  // (60px) plus real breathing room on top of it, not just butt up against it.
+  const guide = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-quickaction-guide', onEnterPress: onGuideClick })
+
+  // Hero is its own fixed flex region now (see HomePage's top-level layout)
+  // — it no longer bleeds into this area via negative margin, so this just
+  // needs normal breathing room, not extra clearance for a pull-up hack.
   return (
-    <div style={{ padding: '100px 24px 8px' }}>
+    <div style={{ padding: '20px 24px 8px' }}>
       <div style={{
         display: 'flex', gap: 10, padding: '14px 18px', borderRadius: 12,
         background: 'var(--hds-glass)', backdropFilter: 'blur(8px)', border: '1px solid var(--hds-glass-border)',
       }}>
-        <button onClick={onGuideClick} style={{
+        <button ref={guide.ref} data-tv-focused={guide.focused} onClick={onGuideClick} style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 8, cursor: 'pointer',
           border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
           fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
@@ -476,17 +515,31 @@ function QuickActionsRow({ onGuideClick }: { onGuideClick: () => void }) {
 // ── Shelves ───────────────────────────────────────────────────────────────────
 
 function Shelves({
-  loading, recentShows, recentMovies, continueWatching, onItemClick, onNavigate, onItemHover, onRowLeave,
+  loading, recentShows, recentMovies, recentlyReleased, recentlyAired, continueWatching,
+  onItemClick, onNavigate, onItemHover, onRowLeave,
 }: {
   loading:          boolean
   recentShows:      Show[]
   recentMovies:     Movie[]
+  recentlyReleased: Movie[]
+  recentlyAired:    Show[]
   continueWatching: WatchProgress[]
   onItemClick:      (id: string, type: 'show' | 'movie') => void
   onNavigate:       (path: string) => void
   onItemHover:      (id: string) => void
   onRowLeave:       () => void
 }) {
+  // Applies a shelf's implicit filter/sort to the Library page before
+  // navigating there — e.g. "Recently Added Movies" lands on Library showing
+  // movies only, sorted by date added. Mutating the store synchronously
+  // before navigate() is safe: LibraryPage's mount effect (loadLibraries().
+  // then(() => store.fetch())) reads store state fresh on arrival.
+  const continueInLibrary = (contentType: 'show' | 'movie' | 'all', sort: string) => () => {
+    libraryStore.setContentType(contentType)
+    libraryStore.setSort(sort)
+    onNavigate('/library')
+  }
+
   return (
     <div style={{ padding: '20px 0 48px' }}>
 
@@ -506,7 +559,7 @@ function Shelves({
                 content_type: 'show' as const,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
-              onViewAll={() => onNavigate('/library')}
+              onViewAll={continueInLibrary('show', 'recently_added')}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
             />
@@ -520,7 +573,41 @@ function Shelves({
                 content_type: 'movie' as const,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
-              onViewAll={() => onNavigate('/library')}
+              onViewAll={continueInLibrary('movie', 'recently_added')}
+              onItemHover={onItemHover}
+              onRowLeave={onRowLeave}
+            />
+          )}
+          {recentlyReleased.length > 0 && (
+            <Shelf
+              title="Recently Released"
+              items={recentlyReleased.map(m => ({
+                id: m.movie_id, title: m.title, year: m.year,
+                thumb_url: proxyThumb(m), rating: m.audience_rating,
+                content_type: 'movie' as const,
+              }))}
+              onItemClick={(id, type) => onItemClick(id, type)}
+              onViewAll={continueInLibrary('movie', 'recently_released')}
+              onItemHover={onItemHover}
+              onRowLeave={onRowLeave}
+            />
+          )}
+          {/* Only shows the backend actually resolved a jump-to episode for
+              (see latest_episode enrichment, ContentService.cpp) — a show
+              with no valid aired episode has nothing for this shelf's
+              "select it and it starts playing" behavior to do. */}
+          {recentlyAired.filter(s => s.latest_episode).length > 0 && (
+            <Shelf
+              title="Recently Aired"
+              items={recentlyAired.filter(s => s.latest_episode).map(s => ({
+                id: s.show_id, title: s.title, year: s.year,
+                thumb_url: proxyThumb(s), rating: s.audience_rating,
+                content_type: 'show' as const,
+                directPlayPath: `/player/episode/${s.latest_episode!.episode_id}`,
+              }))}
+              onItemClick={(id, type) => onItemClick(id, type)}
+              onNavigate={onNavigate}
+              onViewAll={continueInLibrary('show', 'recently_aired')}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
             />
@@ -536,12 +623,18 @@ function Shelves({
 interface ShelfEntry {
   id: string; title: string; year?: number
   thumb_url?: string; rating?: number; content_type: 'show' | 'movie'
+  // Recently Aired only: when set, selecting the card jumps straight to
+  // playing this episode instead of opening the show's detail view (unlike
+  // a typical "recently aired episodes" list, this shelf is one tile per
+  // show — the tile itself carries which specific episode to play).
+  directPlayPath?: string
 }
 
-function Shelf({ title, items, onItemClick, onViewAll, onItemHover, onRowLeave }: {
+function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, onRowLeave }: {
   title:       string
   items:       ShelfEntry[]
   onItemClick: (id: string, type: 'show' | 'movie') => void
+  onNavigate?: (path: string) => void
   onViewAll?:  () => void
   onItemHover?: (id: string) => void
   onRowLeave?:  () => void
@@ -582,12 +675,51 @@ function Shelf({ title, items, onItemClick, onViewAll, onItemHover, onRowLeave }
         {items.map(item => (
           <ShelfCard
             key={item.id} item={item}
-            onClick={() => onItemClick(item.id, item.content_type)}
+            onClick={() => item.directPlayPath ? onNavigate?.(item.directPlayPath) : onItemClick(item.id, item.content_type)}
             onHover={() => onItemHover?.(item.id)}
           />
         ))}
+        {onViewAll && <ShelfEndTile focusKey={`home-shelf-end-${title}`} onClick={onViewAll} />}
       </div>
       {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
+    </div>
+  )
+}
+
+// Trailing tile at the end of every shelf's row — "Continue in Library"
+// lands on the Library page pre-filtered/sorted to match the shelf (see each
+// shelf's onViewAll closure in Shelves/HomePage). Lives in the same
+// card-focus flow as ShelfCard, so it's D-pad reachable (right-arrow from
+// the last real card) unlike the header's mouse-only "View All →" link.
+function ShelfEndTile({ focusKey, onClick }: { focusKey: string; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false)
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({ focusKey, onEnterPress: onClick })
+  const active = hovered || focused
+
+  return (
+    <div
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        flexShrink: 0, width: 150, aspectRatio: '2/3', borderRadius: 10, cursor: 'pointer',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
+        border: `1px dashed ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+        background: active ? 'oklch(0.55 0.14 292 / 0.1)' : 'var(--hds-bg-2)',
+        color: active ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
+        transform: active ? 'scale(1.04)' : 'scale(1)',
+        transition: 'transform .15s cubic-bezier(0.2,0,0.2,1), border-color .12s, background .12s, color .12s',
+        textAlign: 'center', padding: '0 16px',
+      }}
+    >
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <rect x="3" y="3" width="7" height="7" rx="1.2" /><rect x="12" y="3" width="7" height="7" rx="1.2" />
+        <rect x="3" y="12" width="7" height="7" rx="1.2" /><rect x="12" y="12" width="7" height="7" rx="1.2" />
+      </svg>
+      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: '0.04em', lineHeight: 1.4 }}>
+        Continue in Library
+      </span>
     </div>
   )
 }
@@ -597,15 +729,22 @@ function ShelfCard({ item, onClick, onHover }: { item: ShelfEntry; onClick: () =
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = item.thumb_url && !imgErr
 
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({
+    focusKey: `home-shelf-card-${item.content_type}-${item.id}`,
+    onEnterPress: onClick,
+    onFocus: () => onHover?.(),
+  })
+
   return (
     <div
+      ref={ref} data-tv-focused={focused}
       onClick={onClick}
       onMouseEnter={() => { setHovered(true); onHover?.() }}
       onMouseLeave={() => setHovered(false)}
       style={{
         flexShrink: 0, width: 150, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
-        boxShadow: hovered ? '0 0 0 2px var(--hds-violet)' : 'none',
-        transform: hovered ? 'scale(1.04)' : 'scale(1)',
+        boxShadow: hovered || focused ? '0 0 0 2px var(--hds-violet)' : 'none',
+        transform: hovered || focused ? 'scale(1.04)' : 'scale(1)',
         transition: 'transform .15s cubic-bezier(0.2,0,0.2,1), box-shadow .15s',
       }}
     >
@@ -627,7 +766,7 @@ function ShelfCard({ item, onClick, onHover }: { item: ShelfEntry; onClick: () =
             {item.title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
         )}
-        {hovered && (
+        {(hovered || focused) && (
           <div style={{
             position: 'absolute', bottom: 0, left: 0, right: 0,
             background: 'linear-gradient(to top, oklch(0 0 0 / 0.85), transparent)',
@@ -688,6 +827,10 @@ function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; 
         {items.map(p => (
           <ContinueWatchingCard key={`${p.content_type}:${p.content_id}`} item={p} onNavigate={onNavigate} />
         ))}
+        {/* No natural single filter for Continue Watching (mixed shows/movies/
+            episodes) — lands on an unfiltered Library, same as the other
+            shelves' "View All" did before this feature. */}
+        <ShelfEndTile focusKey="home-shelf-end-continue-watching" onClick={() => onNavigate('/library')} />
       </div>
       {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
     </div>
@@ -707,15 +850,21 @@ function ContinueWatchingCard({ item, onNavigate }: { item: WatchProgress; onNav
 
   const go = () => onNavigate(`/player/${item.content_type}/${item.content_id}?t=${item.position_ms}`)
 
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({
+    focusKey: `home-cw-card-${item.content_type}-${item.content_id}`,
+    onEnterPress: go,
+  })
+
   return (
     <div
+      ref={ref} data-tv-focused={focused}
       onClick={go}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         flexShrink: 0, width: 150, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
-        boxShadow: hovered ? '0 0 0 2px var(--hds-violet)' : 'none',
-        transform: hovered ? 'scale(1.04)' : 'scale(1)',
+        boxShadow: hovered || focused ? '0 0 0 2px var(--hds-violet)' : 'none',
+        transform: hovered || focused ? 'scale(1.04)' : 'scale(1)',
         transition: 'transform .15s cubic-bezier(0.2,0,0.2,1), box-shadow .15s',
       }}
     >

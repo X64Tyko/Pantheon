@@ -1,0 +1,10 @@
+/* Spatial-nav focus ring — driven by FocusManager's headless state via
+   [data-tv-focused], not raw DOM :focus. useFocusable also calls the real
+   .focus() as a secondary signal (screen readers, :focus-visible) but this
+   attribute is the primary, portable indicator. */
+[data-tv-focused="true"] {
+  outline: 2px solid var(--hds-gold);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px oklch(0.83 0.13 84 / 0.18);
+  transition: outline-color .12s, box-shadow .12s;
+}

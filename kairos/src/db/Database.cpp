@@ -1405,6 +1405,30 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_watch_progress_user ON watch_progress(user_id, updated_at DESC);
 )SQL" }
 
+// ── v59: real movie release date (movie previously only stored a coarse
+//         `year` integer) + an index supporting "most-recently-aired
+//         episode per show" queries (Home's Recently Released/Recently
+//         Aired shelves).
+,{ 59, R"SQL(
+    ALTER TABLE movie ADD COLUMN release_date TEXT NOT NULL DEFAULT '';
+    CREATE INDEX idx_episode_show_airdate ON episode(show_id, air_date);
+)SQL" }
+
+// ── v60: backfill release_date for movies scraped before v59 existed —
+//         without this, every existing movie has release_date='' and the
+//         Recently Released shelf's "AND release_date != ''" filter (see
+//         ContentRepository::searchMovies) excludes the entire library,
+//         leaving the shelf empty. Jan 1 of the already-known `year` is a
+//         coarse but immediately-usable placeholder; it's overwritten with
+//         the real precise date the next time a movie is normally re-
+//         scraped/matched (acceptMatch's UPDATE always sets release_date
+//         when the row isn't locked), so this is a one-time bootstrap, not
+//         a permanent approximation.
+,{ 60, R"SQL(
+    UPDATE movie SET release_date = printf('%04d-01-01', year)
+    WHERE release_date = '' AND year IS NOT NULL;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

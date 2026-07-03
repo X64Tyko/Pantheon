@@ -118,6 +118,7 @@ Movie TmdbScraper::movieFromJson(const json& j, bool is_detail) {
     std::string release = safeStr(j, "release_date");
     int y = yearFromDate(release);
     if (y > 0) m.year = y;
+    m.release_date = release;
 
     m.thumb = posterUrl(safeStr(j, "poster_path"));
     m.art   = posterUrl(safeStr(j, "backdrop_path"));

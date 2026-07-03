@@ -162,6 +162,7 @@ Movie TvdbScraper::movieFromJson(const json& j) {
     }
     int y = yearFromDate(release);
     if (y > 0) m.year = y;
+    m.release_date = release;
 
     m.thumb = safeStr(j, "image");
     if (m.thumb.empty()) m.thumb = safeStr(j, "image_url");

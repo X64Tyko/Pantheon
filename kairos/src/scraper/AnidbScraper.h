@@ -54,5 +54,11 @@ private:
     static constexpr const char* kTitlesXml  = "/tmp/kairos-anidb-titles.xml";
     static constexpr const char* kTitlesGz   = "/tmp/kairos-anidb-titles.xml.gz";
     static constexpr const char* kXmlCacheDir = "anidb-xml-cache";
-    static constexpr const char* kImgBase    = "https://cdn-us.anidb.net/images/main/";
+    // No region-specific "-us"/"-eu" subdomain — cdn-us.anidb.net (the
+    // previous value here) doesn't appear in any current AniDB documentation
+    // or examples; the bare cdn.anidb.net is what every current source
+    // actually uses. This is exactly the kind of hardcoded-hostname rot a
+    // sibling project (ShokoServer) hit too — AniDB has moved image hosts
+    // before with no redirect from the old one.
+    static constexpr const char* kImgBase    = "https://cdn.anidb.net/images/main/";
 };

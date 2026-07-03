@@ -60,6 +60,15 @@ body {
   @apply bg-violet-800/60 text-white;
 }
 
+/* Baseline keyboard-focus indicator — previously nonexistent anywhere in the
+   app (native Tab-focus was invisible everywhere). Independent of the
+   nav/ spatial-nav framework's [data-tv-focused] styling (nav/focus.css),
+   which layers on top for D-pad-driven focus specifically. */
+:focus-visible {
+  outline: 2px solid var(--hds-violet);
+  outline-offset: 2px;
+}
+
 /* ─── Scrollbar — dark with subtle violet accent ───────────────────────────── */
 
 * {
@@ -133,7 +142,10 @@ body {
 .hds-btn-gold {
   animation: hds-gold-pulse 2.4s ease-in-out infinite;
   transition: filter .15s, transform .12s;
-  outline: none;
+}
+.hds-btn-gold:focus-visible {
+  outline: 2px solid var(--hds-violet);
+  outline-offset: 3px;
 }
 .hds-btn-gold:not(:disabled):hover {
   filter: brightness(1.25) saturate(1.1);

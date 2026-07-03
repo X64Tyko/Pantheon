@@ -17,6 +17,9 @@ class LibraryStore {
   page:         number = 0
   query:        string = ''
   contentType:  'show' | 'movie' | 'all' = 'all'
+  // No user-facing sort picker in LibraryFilters yet — reachable only via
+  // Home's shelf "Continue in Library" tiles for now (see HomePage.tsx).
+  sort:         string = 'recently_added'
   activeLibId:  string | null = null
   filterGenre:  string = ''
   density:      LibraryDensity = (localStorage.getItem(DENSITY_KEY) as LibraryDensity | null) ?? 'standard'
@@ -43,6 +46,7 @@ class LibraryStore {
       q: this.query || undefined,
       library_id: this.activeLibId ?? undefined,
       genre: this.filterGenre || undefined,
+      sort: this.sort || undefined,
     }
   }
 
@@ -98,6 +102,7 @@ class LibraryStore {
   }
   setLibrary(id: string | null)    { this.activeLibId = id; this.page = 0; this.fetch() }
   setContentType(t: 'show' | 'movie' | 'all') { this.contentType = t; this.page = 0; this.fetch() }
+  setSort(s: string)                { this.sort        = s; this.page = 0; this.fetch() }
   setPage(p: number)               { this.page        = p; this.fetch() }
   setFilterGenre(g: string)        { this.filterGenre = g; this.page = 0; this.fetch() }
 

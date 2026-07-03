@@ -117,6 +117,15 @@ export interface ActivitySession {
 
 export type MatchStatus = 'matched' | 'uncertain' | 'unmatched' | 'unscraped'
 
+// Only present when the show list was fetched with sort=recently_aired —
+// see api.getShows()/HomePage's Recently Aired shelf.
+export interface LatestAiredEpisode {
+  episode_id: string
+  season:     number
+  episode:    number
+  air_date:   string
+}
+
 export interface Show {
   show_id:         string
   title:           string
@@ -129,6 +138,7 @@ export interface Show {
   audience_rating?: number
   match_status?:   MatchStatus
   match_score?:    number | null
+  latest_episode?: LatestAiredEpisode
 }
 
 export interface Movie {
@@ -137,6 +147,7 @@ export interface Movie {
   content_rating:  string
   duration_ms:     number
   year?:           number
+  release_date?:   string
   thumb?:          string
   art?:            string
   source_base_url?: string
@@ -177,6 +188,7 @@ export interface MovieDetail {
   content_rating:   string
   duration_ms:      number
   year?:            number
+  release_date?:    string
   overview:         string
   tagline:          string
   studio:           string

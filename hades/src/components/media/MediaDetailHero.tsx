@@ -1,8 +1,10 @@
-import { type ReactNode, useEffect, useState } from 'react'
-import { api, mediaUrl } from '../../api/client'
-import type { Episode, MediaLanguages, ScraperSearchResult, ShowDetail, MovieDetail, VideoInfo } from '../../api/types'
+import { type ReactNode } from 'react'
+import type { ScraperSearchResult, VideoInfo } from '../../api/types'
 import { EpisodeShelf } from './EpisodeShelf'
 import { LanguageChips } from './LanguageChips'
+import { useFocusable } from '../../nav/useFocusable'
+import { useNavBack } from '../../nav/back'
+import { useMediaDetail } from './useMediaDetail'
 
 function formatVideoInfo(v: VideoInfo): string | null {
   if (!v.codec && !v.height) return null
@@ -32,57 +34,15 @@ const metaChip: React.CSSProperties = {
   border: '1px solid var(--hds-line-s)', color: 'var(--hds-txt-3)',
 }
 
-function showThumbUrl(id: string) { return mediaUrl(`/api/shows/${id}/thumb`) }
-function showArtUrl(id: string)   { return mediaUrl(`/api/shows/${id}/art`) }
-function movieThumbUrl(id: string) { return mediaUrl(`/api/movies/${id}/thumb`) }
-function movieArtUrl(id: string)   { return mediaUrl(`/api/movies/${id}/art`) }
-
 export function MediaDetailHero({ id, content_type, discoverResult, onBack, actions, afterShelves, showBackdrop = true }: MediaDetailHeroProps) {
-  const [show,      setShow]      = useState<ShowDetail | null>(null)
-  const [movie,     setMovie]     = useState<MovieDetail | null>(null)
-  const [loading,   setLoading]   = useState(!discoverResult)
-  const [episodes,  setEpisodes]  = useState<Episode[]>([])
-  const [languages, setLanguages] = useState<MediaLanguages | null>(null)
-  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
+  useNavBack(onBack) // Escape/Backspace closes the detail view, same contract as PlayerPage
+  const {
+    show, movie, loading, detail, contentType,
+    posterUrl, backdropUrl, title, year, overview, genres, rating,
+    seasonsWithEpisodes, languages, videoInfo,
+  } = useMediaDetail({ id, content_type, discoverResult })
 
-  useEffect(() => {
-    if (discoverResult) return
-    if (!id || !content_type) return
-    setLoading(true)
-    setShow(null); setMovie(null); setEpisodes([]); setLanguages(null); setVideoInfo(null)
-
-    if (content_type === 'show') {
-      api.getShow(id).then(setShow).finally(() => setLoading(false))
-      api.getEpisodes(id).then(setEpisodes).catch(() => {})
-      api.getShowLanguages(id).then(setLanguages).catch(() => {})
-      api.getShowVideoInfo(id).then(setVideoInfo).catch(() => {})
-    } else {
-      api.getMovie(id).then(setMovie).finally(() => setLoading(false))
-      api.getMovieLanguages(id).then(setLanguages).catch(() => {})
-      api.getMovieVideoInfo(id).then(setVideoInfo).catch(() => {})
-    }
-  }, [id, content_type, discoverResult])
-
-  const detail = discoverResult ? null : (show ?? movie)
-  const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
-
-  const posterUrl = discoverResult?.poster_url
-    ?? (id && detail?.thumb ? (contentType === 'show' ? showThumbUrl(id) : movieThumbUrl(id)) : undefined)
-  const backdropUrl = discoverResult?.poster_url
-    ?? (id && detail?.art ? (contentType === 'show' ? showArtUrl(id) : movieArtUrl(id)) : undefined)
-
-  const title    = discoverResult?.title    ?? detail?.title    ?? ''
-  const year     = discoverResult?.year     ?? detail?.year
-  const overview = discoverResult?.overview ?? detail?.overview ?? ''
-  const genres   = detail?.genres ?? []
-  const rating   = detail?.audience_rating
   const srcColor = discoverResult?.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
-
-  const seasonsWithEpisodes = show
-    ? show.seasons
-        .map(s => ({ ...s, episodes: episodes.filter(e => e.season === s.number).sort((a, b) => a.episode - b.episode) }))
-        .filter(s => s.episodes.length > 0)
-    : []
 
   return (
     <div>
@@ -231,8 +191,10 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
 }
 
 function BackButton({ onClick, overlay }: { onClick: () => void; overlay?: boolean }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'detail-back', onEnterPress: onClick })
   return (
     <button
+      ref={ref} data-tv-focused={focused}
       onClick={onClick}
       style={{
         display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',

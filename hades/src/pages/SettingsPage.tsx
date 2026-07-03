@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { statusStore } from '../stores'
 import type { ArrConfig, ScraperSettings, ScraperStats } from '../api/types'
+import { useFocusable } from '../nav/useFocusable'
 
 interface Settings {
   epg_debug:              boolean
@@ -10,11 +11,18 @@ interface Settings {
   stream_buffer_size:     number
   image_cache_ttl_hours:  number
   verbose_transcode_logs: boolean
+  cast_app_id:            string
 }
 
-function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+function Toggle({ id, checked, onChange, disabled }: { id: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({
+    focusKey: `settings-toggle-${id}`,
+    onEnterPress: () => onChange(!checked),
+    focusable: !disabled,
+  })
   return (
     <button
+      ref={ref} data-tv-focused={focused}
       role="switch"
       aria-checked={checked}
       disabled={disabled}
@@ -47,6 +55,21 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
   )
 }
 
+// Local helper — this page has several one-off action buttons (Clear All,
+// Save x2, Run Match, Reset/Yes/Cancel) all needing the same D-pad wiring;
+// factored out rather than repeating the useFocusable boilerplate 7 times.
+function NavButton({ id, onClick, disabled, style, children }: {
+  id: string; onClick: () => void; disabled?: boolean
+  style: React.CSSProperties; children: React.ReactNode
+}) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: `settings-btn-${id}`, onEnterPress: onClick, focusable: !disabled })
+  return (
+    <button ref={ref} data-tv-focused={focused} onClick={onClick} disabled={disabled} style={style}>
+      {children}
+    </button>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ background: 'var(--hds-bg-2)', border: '1px solid oklch(0.22 0.01 286 / 0.6)', borderRadius: 10, overflow: 'hidden' }}>
@@ -73,7 +96,8 @@ export default function SettingsPage() {
   const [error,    setError]      = useState<string | null>(null)
   const [threads,  setThreads]    = useState('')
   const [bufferSize, setBufferSize] = useState('')
-  
+  const [castAppId, setCastAppId] = useState('')
+
 
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetting,     setResetting]     = useState(false)
@@ -95,6 +119,7 @@ export default function SettingsPage() {
       setSettings(s)
       setThreads(String(s.sync_threads))
       setBufferSize(String(s.stream_buffer_size))
+      setCastAppId(s.cast_app_id)
     }).catch(() => setError('Failed to load settings'))
     api.getArrConfig().then(setArr).catch(() => {})
     api.getScraperSettings().then(setScraperSettings).catch(() => {})
@@ -113,6 +138,7 @@ export default function SettingsPage() {
       setSettings(next)
       setThreads(String(next.sync_threads))
       setBufferSize(String(next.stream_buffer_size))
+      setCastAppId(next.cast_app_id)
       // Keep statusStore in sync immediately so the debug banner reflects the change.
       if ('sync_debug' in update) statusStore.syncDebug = next.sync_debug
       if ('epg_debug'  in update) statusStore.epgDebug  = next.epg_debug
@@ -134,6 +160,10 @@ const applyBuffer = () => {
     if (!isNaN(n) && n >= 1024) patch({ stream_buffer_size: n })
     else setBufferSize(settings ? String(settings.stream_buffer_size) : '1024')
 }
+
+  const applyCastAppId = () => {
+    if (castAppId !== (settings?.cast_app_id ?? '')) patch({ cast_app_id: castAppId.trim() })
+  }
 
   const resetLibrary = async () => {
     setResetting(true)
@@ -220,6 +250,7 @@ const applyBuffer = () => {
           hint="Verbose output for every sync, ffprobe call, and scraper query — phase timings, per-episode path mapping, and chapter probe results. Disable when not actively diagnosing."
         >
           <Toggle
+            id="sync_debug"
             checked={settings?.sync_debug ?? false}
             disabled={!settings || saving}
             onChange={v => patch({ sync_debug: v })}
@@ -230,6 +261,7 @@ const applyBuffer = () => {
           hint="Emits verbose [epg] lines to stdout during schedule projection. Visible in engine logs and docker logs."
         >
           <Toggle
+            id="epg_debug"
             checked={settings?.epg_debug ?? false}
             disabled={!settings || saving}
             onChange={v => patch({ epg_debug: v })}
@@ -240,6 +272,7 @@ const applyBuffer = () => {
           hint="Logs full ffmpeg command lines and -v verbose output for every spawned transcode (live channels, VOD, previews) — noisy, enable only when debugging hardware acceleration issues. Applies to new streams within ~15s, no restart needed."
         >
           <Toggle
+            id="verbose_transcode_logs"
             checked={settings?.verbose_transcode_logs ?? false}
             disabled={!settings || saving}
             onChange={v => patch({ verbose_transcode_logs: v })}
@@ -296,7 +329,8 @@ const applyBuffer = () => {
           label="Clear All EPG Caches"
           hint="Deletes all scheduled program rows across every channel. The guide will regenerate on next request."
         >
-          <button
+          <NavButton
+            id="clear-epg"
             onClick={clearAllEpg}
             disabled={clearing}
             style={{
@@ -307,7 +341,7 @@ const applyBuffer = () => {
             }}
           >
             {clearing ? 'Clearing…' : 'Clear All'}
-          </button>
+          </NavButton>
         </SettingRow>
         {clearMsg && (
           <div style={{ padding: '10px 0 14px', fontSize: 11, color: 'var(--hds-txt-3)' }}>{clearMsg}</div>
@@ -336,6 +370,23 @@ const applyBuffer = () => {
             </SettingRow>
         </Section>
 
+      <Section title="Chromecast">
+        <SettingRow
+          label="Receiver Application ID"
+          hint="From the Google Cast SDK Developer Console, registered against the Pantheon custom receiver's hosted URL. Leave blank to disable the Cast button."
+        >
+          <input
+            style={{ ...inputStyle, width: 200 }}
+            placeholder="XXXXXXXX"
+            value={castAppId}
+            onChange={e => setCastAppId(e.target.value)}
+            onBlur={applyCastAppId}
+            onKeyDown={e => e.key === 'Enter' && applyCastAppId()}
+            disabled={!settings || saving}
+          />
+        </SettingRow>
+      </Section>
+
       <Section title="Sonarr">
         <ArrField label="URL" hint="e.g. http://sonarr:8989" value={arr.sonarr_url}
           onChange={v => setArr(a => ({ ...a, sonarr_url: v }))} />
@@ -351,7 +402,8 @@ const applyBuffer = () => {
       </Section>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button
+        <NavButton
+          id="save-arr"
           onClick={async () => {
             setArrSave('saving')
             try { await api.patchArrConfig(arr); setArrSave('ok') }
@@ -368,7 +420,7 @@ const applyBuffer = () => {
           }}
         >
           {arrSave === 'saving' ? 'Saving…' : arrSave === 'ok' ? 'Saved' : arrSave === 'err' ? 'Error' : 'Save Settings'}
-        </button>
+        </NavButton>
         <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>
           Used when adding missing media from the import preview.
         </span>
@@ -379,6 +431,7 @@ const applyBuffer = () => {
       <Section title="TMDB — The Movie Database">
         <SettingRow label="Enabled" hint="Primary metadata source for movies and shows.">
           <Toggle
+            id="tmdb_enabled"
             checked={tmdb?.enabled ?? false}
             disabled={!scraperSettings}
             onChange={v => updateScraperConfig('tmdb', 'enabled', v)}
@@ -406,6 +459,7 @@ const applyBuffer = () => {
       <Section title="TVDB — TheTVDB">
         <SettingRow label="Enabled" hint="Secondary source; provides TVDB IDs and series data.">
           <Toggle
+            id="tvdb_enabled"
             checked={tvdb?.enabled ?? false}
             disabled={!scraperSettings}
             onChange={v => updateScraperConfig('tvdb', 'enabled', v)}
@@ -442,6 +496,7 @@ const applyBuffer = () => {
       <Section title="AniDB">
         <SettingRow label="Enabled" hint="Anime metadata source for shows and movies via the AniDB HTTP API.">
           <Toggle
+            id="anidb_enabled"
             checked={anidb?.enabled ?? false}
             disabled={!scraperSettings}
             onChange={v => updateScraperConfig('anidb', 'enabled', v)}
@@ -500,7 +555,8 @@ const applyBuffer = () => {
         )}
 
         <div style={{ padding: '14px 0', display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button
+          <NavButton
+            id="run-match"
             onClick={runMatch}
             disabled={matchRunning}
             style={{
@@ -513,12 +569,13 @@ const applyBuffer = () => {
             }}
           >
             {matchRunning ? '● Running…' : 'Run Match Pass'}
-          </button>
+          </NavButton>
         </div>
       </Section>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button
+        <NavButton
+          id="save-scraper"
           onClick={saveScraperSettings}
           disabled={!scraperDirty || scraperSaving}
           style={{
@@ -532,7 +589,7 @@ const applyBuffer = () => {
           }}
         >
           {scraperSaving ? 'Saving…' : scraperSaved ? '✓ Saved' : 'Save Scraper Settings'}
-        </button>
+        </NavButton>
       </div>
 
       {saving && (
@@ -545,7 +602,8 @@ const applyBuffer = () => {
           hint="Wipes all shows, episodes, movies, and source mappings. Source/library config, channels, and users are kept. The next sync rebuilds everything from scratch."
         >
           {!resetConfirm ? (
-            <button
+            <NavButton
+              id="reset-library"
               onClick={() => { setResetConfirm(true); setResetMsg(null) }}
               style={{
                 padding: '5px 14px', borderRadius: 6,
@@ -556,11 +614,12 @@ const applyBuffer = () => {
               }}
             >
               Reset
-            </button>
+            </NavButton>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 11, color: 'oklch(0.75 0.15 22)' }}>Sure?</span>
-              <button
+              <NavButton
+                id="reset-library-confirm"
                 onClick={resetLibrary}
                 disabled={resetting}
                 style={{
@@ -573,8 +632,9 @@ const applyBuffer = () => {
                 }}
               >
                 {resetting ? 'Resetting…' : 'Yes, wipe it'}
-              </button>
-              <button
+              </NavButton>
+              <NavButton
+                id="reset-library-cancel"
                 onClick={() => setResetConfirm(false)}
                 style={{
                   padding: '5px 10px', borderRadius: 6,
@@ -585,7 +645,7 @@ const applyBuffer = () => {
                 }}
               >
                 Cancel
-              </button>
+              </NavButton>
             </div>
           )}
         </SettingRow>

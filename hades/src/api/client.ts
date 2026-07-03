@@ -24,17 +24,24 @@ export function channelLogoUrl(channelId: string): string {
   return mediaUrl(`/api/channels/${channelId}/logo`)
 }
 
+// Set while the /tv route tree is mounted (TvShell) so every request — API
+// and /stream alike — carries X-Pantheon-Surface: tv. Kairos downgrades an
+// admin caller to viewer on that header (Router.cpp), and Hermes forwards it
+// through both proxy paths; this is the one place in Hades that toggles it.
+let activeSurface: 'tv' | null = null
+export function setSurface(s: 'tv' | null) { activeSurface = s }
+
 /** For fetch() calls to Hermes's /stream/* routes, which sit outside request()'s /api prefix. */
 export function authHeaders(): Record<string, string> {
   const token = localStorage.getItem(TOKEN_KEY)
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  if (activeSurface) headers['X-Pantheon-Surface'] = activeSurface
+  return headers
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { ...authHeaders() }
   if (body != null) headers['Content-Type'] = 'application/json'
-  const token = localStorage.getItem(TOKEN_KEY)
-  if (token) headers['Authorization'] = `Bearer ${token}`
 
   const res = await fetch(`/api${path}`, {
     method,
@@ -284,8 +291,8 @@ export const api = {
   deleteBumper:  (channelId: string, bumperId: number)               => request<void>          ('DELETE', `/channels/${channelId}/bumpers/${bumperId}`),
 
   // Runtime settings
-  getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean }>('GET',   '/config/settings'),
-  updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean }>('PATCH', '/config/settings', b),
+  getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('GET',   '/config/settings'),
+  updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),
 

@@ -144,6 +144,12 @@ static void proxyRequest(const std::string& upstream_base,
     res.status = r->status;
     auto loc = r->get_header_value("Location");
     if (!loc.empty()) res.set_header("Location", loc);
+    // Needed for a Chromecast custom receiver's player pipeline (a JS-level
+    // fetch from whatever origin the receiver is hosted at — github.io or a
+    // self-hosted domain) to read manifests/segments cross-origin if it ever
+    // falls back off native passthrough. Same wide-open posture proxyStream
+    // and the SSE log route already use elsewhere in this file.
+    res.set_header("Access-Control-Allow-Origin", "*");
     auto resp_ct = r->get_header_value("Content-Type");
     if (!r->body.empty())
         res.set_content(r->body, resp_ct.empty() ? "application/octet-stream" : resp_ct);

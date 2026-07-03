@@ -1,6 +1,7 @@
 #include "ConfigService.h"
 #include "../RouteHelpers.h"
 #include "../../conf/ConfStore.h"
+#include "../../db/ConfigRepository.h"
 #include "../../db/ScheduleRepository.h"
 #include "../../db/SourceRepository.h"
 #include "../../source/SyncManager.h"
@@ -34,6 +35,11 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			{"stream_buffer_size",           g_buffer_size.load()},
 			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
 			{"verbose_transcode_logs", g_verbose_transcode_logs.load()},
+			// Chromecast custom receiver's Application ID (from the Google Cast
+			// SDK Developer Console) — a runtime setting rather than a Hades
+			// build-time env var, since Hades ships as a prebuilt Docker image
+			// with no way to rebuild just to change this value.
+			{"cast_app_id",            ConfigRepository(db_).getValue("cast_app_id")},
 		};
 	};
 
@@ -74,6 +80,9 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 				bool v = b["verbose_transcode_logs"].get<bool>();
 				g_verbose_transcode_logs.store(v);
 				persistFlag("verbose_transcode_logs", v);
+			}
+			if (b.contains("cast_app_id") && b["cast_app_id"].is_string()) {
+				ConfigRepository(db_).setValue("cast_app_id", b["cast_app_id"].get<std::string>());
 			}
 			route::ok(res, settingsJson().dump());
 		} catch (const std::exception& e) {

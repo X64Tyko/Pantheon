@@ -80,6 +80,7 @@ struct MovieRow {
     std::string movie_id, title, content_rating;
     int64_t duration_ms = 0;
     std::optional<int>    year;
+    std::string           release_date; // "YYYY-MM-DD"; empty if the source never provided one
     std::string           thumb, art, source_base_url;
     std::optional<double> audience_rating;
     std::string           match_status;
@@ -95,6 +96,7 @@ struct MovieDetail {
     std::string movie_id, title, content_rating;
     int64_t duration_ms = 0;
     std::optional<int>    year;
+    std::string           release_date; // "YYYY-MM-DD"; empty if the source never provided one
     std::optional<double> audience_rating;
     bool locked = false;
     std::string overview, tagline, studio, director, genres, thumb, art, imdb_id, tmdb_id;
@@ -111,14 +113,14 @@ struct ShowSearchParams {
     int limit = 50, offset = 0;
     std::string library_id, q, genre, year, content_rating;
     std::string label, network, actor, country, collection, studio;
-    std::string sort;   // "title" (default) | "recently_added" | "random"
+    std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_aired"
 };
 
 struct MovieSearchParams {
     int limit = 50, offset = 0;
     std::string library_id, q, genre, year, content_rating;
     std::string label, actor, country, collection, studio;
-    std::string sort;   // "title" (default) | "recently_added" | "random"
+    std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_released"
 };
 
 struct StrField { std::string col, val; };
@@ -200,6 +202,9 @@ public:
 
     std::vector<EpisodeRow>       listEpisodesForShow(const std::string& show_id,
                                                        const std::string& season_filter = "");
+    // Most recently aired (real-world air_date, blanks/future excluded)
+    // episode of a show — used by Home's Recently Aired shelf.
+    std::optional<EpisodeRow>     getLatestAiredEpisode(const std::string& show_id);
     std::vector<SeasonRow>        listSeasons(const std::string& show_id);
     std::vector<EpisodeSearchRow> searchEpisodes(const std::string& show_id,
                                                   const std::string& q,

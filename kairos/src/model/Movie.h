@@ -10,6 +10,7 @@ struct Movie {
     std::string    file_path;
     int64_t        duration_ms = 0;
     std::optional<int> year;
+    std::string    release_date; // "YYYY-MM-DD" when known; empty if the source never provided one
 
     std::string    overview;
     std::string    tagline;

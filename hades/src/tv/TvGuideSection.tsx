@@ -1,9 +1,14 @@
 import { useNavigate } from 'react-router-dom'
-import { useGuideSession } from './useGuideSession'
-import { GuideGrid } from './GuideGrid'
-import { GuidePreview } from './GuidePreview'
+import { useGuideSession } from '../guide/useGuideSession'
+import { GuideGrid } from '../guide/GuideGrid'
+import { GuidePreview } from '../guide/GuidePreview'
 
-export function GuidePage() {
+// Same session/preview state machine as the desktop GuidePage (useGuideSession)
+// — GuideGrid/GuidePreview/ChannelColumn are reused as-is rather than forked,
+// since Phase 1's D-pad wiring already lives in those components and their
+// current sizing already reads fine on a TV-class display; true 10-foot
+// font/spacing scaling is a flagged fast-follow, not a functional blocker.
+export function TvGuideSection() {
   const navigate = useNavigate()
   const {
     channels, epgByChannel, windowStartMs, nowMs,
@@ -16,6 +21,10 @@ export function GuidePage() {
 
   return (
     <div>
+      <div style={{
+        fontFamily: "'Chakra Petch', sans-serif", fontSize: 20, fontWeight: 600,
+        color: 'var(--hds-txt)', padding: '0 48px 16px',
+      }}>Live Guide</div>
       <GuidePreview channel={focusedChannel} nowProgram={nowProgram} manifestUrl={manifestUrl} onWatch={() => focusedId && watchChannel(focusedId)} />
       <GuideGrid
         channels={channels}

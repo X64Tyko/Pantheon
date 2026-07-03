@@ -262,6 +262,22 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			if (r.year)            entry["year"]            = *r.year;
 			if (r.audience_rating) entry["audience_rating"] = *r.audience_rating;
 			if (r.match_score)     entry["match_score"]     = *r.match_score;
+			// Only for this specific sort — Home's Recently Aired shelf needs
+			// to know exactly which episode to jump straight to; every other
+			// sort (and Library's own use of this same endpoint) doesn't need
+			// per-item episode data, so this stays a small N+1 over an
+			// already-paginated (16-24 item) page rather than a batch query
+			// that would complicate every other caller of searchShows().
+			if (p.sort == "recently_aired") {
+				if (auto ep = repo.getLatestAiredEpisode(r.show_id)) {
+					entry["latest_episode"] = {
+						{"episode_id", ep->episode_id},
+						{"season",     ep->season},
+						{"episode",    ep->episode},
+						{"air_date",   ep->air_date},
+					};
+				}
+			}
 			items.push_back(std::move(entry));
 		}
 		route::ok(res, json{{"items", items}, {"total", result.total}}.dump());
@@ -390,6 +406,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			              {"source_base_url", r.source_base_url},
 			              {"match_status",    r.match_status.empty() ? "unscraped" : r.match_status}};
 			if (r.year)            entry["year"]            = *r.year;
+			if (!r.release_date.empty()) entry["release_date"] = r.release_date;
 			if (r.audience_rating) entry["audience_rating"] = *r.audience_rating;
 			if (r.match_score)     entry["match_score"]     = *r.match_score;
 			items.push_back(std::move(entry));
@@ -517,6 +534,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		movie["content_rating"]  = d->content_rating;
 		movie["duration_ms"]     = d->duration_ms;
 		if (d->year)            movie["year"]            = *d->year;
+		if (!d->release_date.empty()) movie["release_date"] = d->release_date;
 		if (d->audience_rating) movie["audience_rating"] = *d->audience_rating;
 		movie["overview"]        = d->overview;
 		movie["tagline"]         = d->tagline;

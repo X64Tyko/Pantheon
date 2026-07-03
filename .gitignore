@@ -36,3 +36,10 @@ desktop.ini
 /image-cache/
 /anidb-xml-cache/
 /data/
+
+# ── pantheon-relay ────────────────────────────────────────────────────────────
+# Symlink to a separate, standalone git repo (Chromecast receiver hosting) —
+# linked in here purely so it's reachable/editable from this workspace.
+# Never tracked: it's not part of this monorepo and the symlink target is an
+# absolute, machine-specific path.
+/pantheon-relay

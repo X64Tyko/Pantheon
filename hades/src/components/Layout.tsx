@@ -1,9 +1,12 @@
 import { observer } from 'mobx-react-lite'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
+import { useFocusable } from '../nav/useFocusable'
 import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
 import { systemStore, statusStore } from '../stores'
+import { SIDEBAR_FOCUS_KEY } from '../nav/back'
 
 const navItems: { to: string; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
   { to: '/',          label: 'Home',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 7.5L8 2l6 5.5V14H10v-3.5H6V14H2V7.5z" strokeLinejoin="round"/></svg> },
@@ -37,6 +40,38 @@ export default observer(function Layout() {
     localStorage.setItem('hds-nav-collapsed', next ? '1' : '0')
     return next
   })
+
+  // D-pad/keyboard nav auto-manages the sidebar: minimized while focus is in
+  // page content, expanded when it returns to a sidebar item — standard
+  // 10-foot-UI rail behavior. hasFocusedChild starts false and only becomes
+  // true once a real focus event lands on a sidebar item, so this never
+  // fires for mouse-only users and never overrides their manually-persisted
+  // (localStorage) preference on a fresh page load. Deliberately doesn't
+  // touch localStorage itself: the stored preference should keep reflecting
+  // the last *manual* toggle, not this transient, focus-driven state.
+  // isFocusBoundary contains up/down within the sidebar's own vertical list
+  // (never escapes to page content that way) while leaving left/right open
+  // so content can still hand off into/out of the sidebar at its edges.
+  const { ref: sidebarRef, focusKey: sidebarFocusKey, hasFocusedChild } = useFocusable({
+    focusKey: SIDEBAR_FOCUS_KEY,
+    trackChildren: true,
+    isFocusBoundary: true,
+    focusBoundaryDirections: ['up', 'down'],
+    saveLastFocusedChild: true,
+  })
+  // Only reacts to real transitions once the sidebar has genuinely had focus
+  // at least once — hasFocusedChild starts false on mount regardless of
+  // input method, so collapsing on that initial false would fight a mouse-
+  // only user's manually-persisted preference before they've touched a key.
+  const sidebarEverFocusedRef = useRef(false)
+  useEffect(() => {
+    if (hasFocusedChild) {
+      sidebarEverFocusedRef.current = true
+      setNavCollapsed(false)
+    } else if (sidebarEverFocusedRef.current) {
+      setNavCollapsed(true)
+    }
+  }, [hasFocusedChild])
 
   // Fetch pending request count for admin badge.
   useEffect(() => {
@@ -75,7 +110,7 @@ export default observer(function Layout() {
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--hds-bg)' }}>
       {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
-      <nav style={{
+      <nav ref={sidebarRef} style={{
         width: col ? 52 : 236, flexShrink: 0, display: 'flex', flexDirection: 'column',
         borderRight: '1px solid var(--hds-line-s)',
         background: 'linear-gradient(180deg, oklch(0.17 0.018 286), var(--hds-bg))',
@@ -149,88 +184,19 @@ export default observer(function Layout() {
         </div>
 
         {/* Nav */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
-          {navItems.filter(item => !item.adminOnly || user?.role === 'admin').map(({ to, label, icon }) => (
-            <NavLink key={to} to={to} title={col ? label : undefined} style={{ textDecoration: 'none' }}>
-              {({ isActive }) => (
-                <div style={{
-                  position: 'relative', display: 'flex', alignItems: 'center',
-                  gap: col ? 0 : 11,
-                  justifyContent: col ? 'center' : 'flex-start',
-                  padding: col ? '10px 0' : '10px 12px', borderRadius: 9,
-                  background: isActive ? 'var(--hds-bg-3)' : 'transparent',
-                  color: isActive ? 'var(--hds-gold)' : 'var(--hds-txt-2)',
-                  boxShadow: isActive ? 'inset 0 0 0 1px oklch(0.83 0.13 84 / 0.18)' : 'none',
-                  fontWeight: isActive ? 600 : 400,
-                  cursor: 'pointer',
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: 13,
-                  transition: 'background .14s, color .14s',
-                }}>
-                  {isActive && (
-                    <span style={{
-                      position: 'absolute', left: 0, top: 9, bottom: 9, width: 3,
-                      borderRadius: 3, background: 'var(--hds-gold)',
-                      boxShadow: '0 0 12px var(--hds-gold)',
-                    }} />
-                  )}
-                  <span style={{ color: isActive ? 'var(--hds-gold)' : 'var(--hds-txt-3)', flexShrink: 0 }}>
-                    {icon}
-                  </span>
-                  {!col && <span>{label}</span>}
-
-                  {/* Pending requests badge on Review (admin) */}
-                  {to === '/review' && pendingRequests > 0 && (
-                    <span style={{
-                      marginLeft: col ? undefined : 'auto',
-                      position: col ? 'absolute' : undefined,
-                      top: col ? 4 : undefined, right: col ? 4 : undefined,
-                      minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px',
-                      background: 'oklch(0.75 0.12 80)',
-                      color: 'oklch(0.15 0.02 80)',
-                      fontSize: 9, fontWeight: 700,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      letterSpacing: 0,
-                    }}>
-                      {pendingRequests > 99 ? '99+' : pendingRequests}
-                    </span>
-                  )}
-
-                  {/* Activity indicator: red error badge > purple sync dot */}
-                  {to === '/activity' && (
-                    hasErrors ? (
-                      <span style={{
-                        marginLeft: col ? undefined : 'auto',
-                        position: col ? 'absolute' : undefined,
-                        top: col ? 4 : undefined, right: col ? 4 : undefined,
-                        minWidth: 16, height: 16, borderRadius: 8,
-                        padding: '0 4px',
-                        background: 'oklch(0.55 0.22 22)',
-                        color: 'oklch(1 0 0)',
-                        fontSize: 9, fontWeight: 700,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        boxShadow: '0 0 10px oklch(0.55 0.22 22 / 0.7)',
-                        animation: 'hds-pulse 2s ease-in-out infinite',
-                        letterSpacing: 0,
-                      }}>
-                        {systemStore.unreadErrors > 99 ? '99+' : systemStore.unreadErrors}
-                      </span>
-                    ) : statusStore.anyRunning ? (
-                      <span style={{
-                        marginLeft: col ? undefined : 'auto',
-                        position: col ? 'absolute' : undefined,
-                        top: col ? 6 : undefined, right: col ? 6 : undefined,
-                        width: 6, height: 6, borderRadius: '50%',
-                        background: 'var(--hds-violet)',
-                        animation: 'hds-pulse 2.6s ease-in-out infinite',
-                      }} />
-                    ) : null
-                  )}
-                </div>
-              )}
-            </NavLink>
-          ))}
-        </div>
+        <FocusContext.Provider value={sidebarFocusKey}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
+            {navItems.filter(item => !item.adminOnly || user?.role === 'admin').map(({ to, label, icon }) => (
+              <SidebarNavItem
+                key={to} to={to} label={label} icon={icon} col={col}
+                pendingRequests={to === '/review' ? pendingRequests : 0}
+                hasErrors={to === '/activity' && hasErrors}
+                unreadErrors={systemStore.unreadErrors}
+                anyRunning={to === '/activity' && statusStore.anyRunning}
+              />
+            ))}
+          </div>
+        </FocusContext.Provider>
 
         {/* Status footer */}
         <div style={{ paddingTop: 14, borderTop: '1px solid var(--hds-line-s)', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -333,6 +299,114 @@ export default observer(function Layout() {
     </div>
   )
 })
+
+// Sidebar nav is persistent chrome present on every non-full-screen page —
+// wiring it into the nav framework (not just Guide/Player) is what gives
+// D-pad users an escape route out of any page-local focus island (e.g.
+// pressing left at the Guide's leftmost column) rather than a dead end.
+function SidebarNavItem({ to, label, icon, col, pendingRequests, hasErrors, unreadErrors, anyRunning }: {
+  to: string; label: string; icon: React.ReactNode; col: boolean
+  pendingRequests: number; hasErrors: boolean; unreadErrors: number; anyRunning: boolean
+}) {
+  const navigate = useNavigate()
+  // Enter/select needs an explicit navigate() call — the synthetic activate()
+  // path doesn't trigger NavLink's own native click-based navigation.
+  //
+  // forceFocus on Home specifically: the library never auto-focuses anything
+  // on mount — smartNavigate() silently no-ops on every arrow press until
+  // something is focused at least once. forceFocus is its own fallback
+  // mechanism for exactly this ("preferred fallback when focus is lost"),
+  // re-evaluated live on every navigation attempt rather than needing one
+  // well-timed imperative setFocus() call at just the right point in the
+  // route tree (which routes like /player/* that mount outside <Layout>
+  // would miss entirely).
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({
+    focusKey: `sidebar-nav-${to}`,
+    onEnterPress: () => navigate(to),
+    forceFocus: to === '/',
+  })
+
+  return (
+    <NavLink to={to} title={col ? label : undefined} style={{ textDecoration: 'none' }}>
+      {({ isActive }) => (
+        <div
+          ref={ref} data-tv-focused={focused}
+          style={{
+            position: 'relative', display: 'flex', alignItems: 'center',
+            gap: col ? 0 : 11,
+            justifyContent: col ? 'center' : 'flex-start',
+            padding: col ? '10px 0' : '10px 12px', borderRadius: 9,
+            background: isActive ? 'var(--hds-bg-3)' : 'transparent',
+            color: isActive ? 'var(--hds-gold)' : 'var(--hds-txt-2)',
+            boxShadow: isActive ? 'inset 0 0 0 1px oklch(0.83 0.13 84 / 0.18)' : 'none',
+            fontWeight: isActive ? 600 : 400,
+            cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 13,
+            transition: 'background .14s, color .14s',
+          }}>
+          {isActive && (
+            <span style={{
+              position: 'absolute', left: 0, top: 9, bottom: 9, width: 3,
+              borderRadius: 3, background: 'var(--hds-gold)',
+              boxShadow: '0 0 12px var(--hds-gold)',
+            }} />
+          )}
+          <span style={{ color: isActive ? 'var(--hds-gold)' : 'var(--hds-txt-3)', flexShrink: 0 }}>
+            {icon}
+          </span>
+          {!col && <span>{label}</span>}
+
+          {/* Pending requests badge on Review (admin) */}
+          {pendingRequests > 0 && (
+            <span style={{
+              marginLeft: col ? undefined : 'auto',
+              position: col ? 'absolute' : undefined,
+              top: col ? 4 : undefined, right: col ? 4 : undefined,
+              minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px',
+              background: 'oklch(0.75 0.12 80)',
+              color: 'oklch(0.15 0.02 80)',
+              fontSize: 9, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              letterSpacing: 0,
+            }}>
+              {pendingRequests > 99 ? '99+' : pendingRequests}
+            </span>
+          )}
+
+          {/* Activity indicator: red error badge > purple sync dot */}
+          {hasErrors ? (
+            <span style={{
+              marginLeft: col ? undefined : 'auto',
+              position: col ? 'absolute' : undefined,
+              top: col ? 4 : undefined, right: col ? 4 : undefined,
+              minWidth: 16, height: 16, borderRadius: 8,
+              padding: '0 4px',
+              background: 'oklch(0.55 0.22 22)',
+              color: 'oklch(1 0 0)',
+              fontSize: 9, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 0 10px oklch(0.55 0.22 22 / 0.7)',
+              animation: 'hds-pulse 2s ease-in-out infinite',
+              letterSpacing: 0,
+            }}>
+              {unreadErrors > 99 ? '99+' : unreadErrors}
+            </span>
+          ) : anyRunning ? (
+            <span style={{
+              marginLeft: col ? undefined : 'auto',
+              position: col ? 'absolute' : undefined,
+              top: col ? 6 : undefined, right: col ? 6 : undefined,
+              width: 6, height: 6, borderRadius: '50%',
+              background: 'var(--hds-violet)',
+              animation: 'hds-pulse 2.6s ease-in-out infinite',
+            }} />
+          ) : null}
+        </div>
+      )}
+    </NavLink>
+  )
+}
 
 // ── Process status components ─────────────────────────────────────────────────
 

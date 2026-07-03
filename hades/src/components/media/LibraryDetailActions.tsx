@@ -6,6 +6,7 @@ import type { ArrLookupResult, ArrServiceOptions, ScraperSearchResult } from '..
 import { MatchBadge } from './MatchBadge'
 import { goldBtnStyle } from '../../channel/styles'
 import { resolvePlayPath } from '../../player/resolvePlayTarget'
+import { useFocusable } from '../../nav/useFocusable'
 
 interface LibraryDetailActionsProps {
   id?:             string
@@ -134,14 +135,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
   if (isLibraryItem) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 420 }}>
-        <button onClick={handlePlay} disabled={playLoading} style={{
-          ...goldBtnStyle, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', gap: 8, opacity: playLoading ? 0.6 : 1,
-          cursor: playLoading ? 'wait' : 'pointer',
-        }}>
-          <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
-          {playLoading ? 'Loading…' : 'Play'}
-        </button>
+        <PlayButton onClick={handlePlay} loading={playLoading} />
 
         <div style={{
           padding: '12px 14px', borderRadius: 8,
@@ -176,15 +170,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
             }}>{serviceLabel.toUpperCase()}</div>
 
             {arrStep === 'idle' && (
-              <button onClick={handleArrLookup} style={{
-                width: '100%', padding: '9px 0', borderRadius: 8, cursor: 'pointer',
-                border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-                color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-                transition: 'border-color .12s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--hds-violet)'}
-              onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hds-line)'}
-              >Add to {serviceLabel} →</button>
+              <ArrLookupButton onClick={handleArrLookup} label={`Add to ${serviceLabel} →`} />
             )}
 
             {(arrStep === 'loading' || arrStep === 'adding') && (
@@ -240,15 +226,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
             }}>REQUEST</div>
 
             {reqStep === 'idle' && (
-              <button onClick={handleRequest} style={{
-                width: '100%', padding: '9px 0', borderRadius: 8, cursor: 'pointer',
-                border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-                color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-                transition: 'border-color .12s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--hds-gold)'}
-              onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hds-line)'}
-              >Request →</button>
+              <RequestButton onClick={handleRequest} />
             )}
 
             {reqStep === 'loading' && (
@@ -276,6 +254,62 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
   }
 
   return null
+}
+
+function PlayButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
+  const { ref, focused, focusSelf } = useFocusable<object, HTMLButtonElement>({ focusKey: 'detail-play', onEnterPress: onClick, focusable: !loading })
+  // Whenever this button exists, it's the detail view's primary action —
+  // claim focus the moment it mounts (its own conditional rendering above
+  // already gates "is this the right primary action right now").
+  useEffect(() => { focusSelf() }, [focusSelf])
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick} disabled={loading} style={{
+        ...goldBtnStyle, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', gap: 8, opacity: loading ? 0.6 : 1,
+        cursor: loading ? 'wait' : 'pointer',
+      }}>
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
+      {loading ? 'Loading…' : 'Play'}
+    </button>
+  )
+}
+
+function ArrLookupButton({ onClick, label }: { onClick: () => void; label: string }) {
+  const { ref, focused, focusSelf } = useFocusable<object, HTMLButtonElement>({ focusKey: 'detail-arr-lookup', onEnterPress: onClick })
+  useEffect(() => { focusSelf() }, [focusSelf])
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick} style={{
+        width: '100%', padding: '9px 0', borderRadius: 8, cursor: 'pointer',
+        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
+        color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+        transition: 'border-color .12s',
+      }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--hds-violet)'}
+      onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hds-line)'}
+    >{label}</button>
+  )
+}
+
+function RequestButton({ onClick }: { onClick: () => void }) {
+  const { ref, focused, focusSelf } = useFocusable<object, HTMLButtonElement>({ focusKey: 'detail-request', onEnterPress: onClick })
+  useEffect(() => { focusSelf() }, [focusSelf])
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick} style={{
+        width: '100%', padding: '9px 0', borderRadius: 8, cursor: 'pointer',
+        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
+        color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+        transition: 'border-color .12s',
+      }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--hds-gold)'}
+      onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hds-line)'}
+    >Request →</button>
+  )
 }
 
 const formLabelStyle: React.CSSProperties = {

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useFocusable } from '../../nav/useFocusable'
 import { mediaUrl } from '../../api/client'
 import type { Episode } from '../../api/types'
 
@@ -46,14 +47,22 @@ export function EpisodeShelf({ seasonNumber, seasonName, episodes }: EpisodeShel
 }
 
 function EpisodeTile({ episode }: { episode: Episode }) {
-  const [hovered, setHovered] = useState(false)
+  const [hoveredState, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = episode.thumb && !imgErr
   const code = `S${String(episode.season).padStart(2, '0')}E${String(episode.episode).padStart(2, '0')}`
   const navigate = useNavigate()
+  const go = () => navigate(`/player/episode/${episode.episode_id}`)
+
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({
+    focusKey: `episode-tile-${episode.episode_id}`,
+    onEnterPress: go,
+  })
+  const hovered = hoveredState || focused
 
   return (
     <div
+      ref={ref} data-tv-focused={focused}
       title={episode.overview || episode.title}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -63,7 +72,7 @@ function EpisodeTile({ episode }: { episode: Episode }) {
         background: 'var(--hds-bg-2)', transition: 'border-color .12s, transform .12s',
         transform: hovered ? 'translateY(-2px)' : 'none',
       }}
-      onClick={() => navigate(`/player/episode/${episode.episode_id}`)}
+      onClick={go}
     >
       <div style={{
         aspectRatio: '16/9', width: '100%', position: 'relative', overflow: 'hidden',

@@ -6,6 +6,8 @@ import LoginPage              from './auth/LoginPage'
 import ProtectedRoute         from './auth/ProtectedRoute'
 import SetupPage              from './auth/SetupPage'
 import Layout                 from './components/Layout'
+import { FocusRoot }          from './nav/FocusRoot'
+import { CastProvider }       from './cast/CastProvider'
 import ActivityPage           from './pages/ActivityPage'
 import ChannelDetailPage      from './pages/ChannelDetailPage'
 import ChannelsPage           from './pages/ChannelsPage'
@@ -23,14 +25,25 @@ import UsersPage              from './pages/UsersPage'
 // other page load (the vast majority of app usage) shouldn't pay for it.
 const PlayerPage = lazy(() => import('./player/PlayerPage').then(m => ({ default: m.PlayerPage })))
 
+// Lazy: the whole /tv tree (10-foot screens, TV-sized grids) is dead weight
+// on every desktop/mobile page load — only devices actually navigating to
+// /tv should pay for this chunk.
+const TvShell         = lazy(() => import('./tv/TvShell').then(m => ({ default: m.TvShell })))
+const TvHome          = lazy(() => import('./tv/TvHome').then(m => ({ default: m.TvHome })))
+const TvLibrary       = lazy(() => import('./tv/TvLibrary').then(m => ({ default: m.TvLibrary })))
+const TvLibraryDetail = lazy(() => import('./tv/TvLibraryDetail').then(m => ({ default: m.TvLibraryDetail })))
+
 // Matches PlayerPage's own background so the moment before the lazy chunk
 // resolves doesn't flash unstyled content.
 const playerFallback = <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 100 }} />
+const tvFallback      = <div style={{ position: 'fixed', inset: 0, background: 'var(--hds-bg)', zIndex: 100 }} />
 
 export default function App() {
   return (
     <AuthProvider>
       <ErrorBoundary>
+      <CastProvider />
+      <FocusRoot>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
@@ -46,6 +59,15 @@ export default function App() {
           <Route path="player/channel/:channelId" element={
             <Suspense fallback={playerFallback}><PlayerPage kind="channel" /></Suspense>
           } />
+
+          {/* 10-foot surface — no admin sidebar, same full-screen-takeover pattern as /player/*. */}
+          <Route path="tv" element={
+            <Suspense fallback={tvFallback}><TvShell /></Suspense>
+          }>
+            <Route index                    element={<TvHome />} />
+            <Route path="library"           element={<TvLibrary />} />
+            <Route path="library/:type/:id" element={<TvLibraryDetail />} />
+          </Route>
 
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
@@ -63,6 +85,7 @@ export default function App() {
           </Route>
         </Route>
       </Routes>
+      </FocusRoot>
       </ErrorBoundary>
     </AuthProvider>
   )
