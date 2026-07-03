@@ -417,8 +417,18 @@ const applyBuffer = () => {
                 <li style={{ marginBottom: 8 }}>Cloudflare Zero Trust dashboard → <b style={{ color: 'var(--hds-txt)' }}>Networks → Tunnels → Create a tunnel</b> → connector type <b style={{ color: 'var(--hds-txt)' }}>Docker</b> → copy the token it gives you.</li>
                 <li style={{ marginBottom: 8 }}>In the same wizard, add a <b style={{ color: 'var(--hds-txt)' }}>Public Hostname</b>: the hostname you want (e.g. <code>pantheon.yourdomain.com</code>) → service type <b style={{ color: 'var(--hds-txt)' }}>HTTP</b> → URL <code>hermes:8000</code>. This is also where the hostname itself is configured — nothing in Pantheon's own files needs your hostname hardcoded.</li>
                 <li style={{ marginBottom: 8 }}>Put that token in a <code>.env</code> file next to Pantheon's <code>docker-compose.yml</code>:<br /><code>CLOUDFLARE_TUNNEL_TOKEN=eyJ...</code></li>
-                <li>Start it: <code>docker compose --profile cloudflare up -d</code> (it's opt-in — omitting <code>--profile cloudflare</code> leaves your setup exactly as it was).</li>
+                <li>Start/restart the stack however you normally do (plain <code>docker compose up -d</code>, or the Unraid Compose Manager UI) — no extra flags needed. Leaving the token blank keeps the container quietly stopped and doesn't affect anything else.</li>
               </ol>
+            </HelpSection>
+            <HelpSection title="Important">
+              <p style={{ margin: 0 }}>
+                The <code>cloudflared</code> container has to actually be running — the tunnel
+                only exists while it's up. Registering a tunnel and hostname in the Cloudflare
+                dashboard doesn't do anything on its own if <code>CLOUDFLARE_TUNNEL_TOKEN</code>{' '}
+                isn't set, or the container ever gets stopped — the hostname will simply fail to
+                connect until it's running again. Check it with{' '}
+                <code>docker compose ps cloudflared</code>.
+              </p>
             </HelpSection>
             <HelpSection title="Security note">
               This makes Pantheon reachable from the public internet at whatever hostname you choose, not just your LAN. Kairos's own login screen still gates access — if you want an extra layer, Cloudflare Zero Trust Access can require an email/SSO check before a request ever reaches Pantheon, configured separately in the same dashboard.

@@ -19,7 +19,8 @@
 # Optional: remote/HTTPS access via Cloudflare Tunnel — chromecast sender
 # support (and anything else requiring a secure context) needs Hades served
 # over HTTPS, which a LAN-only http://<host>:8000 address never satisfies.
-# Off by default; enable per-install with:
+# Off by default, no compose flags needed to keep it that way (see the
+# cloudflared service below for why) — enable per-install with:
 #   1. Cloudflare Zero Trust dashboard → Networks → Tunnels → Create a tunnel
 #      → connector type "Docker" → copy the token it gives you.
 #   2. In that same wizard, add a Public Hostname: whatever hostname you want
@@ -28,7 +29,15 @@
 #      per-install-hardcoded, it only needs the token.
 #   3. Put that token in a `.env` file next to this compose file:
 #        CLOUDFLARE_TUNNEL_TOKEN=eyJ...
-#   4. docker compose --profile cloudflare up -d
+#   4. docker compose up -d (or however you normally start the stack — the
+#      Unraid Compose Manager UI works fine here, unlike an earlier version
+#      of this file which needed a --profile flag it has no way to pass)
+#
+#   IMPORTANT: the tunnel only exists while the cloudflared container is
+#   actually running. Registering it in the Cloudflare dashboard isn't
+#   enough on its own — if CLOUDFLARE_TUNNEL_TOKEN isn't set, or the
+#   container is stopped, the hostname will simply fail to connect.
+#   Check it with: docker compose ps cloudflared
 
 services:
   kairos:
@@ -96,11 +105,28 @@ services:
   # its target (hermes:8000) are configured in the Cloudflare dashboard when
   # the tunnel token is created, not here — this file is the same for every
   # install, only the token differs.
+  #
+  # Always defined and started by a plain `docker compose up` — no
+  # --profile flag, since some management UIs (Unraid's Compose Manager
+  # included) just run compose directly with no way to pass one. Opting out
+  # is purely env-var-driven instead: the entrypoint below checks for
+  # CLOUDFLARE_TUNNEL_TOKEN itself and exits cleanly (0) rather than trying
+  # to authenticate with nothing if it's unset, and `restart: on-failure`
+  # (not unless-stopped) means that clean exit leaves the container quietly
+  # sitting at "Exited (0)" instead of crash-looping forever for anyone who
+  # doesn't set a token at all.
   cloudflared:
     image: cloudflare/cloudflared:latest
-    command: tunnel run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    environment:
+      - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+          echo "cloudflared: CLOUDFLARE_TUNNEL_TOKEN not set in .env — skipping (see the note near the top of docker-compose.yml)"
+          exit 0
+        fi
+        exec cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
     depends_on:
       - hermes
-    restart: unless-stopped
-    profiles:
-      - cloudflare
+    restart: on-failure
