@@ -1,15 +1,23 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 
-let readyListeners: Array<(ready: boolean) => void> = []
-let cachedReady = false
+declare global {
+  interface Window {
+    __pantheonCastReady?: boolean
+    __pantheonCastReadyListener?: (ready: boolean) => void
+  }
+}
 
-// The gstatic <script> (index.html) calls this once the framework is
-// actually usable — it can fire before or after CastProvider mounts (script
-// load timing vs. React mount timing is a race), so both directions are
-// handled: the global here catches an early call, and the listener list
-// catches a late one.
-window.__onGCastApiAvailable = (available: boolean) => {
+let readyListeners: Array<(ready: boolean) => void> = []
+// index.html defines window.__onGCastApiAvailable as a plain inline script,
+// executed before the gstatic <script> tag — the SDK's call to it is a race
+// against this module even loading (this is a JS module, deferred until
+// after the page parses), so the actual capture has to live in the HTML
+// itself. __pantheonCastReady catches an early call that already landed;
+// __pantheonCastReadyListener (registered below) catches a later one.
+let cachedReady = !!window.__pantheonCastReady
+
+window.__pantheonCastReadyListener = (available: boolean) => {
   cachedReady = available
   readyListeners.forEach(fn => fn(available))
 }

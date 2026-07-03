@@ -10,6 +10,7 @@ import { ghostBtnStyle, goldBtnStyle } from '../channel/styles'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useFocusable } from '../nav/useFocusable'
 import { libraryStore } from '../stores/LibraryStore'
+import { useCastSession } from '../cast/useCastSession'
 
 const HOME_FOCUS_KEY = 'HOME'
 
@@ -40,6 +41,7 @@ export default function HomePage() {
   const restoredScrollRef  = useRef(false)
   const allItemsRef        = useRef<Map<string, Show | Movie>>(new Map())
   const guideRef           = useRef<HTMLDivElement>(null)
+  const castSession        = useCastSession()
 
   // Data
   const [recentShows,      setRecentShows]      = useState<Show[]>([])
@@ -259,6 +261,26 @@ export default function HomePage() {
             }}
             onDotClick={i => { startRotation(); goToHero(i) }}
             onReviewClick={() => navigate('/review')}
+            castAvailable={castSession.available}
+            onCast={async () => {
+              // Whichever item is currently the hero — rotation or a shelf
+              // hover both already retarget it, and Play already follows the
+              // same item, so Cast mirrors that "current state" for free
+              // rather than needing its own tracking.
+              if (!castSession.connected) {
+                try { await cast.framework.CastContext.getInstance().requestSession() }
+                catch { return } // user closed the device picker — don't start anything
+              }
+              // PlayerPage's own useCastSession() picks up the now-connected
+              // session on mount and loads this content into it — same as if
+              // Cast were pressed mid-local-playback, just starting already
+              // connected. No cast-session/VOD-lifecycle duplication needed here.
+              const path = await resolvePlayPath(
+                isShow(heroItem) ? 'show' : 'movie',
+                isShow(heroItem) ? heroItem.show_id : heroItem.movie_id,
+              )
+              if (path) navigate(path)
+            }}
           />
         ) : (
           <EmptyHero onGoToSources={() => navigate('/sources')} />
@@ -319,6 +341,7 @@ export default function HomePage() {
 function HeroPanel({
   item, detail, fading, detailMode, totalCandidates, currentIdx,
   reviewCount, onViewDetail, onPlay, onDotClick, onReviewClick,
+  castAvailable, onCast,
 }: {
   item:            Show | Movie
   detail:          ShowDetail | MovieDetail | null
@@ -331,6 +354,10 @@ function HeroPanel({
   onPlay:          () => void
   onDotClick:      (i: number) => void
   onReviewClick:   () => void
+  // SDK-loaded gate for the Cast button, same as PlayerControls' cast?.available
+  // — hidden entirely rather than shown-but-disabled when the SDK isn't usable.
+  castAvailable:   boolean
+  onCast:          () => void
 }) {
   const backdrop = proxyArt(item)
   const bg = backdrop
@@ -344,6 +371,7 @@ function HeroPanel({
 
   const play      = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-play',   onEnterPress: onPlay,       focusable: !detailMode })
   const viewDetail = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-detail', onEnterPress: onViewDetail, focusable: !detailMode })
+  const castBtn    = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-cast',    onEnterPress: onCast,       focusable: !detailMode && castAvailable })
   const review     = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-review', onEnterPress: onReviewClick, focusable: reviewCount > 0 })
 
   return (
@@ -420,6 +448,21 @@ function HeroPanel({
             <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
             Play
           </button>
+          {castAvailable && (
+            <button
+              ref={castBtn.ref} data-tv-focused={castBtn.focused}
+              style={{ ...ghostBtnStyle, display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={onCast}
+              aria-label="Cast"
+            >
+              <svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <rect x="2" y="2.5" width="14" height="10" rx="1.2" />
+                <path d="M2 15.5a4 4 0 0 0-2-3.5M2 12.5a1.5 1.5 0 0 1 1.5 1.5" fill="none" strokeLinecap="round" />
+                <circle cx="2.3" cy="15.5" r="0.9" fill="currentColor" stroke="none" />
+              </svg>
+              Cast
+            </button>
+          )}
           <button ref={viewDetail.ref} data-tv-focused={viewDetail.focused} style={ghostBtnStyle} onClick={onViewDetail}>View Details</button>
         </div>
       </div>

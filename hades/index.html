@@ -7,8 +7,23 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Chakra+Petch:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <!-- No-op on non-Cast browsers. Calls window.__onGCastApiAvailable (set by
-         CastProvider) once loaded — see hades/src/cast/CastProvider.tsx. -->
+    <!-- Must be defined before the gstatic script tag below, and as a plain
+         inline script rather than from CastProvider.tsx — the SDK may call
+         __onGCastApiAvailable synchronously (or from a very fast async
+         continuation) while this page is still being parsed, well before a
+         type="module" script (always deferred until after parsing) gets a
+         chance to run and attach a real listener. Without this stub, that
+         one-shot call is simply lost — see hades/src/cast/CastProvider.tsx
+         for the React-side half of this. -->
+    <script>
+      window.__onGCastApiAvailable = function (isAvailable) {
+        window.__pantheonCastReady = isAvailable
+        if (typeof window.__pantheonCastReadyListener === 'function') {
+          window.__pantheonCastReadyListener(isAvailable)
+        }
+      }
+    </script>
+    <!-- No-op on non-Cast browsers. -->
     <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
   </head>
   <body>
