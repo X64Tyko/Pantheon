@@ -292,7 +292,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		auto rows = repo.listEpisodesForShow(id, season_filter);
 		json result = json::array();
 		for (const auto& r : rows) {
-			result.push_back({
+			json entry{
 				{"episode_id",  r.episode_id},
 				{"season",      r.season},
 				{"episode",     r.episode},
@@ -301,7 +301,9 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 				{"overview",    r.overview},
 				{"air_date",    r.air_date},
 				{"thumb",       r.thumb},
-			});
+			};
+			if (!r.file_path.empty()) entry["file_path"] = r.file_path;
+			result.push_back(std::move(entry));
 		}
 		route::ok(res, result.dump());
 	});
@@ -452,6 +454,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		show["external_id"]     = d->external_id;
 		show["source_id"]       = d->source_id;
 		show["source_base_url"] = d->source_base_url;
+		show["match_status"]    = d->match_status;
+		if (d->match_score) show["match_score"] = *d->match_score;
 
 		json seasons = json::array();
 		for (const auto& s : d->seasons)
@@ -553,6 +557,9 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		movie["external_id"]     = d->external_id;
 		movie["source_id"]       = d->source_id;
 		movie["source_base_url"] = d->source_base_url;
+		if (!d->file_path.empty()) movie["file_path"] = d->file_path;
+		movie["match_status"]    = d->match_status;
+		if (d->match_score) movie["match_score"] = *d->match_score;
 		route::ok(res, movie.dump());
 	});
 

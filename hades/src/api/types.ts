@@ -180,6 +180,8 @@ export interface ShowDetail {
   external_id:             string
   source_id:               string
   source_base_url:         string
+  match_status?:           MatchStatus
+  match_score?:            number
 }
 
 export interface MovieDetail {
@@ -203,6 +205,9 @@ export interface MovieDetail {
   external_id:      string
   source_id:        string
   source_base_url:  string
+  file_path?:       string
+  match_status?:    MatchStatus
+  match_score?:     number
 }
 
 export interface Episode {
@@ -214,6 +219,7 @@ export interface Episode {
   overview:    string
   air_date:    string
   thumb:       string
+  file_path?:  string
 }
 
 export interface WatchProgress {

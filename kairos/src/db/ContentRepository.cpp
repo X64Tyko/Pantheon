@@ -770,7 +770,8 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
                s.genres, s.thumb, s.art, s.imdb_id, s.tvdb_id, s.tmdb_id,
                s.originally_available_at, s.year, s.audience_rating, s.locked,
                COUNT(e.episode_id) AS episode_count,
-               s.labels, s.network, s.actors, s.countries, s.collections
+               s.labels, s.network, s.actors, s.countries, s.collections,
+               s.match_status, s.match_score
         FROM show s
         LEFT JOIN episode e ON e.show_id = s.show_id
         WHERE s.show_id = ?
@@ -802,6 +803,8 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
     d.actors        = q.getColumn(19).getString();
     d.countries     = q.getColumn(20).getString();
     d.collections   = q.getColumn(21).getString();
+    d.match_status  = q.getColumn(22).getString();
+    if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
 
     {
         SQLite::Statement sm(db_.get(), R"(
@@ -838,7 +841,8 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
         SELECT movie_id, title, content_rating, duration_ms, year,
                overview, tagline, studio, director, genres, thumb, art,
                imdb_id, tmdb_id, audience_rating, locked,
-               labels, actors, countries, collections, release_date
+               labels, actors, countries, collections, release_date,
+               file_path, match_status, match_score
         FROM movie WHERE movie_id = ?
     )");
     q.bind(1, movie_id);
@@ -866,6 +870,9 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     d.countries      = q.getColumn(18).getString();
     d.collections    = q.getColumn(19).getString();
     d.release_date   = q.getColumn(20).getString();
+    d.file_path      = q.getColumn(21).getString();
+    d.match_status   = q.getColumn(22).getString();
+    if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
 
     SQLite::Statement sm(db_.get(), R"(
         SELECT sm.external_id, sm.source_id, ms.base_url
@@ -920,7 +927,7 @@ std::vector<EpisodeRow> ContentRepository::listEpisodesForShow(const std::string
                                                                  const std::string& season_filter) {
     bool has_season = !season_filter.empty();
     SQLite::Statement q(db_.get(),
-        std::string("SELECT episode_id, season, episode, title, duration_ms, overview, air_date, thumb "
+        std::string("SELECT episode_id, season, episode, title, duration_ms, overview, air_date, thumb, file_path "
                     "FROM episode WHERE show_id = ?") +
         (has_season ? " AND season = ?" : "") + " ORDER BY season, episode");
     q.bind(1, show_id);
@@ -936,6 +943,7 @@ std::vector<EpisodeRow> ContentRepository::listEpisodesForShow(const std::string
         r.overview    = q.getColumn(5).getString();
         r.air_date    = q.getColumn(6).getString();
         r.thumb       = q.getColumn(7).getString();
+        r.file_path   = q.getColumn(8).getString();
         rows.push_back(std::move(r));
     }
     return rows;

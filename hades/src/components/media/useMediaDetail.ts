@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api, mediaUrl } from '../../api/client'
 import type { Episode, MediaLanguages, ScraperSearchResult, ShowDetail, MovieDetail, VideoInfo } from '../../api/types'
 
@@ -6,6 +6,17 @@ function showThumbUrl(id: string) { return mediaUrl(`/api/shows/${id}/thumb`) }
 function showArtUrl(id: string)   { return mediaUrl(`/api/shows/${id}/art`) }
 function movieThumbUrl(id: string) { return mediaUrl(`/api/movies/${id}/thumb`) }
 function movieArtUrl(id: string)   { return mediaUrl(`/api/movies/${id}/art`) }
+
+// Admin-facing "where does this actually live on disk" display — movies have
+// a single file (movie.file_path); shows are a collection of episode files,
+// so there's no single path to show at the show level (hence optional).
+export function splitFilePath(path?: string): { folderName?: string; fileName?: string } {
+  if (!path) return {}
+  const parts = path.split(/[/\\]/).filter(Boolean)
+  const fileName = parts.at(-1)
+  const folderName = parts.length > 1 ? parts.at(-2) : undefined
+  return { folderName, fileName }
+}
 
 export interface UseMediaDetailArgs {
   id?:             string
@@ -22,6 +33,11 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   const [episodes,  setEpisodes]  = useState<Episode[]>([])
   const [languages, setLanguages] = useState<MediaLanguages | null>(null)
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
+  // Bumped by refetch() — e.g. after LibraryDetailActions' Fix Match flow
+  // changes match_status/score server-side, with no other prop actually
+  // changing to naturally re-trigger the effect below.
+  const [refreshKey, setRefreshKey] = useState(0)
+  const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
 
   useEffect(() => {
     if (discoverResult) return
@@ -39,7 +55,7 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
       api.getMovieLanguages(id).then(setLanguages).catch(() => {})
       api.getMovieVideoInfo(id).then(setVideoInfo).catch(() => {})
     }
-  }, [id, content_type, discoverResult])
+  }, [id, content_type, discoverResult, refreshKey])
 
   const detail = discoverResult ? null : (show ?? movie)
   const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
@@ -61,9 +77,17 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
         .filter(s => s.episodes.length > 0)
     : []
 
+  // Movies only — shows are a collection of per-episode files, no single
+  // path to show at the show level (see splitFilePath's own comment).
+  const { folderName, fileName } = splitFilePath(movie?.file_path)
+
+  const matchStatus = detail?.match_status
+  const matchScore  = detail?.match_score
+
   return {
     show, movie, loading, episodes, languages, videoInfo,
     detail, contentType, posterUrl, backdropUrl,
     title, year, overview, genres, rating, seasonsWithEpisodes,
+    folderName, fileName, matchStatus, matchScore, refetch,
   }
 }

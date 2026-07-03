@@ -39,7 +39,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
   const {
     show, movie, loading, detail, contentType,
     posterUrl, backdropUrl, title, year, overview, genres, rating,
-    seasonsWithEpisodes, languages, videoInfo,
+    seasonsWithEpisodes, languages, videoInfo, folderName, fileName,
   } = useMediaDetail({ id, content_type, discoverResult })
 
   const srcColor = discoverResult?.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
@@ -164,6 +164,16 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
                   {movie.studio   && <MetaRow label="Studio">{movie.studio}</MetaRow>}
                   {movie.duration_ms > 0 && (
                     <MetaRow label="Runtime">{Math.round(movie.duration_ms / 60000)} min</MetaRow>
+                  )}
+                  {/* Admin-facing "where does this live on disk" — shows don't
+                      get this (a collection of per-episode files, no single
+                      path), only movies have one file to point at. */}
+                  {fileName && (
+                    <MetaRow label="File">
+                      <span style={{ wordBreak: 'break-all' }}>
+                        {folderName && <>{folderName}/</>}{fileName}
+                      </span>
+                    </MetaRow>
                   )}
                 </div>
               )}

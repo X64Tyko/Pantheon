@@ -60,10 +60,13 @@ function EpisodeTile({ episode }: { episode: Episode }) {
   })
   const hovered = hoveredState || focused
 
+  const tooltip = [episode.overview || episode.title, episode.file_path]
+    .filter(Boolean).join('\n\n')
+
   return (
     <div
       ref={ref} data-tv-focused={focused}
-      title={episode.overview || episode.title}
+      title={tooltip}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{

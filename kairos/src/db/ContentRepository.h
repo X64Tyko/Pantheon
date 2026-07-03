@@ -58,6 +58,8 @@ struct ShowDetail {
     std::string labels, network, actors, countries, collections;
     std::string external_id, source_id, source_base_url;
     std::vector<SeasonRow> seasons;
+    std::string           match_status;
+    std::optional<double> match_score;
 };
 
 struct EpisodeRow {
@@ -66,6 +68,7 @@ struct EpisodeRow {
     std::string title;
     int64_t duration_ms = 0;
     std::string overview, air_date, thumb;
+    std::string file_path; // admin-facing "source file" display — not used for playback (see model/Episode.h for that)
 };
 
 struct EpisodeSearchRow {
@@ -102,6 +105,9 @@ struct MovieDetail {
     std::string overview, tagline, studio, director, genres, thumb, art, imdb_id, tmdb_id;
     std::string labels, actors, countries, collections;
     std::string external_id, source_id, source_base_url;
+    std::string           file_path; // admin-facing "source file" display
+    std::string           match_status;
+    std::optional<double> match_score;
 };
 
 struct ItemSource {
