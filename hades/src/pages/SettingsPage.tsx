@@ -47,7 +47,11 @@ function Toggle({ id, checked, onChange, disabled }: { id: string; checked: bool
 
 function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, padding: '14px 0', borderBottom: '1px solid oklch(0.22 0.01 286)' }}>
+    // flexWrap so the label/hint stack above the control on narrow screens
+    // instead of both fighting for horizontal space — several controls here
+    // have hardcoded widths (e.g. 260px API key inputs) that would otherwise
+    // crush the label into a sliver, or overflow outright, on a phone.
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px 24px', padding: '14px 0', borderBottom: '1px solid oklch(0.22 0.01 286)' }}>
       <div>
         <div style={{ fontSize: 13, color: 'var(--hds-txt)', fontWeight: 500 }}>{label}</div>
         {hint && <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginTop: 3 }}>{hint}</div>}

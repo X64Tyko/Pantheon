@@ -162,9 +162,15 @@ export function PlayerControls({
       {/* Bottom bar */}
       <div style={bottomBarStyle}>
         {!isLive && (
+          // Outer element is the actual hit area (ref/focus/click all live
+          // here) — much taller than the visible bar so it's actually
+          // draggable with a finger, while the inner div keeps the thin
+          // visual track. getBoundingClientRect() below still only cares
+          // about X-axis width, so the added vertical padding doesn't
+          // affect the seek-position math at all.
           <div
             ref={scrub.ref} data-tv-focused={scrub.focused}
-            style={scrubTrackStyle}
+            style={scrubHitAreaStyle}
             onClick={e => {
               if (durationMs <= 0) return
               const rect = e.currentTarget.getBoundingClientRect()
@@ -172,7 +178,9 @@ export function PlayerControls({
               onSeek(pct * durationMs)
             }}
           >
-            <div style={{ ...scrubFillStyle, width: `${progress * 100}%` }} />
+            <div style={scrubTrackStyle}>
+              <div style={{ ...scrubFillStyle, width: `${progress * 100}%` }} />
+            </div>
           </div>
         )}
 
@@ -255,8 +263,15 @@ const bottomBarStyle: React.CSSProperties = {
   display: 'flex', flexDirection: 'column', gap: 10,
 }
 
+// Real hit area — a 5px-tall track alone is very hard to drag precisely
+// with a finger, so the clickable/draggable region (see the wrapping div
+// above) is much taller than what's actually drawn.
+const scrubHitAreaStyle: React.CSSProperties = {
+  padding: '14px 0', cursor: 'pointer',
+}
+
 const scrubTrackStyle: React.CSSProperties = {
-  position: 'relative', height: 5, borderRadius: 3, cursor: 'pointer',
+  position: 'relative', height: 5, borderRadius: 3,
   background: 'oklch(1 0 0 / 0.2)',
 }
 
@@ -266,13 +281,15 @@ const scrubFillStyle: React.CSSProperties = {
 }
 
 const controlsRowStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 4,
+  display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
 }
 
 const iconBtnStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center',
-  width: 36, height: 36, borderRadius: 8, cursor: 'pointer',
-  background: 'transparent', border: 'none', color: '#fff',
+  // 44x44 — below Apple/Google's ~44-48px minimum recommended touch target,
+  // 36px was hard to hit precisely with a finger. Fine on desktop too.
+  width: 44, height: 44, borderRadius: 8, cursor: 'pointer',
+  background: 'transparent', border: 'none', color: '#fff', flexShrink: 0,
 }
 
 const volumeSliderStyle: React.CSSProperties = {

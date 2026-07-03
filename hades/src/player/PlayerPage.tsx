@@ -207,7 +207,13 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                 paused:     castSession.paused,
                 togglePlay: castSession.togglePlay,
                 endSession: castSession.endSession,
-                onRequestCast: () => cast.framework.CastContext.getInstance().requestSession().catch(() => {}),
+                onRequestCast: () => cast.framework.CastContext.getInstance().requestSession().catch(err => {
+                  // 'cancel' is the normal "closed the device picker" case —
+                  // anything else was previously silent here with zero
+                  // feedback, which looks identical to the button doing
+                  // nothing at all.
+                  if (err !== 'cancel') console.error('Cast requestSession() failed:', err)
+                }),
               }}
             />
             {menu === 'tracks' && (

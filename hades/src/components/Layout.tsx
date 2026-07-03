@@ -34,6 +34,15 @@ export default observer(function Layout() {
   const [expandBtnHover,   setExpandBtnHover]   = useState(false)
   const [collapseBtnHover, setCollapseBtnHover] = useState(false)
   const [pendingRequests,  setPendingRequests]  = useState(0)
+  // Mobile-only slide-in drawer (see hds-mobile-topbar/-drawer in index.css)
+  // — the desktop sidebar itself just gets CSS-hidden below the breakpoint,
+  // this is a separate, simpler nav surface rather than trying to force one
+  // DOM structure to reflow between a vertical rail and a top bar + drawer.
+  const [mobileMenuOpen,   setMobileMenuOpen]   = useState(false)
+
+  // Closing the drawer on route change (rather than only on item click) also
+  // covers back/forward navigation and any other route change.
+  useEffect(() => { setMobileMenuOpen(false) }, [location.pathname])
 
   const toggleNav = () => setNavCollapsed(c => {
     const next = !c
@@ -108,9 +117,9 @@ export default observer(function Layout() {
   const col = navCollapsed
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--hds-bg)' }}>
-      {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
-      <nav ref={sidebarRef} style={{
+    <div className="hds-app-shell" style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--hds-bg)' }}>
+      {/* ── Sidebar (desktop) ───────────────────────────────────────────────── */}
+      <nav ref={sidebarRef} className="hds-sidebar-desktop" style={{
         width: col ? 52 : 236, flexShrink: 0, display: 'flex', flexDirection: 'column',
         borderRight: '1px solid var(--hds-line-s)',
         background: 'linear-gradient(180deg, oklch(0.17 0.018 286), var(--hds-bg))',
@@ -260,8 +269,81 @@ export default observer(function Layout() {
         </div>
       </nav>
 
+      {/* ── Top bar (mobile only — hidden on desktop via CSS) ──────────────── */}
+      <div className="hds-mobile-topbar">
+        <button
+          onClick={() => setMobileMenuOpen(o => !o)}
+          aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+            border: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-3)',
+            color: 'var(--hds-txt)', cursor: 'pointer',
+          }}
+        >
+          {mobileMenuOpen ? (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13" /></svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M2 4h12M2 8h12M2 12h12" /></svg>
+          )}
+        </button>
+        <div style={{
+          fontFamily: "'Chakra Petch', sans-serif", fontWeight: 800,
+          fontSize: 17, letterSpacing: '0.24em', color: 'var(--hds-gold)',
+          textShadow: '0 0 16px oklch(0.83 0.13 84 / 0.35)',
+        }}>HADES</div>
+      </div>
+
+      {/* ── Slide-in drawer (mobile only) — same navItems list as the desktop
+          sidebar, but a separate, D-pad-nav-framework-free component: reusing
+          SidebarNavItem here (it registers a useFocusable with a focusKey per
+          route) would collide with the desktop sidebar's own copies of those
+          same focusKeys, since CSS-hiding the sidebar on mobile doesn't unmount
+          it. Touch UI has no use for D-pad focus registration anyway. ── */}
+      {mobileMenuOpen && (
+        <div
+          className="hds-mobile-drawer-backdrop"
+          onClick={() => setMobileMenuOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'oklch(0.08 0.015 286 / 0.75)' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'absolute', top: 0, left: 0, bottom: 0, width: 'min(78vw, 300px)',
+              background: 'linear-gradient(180deg, oklch(0.17 0.018 286), var(--hds-bg))',
+              borderRight: '1px solid var(--hds-line-s)',
+              padding: '22px 14px', display: 'flex', flexDirection: 'column', gap: 3,
+              overflowY: 'auto',
+            }}
+          >
+            {navItems.filter(item => !item.adminOnly || user?.role === 'admin').map(({ to, label, icon }) => (
+              <MobileNavLink key={to} to={to} label={label} icon={icon} />
+            ))}
+            {user && (
+              <div style={{
+                marginTop: 'auto', paddingTop: 14, borderTop: '1px solid var(--hds-line-s)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+              }}>
+                <span style={{ fontSize: 12, color: 'var(--hds-txt-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {user.username}
+                  {user.role === 'admin' && <span style={{ marginLeft: 5, color: 'var(--hds-gold)', opacity: 0.7, fontSize: 10 }}>ADMIN</span>}
+                </span>
+                <button
+                  onClick={() => { logout().then(() => navigate('/login')) }}
+                  style={{
+                    background: 'none', border: '1px solid var(--hds-line)', borderRadius: 6,
+                    cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 11, padding: '4px 10px',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >Sign out</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Main content ────────────────────────────────────────────────────── */}
-      <main style={{
+      <main className="hds-main-content" style={{
         flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
         overflow: 'hidden',
         fontFamily: "'JetBrains Mono', monospace",
@@ -299,6 +381,31 @@ export default observer(function Layout() {
     </div>
   )
 })
+
+// Plain NavLink, no useFocusable — the mobile drawer is touch-only, and
+// registering these with the D-pad nav framework would collide with the
+// desktop sidebar's own focusKeys for the same routes (see the drawer's own
+// comment above for why that matters: CSS-hiding the sidebar on mobile
+// doesn't unmount it, so both would be registered simultaneously).
+function MobileNavLink({ to, label, icon }: { to: string; label: string; icon: React.ReactNode }) {
+  return (
+    <NavLink to={to} style={{ textDecoration: 'none' }}>
+      {({ isActive }) => (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 13,
+          padding: '13px 12px', borderRadius: 9,
+          background: isActive ? 'var(--hds-bg-3)' : 'transparent',
+          color: isActive ? 'var(--hds-gold)' : 'var(--hds-txt-2)',
+          fontWeight: isActive ? 600 : 400,
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
+        }}>
+          <span style={{ color: isActive ? 'var(--hds-gold)' : 'var(--hds-txt-3)', flexShrink: 0 }}>{icon}</span>
+          {label}
+        </div>
+      )}
+    </NavLink>
+  )
+}
 
 // Sidebar nav is persistent chrome present on every non-full-screen page —
 // wiring it into the nav framework (not just Guide/Player) is what gives

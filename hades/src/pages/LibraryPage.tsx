@@ -67,7 +67,7 @@ export default observer(function LibraryPage() {
           padding: '14px 24px 10px', borderBottom: '1px solid var(--hds-line)',
           display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <input
               style={{ ...filterInputStyle, flex: 1 }}
               placeholder={store.discoverMode ? 'Search scrapers…' : 'Search library…'}

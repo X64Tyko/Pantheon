@@ -269,7 +269,14 @@ export default function HomePage() {
               // rather than needing its own tracking.
               if (!castSession.connected) {
                 try { await cast.framework.CastContext.getInstance().requestSession() }
-                catch { return } // user closed the device picker — don't start anything
+                catch (err) {
+                  // chrome.cast.ErrorCode.CANCEL is the normal "closed the
+                  // device picker" case — anything else (e.g. invalid/
+                  // unregistered App ID, no eligible receiver) is a real
+                  // failure that was previously silent here.
+                  if (err !== 'cancel') console.error('Cast requestSession() failed:', err)
+                  return
+                }
               }
               // PlayerPage's own useCastSession() picks up the now-connected
               // session on mount and loads this content into it — same as if
@@ -398,9 +405,12 @@ function HeroPanel({
         pointerEvents: 'none',
       }} />
 
-      {/* Text content — fades out in detail mode */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, padding: '0 64px 56px', maxWidth: 640,
+      {/* Text content — fades out in detail mode. Padding/maxWidth shrink on
+          mobile via .hds-hero-text (index.css) — at 64px each side this
+          left ~247px for the whole title/genres/overview/button column on a
+          375px phone. */}
+      <div className="hds-hero-text" style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 64px 56px', maxWidth: 640,
         opacity: detailMode ? 0 : 1, transition: 'opacity .35s ease',
         pointerEvents: detailMode ? 'none' : 'auto',
       }}>
@@ -439,7 +449,7 @@ function HeroPanel({
           }}>{overview}</p>
         )}
 
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button
             ref={play.ref} data-tv-focused={play.focused}
             style={{ ...goldBtnStyle, display: 'flex', alignItems: 'center', gap: 8 }}

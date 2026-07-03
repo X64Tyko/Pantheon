@@ -21,7 +21,7 @@ export function GuidePreview({ channel, nowProgram, manifestUrl, onWatch }: Guid
     : undefined
 
   return (
-    <div style={{
+    <div className="hds-guide-preview-row" style={{
       display: 'flex', gap: 20, padding: '16px 20px', marginBottom: 12,
       background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line-s)', borderRadius: 10,
     }}>

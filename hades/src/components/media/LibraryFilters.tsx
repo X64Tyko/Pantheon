@@ -9,11 +9,19 @@ export const LibraryFilters = observer(function LibraryFilters() {
   const [genreOpen, setGenreOpen] = useState(true)
 
   return (
-    <aside style={{
-      width: 220, flexShrink: 0, borderRight: '1px solid var(--hds-line-s)',
-      padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 8,
-      overflowY: 'auto',
-    }}>
+    <>
+      {/* Tap-to-close backdrop — mobile only (hds-library-filters-backdrop is
+          display:none outside the <768px breakpoint, see index.css). On
+          desktop this filter panel is a normal flex sibling pushing the grid
+          over; on mobile that same layout leaves ~155px for the grid on a
+          375px screen, so below the breakpoint it becomes a fixed overlay
+          drawer instead (see .hds-library-filters in index.css). */}
+      <div className="hds-library-filters-backdrop" onClick={() => libraryStore.toggleSidebar()} />
+      <aside className="hds-library-filters" style={{
+        width: 220, flexShrink: 0, borderRight: '1px solid var(--hds-line-s)',
+        padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 8,
+        overflowY: 'auto',
+      }}>
       <AccordionSection
         title="CONTENT TYPE"
         open={typeOpen}
@@ -53,6 +61,7 @@ export const LibraryFilters = observer(function LibraryFilters() {
           />
         </div>
       </AccordionSection>
-    </aside>
+      </aside>
+    </>
   )
 })

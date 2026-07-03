@@ -68,13 +68,13 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
         </div>
       )}
 
-      <div style={{ position: 'relative', zIndex: 2, padding: '0 48px 48px' }}>
+      <div className="hds-media-detail-hero-container" style={{ position: 'relative', zIndex: 2, padding: '0 48px 48px' }}>
         {!showBackdrop && <BackButton onClick={onBack} />}
 
         {loading && !discoverResult ? (
           <DetailSkeleton />
         ) : (
-          <div style={{ display: 'flex', gap: 36, alignItems: 'flex-start', maxWidth: 980, paddingTop: showBackdrop ? 20 : 0 }}>
+          <div className="hds-media-detail-hero-row" style={{ display: 'flex', gap: 36, alignItems: 'flex-start', maxWidth: 980, paddingTop: showBackdrop ? 20 : 0 }}>
             {/* Poster */}
             <div style={{
               width: 170, height: 255, borderRadius: 10, overflow: 'hidden', flexShrink: 0,
