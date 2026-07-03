@@ -36,6 +36,10 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
         const filter  = isTop ? 'none' : `brightness(${(0.82 - depth * 0.1).toFixed(2)}) saturate(0.85)`
         const shadow  = block.priority > 1 ? '0 8px 22px -8px rgba(0,0,0,0.65)' : 'none'
         const outline = bulkSelected ? '2px solid var(--hds-violet)' : sel ? '2px solid var(--hds-gold)' : 'none'
+        // Selected (not bulk-selected) blocks additionally get a shimmering
+        // gold ring layered on top of that static outline (hds-shimmer-ring
+        // className below) — the outline above stays exactly as it was.
+        const shimmerGold = sel && !bulkSelected
         const firstName = block.name || block.content[0]?.title || m.name
         const showMeta  = height > 62
         const metaLabel = m.name.toUpperCase() + ' · P' + block.priority + (limitM === 'programs' ? ` · ${block.program_count}×` : '') + (limitM === 'programs' ? ' · flex' : '')
@@ -63,6 +67,10 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
           <div
             key={block.block_id}
             style={boxStyle}
+            // boxStyle's own position: absolute already establishes the
+            // positioning context hds-shimmer-ring's ::after needs (any
+            // non-static position works, not just relative).
+            className={shimmerGold ? 'hds-shimmer-ring hds-shimmer-ring--gold' : undefined}
             onClick={() => store.bulkMode ? store.toggleBulkBlock(block.block_id) : store.select(block.block_id)}
             onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.filter = 'brightness(1.15) saturate(1)'}
             onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.filter = filter}

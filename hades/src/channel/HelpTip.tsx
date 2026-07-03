@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { observer } from 'mobx-react-lite'
 import type { ReactNode } from 'react'
+import { helpTipsStore } from '../stores/HelpTipsStore'
 
 // ─── Sub-components used inside modal body ────────────────────────────────────
 
@@ -43,11 +45,17 @@ export function GifSlot({ src, label }: { src?: string; label: string }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function HelpTip({ title, tip, children, down }: {
+export const HelpTip = observer(function HelpTip({ title, tip, children, down, label }: {
   title:    string
-  tip:      string
+  // Only used by the default small "?" trigger's hover preview — the full
+  // button variant (label) opens straight to the modal, no preview needed.
+  tip?:     string
   children: ReactNode
   down?:    boolean
+  // When set, renders a full labeled button (e.g. "Setup Guide") instead of
+  // the small "?" circle used elsewhere (EditorForm's block-type/late-start
+  // tips) — same modal underneath either way.
+  label?:   string
 }) {
   const [hover, setHover] = useState(false)
   const [modal, setModal] = useState(false)
@@ -69,22 +77,48 @@ export function HelpTip({ title, tip, children, down }: {
     setHover(true)
   }
 
+  // Settings → Help & Tips toggle — removes every help affordance app-wide
+  // (both this and the label-button variant), not just the trigger, so a
+  // modal that was already open can't be left dangling once this flips off.
+  // Placed after all hooks above — an early return before them would violate
+  // the Rules of Hooks the moment the toggle's state ever changed.
+  if (!helpTipsStore.enabled) return null
+
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 5 }}>
-      <button
-        ref={btnRef}
-        onMouseEnter={onEnter}
-        onMouseLeave={() => setHover(false)}
-        onClick={e => { e.stopPropagation(); setHover(false); setModal(true) }}
-        style={{
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          width: 14, height: 14, borderRadius: '50%',
-          border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-          color: 'var(--hds-txt-3)', fontSize: 9, fontFamily: 'sans-serif',
-          fontWeight: 700, cursor: 'pointer', lineHeight: 1, flexShrink: 0,
-          padding: 0, transition: '.1s',
-        }}
-      >?</button>
+    <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: label ? 0 : 5 }}>
+      {label ? (
+        <button
+          onClick={e => { e.stopPropagation(); setModal(true) }}
+          style={{
+            padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+            border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
+            color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+          }}
+        >{label}</button>
+      ) : (
+        <button
+          ref={btnRef}
+          onMouseEnter={onEnter}
+          onMouseLeave={() => setHover(false)}
+          onClick={e => { e.stopPropagation(); setHover(false); setModal(true) }}
+          // Paused once the user's actually noticed it (hovering or already
+          // reading the modal) — the pulse's whole job is discoverability,
+          // not competing for attention with someone already using it.
+          className={hover || modal ? undefined : 'hds-shimmer-sweep'}
+          style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 14, height: 14, borderRadius: '50%',
+            border: '1px solid var(--hds-line)',
+            // backgroundColor (longhand), not `background` — the shorthand
+            // would reset background-image/position/attachment/size back to
+            // initial, wiping out the shimmer the CSS class above applies.
+            backgroundColor: 'var(--hds-bg-3)',
+            color: 'var(--hds-txt-3)', fontSize: 9, fontFamily: 'sans-serif',
+            fontWeight: 700, cursor: 'pointer', lineHeight: 1, flexShrink: 0,
+            padding: 0, transition: '.1s',
+          }}
+        >?</button>
+      )}
 
       {/* Brief hover tooltip */}
       {hover && !modal && createPortal(
@@ -130,4 +164,4 @@ export function HelpTip({ title, tip, children, down }: {
       )}
     </span>
   )
-}
+})

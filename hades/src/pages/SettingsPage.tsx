@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { observer } from 'mobx-react-lite'
 import { api } from '../api/client'
-import { statusStore } from '../stores'
+import { statusStore, helpTipsStore } from '../stores'
 import type { ArrConfig, ScraperSettings, ScraperStats } from '../api/types'
 import { useFocusable } from '../nav/useFocusable'
+import { HelpTip, HelpSection } from '../channel/HelpTip'
 
 interface Settings {
   epg_debug:              boolean
@@ -88,7 +90,7 @@ const inputStyle: React.CSSProperties = {
   fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
 }
 
-export default function SettingsPage() {
+export default observer(function SettingsPage() {
   const [settings, setSettings]   = useState<Settings | null>(null)
   const [saving,   setSaving]     = useState(false)
   const [clearing, setClearing]   = useState(false)
@@ -244,6 +246,19 @@ const applyBuffer = () => {
         </div>
       )}
 
+      <Section title="Interface">
+        <SettingRow
+          label="Help & Tips"
+          hint={'The small "?" help buttons throughout the app (channel builder, etc.) and their explanation popups. Off removes them entirely, everywhere.'}
+        >
+          <Toggle
+            id="help_tips_enabled"
+            checked={helpTipsStore.enabled}
+            onChange={v => helpTipsStore.setEnabled(v)}
+          />
+        </SettingRow>
+      </Section>
+
       <Section title="Diagnostics">
         <SettingRow
           label="Sync Debug Logging"
@@ -384,6 +399,31 @@ const applyBuffer = () => {
             onKeyDown={e => e.key === 'Enter' && applyCastAppId()}
             disabled={!settings || saving}
           />
+        </SettingRow>
+        <SettingRow
+          label="Remote / HTTPS Access"
+          hint="Chrome only enables the Cast button on a secure origin (HTTPS, or localhost) — a plain http://<lan-ip> address never satisfies this. Cloudflare Tunnel is one free way to get a real HTTPS URL for Pantheon without port-forwarding."
+        >
+          <HelpTip title="Cloudflare Tunnel Setup" label="Setup Guide">
+            <HelpSection title="Why">
+              Google Chrome disables the Chromecast Sender API entirely on insecure origins — casting only works from an <code>https://</code> URL, or from <code>http://localhost</code> on the machine Pantheon itself runs on. A LAN address like <code>http://192.168.1.20:8000</code> will never show a Cast button, no matter what's configured elsewhere in this app.
+            </HelpSection>
+            <HelpSection title="What Cloudflare Tunnel does">
+              Gives Pantheon a real <code>https://</code> hostname (e.g. <code>pantheon.yourdomain.com</code>) that reaches your server without opening any inbound ports on your router — the tunnel is outbound-only from your network to Cloudflare's edge.
+            </HelpSection>
+            <HelpSection title="Setup">
+              <ol style={{ margin: 0, paddingLeft: 18 }}>
+                <li style={{ marginBottom: 8 }}>You need a domain added to Cloudflare (DNS managed by Cloudflare — free tier is fine).</li>
+                <li style={{ marginBottom: 8 }}>Cloudflare Zero Trust dashboard → <b style={{ color: 'var(--hds-txt)' }}>Networks → Tunnels → Create a tunnel</b> → connector type <b style={{ color: 'var(--hds-txt)' }}>Docker</b> → copy the token it gives you.</li>
+                <li style={{ marginBottom: 8 }}>In the same wizard, add a <b style={{ color: 'var(--hds-txt)' }}>Public Hostname</b>: the hostname you want (e.g. <code>pantheon.yourdomain.com</code>) → service type <b style={{ color: 'var(--hds-txt)' }}>HTTP</b> → URL <code>hermes:8000</code>. This is also where the hostname itself is configured — nothing in Pantheon's own files needs your hostname hardcoded.</li>
+                <li style={{ marginBottom: 8 }}>Put that token in a <code>.env</code> file next to Pantheon's <code>docker-compose.yml</code>:<br /><code>CLOUDFLARE_TUNNEL_TOKEN=eyJ...</code></li>
+                <li>Start it: <code>docker compose --profile cloudflare up -d</code> (it's opt-in — omitting <code>--profile cloudflare</code> leaves your setup exactly as it was).</li>
+              </ol>
+            </HelpSection>
+            <HelpSection title="Security note">
+              This makes Pantheon reachable from the public internet at whatever hostname you choose, not just your LAN. Kairos's own login screen still gates access — if you want an extra layer, Cloudflare Zero Trust Access can require an email/SSO check before a request ever reaches Pantheon, configured separately in the same dashboard.
+            </HelpSection>
+          </HelpTip>
         </SettingRow>
       </Section>
 
@@ -657,7 +697,7 @@ const applyBuffer = () => {
       </Section>
     </div>
   )
-}
+})
 
 function ArrField({ label, hint, value, onChange, password }: {
   label: string; hint?: string; value: string; onChange: (v: string) => void; password?: boolean

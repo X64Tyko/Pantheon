@@ -11,3 +11,4 @@ export const systemStore  = new SystemStore()
 export const userStore    = new UserStore()
 
 export { statusStore }   from './StatusStore'
+export { helpTipsStore } from './HelpTipsStore'

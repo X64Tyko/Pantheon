@@ -232,6 +232,101 @@ body {
   animation: hds-shimmer 1.4s ease infinite;
 }
 
+/* ─── Attention shimmer ───────────────────────────────────────────────────────
+   Draws the eye to an easy-to-miss affordance (the small "?" trigger,
+   HelpTip.tsx) or highlights a selected element (the channel builder's
+   selected block outline, DayColumn.tsx) — one band, fixed to the viewport
+   (not each element), sweeping right-to-left every cycle. Every element
+   using these classes shares the exact same gradient + background-
+   attachment: fixed + animation, so they're all windows onto the *same*
+   moving band rather than each playing their own independent pulse — the
+   illusion of a single shimmer sweeping across the whole screen only
+   depends on that being identical everywhere it's applied.
+   --hds-shimmer-gradient is factored out so both the fill variant
+   (.hds-shimmer-sweep) and the ring/border variant (.hds-shimmer-ring,
+   below) stay in sync if the look is ever tuned again — only the color
+   (--hds-shimmer-color) differs per use via the --gold modifier. */
+@keyframes hds-shimmer-sweep {
+  0%   { background-position: 120vw 0; }
+  100% { background-position: -20vw 0; }
+}
+
+:root {
+  /* 115deg = 25° off vertical (90deg would be a plumb-straight wipe). The
+     bright core (white blended with the theme color) is only ~1% of the
+     gradient box wide — a genuinely thin line, like a specular highlight
+     catching the edge of something metallic/glass — with a softer color
+     halo around it that tapers to transparent, rather than one wide band
+     of flat color. A slow cycle matters as much as the thinness: too fast
+     and a small fixed-size element only ever catches the tail of the fade
+     in a frame or two, which reads as an instant flash/blink rather than a
+     line visibly sliding past it. */
+  --hds-shimmer-gradient: linear-gradient(
+    115deg,
+    transparent 47%,
+    color-mix(in oklch, var(--hds-shimmer-color, var(--hds-violet)) 45%, transparent) 49.4%,
+    color-mix(in oklch, white 80%, var(--hds-shimmer-color, var(--hds-violet))) 50%,
+    color-mix(in oklch, var(--hds-shimmer-color, var(--hds-violet)) 45%, transparent) 50.6%,
+    transparent 53%
+  );
+}
+
+.hds-shimmer-sweep {
+  --hds-shimmer-color: var(--hds-violet);
+  background-image: var(--hds-shimmer-gradient);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-size: 22vw 100%;
+  animation: hds-shimmer-sweep 12s linear infinite;
+}
+
+.hds-shimmer-sweep--gold {
+  --hds-shimmer-color: var(--hds-gold);
+}
+
+/* Ring/border variant — layers an *additional* shimmering ring on top of a
+   normal, always-visible static outline (the channel builder's selected-
+   block gold outline in DayColumn.tsx keeps its plain `outline` exactly as
+   before; this is purely additive). `outline`/`border-image` can't carry a
+   background-attachment: fixed gradient directly, so this paints via an
+   inset pseudo-element instead — deliberately using background-clip
+   (padding-box vs border-box), not `mask`/`mask-composite`: the mask-
+   composite route (an earlier version of this rule) silently rendered
+   nothing in real-world Chrome, whereas background-clip layering has none
+   of that cross-browser fragility. The padding-box layer is a fully
+   transparent gradient — it paints nothing, so whatever's underneath (the
+   real block, its own borders, the static outline) simply shows through —
+   while the border-box layer carries the shimmer, visible only in the ring
+   between the two clip boxes. Needs `position: relative` (and a
+   border-radius, inherited) on the element — DayColumn.tsx sets both. */
+@keyframes hds-shimmer-ring-sweep {
+  0%   { background-position: 0 0, 120vw 0; }
+  100% { background-position: 0 0, -20vw 0; }
+}
+
+.hds-shimmer-ring {
+  position: relative;
+}
+.hds-shimmer-ring::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 2px solid transparent; /* = ring thickness, reserved via a real border so background-clip has a padding-box/border-box gap to work with */
+  border-radius: inherit;
+  background-image:
+    linear-gradient(transparent, transparent) padding-box,
+    var(--hds-shimmer-gradient) border-box;
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: scroll, fixed;
+  background-size: auto, 22vw 100%;
+  animation: hds-shimmer-ring-sweep 12s linear infinite;
+  pointer-events: none;
+}
+
+.hds-shimmer-ring--gold {
+  --hds-shimmer-color: var(--hds-gold);
+}
+
 /* Guide grid: currently-airing program block */
 .hds-guide-now {
   background: linear-gradient(120deg,

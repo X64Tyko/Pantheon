@@ -15,6 +15,20 @@
 # Port map:
 #   8000 — Hermes (single public endpoint: UI, API, live TV, HDHomeRun)
 #   8081 — Kairos direct access (optional; useful for debugging)
+#
+# Optional: remote/HTTPS access via Cloudflare Tunnel — chromecast sender
+# support (and anything else requiring a secure context) needs Hades served
+# over HTTPS, which a LAN-only http://<host>:8000 address never satisfies.
+# Off by default; enable per-install with:
+#   1. Cloudflare Zero Trust dashboard → Networks → Tunnels → Create a tunnel
+#      → connector type "Docker" → copy the token it gives you.
+#   2. In that same wizard, add a Public Hostname: whatever hostname you want
+#      (e.g. pantheon.yourdomain.com) → service type HTTP → URL hermes:8000.
+#      This is also where the hostname is configured — nothing below is
+#      per-install-hardcoded, it only needs the token.
+#   3. Put that token in a `.env` file next to this compose file:
+#        CLOUDFLARE_TUNNEL_TOKEN=eyJ...
+#   4. docker compose --profile cloudflare up -d
 
 services:
   kairos:
@@ -76,3 +90,17 @@ services:
       - hephaestus
       - hades
     restart: unless-stopped
+
+  # Optional — see the "Cloudflare Tunnel" note near the top of this file.
+  # Outbound-only, no inbound port mapping needed; the public hostname and
+  # its target (hermes:8000) are configured in the Cloudflare dashboard when
+  # the tunnel token is created, not here — this file is the same for every
+  # install, only the token differs.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - hermes
+    restart: unless-stopped
+    profiles:
+      - cloudflare
