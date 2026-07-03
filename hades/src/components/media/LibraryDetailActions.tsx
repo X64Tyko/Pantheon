@@ -3,10 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import type { ArrLookupResult, ArrServiceOptions, ScraperSearchResult } from '../../api/types'
+import type { MatchStatus } from './MatchBadge'
 import { MatchBadge } from './MatchBadge'
+import { FixMatchPanel } from './FixMatchPanel'
 import { goldBtnStyle } from '../../channel/styles'
 import { resolvePlayPath } from '../../player/resolvePlayTarget'
 import { useFocusable } from '../../nav/useFocusable'
+import { useMediaDetail } from './useMediaDetail'
 
 interface LibraryDetailActionsProps {
   id?:             string
@@ -22,6 +25,14 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
   const isAdmin  = user?.role === 'admin'
   const isLibraryItem = !discoverResult && !!id && !!content_type
   const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
+
+  // A second, independent fetch of the same item — MediaDetailHero already
+  // fetched it for the poster/overview/etc, but has no way to hand this
+  // component the result (actions is built by the *parent* page before
+  // MediaDetailHero's own hook ever runs). Cheap GET, not worth a wider
+  // prop-threading change to avoid.
+  const { detail, title: detailTitle, refetch: refetchDetail } = useMediaDetail({ id, content_type })
+  const [fixMatchOpen, setFixMatchOpen] = useState(false)
 
   const [playLoading, setPlayLoading] = useState(false)
 
@@ -61,6 +72,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
     setRootFolder('')
     setArrError('')
     setAlreadyAdded(false)
+    setFixMatchOpen(false)
   }, [id, discoverResult?.external_id])
 
   const serviceLabel = contentType === 'show' ? 'Sonarr' : 'Radarr'
@@ -133,6 +145,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
   }
 
   if (isLibraryItem) {
+    const matchStatus = (detail?.match_status ?? 'unscraped') as MatchStatus
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 420 }}>
         <PlayButton onClick={handlePlay} loading={playLoading} />
@@ -142,14 +155,22 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
           background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
-          <MatchBadge status="unscraped" size="md" />
-          <button disabled style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-            padding: '3px 10px', borderRadius: 6, cursor: 'not-allowed',
-            border: '1px solid var(--hds-line)', background: 'transparent',
-            color: 'var(--hds-txt-3)', opacity: 0.5,
-          }}>Review Match</button>
+          <MatchBadge status={matchStatus} score={detail?.match_score} size="md" />
+          {isAdmin && (
+            <FixMatchButton active={fixMatchOpen} onClick={() => setFixMatchOpen(o => !o)} />
+          )}
         </div>
+
+        {isAdmin && fixMatchOpen && id && (
+          <FixMatchPanel
+            id={id}
+            contentType={contentType}
+            defaultQuery={detailTitle}
+            locked={!!detail?.locked}
+            onMatched={() => { setFixMatchOpen(false); refetchDetail() }}
+            onCancel={() => setFixMatchOpen(false)}
+          />
+        )}
 
         <button disabled style={{ ...goldBtnStyle, opacity: 0.4, cursor: 'not-allowed', boxSizing: 'border-box' }}>
           Push to Sources
@@ -254,6 +275,23 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
   }
 
   return null
+}
+
+function FixMatchButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'detail-fix-match', onEnterPress: onClick })
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick}
+      style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+        padding: '3px 10px', borderRadius: 6, cursor: 'pointer',
+        border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+        background: active ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
+        color: active ? 'var(--hds-violet)' : 'var(--hds-txt-2)',
+      }}
+    >{active ? 'Cancel' : 'Fix Match'}</button>
+  )
 }
 
 function PlayButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {

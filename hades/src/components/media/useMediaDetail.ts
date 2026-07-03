@@ -13,8 +13,8 @@ function movieArtUrl(id: string)   { return mediaUrl(`/api/movies/${id}/art`) }
 export function splitFilePath(path?: string): { folderName?: string; fileName?: string } {
   if (!path) return {}
   const parts = path.split(/[/\\]/).filter(Boolean)
-  const fileName = parts.at(-1)
-  const folderName = parts.length > 1 ? parts.at(-2) : undefined
+  const fileName = parts[parts.length - 1]
+  const folderName = parts.length > 1 ? parts[parts.length - 2] : undefined
   return { folderName, fileName }
 }
 
