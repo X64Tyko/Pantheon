@@ -735,13 +735,15 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                         overview      = CASE WHEN locked THEN overview      ELSE ? END,
                         status        = CASE WHEN locked THEN status        ELSE ? END,
                         thumb         = CASE WHEN locked THEN thumb         ELSE ? END,
+                        art           = CASE WHEN locked THEN art           ELSE ? END,
                         content_rating= CASE WHEN locked THEN content_rating ELSE ? END
                     WHERE show_id = ?
                 )");
                 app.bind(1, show->tvdb_id); app.bind(2, show->overview);
                 app.bind(3, show->status);  app.bind(4, show->thumb);
-                app.bind(5, show->content_rating);
-                app.bind(6, kairos_id);
+                app.bind(5, show->art);
+                app.bind(6, show->content_rating);
+                app.bind(7, kairos_id);
                 app.exec();
             }
         } else if (item_type == "movie") {
@@ -751,12 +753,14 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                     UPDATE movie SET
                         overview      = CASE WHEN locked THEN overview      ELSE ? END,
                         thumb         = CASE WHEN locked THEN thumb         ELSE ? END,
+                        art           = CASE WHEN locked THEN art           ELSE ? END,
                         content_rating= CASE WHEN locked THEN content_rating ELSE ? END
                     WHERE movie_id = ?
                 )");
                 app.bind(1, movie->overview); app.bind(2, movie->thumb);
-                app.bind(3, movie->content_rating);
-                app.bind(4, kairos_id);
+                app.bind(3, movie->art);
+                app.bind(4, movie->content_rating);
+                app.bind(5, kairos_id);
                 app.exec();
             }
         }
@@ -774,14 +778,17 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                         status    = CASE WHEN locked THEN status    ELSE ? END,
                         genres    = CASE WHEN locked THEN genres    ELSE ? END,
                         network   = CASE WHEN locked THEN network   ELSE ? END,
-                        studio    = CASE WHEN locked THEN studio    ELSE ? END
+                        studio    = CASE WHEN locked THEN studio    ELSE ? END,
+                        thumb     = CASE WHEN locked THEN thumb     ELSE ? END,
+                        art       = CASE WHEN locked THEN art       ELSE ? END
                     WHERE show_id = ?
                 )");
                 app.bind(1, show->tmdb_id); app.bind(2, show->tvdb_id);
                 app.bind(3, show->imdb_id); app.bind(4, show->overview);
                 app.bind(5, show->status);  app.bind(6, show->genres);
                 app.bind(7, show->network); app.bind(8, show->studio);
-                app.bind(9, kairos_id);
+                app.bind(9, show->thumb);   app.bind(10, show->art);
+                app.bind(11, kairos_id);
                 app.exec();
             }
         } else if (item_type == "movie") {
@@ -795,14 +802,17 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                         genres       = CASE WHEN locked THEN genres       ELSE ? END,
                         studio       = CASE WHEN locked THEN studio       ELSE ? END,
                         director     = CASE WHEN locked THEN director     ELSE ? END,
-                        release_date = CASE WHEN locked THEN release_date ELSE ? END
+                        release_date = CASE WHEN locked THEN release_date ELSE ? END,
+                        thumb        = CASE WHEN locked THEN thumb        ELSE ? END,
+                        art          = CASE WHEN locked THEN art          ELSE ? END
                     WHERE movie_id = ?
                 )");
                 app.bind(1, movie->tmdb_id); app.bind(2, movie->imdb_id);
                 app.bind(3, movie->overview); app.bind(4, movie->genres);
                 app.bind(5, movie->studio);  app.bind(6, movie->director);
                 app.bind(7, movie->release_date);
-                app.bind(8, kairos_id);
+                app.bind(8, movie->thumb);   app.bind(9, movie->art);
+                app.bind(10, kairos_id);
                 app.exec();
             }
         }
@@ -822,7 +832,8 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                         network                 = CASE WHEN locked THEN network                 ELSE ? END,
                         originally_available_at = CASE WHEN locked THEN originally_available_at ELSE ? END,
                         year                    = CASE WHEN locked THEN year                    ELSE ? END,
-                        thumb                   = CASE WHEN locked THEN thumb                   ELSE ? END
+                        thumb                   = CASE WHEN locked THEN thumb                   ELSE ? END,
+                        art                     = CASE WHEN locked THEN art                     ELSE ? END
                     WHERE show_id = ?
                 )");
                 app.bind(1,  show->tvdb_id);
@@ -836,7 +847,8 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 if (show->year.has_value()) app.bind(9, show->year.value());
                 else                        app.bind(9);
                 app.bind(10, show->thumb);
-                app.bind(11, kairos_id);
+                app.bind(11, show->art);
+                app.bind(12, kairos_id);
                 app.exec();
             }
         } else if (item_type == "movie") {
@@ -851,6 +863,7 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                         studio       = CASE WHEN locked THEN studio       ELSE ? END,
                         year         = CASE WHEN locked THEN year         ELSE ? END,
                         thumb        = CASE WHEN locked THEN thumb        ELSE ? END,
+                        art          = CASE WHEN locked THEN art          ELSE ? END,
                         release_date = CASE WHEN locked THEN release_date ELSE ? END
                     WHERE movie_id = ?
                 )");
@@ -862,8 +875,9 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 if (movie->year.has_value()) app.bind(6, movie->year.value());
                 else                         app.bind(6);
                 app.bind(7, movie->thumb);
-                app.bind(8, movie->release_date);
-                app.bind(9, kairos_id);
+                app.bind(8, movie->art);
+                app.bind(9, movie->release_date);
+                app.bind(10, kairos_id);
                 app.exec();
             }
         }
