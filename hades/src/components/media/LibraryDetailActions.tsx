@@ -175,7 +175,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
   if (isLibraryItem) {
     const matchStatus = (detail?.match_status ?? 'unscraped') as MatchStatus
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 760 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 900 }}>
         <PlayButton onClick={handlePlay} loading={playLoading} />
 
         <div style={{
@@ -362,8 +362,8 @@ function FixMatchButton({ active, onClick }: { active: boolean; onClick: () => v
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
       style={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-        padding: '3px 10px', borderRadius: 6, cursor: 'pointer',
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+        padding: '8px 16px', borderRadius: 6, cursor: 'pointer',
         border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
         background: active ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
         color: active ? 'var(--hds-violet)' : 'var(--hds-txt-2)',

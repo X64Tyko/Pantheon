@@ -1046,7 +1046,10 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     CursorState& state,
     Xoshiro256& rng,
     const std::vector<PlayRecord>& pass_records,
-    std::time_t before_time)
+    std::time_t before_time,
+    std::optional<std::time_t>& history_cached_before,
+    std::unordered_map<std::string, int64_t>& history_cache,
+    std::unordered_map<std::string, std::vector<FillerItem>>& items_cache)
 {
     if (pool.empty()) return std::nullopt;
     int pool_size = static_cast<int>(pool.size());
@@ -1082,9 +1085,14 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     {
         int tried = 0;
         while (tried < pool_size) {
-            for (const auto& fi : content_.loadFillerItems(pool[entry_idx].content_type,
-                                                            pool[entry_idx].content_id,
-                                                            pool[entry_idx].season_filter))
+            const auto& src = pool[entry_idx];
+            std::string key = src.content_type + ":" + src.content_id + ":"
+                             + (src.season_filter.has_value() ? std::to_string(*src.season_filter) : "");
+            auto cached = items_cache.find(key);
+            if (cached == items_cache.end())
+                cached = items_cache.emplace(key, content_.loadFillerItems(
+                    src.content_type, src.content_id, src.season_filter)).first;
+            for (const auto& fi : cached->second)
                 items.push_back({fi.item_type, fi.item_id, fi.duration_ms});
             if (!items.empty()) break;
             entry_idx = (entry_idx + 1) % pool_size;
@@ -1107,7 +1115,18 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
         if (eligible.empty()) return std::nullopt;
 
         // Prefer the least recently played eligible clip (never-played first).
-        auto last_played = content_.getLastPlayedMap(channel_id, before_time);
+        // The persisted-history query is expensive (full GROUP BY over
+        // filler_play_history, which only grows over a channel's lifetime) and
+        // — since this is forward projection, before_time is always at or past
+        // "now" and thus already past every persisted row — its result is the
+        // same for the whole pass. Compute it once, not on every single pick
+        // (before_time increases nearly every call, so re-querying whenever it
+        // advances is effectively every call — the bug this replaced).
+        if (!history_cached_before) {
+            history_cache          = content_.getLastPlayedMap(channel_id, before_time);
+            history_cached_before  = before_time;
+        }
+        auto last_played = history_cache;
 
         // Augment with in-pass picks: persisted history only reflects prior project()
         // calls, not clips already chosen earlier in this same gap/pass.
@@ -1151,8 +1170,12 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
     // hottest smart_pct% of the pool by recency, scan forward for a cooler alternative.
     // Sized advancement already applies LRU directly; this covers the other two modes.
     if (fe.advancement != "sized" && block.smart_pct > 0 && before_time > 0) {
-        auto lp    = content_.getLastPlayedMap(channel_id, before_time);
-        
+        if (!history_cached_before) {
+            history_cache          = content_.getLastPlayedMap(channel_id, before_time);
+            history_cached_before  = before_time;
+        }
+        auto lp = history_cache;
+
         // Augment last-played map with in-pass records.
         for (const auto& pr : pass_records) {
             if (pr.channel_id == channel_id && pr.aired_at < before_time) {
@@ -1382,7 +1405,7 @@ bool RuleEngine::scheduleBlock(
             const auto& pool = block.filler_entries.empty() ? ctx.channel_filler
                                                             : block.filler_entries;
             if (!pool.empty())
-                if (auto fi = pickFillerSim(ctx.channel_id, block, pool, 0, ctx.state, ctx.rng, pass.filler_records, pass.t)) {
+                if (auto fi = pickFillerSim(ctx.channel_id, block, pool, 0, ctx.state, ctx.rng, pass.filler_records, pass.t, pass.filler_history_cached_before, pass.filler_history_cache, pass.filler_items_cache)) {
                     item_opt           = std::move(fi);
                     is_fallback_filler = true;
                 }
@@ -1497,7 +1520,7 @@ bool RuleEngine::scheduleBlock(
                     while (pass.t < fill_target) {
                         int64_t rem_ms = (fill_target - pass.t) * 1000;
                         int64_t max_ms = (late_boundary - pass.t) * 1000;
-                        auto fi = pickFillerSim(ctx.channel_id, block, pool, rem_ms, ctx.state, ctx.rng, pass.filler_records, pass.t);
+                        auto fi = pickFillerSim(ctx.channel_id, block, pool, rem_ms, ctx.state, ctx.rng, pass.filler_records, pass.t, pass.filler_history_cached_before, pass.filler_history_cache, pass.filler_items_cache);
                         if (!fi || fi->duration_ms <= 0 || fi->duration_ms > max_ms) break;
                         fi->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
                         fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;
@@ -1864,6 +1887,81 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
     return result;
 }
 
+// ── Timeslot content selection ────────────────────────────────────────────────
+// A timeslot slot's programming lives in TimeslotSlot::queue, not block.content
+// (which is always empty for a timeslot block) — pickNextContent/advanceAndGet
+// don't apply here.
+
+// Formats t's calendar date (in tz) as "YYYY-MM-DD" — ISO 8601 dates compare
+// correctly as plain strings, so premiere_date gating needs no date parsing.
+static std::string dateStringForCompare(std::time_t t, const std::string& tz) {
+    auto tm = toChannelTZ(t, tz);
+    char buf[11];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    return buf;
+}
+
+std::optional<ScheduledItem> RuleEngine::pickTimeslotItem(
+    const std::string& channel_id,
+    const Block& block,
+    const TimeslotSlot& slot,
+    SlotCursor& sc,
+    std::time_t at,
+    const std::string& tz)
+{
+    const int n = static_cast<int>(slot.queue.size());
+    if (n == 0) return std::nullopt;
+
+    const std::string today = dateStringForCompare(at, tz);
+    auto premiered = [&](const TimeslotQueueEntry& e) {
+        return e.premiere_date.empty() || today >= e.premiere_date;
+    };
+
+    int idx = sc.queue_pos % n;
+    const TimeslotQueueEntry* entry = &slot.queue[idx];
+    // False while serving a stand-in for a not-yet-premiered entry — the queue
+    // must not advance past it, so it's retried (and re-gated) on the next call.
+    bool advancing_queue = true;
+
+    if (!premiered(*entry)) {
+        if (entry->pre_premiere_behavior == "replay_previous" && n > 1) {
+            entry = &slot.queue[(idx - 1 + n) % n];
+            advancing_queue = false;
+        } else if (entry->pre_premiere_behavior == "skip") {
+            int next_idx = (idx + 1) % n;
+            if (!premiered(slot.queue[next_idx])) return std::nullopt; // not ready either — fall to filler
+            idx = next_idx;
+            entry = &slot.queue[idx];
+        } else {
+            return std::nullopt; // "filler" behavior, or replay_previous with no prior entry
+        }
+    }
+
+    if (entry->content_type == "movie") {
+        auto m = getMovie(entry->content_id);
+        if (!m) return std::nullopt;
+        auto item = movieItem(*m);
+        item.channel_id = channel_id;
+        item.block_id   = block.block_id;
+        if (advancing_queue) { sc.queue_pos = (idx + 1) % n; sc.episode_pos = 0; }
+        return item;
+    }
+
+    // "show" — sequential episode order, advancing to the next queue entry
+    // once this show's episode list is exhausted.
+    auto eps = getEpisodes(entry->content_id, std::nullopt, false, "season");
+    if (eps.empty()) return std::nullopt;
+    int ep_pos = sc.episode_pos % static_cast<int>(eps.size());
+    auto item = itemFromShow(channel_id, block.block_id, eps, ep_pos, showTitle(entry->content_id));
+    if (!item) return std::nullopt;
+
+    if (advancing_queue) {
+        if (ep_pos + 1 >= static_cast<int>(eps.size())) { sc.queue_pos = (idx + 1) % n; sc.episode_pos = 0; }
+        else                                            { sc.episode_pos = ep_pos + 1; }
+    }
+    return item;
+}
+
 // ── Timeslot block scheduling ─────────────────────────────────────────────────
 
 void RuleEngine::fillToTime(const ProjectContext& ctx,
@@ -1877,7 +1975,7 @@ void RuleEngine::fillToTime(const ProjectContext& ctx,
     int guard = 0;
     while (pass.t < target && guard++ < 2000) {
         int64_t max_ms = (target - pass.t) * 1000;
-        auto fi = pickFillerSim(ctx.channel_id, block, pool, max_ms, ctx.state, ctx.rng, pass.filler_records, pass.t);
+        auto fi = pickFillerSim(ctx.channel_id, block, pool, max_ms, ctx.state, ctx.rng, pass.filler_records, pass.t, pass.filler_history_cached_before, pass.filler_history_cache, pass.filler_items_cache);
         if (!fi || fi->duration_ms <= 0 || fi->duration_ms > max_ms) break;
         fi->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
         fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;
@@ -1957,12 +2055,9 @@ bool RuleEngine::scheduleTimeslotBlock(
             if (eff > pass.t && eff < slot_end) pass.t = eff;
         }
 
-        // Schedule content.
+        // Schedule content — resolved from this slot's own queue, not block.content.
         auto sc = ctx.state.getSlotCursor(slot.slot_id);
-        int sel_ts = pickNextContent(ctx.channel_id, block, pass.t, ctx.state, pass.play_records, ctx.rng);
-        auto item_opt = (sel_ts >= 0)
-            ? advanceAndGet(ctx.channel_id, block, sel_ts, pass.t, ctx.state, pass.play_records, ctx.rng)
-            : std::nullopt;
+        auto item_opt = pickTimeslotItem(ctx.channel_id, block, slot, sc, pass.t, ctx.tz);
         if (item_opt) {
             int64_t dur_ms = item_opt->duration_ms;
             if (slot.overflow == SlotOverflow::Cutoff) {
@@ -1989,7 +2084,8 @@ bool RuleEngine::scheduleTimeslotBlock(
             ctx.result.push_back(std::move(*item_opt));
             pass.t += dur_ms / 1000;
 
-            sc.episode_pos++;
+            // pickTimeslotItem() already advanced sc in place (queue_pos and/or
+            // episode_pos) — just persist it.
             ctx.state.setSlotCursor(slot.slot_id, sc.queue_pos, sc.episode_pos);
         } else {
             if (slot.overflow == SlotOverflow::Cutoff) pass.t = slot_end;
@@ -2014,8 +2110,6 @@ bool RuleEngine::scheduleTimeslotBlock(
     // Return true (exhausted) when no slots were active this pass so projectDay
     // removes the block from the active set for the rest of this calendar day.
     return !any_slot_ran;
-
-    return false; // timeslot blocks don't exhaust via program_count
 }
 
 // ── Playback completion ───────────────────────────────────────────────────────

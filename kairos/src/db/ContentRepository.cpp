@@ -128,7 +128,14 @@ std::vector<Episode> ContentRepository::getPlayedEpisodes(const std::string& sho
     // where is_scheduled=1 rows (written by EPGMaterializer::commit()) are the only
     // play_history ever gets; requiring is_scheduled=0 here would make the rerun pool
     // never see them.
-    sql += " AND EXISTS (SELECT 1 FROM play_history ph"
+    // INDEXED BY forces the per-episode item_id lookup (idx_history_item):
+    // without it, SQLite's planner picks idx_history_channel instead for this
+    // correlated subquery and rescans the channel's *entire* play_history for
+    // every candidate episode — measured ~130x slower on a channel with tens
+    // of thousands of accumulated history rows (the common case for a
+    // long-lived channel), which is what made schedule generation for
+    // rerun/shuffle blocks pathologically slow.
+    sql += " AND EXISTS (SELECT 1 FROM play_history ph INDEXED BY idx_history_item"
            " WHERE ph.item_type='episode' AND ph.item_id=e.episode_id";
     if (!global_scope) sql += " AND ph.channel_id=?";
     sql += " AND ph.aired_at < ?)";
@@ -165,7 +172,7 @@ std::vector<Episode> ContentRepository::getPlayedEpisodesWithCooldown(
                e.duration_ms, e.overview, e.air_date, e.thumb,
                MAX(ph.aired_at) AS last_aired
         FROM episode e
-        JOIN play_history ph ON ph.item_type='episode' AND ph.item_id=e.episode_id
+        JOIN play_history ph INDEXED BY idx_history_item ON ph.item_type='episode' AND ph.item_id=e.episode_id
                              AND ph.channel_id=? AND ph.aired_at < ?
         WHERE e.show_id=? AND e.season=?
         GROUP BY e.episode_id ORDER BY last_aired ASC
@@ -175,7 +182,7 @@ std::vector<Episode> ContentRepository::getPlayedEpisodesWithCooldown(
                e.duration_ms, e.overview, e.air_date, e.thumb,
                MAX(ph.aired_at) AS last_aired
         FROM episode e
-        JOIN play_history ph ON ph.item_type='episode' AND ph.item_id=e.episode_id
+        JOIN play_history ph INDEXED BY idx_history_item ON ph.item_type='episode' AND ph.item_id=e.episode_id
                              AND ph.channel_id=? AND ph.aired_at < ?
         WHERE e.show_id=?
         GROUP BY e.episode_id ORDER BY last_aired ASC
@@ -185,7 +192,7 @@ std::vector<Episode> ContentRepository::getPlayedEpisodesWithCooldown(
                e.duration_ms, e.overview, e.air_date, e.thumb,
                MAX(ph.aired_at) AS last_aired
         FROM episode e
-        JOIN play_history ph ON ph.item_type='episode' AND ph.item_id=e.episode_id
+        JOIN play_history ph INDEXED BY idx_history_item ON ph.item_type='episode' AND ph.item_id=e.episode_id
                              AND ph.aired_at < ?
         WHERE e.show_id=? AND e.season=?
         GROUP BY e.episode_id ORDER BY last_aired ASC
@@ -195,7 +202,7 @@ std::vector<Episode> ContentRepository::getPlayedEpisodesWithCooldown(
                e.duration_ms, e.overview, e.air_date, e.thumb,
                MAX(ph.aired_at) AS last_aired
         FROM episode e
-        JOIN play_history ph ON ph.item_type='episode' AND ph.item_id=e.episode_id
+        JOIN play_history ph INDEXED BY idx_history_item ON ph.item_type='episode' AND ph.item_id=e.episode_id
                              AND ph.aired_at < ?
         WHERE e.show_id=?
         GROUP BY e.episode_id ORDER BY last_aired ASC

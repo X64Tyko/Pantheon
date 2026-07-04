@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 
 declare global {
   interface Window {
@@ -40,11 +41,17 @@ export function useCastApiReady(): boolean {
 // initializing against an empty string.
 export function CastProvider() {
   const ready = useCastApiReady()
+  const { user } = useAuth()
   const [appId, setAppId] = useState<string | null>(null)
 
   useEffect(() => {
+    // CastProvider is mounted at the App root, outside ProtectedRoute — with
+    // no auth check this fired (and got a 401) on the login page too. Keyed
+    // on `user` rather than a one-time mount check so it also fires right
+    // after login, without requiring a page refresh.
+    if (!user) return
     api.getSettings().then(s => setAppId(s.cast_app_id || null)).catch(() => {})
-  }, [])
+  }, [user])
 
   useEffect(() => {
     if (!ready || !appId) return

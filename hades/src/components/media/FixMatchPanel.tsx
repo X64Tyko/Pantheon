@@ -16,8 +16,8 @@ interface FixMatchPanelProps {
 }
 
 // Condensed version of ReviewPage's CandidatePanel search flow — same
-// scraperSearch/manualMatch API calls, scoped down to the detail view's
-// narrower column (maxWidth 420 in LibraryDetailActions) rather than a full
+// scraperSearch/manualMatch API calls, scoped down to the detail view's own
+// column width (maxWidth 900 in LibraryDetailActions) rather than a full
 // page. Runs an initial search against the item's own title immediately on
 // open, since the point of opening this is "the current match is wrong,"
 // not "start from a blank search."
@@ -91,7 +91,7 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
           onKeyDown={e => e.key === 'Enter' && runSearch(query)}
           placeholder="Search title…"
           style={{
-            flex: 1, padding: '6px 10px', borderRadius: 6,
+            flex: 1, padding: '9px 12px', borderRadius: 6,
             border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
             color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
             outline: 'none',
@@ -101,7 +101,7 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
           onClick={() => runSearch(query)}
           disabled={loading || !query.trim()}
           style={{
-            padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+            padding: '9px 16px', borderRadius: 6, cursor: 'pointer',
             border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
             color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
             opacity: (loading || !query.trim()) ? 0.5 : 1,
@@ -113,10 +113,10 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
         <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-red)' }}>{error}</div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }} className="scrollbar-dark">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 440, overflowY: 'auto' }} className="scrollbar-dark">
         {loading ? (
           Array.from({ length: 3 }, (_, i) => (
-            <div key={i} className="hds-skeleton" style={{ height: 96, borderRadius: 7 }} />
+            <div key={i} className="hds-skeleton" style={{ height: 120, borderRadius: 7 }} />
           ))
         ) : results.length === 0 ? (
           <div style={{
@@ -136,23 +136,23 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
               }}>
                 {r.poster_url && (
                   <img src={r.poster_url} alt=""
-                    style={{ width: 64, height: 96, objectFit: 'cover', flexShrink: 0 }}
+                    style={{ width: 80, height: 120, objectFit: 'cover', flexShrink: 0 }}
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
                 )}
-                <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ flex: 1, minWidth: 0, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                     <span style={{
-                      fontFamily: "'Chakra Petch', sans-serif", fontSize: 11.5, fontWeight: 600,
+                      fontFamily: "'Chakra Petch', sans-serif", fontSize: 12.5, fontWeight: 600,
                       color: 'var(--hds-txt)', flex: 1, lineHeight: 1.3,
                     }}>{r.title}</span>
                     <button
                       onClick={() => handleMatch(r)}
                       disabled={isMatching}
                       style={{
-                        flexShrink: 0, padding: '3px 9px', borderRadius: 5, cursor: isMatching ? 'not-allowed' : 'pointer',
+                        flexShrink: 0, padding: '7px 16px', borderRadius: 6, cursor: isMatching ? 'not-allowed' : 'pointer',
                         border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.1)',
-                        color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 600,
+                        color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600,
                       }}
                     >{isMatching ? '…' : 'Use'}</button>
                   </div>
@@ -182,7 +182,7 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
       <button
         onClick={onCancel}
         style={{
-          padding: '6px 0', borderRadius: 6, cursor: 'pointer',
+          padding: '9px 0', borderRadius: 6, cursor: 'pointer',
           border: '1px solid var(--hds-line)', background: 'transparent',
           color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
         }}

@@ -267,6 +267,26 @@ private:
         int                                  channel_prog_count = 0;
         std::vector<PlayRecord>              play_records;
         std::vector<PlayRecord>              filler_records;
+
+        // Persisted (DB) filler_play_history is fixed for the whole pass — only
+        // its content_.getLastPlayedMap() *query* is expensive (a full-table
+        // GROUP BY that can be tens of thousands of rows for a long-lived
+        // channel). Caching it here turns pickFillerSim's "sized" cooldown
+        // lookup, previously re-querying on every single filler pick, into one
+        // DB round trip for the whole generate() call — computed once (the
+        // std::optional just marks "already computed"), never invalidated
+        // mid-pass, since before_time only ever moves further past "now" (and
+        // thus further past every already-persisted row) as pass.t advances —
+        // see pickFillerSim.
+        std::optional<std::time_t> filler_history_cached_before;
+        std::unordered_map<std::string, int64_t> filler_history_cache;
+
+        // Same rationale as filler_history_cache: a filler source's own item list
+        // (e.g. a show's episodes) can't change mid-pass, but pickFillerSim was
+        // reloading it from DB on every single pick — round-robin between just a
+        // couple of sources means the same source gets re-fetched hundreds of
+        // times per day of projection. Keyed by "content_type:content_id:season".
+        std::unordered_map<std::string, std::vector<FillerItem>> filler_items_cache;
     };
 
     // Three-layer projection core.
@@ -296,6 +316,19 @@ private:
                                int window_late_start_mins,
                                std::time_t day_start,
                                ProjectPassState& pass);
+
+    // Resolves the next item for one timeslot slot from its own queue (NOT
+    // block.content — a timeslot slot's programming lives in TimeslotSlot::queue,
+    // keyed by its own SlotCursor). Returns nullopt when the queue is empty or
+    // every entry is pre-premiere-gated with no usable fallback, in which case
+    // the caller falls through to filler exactly like an empty regular block.
+    // Mutates `sc` (queue/episode position) in place on success.
+    std::optional<ScheduledItem> pickTimeslotItem(const std::string& channel_id,
+                                                   const Block& block,
+                                                   const TimeslotSlot& slot,
+                                                   SlotCursor& sc,
+                                                   std::time_t at,
+                                                   const std::string& tz);
 
     // Fill pass.t → target with sized filler; advance pass.t to target if no filler fits.
     void fillToTime(const ProjectContext& ctx,
@@ -341,6 +374,7 @@ private:
 
     // Pick one filler clip from the effective pool, advancing filler positions in state.
     // max_ms > 0: "sized" advancement rejects clips longer than this.
+    // history_cache/history_cached_before: caller's ProjectPassState fields (see there for why).
     std::optional<ScheduledItem> pickFillerSim(const std::string& channel_id,
                                                const Block& block,
                                                const std::vector<BlockFillerEntry>& pool,
@@ -348,7 +382,10 @@ private:
                                                CursorState& state,
                                                Xoshiro256& rng,
                                                const std::vector<PlayRecord>& pass_records,
-                                               std::time_t before_time = 0);
+                                               std::time_t before_time,
+                                               std::optional<std::time_t>& history_cached_before,
+                                               std::unordered_map<std::string, int64_t>& history_cache,
+                                               std::unordered_map<std::string, std::vector<FillerItem>>& items_cache);
 
     Database&         db_;
     BlockRepository   blocks_;
