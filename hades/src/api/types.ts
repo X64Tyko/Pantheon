@@ -1,7 +1,18 @@
 export interface User {
-  user_id:  string
-  username: string
-  role:     'admin' | 'viewer'
+  user_id:            string
+  username:           string
+  role:               'admin' | 'viewer'
+  restricted:         boolean
+  max_tv_rating:      string
+  max_movie_rating:   string
+  max_channel_rating: string
+}
+
+export interface ContentOverride {
+  entity_type: 'show' | 'movie' | 'channel'
+  entity_id:   string
+  mode:        'allow' | 'block'
+  title?:      string // present on GET, not needed on POST
 }
 
 export interface AuthResponse {
@@ -51,6 +62,9 @@ export interface Library {
   library_type:        'show' | 'movie' | 'mixed' | 'music' | 'photo'
   preferred_scraper:   '' | 'tmdb' | 'tvdb' | 'anidb'
   preferred_language:  string
+  // AniDB is anime-only — never queried for a library unless explicitly opted
+  // in here (or preferred_scraper is set to 'anidb' outright).
+  include_anidb:       boolean
   enabled:             boolean
 }
 
@@ -77,6 +91,7 @@ export interface Channel {
   stream_resolution?:       'source' | '1080p' | '720p' | '480p'
   stream_video_bitrate?:    number  // kbps; 0 = CRF/CQ auto
   stream_audio_bitrate?:    number  // kbps; default 192
+  content_tag?:             string  // admin-assigned rating tag, TV scale; empty = unrated (fails closed for restricted accounts)
 }
 
 export interface AnchorSnapshot {
@@ -182,6 +197,7 @@ export interface ShowDetail {
   source_base_url:         string
   match_status?:           MatchStatus
   match_score?:            number
+  match_confirmed?:        boolean
 }
 
 export interface MovieDetail {
@@ -208,6 +224,11 @@ export interface MovieDetail {
   file_path?:       string
   match_status?:    MatchStatus
   match_score?:     number
+  match_confirmed?: boolean
+}
+
+export interface WritebackResult {
+  results: { source_id: string; source_type: string; ok: boolean }[]
 }
 
 export interface Episode {
@@ -724,7 +745,7 @@ export interface ReviewQueueItem {
   thumb:           string
   source_id:       string
   source_base_url: string
-  match_status:    'uncertain' | 'unmatched'
+  match_status:    'uncertain' | 'unmatched' | 'matched'
   match_score:     number
   candidates:      ItemMatchCandidate[]
 }
@@ -746,4 +767,6 @@ export interface ScraperSearchResult {
   poster_url:   string
   content_type: 'show' | 'movie'
   in_library:   boolean
+  library_id?:      string // this library's show_id/movie_id when in_library
+  request_status?:  'pending' | 'approved' | 'rejected' // set if ANYONE has already requested this, regardless of in_library
 }

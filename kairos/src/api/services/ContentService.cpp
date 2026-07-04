@@ -5,6 +5,12 @@
 #include "../../conf/ConfStore.h"
 #include "../../db/ContentRepository.h"
 #include "../../db/Database.h"
+#include "../../db/MetadataOverrideRepository.h"
+#include "../../db/RestrictionRepository.h"
+#include "../../db/SourceRepository.h"
+#include "../../model/WritebackFields.h"
+#include "../../scraper/RatingSeverity.h"
+#include "../../source/IMediaSource.h"
 #include "../../source/MediaProbe.h"
 #include "../../source/SyncManager.h"
 #include <nlohmann/json.hpp>
@@ -48,6 +54,21 @@ struct ItemLangCache {
 	std::unordered_map<std::string, nlohmann::json> data;
 };
 ItemLangCache g_item_lang_cache;
+
+// Builds the parental-controls context for the current request's user, for
+// ContentRepository's search methods (see RestrictionContext) — the service
+// layer owns "what does restricted mean for this user," the repository just
+// applies a plain ceiling + override lookup.
+RestrictionContext restrictionFor(const std::string& entity_type) {
+	RestrictionContext ctx;
+	if (!currentUser() || !currentUser()->restricted) return ctx;
+	ctx.restricted = true;
+	ctx.user_id = currentUser()->user_id;
+	ctx.rating_ceiling = (entity_type == "show")
+		? RatingSeverity::tvRatingSeverity(currentUser()->max_tv_rating)
+		: RatingSeverity::movieRatingSeverity(currentUser()->max_movie_rating);
+	return ctx;
+}
 
 nlohmann::json probeLanguagesCached(const std::string& cacheKey, const std::string& filePath, ConfStore& conf) {
 	{
@@ -186,6 +207,21 @@ void ContentService::proxyImage(const Req& req,
 
 void ContentService::registerRoutes(httplib::Server& svr) {
 
+	// Parental controls — called by Hermes (via authedHephaestusProxy, using
+	// the caller's own Authorization header) before starting a VOD/preview
+	// session, so restriction is enforced at the one already-authenticated
+	// playback-start boundary rather than only hiding blocked items from
+	// browse/list views. type: "movie" | "episode" | "show".
+	svr.Get("/api/content/:type/:id/access-check", [this](const Req& req, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		auto type = req.path_params.at("type");
+		auto id   = req.path_params.at("id");
+		auto lookup = ContentRepository(db_).resolveForRestriction(type, id);
+		bool allowed = RestrictionRepository(db_).isAllowed(
+			*currentUser(), lookup.entity_type, lookup.entity_id, lookup.content_rating);
+		route::ok(res, json{{"allowed", allowed}}.dump());
+	});
+
 	// ── Public image proxy — used by <img> tags that can't send auth headers ──
 	// Fetches and caches any external image URL. Exempt from auth in isPublicPath.
 	svr.Get("/api/images/proxy", [this](const Req& req, Res& res) {
@@ -246,6 +282,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("collection"))     p.collection    = req.get_param_value("collection");
 		if (req.has_param("studio"))         p.studio        = req.get_param_value("studio");
 		if (req.has_param("sort"))           p.sort          = req.get_param_value("sort");
+		p.restriction = restrictionFor("show");
 
 		ContentRepository repo(db_);
 		auto result = repo.searchShows(p);
@@ -394,6 +431,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("collection"))     p.collection    = req.get_param_value("collection");
 		if (req.has_param("studio"))         p.studio        = req.get_param_value("studio");
 		if (req.has_param("sort"))           p.sort          = req.get_param_value("sort");
+		p.restriction = restrictionFor("movie");
 
 		ContentRepository repo(db_);
 		auto result = repo.searchMovies(p);
@@ -423,6 +461,12 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		ContentRepository repo(db_);
 		auto d = repo.getShowDetail(id);
 		if (!d) { route::err(res, 404, "show not found"); return; }
+		// Same 404 as a genuinely missing show — don't reveal existence of
+		// blocked content via a distinct "forbidden" response.
+		if (currentUser() && currentUser()->restricted
+		    && !RestrictionRepository(db_).isAllowed(*currentUser(), "show", id, d->content_rating)) {
+			route::err(res, 404, "show not found"); return;
+		}
 
 		auto parseArr = [](const std::string& s) -> json {
 			try { return json::parse(s); } catch (...) { return json::array(); }
@@ -456,6 +500,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		show["source_base_url"] = d->source_base_url;
 		show["match_status"]    = d->match_status;
 		if (d->match_score) show["match_score"] = *d->match_score;
+		show["match_confirmed"] = d->match_confirmed;
 
 		json seasons = json::array();
 		for (const auto& s : d->seasons)
@@ -495,8 +540,50 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("year"))                    intf.push_back({"year", b["year"].get<int>()});
 
 			ContentRepository(db_).updateShow(id, sf, intf);
+
+			// A manual edit is an explicit, human-confirmed correction — record it as a
+			// per-field override so it survives future syncs even if `locked` is later
+			// cleared, without freezing the whole row the way `locked` alone would.
+			MetadataOverrideRepository ovr(db_);
+			for (const auto& f : sf)   ovr.set("show", id, f.col, f.val, "user");
+			for (const auto& f : intf) ovr.set("show", id, f.col, std::to_string(f.val), "user");
+
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) { route::logErr("PATCH /api/shows/" + id, e); route::err(res, 400, e.what()); }
+	});
+
+	svr.Post("/api/shows/:id/writeback", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			ContentRepository repo(db_);
+			auto d = repo.getShowDetail(id);
+			if (!d) { route::err(res, 404, "show not found"); return; }
+			// Writeback is gated on a human-confirmed match, never an auto-accepted
+			// one — see acceptCandidate() and the "Push to Sources" plan.
+			if (!d->match_confirmed) { route::err(res, 403, "match not confirmed"); return; }
+
+			WritebackFields fields;
+			fields.title           = d->title;
+			fields.overview        = d->overview;
+			fields.genres          = d->genres;
+			fields.content_rating  = d->content_rating;
+			fields.studio          = d->studio;
+			fields.network         = d->network;
+			fields.actors          = d->actors;
+			fields.countries       = d->countries;
+			fields.collections     = d->collections;
+			fields.release_date    = d->originally_available_at;
+
+			auto targets = SourceRepository(db_).getWritebackTargets("show", id);
+			json results = json::array();
+			for (const auto& t : targets) {
+				auto* src = sync_.findSource(t.source_id);
+				bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "show", fields);
+				results.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"ok", ok}});
+			}
+			route::ok(res, json{{"results", results}}.dump());
+		} catch (const std::exception& e) { route::logErr("POST /api/shows/:id/writeback", e); route::err(res, 500, e.what()); }
 	});
 
 	svr.Get("/api/shows/:id/thumb", [this](const Req& req, Res& res) {
@@ -527,6 +614,12 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		ContentRepository repo(db_);
 		auto d = repo.getMovieDetail(id);
 		if (!d) { route::err(res, 404, "movie not found"); return; }
+		// Same 404 as a genuinely missing movie — don't reveal existence of
+		// blocked content via a distinct "forbidden" response.
+		if (currentUser() && currentUser()->restricted
+		    && !RestrictionRepository(db_).isAllowed(*currentUser(), "movie", id, d->content_rating)) {
+			route::err(res, 404, "movie not found"); return;
+		}
 
 		auto parseArr = [](const std::string& s) -> json {
 			try { return json::parse(s); } catch (...) { return json::array(); }
@@ -560,6 +653,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (!d->file_path.empty()) movie["file_path"] = d->file_path;
 		movie["match_status"]    = d->match_status;
 		if (d->match_score) movie["match_score"] = *d->match_score;
+		movie["match_confirmed"] = d->match_confirmed;
 		route::ok(res, movie.dump());
 	});
 
@@ -591,8 +685,51 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("year"))           intf.push_back({"year", b["year"].get<int>()});
 
 			ContentRepository(db_).updateMovie(id, sf, intf);
+
+			// A manual edit is an explicit, human-confirmed correction — record it as a
+			// per-field override so it survives future syncs even if `locked` is later
+			// cleared, without freezing the whole row the way `locked` alone would.
+			MetadataOverrideRepository ovr(db_);
+			for (const auto& f : sf)   ovr.set("movie", id, f.col, f.val, "user");
+			for (const auto& f : intf) ovr.set("movie", id, f.col, std::to_string(f.val), "user");
+
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) { route::logErr("PATCH /api/movies/" + id, e); route::err(res, 400, e.what()); }
+	});
+
+	svr.Post("/api/movies/:id/writeback", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			ContentRepository repo(db_);
+			auto d = repo.getMovieDetail(id);
+			if (!d) { route::err(res, 404, "movie not found"); return; }
+			// Writeback is gated on a human-confirmed match, never an auto-accepted
+			// one — see acceptCandidate() and the "Push to Sources" plan.
+			if (!d->match_confirmed) { route::err(res, 403, "match not confirmed"); return; }
+
+			WritebackFields fields;
+			fields.title           = d->title;
+			fields.overview        = d->overview;
+			fields.genres          = d->genres;
+			fields.content_rating  = d->content_rating;
+			fields.studio          = d->studio;
+			fields.director        = d->director;
+			fields.tagline         = d->tagline;
+			fields.actors          = d->actors;
+			fields.countries       = d->countries;
+			fields.collections     = d->collections;
+			fields.release_date    = d->release_date;
+
+			auto targets = SourceRepository(db_).getWritebackTargets("movie", id);
+			json results = json::array();
+			for (const auto& t : targets) {
+				auto* src = sync_.findSource(t.source_id);
+				bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "movie", fields);
+				results.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"ok", ok}});
+			}
+			route::ok(res, json{{"results", results}}.dump());
+		} catch (const std::exception& e) { route::logErr("POST /api/movies/:id/writeback", e); route::err(res, 500, e.what()); }
 	});
 
 	svr.Get("/api/movies/:id/thumb", [this](const Req& req, Res& res) {

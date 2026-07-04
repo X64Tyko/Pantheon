@@ -458,32 +458,43 @@ function HeroPanel({
             <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
             Play
           </button>
-          {castAvailable && (
-            <button
-              ref={castBtn.ref} data-tv-focused={castBtn.focused}
-              style={{ ...ghostBtnStyle, display: 'flex', alignItems: 'center', gap: 8 }}
-              onClick={onCast}
-              aria-label="Cast"
-            >
-              <svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
-                <rect x="2" y="2.5" width="14" height="10" rx="1.2" />
-                <path d="M2 15.5a4 4 0 0 0-2-3.5M2 12.5a1.5 1.5 0 0 1 1.5 1.5" fill="none" strokeLinecap="round" />
-                <circle cx="2.3" cy="15.5" r="0.9" fill="currentColor" stroke="none" />
-              </svg>
-              Cast
-            </button>
-          )}
           <button ref={viewDetail.ref} data-tv-focused={viewDetail.focused} style={ghostBtnStyle} onClick={onViewDetail}>View Details</button>
         </div>
       </div>
 
-      {/* Review notification pill */}
+      {/* Cast — fixed top-right, not inline with Play/View Details; every
+          window it's available in (here and the player) anchors it the same
+          way rather than mixing it into the row of content actions. */}
+      {castAvailable && !detailMode && (
+        <button
+          ref={castBtn.ref} data-tv-focused={castBtn.focused}
+          onClick={onCast}
+          aria-label="Cast"
+          style={{
+            position: 'absolute', top: 18, right: 24, zIndex: 3,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 34, height: 34, borderRadius: '50%',
+            border: '1px solid var(--hds-glass-border)',
+            background: 'var(--hds-glass)', backdropFilter: 'blur(8px)',
+            color: 'oklch(0.92 0.01 285)', cursor: 'pointer',
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <rect x="2" y="2.5" width="14" height="10" rx="1.2" />
+            <path d="M2 15.5a4 4 0 0 0-2-3.5M2 12.5a1.5 1.5 0 0 1 1.5 1.5" fill="none" strokeLinecap="round" />
+            <circle cx="2.3" cy="15.5" r="0.9" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      )}
+
+      {/* Review notification pill — stacks below Cast when both are visible
+          so they share the same top-right corner without overlapping. */}
       {reviewCount > 0 && (
         <button
           ref={review.ref} data-tv-focused={review.focused}
           onClick={onReviewClick}
           style={{
-            position: 'absolute', top: 18, right: 24, zIndex: 3,
+            position: 'absolute', top: castAvailable && !detailMode ? 60 : 18, right: 24, zIndex: 3,
             display: 'flex', alignItems: 'center', gap: 7,
             padding: '5px 12px', borderRadius: 20,
             border: '1px solid var(--hds-match-amber)',

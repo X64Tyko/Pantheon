@@ -107,11 +107,11 @@ export default observer(function SourcesPage() {
 
   // ── Add-library form ───────────────────────────────────────────────────────
   const [showAddLib, setShowAddLib] = useState(false)
-  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '' })
+  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false })
 
   // ── Library edit state ─────────────────────────────────────────────────────
   const [editingLib, setEditingLib] = useState<string | null>(null)
-  const [editForm, setEditForm]     = useState({ display_name: '', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '' })
+  const [editForm, setEditForm]     = useState({ display_name: '', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false })
 
   // ── Local folder browser ───────────────────────────────────────────────────
   const [localBrowsePath,    setLocalBrowsePath]   = useState('')
@@ -131,15 +131,15 @@ export default observer(function SourcesPage() {
 
   const addLib = async () => {
     if (!store.selectedId) return
-    await store.addLibrary(store.selectedId, libForm.external_lib_id, libForm.display_name, libForm.library_type, libForm.preferred_scraper, libForm.preferred_language)
+    await store.addLibrary(store.selectedId, libForm.external_lib_id, libForm.display_name, libForm.library_type, libForm.preferred_scraper, libForm.preferred_language, libForm.include_anidb)
     setShowAddLib(false)
-    setLibForm({ external_lib_id: '', display_name: '', library_type: 'show', preferred_scraper: '', preferred_language: '' })
+    setLibForm({ external_lib_id: '', display_name: '', library_type: 'show', preferred_scraper: '', preferred_language: '', include_anidb: false })
     setLocalBrowsePath(''); setLocalEntries([])
   }
 
-  const openEditLib = (lib: { library_id: string; display_name: string; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string }) => {
+  const openEditLib = (lib: { library_id: string; display_name: string; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string; include_anidb: boolean }) => {
     setEditingLib(lib.library_id)
-    setEditForm({ display_name: lib.display_name, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '' })
+    setEditForm({ display_name: lib.display_name, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '', include_anidb: lib.include_anidb })
     setConfirmLib(null)
   }
 
@@ -586,7 +586,7 @@ export default observer(function SourcesPage() {
                                 <button
                                   type="button"
                                   className="flex-1 text-left min-w-0"
-                                  onClick={() => setLibForm({ external_lib_id: e.external_lib_id, display_name: e.name, library_type: e.type as any, preferred_scraper: '', preferred_language: '' })}
+                                  onClick={() => setLibForm({ external_lib_id: e.external_lib_id, display_name: e.name, library_type: e.type as any, preferred_scraper: '', preferred_language: '', include_anidb: libForm.include_anidb })}
                                 >
                                   <span className="text-xs text-zinc-200 truncate block">{e.name}</span>
                                 </button>
@@ -609,7 +609,7 @@ export default observer(function SourcesPage() {
                         value={libForm.external_lib_id}
                         onChange={e => {
                           const lib = store.available.find(l => l.external_lib_id === e.target.value)
-                          setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any, preferred_scraper: '', preferred_language: '' })
+                          setLibForm({ external_lib_id: e.target.value, display_name: lib?.name ?? libForm.display_name, library_type: (lib?.type ?? 'show') as any, preferred_scraper: '', preferred_language: '', include_anidb: libForm.include_anidb })
                         }}
                         className="input w-full"
                       >
@@ -663,6 +663,14 @@ export default observer(function SourcesPage() {
                     <option value="tvdb">TVDB</option>
                     <option value="anidb">AniDB</option>
                   </select>
+                  <label className="flex items-center gap-2 text-sm text-zinc-400">
+                    <input
+                      type="checkbox"
+                      checked={libForm.include_anidb}
+                      onChange={e => setLibForm({ ...libForm, include_anidb: e.target.checked })}
+                    />
+                    Include AniDB (anime only — leave off for general movie/TV libraries)
+                  </label>
                   <select
                     value={libForm.preferred_language}
                     onChange={e => setLibForm({ ...libForm, preferred_language: e.target.value })}
@@ -760,6 +768,14 @@ export default observer(function SourcesPage() {
                         <option value="tvdb">TVDB</option>
                         <option value="anidb">AniDB</option>
                       </select>
+                      <label className="flex items-center gap-2 text-sm text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={editForm.include_anidb}
+                          onChange={e => setEditForm({ ...editForm, include_anidb: e.target.checked })}
+                        />
+                        Include AniDB (anime only)
+                      </label>
                       <select
                         value={editForm.preferred_language}
                         onChange={e => setEditForm({ ...editForm, preferred_language: e.target.value })}

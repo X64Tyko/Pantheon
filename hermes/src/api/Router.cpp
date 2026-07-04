@@ -318,6 +318,44 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
             res.set_content(json{{"error", "Unauthorized"}}.dump(), "application/json");
             return;
         }
+
+        // Parental controls — only "start"/"switch" calls carry enough info
+        // (content_type+content_id for VOD, channel_id for preview) to check;
+        // stop/activity calls operate on an already-authorized session and
+        // are left alone. This is the one already-authenticated playback
+        // boundary for VOD/preview, so restriction is enforced here as a
+        // real security check, not just hidden from browse/list views.
+        // Fails open on an infrastructure error (Kairos already had to be
+        // reachable for the auth check above to have succeeded at all) and
+        // closed only on an explicit "not allowed" response.
+        bool is_start_or_switch = req.path.ends_with("/start") || req.path.ends_with("/switch");
+        if (is_start_or_switch) {
+            try {
+                auto body = json::parse(req.body);
+                httplib::Client kairos(cfg.kairos_url);
+                kairos.set_connection_timeout(5);
+                kairos.set_read_timeout(5);
+                httplib::Result check;
+                if (req.path.starts_with("/stream/vod/") &&
+                    body.contains("content_type") && body.contains("content_id")) {
+                    std::string path = "/api/content/" + body["content_type"].get<std::string>()
+                                      + "/" + body["content_id"].get<std::string>() + "/access-check";
+                    check = kairos.Get(path, httplib::Headers{{"Authorization", auth}});
+                } else if (req.path.starts_with("/stream/preview/") && body.contains("channel_id")) {
+                    std::string path = "/api/channels/" + body["channel_id"].get<std::string>() + "/access-check";
+                    check = kairos.Get(path, httplib::Headers{{"Authorization", auth}});
+                }
+                if (check && check->status == 200) {
+                    auto cj = json::parse(check->body);
+                    if (!cj.value("allowed", true)) {
+                        res.status = 403;
+                        res.set_content(json{{"error", "Restricted"}}.dump(), "application/json");
+                        return;
+                    }
+                }
+            } catch (...) { /* malformed body or unreachable check — fail open, per above */ }
+        }
+
         proxyRequest(cfg.hephaestus_url, req, res);
     };
     svr.Post(R"(/stream/vod/.*)",     authedHephaestusProxy);

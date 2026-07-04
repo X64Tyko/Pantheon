@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { startVodPlayback, stopVodPlayback, liveChannelManifestUrl } from './playbackApi'
 import type { VodTracks } from './playbackApi'
+import { api } from '../api/client'
 
 export type PlaybackTarget =
   | { kind: 'movie';   id: string }
@@ -52,11 +53,25 @@ export function usePlaybackSession(target: PlaybackTarget, initialPositionMs = 0
     if (prevSession) stopVodPlayback(prevSession)
 
     if (isLive) {
-      setLoading(false)
-      setManifestUrl(liveChannelManifestUrl(target.id))
-      setSubtitleUrl(null)
-      setDirectPlay(null)
-      setTracks(null)
+      setLoading(true)
+      setError(null)
+      api.checkChannelAccess(target.id).then(res => {
+        if (genRef.current !== gen) return // superseded while in flight
+        if (!res.allowed) {
+          setError('This channel is restricted on your account.')
+          setLoading(false)
+          return
+        }
+        setManifestUrl(liveChannelManifestUrl(target.id))
+        setSubtitleUrl(null)
+        setDirectPlay(null)
+        setTracks(null)
+        setLoading(false)
+      }).catch(err => {
+        if (genRef.current !== gen) return
+        setError(err instanceof Error ? err.message : 'Failed to load channel')
+        setLoading(false)
+      })
       return
     }
 

@@ -2,6 +2,9 @@ import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { userStore } from '../stores'
+import { TV_RATINGS, MOVIE_RATINGS } from '../api/ratingScales'
+import type { User } from '../api/types'
+import UserOverridesOverlay from './UserOverridesOverlay'
 
 const inputStyle: React.CSSProperties = {
   padding: '7px 10px', background: 'var(--hds-bg-3)',
@@ -26,7 +29,20 @@ const btnStyle = (variant: 'primary' | 'ghost' | 'danger'): React.CSSProperties 
 })
 
 interface NewUserForm { username: string; password: string; role: 'admin' | 'viewer' }
-interface EditState   { userId: string; password: string; role: 'admin' | 'viewer' }
+interface EditState {
+  userId:     string
+  password:   string
+  role:       'admin' | 'viewer'
+  restricted: boolean
+  maxTv:      string
+  maxMovie:   string
+  maxChannel: string
+}
+
+const editStateFor = (u: User): EditState => ({
+  userId: u.user_id, password: '', role: u.role,
+  restricted: u.restricted, maxTv: u.max_tv_rating, maxMovie: u.max_movie_rating, maxChannel: u.max_channel_rating,
+})
 
 export default observer(function UsersPage() {
   const { user: self } = useAuth()
@@ -41,7 +57,8 @@ export default observer(function UsersPage() {
   const [editError, setEditError] = useState('')
   const [editBusy,  setEditBusy]  = useState(false)
 
-  const [deleting,  setDeleting]  = useState<string | null>(null)
+  const [deleting,   setDeleting]   = useState<string | null>(null)
+  const [overridesFor, setOverridesFor] = useState<User | null>(null)
 
   useEffect(() => { store.fetchAll() }, [])
 
@@ -74,6 +91,12 @@ export default observer(function UsersPage() {
       await store.update(editing.userId, {
         password: editing.password || undefined,
         role:     editing.role,
+      })
+      await store.updateRestriction(editing.userId, {
+        restricted:         editing.restricted,
+        max_tv_rating:      editing.maxTv,
+        max_movie_rating:   editing.maxMovie,
+        max_channel_rating: editing.maxChannel,
       })
       setEditing(null)
     } catch (err: any) {
@@ -176,9 +199,23 @@ export default observer(function UsersPage() {
                   }}>
                     {u.role}
                   </span>
+                  {u.restricted && (
+                    <span style={{
+                      fontSize: 9.5, letterSpacing: '0.1em', fontWeight: 700, padding: '2px 7px',
+                      borderRadius: 4, background: 'oklch(0.6 0.2 22 / 0.12)', color: 'oklch(0.75 0.18 22)',
+                      border: '1px solid oklch(0.6 0.2 22 / 0.3)',
+                    }}>
+                      RESTRICTED
+                    </span>
+                  )}
                   <div style={{ display: 'flex', gap: 6 }}>
+                    {u.restricted && (
+                      <button style={btnStyle('ghost')} onClick={() => setOverridesFor(u)}>
+                        Overrides
+                      </button>
+                    )}
                     <button style={btnStyle('ghost')}
-                      onClick={() => { setEditing({ userId: u.user_id, password: '', role: u.role }); setEditError('') }}>
+                      onClick={() => { setEditing(editStateFor(u)); setEditError('') }}>
                       Edit
                     </button>
                     {u.user_id !== self?.user_id && (
@@ -221,6 +258,40 @@ export default observer(function UsersPage() {
                       </select>
                     </div>
                   </div>
+
+                  <div style={{ borderTop: '1px solid var(--hds-line-s)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--hds-txt-2)', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={editing.restricted}
+                        onChange={e => setEditing(s => s && ({ ...s, restricted: e.target.checked }))} />
+                      Restricted account <span style={{ opacity: 0.6 }}>(limit by content rating; overrides always win)</span>
+                    </label>
+                    {editing.restricted && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>MAX TV RATING</label>
+                          <select value={editing.maxTv}
+                            onChange={e => setEditing(s => s && ({ ...s, maxTv: e.target.value }))} style={inputStyle}>
+                            {TV_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>MAX MOVIE RATING</label>
+                          <select value={editing.maxMovie}
+                            onChange={e => setEditing(s => s && ({ ...s, maxMovie: e.target.value }))} style={inputStyle}>
+                            {MOVIE_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>MAX CHANNEL RATING</label>
+                          <select value={editing.maxChannel}
+                            onChange={e => setEditing(s => s && ({ ...s, maxChannel: e.target.value }))} style={inputStyle}>
+                            {TV_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {editError && <div style={{ fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{editError}</div>}
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button type="submit" disabled={editBusy} style={btnStyle('primary')}>
@@ -233,6 +304,10 @@ export default observer(function UsersPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {overridesFor && (
+        <UserOverridesOverlay user={overridesFor} onClose={() => setOverridesFor(null)} />
       )}
     </div>
   )

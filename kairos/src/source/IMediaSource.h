@@ -5,6 +5,7 @@
 #include "model/Playlist.h"
 #include "model/Show.h"
 #include "model/SourceConfig.h"
+#include "model/WritebackFields.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -78,5 +79,19 @@ public:
     // source="plex_chapters"; chapter_type is "unclassified".
     virtual std::vector<Chapter> fetchChapters(const std::string& /*external_id*/) {
         return {};
+    }
+
+    // ── Metadata writeback ───────────────────────────────────────────────────
+    // Pushes corrected metadata back into the source library for one item.
+    // Default: unsupported. Callers must check the return value — false means
+    // either this source type doesn't implement writeback yet, or the push
+    // itself failed; either way nothing was written.
+    // external_lib_id: the source's library/section id (Plex "section"),
+    // needed by sources whose write endpoint is scoped per-library.
+    virtual bool pushMetadata(const std::string& /*external_id*/,
+                               const std::string& /*external_lib_id*/,
+                               const std::string& /*item_type*/,
+                               const WritebackFields& /*fields*/) {
+        return false;
     }
 };

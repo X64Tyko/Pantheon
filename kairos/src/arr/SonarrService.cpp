@@ -1,5 +1,6 @@
 #include "SonarrService.h"
 #include <iostream>
+#include <stdexcept>
 
 static std::string pctEncode(const std::string& s) {
     std::string out;
@@ -86,9 +87,10 @@ bool SonarrService::add(const json& add_data, const ArrAddOptions& opts) {
     };
     auto res = post("/api/v3/series", body.dump());
     if (!res || (res->status != 200 && res->status != 201)) {
+        std::string err = parseArrError(res ? res->status : 0, res ? res->body : "");
         std::cerr << "[sonarr] add failed (HTTP " << (res ? res->status : 0) << "): "
                   << (res ? res->body.substr(0, 300) : "no response") << '\n';
-        return false;
+        throw std::runtime_error("Sonarr: " + err);
     }
     return true;
 }

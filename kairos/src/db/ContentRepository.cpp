@@ -1,11 +1,56 @@
 #include "ContentRepository.h"
 #include "Database.h"
+#include "MetadataOverrideRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <set>
 #include <sstream>
 
 ContentRepository::ContentRepository(Database& db) : db_(db) {}
+
+ContentRepository::RestrictionLookup ContentRepository::resolveForRestriction(
+    const std::string& item_type, const std::string& item_id) {
+    if (item_type == "episode") {
+        SQLite::Statement q(db_.get(), R"(
+            SELECT s.show_id, s.content_rating FROM episode e
+            JOIN show s ON s.show_id = e.show_id
+            WHERE e.episode_id = ?
+        )");
+        q.bind(1, item_id);
+        if (q.executeStep())
+            return {"show", q.getColumn(0).getString(), q.getColumn(1).getString()};
+        return {"show", "", ""};
+    }
+    if (item_type == "movie") {
+        SQLite::Statement q(db_.get(), "SELECT content_rating FROM movie WHERE movie_id = ?");
+        q.bind(1, item_id);
+        if (q.executeStep()) return {"movie", item_id, q.getColumn(0).getString()};
+        return {"movie", item_id, ""};
+    }
+    if (item_type == "show") {
+        SQLite::Statement q(db_.get(), "SELECT content_rating FROM show WHERE show_id = ?");
+        q.bind(1, item_id);
+        if (q.executeStep()) return {"show", item_id, q.getColumn(0).getString()};
+        return {"show", item_id, ""};
+    }
+    return {item_type, item_id, ""};
+}
+
+// Override precedence rule (architecture.md "Metadata Override Layer"): a
+// per-field metadata_override row always wins over whatever the base table
+// holds, regardless of which source most recently synced over it.
+namespace {
+    void applyStr(const std::unordered_map<std::string, std::string>& ov,
+                  const std::string& field, std::string& out) {
+        auto it = ov.find(field);
+        if (it != ov.end()) out = it->second;
+    }
+    void applyInt(const std::unordered_map<std::string, std::string>& ov,
+                  const std::string& field, std::optional<int>& out) {
+        auto it = ov.find(field);
+        if (it != ov.end()) { try { out = std::stoi(it->second); } catch (...) {} }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Episode row helper
@@ -495,6 +540,41 @@ void appendJsonIn(const std::string& tbl, const std::string& col, const std::str
     for (auto& p : parts) vals.push_back(p);
 }
 
+// Appends a restriction WHERE clause (override-wins-over-ceiling, mirrors
+// RestrictionRepository::isAllowed) to the same extras/extra_vals idiom used
+// above by the other dynamic filters. entity_type is "show" or "movie";
+// id_col/rating_col are the already-aliased column references in the query
+// being built (e.g. "s.show_id"/"s.content_rating"). Ceiling comparison is
+// done as an explicit CAST(...AS INTEGER), matching this file's existing
+// idiom for binding numeric values through the string-based extra_vals
+// vector (see the `year` filter above) rather than relying on SQLite's
+// storage-class comparison rules, which sort TEXT after INTEGER regardless
+// of numeric content.
+void appendRestriction(const RestrictionContext& ctx, const std::string& entity_type,
+                       const std::string& id_col, const std::string& rating_col,
+                       std::string& extras, std::vector<std::string>& vals) {
+    if (!ctx.restricted) return;
+    const std::string case_expr = (entity_type == "show")
+        ? "CASE UPPER(IFNULL(" + rating_col + ",'')) "
+          "WHEN 'TV-Y' THEN 0 WHEN 'TV-Y7' THEN 1 WHEN 'TV-G' THEN 2 "
+          "WHEN 'TV-PG' THEN 3 WHEN 'TV-14' THEN 4 WHEN 'TV-MA' THEN 5 ELSE 6 END"
+        : "CASE UPPER(IFNULL(" + rating_col + ",'')) "
+          "WHEN 'G' THEN 0 WHEN 'PG' THEN 1 WHEN 'PG-13' THEN 2 "
+          "WHEN 'R' THEN 3 WHEN 'NC-17' THEN 4 ELSE 5 END";
+    extras += " AND ("
+              "  EXISTS (SELECT 1 FROM user_content_override uco WHERE uco.user_id=? "
+              "          AND uco.entity_type=? AND uco.entity_id=" + id_col + " AND uco.mode='allow')"
+              "  OR ("
+              "    NOT EXISTS (SELECT 1 FROM user_content_override uco2 WHERE uco2.user_id=? "
+              "                AND uco2.entity_type=? AND uco2.entity_id=" + id_col + " AND uco2.mode='block')"
+              "    AND " + case_expr + " <= CAST(? AS INTEGER)"
+              "  )"
+              ")";
+    vals.push_back(ctx.user_id); vals.push_back(entity_type);
+    vals.push_back(ctx.user_id); vals.push_back(entity_type);
+    vals.push_back(std::to_string(ctx.rating_ceiling));
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -600,6 +680,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
     if (!p.country.empty())      appendJsonIn("s", "countries",   p.country,    extras, extra_vals);
     if (!p.collection.empty())   appendJsonIn("s", "collections", p.collection, extras, extra_vals);
     if (!p.studio.empty())       { extras += " AND s.studio LIKE '%' || ? || '%'"; extra_vals.push_back(p.studio); }
+    appendRestriction(p.restriction, "show", "s.show_id", "s.content_rating", extras, extra_vals);
 
     auto bindExtras = [&](SQLite::Statement& q, int& idx) {
         for (const auto& v : extra_vals) q.bind(idx++, v);
@@ -696,6 +777,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     // release_date (most commonly AniDB, which doesn't fetch one at all) —
     // exclude them rather than let them sort to one end of the list.
     if (p.sort == "recently_released") extras += " AND m.release_date != ''";
+    appendRestriction(p.restriction, "movie", "m.movie_id", "m.content_rating", extras, extra_vals);
 
     auto bindExtras = [&](SQLite::Statement& q, int& idx) {
         for (const auto& v : extra_vals) q.bind(idx++, v);
@@ -771,7 +853,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
                s.originally_available_at, s.year, s.audience_rating, s.locked,
                COUNT(e.episode_id) AS episode_count,
                s.labels, s.network, s.actors, s.countries, s.collections,
-               s.match_status, s.match_score
+               s.match_status, s.match_score, s.match_confirmed
         FROM show s
         LEFT JOIN episode e ON e.show_id = s.show_id
         WHERE s.show_id = ?
@@ -805,6 +887,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
     d.collections   = q.getColumn(21).getString();
     d.match_status  = q.getColumn(22).getString();
     if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
+    d.match_confirmed = q.getColumn(24).getInt() != 0;
 
     {
         SQLite::Statement sm(db_.get(), R"(
@@ -833,6 +916,28 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
             d.seasons.push_back({sq.getColumn(0).getInt(), sq.getColumn(1).getString()});
     }
 
+    {
+        auto ov = MetadataOverrideRepository(db_).getAll("show", show_id);
+        applyStr(ov, "title",                   d.title);
+        applyStr(ov, "overview",                d.overview);
+        applyStr(ov, "studio",                  d.studio);
+        applyStr(ov, "status",                  d.status);
+        applyStr(ov, "content_rating",          d.content_rating);
+        applyStr(ov, "originally_available_at", d.originally_available_at);
+        applyStr(ov, "imdb_id",                 d.imdb_id);
+        applyStr(ov, "tvdb_id",                 d.tvdb_id);
+        applyStr(ov, "tmdb_id",                 d.tmdb_id);
+        applyStr(ov, "thumb",                   d.thumb);
+        applyStr(ov, "art",                     d.art);
+        applyStr(ov, "genres",                  d.genres);
+        applyStr(ov, "labels",                  d.labels);
+        applyStr(ov, "network",                 d.network);
+        applyStr(ov, "actors",                  d.actors);
+        applyStr(ov, "countries",               d.countries);
+        applyStr(ov, "collections",             d.collections);
+        applyInt(ov, "year",                    d.year);
+    }
+
     return d;
 }
 
@@ -842,7 +947,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
                overview, tagline, studio, director, genres, thumb, art,
                imdb_id, tmdb_id, audience_rating, locked,
                labels, actors, countries, collections, release_date,
-               file_path, match_status, match_score
+               file_path, match_status, match_score, match_confirmed
         FROM movie WHERE movie_id = ?
     )");
     q.bind(1, movie_id);
@@ -873,6 +978,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     d.file_path      = q.getColumn(21).getString();
     d.match_status   = q.getColumn(22).getString();
     if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
+    d.match_confirmed = q.getColumn(24).getInt() != 0;
 
     SQLite::Statement sm(db_.get(), R"(
         SELECT sm.external_id, sm.source_id, ms.base_url
@@ -886,6 +992,26 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
         d.external_id     = sm.getColumn(0).getString();
         d.source_id       = sm.getColumn(1).getString();
         d.source_base_url = sm.getColumn(2).getString();
+    }
+
+    {
+        auto ov = MetadataOverrideRepository(db_).getAll("movie", movie_id);
+        applyStr(ov, "title",          d.title);
+        applyStr(ov, "overview",       d.overview);
+        applyStr(ov, "tagline",        d.tagline);
+        applyStr(ov, "studio",         d.studio);
+        applyStr(ov, "director",       d.director);
+        applyStr(ov, "content_rating", d.content_rating);
+        applyStr(ov, "imdb_id",        d.imdb_id);
+        applyStr(ov, "tmdb_id",        d.tmdb_id);
+        applyStr(ov, "thumb",          d.thumb);
+        applyStr(ov, "art",            d.art);
+        applyStr(ov, "genres",         d.genres);
+        applyStr(ov, "labels",         d.labels);
+        applyStr(ov, "actors",         d.actors);
+        applyStr(ov, "countries",      d.countries);
+        applyStr(ov, "collections",    d.collections);
+        applyInt(ov, "year",           d.year);
     }
 
     return d;

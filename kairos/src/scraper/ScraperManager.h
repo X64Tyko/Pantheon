@@ -109,6 +109,8 @@ public:
         std::string poster_url;
         std::string content_type;  // "show" | "movie"
         bool        in_library = false;
+        std::string library_id;      // this library's show_id/movie_id when in_library; empty otherwise
+        std::string request_status;  // most relevant existing content_request status ("pending"|"approved"|"rejected"), by ANY user; empty = never requested
     };
     std::vector<SearchResult> search(const std::string& query,
                                      const std::string& content_type) const;
@@ -124,10 +126,10 @@ private:
 
     void matchShow (const std::string& kairos_id, const std::string& title,
                     int year, const std::string& tmdb_id, const std::string& tvdb_id,
-                    const std::string& preferred_scraper = "");
+                    const std::string& preferred_scraper = "", bool include_anidb = false);
     void matchMovie(const std::string& kairos_id, const std::string& title,
                     int year, const std::string& tmdb_id, const std::string& file_path,
-                    const std::string& preferred_scraper = "");
+                    const std::string& preferred_scraper = "", bool include_anidb = false);
 
     void  storeCandidate(const std::string& item_type, const std::string& kairos_id,
                          const std::string& source,    const std::string& external_id,

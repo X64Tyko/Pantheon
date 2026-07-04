@@ -5,6 +5,7 @@ import { inputStyle, filterInputStyle } from './styles'
 import { CardSection, LauncherRow } from './sections'
 import type { ChannelDetailStore } from './store'
 import { api } from '../api/client'
+import { CHANNEL_RATINGS } from '../api/ratingScales'
 
 // ISO 639-2 code → display name for the language dropdowns.
 const LANG_NAMES: Record<string, string> = {
@@ -114,6 +115,20 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
           </select>
           <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
             On Play pauses the channel when nobody is streaming. Episodes only advance after Tunarr confirms playback.
+          </div>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>CONTENT TAG</div>
+          <select
+            value={store.channelDraft.content_tag}
+            onChange={e => store.setChannelDraft({ content_tag: e.target.value })}
+            style={inputStyle}
+          >
+            <option value="">Unrated</option>
+            {CHANNEL_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+            Ceiling for this channel's own content, evaluated the same way as a show's rating. Restricted accounts can't see or play this channel above their max channel rating — "Unrated" fails closed.
           </div>
         </div>
 

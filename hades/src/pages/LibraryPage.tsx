@@ -113,7 +113,11 @@ export default observer(function LibraryPage() {
         >
           {detailOpen ? (
             selectedDiscover ? (
-              <MediaDetail discoverResult={selectedDiscover} onClose={closeDetail} />
+              <MediaDetail
+                discoverResult={selectedDiscover}
+                onClose={closeDetail}
+                onViewInLibrary={(id, type) => openDetail(() => { setSelectedDiscover(null); store.selectItem(id, type) })}
+              />
             ) : (
               <MediaDetail id={store.selectedId!} content_type={store.selectedType!} onClose={closeDetail} />
             )
@@ -313,6 +317,20 @@ function DiscoverCard({ result, selected, onClick }: {
           color: '#fff', padding: '2px 6px', letterSpacing: '0.06em',
           boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
         }}>IN LIBRARY</div>
+      )}
+      {/* Already requested by someone — shown even when not yet in the
+          library, so a requester doesn't submit a duplicate for content
+          that's pending/approved but not fulfilled yet. */}
+      {!result.in_library && result.request_status && (
+        <div style={{
+          position: 'absolute', top: 8, right: 8, zIndex: 2,
+          background: result.request_status === 'approved' ? 'oklch(0.7 0.16 150)' : 'oklch(0.78 0.15 84)',
+          borderRadius: 6,
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 8,
+          color: result.request_status === 'approved' ? '#fff' : 'oklch(0.2 0.04 70)',
+          padding: '2px 6px', letterSpacing: '0.06em',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+        }}>{result.request_status === 'approved' ? 'APPROVED' : result.request_status === 'rejected' ? 'REJECTED' : 'REQUESTED'}</div>
       )}
 
       {result.poster_url ? (

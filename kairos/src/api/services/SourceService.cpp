@@ -212,6 +212,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			                  {"display_name", lib.display_name}, {"library_type", lib.library_type},
 			                  {"preferred_scraper", lib.preferred_scraper},
 			                  {"preferred_language", lib.preferred_language},
+			                  {"include_anidb", lib.include_anidb},
 			                  {"enabled", lib.enabled}});
 		route::ok(res, result.dump());
 	});
@@ -226,12 +227,13 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			std::string library_type       = b.value("library_type",       "show");
 			std::string preferred_scraper  = b.value("preferred_scraper",  "");
 			std::string preferred_language = b.value("preferred_language", "");
+			bool        include_anidb      = b.value("include_anidb",      false);
 			if (external_lib_id.empty() || display_name.empty()) {
 				route::err(res, 400, "external_lib_id and display_name required"); return;
 			}
 			std::string library_id = SourceRepository(db_).createLibrary(
 				source_id, external_lib_id, display_name, library_type,
-				preferred_scraper, preferred_language);
+				preferred_scraper, preferred_language, include_anidb);
 			res.status = 201;
 			route::ok(res, json{{"library_id", library_id}}.dump());
 		} catch (const SQLite::Exception& e) {
@@ -257,7 +259,8 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			std::string display_name      = b.value("display_name",      it->display_name);
 			std::string preferred_scraper = b.value("preferred_scraper", it->preferred_scraper);
 			std::string preferred_language= b.value("preferred_language",it->preferred_language);
-			repo.updateLibrary(lid, display_name, preferred_scraper, preferred_language);
+			bool        include_anidb     = b.value("include_anidb",     it->include_anidb);
+			repo.updateLibrary(lid, display_name, preferred_scraper, preferred_language, include_anidb);
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const json::exception& e) {
 			route::err(res, 400, e.what());

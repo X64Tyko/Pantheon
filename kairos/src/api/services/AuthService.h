@@ -3,6 +3,7 @@
 #include "../ServiceContext.h"
 
 class AuthStore;
+class Database;
 
 class AuthService : public IKairosService {
 public:
@@ -11,4 +12,5 @@ public:
 
 private:
 	AuthStore& auth_;
+	Database&  db_;
 };

@@ -79,7 +79,11 @@ std::vector<std::string> buildPreviewImageArgs(const std::string& ffmpeg_path,
     // Image loop input never decodes a real file, so only encode-side amd
     // (not decode) can ever need the device here.
     pushVaapiDeviceArg(a, hw_accel, HwAccel::none, vaapi_device);
-    a.insert(a.end(), {"-loop", "1", "-framerate", "25", "-i", image_path});
+    // -f image2 forced explicitly — image_path may be a remote URL, and
+    // ffmpeg's demuxer auto-detection picks a pipe-style demuxer for those
+    // instead of image2, silently breaking -loop (see ChannelSession.cpp's
+    // buildImageArgs for the full explanation).
+    a.insert(a.end(), {"-f", "image2", "-loop", "1", "-framerate", "25", "-i", image_path});
     a.insert(a.end(), {"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"});
     a.insert(a.end(), {"-map", "0:v:0", "-map", "1:a:0", "-dn", "-map_chapters", "-1"});
 

@@ -91,7 +91,8 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	const int64_t now = static_cast<int64_t>(std::time(nullptr));
 
 	SQLite::Statement q(db_.get(), R"(
-		SELECT u.user_id, u.username, u.role
+		SELECT u.user_id, u.username, u.role,
+		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating
 		FROM session s
 		JOIN user u ON u.user_id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
@@ -101,9 +102,13 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	if (!q.executeStep()) return std::nullopt;
 
 	AuthUser user;
-	user.user_id  = q.getColumn(0).getString();
-	user.username = q.getColumn(1).getString();
-	user.role     = q.getColumn(2).getString();
+	user.user_id            = q.getColumn(0).getString();
+	user.username           = q.getColumn(1).getString();
+	user.role                = q.getColumn(2).getString();
+	user.restricted          = q.getColumn(3).getInt() != 0;
+	user.max_tv_rating       = q.getColumn(4).getString();
+	user.max_movie_rating    = q.getColumn(5).getString();
+	user.max_channel_rating  = q.getColumn(6).getString();
 
 	SQLite::Statement upd(db_.get(),
 		"UPDATE session SET last_seen = ? WHERE token = ?");
@@ -116,13 +121,19 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 
 std::vector<AuthUser> AuthStore::listUsers() const {
 	SQLite::Statement q(db_.get(),
-		"SELECT user_id, username, role FROM user ORDER BY username");
+		"SELECT user_id, username, role, "
+		"       restricted, max_tv_rating, max_movie_rating, max_channel_rating "
+		"FROM user ORDER BY username");
 	std::vector<AuthUser> result;
 	while (q.executeStep()) {
 		result.push_back({
 			q.getColumn(0).getString(),
 			q.getColumn(1).getString(),
-			q.getColumn(2).getString()
+			q.getColumn(2).getString(),
+			q.getColumn(3).getInt() != 0,
+			q.getColumn(4).getString(),
+			q.getColumn(5).getString(),
+			q.getColumn(6).getString(),
 		});
 	}
 	return result;
@@ -173,6 +184,23 @@ bool AuthStore::updateUser(const std::string& user_id,
 		u.exec();
 	}
 	return true;
+}
+
+void AuthStore::updateRestriction(const std::string& user_id, bool restricted,
+                                  const std::string& max_tv_rating,
+                                  const std::string& max_movie_rating,
+                                  const std::string& max_channel_rating) {
+	SQLite::Statement u(db_.get(), R"(
+		UPDATE user SET restricted = ?, max_tv_rating = ?,
+		                max_movie_rating = ?, max_channel_rating = ?
+		WHERE user_id = ?
+	)");
+	u.bind(1, restricted ? 1 : 0);
+	u.bind(2, max_tv_rating);
+	u.bind(3, max_movie_rating);
+	u.bind(4, max_channel_rating);
+	u.bind(5, user_id);
+	u.exec();
 }
 
 // ---------------------------------------------------------------------------

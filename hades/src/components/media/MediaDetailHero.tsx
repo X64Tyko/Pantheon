@@ -130,6 +130,15 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
                     IN LIBRARY
                   </span>
                 )}
+                {!discoverResult?.in_library && discoverResult?.request_status && (
+                  <span style={{
+                    ...metaChip,
+                    color:       discoverResult.request_status === 'approved' ? 'oklch(0.7 0.16 150)' : 'oklch(0.78 0.15 84)',
+                    borderColor: discoverResult.request_status === 'approved' ? 'oklch(0.7 0.16 150 / 0.4)' : 'oklch(0.78 0.15 84 / 0.4)',
+                  }}>
+                    {discoverResult.request_status === 'approved' ? 'APPROVED' : discoverResult.request_status === 'rejected' ? 'REJECTED' : 'REQUESTED'}
+                  </span>
+                )}
               </div>
 
               {/* Genres */}

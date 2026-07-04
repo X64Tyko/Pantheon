@@ -34,15 +34,20 @@ using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-static bool isPublicPath(const std::string& path) {
+static bool isPublicPath(const std::string& method, const std::string& path) {
 	if (!path.starts_with("/api/")) return true;
 	if (path == "/api/auth/setup") return true;
 	if (path == "/api/auth/login") return true;
 	if (path.ends_with("/now") || path.ends_with("/next") || path.ends_with("/epg"))
 		return true;
-	// Paths called by internal services (Hermes, Hephaestus) with no user session.
-	if (path == "/api/channels") return true;
-	if (path == "/api/sources")  return true;
+	// Paths called by internal services (Hermes, Hephaestus) with no user session
+	// — GET only. The same exact paths also carry admin-gated write methods
+	// (POST /api/channels creates a channel, POST /api/sources adds a source)
+	// that must still go through the auth/role check below, or currentUser()
+	// would never be populated and those routes' own admin check would always
+	// fail closed with a 403 no admin token could ever satisfy.
+	if (method == "GET" && path == "/api/channels") return true;
+	if (method == "GET" && path == "/api/sources")  return true;
 	if (path.ends_with("/played")) return true;
 	// Hephaestus resolving a library item to a playable file for VOD sessions.
 	if (path.starts_with("/api/playback/")) return true;
@@ -92,7 +97,7 @@ void Router::registerRoutes() {
 		conf_.maybeReload();
 		clearCurrentUser();
 
-		if (isPublicPath(req.path)) return httplib::Server::HandlerResponse::Unhandled;
+		bool required = !isPublicPath(req.method, req.path);
 
 		std::string token;
 		if (req.has_header("Authorization")) {
@@ -103,12 +108,18 @@ void Router::registerRoutes() {
 			if (it != req.params.end()) token = it->second;
 		}
 
-		auto user = auth_.validate(token);
-		if (!user) {
+		// A "public" path is public for callers with no session (internal
+		// services, DVR clients) — but if a real caller (e.g. Hades itself)
+		// still sends a valid token to one of these paths, currentUser() must
+		// be populated anyway, or every downstream restriction/role check on
+		// that path would silently see an anonymous caller and never fire.
+		auto user = token.empty() ? std::nullopt : auth_.validate(token);
+		if (required && !user) {
 			res.status = 401;
 			res.set_content(R"({"error":"Unauthorized"})", "application/json");
 			return httplib::Server::HandlerResponse::Handled;
 		}
+		if (!user) return httplib::Server::HandlerResponse::Unhandled;
 
 		// Any request tagged as coming through the /tv surface (Hades sets this
 		// header when mounted at /tv; Hermes forwards it) is treated as a viewer

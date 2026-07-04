@@ -484,3 +484,60 @@ std::vector<Chapter> PlexSource::fetchChapters(const std::string& external_id) {
     }
     return result;
 }
+
+namespace {
+std::string plexUrlEncode(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+            out += static_cast<char>(c);
+        else { char buf[4]; snprintf(buf, sizeof(buf), "%%%02X", c); out += buf; }
+    }
+    return out;
+}
+}
+
+bool PlexSource::pushMetadata(const std::string& external_id,
+                               const std::string& external_lib_id,
+                               const std::string& item_type,
+                               const WritebackFields& fields) {
+    if (external_lib_id.empty()) {
+        std::cerr << "[plex:" << source_id_ << "] pushMetadata: no section id for id="
+                  << external_id << '\n';
+        return false;
+    }
+
+    // Scalar text fields only for v1 — Plex's array-valued fields (genres,
+    // cast, countries, collections) use a different multi-value tag-editing
+    // convention (separate add/remove directives per tag) that needs live
+    // verification against a real server before it's safe to guess at; a
+    // wrong shape here risks corrupting tags rather than just failing to
+    // apply, so it's deliberately deferred rather than attempted blind.
+    std::string path = "/library/sections/" + external_lib_id + "/all?type="
+        + (item_type == "movie" ? "1" : "2") + "&id=" + external_id;
+
+    auto addField = [&](const std::string& plex_field, const std::string& value) {
+        if (value.empty()) return;
+        path += "&" + plex_field + ".value=" + plexUrlEncode(value)
+              + "&" + plex_field + ".locked=1";
+    };
+    addField("title",                fields.title);
+    addField("summary",              fields.overview);
+    addField("contentRating",        fields.content_rating);
+    addField("studio",               fields.studio);
+    addField("tagline",              fields.tagline);
+    addField("originallyAvailableAt", fields.release_date);
+
+    auto res = client_.Put(path.c_str());
+    if (!res) {
+        std::cerr << "[plex:" << source_id_ << "] pushMetadata failed (id=" << external_id
+                  << "): " << httplib::to_string(res.error()) << '\n';
+        return false;
+    }
+    if (res->status != 200) {
+        std::cerr << "[plex:" << source_id_ << "] pushMetadata HTTP " << res->status
+                  << " (id=" << external_id << ")\n";
+        return false;
+    }
+    return true;
+}

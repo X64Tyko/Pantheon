@@ -12,14 +12,21 @@ import { useFocusable } from '../../nav/useFocusable'
 import { useMediaDetail } from './useMediaDetail'
 
 interface LibraryDetailActionsProps {
-  id?:             string
-  content_type?:   'show' | 'movie'
-  discoverResult?: ScraperSearchResult
+  id?:              string
+  content_type?:    'show' | 'movie'
+  discoverResult?:  ScraperSearchResult
+  onViewInLibrary?: (id: string, content_type: 'show' | 'movie') => void
 }
 
 type ArrStep = 'idle' | 'loading' | 'form' | 'adding' | 'done' | 'error'
 
-export function LibraryDetailActions({ id, content_type, discoverResult }: LibraryDetailActionsProps) {
+const REQUEST_STATUS_LABEL: Record<string, string> = {
+  pending:  'already requested — pending admin review',
+  approved: 'already requested — approved, on its way',
+  rejected: 'already requested — the request was declined',
+}
+
+export function LibraryDetailActions({ id, content_type, discoverResult, onViewInLibrary }: LibraryDetailActionsProps) {
   const { user } = useAuth()
   const navigate = useNavigate()
   const isAdmin  = user?.role === 'admin'
@@ -44,6 +51,27 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
       if (path) navigate(path)
     } finally {
       setPlayLoading(false)
+    }
+  }
+
+  // Push to Sources (admin) — writeback is gated server-side on match_confirmed
+  // too; the button is just the first line of defense.
+  const [pushing, setPushing] = useState(false)
+  const [pushResult, setPushResult] = useState<string | null>(null)
+
+  const handlePush = async () => {
+    if (!id) return
+    setPushing(true)
+    setPushResult(null)
+    try {
+      const { results } = await api.pushToSources(id, contentType)
+      if (results.length === 0) setPushResult('Not mapped to any source.')
+      else if (results.every(r => r.ok)) setPushResult(`Pushed to ${results.map(r => r.source_type).join(', ')}`)
+      else setPushResult(results.map(r => `${r.source_type}: ${r.ok ? 'ok' : 'failed'}`).join(' · '))
+    } catch {
+      setPushResult('Failed to push.')
+    } finally {
+      setPushing(false)
     }
   }
 
@@ -126,8 +154,8 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
       if (opts.quality_profiles.length > 0) setQualityProfileId(opts.quality_profiles[0].id)
       if (opts.root_folders.length > 0)     setRootFolder(opts.root_folders[0])
       setArrStep('form')
-    } catch {
-      setArrError(`Could not reach ${serviceLabel}. Check arr configuration in Sources.`)
+    } catch (e: any) {
+      setArrError(e.message ?? `Could not reach ${serviceLabel}. Check arr configuration in Sources.`)
       setArrStep('error')
     }
   }
@@ -138,8 +166,8 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
     try {
       await api.arrAdd({ type: contentType, add_data: arrResult.add_data, quality_profile_id: qualityProfileId, root_folder: rootFolder, search_on_add: searchOnAdd })
       setArrStep('done')
-    } catch {
-      setArrError(`Failed to add to ${serviceLabel}.`)
+    } catch (e: any) {
+      setArrError(e.message ?? `Failed to add to ${serviceLabel}.`)
       setArrStep('error')
     }
   }
@@ -147,7 +175,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
   if (isLibraryItem) {
     const matchStatus = (detail?.match_status ?? 'unscraped') as MatchStatus
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 420 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 760 }}>
         <PlayButton onClick={handlePlay} loading={playLoading} />
 
         <div style={{
@@ -172,9 +200,50 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
           />
         )}
 
-        <button disabled style={{ ...goldBtnStyle, opacity: 0.4, cursor: 'not-allowed', boxSizing: 'border-box' }}>
-          Push to Sources
-        </button>
+        {isAdmin && (
+          <>
+            <button
+              onClick={handlePush}
+              disabled={pushing || !detail?.match_confirmed}
+              title={detail?.match_confirmed ? undefined : 'Confirm this match (Fix Match) before pushing to sources'}
+              style={{
+                ...goldBtnStyle, boxSizing: 'border-box', alignSelf: 'flex-start',
+                opacity: (pushing || !detail?.match_confirmed) ? 0.4 : 1,
+                cursor: (pushing || !detail?.match_confirmed) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {pushing ? 'Pushing…' : 'Push to Sources'}
+            </button>
+            {pushResult && (
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+                {pushResult}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
+
+  if (discoverResult && discoverResult.in_library) {
+    return (
+      <div style={{ borderTop: '1px solid var(--hds-line-s)', borderBottom: '1px solid var(--hds-line-s)', padding: '16px 0', margin: '4px 0 22px', maxWidth: 420 }}>
+        <div style={{
+          padding: '10px 14px', borderRadius: 8,
+          border: '1px solid oklch(0.7 0.16 150 / 0.4)', background: 'oklch(0.7 0.16 150 / 0.08)',
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.7 0.16 150)', lineHeight: 1.5,
+          marginBottom: (onViewInLibrary && discoverResult.library_id) ? 10 : 0,
+        }}>
+          Already in your library — no need to request or add it.
+        </div>
+        {onViewInLibrary && discoverResult.library_id && (
+          <button
+            onClick={() => onViewInLibrary(discoverResult.library_id!, discoverResult.content_type)}
+            style={{ padding: '8px 16px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.15)', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600 }}
+          >
+            View in Library →
+          </button>
+        )}
       </div>
     )
   }
@@ -182,6 +251,15 @@ export function LibraryDetailActions({ id, content_type, discoverResult }: Libra
   if (discoverResult && !discoverResult.in_library) {
     return (
       <div style={{ borderTop: '1px solid var(--hds-line-s)', borderBottom: '1px solid var(--hds-line-s)', padding: '16px 0', margin: '4px 0 22px', maxWidth: 420 }}>
+        {discoverResult.request_status && (
+          <div style={{
+            marginBottom: 14, padding: '10px 14px', borderRadius: 8,
+            border: '1px solid oklch(0.78 0.15 84 / 0.4)', background: 'oklch(0.78 0.15 84 / 0.08)',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.78 0.15 84)', lineHeight: 1.5,
+          }}>
+            {REQUEST_STATUS_LABEL[discoverResult.request_status] ?? 'Already requested by someone else.'}
+          </div>
+        )}
         {isAdmin ? (
           // Admin: add directly to arr service
           <>
@@ -306,7 +384,7 @@ function PlayButton({ onClick, loading }: { onClick: () => void; loading: boolea
       onClick={onClick} disabled={loading} style={{
         ...goldBtnStyle, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
         justifyContent: 'center', gap: 8, opacity: loading ? 0.6 : 1,
-        cursor: loading ? 'wait' : 'pointer',
+        cursor: loading ? 'wait' : 'pointer', alignSelf: 'flex-start',
       }}>
       <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
       {loading ? 'Loading…' : 'Play'}

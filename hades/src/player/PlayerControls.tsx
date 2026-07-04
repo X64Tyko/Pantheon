@@ -157,6 +157,16 @@ export function PlayerControls({
           <BackIcon />
         </button>
         <span style={titleStyle}>{title}</span>
+        <div style={{ flex: 1 }} />
+        {isCasting ? (
+          <button ref={stopCast.ref} data-tv-focused={stopCast.focused} onClick={() => cast?.endSession()} style={iconBtnStyle} aria-label="Stop casting">
+            <CastConnectedIcon />
+          </button>
+        ) : cast?.available ? (
+          <button ref={castBtn.ref} data-tv-focused={castBtn.focused} onClick={() => cast.onRequestCast()} style={iconBtnStyle} aria-label="Cast">
+            <CastIcon />
+          </button>
+        ) : null}
       </div>
 
       {/* Bottom bar */}
@@ -213,11 +223,7 @@ export function PlayerControls({
 
           <div style={{ flex: 1 }} />
 
-          {isCasting ? (
-            <button ref={stopCast.ref} data-tv-focused={stopCast.focused} onClick={() => cast?.endSession()} style={iconBtnStyle} aria-label="Stop casting">
-              <CastConnectedIcon />
-            </button>
-          ) : (
+          {!isCasting && (
             <>
               <button ref={tracks.ref} data-tv-focused={tracks.focused} onClick={onOpenTracks} style={iconBtnStyle} aria-label="Audio & Subtitles">
                 <TracksIcon />
@@ -225,11 +231,6 @@ export function PlayerControls({
               {showSettings && (
                 <button ref={settings.ref} data-tv-focused={settings.focused} onClick={onOpenSettings} style={iconBtnStyle} aria-label="Playback info">
                   <SettingsIcon />
-                </button>
-              )}
-              {cast?.available && (
-                <button ref={castBtn.ref} data-tv-focused={castBtn.focused} onClick={() => cast.onRequestCast()} style={iconBtnStyle} aria-label="Cast">
-                  <CastIcon />
                 </button>
               )}
               <button ref={fullscreen.ref} data-tv-focused={fullscreen.focused} onClick={toggleFullscreen} style={iconBtnStyle} aria-label="Fullscreen">

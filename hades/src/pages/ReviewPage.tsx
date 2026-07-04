@@ -124,7 +124,7 @@ export default observer(function ReviewPage() {
   const [queueItems,    setQueueItems]    = useState<ReviewQueueItem[]>([])
   const [queueTotal,    setQueueTotal]    = useState(0)
   const [queueLoading,  setQueueLoading]  = useState(true)
-  const [queueFilter,   setQueueFilter]   = useState<'all'|'uncertain'|'unmatched'>('all')
+  const [queueFilter,   setQueueFilter]   = useState<'all'|'uncertain'|'unmatched'|'auto_unconfirmed'>('all')
   const [selectedQueue, setSelectedQueue] = useState<ReviewQueueItem | null>(null)
   const [matching,      setMatching]      = useState(false)
 
@@ -308,13 +308,22 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
 
 // ── Queue tab ─────────────────────────────────────────────────────────────────
 
+const QUEUE_FILTER_LABELS: Record<'all'|'uncertain'|'unmatched'|'auto_unconfirmed', string> = {
+  all:              'ALL',
+  uncertain:        'UNCERTAIN',
+  unmatched:        'UNMATCHED',
+  // Auto-matched by the scraper, never reviewed by a human — distinct from a
+  // genuinely user-confirmed match. See match_confirmed / acceptCandidate().
+  auto_unconfirmed: 'AUTO-MATCHED',
+}
+
 function QueueListPanel({
   items, total, loading, filter, selected, matching,
   onFilterChange, onSelect, onTriggerMatch,
 }: {
   items: ReviewQueueItem[]; total: number; loading: boolean
-  filter: 'all'|'uncertain'|'unmatched'; selected: ReviewQueueItem | null; matching: boolean
-  onFilterChange: (f: 'all'|'uncertain'|'unmatched') => void
+  filter: 'all'|'uncertain'|'unmatched'|'auto_unconfirmed'; selected: ReviewQueueItem | null; matching: boolean
+  onFilterChange: (f: 'all'|'uncertain'|'unmatched'|'auto_unconfirmed') => void
   onSelect: (item: ReviewQueueItem) => void
   onTriggerMatch: () => void
 }) {
@@ -331,7 +340,7 @@ function QueueListPanel({
           </span>
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
-          {(['all', 'uncertain', 'unmatched'] as const).map(f => (
+          {(['all', 'uncertain', 'unmatched', 'auto_unconfirmed'] as const).map(f => (
             <button key={f} onClick={() => onFilterChange(f)} style={{
               flex: 1, padding: '5px 0', borderRadius: 6,
               border: `1px solid ${filter === f ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
@@ -340,7 +349,7 @@ function QueueListPanel({
               fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
               cursor: 'pointer', letterSpacing: '0.06em',
             }}>
-              {f.toUpperCase()}
+              {QUEUE_FILTER_LABELS[f]}
             </button>
           ))}
         </div>
@@ -373,7 +382,11 @@ function QueueListPanel({
                 padding: '10px 16px', border: 'none', cursor: 'pointer', textAlign: 'left',
                 background: selected?.kairos_id === item.kairos_id ? 'var(--hds-bg-3)' : 'transparent',
                 borderBottom: '1px solid var(--hds-line-s)',
-                borderLeft: `3px solid ${item.match_status === 'uncertain' ? 'var(--hds-match-amber)' : 'var(--hds-match-red)'}`,
+                borderLeft: `3px solid ${
+                  item.match_status === 'uncertain' ? 'var(--hds-match-amber)'
+                  : item.match_status === 'matched'  ? 'var(--hds-match-green)'
+                  : 'var(--hds-match-red)'
+                }`,
                 transition: 'background .1s',
               }}
             >
@@ -1054,8 +1067,8 @@ function RequestDetailPanel({ request: r, onClose, onStatusChange }: {
       if (opts.quality_profiles.length > 0) setQualityProfileId(opts.quality_profiles[0].id)
       if (opts.root_folders.length > 0)     setRootFolder(opts.root_folders[0])
       setArrStep('form')
-    } catch {
-      setArrError(`Could not reach ${serviceLabel}.`)
+    } catch (e: any) {
+      setArrError(e.message ?? `Could not reach ${serviceLabel}.`)
       setArrStep('error')
     }
   }
@@ -1068,8 +1081,8 @@ function RequestDetailPanel({ request: r, onClose, onStatusChange }: {
       await api.updateRequest(r.request_id, 'approved')
       onStatusChange(r.request_id, 'approved')
       setArrStep('done')
-    } catch {
-      setArrError(`Failed to add to ${serviceLabel}.`)
+    } catch (e: any) {
+      setArrError(e.message ?? `Failed to add to ${serviceLabel}.`)
       setArrStep('error')
     }
   }

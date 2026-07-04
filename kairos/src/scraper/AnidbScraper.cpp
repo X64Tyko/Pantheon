@@ -98,6 +98,20 @@ int yearFromDate(const std::string& d) {
     return 0;
 }
 
+// AniDB flags 18+/hentai titles as restricted="true" on the root <anime>
+// element. Adult content is allowed by default (a real, if maximally-severe,
+// content_rating) — showFromXml/movieFromXml below tag it as "Adult" rather
+// than refusing to parse it, so it flows through the normal content_rating
+// pipeline and gets blocked specifically for restricted accounts by the
+// rating-severity system, not hidden from everyone unconditionally.
+bool isRestrictedXml(const std::string& xml) {
+    auto p1 = xml.find("<anime");
+    if (p1 == std::string::npos) return false;
+    auto gt = xml.find('>', p1);
+    if (gt == std::string::npos) return false;
+    return xmlAttr(xml.substr(p1, gt - p1 + 1), "restricted") == "true";
+}
+
 // Levenshtein-based title similarity [0, 1].
 double titleSim(const std::string& a, const std::string& b) {
     auto norm = [](const std::string& s) {
@@ -353,6 +367,8 @@ Show AnidbScraper::showFromXml(const std::string& xml, const std::string& aid) {
         }
     }
 
+    if (isRestrictedXml(xml)) s.content_rating = "Adult";
+
     return s;
 }
 
@@ -391,6 +407,8 @@ Movie AnidbScraper::movieFromXml(const std::string& xml, const std::string& aid)
             try { m.audience_rating = std::stof(rating); } catch (...) {}
         }
     }
+
+    if (isRestrictedXml(xml)) m.content_rating = "Adult";
 
     return m;
 }

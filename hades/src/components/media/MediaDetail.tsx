@@ -4,20 +4,21 @@ import { LibraryDetailActions } from './LibraryDetailActions'
 import { LibraryAdminPanel } from './LibraryAdminPanel'
 
 interface MediaDetailProps {
-  id?:             string
-  content_type?:   'show' | 'movie'
-  discoverResult?: ScraperSearchResult
-  onClose:         () => void
+  id?:              string
+  content_type?:    'show' | 'movie'
+  discoverResult?:  ScraperSearchResult
+  onClose:          () => void
+  onViewInLibrary?: (id: string, content_type: 'show' | 'movie') => void
 }
 
-export function MediaDetail({ id, content_type, discoverResult, onClose }: MediaDetailProps) {
+export function MediaDetail({ id, content_type, discoverResult, onClose, onViewInLibrary }: MediaDetailProps) {
   return (
     <MediaDetailHero
       id={id}
       content_type={content_type}
       discoverResult={discoverResult}
       onBack={onClose}
-      actions={<LibraryDetailActions id={id} content_type={content_type} discoverResult={discoverResult} />}
+      actions={<LibraryDetailActions id={id} content_type={content_type} discoverResult={discoverResult} onViewInLibrary={onViewInLibrary} />}
       afterShelves={id && content_type && !discoverResult ? <LibraryAdminPanel id={id} content_type={content_type} /> : undefined}
     />
   )

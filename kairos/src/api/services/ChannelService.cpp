@@ -5,6 +5,7 @@
 #include "../../conf/ConfStore.h"
 #include "../../db/ChannelRepository.h"
 #include "../../db/ChannelSerializer.h"
+#include "../../db/RestrictionRepository.h"
 #include "../../log/LogBuffer.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -30,6 +31,14 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 			auto channels = ChannelRepository(db_).listChannels();
 			json result = json::array();
 			for (const auto& c : channels) {
+				// Parental controls — a restricted account never sees a
+				// channel whose content_tag fails its ceiling/override, same
+				// "don't reveal existence of blocked content" posture as the
+				// show/movie list endpoints.
+				if (currentUser() && currentUser()->restricted
+				    && !RestrictionRepository(db_).isAllowed(*currentUser(), "channel", c.channel_id, c.content_tag)) {
+					continue;
+				}
 				json channel = {
 					{"channel_id",               c.channel_id},
 					{"name",                     c.name},
@@ -49,6 +58,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 					{"stream_resolution",        c.stream_resolution},
 					{"stream_video_bitrate",     c.stream_video_bitrate},
 					{"stream_audio_bitrate",     c.stream_audio_bitrate},
+					{"content_tag",              c.content_tag},
 				};
 				if (!c.anchor_hashes.empty()) {
 					try { channel["anchor_hashes"] = json::parse(c.anchor_hashes); } catch (...) {}
@@ -61,6 +71,20 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 			route::logErr("GET /api/channels", e);
 			route::err(res, 500, e.what());
 		}
+	});
+
+	// Parental controls — called by Hades before starting live playback of a
+	// channel (there's no other authenticated checkpoint for live viewing;
+	// the raw MPEG-TS/HLS routes stay intentionally open for HDHomeRun/DVR
+	// compatibility — see the writeback/parental-controls plan). Also used
+	// by Hermes's authedHephaestusProxy for Guide preview sessions.
+	svr.Get("/api/channels/:id/access-check", [this](const Req& req, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		auto id = req.path_params.at("id");
+		auto ch = ChannelRepository(db_).findById(id);
+		if (!ch) { route::err(res, 404, "channel not found"); return; }
+		bool allowed = RestrictionRepository(db_).isAllowed(*currentUser(), "channel", id, ch->content_tag);
+		route::ok(res, json{{"allowed", allowed}}.dump());
 	});
 
 	svr.Post("/api/channels", [this](const Req& req, Res& res) {
@@ -126,6 +150,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("stream_video_bitrate"))     updI("stream_video_bitrate",    b["stream_video_bitrate"].get<int>());
 			if (b.contains("stream_audio_bitrate"))     updI("stream_audio_bitrate",    b["stream_audio_bitrate"].get<int>());
 			if (b.contains("seed"))                     updI("seed",                    b["seed"].get<int>());
+			if (b.contains("content_tag"))               upd("content_tag",              b["content_tag"]);
 			if (b.contains("anchor_hashes")) {
 				std::string ah = b["anchor_hashes"].is_string()
 					? b["anchor_hashes"].get<std::string>()

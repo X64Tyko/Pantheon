@@ -18,7 +18,6 @@ export const BLOCK_META: Record<BlockType, { name: string; bg: string; solid: st
   filler:   { name: 'Filler',   bg: 'linear-gradient(160deg, oklch(0.32 0.018 262), oklch(0.27 0.015 262))', solid: 'oklch(0.31 0.018 262)', edge: 'oklch(0.62 0.03 262)', border: 'oklch(0.42 0.02 262)' },
 }
 
-export const RATINGS = ['', 'TV-Y', 'TV-Y7', 'TV-G', 'TV-PG', 'TV-14', 'TV-MA']
 export const DELAY_OPTS: [number, string][]     = [[0,'None'],[5,'5 min'],[10,'10 min'],[15,'15 min'],[30,'30 min'],[60,'1 hr']]
 export const EARLY_OPTS: [number, string][]     = [[0,'None'],[15,'15 sec'],[30,'30 sec'],[60,'1 min'],[120,'2 min']]
 export const ALIGN_OPTS: [number, string][]     = [[0,'None'],[15,':00/:15/:30/:45'],[30,':00/:30'],[60,'Top of hour']]

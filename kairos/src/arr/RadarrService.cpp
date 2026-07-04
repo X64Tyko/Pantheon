@@ -1,5 +1,6 @@
 #include "RadarrService.h"
 #include <iostream>
+#include <stdexcept>
 
 static std::string pctEncode(const std::string& s) {
     std::string out;
@@ -81,9 +82,10 @@ bool RadarrService::add(const json& add_data, const ArrAddOptions& opts) {
     body["addOptions"]       = {{"searchForMovie", opts.search_on_add}};
     auto res = post("/api/v3/movie", body.dump());
     if (!res || (res->status != 200 && res->status != 201)) {
+        std::string err = parseArrError(res ? res->status : 0, res ? res->body : "");
         std::cerr << "[radarr] add failed (HTTP " << (res ? res->status : 0) << "): "
                   << (res ? res->body.substr(0, 300) : "no response") << '\n';
-        return false;
+        throw std::runtime_error("Radarr: " + err);
     }
     return true;
 }

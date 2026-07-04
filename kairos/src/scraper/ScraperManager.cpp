@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <thread>
 
 namespace fs = std::filesystem;
@@ -74,6 +75,22 @@ double computeScore(const std::string& source_title, int source_year,
 std::string candidateKey(const std::string& item_type, const std::string& kairos_id,
                           const std::string& source,    const std::string& external_id) {
     return item_type + ":" + kairos_id + ":" + source + ":" + external_id;
+}
+
+// True when 2+ distinct external ids score within epsilon of the top score —
+// a genuine tie the scorer can't break (e.g. two different real movies that
+// happen to share an exact title, with the source file's year unknown so
+// nothing separates them). computeScore alone can't express "I don't know" —
+// an exact title match alone already scores 0.75/1.0 regardless of whether
+// there's one candidate with that title or five, so a tie here is real
+// ambiguity, not noise, and auto-accepting one anyway means silently picking
+// whichever the source API happened to list first.
+template <typename Cand>
+bool isAmbiguousTie(const std::vector<Cand>& candidates, double best, double epsilon = 0.01) {
+    std::set<std::string> near_best_ids;
+    for (const auto& c : candidates)
+        if (best - c.score <= epsilon) near_best_ids.insert(c.ext_id);
+    return near_best_ids.size() > 1;
 }
 
 // Returns true if the mapped path's parent directory exists on disk.
@@ -267,7 +284,12 @@ void ScraperManager::runMatch(const std::string& target_id,
                         FROM source_mapping sm
                         JOIN media_library ml ON ml.library_id = sm.library_id
                         WHERE sm.kairos_id = s.show_id AND sm.item_type = 'show'
-                        LIMIT 1), '') AS preferred_scraper
+                        LIMIT 1), '') AS preferred_scraper,
+              COALESCE((SELECT ml.include_anidb
+                        FROM source_mapping sm
+                        JOIN media_library ml ON ml.library_id = sm.library_id
+                        WHERE sm.kairos_id = s.show_id AND sm.item_type = 'show'
+                        LIMIT 1), 0) AS include_anidb
             FROM show s WHERE s.match_status IN ('unscraped','uncertain','unmatched')
         )";
         if (!target_id.empty()) sql += " AND s.show_id = '" + target_id + "'";
@@ -279,7 +301,8 @@ void ScraperManager::runMatch(const std::string& target_id,
                       q.getColumn(2).getInt(),
                       q.getColumn(3).getString(),
                       q.getColumn(4).getString(),
-                      q.getColumn(5).getString());
+                      q.getColumn(5).getString(),
+                      q.getColumn(6).getInt() != 0);
         }
     }
 
@@ -291,7 +314,12 @@ void ScraperManager::runMatch(const std::string& target_id,
                         FROM source_mapping sm
                         JOIN media_library ml ON ml.library_id = sm.library_id
                         WHERE sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
-                        LIMIT 1), '') AS preferred_scraper
+                        LIMIT 1), '') AS preferred_scraper,
+              COALESCE((SELECT ml.include_anidb
+                        FROM source_mapping sm
+                        JOIN media_library ml ON ml.library_id = sm.library_id
+                        WHERE sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
+                        LIMIT 1), 0) AS include_anidb
             FROM movie m WHERE m.match_status IN ('unscraped','uncertain','unmatched')
         )";
         if (!target_id.empty()) sql += " AND m.movie_id = '" + target_id + "'";
@@ -303,7 +331,8 @@ void ScraperManager::runMatch(const std::string& target_id,
                        q.getColumn(2).getInt(),
                        q.getColumn(3).getString(),
                        q.getColumn(4).getString(),
-                       q.getColumn(5).getString());
+                       q.getColumn(5).getString(),
+                       q.getColumn(6).getInt() != 0);
         }
     }
     std::cout << "[scraper] match complete ("
@@ -315,7 +344,7 @@ void ScraperManager::runMatch(const std::string& target_id,
 void ScraperManager::matchShow(const std::string& kairos_id, const std::string& title,
                                 int year, const std::string& tmdb_id,
                                 const std::string& tvdb_id,
-                                const std::string& preferred_scraper) {
+                                const std::string& preferred_scraper, bool include_anidb) {
     // Resolve the effective search title. When the on-disk folder name disagrees
     // with the source-provided title, the folder is more trustworthy.
     std::string search_title = title;
@@ -411,7 +440,11 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
         DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearch("tvdb", std::move(results));
     }
-    if (anidb_ && wantScraper("anidb")) {
+    // AniDB is anime-only — never queried for a library unless the admin
+    // explicitly opted it in (include_anidb) or chose it as this library's
+    // one preferred scraper outright. Prevents cross-matching an unrelated
+    // general movie/show library against anime titles on title text alone.
+    if (anidb_ && (preferred_scraper == "anidb" || (wantScraper("anidb") && include_anidb))) {
         DLOG << "[scraper]   querying anidb for show \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
         auto results = anidb_->searchShows(search_title, year);
@@ -429,6 +462,11 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
     if (candidates.empty()) {
         std::cout << "[scraper]   \"" << search_title << "\" → unmatched\n";
         setMatchStatus("show", kairos_id, "unmatched", 0.0);
+    } else if (isAmbiguousTie(candidates, best)) {
+        std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
+                  << " (ambiguous: 2+ distinct candidates tied at "
+                  << std::fixed << std::setprecision(2) << best << ")\n";
+        setMatchStatus("show", kairos_id, "uncertain", best);
     } else if (best >= threshold()) {
         const auto& best_c = *std::max_element(candidates.begin(), candidates.end(),
             [](const Cand& a, const Cand& b){ return a.score < b.score; });
@@ -450,7 +488,7 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
 void ScraperManager::matchMovie(const std::string& kairos_id, const std::string& title,
                                  int year, const std::string& tmdb_id,
                                  const std::string& file_path,
-                                 const std::string& preferred_scraper) {
+                                 const std::string& preferred_scraper, bool include_anidb) {
     // Resolve the effective search title. When the on-disk folder name disagrees
     // with the source-provided title, the folder is more trustworthy.
     std::string search_title = title;
@@ -536,7 +574,11 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
         DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearchM("tvdb", std::move(results));
     }
-    if (anidb_ && wantScraper("anidb")) {
+    // AniDB is anime-only — never queried for a library unless the admin
+    // explicitly opted it in (include_anidb) or chose it as this library's
+    // one preferred scraper outright. Prevents cross-matching an unrelated
+    // general movie/show library against anime titles on title text alone.
+    if (anidb_ && (preferred_scraper == "anidb" || (wantScraper("anidb") && include_anidb))) {
         DLOG << "[scraper]   querying anidb for movie \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
         auto results = anidb_->searchMovies(search_title, year);
@@ -554,6 +596,11 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
     if (candidates.empty()) {
         std::cout << "[scraper]   \"" << search_title << "\" → unmatched\n";
         setMatchStatus("movie", kairos_id, "unmatched", 0.0);
+    } else if (isAmbiguousTie(candidates, best)) {
+        std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
+                  << " (ambiguous: 2+ distinct candidates tied at "
+                  << std::fixed << std::setprecision(2) << best << ")\n";
+        setMatchStatus("movie", kairos_id, "uncertain", best);
     } else if (best >= threshold()) {
         const auto& best_c = *std::max_element(candidates.begin(), candidates.end(),
             [](const Cand& a, const Cand& b){ return a.score < b.score; });
@@ -638,6 +685,19 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
     upd.exec();
 
     setMatchStatus(item_type, kairos_id, "matched", score);
+
+    // acceptCandidate() is only ever reached via a human action (the review
+    // queue's accept route, or a manual match search) — never by the
+    // threshold-clearing auto-match branch above in this file. This is the
+    // one place match_confirmed gets set, and it's what gates metadata
+    // writeback to Plex/Jellyfin (see architecture.md / writeback plan).
+    {
+        SQLite::Statement conf(db_.get(),
+            "UPDATE " + item_type + " SET match_confirmed = 1 WHERE " + item_type + "_id = ?");
+        conf.bind(1, kairos_id);
+        conf.exec();
+    }
+
     txn.commit();
 
     // Resolve effective metadata language: item-level override → library default → "".
@@ -671,15 +731,17 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
             if (show) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE show SET
-                        tvdb_id  = CASE WHEN locked THEN tvdb_id  ELSE ? END,
-                        overview = CASE WHEN locked THEN overview ELSE ? END,
-                        status   = CASE WHEN locked THEN status   ELSE ? END,
-                        thumb    = CASE WHEN locked THEN thumb    ELSE ? END
+                        tvdb_id       = CASE WHEN locked THEN tvdb_id       ELSE ? END,
+                        overview      = CASE WHEN locked THEN overview      ELSE ? END,
+                        status        = CASE WHEN locked THEN status        ELSE ? END,
+                        thumb         = CASE WHEN locked THEN thumb         ELSE ? END,
+                        content_rating= CASE WHEN locked THEN content_rating ELSE ? END
                     WHERE show_id = ?
                 )");
                 app.bind(1, show->tvdb_id); app.bind(2, show->overview);
                 app.bind(3, show->status);  app.bind(4, show->thumb);
-                app.bind(5, kairos_id);
+                app.bind(5, show->content_rating);
+                app.bind(6, kairos_id);
                 app.exec();
             }
         } else if (item_type == "movie") {
@@ -687,12 +749,14 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
             if (movie) {
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE movie SET
-                        overview = CASE WHEN locked THEN overview ELSE ? END,
-                        thumb    = CASE WHEN locked THEN thumb    ELSE ? END
+                        overview      = CASE WHEN locked THEN overview      ELSE ? END,
+                        thumb         = CASE WHEN locked THEN thumb         ELSE ? END,
+                        content_rating= CASE WHEN locked THEN content_rating ELSE ? END
                     WHERE movie_id = ?
                 )");
                 app.bind(1, movie->overview); app.bind(2, movie->thumb);
-                app.bind(3, kairos_id);
+                app.bind(3, movie->content_rating);
+                app.bind(4, kairos_id);
                 app.exec();
             }
         }
@@ -837,6 +901,9 @@ std::vector<QueueItem> ScraperManager::getQueue(const std::string& status_filter
     std::string where;
     if (status_filter == "uncertain") where = " AND match_status='uncertain'";
     else if (status_filter == "unmatched") where = " AND match_status='unmatched'";
+    // Auto-matched by the scraper, never reviewed by a human — distinct from a
+    // genuinely user-confirmed match (see match_confirmed / acceptCandidate()).
+    else if (status_filter == "auto_unconfirmed") where = " AND match_status='matched' AND match_confirmed=0";
     else where = " AND match_status IN ('uncertain','unmatched')";
 
     // Shows
@@ -934,6 +1001,7 @@ int ScraperManager::queueTotal(const std::string& status_filter) const {
     std::string where;
     if (status_filter == "uncertain") where = " match_status='uncertain'";
     else if (status_filter == "unmatched") where = " match_status='unmatched'";
+    else if (status_filter == "auto_unconfirmed") where = " match_status='matched' AND match_confirmed=0";
     else where = " match_status IN ('uncertain','unmatched')";
 
     SQLite::Statement q(db_.get(),
@@ -978,14 +1046,24 @@ ScraperManager::search(const std::string& query, const std::string& content_type
         // Check if in library by tmdb_id or tvdb_id
         if (!s.tmdb_id.empty()) {
             SQLite::Statement chk(db_.get(),
-                "SELECT 1 FROM show WHERE tmdb_id=? LIMIT 1");
+                "SELECT show_id FROM show WHERE tmdb_id=? LIMIT 1");
             chk.bind(1, s.tmdb_id);
-            r.in_library = chk.executeStep();
+            if (chk.executeStep()) { r.in_library = true; r.library_id = chk.getColumn(0).getString(); }
         } else if (!s.tvdb_id.empty()) {
             SQLite::Statement chk(db_.get(),
-                "SELECT 1 FROM show WHERE tvdb_id=? LIMIT 1");
+                "SELECT show_id FROM show WHERE tvdb_id=? LIMIT 1");
             chk.bind(1, s.tvdb_id);
-            r.in_library = chk.executeStep();
+            if (chk.executeStep()) { r.in_library = true; r.library_id = chk.getColumn(0).getString(); }
+        }
+        // Already requested by anyone (not just the current caller) — lets a
+        // requester see "already in the system" even when it's not in_library
+        // yet (requested but not fulfilled). Prefer the most "advanced" status.
+        if (!r.external_id.empty()) {
+            SQLite::Statement rq(db_.get(),
+                "SELECT status FROM content_request WHERE content_type='show' AND source=? AND external_id=? "
+                "ORDER BY CASE status WHEN 'approved' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END LIMIT 1");
+            rq.bind(1, source); rq.bind(2, r.external_id);
+            if (rq.executeStep()) r.request_status = rq.getColumn(0).getString();
         }
         if (!r.external_id.empty()) out.push_back(std::move(r));
     };
@@ -1003,9 +1081,16 @@ ScraperManager::search(const std::string& query, const std::string& content_type
         r.content_type = "movie";
         if (!m.tmdb_id.empty()) {
             SQLite::Statement chk(db_.get(),
-                "SELECT 1 FROM movie WHERE tmdb_id=? LIMIT 1");
+                "SELECT movie_id FROM movie WHERE tmdb_id=? LIMIT 1");
             chk.bind(1, m.tmdb_id);
-            r.in_library = chk.executeStep();
+            if (chk.executeStep()) { r.in_library = true; r.library_id = chk.getColumn(0).getString(); }
+        }
+        if (!r.external_id.empty()) {
+            SQLite::Statement rq(db_.get(),
+                "SELECT status FROM content_request WHERE content_type='movie' AND source=? AND external_id=? "
+                "ORDER BY CASE status WHEN 'approved' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END LIMIT 1");
+            rq.bind(1, source); rq.bind(2, r.external_id);
+            if (rq.executeStep()) r.request_status = rq.getColumn(0).getString();
         }
         if (!r.external_id.empty()) out.push_back(std::move(r));
     };

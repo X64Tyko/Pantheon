@@ -136,12 +136,14 @@ export class ChannelDetailStore {
     stream_resolution:   'source' | '1080p' | '720p' | '480p'
     stream_video_bitrate: number
     stream_audio_bitrate: number
+    content_tag:         string
   } = {
     name: '', number: 1, timezone: 'UTC', seed: 12345, advance_mode: 'scheduled',
     offline_video_path: '', offline_image_path: '',
     offline_audio_id: '', offline_audio_type: '', offline_audio_title: '',
     logo_path: '', audio_lang: '', subtitle_lang: '',
     stream_resolution: 'source', stream_video_bitrate: 0, stream_audio_bitrate: 192,
+    content_tag: '',
   }
   channelDirty:   boolean     = false
   channelSaving:        boolean = false
@@ -179,6 +181,7 @@ export class ChannelDetailStore {
       stream_resolution:   channel.stream_resolution    ?? 'source',
       stream_video_bitrate: channel.stream_video_bitrate ?? 0,
       stream_audio_bitrate: channel.stream_audio_bitrate ?? 192,
+      content_tag:         channel.content_tag ?? '',
     }
     this.channelDirty    = false
     this.confirmedAnchors = channel.anchor_hashes ?? {}

@@ -116,7 +116,7 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }} className="scrollbar-dark">
         {loading ? (
           Array.from({ length: 3 }, (_, i) => (
-            <div key={i} className="hds-skeleton" style={{ height: 62, borderRadius: 7 }} />
+            <div key={i} className="hds-skeleton" style={{ height: 96, borderRadius: 7 }} />
           ))
         ) : results.length === 0 ? (
           <div style={{
@@ -136,15 +136,15 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
               }}>
                 {r.poster_url && (
                   <img src={r.poster_url} alt=""
-                    style={{ width: 42, height: 62, objectFit: 'cover', flexShrink: 0 }}
+                    style={{ width: 64, height: 96, objectFit: 'cover', flexShrink: 0 }}
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
                 )}
-                <div style={{ flex: 1, minWidth: 0, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                     <span style={{
-                      fontFamily: "'Chakra Petch', sans-serif", fontSize: 11, fontWeight: 600,
-                      color: 'var(--hds-txt)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      fontFamily: "'Chakra Petch', sans-serif", fontSize: 11.5, fontWeight: 600,
+                      color: 'var(--hds-txt)', flex: 1, lineHeight: 1.3,
                     }}>{r.title}</span>
                     <button
                       onClick={() => handleMatch(r)}
@@ -166,6 +166,12 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
                       <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: 'oklch(0.7 0.16 150)' }}>in library</span>
                     )}
                   </div>
+                  {r.overview && (
+                    <p style={{
+                      margin: 0, fontSize: 10.5, lineHeight: 1.4, color: 'var(--hds-txt-2)',
+                      display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                    }}>{r.overview}</p>
+                  )}
                 </div>
               </div>
             )

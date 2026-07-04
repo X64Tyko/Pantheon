@@ -1,5 +1,6 @@
 #include "ScraperService.h"
 #include "scraper/ScraperManager.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -22,6 +23,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
     // GET /api/scrapers/config
     svr.Get("/api/scrapers/config", [this](const Req&, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         auto s = scraper_.getSettings();
         json out;
         out["match_threshold"] = s.match_threshold;
@@ -41,6 +43,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
     // PATCH /api/scrapers/config
     svr.Patch("/api/scrapers/config", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         try {
             auto body = json::parse(req.body);
             ScraperSettings s = scraper_.getSettings();
@@ -69,6 +72,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
     // POST /api/scrapers/match
     svr.Post("/api/scrapers/match", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string target_id, item_type;
         try {
             if (!req.body.empty()) {
@@ -90,11 +94,13 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
     // GET /api/scrapers/match/status
     svr.Get("/api/scrapers/match/status", [this](const Req&, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         ok(res, json{{"running", scraper_.isMatching()}});
     });
 
     // GET /api/scrapers/stats
     svr.Get("/api/scrapers/stats", [this](const Req&, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         auto s = scraper_.stats();
         ok(res, json{
             {"total",     s.total},
@@ -107,6 +113,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
     // GET /api/scrapers/queue
     svr.Get("/api/scrapers/queue", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string status_filter = "all";
         int limit = 48, offset = 0;
         if (req.has_param("status"))  status_filter = req.get_param_value("status");
@@ -149,6 +156,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
     // POST /api/scrapers/queue/:kairos_id/manual-match
     svr.Post(R"(/api/scrapers/queue/([^/]+)/manual-match)", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string kairos_id = req.matches[1];
         try {
             auto body = json::parse(req.body);
@@ -174,6 +182,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
     // POST /api/scrapers/queue/:id/accept
     svr.Post(R"(/api/scrapers/queue/([^/]+)/accept)", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string cid = req.matches[1];
         if (scraper_.acceptCandidate(cid))
             ok(res, json{{"ok", true}});
@@ -183,6 +192,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
     // POST /api/scrapers/queue/:id/reject
     svr.Post(R"(/api/scrapers/queue/([^/]+)/reject)", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string cid = req.matches[1];
         if (scraper_.rejectCandidate(cid))
             ok(res, json{{"ok", true}});
@@ -223,6 +233,8 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             }
             rj["content_type"] = r.content_type;
             rj["in_library"]   = r.in_library;
+            if (!r.library_id.empty())     rj["library_id"]     = r.library_id;
+            if (!r.request_status.empty()) rj["request_status"] = r.request_status;
             arr.push_back(rj);
         }
         ok(res, json{{"items", arr}});

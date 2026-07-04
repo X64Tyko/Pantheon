@@ -2,13 +2,28 @@
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../auth/AuthStore.h"
+#include "../../db/RestrictionRepository.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-AuthService::AuthService(const ServiceContext& ctx) : auth_(ctx.auth) {}
+AuthService::AuthService(const ServiceContext& ctx) : auth_(ctx.auth), db_(ctx.db) {}
+
+namespace {
+json userJson(const AuthUser& u) {
+	return {
+		{"user_id",             u.user_id},
+		{"username",            u.username},
+		{"role",                u.role},
+		{"restricted",          u.restricted},
+		{"max_tv_rating",       u.max_tv_rating},
+		{"max_movie_rating",    u.max_movie_rating},
+		{"max_channel_rating",  u.max_channel_rating},
+	};
+}
+}
 
 void AuthService::registerRoutes(httplib::Server& svr) {
 
@@ -26,7 +41,7 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 		if (!auth_.createUser(username, password, "admin")) { route::err(res, 500, "Failed to create user"); return; }
 		const std::string token = auth_.login(username, password);
 		auto user = auth_.validate(token);
-		route::ok(res, json{{"token", token}, {"user", {{"user_id", user->user_id}, {"username", user->username}, {"role", user->role}}}}.dump());
+		route::ok(res, json{{"token", token}, {"user", userJson(*user)}}.dump());
 	});
 
 	svr.Post("/api/auth/login", [this](const Req& req, Res& res) {
@@ -38,7 +53,7 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 		const std::string token = auth_.login(username, password);
 		if (token.empty()) { route::err(res, 401, "Invalid credentials"); return; }
 		auto user = auth_.validate(token);
-		route::ok(res, json{{"token", token}, {"user", {{"user_id", user->user_id}, {"username", user->username}, {"role", user->role}}}}.dump());
+		route::ok(res, json{{"token", token}, {"user", userJson(*user)}}.dump());
 	});
 
 	svr.Post("/api/auth/logout", [this](const Req& req, Res& res) {
@@ -51,15 +66,14 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/auth/me", [](const Req&, Res& res) {
 		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
-		const auto& u = *currentUser();
-		route::ok(res, json{{"user_id", u.user_id}, {"username", u.username}, {"role", u.role}}.dump());
+		route::ok(res, userJson(*currentUser()).dump());
 	});
 
 	svr.Get("/api/users", [this](const Req&, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json arr = json::array();
 		for (const auto& u : auth_.listUsers())
-			arr.push_back({{"user_id", u.user_id}, {"username", u.username}, {"role", u.role}});
+			arr.push_back(userJson(u));
 		route::ok(res, arr.dump());
 	});
 
@@ -89,6 +103,51 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 		if (!auth_.deleteUser(req.path_params.at("id"), currentUser()->user_id)) {
 			route::err(res, 409, "Cannot delete self or last admin"); return;
 		}
+		route::ok(res, json{{"ok", true}}.dump());
+	});
+
+	// Parental-controls settings — separate from the credentials/role PATCH
+	// above so the Users page can save one concern without resending the other.
+	svr.Patch("/api/users/:id/restriction", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		json body;
+		try { body = json::parse(req.body); } catch (...) { route::err(res, 400, "Invalid JSON"); return; }
+		auth_.updateRestriction(
+			req.path_params.at("id"),
+			body.value("restricted", false),
+			body.value("max_tv_rating", "TV-Y"),
+			body.value("max_movie_rating", "G"),
+			body.value("max_channel_rating", "TV-Y"));
+		route::ok(res, json{{"ok", true}}.dump());
+	});
+
+	svr.Get("/api/users/:id/overrides", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		json arr = json::array();
+		for (const auto& o : RestrictionRepository(db_).listOverrides(req.path_params.at("id")))
+			arr.push_back({{"entity_type", o.entity_type}, {"entity_id", o.entity_id}, {"mode", o.mode}, {"title", o.title}});
+		route::ok(res, arr.dump());
+	});
+
+	svr.Post("/api/users/:id/overrides", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		json body;
+		try { body = json::parse(req.body); } catch (...) { route::err(res, 400, "Invalid JSON"); return; }
+		const std::string entity_type = body.value("entity_type", "");
+		const std::string entity_id   = body.value("entity_id", "");
+		const std::string mode        = body.value("mode", "");
+		if ((entity_type != "show" && entity_type != "movie" && entity_type != "channel")
+		    || entity_id.empty() || (mode != "allow" && mode != "block")) {
+			route::err(res, 400, "entity_type, entity_id, and mode ('allow'|'block') required"); return;
+		}
+		RestrictionRepository(db_).setOverride(req.path_params.at("id"), entity_type, entity_id, mode);
+		route::ok(res, json{{"ok", true}}.dump());
+	});
+
+	svr.Delete("/api/users/:id/overrides/:entity_type/:entity_id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		RestrictionRepository(db_).removeOverride(
+			req.path_params.at("id"), req.path_params.at("entity_type"), req.path_params.at("entity_id"));
 		route::ok(res, json{{"ok", true}}.dump());
 	});
 }

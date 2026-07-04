@@ -9,6 +9,12 @@ struct AuthUser {
 	std::string user_id;
 	std::string username;
 	std::string role;   // "admin" | "viewer"
+	// Parental controls — see RatingSeverity.h. restricted=false (the default)
+	// means this account sees everything; the ceilings only apply when true.
+	bool        restricted         = false;
+	std::string max_tv_rating      = "TV-Y";
+	std::string max_movie_rating   = "G";
+	std::string max_channel_rating = "TV-Y";
 };
 
 class AuthStore {
@@ -39,6 +45,14 @@ public:
 	bool updateUser(const std::string& user_id,
 	                const std::string& new_password,
 	                const std::string& new_role);
+
+	// Parental-controls settings for one account — separate from updateUser
+	// since it's a distinct concern (restriction tier vs credentials/role) and
+	// the Users page can update it without resending password/role each time.
+	void updateRestriction(const std::string& user_id, bool restricted,
+	                       const std::string& max_tv_rating,
+	                       const std::string& max_movie_rating,
+	                       const std::string& max_channel_rating);
 
 private:
 	Database& db_;

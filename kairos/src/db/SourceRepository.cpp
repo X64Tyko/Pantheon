@@ -59,7 +59,7 @@ void SourceRepository::removeSource(const std::string& source_id) {
 std::vector<MediaLibraryConfig> SourceRepository::listLibraries(const std::string& source_id) {
     SQLite::Statement q(db_.get(),
         "SELECT library_id, external_lib_id, display_name, library_type, enabled, "
-        "       preferred_scraper, preferred_language "
+        "       preferred_scraper, preferred_language, include_anidb "
         "FROM media_library WHERE source_id = ? ORDER BY display_name");
     q.bind(1, source_id);
     std::vector<MediaLibraryConfig> result;
@@ -73,6 +73,7 @@ std::vector<MediaLibraryConfig> SourceRepository::listLibraries(const std::strin
         lib.enabled             = q.getColumn(4).getInt() != 0;
         lib.preferred_scraper   = q.getColumn(5).getString();
         lib.preferred_language  = q.getColumn(6).getString();
+        lib.include_anidb       = q.getColumn(7).getInt() != 0;
         result.push_back(std::move(lib));
     }
     return result;
@@ -83,17 +84,19 @@ std::string SourceRepository::createLibrary(const std::string& source_id,
                                              const std::string& display_name,
                                              const std::string& library_type,
                                              const std::string& preferred_scraper,
-                                             const std::string& preferred_language) {
+                                             const std::string& preferred_language,
+                                             bool include_anidb) {
     std::string library_id = generateId();
     SQLite::Statement s(db_.get(),
         "INSERT INTO media_library "
         "(library_id, source_id, external_lib_id, display_name, library_type, "
-        " preferred_scraper, preferred_language) "
-        "VALUES (?,?,?,?,?,?,?)");
+        " preferred_scraper, preferred_language, include_anidb) "
+        "VALUES (?,?,?,?,?,?,?,?)");
     s.bind(1, library_id); s.bind(2, source_id);
     s.bind(3, external_lib_id); s.bind(4, display_name);
     s.bind(5, library_type);   s.bind(6, preferred_scraper);
     s.bind(7, preferred_language);
+    s.bind(8, include_anidb ? 1 : 0);
     s.exec();
     return library_id;
 }
@@ -101,15 +104,17 @@ std::string SourceRepository::createLibrary(const std::string& source_id,
 void SourceRepository::updateLibrary(const std::string& library_id,
                                       const std::string& display_name,
                                       const std::string& preferred_scraper,
-                                      const std::string& preferred_language) {
+                                      const std::string& preferred_language,
+                                      bool include_anidb) {
     SQLite::Statement s(db_.get(),
         "UPDATE media_library "
-        "SET display_name = ?, preferred_scraper = ?, preferred_language = ? "
+        "SET display_name = ?, preferred_scraper = ?, preferred_language = ?, include_anidb = ? "
         "WHERE library_id = ?");
     s.bind(1, display_name);
     s.bind(2, preferred_scraper);
     s.bind(3, preferred_language);
-    s.bind(4, library_id);
+    s.bind(4, include_anidb ? 1 : 0);
+    s.bind(5, library_id);
     s.exec();
 }
 
@@ -243,4 +248,30 @@ std::string SourceRepository::getExternalId(const std::string& source_id,
         "WHERE source_id = ? AND kairos_id = ? AND item_type = ?");
     q.bind(1, source_id); q.bind(2, kairos_id); q.bind(3, item_type);
     return q.executeStep() ? q.getColumn(0).getString() : "";
+}
+
+std::vector<SourceRepository::WritebackTarget> SourceRepository::getWritebackTargets(
+    const std::string& item_type, const std::string& kairos_id) {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT ms.source_id, ms.source_type, ms.base_url,
+               sm.external_id, COALESCE(ml.external_lib_id, '')
+        FROM source_mapping sm
+        JOIN media_source ms ON ms.source_id = sm.source_id
+        LEFT JOIN media_library ml ON ml.library_id = sm.library_id
+        WHERE sm.item_type = ? AND sm.kairos_id = ?
+    )");
+    q.bind(1, item_type);
+    q.bind(2, kairos_id);
+
+    std::vector<WritebackTarget> out;
+    while (q.executeStep()) {
+        out.push_back({
+            q.getColumn(0).getString(),
+            q.getColumn(1).getString(),
+            q.getColumn(2).getString(),
+            q.getColumn(3).getString(),
+            q.getColumn(4).getString(),
+        });
+    }
+    return out;
 }

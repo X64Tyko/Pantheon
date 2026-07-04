@@ -18,6 +18,9 @@ struct MediaLibraryConfig {
     std::string preferred_scraper;    // "" | "tmdb" | "tvdb" | "anidb"
     std::string preferred_language;   // ISO 639-1 e.g. "en", "ja"; empty = scraper default
     bool        enabled = true;
+    // AniDB is anime-only — never queried automatically for a library unless
+    // explicitly opted in here (or preferred_scraper is set to "anidb" outright).
+    bool        include_anidb = false;
 };
 
 // Returned by MediaSource::listAvailableLibraries() — live from the server

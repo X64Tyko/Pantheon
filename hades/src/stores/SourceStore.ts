@@ -96,12 +96,12 @@ export class SourceStore {
     })
   }
 
-  async addLibrary(sourceId: string, external_lib_id: string, display_name: string, library_type: Library['library_type'], preferred_scraper: Library['preferred_scraper'] = '', preferred_language = '') {
-    await api.addLibrary(sourceId, { external_lib_id, display_name, library_type, preferred_scraper, preferred_language })
+  async addLibrary(sourceId: string, external_lib_id: string, display_name: string, library_type: Library['library_type'], preferred_scraper: Library['preferred_scraper'] = '', preferred_language = '', include_anidb = false) {
+    await api.addLibrary(sourceId, { external_lib_id, display_name, library_type, preferred_scraper, preferred_language, include_anidb })
     await this.fetchLibraries(sourceId)
   }
 
-  async updateLibrary(sourceId: string, libraryId: string, patch: { display_name?: string; preferred_scraper?: Library['preferred_scraper']; preferred_language?: string }) {
+  async updateLibrary(sourceId: string, libraryId: string, patch: { display_name?: string; preferred_scraper?: Library['preferred_scraper']; preferred_language?: string; include_anidb?: boolean }) {
     await api.patchLibrary(sourceId, libraryId, patch)
     runInAction(() => {
       const lib = this.libraries.find(l => l.library_id === libraryId)

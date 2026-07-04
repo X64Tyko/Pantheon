@@ -60,6 +60,7 @@ struct ShowDetail {
     std::vector<SeasonRow> seasons;
     std::string           match_status;
     std::optional<double> match_score;
+    bool                   match_confirmed = false;
 };
 
 struct EpisodeRow {
@@ -108,6 +109,7 @@ struct MovieDetail {
     std::string           file_path; // admin-facing "source file" display
     std::string           match_status;
     std::optional<double> match_score;
+    bool                   match_confirmed = false;
 };
 
 struct ItemSource {
@@ -115,11 +117,21 @@ struct ItemSource {
     std::string source_id;
 };
 
+// Parental-controls context for a search, decided by the service layer (which
+// owns the "what does restricted mean" decision — see AuthContext/RatingSeverity)
+// so the repository just applies a plain ceiling + override lookup.
+struct RestrictionContext {
+    bool        restricted = false;
+    int         rating_ceiling = 0; // RatingSeverity::tvRatingSeverity/movieRatingSeverity(user's ceiling)
+    std::string user_id;
+};
+
 struct ShowSearchParams {
     int limit = 50, offset = 0;
     std::string library_id, q, genre, year, content_rating;
     std::string label, network, actor, country, collection, studio;
     std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_aired"
+    RestrictionContext restriction;
 };
 
 struct MovieSearchParams {
@@ -127,6 +139,7 @@ struct MovieSearchParams {
     std::string library_id, q, genre, year, content_rating;
     std::string label, actor, country, collection, studio;
     std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_released"
+    RestrictionContext restriction;
 };
 
 struct StrField { std::string col, val; };
@@ -135,6 +148,14 @@ struct IntField { std::string col; int val = 0; };
 class ContentRepository {
 public:
     explicit ContentRepository(Database& db);
+
+    // Resolves item_type/item_id into the (entity_type, entity_id,
+    // content_rating) triple RestrictionRepository::isAllowed actually
+    // operates on. Episodes have no rating or override entity of their own —
+    // they resolve to their parent show's, same as everywhere else in the
+    // codebase treats episode rating (no per-episode content_rating field).
+    struct RestrictionLookup { std::string entity_type, entity_id, content_rating; };
+    RestrictionLookup resolveForRestriction(const std::string& item_type, const std::string& item_id);
 
     // ── Episodes ──────────────────────────────────────────────────────────────
 

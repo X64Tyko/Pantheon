@@ -216,8 +216,8 @@ function RequestDetail({ request: r, onClose, onStatusChange }: {
       if (opts.quality_profiles.length > 0) setQualityProfileId(opts.quality_profiles[0].id)
       if (opts.root_folders.length > 0)     setRootFolder(opts.root_folders[0])
       setArrStep('form')
-    } catch {
-      setArrError(`Could not reach ${serviceLabel}.`)
+    } catch (e: any) {
+      setArrError(e.message ?? `Could not reach ${serviceLabel}.`)
       setArrStep('error')
     }
   }
@@ -230,8 +230,8 @@ function RequestDetail({ request: r, onClose, onStatusChange }: {
       await api.updateRequest(r.request_id, 'approved')
       onStatusChange(r.request_id, 'approved')
       setArrStep('done')
-    } catch {
-      setArrError(`Failed to add to ${serviceLabel}.`)
+    } catch (e: any) {
+      setArrError(e.message ?? `Failed to add to ${serviceLabel}.`)
       setArrStep('error')
     }
   }

@@ -5,6 +5,36 @@
 
 using json = nlohmann::json;
 
+// Sonarr/Radarr reject an add with either a single {"message": "..."} object
+// or an array of per-field validation failures
+// ([{"propertyName":"RootFolderPath","errorMessage":"..."}, ...]) — both
+// shapes need to be tried, or a rejection like "already added" / "root
+// folder does not exist" gets silently swallowed into a generic failure.
+inline std::string parseArrError(int status, const std::string& body) {
+    try {
+        auto j = json::parse(body);
+        std::vector<std::string> msgs;
+        if (j.is_array()) {
+            for (const auto& e : j) {
+                std::string m = e.value("errorMessage", "");
+                if (m.empty()) m = e.value("message", "");
+                if (!m.empty()) msgs.push_back(m);
+            }
+        } else if (j.is_object()) {
+            std::string m = j.value("message", "");
+            if (m.empty()) m = j.value("error", "");
+            if (!m.empty()) msgs.push_back(m);
+        }
+        if (!msgs.empty()) {
+            std::string out;
+            for (size_t i = 0; i < msgs.size(); ++i) { if (i) out += "; "; out += msgs[i]; }
+            return out;
+        }
+    } catch (...) {}
+    if (status == 0) return "no response from arr server (connection failed)";
+    return "HTTP " + std::to_string(status) + (body.empty() ? "" : (": " + body.substr(0, 200)));
+}
+
 struct ArrLookupResult {
     std::string title;
     int         year          = 0;

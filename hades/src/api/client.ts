@@ -2,14 +2,14 @@ import type {
   ArrConfig, ArrLookupResult, ArrServiceOptions,
   AuthResponse,
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
-  Channel, ContentRequest, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
+  Channel, ContentOverride, ContentRequest, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
   ActivitySession,
   Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, MediaLanguages, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
-  Show, ShowDetail, Source, SourceType, User, VideoInfo, WatchProgress,
+  Show, ShowDetail, Source, SourceType, User, VideoInfo, WatchProgress, WritebackResult,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -81,6 +81,12 @@ export const api = {
   createUser:  (username: string, password: string, role: string) => request<void>('POST', '/users', { username, password, role }),
   updateUser:  (id: string, patch: { password?: string; role?: string }) => request<void>('PATCH', `/users/${id}`, patch),
   deleteUser:  (id: string)                                 => request<void>('DELETE', `/users/${id}`),
+  updateUserRestriction: (id: string, patch: { restricted: boolean; max_tv_rating: string; max_movie_rating: string; max_channel_rating: string }) =>
+                                                             request<void>('PATCH', `/users/${id}/restriction`, patch),
+  getUserOverrides:   (id: string)                          => request<ContentOverride[]>('GET', `/users/${id}/overrides`),
+  addUserOverride:    (id: string, b: ContentOverride)      => request<void>('POST', `/users/${id}/overrides`, b),
+  removeUserOverride: (id: string, entityType: string, entityId: string) =>
+                                                             request<void>('DELETE', `/users/${id}/overrides/${entityType}/${entityId}`),
 
   // Sources
   getSources:       ()                                  => request<Source[]>    ('GET',    '/sources'),
@@ -92,9 +98,9 @@ export const api = {
   getAvailableLibs: (sourceId: string)                  => request<LibraryInfo[]>('GET',    `/sources/${sourceId}/libraries/available`),
   browseLocalDir:   (sourceId: string, path: string)    => request<LibraryInfo[]>('GET',    `/sources/${sourceId}/fs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   getLibraries:     (sourceId: string)                  => request<Library[]>    ('GET',    `/sources/${sourceId}/libraries`),
-  addLibrary:       (sourceId: string, b: Pick<Library, 'external_lib_id'|'display_name'|'library_type'|'preferred_scraper'|'preferred_language'>) =>
+  addLibrary:       (sourceId: string, b: Pick<Library, 'external_lib_id'|'display_name'|'library_type'|'preferred_scraper'|'preferred_language'|'include_anidb'>) =>
                                                         request<{library_id: string}>('POST', `/sources/${sourceId}/libraries`, b),
-  patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'preferred_scraper'|'preferred_language'>>) =>
+  patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'preferred_scraper'|'preferred_language'|'include_anidb'>>) =>
                                                         request<void>('PATCH', `/sources/${sourceId}/libraries/${lid}`, b),
   removeLibrary:    (sourceId: string, lid: string)     => request<void>         ('DELETE', `/sources/${sourceId}/libraries/${lid}`),
   triggerSync:      (sourceId: string)                  => request<{status: string}>('POST', `/sources/${sourceId}/sync`),
@@ -105,8 +111,9 @@ export const api = {
 
   // Channels
   getChannels:      ()                                                            => request<Channel[]>('GET',    '/channels'),
+  checkChannelAccess: (id: string)                                                => request<{ allowed: boolean }>('GET', `/channels/${id}/access-check`),
   createChannel:    (b: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection'>) => request<{channel_id: string}>('POST', '/channels', b),
-  updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes' | 'audio_lang' | 'subtitle_lang' | 'stream_resolution' | 'stream_video_bitrate' | 'stream_audio_bitrate'>>) => request<void>('PATCH', `/channels/${id}`, b),
+  updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes' | 'audio_lang' | 'subtitle_lang' | 'stream_resolution' | 'stream_video_bitrate' | 'stream_audio_bitrate' | 'content_tag'>>) => request<void>('PATCH', `/channels/${id}`, b),
   deleteChannel:    (id: string)                                                  => request<void>('DELETE', `/channels/${id}`),
   exportChannel:    (id: string, depth: ExportDepth)                              => request<ChannelExport>('GET', `/channels/${id}/export?depth=${depth}`),
   importChannel:    (data: ChannelExport)                                         => request<ImportResult>('POST', '/channels/import', data),
@@ -277,6 +284,8 @@ export const api = {
   updateShow:     (id: string, b: Partial<ShowDetail>)  => request<void>      ('PATCH', `/shows/${id}`, b),
   getMovie:       (id: string)                          => request<MovieDetail>('GET',  `/movies/${id}`),
   updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
+  pushToSources:  (id: string, contentType: 'show' | 'movie') =>
+                    request<WritebackResult>('POST', `/${contentType}s/${id}/writeback`),
   getShowLanguages:  (id: string) => request<MediaLanguages>('GET', `/shows/${id}/languages`),
   getMovieLanguages: (id: string) => request<MediaLanguages>('GET', `/movies/${id}/languages`),
   getShowVideoInfo:  (id: string) => request<VideoInfo>('GET', `/shows/${id}/videoinfo`),

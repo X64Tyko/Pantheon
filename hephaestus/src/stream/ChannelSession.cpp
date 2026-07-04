@@ -178,7 +178,14 @@ static std::vector<std::string> buildImageArgs(
 
     // Input 0: the image, looped forever. A still image has no frame rate of
     // its own — pick a normal one so players see a standard CFR stream.
-    a.insert(a.end(), {"-loop", "1", "-framerate", "25", "-i", image_path});
+    // -f image2 must be forced explicitly: image_path can be a remote URL
+    // (offline_image_path/logo_path both accept "path or URL"), and ffmpeg's
+    // format auto-detection picks a pipe-style demuxer (e.g. png_pipe) for
+    // those instead of image2 — -loop is an image2-demuxer option, so on a
+    // pipe demuxer it's silently ignored on the first pass and then corrupts
+    // the stream on the second read attempt (the underlying avio can't
+    // properly re-fetch a non-seekable network resource from byte 0).
+    a.insert(a.end(), {"-f", "image2", "-loop", "1", "-framerate", "25", "-i", image_path});
 
     // Input 1: configured offline audio (looped) or generated silence.
     if (!audio_path.empty())

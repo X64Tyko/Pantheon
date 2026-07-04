@@ -30,12 +30,14 @@ public:
                               const std::string& display_name,
                               const std::string& library_type,
                               const std::string& preferred_scraper = "",
-                              const std::string& preferred_language = "");
+                              const std::string& preferred_language = "",
+                              bool include_anidb = false);
 
     void updateLibrary(const std::string& library_id,
                        const std::string& display_name,
                        const std::string& preferred_scraper,
-                       const std::string& preferred_language);
+                       const std::string& preferred_language,
+                       bool include_anidb);
 
     void removeLibrary(const std::string& library_id);
 
@@ -77,6 +79,19 @@ public:
     std::string getExternalId(const std::string& source_id,
                                const std::string& kairos_id,
                                const std::string& item_type);
+
+    struct WritebackTarget {
+        std::string source_id;
+        std::string source_type;    // "plex" | "jellyfin" | "emby" | "local"
+        std::string base_url;
+        std::string external_id;
+        std::string external_lib_id; // Plex "section" id; empty if not tracked for this mapping
+    };
+    // Every source this show/movie is mapped to, with what's needed to push
+    // metadata back to each one. Usually one row, but not assumed — an item
+    // can be mapped to more than one source_mapping row (different sources).
+    std::vector<WritebackTarget> getWritebackTargets(const std::string& item_type,
+                                                      const std::string& kairos_id);
 
 private:
     Database& db_;

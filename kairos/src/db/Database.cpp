@@ -1429,6 +1429,52 @@ constexpr Migration kMigrations[] = {
     WHERE release_date = '' AND year IS NOT NULL;
 )SQL" }
 
+// ── v61: match_confirmed — distinguishes a human-confirmed match from an
+//         auto-accepted one. match_status='matched' alone doesn't tell these
+//         apart: the auto-match path (ScraperManager's threshold-clearing
+//         branch) sets it directly with no human involved, same as
+//         acceptCandidate() (reached only via the review-queue accept route
+//         and manual match search). Metadata writeback to Plex/Jellyfin must
+//         gate on this, not on match_status — see acceptCandidate().
+,{ 61, R"SQL(
+    ALTER TABLE show  ADD COLUMN match_confirmed INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE movie ADD COLUMN match_confirmed INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
+// ── v62: media_library.include_anidb — AniDB is an anime-only database, but
+//         wantScraper() previously queried it for every library with no
+//         preferred_scraper set (the default), letting a general movie/show
+//         library get cross-matched against completely unrelated anime
+//         titles on nothing but a title-string coincidence. Requiring an
+//         explicit per-library opt-in (default off) closes that off; an
+//         admin only enables it for a library that actually contains anime.
+,{ 62, R"SQL(
+    ALTER TABLE media_library ADD COLUMN include_anidb INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
+// ── v63: parental controls — restricted accounts, across media and channels.
+//   Two-layer model: a per-content-type severity ceiling as the base rule
+//   (see RatingSeverity.h), with an explicit per-title/per-channel allow/block
+//   override on top of it. Unrestricted by default (restricted=0); an admin
+//   opts a specific account into restriction via the Users page.
+,{ 63, R"SQL(
+    ALTER TABLE user ADD COLUMN restricted         INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE user ADD COLUMN max_tv_rating      TEXT    NOT NULL DEFAULT 'TV-Y';
+    ALTER TABLE user ADD COLUMN max_movie_rating   TEXT    NOT NULL DEFAULT 'G';
+    ALTER TABLE user ADD COLUMN max_channel_rating TEXT    NOT NULL DEFAULT 'TV-Y';
+
+    ALTER TABLE channel ADD COLUMN content_tag TEXT NOT NULL DEFAULT '';
+
+    CREATE TABLE user_content_override (
+        id          INTEGER PRIMARY KEY,
+        user_id     TEXT NOT NULL REFERENCES user(user_id) ON DELETE CASCADE,
+        entity_type TEXT NOT NULL CHECK(entity_type IN ('show','movie','channel')),
+        entity_id   TEXT NOT NULL,
+        mode        TEXT NOT NULL CHECK(mode IN ('allow','block')),
+        UNIQUE(user_id, entity_type, entity_id)
+    );
+)SQL" }
+
 }; // kMigrations
 
 } // namespace
