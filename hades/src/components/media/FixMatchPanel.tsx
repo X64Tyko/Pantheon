@@ -113,10 +113,10 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
         <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-red)' }}>{error}</div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 440, overflowY: 'auto' }} className="scrollbar-dark">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 440, overflowY: 'auto', flexShrink: 0 }} className="scrollbar-dark">
         {loading ? (
           Array.from({ length: 3 }, (_, i) => (
-            <div key={i} className="hds-skeleton" style={{ height: 120, borderRadius: 7 }} />
+            <div key={i} className="hds-skeleton" style={{ height: 120, borderRadius: 7, flexShrink: 0 }} />
           ))
         ) : results.length === 0 ? (
           <div style={{
@@ -130,7 +130,7 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
             const srcColor = r.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : r.source === 'tvdb' ? 'oklch(0.65 0.12 280)' : 'var(--hds-gold)'
             return (
               <div key={key} style={{
-                display: 'flex', gap: 0, borderRadius: 7,
+                display: 'flex', gap: 0, borderRadius: 7, flexShrink: 0,
                 border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
                 overflow: 'hidden', opacity: isMatching ? 0.6 : 1,
               }}>

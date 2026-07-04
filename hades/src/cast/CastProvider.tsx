@@ -33,6 +33,39 @@ export function useCastApiReady(): boolean {
   return ready
 }
 
+// Separate from useCastApiReady (SDK script loaded): also requires
+// cast_app_id to be configured, matching CastProvider's own "no App ID means
+// no registered receiver, so casting stays off" comment below. Without this,
+// useCastSession's `available` tracked SDK-load alone, so the Cast button
+// showed as clickable even with no App ID set — requestSession() against a
+// CastContext that was never given a receiverApplicationId doesn't open the
+// app's own device picker; it falls through to Chrome's native tab-mirroring
+// flow, which is a plausible source of an unrelated Chrome dialog (its
+// native cast picker surfaces a "Live Caption" toggle) instead of casting.
+let cachedAppIdConfigured = false
+let configuredListeners: Array<(configured: boolean) => void> = []
+
+function setCastConfigured(configured: boolean) {
+  if (cachedAppIdConfigured === configured) return
+  cachedAppIdConfigured = configured
+  configuredListeners.forEach(fn => fn(configured))
+}
+
+export function useCastAvailable(): boolean {
+  const [available, setAvailable] = useState(cachedReady && cachedAppIdConfigured)
+  useEffect(() => {
+    const recompute = () => setAvailable(cachedReady && cachedAppIdConfigured)
+    recompute()
+    readyListeners.push(recompute)
+    configuredListeners.push(recompute)
+    return () => {
+      readyListeners = readyListeners.filter(fn => fn !== recompute)
+      configuredListeners = configuredListeners.filter(fn => fn !== recompute)
+    }
+  }, [])
+  return available
+}
+
 // Mounted once in App.tsx. Renders nothing — just wires up
 // CastContext.setOptions() as soon as both the SDK and the App ID (a
 // Kairos-backed runtime setting, not a Vite build-time env var — see
@@ -54,16 +87,17 @@ export function CastProvider() {
   }, [user])
 
   useEffect(() => {
-    if (!ready || !appId) return
+    if (!ready || !appId) { setCastConfigured(false); return }
     cast.framework.CastContext.getInstance().setOptions({
       receiverApplicationId: appId,
       autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
     })
+    setCastConfigured(true)
   }, [ready, appId])
 
   return null
 }
 
 export function castAvailable(): boolean {
-  return cachedReady
+  return cachedReady && cachedAppIdConfigured
 }

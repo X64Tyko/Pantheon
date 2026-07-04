@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useCastApiReady } from './CastProvider'
+import { useCastApiReady, useCastAvailable } from './CastProvider'
 import { buildLoadRequest, type CastMediaArgs } from './castMedia'
 
 export interface CastSessionState {
@@ -20,7 +20,8 @@ export interface CastSessionState {
 // don't need to be recreated on session start/end, only re-read via the
 // ANY_CHANGE listener below.
 export function useCastSession(): CastSessionState {
-  const ready = useCastApiReady()
+  const ready     = useCastApiReady()
+  const available = useCastAvailable()
   const [, forceUpdate] = useState(0)
   const playerRef     = useRef<cast.framework.RemotePlayer | null>(null)
   const controllerRef = useRef<cast.framework.RemotePlayerController | null>(null)
@@ -46,7 +47,7 @@ export function useCastSession(): CastSessionState {
   }
 
   return {
-    available:  ready,
+    available:  available,
     connected:  !!player?.isConnected,
     deviceName: session?.getCastDevice().friendlyName ?? null,
     currentMs:  (player?.currentTime ?? 0) * 1000,

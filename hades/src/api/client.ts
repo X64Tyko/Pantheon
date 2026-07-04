@@ -286,6 +286,8 @@ export const api = {
   updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
   pushToSources:  (id: string, contentType: 'show' | 'movie') =>
                     request<WritebackResult>('POST', `/${contentType}s/${id}/writeback`),
+  refreshImages:  (id: string, contentType: 'show' | 'movie') =>
+                    request<{ ok: boolean }>('POST', `/${contentType}s/${id}/refresh-images`),
   getShowLanguages:  (id: string) => request<MediaLanguages>('GET', `/shows/${id}/languages`),
   getMovieLanguages: (id: string) => request<MediaLanguages>('GET', `/movies/${id}/languages`),
   getShowVideoInfo:  (id: string) => request<VideoInfo>('GET', `/shows/${id}/videoinfo`),

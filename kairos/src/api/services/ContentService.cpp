@@ -42,6 +42,29 @@ static std::string imgCacheKey(const std::string& sourceId, const std::string& i
 	return oss.str();
 }
 
+// Mirrors proxyImage()'s own hash derivation (the CDN-vs-source_id base
+// choice) without the network-fetch side — used to invalidate a cached
+// image on demand so a "refresh images" action doesn't have to wait out
+// image_cache_ttl_hours. Empty return = a redirect-only URL (never cached).
+static std::string imgCacheHashFor(const std::string& imgPath, const std::string& sourceId) {
+	bool is_cdn = (imgPath.rfind("http", 0) == 0);
+	if (!is_cdn) return imgCacheKey(sourceId, imgPath);
+	auto scheme_end = imgPath.find("://");
+	auto path_start = (scheme_end != std::string::npos) ? imgPath.find('/', scheme_end + 3) : std::string::npos;
+	if (path_start == std::string::npos) return "";
+	return imgCacheKey(imgPath.substr(0, path_start), imgPath);
+}
+
+static void clearImageCache(const std::string& imgPath, const std::string& sourceId) {
+	if (imgPath.empty()) return;
+	std::string hash = imgCacheHashFor(imgPath, sourceId);
+	if (hash.empty()) return;
+	fs::path cache_dir = "image-cache";
+	std::error_code ec;
+	fs::remove(cache_dir / hash, ec);
+	fs::remove(cache_dir / (hash + ".ct"), ec);
+}
+
 ContentService::ContentService(const ServiceContext& ctx)
 	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync) {}
 
@@ -227,6 +250,27 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/images/proxy", [this](const Req& req, Res& res) {
 		if (!req.has_param("url")) { res.status = 400; return; }
 		proxyImage(req, req.get_param_value("url"), "", res);
+	});
+
+	// Force a re-fetch of this item's poster/backdrop next time they're
+	// requested, rather than waiting out image_cache_ttl_hours — e.g. after
+	// a source updated its artwork, or right after Fix Match to make sure a
+	// stale poster from the previous (wrong) match can't linger.
+	svr.Post("/api/shows/:id/refresh-images", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		ContentRepository repo(db_);
+		if (auto t = repo.getShowThumb(id)) clearImageCache(t->image_path, t->source_id);
+		if (auto a = repo.getShowArt(id))   clearImageCache(a->image_path, a->source_id);
+		route::ok(res, json{{"ok", true}}.dump());
+	});
+	svr.Post("/api/movies/:id/refresh-images", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		ContentRepository repo(db_);
+		if (auto t = repo.getMovieThumb(id)) clearImageCache(t->image_path, t->source_id);
+		if (auto a = repo.getMovieArt(id))   clearImageCache(a->image_path, a->source_id);
+		route::ok(res, json{{"ok", true}}.dump());
 	});
 
 	// ── Libraries ────────────────────────────────────────────────────────────

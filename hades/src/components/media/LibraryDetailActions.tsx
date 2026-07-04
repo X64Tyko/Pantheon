@@ -75,6 +75,28 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
     }
   }
 
+  // Refresh images (admin) — clears Kairos's own image cache for this item's
+  // poster/backdrop so a source-side artwork update (or a stale poster left
+  // over from a since-corrected Fix Match) shows up immediately instead of
+  // waiting out image_cache_ttl_hours.
+  const [refreshingImages, setRefreshingImages] = useState(false)
+  const [refreshImagesResult, setRefreshImagesResult] = useState<string | null>(null)
+
+  const handleRefreshImages = async () => {
+    if (!id) return
+    setRefreshingImages(true)
+    setRefreshImagesResult(null)
+    try {
+      await api.refreshImages(id, contentType)
+      refetchDetail() // also busts the browser-side image cache — see useMediaDetail's bust()
+      setRefreshImagesResult('Refreshed')
+    } catch {
+      setRefreshImagesResult('Failed to refresh images.')
+    } finally {
+      setRefreshingImages(false)
+    }
+  }
+
   // Request state (viewer)
   const [reqStep,      setReqStep]      = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [reqDuplicate, setReqDuplicate] = useState(false)
@@ -217,6 +239,24 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
             {pushResult && (
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
                 {pushResult}
+              </div>
+            )}
+            <button
+              onClick={handleRefreshImages}
+              disabled={refreshingImages}
+              title="Re-fetch this item's poster and backdrop, bypassing the image cache"
+              style={{
+                alignSelf: 'flex-start', padding: '8px 16px', borderRadius: 7, cursor: refreshingImages ? 'not-allowed' : 'pointer',
+                border: '1px solid var(--hds-line)', background: 'transparent',
+                color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                opacity: refreshingImages ? 0.5 : 1,
+              }}
+            >
+              {refreshingImages ? 'Refreshing…' : 'Refresh Images'}
+            </button>
+            {refreshImagesResult && (
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+                {refreshImagesResult}
               </div>
             )}
           </>

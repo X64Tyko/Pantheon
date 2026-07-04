@@ -60,10 +60,16 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   const detail = discoverResult ? null : (show ?? movie)
   const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
 
+  // refreshKey busts both Kairos's own image cache (via refreshImages()) and
+  // the browser's HTTP cache (Cache-Control on /thumb and /art is 1 day) —
+  // without the query param, refetch() alone wouldn't be enough to show a
+  // just-refreshed image immediately.
+  const bust = (url: string) => refreshKey > 0 ? `${url}${url.includes('?') ? '&' : '?'}v=${refreshKey}` : url
+
   const posterUrl = discoverResult?.poster_url
-    ?? (id && detail?.thumb ? (contentType === 'show' ? showThumbUrl(id) : movieThumbUrl(id)) : undefined)
+    ?? (id && detail?.thumb ? bust(contentType === 'show' ? showThumbUrl(id) : movieThumbUrl(id)) : undefined)
   const backdropUrl = discoverResult?.poster_url
-    ?? (id && detail?.art ? (contentType === 'show' ? showArtUrl(id) : movieArtUrl(id)) : undefined)
+    ?? (id && detail?.art ? bust(contentType === 'show' ? showArtUrl(id) : movieArtUrl(id)) : undefined)
 
   const title    = discoverResult?.title    ?? detail?.title    ?? ''
   const year     = discoverResult?.year     ?? detail?.year
