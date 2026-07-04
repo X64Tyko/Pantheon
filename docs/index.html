@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pantheon — Docs</title>
+<style>
+  :root {
+    --bg: oklch(0.152 0.016 286);
+    --bg2: oklch(0.19 0.018 286);
+    --line: oklch(0.45 0.05 290 / 0.32);
+    --txt: oklch(0.94 0.008 90);
+    --txt2: oklch(0.68 0.02 288);
+    --txt3: oklch(0.54 0.025 290);
+    --gold: oklch(0.83 0.13 84);
+    --violet: oklch(0.72 0.15 290);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 60px 24px;
+  }
+  main { width: 100%; max-width: 760px; }
+  h1 {
+    font-weight: 800;
+    font-size: 34px;
+    letter-spacing: 0.01em;
+    margin: 0 0 6px;
+  }
+  .sub {
+    color: var(--txt2);
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0 0 36px;
+    max-width: 560px;
+  }
+  .sub a { color: var(--violet); }
+  ul.docs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  li.doc a {
+    display: block;
+    padding: 16px 18px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: linear-gradient(168deg, oklch(0.21 0.026 290 / 0.6), oklch(0.16 0.02 288 / 0.7));
+    text-decoration: none;
+    color: var(--txt);
+    transition: border-color .12s, background .12s;
+  }
+  li.doc a:hover { border-color: var(--violet); background: oklch(0.22 0.03 290 / 0.65); }
+  li.doc .title {
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+  }
+  li.doc .desc {
+    color: var(--txt2);
+    font-size: 12.5px;
+    margin-top: 4px;
+    line-height: 1.45;
+  }
+  footer {
+    margin-top: 40px;
+    font-size: 11px;
+    color: var(--txt3);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  footer a { color: var(--txt3); }
+</style>
+</head>
+<body>
+<main>
+  <h1>PANTHEON</h1>
+  <p class="sub">Reference docs for the <a href="https://github.com/X64Tyko/Pantheon">Pantheon</a> media platform — Kairos (scheduling/library engine), Hades (management UI), Hermes (streaming server), Hephaestus (transcoding).</p>
+
+  <ul class="docs">
+    <li class="doc">
+      <a href="HADES%20Scheduling%20Diagram.html">
+        <div class="title">HADES Scheduling Diagram</div>
+        <div class="desc">How a channel fills itself — blocks, cursors, advancement modes, rerun pools, filler, and bumpers, kept in sync with the current Kairos scheduler implementation.</div>
+      </a>
+    </li>
+  </ul>
+
+  <footer>More docs land here over time — add a file to <code>docs/</code> and a link to this index.</footer>
+</main>
+</body>
+</html>
