@@ -99,6 +99,13 @@ public:
                      const std::string& poster_url,
                      const std::string& overview);
 
+    // Re-fetches and re-applies full metadata (overview, genres, images, etc.)
+    // from whichever scraper is already matched to this item — same
+    // fetch-and-apply path as accepting a candidate, just re-run against the
+    // existing match instead of a newly-searched one. Locked fields are still
+    // respected. False if the item has never had a confirmed match to refresh.
+    bool refreshMetadata(const std::string& kairos_id, const std::string& item_type);
+
     // Live search of enabled scrapers
     struct SearchResult {
         std::string source;

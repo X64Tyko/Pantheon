@@ -1026,6 +1026,22 @@ bool ScraperManager::manualMatch(const std::string& kairos_id,
     return acceptCandidate(cid);
 }
 
+bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::string& item_type) {
+    // acceptCandidate() is the one place a match is ever confirmed (see its
+    // own comment), so the most recently accepted row is the currently
+    // matched source+external_id — re-running acceptCandidate() on it re-does
+    // the exact same fetch-and-apply flow with fresh data from the scraper.
+    SQLite::Statement q(db_.get(), R"(
+        SELECT candidate_id FROM item_match_candidate
+        WHERE item_type=? AND kairos_id=? AND accepted=1
+        ORDER BY rowid DESC LIMIT 1
+    )");
+    q.bind(1, item_type);
+    q.bind(2, kairos_id);
+    if (!q.executeStep()) return false;
+    return acceptCandidate(q.getColumn(0).getString());
+}
+
 // ── Live search ───────────────────────────────────────────────────────────────
 
 std::vector<ScraperManager::SearchResult>

@@ -149,7 +149,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<ChannelService>(ctx));
 	services_.push_back(std::make_unique<KairosService>(ctx));
 	services_.push_back(std::make_unique<BlockService>(ctx));
-	services_.push_back(std::make_unique<ContentService>(ctx));
+	services_.push_back(std::make_unique<ContentService>(ctx, *scraper_mgr_));
 	services_.push_back(std::make_unique<ChapterService>(ctx));
 	services_.push_back(std::make_unique<PlaylistService>(ctx));
 	services_.push_back(std::make_unique<FillerService>(ctx));

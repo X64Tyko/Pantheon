@@ -75,25 +75,26 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
     }
   }
 
-  // Refresh images (admin) — clears Kairos's own image cache for this item's
-  // poster/backdrop so a source-side artwork update (or a stale poster left
-  // over from a since-corrected Fix Match) shows up immediately instead of
-  // waiting out image_cache_ttl_hours.
-  const [refreshingImages, setRefreshingImages] = useState(false)
-  const [refreshImagesResult, setRefreshImagesResult] = useState<string | null>(null)
+  // Refresh metadata (admin) — re-fetches overview/genres/images/etc. from
+  // whichever scraper this item is already matched to (same apply path as
+  // accepting a match, just re-run against the existing one), then clears
+  // Kairos's own image cache so a same-URL-but-updated poster/backdrop shows
+  // up immediately instead of waiting out image_cache_ttl_hours.
+  const [refreshingMetadata, setRefreshingMetadata] = useState(false)
+  const [refreshMetadataResult, setRefreshMetadataResult] = useState<string | null>(null)
 
-  const handleRefreshImages = async () => {
+  const handleRefreshMetadata = async () => {
     if (!id) return
-    setRefreshingImages(true)
-    setRefreshImagesResult(null)
+    setRefreshingMetadata(true)
+    setRefreshMetadataResult(null)
     try {
-      await api.refreshImages(id, contentType)
-      refetchDetail() // also busts the browser-side image cache — see useMediaDetail's bust()
-      setRefreshImagesResult('Refreshed')
-    } catch {
-      setRefreshImagesResult('Failed to refresh images.')
+      await api.refreshMetadata(id, contentType)
+      refetchDetail() // re-fetches detail fields and busts the browser-side image cache — see useMediaDetail's bust()
+      setRefreshMetadataResult('Refreshed')
+    } catch (e: any) {
+      setRefreshMetadataResult(e.message ?? 'Failed to refresh metadata.')
     } finally {
-      setRefreshingImages(false)
+      setRefreshingMetadata(false)
     }
   }
 
@@ -242,21 +243,22 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
               </div>
             )}
             <button
-              onClick={handleRefreshImages}
-              disabled={refreshingImages}
-              title="Re-fetch this item's poster and backdrop, bypassing the image cache"
+              onClick={handleRefreshMetadata}
+              disabled={refreshingMetadata || !detail?.match_confirmed}
+              title={detail?.match_confirmed ? "Re-fetch this item's metadata (overview, genres, images, etc.) from its matched scraper" : 'Confirm this match (Fix Match) before refreshing metadata'}
               style={{
-                alignSelf: 'flex-start', padding: '8px 16px', borderRadius: 7, cursor: refreshingImages ? 'not-allowed' : 'pointer',
+                alignSelf: 'flex-start', padding: '8px 16px', borderRadius: 7,
+                cursor: (refreshingMetadata || !detail?.match_confirmed) ? 'not-allowed' : 'pointer',
                 border: '1px solid var(--hds-line)', background: 'transparent',
                 color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                opacity: refreshingImages ? 0.5 : 1,
+                opacity: (refreshingMetadata || !detail?.match_confirmed) ? 0.5 : 1,
               }}
             >
-              {refreshingImages ? 'Refreshing…' : 'Refresh Images'}
+              {refreshingMetadata ? 'Refreshing…' : 'Refresh Metadata'}
             </button>
-            {refreshImagesResult && (
+            {refreshMetadataResult && (
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
-                {refreshImagesResult}
+                {refreshMetadataResult}
               </div>
             )}
           </>

@@ -10,6 +10,7 @@
 #include "../../db/SourceRepository.h"
 #include "../../model/WritebackFields.h"
 #include "../../scraper/RatingSeverity.h"
+#include "../../scraper/ScraperManager.h"
 #include "../../source/IMediaSource.h"
 #include "../../source/MediaProbe.h"
 #include "../../source/SyncManager.h"
@@ -65,8 +66,8 @@ static void clearImageCache(const std::string& imgPath, const std::string& sourc
 	fs::remove(cache_dir / (hash + ".ct"), ec);
 }
 
-ContentService::ContentService(const ServiceContext& ctx)
-	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync) {}
+ContentService::ContentService(const ServiceContext& ctx, ScraperManager& scraper)
+	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync), scraper_(scraper) {}
 
 namespace {
 
@@ -252,21 +253,26 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		proxyImage(req, req.get_param_value("url"), "", res);
 	});
 
-	// Force a re-fetch of this item's poster/backdrop next time they're
-	// requested, rather than waiting out image_cache_ttl_hours — e.g. after
-	// a source updated its artwork, or right after Fix Match to make sure a
-	// stale poster from the previous (wrong) match can't linger.
-	svr.Post("/api/shows/:id/refresh-images", [this](const Req& req, Res& res) {
+	// Re-fetch and re-apply this item's full metadata (overview, genres,
+	// images, etc.) from whichever scraper it's already matched to, then
+	// clear the image cache so a same-URL-but-updated poster/backdrop
+	// doesn't keep serving stale cached bytes for the rest of
+	// image_cache_ttl_hours. Locked fields are still respected (same as any
+	// other match-apply path). 404 if the item has no confirmed match to
+	// refresh from — nothing to re-fetch.
+	svr.Post("/api/shows/:id/refresh-metadata", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
+		if (!scraper_.refreshMetadata(id, "show")) { route::err(res, 404, "No confirmed match to refresh from"); return; }
 		ContentRepository repo(db_);
 		if (auto t = repo.getShowThumb(id)) clearImageCache(t->image_path, t->source_id);
 		if (auto a = repo.getShowArt(id))   clearImageCache(a->image_path, a->source_id);
 		route::ok(res, json{{"ok", true}}.dump());
 	});
-	svr.Post("/api/movies/:id/refresh-images", [this](const Req& req, Res& res) {
+	svr.Post("/api/movies/:id/refresh-metadata", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
+		if (!scraper_.refreshMetadata(id, "movie")) { route::err(res, 404, "No confirmed match to refresh from"); return; }
 		ContentRepository repo(db_);
 		if (auto t = repo.getMovieThumb(id)) clearImageCache(t->image_path, t->source_id);
 		if (auto a = repo.getMovieArt(id))   clearImageCache(a->image_path, a->source_id);
