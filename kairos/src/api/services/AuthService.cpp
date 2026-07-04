@@ -150,4 +150,35 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 			req.path_params.at("id"), req.path_params.at("entity_type"), req.path_params.at("entity_id"));
 		route::ok(res, json{{"ok", true}}.dump());
 	});
+
+	// Mints a viewer-capped session for handing off to a Cast receiver (see
+	// hades/src/cast/ and pantheon-relay) — any authenticated user may mint
+	// one for themselves. The token is returned exactly once here and never
+	// re-exposed; session_id is what listSessions()/revokeSession() below
+	// operate on instead.
+	svr.Post("/api/auth/cast-token", [this](const Req&, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		auto [token, session_id] = auth_.mintCastToken(currentUser()->user_id);
+		route::ok(res, json{{"token", token}, {"session_id", session_id}}.dump());
+	});
+
+	// A user's own Cast devices — not admin-gated, this is "my devices," not
+	// a cross-user panel. purpose is currently always 'cast' in practice
+	// (the only other purpose, 'login', isn't surfaced through this path).
+	svr.Get("/api/auth/sessions", [this](const Req& req, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		std::string purpose = req.has_param("purpose") ? req.get_param_value("purpose") : "cast";
+		json arr = json::array();
+		for (const auto& s : auth_.listSessions(currentUser()->user_id, purpose))
+			arr.push_back({{"session_id", s.session_id}, {"created_at", s.created_at}, {"last_seen", s.last_seen}});
+		route::ok(res, arr.dump());
+	});
+
+	svr.Delete("/api/auth/sessions/:id", [this](const Req& req, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		if (!auth_.revokeSession(currentUser()->user_id, req.path_params.at("id"))) {
+			route::err(res, 404, "Session not found"); return;
+		}
+		route::ok(res, json{{"ok", true}}.dump());
+	});
 }

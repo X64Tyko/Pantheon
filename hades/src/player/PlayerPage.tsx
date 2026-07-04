@@ -118,6 +118,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                 : kind === 'channel' ? channelLogoUrl(targetId)
                 : undefined, // episode: no cheap thumb URL without an extra fetch — v1 scope
       },
+      route: { contentType: kind, contentId: targetId },
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCasting])

@@ -110,7 +110,13 @@ export function TvHome() {
 }
 
 function LibraryButton({ onClick }: { onClick: () => void }) {
-  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-quickaction-library', onEnterPress: onClick })
+  // forceFocus: TvHome renders outside <Layout> (under TvShell, the /tv-only
+  // shell), so Layout.tsx's own sidebar-Home forceFocus fallback never mounts
+  // here — without one of its own, a cold /tv load (e.g. right after a Cast
+  // receiver handoff) leaves nothing focused, and every arrow/D-pad press is
+  // a silent no-op forever. Matches PlayerControls.tsx's identical fallback
+  // for /player/*, another route that mounts outside <Layout>.
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-quickaction-library', onEnterPress: onClick, forceFocus: true })
   return (
     <button
       ref={ref} data-tv-focused={focused}

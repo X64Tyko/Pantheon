@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { api } from '../api/client'
 import { statusStore, helpTipsStore } from '../stores'
-import type { ArrConfig, ScraperSettings, ScraperStats } from '../api/types'
+import type { ArrConfig, CastSessionInfo, ScraperSettings, ScraperStats } from '../api/types'
 import { useFocusable } from '../nav/useFocusable'
 import { HelpTip, HelpSection } from '../channel/HelpTip'
 
@@ -103,6 +103,8 @@ export default observer(function SettingsPage() {
   const [threads,  setThreads]    = useState('')
   const [bufferSize, setBufferSize] = useState('')
   const [castAppId, setCastAppId] = useState('')
+  const [castSessions, setCastSessions] = useState<CastSessionInfo[] | null>(null)
+  const [revokingCast, setRevokingCast] = useState<string | null>(null)
 
 
   const [resetConfirm,  setResetConfirm]  = useState(false)
@@ -120,6 +122,14 @@ export default observer(function SettingsPage() {
   const [matchRunning,    setMatchRunning]    = useState(false)
   const matchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  const loadCastSessions = () => api.getCastSessions().then(setCastSessions).catch(() => setCastSessions([]))
+
+  const revokeCastSession = async (sessionId: string) => {
+    setRevokingCast(sessionId)
+    try { await api.revokeCastSession(sessionId); await loadCastSessions() }
+    finally { setRevokingCast(null) }
+  }
+
   useEffect(() => {
     api.getSettings().then(s => {
       setSettings(s)
@@ -127,6 +137,7 @@ export default observer(function SettingsPage() {
       setBufferSize(String(s.stream_buffer_size))
       setCastAppId(s.cast_app_id)
     }).catch(() => setError('Failed to load settings'))
+    loadCastSessions()
     api.getArrConfig().then(setArr).catch(() => {})
     api.getScraperSettings().then(setScraperSettings).catch(() => {})
     api.getScraperStats().then(setScraperStats).catch(() => {})
@@ -439,6 +450,38 @@ const applyBuffer = () => {
             </HelpSection>
           </HelpTip>
         </SettingRow>
+      </Section>
+
+      <Section title="Cast Devices">
+        {castSessions === null ? (
+          <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>Loading…</div>
+        ) : castSessions.length === 0 ? (
+          <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>
+            No devices paired yet — casting to a Chromecast or Google TV for the first time will add one here.
+          </div>
+        ) : (
+          castSessions.map(s => (
+            <SettingRow
+              key={s.session_id}
+              label={`Paired ${new Date(s.created_at * 1000).toLocaleDateString()}`}
+              hint={`Last used ${new Date(s.last_seen * 1000).toLocaleString()}`}
+            >
+              <NavButton
+                id={`cast-revoke-${s.session_id}`}
+                onClick={() => revokeCastSession(s.session_id)}
+                disabled={revokingCast === s.session_id}
+                style={{
+                  padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+                  border: '1px solid oklch(0.4 0.15 25)', background: 'transparent',
+                  color: 'oklch(0.65 0.2 25)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+                  opacity: revokingCast === s.session_id ? 0.5 : 1,
+                }}
+              >
+                {revokingCast === s.session_id ? 'Revoking…' : 'Revoke'}
+              </NavButton>
+            </SettingRow>
+          ))
+        )}
       </Section>
 
       <Section title="Sonarr">

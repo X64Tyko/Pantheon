@@ -9,6 +9,7 @@ import SetupPage              from './auth/SetupPage'
 import Layout                 from './components/Layout'
 import { FocusRoot }          from './nav/FocusRoot'
 import { CastProvider }       from './cast/CastProvider'
+import { CastReceiverProvider } from './cast/CastReceiverProvider'
 import ActivityPage           from './pages/ActivityPage'
 import ChannelDetailPage      from './pages/ChannelDetailPage'
 import ChannelsPage           from './pages/ChannelsPage'
@@ -44,6 +45,7 @@ export default function App() {
     <AuthProvider>
       <ErrorBoundary>
       <CastProvider />
+      <CastReceiverProvider />
       <FocusRoot>
       <Routes>
         <Route path="/login" element={<LoginPage />} />

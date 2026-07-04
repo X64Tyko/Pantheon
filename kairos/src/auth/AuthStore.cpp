@@ -92,7 +92,8 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 
 	SQLite::Statement q(db_.get(), R"(
 		SELECT u.user_id, u.username, u.role,
-		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating
+		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating,
+		       s.purpose
 		FROM session s
 		JOIN user u ON u.user_id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
@@ -109,6 +110,13 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	user.max_tv_rating       = q.getColumn(4).getString();
 	user.max_movie_rating    = q.getColumn(5).getString();
 	user.max_channel_rating  = q.getColumn(6).getString();
+
+	// A 'cast'-purpose session (minted for handing off to a Cast receiver,
+	// see mintCastToken) is always viewer-capped — this is the actual
+	// security boundary, independent of the client-sent
+	// "X-Pantheon-Surface: tv" downgrade header, which only works if the
+	// holder cooperates with sending it.
+	if (q.getColumn(7).getString() == "cast") user.role = "viewer";
 
 	SQLite::Statement upd(db_.get(),
 		"UPDATE session SET last_seen = ? WHERE token = ?");
@@ -201,6 +209,55 @@ void AuthStore::updateRestriction(const std::string& user_id, bool restricted,
 	u.bind(4, max_channel_rating);
 	u.bind(5, user_id);
 	u.exec();
+}
+
+std::pair<std::string, std::string> AuthStore::mintCastToken(const std::string& user_id) {
+	const std::string token      = generateToken();
+	const std::string session_id = generateToken();
+	const int64_t     now        = static_cast<int64_t>(std::time(nullptr));
+
+	SQLite::Statement ins(db_.get(), R"(
+		INSERT INTO session (token, user_id, created_at, expires_at, last_seen, purpose, session_id)
+		VALUES (?, ?, ?, ?, ?, 'cast', ?)
+	)");
+	ins.bind(1, token);
+	ins.bind(2, user_id);
+	ins.bind(3, now);
+	ins.bind(4, now + SESSION_TTL);
+	ins.bind(5, now);
+	ins.bind(6, session_id);
+	ins.exec();
+
+	return {token, session_id};
+}
+
+std::vector<SessionInfo> AuthStore::listSessions(const std::string& user_id, const std::string& purpose) const {
+	SQLite::Statement q(db_.get(), R"(
+		SELECT session_id, created_at, last_seen
+		FROM session
+		WHERE user_id = ? AND purpose = ? AND session_id IS NOT NULL
+		ORDER BY created_at DESC
+	)");
+	q.bind(1, user_id);
+	q.bind(2, purpose);
+
+	std::vector<SessionInfo> out;
+	while (q.executeStep()) {
+		out.push_back({
+			q.getColumn(0).getString(),
+			q.getColumn(1).getInt64(),
+			q.getColumn(2).getInt64(),
+		});
+	}
+	return out;
+}
+
+bool AuthStore::revokeSession(const std::string& user_id, const std::string& session_id) {
+	SQLite::Statement d(db_.get(), "DELETE FROM session WHERE user_id = ? AND session_id = ?");
+	d.bind(1, user_id);
+	d.bind(2, session_id);
+	d.exec();
+	return db_.get().getChanges() > 0;
 }
 
 // ---------------------------------------------------------------------------

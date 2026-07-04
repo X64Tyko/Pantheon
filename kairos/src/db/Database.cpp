@@ -1475,6 +1475,18 @@ constexpr Migration kMigrations[] = {
     );
 )SQL" }
 
+// ── v64: session.purpose / session_id — lets a session be tagged as a
+//   viewer-scoped Cast-receiver token distinct from a normal login
+//   ('login' vs 'cast'; enforced at AuthStore::validate() time, not just by
+//   convention). session_id is a separate, non-secret identifier the client
+//   can be given to list/revoke a cast session by — the raw token itself is
+//   never sent back down after the session is created.
+,{ 64, R"SQL(
+    ALTER TABLE session ADD COLUMN purpose    TEXT NOT NULL DEFAULT 'login';
+    ALTER TABLE session ADD COLUMN session_id TEXT;
+    CREATE UNIQUE INDEX idx_session_session_id ON session(session_id);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

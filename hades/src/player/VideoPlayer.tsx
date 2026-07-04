@@ -1,5 +1,6 @@
 import { useEffect, type RefObject } from 'react'
 import Hls from 'hls.js'
+import { registerReceiverVideoElement } from '../cast/CastReceiverProvider'
 
 interface VideoPlayerProps {
   videoRef:     RefObject<HTMLVideoElement>
@@ -38,6 +39,7 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
       hls = new Hls(isLive ? {} : { startPosition: 0 })
       hls.loadSource(manifestUrl)
       hls.attachMedia(video)
+      registerReceiverVideoElement(video)
       hls.on(Hls.Events.ERROR, (_evt, data) => {
         if (!data.fatal) return
         switch (data.type) {
@@ -55,6 +57,7 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari: native HLS, no hls.js needed.
       video.src = manifestUrl
+      registerReceiverVideoElement(video)
       if (autoPlay) video.play().catch(() => {})
     } else {
       onError('This browser cannot play HLS video.')

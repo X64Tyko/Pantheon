@@ -20,6 +20,17 @@ export interface AuthResponse {
   user:  User
 }
 
+export interface CastTokenResponse {
+  token:      string
+  session_id: string
+}
+
+export interface CastSessionInfo {
+  session_id: string
+  created_at: number
+  last_seen:  number
+}
+
 export interface Source {
   source_id:    string
   source_type:  'plex' | 'jellyfin' | 'emby' | 'local'

@@ -2,6 +2,7 @@ import type {
   ArrConfig, ArrLookupResult, ArrServiceOptions,
   AuthResponse,
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
+  CastSessionInfo, CastTokenResponse,
   Channel, ContentOverride, ContentRequest, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
   ActivitySession,
   Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, MediaLanguages, ShowGroupingResult, StartScope,
@@ -76,6 +77,9 @@ export const api = {
   login:       (username: string, password: string)          => request<AuthResponse>('POST', '/auth/login', { username, password }),
   logout:      ()                                            => request<void>('POST', '/auth/logout'),
   getMe:       ()                                            => request<User>('GET',  '/auth/me'),
+  mintCastToken:    ()                    => request<CastTokenResponse>('POST',   '/auth/cast-token'),
+  getCastSessions:  ()                    => request<CastSessionInfo[]>('GET',    '/auth/sessions?purpose=cast'),
+  revokeCastSession: (sessionId: string)  => request<{ ok: boolean }>('DELETE',   `/auth/sessions/${sessionId}`),
   // User management (admin only)
   getUsers:    ()                                            => request<User[]>('GET',    '/users'),
   createUser:  (username: string, password: string, role: string) => request<void>('POST', '/users', { username, password, role }),

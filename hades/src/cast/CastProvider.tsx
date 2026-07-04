@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 
+// Must match pantheon-relay/receiver/src/main.ts's own NAMESPACE constant —
+// the two repos can't share a literal, so this is duplicated by hand on
+// both sides of the handoff.
+const RELAY_NAMESPACE = 'urn:x-cast:com.pantheon.relay'
+
 declare global {
   interface Window {
     __pantheonCastReady?: boolean
@@ -94,6 +99,32 @@ export function CastProvider() {
     })
     setCastConfigured(true)
   }, [ready, appId])
+
+  // First cast to a device (pantheon-relay's bootstrap, not yet handed off
+  // to this Hades server's own /tv): mint a dedicated, revocable,
+  // viewer-scoped session (Kairos forces role=viewer server-side for
+  // purpose='cast' tokens, regardless of this account's real role — see
+  // AuthStore::validate) and hand it to the receiver over Cast's custom
+  // message channel. Only on SESSION_STARTED, not SESSION_RESUMED — a
+  // resumed session means the receiver already has a working token in its
+  // own localStorage from its first pairing (or has already taken over as
+  // its own CastReceiverContext, in which case nothing is listening on
+  // RELAY_NAMESPACE anymore and this would be a silent no-op anyway).
+  useEffect(() => {
+    if (!ready) return
+    const context = cast.framework.CastContext.getInstance()
+    const onSessionStateChanged = (event: cast.framework.SessionStateEventData) => {
+      if (event.sessionState !== cast.framework.SessionState.SESSION_STARTED) return
+      api.mintCastToken().then(({ token }) => {
+        event.session.sendMessage(RELAY_NAMESPACE, {
+          hadesOrigin: window.location.origin,
+          castToken:   token,
+        }).catch(() => {}) // no-op against a receiver that isn't pantheon-relay's bootstrap (e.g. Google's default receiver during dev)
+      }).catch(() => {})
+    }
+    context.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, onSessionStateChanged)
+    return () => context.removeEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, onSessionStateChanged)
+  }, [ready])
 
   return null
 }
