@@ -1,4 +1,5 @@
 #include "ChannelService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../ScheduleCache.h"
 #include "../../conf/ConfStore.h"
@@ -63,6 +64,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/channels", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b = json::parse(req.body);
 			std::string name         = b.value("name", "");
@@ -90,6 +92,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/channels/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -139,6 +142,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/channels/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			ChannelRepository(db_).remove(id);
@@ -172,6 +176,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/channels/:id/export", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		bool deep = (req.has_param("depth") && req.get_param_value("depth") == "deep");
 		try {
@@ -183,6 +188,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/channels/import/preview", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto body = json::parse(req.body);
 			bool deep = (body.value("depth", "shallow") == "deep");
@@ -194,6 +200,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/channels/import", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto body = json::parse(req.body);
 			bool deep = (body.value("depth", "shallow") == "deep");
@@ -210,6 +217,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	// ── Channel filler entry CRUD ─────────────────────────────────────────────
 
 	svr.Post("/api/channels/:id/filler", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -245,6 +253,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto eid = std::stoi(req.path_params.at("eid"));
 		try {
 			auto b = json::parse(req.body);
@@ -261,6 +270,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto eid = std::stoi(req.path_params.at("eid"));
 		try {
 			ChannelRepository(db_).removeFillerEntry(eid);

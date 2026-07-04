@@ -1,4 +1,5 @@
 #include "BlockService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../ScheduleCache.h"
 #include "../ServiceContext.h"
@@ -27,6 +28,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	// ── Blocks ────────────────────────────────────────────────────────────────
 
 	svr.Get("/api/channels/:id/blocks", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			BlockRepository repo(db_);
 			route::ok(res, repo.listWithContent(req.path_params.at("id")).dump());
@@ -37,6 +39,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/channels/:id/blocks", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -52,6 +55,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/channels/:id/blocks/:bid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto bid        = req.path_params.at("bid");
 		try {
@@ -104,6 +108,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/channels/:id/blocks/:bid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto bid        = req.path_params.at("bid");
 		try {
@@ -120,6 +125,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	// ── Block content ─────────────────────────────────────────────────────────
 
 	svr.Post("/api/channels/:id/blocks/:bid/content", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto bid        = req.path_params.at("bid");
 		try {
@@ -139,6 +145,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/channels/:id/blocks/:bid/content/:cid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto cid_str    = req.path_params.at("cid");
 		try {
@@ -165,6 +172,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/channels/:id/blocks/:bid/content/:cid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto cid_str    = req.path_params.at("cid");
 		try {
@@ -180,6 +188,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/channels/:id/blocks/:bid/content/:cid/cursor", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto block_id   = req.path_params.at("bid");
 		auto cid_str    = req.path_params.at("cid");
@@ -201,6 +210,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 
 	// Create Kairos playlist from block content, optionally mirrored to Plex.
 	svr.Post("/api/channels/:id/blocks/:bid/playlist", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto bid = req.path_params.at("bid");
 		try {
 			auto b = json::parse(req.body);
@@ -302,6 +312,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	// ── Block filler entries ──────────────────────────────────────────────────
 
 	svr.Post("/api/channels/:id/blocks/:bid/filler", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto block_id   = req.path_params.at("bid");
 		try {
@@ -336,6 +347,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/channels/:id/blocks/:bid/filler/:eid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto eid_str    = req.path_params.at("eid");
 		try {
@@ -353,6 +365,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/channels/:id/blocks/:bid/filler/:eid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto eid_str    = req.path_params.at("eid");
 		try {
@@ -370,6 +383,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	// ── Channel bumpers ───────────────────────────────────────────────────────
 
 	svr.Get("/api/channels/:id/bumpers", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		try {
 			auto rows   = BlockRepository(db_).listBumpers(channel_id);
@@ -396,6 +410,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/channels/:id/bumpers", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -429,6 +444,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/channels/:id/bumpers/:bid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto bid_str    = req.path_params.at("bid");
 		try {
@@ -449,6 +465,7 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/channels/:id/bumpers/:bid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto channel_id = req.path_params.at("id");
 		auto bid_str    = req.path_params.at("bid");
 		try {

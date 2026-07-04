@@ -1,4 +1,5 @@
 #include "DownloadService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../conf/ConfStore.h"
 #include "../../download/DownloadManager.h"
@@ -14,10 +15,12 @@ DownloadService::DownloadService(const ServiceContext& ctx)
 void DownloadService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/config/download", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		route::ok(res, json{{"path", conf_.getDownloadPath()}}.dump());
 	});
 
 	svr.Put("/api/config/download", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b    = json::parse(req.body);
 			auto path = b.value("path", "");
@@ -27,6 +30,7 @@ void DownloadService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/download/jobs", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b    = json::parse(req.body);
 			auto url  = b.value("url", "");
@@ -41,6 +45,7 @@ void DownloadService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/download/jobs", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto jobs = dl_.getJobs();
 		json result = json::array();
 		for (const auto& j : jobs) {

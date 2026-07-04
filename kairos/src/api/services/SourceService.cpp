@@ -1,4 +1,5 @@
 #include "SourceService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../db/SourceRepository.h"
 #include "../../log/LogBuffer.h"
@@ -21,6 +22,7 @@ SourceService::SourceService(const ServiceContext& ctx)
 void SourceService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/sources/types", [](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json types = {
 			{{"type","plex"},     {"display_name","Plex"},        {"supported",true}},
 			{{"type","jellyfin"}, {"display_name","Jellyfin"},    {"supported",true}},
@@ -31,6 +33,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/sources", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json result = json::array();
 		for (const auto& s : SourceRepository(db_).listSources())
 			result.push_back({{"source_id", s.source_id}, {"source_type", s.source_type},
@@ -40,6 +43,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/sources", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b = json::parse(req.body);
 			std::string source_id    = b.value("source_id",    "");
@@ -64,6 +68,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/sources/test", [](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b = json::parse(req.body);
 			std::string source_type = b.value("source_type", "");
@@ -155,6 +160,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/sources/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			SourceRepository(db_).removeSource(id);
@@ -168,6 +174,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/sources/:id/libraries/available", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id  = req.path_params.at("id");
 		auto src = sync_.findSource(id);
 		if (!src)                { route::err(res, 404, "source not found or not loaded"); return; }
@@ -181,6 +188,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/sources/:id/fs", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id  = req.path_params.at("id");
 		auto src = sync_.findSource(id);
 		if (!src)                         { route::err(res, 404, "source not found"); return; }
@@ -195,6 +203,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/sources/:id/libraries", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto source_id = req.path_params.at("id");
 		json result = json::array();
 		for (const auto& lib : SourceRepository(db_).listLibraries(source_id))
@@ -208,6 +217,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/sources/:id/libraries", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto source_id = req.path_params.at("id");
 			auto b = json::parse(req.body);
@@ -234,6 +244,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/sources/:id/libraries/:lid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto lid = req.path_params.at("lid");
 		try {
 			auto b = json::parse(req.body);
@@ -257,6 +268,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/sources/:id/libraries/:lid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id  = req.path_params.at("id");
 		auto lid = req.path_params.at("lid");
 		try {
@@ -270,6 +282,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/sources/:id/sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		sync_.triggerSync(id);
 		res.status = 202;
@@ -277,6 +290,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/sources/:id/browse/:kind", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto source_id = req.path_params.at("id");
 		auto kind      = req.path_params.at("kind");
 		auto src = sync_.findSource(source_id);
@@ -302,6 +316,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/sources/:id/browse/:kind/:eid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto source_id = req.path_params.at("id");
 		auto kind      = req.path_params.at("kind");
 		auto eid       = req.path_params.at("eid");
@@ -337,11 +352,13 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/sources/:id/sample-path", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto sample = SourceRepository(db_).samplePath(req.path_params.at("id"));
 		route::ok(res, json{{"path", sample ? json(*sample) : json(nullptr)}}.dump());
 	});
 
 	svr.Get("/api/sync/status", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		route::ok(res, json{{"running", sync_.isSyncing()}}.dump());
 	});
 }

@@ -1,4 +1,5 @@
 #include "ChapterService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../ServiceContext.h"
 #include "../../db/SourceRepository.h"
@@ -32,6 +33,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	// ── Create (manual) ──────────────────────────────────────────────────────
 
 	svr.Post("/api/episodes/:id/chapters", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json body;
 		try { body = json::parse(req.body); }
 		catch (...) { route::err(res, 400, "invalid JSON"); return; }
@@ -43,6 +45,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/movies/:id/chapters", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json body;
 		try { body = json::parse(req.body); }
 		catch (...) { route::err(res, 400, "invalid JSON"); return; }
@@ -56,6 +59,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	// ── Update ────────────────────────────────────────────────────────────────
 
 	svr.Patch("/api/chapters/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
 		json body;
 		try { body = json::parse(req.body); }
@@ -67,6 +71,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	// ── Delete ────────────────────────────────────────────────────────────────
 
 	svr.Delete("/api/chapters/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
 		repo_.remove(req.path_params.at("id"));
 		res.status = 204;
@@ -75,6 +80,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	// ── Per-item sync (all sources) ───────────────────────────────────────────
 
 	svr.Post("/api/episodes/:id/chapters/sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		const std::string kairos_id = req.path_params.at("id");
 		auto resolved = SourceRepository(db_).resolveItemSource("episode", kairos_id);
 		if (!resolved) { route::err(res, 404, "episode not found"); return; }
@@ -86,6 +92,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/movies/:id/chapters/sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		const std::string kairos_id = req.path_params.at("id");
 		auto resolved = SourceRepository(db_).resolveItemSource("movie", kairos_id);
 		if (!resolved) { route::err(res, 404, "movie not found"); return; }
@@ -99,6 +106,7 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 	// ── Writeback stub ────────────────────────────────────────────────────────
 
 	svr.Post("/api/chapters/:id/writeback", [](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		route::err(res, 501, "writeback not yet implemented");
 	});
 }

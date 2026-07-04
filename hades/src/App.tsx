@@ -4,6 +4,7 @@ import { AuthProvider }       from './auth/AuthContext'
 import { ErrorBoundary }      from './components/ErrorBoundary'
 import LoginPage              from './auth/LoginPage'
 import ProtectedRoute         from './auth/ProtectedRoute'
+import AdminRoute             from './auth/AdminRoute'
 import SetupPage              from './auth/SetupPage'
 import Layout                 from './components/Layout'
 import { FocusRoot }          from './nav/FocusRoot'
@@ -71,17 +72,29 @@ export default function App() {
 
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
-            <Route path="library"      element={<LibraryPage />} />
-            <Route path="sources"      element={<SourcesPage />} />
-            <Route path="channels"     element={<ChannelsPage />} />
-            <Route path="channels/:id" element={<ChannelDetailPage />} />
-            <Route path="playlists"    element={<PlaylistPage />} />
-            <Route path="filler"       element={<FillerPage />} />
-            <Route path="downloads"    element={<DownloadPage />} />
-            <Route path="activity"     element={<ActivityPage />} />
-            <Route path="review"       element={<ReviewPage />} />
-            <Route path="settings"     element={<SettingsPage />} />
-            <Route path="users"        element={<UsersPage />} />
+            <Route path="library" element={<LibraryPage />} />
+
+            {/* Everything else under Layout is admin-only — system/source/
+                channel configuration, scraper+credential settings, download
+                triggering, and internal activity/logs. Viewers get browsing
+                (Home/Library), requesting content (from within Library's
+                detail view), and /tv. Nav-link visibility (Layout.tsx's
+                navItems) hides these from viewers cosmetically, but only
+                this route guard actually stops direct URL navigation —
+                the two need to be kept in sync by hand, there's no single
+                shared source of truth for "admin-only" between them. */}
+            <Route element={<AdminRoute />}>
+              <Route path="sources"      element={<SourcesPage />} />
+              <Route path="channels"     element={<ChannelsPage />} />
+              <Route path="channels/:id" element={<ChannelDetailPage />} />
+              <Route path="playlists"    element={<PlaylistPage />} />
+              <Route path="filler"       element={<FillerPage />} />
+              <Route path="downloads"    element={<DownloadPage />} />
+              <Route path="activity"     element={<ActivityPage />} />
+              <Route path="review"       element={<ReviewPage />} />
+              <Route path="settings"     element={<SettingsPage />} />
+              <Route path="users"        element={<UsersPage />} />
+            </Route>
           </Route>
         </Route>
       </Routes>

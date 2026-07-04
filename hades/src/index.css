@@ -357,7 +357,7 @@ body {
     flex-direction: column;
   }
   .hds-sidebar-desktop {
-    display: none;
+    display: none !important;
   }
   .hds-mobile-topbar {
     display: flex;

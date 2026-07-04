@@ -1,4 +1,5 @@
 #include "ArrService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../arr/ArrServiceFactory.h"
 #include "../../arr/IArrService.h"
@@ -14,6 +15,7 @@ ArrService::ArrService(const ServiceContext& ctx) : db_(ctx.db) {}
 void ArrService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/config/arr", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		ConfigRepository cfg(db_);
 		route::ok(res, json{
 			{"sonarr_url",     cfg.getValue("sonarr_url")},
@@ -24,6 +26,7 @@ void ArrService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/config/arr", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b = json::parse(req.body);
 			ConfigRepository cfg(db_);
@@ -38,6 +41,7 @@ void ArrService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/arr/lookup", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b    = json::parse(req.body);
 			auto type = b.value("type", "");
@@ -73,6 +77,7 @@ void ArrService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/arr/options/:type", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto svc = ArrServiceFactory::make(req.path_params.at("type"), db_);
 		if (!svc) { route::err(res, 400, "arr service not configured"); return; }
 		auto opts = svc->getOptions();
@@ -86,6 +91,7 @@ void ArrService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/arr/add", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b   = json::parse(req.body);
 			auto svc = ArrServiceFactory::make(b.value("type", ""), db_);

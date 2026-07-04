@@ -1,4 +1,5 @@
 #include "FillerService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "PlexSyncHelper.h"
 #include "../../db/FillerRepository.h"
@@ -16,6 +17,7 @@ FillerService::FillerService(const ServiceContext& ctx)
 void FillerService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/filler-lists", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			json result = json::array();
 			for (const auto& r : FillerRepository(db_).listAll()) {
@@ -43,18 +45,21 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 
 	// Must register before /:id routes
 	svr.Post("/api/filler-lists/plex-sync-all", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		sync_.triggerPlexLinkSync();
 		res.status = 202;
 		route::ok(res, json{{"status","accepted"}}.dump());
 	});
 
 	svr.Post("/api/filler-lists/source-sync-all", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		sync_.triggerPlexLinkSync();
 		res.status = 202;
 		route::ok(res, json{{"status","accepted"}}.dump());
 	});
 
 	svr.Post("/api/filler-lists", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b = json::parse(req.body);
 			std::string title       = b.value("title",       "");
@@ -67,6 +72,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/filler-lists/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto id = req.path_params.at("id");
 			auto d = FillerRepository(db_).getDetail(id);
@@ -91,6 +97,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/filler-lists/:id/plex-sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b           = json::parse(req.body);
@@ -105,6 +112,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/filler-lists/:id/source-sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b           = json::parse(req.body);
@@ -119,6 +127,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/filler-lists/:id/plex-link", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			FillerRepository(db_).unlinkPlex(id);
@@ -131,6 +140,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/filler-lists/:id/source-link", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			FillerRepository(db_).unlinkPlex(id);
@@ -143,6 +153,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/filler-lists/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -154,6 +165,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/filler-lists/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			FillerRepository(db_).remove(id);
@@ -165,6 +177,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/filler-lists/:id/items", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto fid = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -179,6 +192,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/filler-lists/:id/items/:iid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto iid = std::stoi(req.path_params.at("iid"));
 		try {
 			FillerRepository(db_).removeItem(iid);
@@ -190,6 +204,7 @@ void FillerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/filler-lists/:id/items/bulk", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto fid = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);

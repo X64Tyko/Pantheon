@@ -1,4 +1,5 @@
 #include "ConfigService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../conf/ConfStore.h"
 #include "../../db/ConfigRepository.h"
@@ -44,10 +45,12 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	};
 
 	svr.Get("/api/config/settings", [settingsJson](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		route::ok(res, settingsJson().dump());
 	});
 
 	svr.Patch("/api/config/settings", [this, persistFlag, settingsJson](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b = json::parse(req.body);
 			if (b.contains("epg_debug") && b["epg_debug"].is_boolean()) {
@@ -91,6 +94,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/config/epg/clear-all", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			int affected = ScheduleRepository(db_).clearAllScheduled();
 			route::ok(res, json{{"cleared", affected}}.dump());
@@ -104,6 +108,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	// source mappings so the next sync starts completely fresh. Keeps source/library
 	// configuration, channels, users, and settings intact.
 	svr.Post("/api/config/library/reset", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			SQLite::Transaction txn(db_.get());
 
@@ -143,6 +148,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/config/credentials", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json result = json::array();
 		for (const auto& r : SourceRepository(db_).listSourcesBasic()) {
 			result.push_back({
@@ -157,12 +163,14 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/config/credentials/:source_id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto sid = req.path_params.at("source_id");
 		route::ok(res, json{{"has_token",   conf_.hasToken(sid)},
 		                    {"has_user_id", conf_.hasUserId(sid)}}.dump());
 	});
 
 	svr.Put("/api/config/credentials/:source_id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto sid     = req.path_params.at("source_id");
 			auto b       = json::parse(req.body);
@@ -180,6 +188,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/config/credentials/:source_id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto sid = req.path_params.at("source_id");
 		try {
 			conf_.removeSource(sid);
@@ -192,6 +201,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/config/path-maps/:source_id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto sid  = req.path_params.at("source_id");
 		auto maps = conf_.getPathMaps(sid);
 		json result = json::array();
@@ -201,6 +211,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Put("/api/config/path-maps/:source_id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto sid = req.path_params.at("source_id");
 			auto b   = json::parse(req.body);

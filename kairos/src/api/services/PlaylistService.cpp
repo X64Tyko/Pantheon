@@ -1,4 +1,5 @@
 #include "PlaylistService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "PlexSyncHelper.h"
 #include "../../db/PlaylistRepository.h"
@@ -16,6 +17,7 @@ PlaylistService::PlaylistService(const ServiceContext& ctx)
 void PlaylistService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/playlists", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			json result = json::array();
 			for (const auto& r : PlaylistRepository(db_).listAll()) {
@@ -43,18 +45,21 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 
 	// Must register before /:id routes
 	svr.Post("/api/playlists/plex-sync-all", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		sync_.triggerPlexLinkSync();
 		res.status = 202;
 		route::ok(res, json{{"status","accepted"}}.dump());
 	});
 
 	svr.Post("/api/playlists/source-sync-all", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		sync_.triggerPlexLinkSync();
 		res.status = 202;
 		route::ok(res, json{{"status","accepted"}}.dump());
 	});
 
 	svr.Post("/api/playlists", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto b = json::parse(req.body);
 			std::string title = b.value("title", "");
@@ -66,6 +71,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/playlists/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		try {
 			auto id = req.path_params.at("id");
 			auto d = PlaylistRepository(db_).getDetail(id);
@@ -93,6 +99,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/playlists/:id/plex-sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b           = json::parse(req.body);
@@ -107,6 +114,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/playlists/:id/source-sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b           = json::parse(req.body);
@@ -121,6 +129,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/playlists/:id/plex-link", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			PlaylistRepository(db_).unlinkPlex(id);
@@ -133,6 +142,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/playlists/:id/source-link", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			PlaylistRepository(db_).unlinkPlex(id);
@@ -145,6 +155,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/playlists/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -162,6 +173,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/playlists/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
 		try {
 			PlaylistRepository(db_).remove(id);
@@ -173,6 +185,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/playlists/:id/items", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto playlist_id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -187,6 +200,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Post("/api/playlists/:id/items/bulk", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto playlist_id = req.path_params.at("id");
 		try {
 			auto b = json::parse(req.body);
@@ -199,6 +213,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Delete("/api/playlists/:id/items/:iid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto playlist_id = req.path_params.at("id");
 		auto iid         = std::stoi(req.path_params.at("iid"));
 		try {
@@ -211,6 +226,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Patch("/api/playlists/:id/items/:iid", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto playlist_id = req.path_params.at("id");
 		auto iid         = std::stoi(req.path_params.at("iid"));
 		try {
