@@ -336,72 +336,89 @@ std::vector<Episode> JellyfinBaseSource::fetchEpisodes(const std::string& extern
         }
     }
 
-    // Step 2: episode list.
-    const std::string epath =
+    // Step 2: episode list — paginated the same way as fetchShows/fetchMovies.
+    // Long-running shows (soaps, procedurals, some anime) can have thousands
+    // of episodes; a single unpaginated request here was the same class of
+    // bug PlexSource::fetchEpisodes had before its /allLeaves paging fix.
+    const std::string base_epath =
         "/Shows/" + external_show_id + "/Episodes"
         "?UserId=" + user_id_ +
-        "&Fields=Overview,MediaSources,PremiereDate&EnableTotalRecordCount=false";
-    auto res = client.Get(epath);
-    if (!res) {
-        std::cerr << "[" << sourceType() << ":" << source_id_
-                  << "] /Shows/" << external_show_id
-                  << "/Episodes — " << httplib::to_string(res.error()) << '\n';
-        return {};
-    }
-    if (res->status != 200) {
-        std::cerr << "[" << sourceType() << ":" << source_id_
-                  << "] /Shows/" << external_show_id
-                  << "/Episodes — HTTP " << res->status << '\n';
-        return {};
-    }
+        "&Fields=Overview,MediaSources,PremiereDate&EnableTotalRecordCount=false"
+        "&Limit=500";
 
     std::vector<Episode> result;
-    try {
-        auto j = json::parse(res->body);
-        for (const auto& item : j["Items"]) {
-            std::string file_path;
-            if (item.contains("MediaSources") && !item["MediaSources"].empty())
-                file_path = item["MediaSources"][0].value("Path", "");
-            if (file_path.empty()) continue;
-
-            const std::string id = item["Id"].get<std::string>();
-            const int season     = item.value("ParentIndexNumber", 0);
-
-            Episode ep;
-            ep.episode_id  = id;
-            ep.show_id     = item.value("SeriesId", external_show_id);
-            ep.season      = season;
-            ep.episode     = item.value("IndexNumber", 0);
-            ep.title       = item.value("Name", "");
-            ep.file_path   = std::move(file_path);
-            ep.overview    = item.value("Overview", "");
-            ep.thumb       = thumbPath(id, item);
-
-            if (item.contains("PremiereDate") && !item["PremiereDate"].is_null())
-                ep.air_date = isoDate(item["PremiereDate"].get<std::string>());
-
-            {
-                int64_t ticks = 0;
-                if (item.contains("RunTimeTicks") && !item["RunTimeTicks"].is_null())
-                    ticks = item["RunTimeTicks"].get<int64_t>();
-                if (ticks <= 0 && item.contains("MediaSources") && !item["MediaSources"].empty())
-                    ticks = item["MediaSources"][0].value("RunTimeTicks", int64_t{0});
-                ep.duration_ms = ticks / 10000;
-            }
-
-            if (item.contains("AbsoluteEpisodeNumber") && !item["AbsoluteEpisodeNumber"].is_null())
-                ep.absolute_index = item["AbsoluteEpisodeNumber"].get<int>();
-
-            auto sn_it = season_names.find(season);
-            if (sn_it != season_names.end())
-                ep.season_name = sn_it->second;
-
-            result.push_back(std::move(ep));
+    int start_index = 0;
+    while (true) {
+        const std::string epath = base_epath + "&StartIndex=" + std::to_string(start_index);
+        auto res = client.Get(epath);
+        if (!res) {
+            std::cerr << "[" << sourceType() << ":" << source_id_
+                      << "] /Shows/" << external_show_id
+                      << "/Episodes — " << httplib::to_string(res.error()) << '\n';
+            break;
         }
-    } catch (const json::exception& e) {
-        std::cerr << "[" << sourceType() << ":" << source_id_
-                  << "] parse error (episodes " << external_show_id
-                  << "): " << e.what() << '\n';
+        if (res->status != 200) {
+            std::cerr << "[" << sourceType() << ":" << source_id_
+                      << "] /Shows/" << external_show_id
+                      << "/Episodes — HTTP " << res->status << '\n';
+            break;
+        }
+
+        int page_count = 0;
+        try {
+            auto j = json::parse(res->body);
+            const auto& items = j["Items"];
+            page_count = static_cast<int>(items.size());
+
+            for (const auto& item : items) {
+                std::string file_path;
+                if (item.contains("MediaSources") && !item["MediaSources"].empty())
+                    file_path = item["MediaSources"][0].value("Path", "");
+                if (file_path.empty()) continue;
+
+                const std::string id = item["Id"].get<std::string>();
+                const int season     = item.value("ParentIndexNumber", 0);
+
+                Episode ep;
+                ep.episode_id  = id;
+                ep.show_id     = item.value("SeriesId", external_show_id);
+                ep.season      = season;
+                ep.episode     = item.value("IndexNumber", 0);
+                ep.title       = item.value("Name", "");
+                ep.file_path   = std::move(file_path);
+                ep.overview    = item.value("Overview", "");
+                ep.thumb       = thumbPath(id, item);
+
+                if (item.contains("PremiereDate") && !item["PremiereDate"].is_null())
+                    ep.air_date = isoDate(item["PremiereDate"].get<std::string>());
+
+                {
+                    int64_t ticks = 0;
+                    if (item.contains("RunTimeTicks") && !item["RunTimeTicks"].is_null())
+                        ticks = item["RunTimeTicks"].get<int64_t>();
+                    if (ticks <= 0 && item.contains("MediaSources") && !item["MediaSources"].empty())
+                        ticks = item["MediaSources"][0].value("RunTimeTicks", int64_t{0});
+                    ep.duration_ms = ticks / 10000;
+                }
+
+                if (item.contains("AbsoluteEpisodeNumber") && !item["AbsoluteEpisodeNumber"].is_null())
+                    ep.absolute_index = item["AbsoluteEpisodeNumber"].get<int>();
+
+                auto sn_it = season_names.find(season);
+                if (sn_it != season_names.end())
+                    ep.season_name = sn_it->second;
+
+                result.push_back(std::move(ep));
+            }
+        } catch (const json::exception& e) {
+            std::cerr << "[" << sourceType() << ":" << source_id_
+                      << "] parse error (episodes " << external_show_id
+                      << "): " << e.what() << '\n';
+            break;
+        }
+
+        if (page_count < 500) break;
+        start_index += page_count;
     }
 
     std::sort(result.begin(), result.end(), [](const Episode& a, const Episode& b) {

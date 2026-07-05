@@ -68,82 +68,99 @@ std::vector<LibraryInfo> PlexSource::listAvailableLibraries() {
 // ---------------------------------------------------------------------------
 
 std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
-    auto res = get("/library/sections/" + external_lib_id + "/all?type=2");
-    if (!res || res->status != 200) return {};
-
+    // Paginated (see fetchMovies for why) — a single request for the whole
+    // section is what forced the read timeout up to 120s in the first place,
+    // and large enough libraries can still exceed that in one shot.
+    constexpr int kPageSize = 200;
     std::vector<Show> result;
-    try {
-        auto j = json::parse(res->body);
-        const auto& items = j["MediaContainer"]["Metadata"];
-        result.reserve(items.size());
-        for (const auto& item : items) {
-            Show show;
-            show.show_id        = item["ratingKey"].get<std::string>();
-            show.title          = item["title"].get<std::string>();
-            show.content_rating = item.value("contentRating", "");
-            show.overview       = item.value("summary", "");
-            show.studio         = item.value("studio", "");
-            show.status         = item.value("status", "");
-            show.thumb          = item.value("thumb", "");
-            show.art            = item.value("art", "");
-            show.originally_available_at = item.value("originallyAvailableAt", "");
-            if (item.contains("year") && !item["year"].is_null())
-                show.year = item["year"].get<int>();
-            if (item.contains("audienceRating") && !item["audienceRating"].is_null())
-                show.audience_rating = item["audienceRating"].get<float>();
+    int start = 0;
+    while (true) {
+        const std::string path = "/library/sections/" + external_lib_id + "/all?type=2"
+            "&X-Plex-Container-Start=" + std::to_string(start) +
+            "&X-Plex-Container-Size=" + std::to_string(kPageSize);
+        auto res = get(path);
+        if (!res || res->status != 200) break;
 
-            // Genres: [{"tag":"Drama"}, ...]
-            json genres = json::array();
-            if (item.contains("Genre"))
-                for (const auto& g : item["Genre"])
-                    genres.push_back(g.value("tag", ""));
-            show.genres = genres.dump();
+        int page_count = 0;
+        try {
+            auto j = json::parse(res->body);
+            if (!j["MediaContainer"].contains("Metadata")) break;
+            const auto& items = j["MediaContainer"]["Metadata"];
+            page_count = static_cast<int>(items.size());
+            result.reserve(result.size() + page_count);
+            for (const auto& item : items) {
+                Show show;
+                show.show_id        = item["ratingKey"].get<std::string>();
+                show.title          = item["title"].get<std::string>();
+                show.content_rating = item.value("contentRating", "");
+                show.overview       = item.value("summary", "");
+                show.studio         = item.value("studio", "");
+                show.status         = item.value("status", "");
+                show.thumb          = item.value("thumb", "");
+                show.art            = item.value("art", "");
+                show.originally_available_at = item.value("originallyAvailableAt", "");
+                if (item.contains("year") && !item["year"].is_null())
+                    show.year = item["year"].get<int>();
+                if (item.contains("audienceRating") && !item["audienceRating"].is_null())
+                    show.audience_rating = item["audienceRating"].get<float>();
 
-            // Labels
-            json labels = json::array();
-            if (item.contains("Label"))
-                for (const auto& l : item["Label"])
-                    labels.push_back(l.value("tag", ""));
-            show.labels = labels.dump();
+                // Genres: [{"tag":"Drama"}, ...]
+                json genres = json::array();
+                if (item.contains("Genre"))
+                    for (const auto& g : item["Genre"])
+                        genres.push_back(g.value("tag", ""));
+                show.genres = genres.dump();
 
-            // Network (Plex exposes it as an array)
-            if (item.contains("Network") && !item["Network"].empty())
-                show.network = item["Network"][0].value("tag", "");
+                // Labels
+                json labels = json::array();
+                if (item.contains("Label"))
+                    for (const auto& l : item["Label"])
+                        labels.push_back(l.value("tag", ""));
+                show.labels = labels.dump();
 
-            // Actors (Role array)
-            json actors = json::array();
-            if (item.contains("Role"))
-                for (const auto& r : item["Role"])
-                    actors.push_back(r.value("tag", ""));
-            show.actors = actors.dump();
+                // Network (Plex exposes it as an array)
+                if (item.contains("Network") && !item["Network"].empty())
+                    show.network = item["Network"][0].value("tag", "");
 
-            // Countries
-            json countries = json::array();
-            if (item.contains("Country"))
-                for (const auto& c : item["Country"])
-                    countries.push_back(c.value("tag", ""));
-            show.countries = countries.dump();
+                // Actors (Role array)
+                json actors = json::array();
+                if (item.contains("Role"))
+                    for (const auto& r : item["Role"])
+                        actors.push_back(r.value("tag", ""));
+                show.actors = actors.dump();
 
-            // Collections
-            json collections = json::array();
-            if (item.contains("Collection"))
-                for (const auto& c : item["Collection"])
-                    collections.push_back(c.value("tag", ""));
-            show.collections = collections.dump();
+                // Countries
+                json countries = json::array();
+                if (item.contains("Country"))
+                    for (const auto& c : item["Country"])
+                        countries.push_back(c.value("tag", ""));
+                show.countries = countries.dump();
 
-            // External IDs: [{"id":"imdb://tt..."}, {"id":"tvdb://..."}, ...]
-            if (item.contains("Guid")) {
-                for (const auto& g : item["Guid"]) {
-                    std::string id = g.value("id", "");
-                    if (id.rfind("imdb://", 0) == 0)  show.imdb_id = id.substr(7);
-                    if (id.rfind("tvdb://", 0) == 0)  show.tvdb_id = id.substr(7);
-                    if (id.rfind("tmdb://", 0) == 0)  show.tmdb_id = id.substr(7);
+                // Collections
+                json collections = json::array();
+                if (item.contains("Collection"))
+                    for (const auto& c : item["Collection"])
+                        collections.push_back(c.value("tag", ""));
+                show.collections = collections.dump();
+
+                // External IDs: [{"id":"imdb://tt..."}, {"id":"tvdb://..."}, ...]
+                if (item.contains("Guid")) {
+                    for (const auto& g : item["Guid"]) {
+                        std::string id = g.value("id", "");
+                        if (id.rfind("imdb://", 0) == 0)  show.imdb_id = id.substr(7);
+                        if (id.rfind("tvdb://", 0) == 0)  show.tvdb_id = id.substr(7);
+                        if (id.rfind("tmdb://", 0) == 0)  show.tmdb_id = id.substr(7);
+                    }
                 }
+                result.push_back(std::move(show));
             }
-            result.push_back(std::move(show));
+        } catch (const json::exception& e) {
+            std::cerr << "[plex:" << source_id_ << "] parse error (shows): " << e.what() << '\n';
+            break;
         }
-    } catch (const json::exception& e) {
-        std::cerr << "[plex:" << source_id_ << "] parse error (shows): " << e.what() << '\n';
+
+        if (page_count < kPageSize) break;
+        start += page_count;
     }
     return result;
 }
@@ -151,93 +168,113 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
 // ---------------------------------------------------------------------------
 
 std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
-    auto res = get("/library/sections/" + external_lib_id + "/all?type=1");
-    if (!res || res->status != 200) return {};
-
+    // Paginated with X-Plex-Container-Start/Size — a single request for the
+    // whole section is what forced the read timeout up to 120s (see the
+    // client_ setup in the constructor), and large enough libraries (or slow
+    // servers building the response) can still exceed that in one shot.
+    constexpr int kPageSize = 200;
     std::vector<Movie> result;
-    try {
-        auto j = json::parse(res->body);
-        for (const auto& item : j["MediaContainer"]["Metadata"]) {
-            std::string file_path;
-            if (item.contains("Media") && !item["Media"].empty()) {
-                const auto& media = item["Media"][0];
-                if (media.contains("Part") && !media["Part"].empty())
-                    file_path = media["Part"][0].value("file", "");
-            }
-            if (file_path.empty()) continue;
+    int start = 0;
+    while (true) {
+        const std::string path = "/library/sections/" + external_lib_id + "/all?type=1"
+            "&X-Plex-Container-Start=" + std::to_string(start) +
+            "&X-Plex-Container-Size=" + std::to_string(kPageSize);
+        auto res = get(path);
+        if (!res || res->status != 200) break;
 
-            Movie movie;
-            movie.movie_id       = item["ratingKey"].get<std::string>();
-            movie.title          = item["title"].get<std::string>();
-            movie.content_rating = item.value("contentRating", "");
-            movie.file_path      = std::move(file_path);
-            {
-                int64_t dur = item.value("duration", int64_t{0});
-                if (dur <= 0 && item.contains("Media") && !item["Media"].empty())
-                    dur = item["Media"][0].value("duration", int64_t{0});
-                movie.duration_ms = dur;
-            }
-            if (item.contains("year") && !item["year"].is_null())
-                movie.year = item["year"].get<int>();
-            movie.overview  = item.value("summary", "");
-            movie.tagline   = item.value("tagline", "");
-            movie.studio    = item.value("studio", "");
-            movie.thumb     = item.value("thumb", "");
-            movie.art       = item.value("art", "");
-            if (item.contains("audienceRating") && !item["audienceRating"].is_null())
-                movie.audience_rating = item["audienceRating"].get<float>();
-
-            // Director
-            if (item.contains("Director") && !item["Director"].empty())
-                movie.director = item["Director"][0].value("tag", "");
-
-            // Genres
-            json genres = json::array();
-            if (item.contains("Genre"))
-                for (const auto& g : item["Genre"])
-                    genres.push_back(g.value("tag", ""));
-            movie.genres = genres.dump();
-
-            // Labels
-            json labels = json::array();
-            if (item.contains("Label"))
-                for (const auto& l : item["Label"])
-                    labels.push_back(l.value("tag", ""));
-            movie.labels = labels.dump();
-
-            // Actors (Role array)
-            json actors = json::array();
-            if (item.contains("Role"))
-                for (const auto& r : item["Role"])
-                    actors.push_back(r.value("tag", ""));
-            movie.actors = actors.dump();
-
-            // Countries
-            json countries = json::array();
-            if (item.contains("Country"))
-                for (const auto& c : item["Country"])
-                    countries.push_back(c.value("tag", ""));
-            movie.countries = countries.dump();
-
-            // Collections
-            json collections = json::array();
-            if (item.contains("Collection"))
-                for (const auto& c : item["Collection"])
-                    collections.push_back(c.value("tag", ""));
-            movie.collections = collections.dump();
-
-            // External IDs
-            if (item.contains("Guid")) {
-                for (const auto& g : item["Guid"]) {
-                    std::string id = g.value("id", "");
-                    if (id.rfind("imdb://", 0) == 0)  movie.imdb_id = id.substr(7);
-                    if (id.rfind("tmdb://", 0) == 0)  movie.tmdb_id = id.substr(7);
+        int page_count = 0;
+        try {
+            auto j = json::parse(res->body);
+            if (!j["MediaContainer"].contains("Metadata")) break;
+            const auto& items = j["MediaContainer"]["Metadata"];
+            page_count = static_cast<int>(items.size());
+            result.reserve(result.size() + page_count);
+            for (const auto& item : items) {
+                std::string file_path;
+                if (item.contains("Media") && !item["Media"].empty()) {
+                    const auto& media = item["Media"][0];
+                    if (media.contains("Part") && !media["Part"].empty())
+                        file_path = media["Part"][0].value("file", "");
                 }
+                if (file_path.empty()) continue;
+
+                Movie movie;
+                movie.movie_id       = item["ratingKey"].get<std::string>();
+                movie.title          = item["title"].get<std::string>();
+                movie.content_rating = item.value("contentRating", "");
+                movie.file_path      = std::move(file_path);
+                {
+                    int64_t dur = item.value("duration", int64_t{0});
+                    if (dur <= 0 && item.contains("Media") && !item["Media"].empty())
+                        dur = item["Media"][0].value("duration", int64_t{0});
+                    movie.duration_ms = dur;
+                }
+                if (item.contains("year") && !item["year"].is_null())
+                    movie.year = item["year"].get<int>();
+                movie.overview  = item.value("summary", "");
+                movie.tagline   = item.value("tagline", "");
+                movie.studio    = item.value("studio", "");
+                movie.thumb     = item.value("thumb", "");
+                movie.art       = item.value("art", "");
+                if (item.contains("audienceRating") && !item["audienceRating"].is_null())
+                    movie.audience_rating = item["audienceRating"].get<float>();
+
+                // Director
+                if (item.contains("Director") && !item["Director"].empty())
+                    movie.director = item["Director"][0].value("tag", "");
+
+                // Genres
+                json genres = json::array();
+                if (item.contains("Genre"))
+                    for (const auto& g : item["Genre"])
+                        genres.push_back(g.value("tag", ""));
+                movie.genres = genres.dump();
+
+                // Labels
+                json labels = json::array();
+                if (item.contains("Label"))
+                    for (const auto& l : item["Label"])
+                        labels.push_back(l.value("tag", ""));
+                movie.labels = labels.dump();
+
+                // Actors (Role array)
+                json actors = json::array();
+                if (item.contains("Role"))
+                    for (const auto& r : item["Role"])
+                        actors.push_back(r.value("tag", ""));
+                movie.actors = actors.dump();
+
+                // Countries
+                json countries = json::array();
+                if (item.contains("Country"))
+                    for (const auto& c : item["Country"])
+                        countries.push_back(c.value("tag", ""));
+                movie.countries = countries.dump();
+
+                // Collections
+                json collections = json::array();
+                if (item.contains("Collection"))
+                    for (const auto& c : item["Collection"])
+                        collections.push_back(c.value("tag", ""));
+                movie.collections = collections.dump();
+
+                // External IDs
+                if (item.contains("Guid")) {
+                    for (const auto& g : item["Guid"]) {
+                        std::string id = g.value("id", "");
+                        if (id.rfind("imdb://", 0) == 0)  movie.imdb_id = id.substr(7);
+                        if (id.rfind("tmdb://", 0) == 0)  movie.tmdb_id = id.substr(7);
+                    }
+                }
+                result.push_back(std::move(movie));
             }
-            result.push_back(std::move(movie));
+        } catch (const json::exception& e) {
+            std::cerr << "[plex:" << source_id_ << "] parse error (movies): " << e.what() << '\n';
+            break;
         }
-    } catch (const json::exception& e) {
-        std::cerr << "[plex:" << source_id_ << "] parse error (movies): " << e.what() << '\n';
+
+        if (page_count < kPageSize) break;
+        start += page_count;
     }
     return result;
 }
@@ -252,59 +289,78 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
     client.set_connection_timeout(10);
     client.set_read_timeout(120); // see constructor above for why 30s wasn't enough
 
-    // Request season/episode order explicitly so the Plex server pre-sorts when it can.
-    const std::string path = "/library/metadata/" + external_show_id
-                           + "/allLeaves?sort=parentIndex%3Aasc%2Cindex%3Aasc";
-    auto res = client.Get(path);
-    if (!res) {
-        std::cerr << "[plex:" << source_id_ << "] /library/metadata/" << external_show_id
-                  << "/allLeaves — " << httplib::to_string(res.error()) << '\n';
-        return {};
-    }
-    if (res->status != 200) {
-        std::cerr << "[plex:" << source_id_ << "] /library/metadata/" << external_show_id
-                  << "/allLeaves — HTTP " << res->status << '\n';
-        return {};
-    }
-
+    // Paginated — this is the "bulk listing" the 120s read timeout above was
+    // originally added for; long-running shows (soaps, procedurals, some
+    // anime) can have thousands of episodes, and a single /allLeaves request
+    // for all of them can still exceed even that.
+    constexpr int kPageSize = 200;
     std::vector<Episode> result;
-    try {
-        auto j = json::parse(res->body);
-        for (const auto& item : j["MediaContainer"]["Metadata"]) {
-            std::string file_path;
-            if (item.contains("Media") && !item["Media"].empty()) {
-                const auto& media = item["Media"][0];
-                if (media.contains("Part") && !media["Part"].empty())
-                    file_path = media["Part"][0].value("file", "");
-            }
-            if (file_path.empty()) continue;
-
-            const int season = item.value("parentIndex", 0);
-            const std::string season_name = item.value("parentTitle", "");
-            const std::string air_date = item.value("originallyAvailableAt", "");
-
-            Episode ep;
-            ep.episode_id  = item["ratingKey"].get<std::string>();
-            ep.show_id     = item["grandparentRatingKey"].get<std::string>(); // resolved by SyncManager
-            ep.season      = season;
-            ep.season_name = season_name;
-            ep.episode     = item.value("index", 0);
-            ep.title       = item.value("title", "");
-            ep.file_path   = std::move(file_path);
-            ep.duration_ms = item.value("duration", int64_t{0});
-            // Plex sometimes omits top-level duration for episodes; fall back to
-            // the Media-level value the way fetchMovies already does.
-            if (ep.duration_ms <= 0 && item.contains("Media") && !item["Media"].empty())
-                ep.duration_ms = item["Media"][0].value("duration", int64_t{0});
-            ep.overview    = item.value("summary", "");
-            ep.air_date    = air_date;
-            ep.thumb       = item.value("thumb", "");
-            if (item.contains("absoluteIndex") && !item["absoluteIndex"].is_null())
-                ep.absolute_index = item["absoluteIndex"].get<int>();
-            result.push_back(std::move(ep));
+    int start = 0;
+    while (true) {
+        // Request season/episode order explicitly so the Plex server pre-sorts when it can.
+        const std::string path = "/library/metadata/" + external_show_id
+            + "/allLeaves?sort=parentIndex%3Aasc%2Cindex%3Aasc"
+              "&X-Plex-Container-Start=" + std::to_string(start) +
+              "&X-Plex-Container-Size=" + std::to_string(kPageSize);
+        auto res = client.Get(path);
+        if (!res) {
+            std::cerr << "[plex:" << source_id_ << "] /library/metadata/" << external_show_id
+                      << "/allLeaves — " << httplib::to_string(res.error()) << '\n';
+            break;
         }
-    } catch (const json::exception& e) {
-        std::cerr << "[plex:" << source_id_ << "] parse error (episodes): " << e.what() << '\n';
+        if (res->status != 200) {
+            std::cerr << "[plex:" << source_id_ << "] /library/metadata/" << external_show_id
+                      << "/allLeaves — HTTP " << res->status << '\n';
+            break;
+        }
+
+        int page_count = 0;
+        try {
+            auto j = json::parse(res->body);
+            if (!j["MediaContainer"].contains("Metadata")) break;
+            const auto& items = j["MediaContainer"]["Metadata"];
+            page_count = static_cast<int>(items.size());
+            result.reserve(result.size() + page_count);
+            for (const auto& item : items) {
+                std::string file_path;
+                if (item.contains("Media") && !item["Media"].empty()) {
+                    const auto& media = item["Media"][0];
+                    if (media.contains("Part") && !media["Part"].empty())
+                        file_path = media["Part"][0].value("file", "");
+                }
+                if (file_path.empty()) continue;
+
+                const int season = item.value("parentIndex", 0);
+                const std::string season_name = item.value("parentTitle", "");
+                const std::string air_date = item.value("originallyAvailableAt", "");
+
+                Episode ep;
+                ep.episode_id  = item["ratingKey"].get<std::string>();
+                ep.show_id     = item["grandparentRatingKey"].get<std::string>(); // resolved by SyncManager
+                ep.season      = season;
+                ep.season_name = season_name;
+                ep.episode     = item.value("index", 0);
+                ep.title       = item.value("title", "");
+                ep.file_path   = std::move(file_path);
+                ep.duration_ms = item.value("duration", int64_t{0});
+                // Plex sometimes omits top-level duration for episodes; fall back to
+                // the Media-level value the way fetchMovies already does.
+                if (ep.duration_ms <= 0 && item.contains("Media") && !item["Media"].empty())
+                    ep.duration_ms = item["Media"][0].value("duration", int64_t{0});
+                ep.overview    = item.value("summary", "");
+                ep.air_date    = air_date;
+                ep.thumb       = item.value("thumb", "");
+                if (item.contains("absoluteIndex") && !item["absoluteIndex"].is_null())
+                    ep.absolute_index = item["absoluteIndex"].get<int>();
+                result.push_back(std::move(ep));
+            }
+        } catch (const json::exception& e) {
+            std::cerr << "[plex:" << source_id_ << "] parse error (episodes): " << e.what() << '\n';
+            break;
+        }
+
+        if (page_count < kPageSize) break;
+        start += page_count;
     }
 
     // Sort client-side as a fallback in case the server ignores the sort param.
