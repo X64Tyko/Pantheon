@@ -311,6 +311,10 @@ export const api = {
 
   // Runtime settings
   getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('GET',   '/config/settings'),
+  // Admin-only settings, minus everything a viewer account has no business
+  // reading (thread counts, buffer sizes, debug flags) — for CastProvider,
+  // which needs cast_app_id regardless of the logged-in account's role.
+  getPublicSettings: ()                                                  => request<{ cast_app_id: string }>('GET', '/config/public-settings'),
   updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),

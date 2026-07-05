@@ -88,7 +88,7 @@ export function CastProvider() {
     // on `user` rather than a one-time mount check so it also fires right
     // after login, without requiring a page refresh.
     if (!user) return
-    api.getSettings().then(s => setAppId(s.cast_app_id || null)).catch(() => {})
+    api.getPublicSettings().then(s => setAppId(s.cast_app_id || null)).catch(() => {})
   }, [user])
 
   useEffect(() => {

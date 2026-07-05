@@ -14,6 +14,12 @@ using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
+// Public pantheon-relay App ID (see /ChimeraShare/pantheon-relay) — the
+// out-of-the-box default so casting works without any setup; overridable
+// per-deployment via PATCH /api/config/settings for anyone self-hosting
+// their own relay under their own App ID.
+static constexpr const char* kDefaultCastAppId = "FA339D2D";
+
 ConfigService::ConfigService(const ServiceContext& ctx)
 	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync) {}
 
@@ -28,7 +34,14 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 		s.exec();
 	};
 
-	auto settingsJson = [this]() {
+	// Empty (never configured) falls back to the shared public relay's App ID
+	// so casting works out of the box — see kDefaultCastAppId.
+	auto castAppId = [this]() {
+		std::string v = ConfigRepository(db_).getValue("cast_app_id");
+		return v.empty() ? std::string(kDefaultCastAppId) : v;
+	};
+
+	auto settingsJson = [this, castAppId]() {
 		return json{
 			{"epg_debug",              g_epg_debug.load()},
 			{"sync_debug",             g_debug_logging.load()},
@@ -36,17 +49,23 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			{"stream_buffer_size",           g_buffer_size.load()},
 			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
 			{"verbose_transcode_logs", g_verbose_transcode_logs.load()},
-			// Chromecast custom receiver's Application ID (from the Google Cast
-			// SDK Developer Console) — a runtime setting rather than a Hades
-			// build-time env var, since Hades ships as a prebuilt Docker image
-			// with no way to rebuild just to change this value.
-			{"cast_app_id",            ConfigRepository(db_).getValue("cast_app_id")},
+			{"cast_app_id",            castAppId()},
 		};
 	};
 
 	svr.Get("/api/config/settings", [settingsJson](const Req&, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		route::ok(res, settingsJson().dump());
+	});
+
+	// Read-only subset any logged-in user (viewer or admin) can fetch — right
+	// now just cast_app_id, since CastProvider.tsx needs it regardless of
+	// role. Everything else in settingsJson() is admin tuning (thread counts,
+	// buffer sizes, debug flags) with no reason for a viewer account to see
+	// it, so this stays its own route rather than loosening the real one.
+	svr.Get("/api/config/public-settings", [castAppId](const Req&, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		route::ok(res, json{{"cast_app_id", castAppId()}}.dump());
 	});
 
 	svr.Patch("/api/config/settings", [this, persistFlag, settingsJson](const Req& req, Res& res) {
