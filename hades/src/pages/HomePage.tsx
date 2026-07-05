@@ -6,7 +6,7 @@ import { resolvePlayPath } from '../player/resolvePlayTarget'
 import { MediaDetailHero } from '../components/media/MediaDetailHero'
 import { LibraryDetailActions } from '../components/media/LibraryDetailActions'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
-import { ghostBtnStyle, goldBtnStyle } from '../channel/styles'
+import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useFocusable } from '../nav/useFocusable'
 import { useTravelingFocus } from '../nav/useTravelingFocus'
@@ -449,11 +449,13 @@ function HeroPanel({
         <h1 style={{
           fontFamily: "'Chakra Petch', sans-serif", fontSize: 34, fontWeight: 700,
           color: 'oklch(1 0 0)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em',
+          textShadow: heroTextShadow,
         }}>{item.title}</h1>
 
         <div style={{
           display: 'flex', alignItems: 'center', gap: 16, marginTop: 10, marginBottom: 14,
           fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-2)',
+          textShadow: heroTextShadow,
         }}>
           {item.year && <span>{item.year}</span>}
           {rating != null && <span style={{ color: 'var(--hds-gold)' }}>★ {rating.toFixed(1)}</span>}
@@ -465,6 +467,7 @@ function HeroPanel({
             fontFamily: "'JetBrains Mono', monospace", fontSize: 12, lineHeight: 1.6,
             color: 'oklch(0.75 0.01 285)', margin: '0 0 22px',
             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+            textShadow: heroTextShadow,
           }}>{overview}</p>
         )}
 

@@ -8,6 +8,7 @@ import { useFocusable } from '../nav/useFocusable'
 import { useTravelingFocus } from '../nav/useTravelingFocus'
 import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
 import { TvGuideSection } from './TvGuideSection'
+import { heroTextShadow } from '../channel/styles'
 
 const HOME_FOCUS_KEY = 'TV_HOME'
 
@@ -133,7 +134,7 @@ export function TvHome() {
     <div ref={homeRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flexShrink: 0 }}>
         {loading ? (
-          <div className="hds-skeleton" style={{ height: '48vh', minHeight: 300 }} />
+          <div className="hds-skeleton" style={{ height: '40vh', minHeight: 280 }} />
         ) : heroItem ? (
           <TvHeroPanel
             item={heroItem}
@@ -150,7 +151,7 @@ export function TvHome() {
           />
         ) : (
           <div style={{
-            height: '48vh', minHeight: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: '40vh', minHeight: 280, display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: 'linear-gradient(135deg, oklch(0.12 0.04 292), oklch(0.16 0.03 280))',
             fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, color: 'var(--hds-txt-3)',
           }}>No content yet</div>
@@ -276,14 +277,14 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
 
   return (
     <div style={{
-      position: 'relative', height: '48vh', minHeight: 300,
+      position: 'relative', height: '40vh', minHeight: 280,
       background: bg, flexShrink: 0,
       opacity: fading ? 0 : 1, transition: 'opacity .26s ease',
       overflow: 'hidden',
     }}>
       <div style={{
         position: 'absolute', inset: 0,
-        background: 'linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%)',
+        background: 'linear-gradient(to right, oklch(0 0 0 / 0.96) 0%, oklch(0 0 0 / 0.8) 38%, oklch(0 0 0 / 0.4) 64%, transparent 100%)',
       }} />
       <div style={{
         position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%',
@@ -308,11 +309,13 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
         <h1 style={{
           fontFamily: "'Chakra Petch', sans-serif", fontSize: 38, fontWeight: 700,
           color: 'oklch(1 0 0)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em',
+          textShadow: heroTextShadow,
         }}>{item.title}</h1>
 
         <div style={{
           display: 'flex', alignItems: 'center', gap: 16, marginTop: 10, marginBottom: 14,
           fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: 'var(--hds-txt-2)',
+          textShadow: heroTextShadow,
         }}>
           {item.year && <span>{item.year}</span>}
           {rating != null && <span style={{ color: 'var(--hds-gold)' }}>★ {rating.toFixed(1)}</span>}
@@ -324,6 +327,7 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
             fontFamily: "'JetBrains Mono', monospace", fontSize: 13, lineHeight: 1.6,
             color: 'oklch(0.75 0.01 285)', margin: '0 0 22px',
             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+            textShadow: heroTextShadow,
           }}>{overview}</p>
         )}
 
@@ -403,7 +407,7 @@ function TvShelf({ title, items, onBlur, endTile }: {
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(item => (
-          <div key={item.key} style={{ flexShrink: 0, width: 160 }}>
+          <div key={item.key} style={{ flexShrink: 0, width: 140 }}>
             <TvShelfCard {...item} onBlur={onBlur} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}
@@ -502,7 +506,7 @@ function TvShelfEndTile({ focusKey, onClick, onBlur, onActivate, onDeactivate }:
       onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
       onMouseLeave={() => { setHovered(false); onBlur?.(); onDeactivate() }}
       style={{
-        flexShrink: 0, width: 160, aspectRatio: '2/3', borderRadius: 12, cursor: 'pointer',
+        flexShrink: 0, width: 140, aspectRatio: '2/3', borderRadius: 12, cursor: 'pointer',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
         border: '1px dashed var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt-3)',
         transform: active ? 'translateY(-4px)' : 'none',
@@ -544,7 +548,7 @@ function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
-          <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 160 }}>
+          <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 140 }}>
             <TvContinueWatchingCard item={p} onNavigate={onNavigate} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}

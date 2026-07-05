@@ -97,7 +97,13 @@ void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double spe
     // a channel's continuous, hours-long runtime. dynaudnorm re-normalizes
     // on short (<8s) windows instead of one long-running estimate, which is
     // what ffmpeg recommends for exactly this always-on streaming case.
-    if (loudnorm) afParts.push_back("dynaudnorm");
+    // Plain dynaudnorm only targets peak level (p=0.95 by default) with
+    // targetrms disabled -- most library content already peaks near full
+    // scale, so peak-only normalization applies almost no gain and sounds
+    // much quieter than loudnorm's old -16 LUFS target did. r= turns on
+    // RMS-based targeting so quiet passages actually get boosted; m= raises
+    // the max gain factor so there's enough headroom left to reach it.
+    if (loudnorm) afParts.push_back("dynaudnorm=m=15:r=0.2");
     if (speed != 1.0) afParts.push_back("atempo=" + fmtSpeed(speed));
 
     // Force stereo: without an explicit -ac, ffmpeg preserves the source's

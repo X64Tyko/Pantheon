@@ -206,7 +206,11 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                 connected:  castSession.connected,
                 deviceName: castSession.deviceName,
                 paused:     castSession.paused,
+                volumeLevel: castSession.volumeLevel,
+                muted:       castSession.muted,
                 togglePlay: castSession.togglePlay,
+                setVolumeLevel: castSession.setVolumeLevel,
+                toggleMuted:    castSession.toggleMuted,
                 endSession: castSession.endSession,
                 onRequestCast: () => cast.framework.CastContext.getInstance().requestSession().catch(err => {
                   // 'cancel' is the normal "closed the device picker" case —

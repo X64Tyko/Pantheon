@@ -9,9 +9,13 @@ export interface CastSessionState {
   currentMs:  number
   durationMs: number
   paused:     boolean
+  volumeLevel: number
+  muted:       boolean
   load:       (args: CastMediaArgs) => Promise<void>
   togglePlay: () => void
   seek:       (ms: number) => void
+  setVolumeLevel: (level: number) => void
+  toggleMuted:    () => void
   endSession: () => void
 }
 
@@ -44,6 +48,17 @@ export function useCastSession(): CastSessionState {
   const load = async (args: CastMediaArgs) => {
     if (!session) return
     await session.loadMedia(buildLoadRequest(args))
+    // Cast session volume is a device-level setting that persists across
+    // apps/sessions (more like a TV volume knob than per-video playback
+    // state) — without this, a fresh cast can silently inherit whatever
+    // low level a previous session (or the device's out-of-box default)
+    // left it at, sounding "quiet" for reasons nothing in this stream's own
+    // audio pipeline caused. Force it up front; the slider (once connected)
+    // is what lets it be turned back down deliberately after that.
+    if (controllerRef.current && player) {
+      player.volumeLevel = 1
+      controllerRef.current.setVolumeLevel()
+    }
   }
 
   return {
@@ -53,6 +68,8 @@ export function useCastSession(): CastSessionState {
     currentMs:  (player?.currentTime ?? 0) * 1000,
     durationMs: (player?.duration ?? 0) * 1000,
     paused:     player?.isPaused ?? false,
+    volumeLevel: player?.volumeLevel ?? 1,
+    muted:       player?.isMuted ?? false,
     load,
     togglePlay: () => controllerRef.current?.playOrPause(),
     seek: ms => {
@@ -60,6 +77,12 @@ export function useCastSession(): CastSessionState {
       player.currentTime = ms / 1000
       controllerRef.current.seek()
     },
+    setVolumeLevel: level => {
+      if (!player || !controllerRef.current) return
+      player.volumeLevel = level
+      controllerRef.current.setVolumeLevel()
+    },
+    toggleMuted: () => controllerRef.current?.muteOrUnmute(),
     endSession: () => cast.framework.CastContext.getInstance().endCurrentSession(true),
   }
 }

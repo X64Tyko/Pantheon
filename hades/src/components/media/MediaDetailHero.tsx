@@ -5,6 +5,7 @@ import { LanguageChips } from './LanguageChips'
 import { useFocusable } from '../../nav/useFocusable'
 import { useNavBack } from '../../nav/back'
 import { folderBaseName, useMediaDetail, type MediaDetailResult } from './useMediaDetail'
+import { heroTextShadow } from '../../channel/styles'
 
 function formatVideoInfo(v: VideoInfo): string | null {
   if (!v.codec && !v.height) return null
@@ -101,6 +102,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
                 <h2 style={{
                   fontFamily: "'Chakra Petch', sans-serif", fontSize: 27, fontWeight: 700,
                   color: 'var(--hds-txt)', margin: 0, flex: 1, lineHeight: 1.15,
+                  textShadow: showBackdrop ? heroTextShadow : undefined,
                 }}>{title}</h2>
                 {detail?.locked && (
                   <span style={{
@@ -166,6 +168,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
                 <p style={{
                   fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, lineHeight: 1.75,
                   color: 'var(--hds-txt-2)', margin: '0 0 16px', maxWidth: 760,
+                  textShadow: showBackdrop ? heroTextShadow : undefined,
                 }}>{overview}</p>
               )}
 

@@ -13,7 +13,11 @@ export interface CastBridge {
   connected:  boolean
   deviceName: string | null
   paused:     boolean
+  volumeLevel: number
+  muted:       boolean
   togglePlay: () => void
+  setVolumeLevel: (level: number) => void
+  toggleMuted:    () => void
   endSession: () => void
   onRequestCast: () => void
 }
@@ -82,6 +86,7 @@ export function PlayerControls({
   }
 
   const toggleMute = () => {
+    if (isCasting) { cast!.toggleMuted(); return }
     const video = videoRef.current
     if (!video) return
     video.muted = !video.muted
@@ -89,6 +94,7 @@ export function PlayerControls({
   }
 
   const changeVolume = (v: number) => {
+    if (isCasting) { cast!.setVolumeLevel(v); return }
     const video = videoRef.current
     if (!video) return
     video.volume = v
@@ -96,6 +102,9 @@ export function PlayerControls({
     setVolume(v)
     setMuted(v === 0)
   }
+
+  const displayVolume = isCasting ? cast!.volumeLevel : volume
+  const displayMuted  = isCasting ? cast!.muted       : muted
 
   const toggleFullscreen = () => {
     const el = videoRef.current?.parentElement
@@ -199,19 +208,15 @@ export function PlayerControls({
             {playing ? <PauseIcon /> : <PlayIcon />}
           </button>
 
-          {!isCasting && (
-            <>
-              <button ref={mute.ref} data-tv-focused={mute.focused} onClick={toggleMute} style={iconBtnStyle} aria-label={muted ? 'Unmute' : 'Mute'}>
-                {muted || volume === 0 ? <MuteIcon /> : <VolumeIcon />}
-              </button>
-              <input
-                type="range" min={0} max={1} step={0.05}
-                value={muted ? 0 : volume}
-                onChange={e => changeVolume(Number(e.target.value))}
-                style={volumeSliderStyle}
-              />
-            </>
-          )}
+          <button ref={mute.ref} data-tv-focused={mute.focused} onClick={toggleMute} style={iconBtnStyle} aria-label={displayMuted ? 'Unmute' : 'Mute'}>
+            {displayMuted || displayVolume === 0 ? <MuteIcon /> : <VolumeIcon />}
+          </button>
+          <input
+            type="range" min={0} max={1} step={0.05}
+            value={displayMuted ? 0 : displayVolume}
+            onChange={e => changeVolume(Number(e.target.value))}
+            style={volumeSliderStyle}
+          />
 
           {isCasting ? (
             <span style={castingLabelStyle}>Casting to {cast!.deviceName ?? 'device'}</span>

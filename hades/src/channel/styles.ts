@@ -49,3 +49,10 @@ export const zoomBtnStyle: CSSProperties = {
   fontFamily: "'JetBrains Mono', monospace",
 }
 
+// Backdrop-darkening gradients only guarantee contrast against a flat
+// average — a bright patch of art directly behind a glyph can still wash it
+// out. A real per-glyph shadow holds up regardless of what's under it.
+// Shared by the Home hero (desktop + TV) and MediaDetailHero so title/meta/
+// overview text reads the same way everywhere it sits over backdrop art.
+export const heroTextShadow = '0 1px 3px oklch(0 0 0 / 0.9), 0 2px 14px oklch(0 0 0 / 0.7)'
+

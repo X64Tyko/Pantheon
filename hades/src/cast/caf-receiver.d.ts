@@ -32,6 +32,7 @@ declare namespace cast.framework {
   namespace messages {
     enum MessageType {
       LOAD = 'LOAD',
+      STOP = 'STOP',
     }
 
     enum ErrorType {
@@ -54,8 +55,15 @@ declare namespace cast.framework {
       autoplay?: boolean
     }
 
+    class RequestData {
+      constructor(type: MessageType)
+      requestId: number
+      mediaSessionId?: number
+    }
+
     interface MessageTypeDataMap {
       [MessageType.LOAD]: LoadRequestData
+      [MessageType.STOP]: RequestData
     }
   }
 }

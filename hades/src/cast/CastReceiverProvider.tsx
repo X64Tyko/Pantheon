@@ -72,6 +72,19 @@ export function CastReceiverProvider() {
         return data
       })
 
+      // A physical remote's Back/Home button on Android TV/Google TV gets
+      // translated by the platform into a standard STOP media command, not a
+      // DOM key event — PlayerManager's default STOP handling tears down the
+      // loaded media and, with nothing left playing and no sender-driven
+      // reconnect, ends the whole app session. Intercepting it and returning
+      // null skips that default handling entirely; navigating to /tv (the
+      // receiver's own browse screen — see TvShell) is what actually gives
+      // "back" the close/minimize-the-player behavior instead of exiting.
+      manager.setMessageInterceptor(cast.framework.messages.MessageType.STOP, () => {
+        navigate('/tv', { replace: true })
+        return null
+      })
+
       // Default inactivity handling assumes PlayerManager's own engine is
       // driving playback and reports activity through it — since we bypass
       // that (see interceptor above), the framework never sees any activity
