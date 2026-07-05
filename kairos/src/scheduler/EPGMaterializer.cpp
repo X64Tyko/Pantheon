@@ -175,12 +175,7 @@ void EPGMaterializer::commit(
 
     db_.get().exec("SAVEPOINT sp_commit");
 
-    // Replace, don't just append: clear any not-yet-aired row in the window this
-    // projection covers before inserting it, so a regenerate can't leave a stale
-    // pick from an earlier call sitting alongside (or overlapping) the new one.
-    // Floored at `now` (never `from` directly) so a rebroadcast can't touch
-    // something already airing or in the past — only content that hasn't started
-    // yet is fair game to replace.
+    // Floored at `now`, not `from` — never touch something already airing or past.
     {
         std::time_t clear_from = std::max(from, static_cast<std::time_t>(now));
         SQLite::Statement del(db_.get(), R"(

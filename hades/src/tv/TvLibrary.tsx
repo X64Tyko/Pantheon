@@ -81,11 +81,7 @@ export const TvLibrary = observer(function TvLibrary() {
 })
 
 function TvBackButton({ onClick }: { onClick: () => void }) {
-  // forceFocus: same fallback as TvHome's LibraryButton — /tv/library mounts
-  // outside <Layout>, so nothing else claims default focus on arrival here,
-  // and the library never auto-focuses anything on its own. Back button
-  // (not search/chips/grid) because it's the only control guaranteed to be
-  // on-screen before the async library fetch resolves.
+  // forceFocus: same fallback as TvHome's LibraryButton — mounts outside <Layout>, no default focus otherwise.
   const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-library-back', onEnterPress: onClick, forceFocus: true })
   return (
     <button

@@ -31,14 +31,10 @@ export function useFocusable<P extends object = object, E extends HTMLElement = 
 
   useEffect(() => {
     if (!result.focused) return
-    // block: 'center' (not 'nearest') — 'nearest' only scrolls the minimum
-    // needed to bring the focused element's own box into view, with no
-    // awareness of a shelf title sitting above the row of cards, so the
-    // settled position is direction-dependent (too high moving up, too low
-    // moving down — the title ends up clipped either way). Centering is
-    // consistent and symmetric regardless of which direction focus came
-    // from, and leaves room above for the title to stay visible.
-    result.ref.current?.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'smooth' })
+    // center on both axes, not 'nearest' — 'nearest' settles at a
+    // direction-dependent position (clipped shelf title, inconsistent
+    // horizontal offset); centering is symmetric and clamps naturally at shelf ends.
+    result.ref.current?.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'smooth' })
   }, [result.focused]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return result

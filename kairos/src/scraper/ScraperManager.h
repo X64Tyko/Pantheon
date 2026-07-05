@@ -131,9 +131,7 @@ public:
     // Returns the CDN poster URL for an AniDB AID, or empty if unavailable/disabled.
     std::string anidbPosterUrl(const std::string& aid) const;
 
-    // Gate before fetching an image from cdn.anidb.net directly (not through
-    // anidbPosterUrl/fetchAnimeXml) — see AnidbScraper::rateLimitImageWait().
-    // No-op if AniDB isn't configured.
+    // See AnidbScraper::rateLimitImageWait(). No-op if AniDB isn't configured.
     void anidbRateLimitImage() const;
 
 private:

@@ -49,12 +49,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
     <div>
       {showBackdrop && (
         <>
-          {/* Sticky, zero-height wrapper: keeps Back pinned to the top of the
-              viewport as the page scrolls, instead of scrolling away with the
-              banner underneath it (which isn't sticky itself — it's normal-
-              flow content in the same scroll container as the season
-              shelves). height:0 so it never adds its own layout space; the
-              button just visually overflows below it. */}
+          {/* Sticky + height:0 so Back stays pinned to the viewport instead of scrolling away with the banner. */}
           <div style={{ position: 'sticky', top: 18, zIndex: 20, height: 0 }}>
             <BackButton onClick={onBack} overlay />
           </div>
@@ -243,10 +238,7 @@ function BackButton({ onClick, overlay }: { onClick: () => void; overlay?: boole
         transition: 'color .12s, background .12s',
         ...(overlay
           ? {
-              // No position here — the sticky, zero-height wrapper in
-              // MediaDetailHero handles keeping this pinned to the viewport;
-              // this just needs its own offset from that wrapper's edge.
-              marginLeft: 24,
+              marginLeft: 24, // positioning handled by the sticky wrapper in MediaDetailHero
               padding: '7px 14px 7px 10px', borderRadius: 20,
               border: '1px solid var(--hds-glass-border)', background: 'var(--hds-glass)',
               backdropFilter: 'blur(8px)', color: 'oklch(0.92 0.01 285)',

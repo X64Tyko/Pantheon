@@ -301,7 +301,7 @@ std::string BlockSerializer::importBlock(const std::string& channel_id,
     SQLite::Statement s(db_.get(), R"(
         INSERT INTO block (block_id, channel_id, name, block_type, day_mask,
                            start_time, end_time, program_count, priority,
-                           max_content_rating, advancement, cursor_scope,
+                           play_style, advancement, cursor_scope,
                            late_start_mins, align_to_mins, inter_filler,
                            early_start_secs, filler_selection, smart_pct,
                            start_scope, no_history_behavior,

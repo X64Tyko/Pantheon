@@ -1589,20 +1589,8 @@ void RuleEngine::projectDay(
     pass.last_show_id.clear();
     pass.prev_block_id.clear();
 
-    // exhausted starts empty and is populated purely from scheduleBlock()'s own
-    // return value below as this pass runs — never from scheduled_program. project()
-    // always replays a whole channel continuously from its Monday anchor (see
-    // EPGMaterializer::generate()), so by the time this day is reached, everything
-    // that matters about earlier days/blocks this run is already reflected in
-    // ctx.state/pass, in memory. A DB read here used to seed exhausted from
-    // whatever a *previous, possibly different* run had already committed — which
-    // silently broke the anchor/RNG determinism generate() is supposed to
-    // guarantee: a run that (for whatever reason) took a different path earlier
-    // would read a different exhausted set here and diverge for the rest of the
-    // day, producing a second, overlapping schedule for time ranges that were
-    // already committed. commit() only diffs by exact wall_clock_start, so that
-    // divergence never got cleaned up — it just piled up (see the Disney channel
-    // corruption this replaced).
+    // exhausted is populated purely in-memory from scheduleBlock()'s return value
+    // below — never re-derived from scheduled_program (that DB read broke determinism).
 
     // Tomorrow's day-mask bit: used when computing cross-midnight preemption windows.
     const int tom_bit = (day_mask_bit < 64) ? day_mask_bit << 1 : 1;
