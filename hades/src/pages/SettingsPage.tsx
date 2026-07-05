@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { api } from '../api/client'
 import { statusStore, helpTipsStore } from '../stores'
+import { tourStore } from '../stores/TourStore'
+import { TourSpotlight } from '../components/tour/TourSpotlight'
 import type { ArrConfig, CastSessionInfo, ScraperSettings, ScraperStats } from '../api/types'
 import { useFocusable } from '../nav/useFocusable'
 import { HelpTip, HelpSection } from '../channel/HelpTip'
@@ -270,6 +272,7 @@ const applyBuffer = () => {
 
   return (
     <div style={{ maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {tourStore.currentStep?.route === '/settings' && <TourSpotlight step={tourStore.currentStep} />}
       <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--hds-txt)', margin: 0 }}>Settings</h1>
 
       {error && (
@@ -553,6 +556,7 @@ const applyBuffer = () => {
         </SettingRow>
         <SettingRow label="API Key (v3)">
           <input
+            data-tour="tmdb-api-key-input"
             style={{ ...inputStyle, width: 260 }}
             type="password"
             placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

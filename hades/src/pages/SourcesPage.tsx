@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import type { LibraryInfo, PathMap } from '../api/types'
 import { sourceStore } from '../stores'
+import { tourStore } from '../stores/TourStore'
+import { TourSpotlight } from '../components/tour/TourSpotlight'
 
 type TestState = 'idle' | 'testing' | 'ok' | 'failed'
 
@@ -193,9 +195,13 @@ export default observer(function SourcesPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
+      {/* Not while showAdd is open — the spotlight's dimmed backdrop would
+          otherwise darken the very form fields the admin needs to fill in;
+          it's only meant to point at the button before they've clicked it. */}
+      {tourStore.currentStep?.route === '/sources' && !showAdd && <TourSpotlight step={tourStore.currentStep} />}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-zinc-100">Media Sources</h1>
-        <button onClick={() => setShowAdd(v => !v)} className="btn-primary">
+        <button onClick={() => setShowAdd(v => !v)} className="btn-primary" data-tour="add-source-btn">
           + Add Source
         </button>
       </div>
@@ -302,7 +308,7 @@ export default observer(function SourcesPage() {
         {/* Source list */}
         <div className="space-y-2">
           {store.sources.length === 0 && !store.loading && (
-            <p className="text-zinc-600 text-sm">No sources configured.</p>
+            <p className="text-zinc-600 text-sm">No sources configured yet — click + Add Source above to connect your media library.</p>
           )}
           {store.sources.map(src => (
             <div
@@ -325,6 +331,7 @@ export default observer(function SourcesPage() {
                 <button
                   onClick={e => { e.stopPropagation(); store.triggerSync(src.source_id) }}
                   disabled={store.syncing}
+                  data-tour="sync-source-btn"
                   className="text-xs px-2 py-0.5 bg-violet-900/30 hover:bg-violet-800/40
                              text-violet-300 rounded border border-violet-800/30
                              disabled:opacity-40 transition-colors"

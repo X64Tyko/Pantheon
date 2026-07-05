@@ -24,7 +24,11 @@ JellyfinBaseSource::JellyfinBaseSource(
 {
     client_.set_default_headers({{auth_header_, token_}, {"Accept", "application/json"}});
     client_.set_connection_timeout(10);
-    client_.set_read_timeout(30);
+    // 30s wasn't enough for a heavy field-set (Overview/People/ProviderIds/
+    // Tags/...) at Limit=500 against a large or slow self-hosted library —
+    // the connection succeeds (Test Connection uses a lightweight ping) but
+    // this bulk read times out mid-response, surfacing as httplib::Error::Read.
+    client_.set_read_timeout(120);
     // Self-hosted Jellyfin/Emby servers commonly use self-signed or LAN certificates.
     // Follow redirects to handle HTTP→HTTPS forwarding rules.
     client_.enable_server_certificate_verification(false);
@@ -313,7 +317,7 @@ std::vector<Episode> JellyfinBaseSource::fetchEpisodes(const std::string& extern
     httplib::Client client(base_url_);
     client.set_default_headers({{auth_header_, token_}, {"Accept", "application/json"}});
     client.set_connection_timeout(10);
-    client.set_read_timeout(30);
+    client.set_read_timeout(120); // see constructor above for why 30s wasn't enough
 
     // Step 1: season names (IndexNumber → Name) for season_name population.
     std::unordered_map<int, std::string> season_names;

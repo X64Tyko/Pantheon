@@ -65,6 +65,8 @@ Direct Kairos access (API, debugging) is on **:8081**.
 
 ## First-time setup (5 minutes)
 
+Hades' first admin account gets a guided tour that highlights each step below in the UI as you go. For the full walkthrough (including scraper API keys) see [`docs/First-Time Setup.html`](docs/First-Time%20Setup.html).
+
 ### 1. Add a media source
 
 Go to **Sources → Add Source**. Pantheon supports:

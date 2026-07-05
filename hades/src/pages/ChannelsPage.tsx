@@ -8,6 +8,8 @@ import { BLOCK_META, DAYS } from '../channel/constants'
 import { todayEpgDay } from '../channel/utils'
 import { msToTzMins, mergeFiller, localDateStr } from '../channel/EpgPreview'
 import ArrAddModal from '../components/ArrAddModal'
+import { tourStore } from '../stores/TourStore'
+import { TourSpotlight } from '../components/tour/TourSpotlight'
 
 function triggerJsonDownload(data: object, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -100,6 +102,10 @@ export default observer(function ChannelsPage() {
 
   return (
     <div className="space-y-5">
+      {/* Not while showAdd is open — same reasoning as SourcesPage: the
+          spotlight is a one-shot nudge toward the button, not something that
+          should keep dimming the form it just revealed. */}
+      {tourStore.currentStep?.route === '/channels' && !showAdd && <TourSpotlight step={tourStore.currentStep} />}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-zinc-100">Channels</h1>
         <div className="flex gap-2">
@@ -107,7 +113,7 @@ export default observer(function ChannelsPage() {
           <button onClick={() => fileRef.current?.click()} className="btn-secondary">
             Import Channel
           </button>
-          <button onClick={() => setShowAdd(v => !v)} className="btn-primary">
+          <button onClick={() => setShowAdd(v => !v)} className="btn-primary" data-tour="add-channel-btn">
             + Add Channel
           </button>
         </div>
@@ -193,7 +199,7 @@ export default observer(function ChannelsPage() {
 
       <div className="space-y-2">
         {store.channels.length === 0 && !store.loading && (
-          <p className="text-zinc-600 text-sm">No channels configured.</p>
+          <p className="text-zinc-600 text-sm">No channels yet — click + Add Channel to build your first schedule.</p>
         )}
         {store.channels.map(ch => (
           <div key={ch.channel_id} className="card px-4 pt-3 pb-3">

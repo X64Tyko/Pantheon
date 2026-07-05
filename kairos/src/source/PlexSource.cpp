@@ -18,7 +18,10 @@ PlexSource::PlexSource(const std::string& source_id,
         {"Accept",       "application/json"}
     });
     client_.set_connection_timeout(10);
-    client_.set_read_timeout(30);
+    // 30s wasn't enough for a bulk listing (e.g. /allLeaves) against a large
+    // or slow library — connection succeeds fast, but the full read can run
+    // long, surfacing as httplib::Error::Read ("Failed to read connection").
+    client_.set_read_timeout(120);
 }
 
 httplib::Result PlexSource::get(const std::string& path) {
@@ -247,7 +250,7 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
     httplib::Client client(base_url_);
     client.set_default_headers({{"X-Plex-Token", token_}, {"Accept", "application/json"}});
     client.set_connection_timeout(10);
-    client.set_read_timeout(30);
+    client.set_read_timeout(120); // see constructor above for why 30s wasn't enough
 
     // Request season/episode order explicitly so the Plex server pre-sorts when it can.
     const std::string path = "/library/metadata/" + external_show_id

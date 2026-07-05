@@ -6,6 +6,8 @@ import { useFocusable } from '../nav/useFocusable'
 import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
 import { systemStore, statusStore } from '../stores'
+import { tourStore } from '../stores/TourStore'
+import { TourPill } from './tour/TourPill'
 import { SIDEBAR_FOCUS_KEY } from '../nav/back'
 
 const navItems: { to: string; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
@@ -86,6 +88,14 @@ export default observer(function Layout() {
   useEffect(() => {
     if (user?.role !== 'admin') return
     api.getRequests().then(reqs => setPendingRequests(reqs.filter(r => r.status === 'pending').length)).catch(() => {})
+  }, [user?.role, location.pathname])
+
+  // Refresh setup-tour progress as the admin navigates — cheap GETs, only
+  // fires on route change (not a polling loop), and refreshCompletion()
+  // itself no-ops once the tour's been dismissed.
+  useEffect(() => {
+    if (user?.role !== 'admin') return
+    tourStore.refreshCompletion()
   }, [user?.role, location.pathname])
 
   // Connect the global SSE log stream once and keep it alive.
@@ -369,6 +379,9 @@ export default observer(function Layout() {
           <Outlet />
         </div>
       </main>
+
+      {/* ── First-time setup tour pill ──────────────────────────────────────── */}
+      {user?.role === 'admin' && <TourPill />}
 
       {/* ── Error toast ─────────────────────────────────────────────────────── */}
       {systemStore.toast && (

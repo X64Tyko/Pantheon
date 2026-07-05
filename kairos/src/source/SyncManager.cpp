@@ -1001,7 +1001,7 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
     httplib::Client client(base_url);
     client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
     client.set_connection_timeout(10);
-    client.set_read_timeout(30);
+    client.set_read_timeout(120); // see PlexSource's client_ setup for why 30s wasn't enough
 
     for (const auto& link : links) {
         try {

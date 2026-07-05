@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pantheon — First-Time Setup</title>
+<style>
+  :root {
+    --bg: oklch(0.152 0.016 286);
+    --bg2: oklch(0.19 0.018 286);
+    --bg3: oklch(0.21 0.026 290 / 0.6);
+    --line: oklch(0.45 0.05 290 / 0.32);
+    --txt: oklch(0.94 0.008 90);
+    --txt2: oklch(0.68 0.02 288);
+    --txt3: oklch(0.54 0.025 290);
+    --gold: oklch(0.83 0.13 84);
+    --violet: oklch(0.72 0.15 290);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 60px 24px 100px;
+  }
+  main { width: 100%; max-width: 760px; }
+  a { color: var(--violet); }
+  .back { display: inline-block; font-size: 13px; color: var(--txt3); text-decoration: none; margin-bottom: 24px; }
+  .back:hover { color: var(--txt2); }
+  h1 { font-weight: 800; font-size: 34px; letter-spacing: 0.01em; margin: 0 0 6px; }
+  .sub { color: var(--txt2); font-size: 15px; line-height: 1.5; margin: 0 0 16px; max-width: 620px; }
+  .note {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 14px 16px; border-radius: 10px; margin: 0 0 40px;
+    border: 1px solid oklch(0.72 0.15 290 / 0.35);
+    background: oklch(0.72 0.15 290 / 0.08);
+    font-size: 13px; line-height: 1.55; color: var(--txt2);
+  }
+  .note b { color: var(--txt); }
+  section { margin-bottom: 44px; }
+  h2 {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 19px; font-weight: 700; color: var(--txt); margin: 0 0 14px;
+  }
+  h2 .n {
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 26px; height: 26px; border-radius: 8px;
+    background: linear-gradient(180deg, var(--gold), oklch(0.7 0.15 60));
+    color: oklch(0.2 0.04 70); font-size: 13px; font-weight: 800;
+    font-family: ui-monospace, monospace;
+  }
+  p { color: var(--txt2); font-size: 14px; line-height: 1.65; margin: 0 0 12px; }
+  code {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    background: oklch(0.1 0.016 285 / 0.6); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 6px; color: oklch(0.9 0.05 90);
+  }
+  pre {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    background: oklch(0.1 0.016 285 / 0.7); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; color: oklch(0.9 0.05 90);
+    overflow-x: auto; margin: 0 0 12px;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 12px; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--txt3); font-weight: 600; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+  td { color: var(--txt2); }
+  .optional {
+    display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+    color: var(--gold); border: 1px solid oklch(0.83 0.13 84 / 0.4); border-radius: 999px;
+    padding: 2px 9px; margin-left: 10px; vertical-align: middle;
+  }
+  footer { margin-top: 40px; font-size: 11px; color: var(--txt3); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  footer a { color: var(--txt3); }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="index.html">← Docs</a>
+  <h1>First-Time Setup</h1>
+  <p class="sub">Everything needed to go from a fresh Pantheon install to a channel that actually plays something — in roughly the order you'll hit it.</p>
+
+  <div class="note">
+    💡 <span><b>Hades walks you through most of this automatically.</b> The first admin account gets a guided tour — a small floating indicator plus an on-page spotlight — that highlights the exact button for steps 1, 2, 3, and 5 below as you go. This page is here for reference, or if you'd rather read ahead before touching the UI.</span>
+  </div>
+
+  <section>
+    <h2><span class="n">1</span>Add a media source</h2>
+    <p>Go to <b>Sources → + Add Source</b>. Pantheon supports:</p>
+    <table>
+      <tr><th>Source type</th><th>Auth</th></tr>
+      <tr><td>Plex</td><td>Server URL + token (Account → Troubleshooting → XML)</td></tr>
+      <tr><td>Jellyfin</td><td>Server URL + API key + user ID</td></tr>
+      <tr><td>Emby</td><td>Server URL + API key + user ID</td></tr>
+      <tr><td>Local</td><td>Mount path — no auth needed</td></tr>
+    </table>
+    <p>Enter the connection details and run <b>Test Connection</b> before saving. After saving, select the source and add the libraries you want Kairos to know about (TV Shows, Movies).</p>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>Configure scraper API keys<span class="optional">optional</span></h2>
+    <p>Go to <b>Settings → Scrapers</b>. Add a key for whichever metadata sources apply to your library:</p>
+    <table>
+      <tr><th>Source</th><th>Where to get a key</th></tr>
+      <tr><td>TMDB</td><td><a href="https://www.themoviedb.org/settings/api">themoviedb.org/settings/api</a> — free, instant</td></tr>
+      <tr><td>TVDB</td><td><a href="https://thetvdb.com/dashboard/account/apikeys">thetvdb.com/dashboard/account/apikeys</a> — free, requires a TheTVDB account</td></tr>
+      <tr><td>AniDB</td><td>Your registered AniDB client name, for anime libraries</td></tr>
+    </table>
+    <p>Enable each one and <b>Save Scraper Settings</b>. This is what turns raw filenames into real titles, artwork, and descriptions once you sync — skip it and content still plays fine, just unmatched.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>Sync your library</h2>
+    <p>Back on <b>Sources</b>, hit <b>Sync</b> on the source you added. Kairos scans in the files and (if scraper keys are configured) matches them against TMDB/TVDB/AniDB. Large libraries take a few minutes — progress is visible in <b>Activity</b>. Anything that doesn't match confidently lands in <b>Review</b> for a manual pick.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">4</span>Set the path map<span class="optional">if needed</span></h2>
+    <p>Your media server reports file paths from its own point of view (e.g. <code>/data/TV/...</code>). If your media is mounted at a different path inside the Kairos container (e.g. <code>/media</code>), add a map under <b>Sources → your source → Path Maps</b> so the transcoder can actually find the files:</p>
+    <pre>/data  →  /media</pre>
+  </section>
+
+  <section>
+    <h2><span class="n">5</span>Create a channel</h2>
+    <p><b>Channels → + Add Channel</b>. Give it a name, number, and timezone.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">6</span>Add a block and preview the EPG</h2>
+    <p>Open the channel, click <b>Add Block</b>. Choose days, a start time, and a block type, then add a show or movie list to it. Click <b>Preview</b> to see the resolved grid — what plays when, with filler patching the gaps — and adjust priority/timing until it looks right. <b>Save Channel</b> locks it in.</p>
+  </section>
+
+  <footer>See the <a href="index.html">docs index</a> for how blocks, advancement, cursors, and filler actually interact once you're past first-run setup.</footer>
+</main>
+</body>
+</html>
