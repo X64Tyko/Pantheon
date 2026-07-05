@@ -53,6 +53,20 @@ httplib::Result TvdbScraper::get(const std::string& path) {
 
 // ── JSON helpers ─────────────────────────────────────────────────────────────
 
+// httplib::detail::encode_url() doesn't escape a literal '%' (it only targets
+// space/comma/quote/etc. and bytes >= 0x80), so a title like "200% Wolf" comes
+// out as "200%%20Wolf" — TVDB can't percent-decode that and treats the query
+// as missing entirely ("query is required"). Escape '%' ourselves first.
+static std::string encodeQuery(const std::string& s) {
+    std::string escaped;
+    escaped.reserve(s.size());
+    for (char c : s) {
+        if (c == '%') escaped += "%25";
+        else escaped += c;
+    }
+    return httplib::detail::encode_url(escaped);
+}
+
 static std::string safeStr(const json& j, const std::string& key, const std::string& def = "") {
     if (j.contains(key) && j[key].is_string()) return j[key].get<std::string>();
     return def;
@@ -206,7 +220,7 @@ Episode TvdbScraper::episodeFromJson(const json& j, const std::string& show_id) 
 
 std::vector<Show> TvdbScraper::searchShows(const std::string& title, int year) {
     std::string path = "/v4/search?type=series&query="
-        + httplib::detail::encode_url(title);
+        + encodeQuery(title);
     if (year > 0) path += "&year=" + std::to_string(year);
 
     auto res = get(path);
@@ -299,7 +313,7 @@ std::vector<Episode> TvdbScraper::fetchEpisodes(const std::string& external_id, 
 
 std::vector<Movie> TvdbScraper::searchMovies(const std::string& title, int year) {
     std::string path = "/v4/search?type=movie&query="
-        + httplib::detail::encode_url(title);
+        + encodeQuery(title);
     if (year > 0) path += "&year=" + std::to_string(year);
 
     auto res = get(path);

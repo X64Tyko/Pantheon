@@ -27,6 +27,20 @@ httplib::Result TmdbScraper::get(const std::string& path) {
 
 // ── JSON helpers ─────────────────────────────────────────────────────────────
 
+// httplib::detail::encode_url() doesn't escape a literal '%' (it only targets
+// space/comma/quote/etc. and bytes >= 0x80), so a title like "200% Wolf" comes
+// out as "200%%20Wolf" — TMDB can't percent-decode that ("%%2" isn't valid hex)
+// and rejects the whole request with 400. Escape '%' ourselves first.
+static std::string encodeQuery(const std::string& s) {
+    std::string escaped;
+    escaped.reserve(s.size());
+    for (char c : s) {
+        if (c == '%') escaped += "%25";
+        else escaped += c;
+    }
+    return httplib::detail::encode_url(escaped);
+}
+
 static std::string safeStr(const json& j, const std::string& key, const std::string& def = "") {
     if (j.contains(key) && j[key].is_string()) return j[key].get<std::string>();
     return def;
@@ -186,7 +200,7 @@ Episode TmdbScraper::episodeFromJson(const json& j, const std::string& show_id) 
 std::vector<Show> TmdbScraper::searchShows(const std::string& title, int year) {
     std::string path = "/3/search/tv?api_key=" + api_key_
         + "&language=" + language_
-        + "&query=" + httplib::detail::encode_url(title);
+        + "&query=" + encodeQuery(title);
     if (year > 0) path += "&first_air_date_year=" + std::to_string(year);
 
     auto res = get(path);
@@ -271,7 +285,7 @@ std::vector<Episode> TmdbScraper::fetchEpisodes(const std::string& external_id, 
 std::vector<Movie> TmdbScraper::searchMovies(const std::string& title, int year) {
     std::string path = "/3/search/movie?api_key=" + api_key_
         + "&language=" + language_
-        + "&query=" + httplib::detail::encode_url(title);
+        + "&query=" + encodeQuery(title);
     if (year > 0) path += "&year=" + std::to_string(year);
 
     auto res = get(path);
