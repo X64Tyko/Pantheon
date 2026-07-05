@@ -11,9 +11,11 @@ static std::string generateSessionId() {
     return ss.str();
 }
 
-// Matches SessionManager's kCacheRefreshInterval — see that file's comment
-// for why this is a background poll rather than a per-request fetch.
-static constexpr auto kSettingsRefreshInterval = std::chrono::seconds(15);
+// Matches SessionManager's active/idle dual cadence — see that file's
+// comment for why this is a background poll rather than a per-request fetch,
+// and why idle backs off instead of polling forever at the active rate.
+static constexpr auto kActiveRefreshInterval = std::chrono::seconds(15);
+static constexpr auto kIdleRefreshInterval   = std::chrono::minutes(5);
 
 PreviewSessionManager::PreviewSessionManager(std::string ffmpeg_path, PreviewStreamOptions opts, KairosClient& kairos)
     : ffmpeg_path(std::move(ffmpeg_path)), opts(std::move(opts)), kairos(kairos) {
@@ -21,7 +23,11 @@ PreviewSessionManager::PreviewSessionManager(std::string ffmpeg_path, PreviewStr
     refreshSettings(); // blocking, but only once, at startup
     settings_refresh_thread = std::thread([this] {
         while (!stop_settings_refresh.load()) {
-            for (int i = 0; i < 15 && !stop_settings_refresh.load(); ++i)
+            bool active;
+            { std::lock_guard<std::mutex> lock(mtx); active = !sessions.empty(); }
+            auto wait = active ? kActiveRefreshInterval : kIdleRefreshInterval;
+            for (auto elapsed = std::chrono::seconds(0); elapsed < wait && !stop_settings_refresh.load();
+                 elapsed += std::chrono::seconds(1))
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             if (stop_settings_refresh.load()) break;
             refreshSettings();
