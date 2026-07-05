@@ -3,8 +3,28 @@
 #include "MetadataOverrideRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <sstream>
+
+namespace {
+
+// Same season-style-folder heuristic as ScraperManager's extractShowFolder
+// (which derives a show's folder *name* from one episode path at match
+// time) — mirrored here to derive the show's full folder *path* from
+// already-imported episodes. "Season 1", "S01", "Specials", etc.
+bool looksLikeSeasonFolder(const std::string& folderName) {
+    std::string lower;
+    lower.reserve(folderName.size());
+    for (char c : folderName)
+        lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return lower.starts_with("season") || lower.starts_with("specials")
+        || lower.starts_with("extras") || lower.starts_with("bonus")
+        || (lower.size() >= 2 && lower[0] == 's'
+            && std::isdigit(static_cast<unsigned char>(lower[1])));
+}
+
+} // namespace
 
 ContentRepository::ContentRepository(Database& db) : db_(db) {}
 
@@ -956,25 +976,28 @@ std::string ContentRepository::parentDir(const std::string& file_path) {
 }
 
 std::optional<std::string> ContentRepository::getShowFolderPath(const std::string& show_id) {
+    // Any single episode's own containing folder is enough to derive the
+    // show's root: it's either a per-season subfolder ("Season 1", "S01",
+    // ...) — in which case the show root is one level up — or, for shows
+    // with no season subfolders, the episode's folder IS the show root.
+    // (Previously this diffed every episode's file_path char-by-char to
+    // find a common prefix, which only stepped up past the season folder
+    // when episodes' *season folders* disagreed — a single-season show
+    // has every episode under the same "Season 1" folder, so the prefix
+    // scan instead diverged inside the filenames and stopped one level
+    // too shallow, reporting "Season 1" as the show's folder.)
     SQLite::Statement q(db_.get(),
-        "SELECT DISTINCT file_path FROM episode WHERE show_id = ? AND file_path != ''");
+        "SELECT file_path FROM episode WHERE show_id = ? AND file_path != '' LIMIT 1");
     q.bind(1, show_id);
+    if (!q.executeStep()) return std::nullopt;
 
-    std::vector<std::string> paths;
-    while (q.executeStep()) paths.push_back(q.getColumn(0).getString());
-    if (paths.empty()) return std::nullopt;
+    std::string dir = parentDir(q.getColumn(0).getString());
+    if (dir.empty()) return std::nullopt;
 
-    std::string common = paths[0];
-    for (size_t i = 1; i < paths.size() && !common.empty(); ++i) {
-        const std::string& p = paths[i];
-        size_t n = std::min(common.size(), p.size());
-        size_t j = 0;
-        while (j < n && common[j] == p[j]) ++j;
-        common.resize(j);
-    }
+    std::string name = dir.substr(dir.find_last_of('/') + 1);
+    if (looksLikeSeasonFolder(name)) dir = parentDir(dir);
 
-    std::string folder = parentDir(common);
-    return folder.empty() ? std::nullopt : std::make_optional(folder);
+    return dir.empty() ? std::nullopt : std::make_optional(dir);
 }
 
 std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& movie_id) {

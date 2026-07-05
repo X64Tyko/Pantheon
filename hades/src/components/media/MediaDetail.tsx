@@ -18,7 +18,7 @@ export function MediaDetail({ id, content_type, discoverResult, onClose, onViewI
       content_type={content_type}
       discoverResult={discoverResult}
       onBack={onClose}
-      actions={<LibraryDetailActions id={id} content_type={content_type} discoverResult={discoverResult} onViewInLibrary={onViewInLibrary} />}
+      actions={media => <LibraryDetailActions id={id} content_type={content_type} discoverResult={discoverResult} onViewInLibrary={onViewInLibrary} media={media} />}
       afterShelves={id && content_type && !discoverResult ? <LibraryAdminPanel id={id} content_type={content_type} /> : undefined}
     />
   )

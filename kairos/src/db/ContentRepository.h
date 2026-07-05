@@ -235,12 +235,11 @@ public:
     static std::string parentDir(const std::string& file_path);
 
     // A show has no file_path of its own — it's a collection of per-episode
-    // files, possibly split across per-season subdirectories. This finds the
-    // longest common directory-boundary-aligned prefix across every episode's
-    // file_path, which lands on the show's own root folder even when episodes
-    // are spread across "Season 01"/"Season 02"/... subfolders (those names
-    // diverge and stop the common-prefix scan right at the show root).
-    // std::nullopt if the show has no episodes with a non-empty file_path.
+    // files, possibly split across per-season subdirectories. This steps up
+    // from one episode's containing folder past a season-style subfolder
+    // ("Season 1", "S01", ...) when present, landing on the show's own root
+    // folder either way. std::nullopt if the show has no episodes with a
+    // non-empty file_path.
     std::optional<std::string> getShowFolderPath(const std::string& show_id);
 
     void updateShow(const std::string& show_id,

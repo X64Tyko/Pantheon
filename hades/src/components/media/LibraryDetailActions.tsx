@@ -9,13 +9,18 @@ import { FixMatchPanel } from './FixMatchPanel'
 import { goldBtnStyle } from '../../channel/styles'
 import { resolvePlayPath } from '../../player/resolvePlayTarget'
 import { useFocusable } from '../../nav/useFocusable'
-import { useMediaDetail } from './useMediaDetail'
+import type { MediaDetailResult } from './useMediaDetail'
 
 interface LibraryDetailActionsProps {
   id?:              string
   content_type?:    'show' | 'movie'
   discoverResult?:  ScraperSearchResult
   onViewInLibrary?: (id: string, content_type: 'show' | 'movie') => void
+  // MediaDetailHero's own useMediaDetail() result, handed down instead of
+  // this component fetching its own copy — a second independent fetch had
+  // its own refreshKey, so Refresh Metadata's cache-bust never reached the
+  // poster/backdrop <img> that MediaDetailHero actually renders.
+  media:            MediaDetailResult
 }
 
 type ArrStep = 'idle' | 'loading' | 'form' | 'adding' | 'done' | 'error'
@@ -26,19 +31,14 @@ const REQUEST_STATUS_LABEL: Record<string, string> = {
   rejected: 'already requested — the request was declined',
 }
 
-export function LibraryDetailActions({ id, content_type, discoverResult, onViewInLibrary }: LibraryDetailActionsProps) {
+export function LibraryDetailActions({ id, content_type, discoverResult, onViewInLibrary, media }: LibraryDetailActionsProps) {
   const { user } = useAuth()
   const navigate = useNavigate()
   const isAdmin  = user?.role === 'admin'
   const isLibraryItem = !discoverResult && !!id && !!content_type
   const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
 
-  // A second, independent fetch of the same item — MediaDetailHero already
-  // fetched it for the poster/overview/etc, but has no way to hand this
-  // component the result (actions is built by the *parent* page before
-  // MediaDetailHero's own hook ever runs). Cheap GET, not worth a wider
-  // prop-threading change to avoid.
-  const { detail, title: detailTitle, refetch: refetchDetail } = useMediaDetail({ id, content_type })
+  const { detail, title: detailTitle, refetch: refetchDetail } = media
   const [fixMatchOpen, setFixMatchOpen] = useState(false)
 
   const [playLoading, setPlayLoading] = useState(false)

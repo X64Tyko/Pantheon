@@ -4,7 +4,7 @@ import { EpisodeShelf } from './EpisodeShelf'
 import { LanguageChips } from './LanguageChips'
 import { useFocusable } from '../../nav/useFocusable'
 import { useNavBack } from '../../nav/back'
-import { folderBaseName, useMediaDetail } from './useMediaDetail'
+import { folderBaseName, useMediaDetail, type MediaDetailResult } from './useMediaDetail'
 
 function formatVideoInfo(v: VideoInfo): string | null {
   if (!v.codec && !v.height) return null
@@ -20,8 +20,14 @@ interface MediaDetailHeroProps {
   content_type?:   'show' | 'movie'
   discoverResult?: ScraperSearchResult
   onBack:          () => void
-  /** Extra library-management controls, rendered between the overview and the season shelves. */
-  actions?:        ReactNode
+  /**
+   * Extra library-management controls, rendered between the overview and
+   * the season shelves. A render-prop (not a plain node) so it shares this
+   * component's own useMediaDetail() result — LibraryDetailActions' refresh
+   * action needs to bump *this* hook's refreshKey to bust the poster/backdrop
+   * URL, not a second independent instance's.
+   */
+  actions?:        (media: MediaDetailResult) => ReactNode
   /** Admin/details tooling, rendered at the very bottom, after the season shelves. */
   afterShelves?:   ReactNode
   /** Home page already renders its own rotating backdrop above this component. */
@@ -36,11 +42,12 @@ const metaChip: React.CSSProperties = {
 
 export function MediaDetailHero({ id, content_type, discoverResult, onBack, actions, afterShelves, showBackdrop = true }: MediaDetailHeroProps) {
   useNavBack(onBack) // Escape/Backspace closes the detail view, same contract as PlayerPage
+  const media = useMediaDetail({ id, content_type, discoverResult })
   const {
     show, movie, loading, detail, contentType,
     posterUrl, backdropUrl, title, year, overview, genres, rating,
     seasonsWithEpisodes, languages, videoInfo, folderName, fileName,
-  } = useMediaDetail({ id, content_type, discoverResult })
+  } = media
 
   const srcColor = discoverResult?.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
 
@@ -200,7 +207,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
               )}
 
               {/* Extra library actions — between description and season shelves */}
-              {actions}
+              {actions?.(media)}
             </div>
           </div>
         )}

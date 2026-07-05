@@ -314,7 +314,7 @@ export default function HomePage() {
               content_type={detailType}
               onBack={closeDetail}
               showBackdrop={false}
-              actions={<LibraryDetailActions id={detailId} content_type={detailType} />}
+              actions={media => <LibraryDetailActions id={detailId} content_type={detailType} media={media} />}
             />
           ) : (
             <>
