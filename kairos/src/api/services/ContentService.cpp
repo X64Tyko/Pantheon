@@ -204,12 +204,21 @@ void ContentService::proxyImage(const Req& req,
 		return;
 	}
 
+	// cdn.anidb.net has its own hotlink/abuse protection, entirely separate
+	// from the already-throttled api.anidb.net:9001 metadata lookups — this
+	// used to be a bare, unthrottled fetch (new client, no delay, no
+	// User-Agent) that could fire once per <img> tag in a grid, which is
+	// exactly what was tripping it into 502s.
+	if (is_cdn && effective_base.find("anidb.net") != std::string::npos)
+		scraper_.anidbRateLimitImage();
+
 	std::string token = is_cdn ? "" : conf_.token(sourceId);
 	httplib::Result img;
 	try {
 		httplib::Client client(effective_base);
-		if (!token.empty())
-			client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "*/*"}});
+		httplib::Headers headers{{"User-Agent", "kairos/1.0 (https://github.com/X64Tyko/Pantheon)"}};
+		if (!token.empty()) { headers.emplace("X-Plex-Token", token); headers.emplace("Accept", "*/*"); }
+		client.set_default_headers(headers);
 		client.set_connection_timeout(10);
 		client.set_read_timeout(15);
 		img = client.Get(fetch_path);

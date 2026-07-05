@@ -1195,6 +1195,10 @@ std::string ScraperManager::anidbPosterUrl(const std::string& aid) const {
     return anidb_->posterUrl(aid);
 }
 
+void ScraperManager::anidbRateLimitImage() const {
+    if (anidb_) anidb_->rateLimitImageWait();
+}
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 ScraperStats ScraperManager::stats() const {

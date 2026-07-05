@@ -48,25 +48,35 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
   return (
     <div>
       {showBackdrop && (
-        <div style={{
-          position: 'relative', height: '42vh', minHeight: 300, flexShrink: 0,
-          background: backdropUrl
-            ? `url(${backdropUrl}) center/cover no-repeat`
-            : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)',
-          marginBottom: -60, paddingBottom: 60,
-          opacity: loading && !discoverResult ? 0.6 : 1, transition: 'opacity .3s ease',
-        }}>
+        <>
+          {/* Sticky, zero-height wrapper: keeps Back pinned to the top of the
+              viewport as the page scrolls, instead of scrolling away with the
+              banner underneath it (which isn't sticky itself — it's normal-
+              flow content in the same scroll container as the season
+              shelves). height:0 so it never adds its own layout space; the
+              button just visually overflows below it. */}
+          <div style={{ position: 'sticky', top: 18, zIndex: 20, height: 0 }}>
+            <BackButton onClick={onBack} overlay />
+          </div>
           <div style={{
-            position: 'absolute', inset: 0,
-            background: 'linear-gradient(to right, oklch(0 0 0 / 0.75) 0%, oklch(0 0 0 / 0.3) 55%, transparent 100%)',
-          }} />
-          <div style={{
-            position: 'absolute', inset: 0,
-            background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 46%)',
-            paddingBottom: 60, marginBottom: -60,
-          }} />
-          <BackButton onClick={onBack} overlay />
-        </div>
+            position: 'relative', height: '42vh', minHeight: 300, flexShrink: 0,
+            background: backdropUrl
+              ? `url(${backdropUrl}) center/cover no-repeat`
+              : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)',
+            marginBottom: -60, paddingBottom: 60,
+            opacity: loading && !discoverResult ? 0.6 : 1, transition: 'opacity .3s ease',
+          }}>
+            <div style={{
+              position: 'absolute', inset: 0,
+              background: 'linear-gradient(to right, oklch(0 0 0 / 0.75) 0%, oklch(0 0 0 / 0.3) 55%, transparent 100%)',
+            }} />
+            <div style={{
+              position: 'absolute', inset: 0,
+              background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 46%)',
+              paddingBottom: 60, marginBottom: -60,
+            }} />
+          </div>
+        </>
       )}
 
       <div className="hds-media-detail-hero-container" style={{ position: 'relative', zIndex: 2, padding: '0 48px 48px' }}>
@@ -233,7 +243,10 @@ function BackButton({ onClick, overlay }: { onClick: () => void; overlay?: boole
         transition: 'color .12s, background .12s',
         ...(overlay
           ? {
-              position: 'absolute', top: 18, left: 24, zIndex: 3,
+              // No position here — the sticky, zero-height wrapper in
+              // MediaDetailHero handles keeping this pinned to the viewport;
+              // this just needs its own offset from that wrapper's edge.
+              marginLeft: 24,
               padding: '7px 14px 7px 10px', borderRadius: 20,
               border: '1px solid var(--hds-glass-border)', background: 'var(--hds-glass)',
               backdropFilter: 'blur(8px)', color: 'oklch(0.92 0.01 285)',

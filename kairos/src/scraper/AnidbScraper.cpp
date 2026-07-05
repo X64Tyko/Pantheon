@@ -156,7 +156,8 @@ AnidbScraper::AnidbScraper(std::string client_name)
     dump_client_.set_read_timeout(120);
     dump_client_.set_default_headers({{"User-Agent", "kairos/1.0 (https://github.com/X64Tyko/Pantheon)"}});
     // Allow an immediate first request
-    last_api_call_ = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    last_api_call_   = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    last_image_call_ = std::chrono::steady_clock::now() - std::chrono::seconds(10);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +172,16 @@ void AnidbScraper::rateLimitWait() {
     if (elapsed < kGap)
         std::this_thread::sleep_for(kGap - elapsed);
     last_api_call_ = std::chrono::steady_clock::now();
+}
+
+void AnidbScraper::rateLimitImageWait() {
+    std::lock_guard lock(image_rate_mu_);
+    auto now     = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_image_call_);
+    constexpr auto kGap = std::chrono::milliseconds(2100);
+    if (elapsed < kGap)
+        std::this_thread::sleep_for(kGap - elapsed);
+    last_image_call_ = std::chrono::steady_clock::now();
 }
 
 // ---------------------------------------------------------------------------

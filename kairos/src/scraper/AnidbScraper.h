@@ -37,6 +37,16 @@ public:
     // Caches the anime XML to disk so repeated calls are instant.
     std::string posterUrl(const std::string& aid);
 
+    // Same 2.1 s gate as the HTTP API, but its own independent clock — image
+    // fetches hit cdn.anidb.net, a different host from api.anidb.net:9001,
+    // so a burst of one must never eat into (or be blocked by) the other's
+    // budget. ContentService::proxyImage calls this before fetching from
+    // cdn.anidb.net — that path used to be completely unthrottled, which is
+    // what was actually tripping cdn.anidb.net's own hotlink/abuse
+    // protection (seen as 502s) after the API-side lookups had already
+    // burned through a minute-plus of 2.1 s waits.
+    void rateLimitImageWait();
+
 private:
     std::string              fetchAnimeXml(const std::string& aid);
 
@@ -50,6 +60,9 @@ private:
 
     std::mutex                            rate_mu_;
     std::chrono::steady_clock::time_point last_api_call_;
+
+    std::mutex                            image_rate_mu_;
+    std::chrono::steady_clock::time_point last_image_call_;
 
     static constexpr const char* kTitlesXml  = "/tmp/kairos-anidb-titles.xml";
     static constexpr const char* kTitlesGz   = "/tmp/kairos-anidb-titles.xml.gz";
