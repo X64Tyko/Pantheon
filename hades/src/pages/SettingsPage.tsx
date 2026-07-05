@@ -120,9 +120,26 @@ export default observer(function SettingsPage() {
   const [scraperSaving,   setScraperSaving]   = useState(false)
   const [scraperSaved,    setScraperSaved]    = useState(false)
   const [matchRunning,    setMatchRunning]    = useState(false)
-  const matchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const matchPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadCastSessions = () => api.getCastSessions().then(setCastSessions).catch(() => setCastSessions([]))
+
+  // Self-terminating poll chain, not a standing interval — only ever ticks
+  // while a match pass is actually running, instead of hitting the server
+  // every 3s for the entire time Settings happens to be open (which is what
+  // was flooding the log with requests whether or not anything was going on).
+  const wasMatchRunningRef = useRef(false)
+  const pollMatchStatus = () => {
+    api.getMatchStatus().then(s => {
+      setMatchRunning(s.running)
+      if (s.running) {
+        matchPollRef.current = setTimeout(pollMatchStatus, 3000)
+      } else if (wasMatchRunningRef.current) {
+        api.getScraperStats().then(setScraperStats).catch(() => {})
+      }
+      wasMatchRunningRef.current = s.running
+    }).catch(() => {})
+  }
 
   const revokeCastSession = async (sessionId: string) => {
     setRevokingCast(sessionId)
@@ -141,10 +158,11 @@ export default observer(function SettingsPage() {
     api.getArrConfig().then(setArr).catch(() => {})
     api.getScraperSettings().then(setScraperSettings).catch(() => {})
     api.getScraperStats().then(setScraperStats).catch(() => {})
-    matchPollRef.current = setInterval(() => {
-      api.getMatchStatus().then(s => setMatchRunning(s.running)).catch(() => {})
-    }, 3000)
-    return () => { if (matchPollRef.current) clearInterval(matchPollRef.current) }
+    // One-time check in case a match kicked off elsewhere (or before this
+    // mount) is still running — pollMatchStatus takes over from here on its
+    // own if so, and stays quiet otherwise.
+    pollMatchStatus()
+    return () => { if (matchPollRef.current) clearTimeout(matchPollRef.current) }
   }, [])
 
   const patch = async (update: Partial<Settings>) => {
@@ -240,11 +258,10 @@ const applyBuffer = () => {
 
   const runMatch = async () => {
     setMatchRunning(true)
+    wasMatchRunningRef.current = true
     await api.triggerMatch()
-    setTimeout(() => {
-      setMatchRunning(false)
-      api.getScraperStats().then(setScraperStats).catch(() => {})
-    }, 4000)
+    if (matchPollRef.current) clearTimeout(matchPollRef.current)
+    pollMatchStatus()
   }
 
   const tmdb  = scraperSettings?.configs.find(c => c.source === 'tmdb')
