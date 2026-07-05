@@ -58,6 +58,7 @@ export interface LibraryWithSource {
   library_type: 'show' | 'movie' | 'mixed' | 'music' | 'photo'
   source_name:  string
   source_type:  string
+  show_on_home: boolean
 }
 
 export interface PagedResult<T> {
@@ -77,6 +78,9 @@ export interface Library {
   // in here (or preferred_scraper is set to 'anidb' outright).
   include_anidb:       boolean
   enabled:             boolean
+  // Off for filler/bumper/commercial libraries — excluded from Home's
+  // unscoped shelves, still fully usable for channel building and Library browsing.
+  show_on_home:        boolean
 }
 
 export type AdvanceMode = 'scheduled' | 'on_play'
@@ -161,6 +165,7 @@ export interface Show {
   thumb?:          string
   art?:            string
   source_base_url?: string
+  library_id?:     string
   audience_rating?: number
   match_status?:   MatchStatus
   match_score?:    number | null
@@ -177,6 +182,7 @@ export interface Movie {
   thumb?:          string
   art?:            string
   source_base_url?: string
+  library_id?:     string
   audience_rating?: number
   match_status?:   MatchStatus
   match_score?:    number | null

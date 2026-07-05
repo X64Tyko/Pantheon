@@ -21,6 +21,10 @@ struct MediaLibraryConfig {
     // AniDB is anime-only — never queried automatically for a library unless
     // explicitly opted in here (or preferred_scraper is set to "anidb" outright).
     bool        include_anidb = false;
+    // Off for filler/bumper/commercial libraries — excluded from the unscoped
+    // (no library_id) show/movie queries backing Home's shelves, but still
+    // fully usable for channel building and direct Library browsing.
+    bool        show_on_home = true;
 };
 
 // Returned by MediaSource::listAvailableLibraries() — live from the server

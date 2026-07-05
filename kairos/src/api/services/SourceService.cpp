@@ -213,7 +213,8 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			                  {"preferred_scraper", lib.preferred_scraper},
 			                  {"preferred_language", lib.preferred_language},
 			                  {"include_anidb", lib.include_anidb},
-			                  {"enabled", lib.enabled}});
+			                  {"enabled", lib.enabled},
+			                  {"show_on_home", lib.show_on_home}});
 		route::ok(res, result.dump());
 	});
 
@@ -261,6 +262,8 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			std::string preferred_language= b.value("preferred_language",it->preferred_language);
 			bool        include_anidb     = b.value("include_anidb",     it->include_anidb);
 			repo.updateLibrary(lid, display_name, preferred_scraper, preferred_language, include_anidb);
+			if (b.contains("show_on_home"))
+				repo.setLibraryShowOnHome(lid, b["show_on_home"].get<bool>());
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const json::exception& e) {
 			route::err(res, 400, e.what());

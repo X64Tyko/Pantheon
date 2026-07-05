@@ -53,6 +53,7 @@ export default function HomePage() {
   const [continueWatching, setContinueWatching] = useState<WatchProgress[]>([])
   const [stats,            setStats]            = useState<ScraperStats | null>(null)
   const [loading,          setLoading]          = useState(true)
+  const [libraryNames,     setLibraryNames]     = useState<Map<string, string>>(new Map())
 
   // Hero
   const heroCandidates    = useRef<(Show | Movie)[]>([])
@@ -112,13 +113,15 @@ export default function HomePage() {
       api.getShows({ limit: 16, sort: 'recently_aired' }).catch(() => ({ items: [] as Show[], total: 0 })),
       api.getScraperStats().catch(() => null),
       api.getWatchProgress().catch(() => []),
-    ]).then(([sr, mr, rr, ra, st, cw]) => {
+      api.getAllLibraries().catch(() => []),
+    ]).then(([sr, mr, rr, ra, st, cw, libs]) => {
       setRecentShows(sr.items)
       setRecentMovies(mr.items)
       setRecentlyReleased(rr.items)
       setRecentlyAired(ra.items)
       setStats(st)
       setContinueWatching(cw)
+      setLibraryNames(new Map(libs.map(l => [l.library_id, l.display_name])))
 
       sr.items.forEach(s => allItemsRef.current.set(s.show_id, s))
       mr.items.forEach(m => allItemsRef.current.set(m.movie_id, m))
@@ -216,6 +219,18 @@ export default function HomePage() {
       hoverRestoreRef.current = null
     }
     if (!detailOpen) startRotation()
+  }
+
+  // Per-card "Hide from Home" shortcut — flips the whole library's
+  // show_on_home flag (see Settings → Sources for the same toggle), then
+  // optimistically drops every currently-loaded item from that library out
+  // of every shelf, not just the one the card was clicked from.
+  const hideLibrary = async (libraryId: string) => {
+    await api.setLibraryShowOnHome(libraryId, false)
+    setRecentShows(s => s.filter(x => x.library_id !== libraryId))
+    setRecentMovies(m => m.filter(x => x.library_id !== libraryId))
+    setRecentlyReleased(m => m.filter(x => x.library_id !== libraryId))
+    setRecentlyAired(s => s.filter(x => x.library_id !== libraryId))
   }
 
   const needsReview = stats ? stats.uncertain + stats.unmatched : 0
@@ -332,6 +347,8 @@ export default function HomePage() {
                 onNavigate={navigate}
                 onItemHover={handleShelfHover}
                 onRowLeave={handleShelfHoverEnd}
+                libraryNames={libraryNames}
+                onHideLibrary={hideLibrary}
               />
               <div ref={guideRef} style={{ padding: '0 24px 48px' }}>
                 <Suspense fallback={null}><GuidePage /></Suspense>
@@ -582,7 +599,7 @@ function QuickActionsRow({ onGuideClick }: { onGuideClick: () => void }) {
 
 function Shelves({
   loading, recentShows, recentMovies, recentlyReleased, recentlyAired, continueWatching,
-  onItemClick, onNavigate, onItemHover, onRowLeave,
+  onItemClick, onNavigate, onItemHover, onRowLeave, libraryNames, onHideLibrary,
 }: {
   loading:          boolean
   recentShows:      Show[]
@@ -594,6 +611,8 @@ function Shelves({
   onNavigate:       (path: string) => void
   onItemHover:      (id: string) => void
   onRowLeave:       () => void
+  libraryNames:     Map<string, string>
+  onHideLibrary:    (libraryId: string) => void
 }) {
   // Applies a shelf's implicit filter/sort to the Library page before
   // navigating there — e.g. "Recently Added Movies" lands on Library showing
@@ -622,12 +641,14 @@ function Shelves({
               items={recentShows.map(s => ({
                 id: s.show_id, title: s.title, year: s.year,
                 thumb_url: proxyThumb(s), rating: s.audience_rating,
-                content_type: 'show' as const,
+                content_type: 'show' as const, library_id: s.library_id,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
               onViewAll={continueInLibrary('show', 'recently_added')}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
+              libraryNames={libraryNames}
+              onHideLibrary={onHideLibrary}
             />
           )}
           {recentMovies.length > 0 && (
@@ -636,12 +657,14 @@ function Shelves({
               items={recentMovies.map(m => ({
                 id: m.movie_id, title: m.title, year: m.year,
                 thumb_url: proxyThumb(m), rating: m.audience_rating,
-                content_type: 'movie' as const,
+                content_type: 'movie' as const, library_id: m.library_id,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
               onViewAll={continueInLibrary('movie', 'recently_added')}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
+              libraryNames={libraryNames}
+              onHideLibrary={onHideLibrary}
             />
           )}
           {recentlyReleased.length > 0 && (
@@ -650,12 +673,14 @@ function Shelves({
               items={recentlyReleased.map(m => ({
                 id: m.movie_id, title: m.title, year: m.year,
                 thumb_url: proxyThumb(m), rating: m.audience_rating,
-                content_type: 'movie' as const,
+                content_type: 'movie' as const, library_id: m.library_id,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
               onViewAll={continueInLibrary('movie', 'recently_released')}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
+              libraryNames={libraryNames}
+              onHideLibrary={onHideLibrary}
             />
           )}
           {/* Only shows the backend actually resolved a jump-to episode for
@@ -668,7 +693,7 @@ function Shelves({
               items={recentlyAired.filter(s => s.latest_episode).map(s => ({
                 id: s.show_id, title: s.title, year: s.year,
                 thumb_url: proxyThumb(s), rating: s.audience_rating,
-                content_type: 'show' as const,
+                content_type: 'show' as const, library_id: s.library_id,
                 directPlayPath: `/player/episode/${s.latest_episode!.episode_id}`,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
@@ -676,6 +701,8 @@ function Shelves({
               onViewAll={continueInLibrary('show', 'recently_aired')}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
+              libraryNames={libraryNames}
+              onHideLibrary={onHideLibrary}
             />
           )}
         </>
@@ -689,6 +716,7 @@ function Shelves({
 interface ShelfEntry {
   id: string; title: string; year?: number
   thumb_url?: string; rating?: number; content_type: 'show' | 'movie'
+  library_id?: string
   // Recently Aired only: when set, selecting the card jumps straight to
   // playing this episode instead of opening the show's detail view (unlike
   // a typical "recently aired episodes" list, this shelf is one tile per
@@ -696,7 +724,7 @@ interface ShelfEntry {
   directPlayPath?: string
 }
 
-function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, onRowLeave }: {
+function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, onRowLeave, libraryNames, onHideLibrary }: {
   title:       string
   items:       ShelfEntry[]
   onItemClick: (id: string, type: 'show' | 'movie') => void
@@ -704,12 +732,23 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
   onViewAll?:  () => void
   onItemHover?: (id: string) => void
   onRowLeave?:  () => void
+  libraryNames: Map<string, string>
+  onHideLibrary: (libraryId: string) => void
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null)
   const [showArrows, setShowArrows] = useState(false)
-  const scroll = (d: 'left' | 'right') =>
-    scrollRef.current?.scrollBy({ left: d === 'right' ? 340 : -340, behavior: 'smooth' })
   const travel = useTravelingFocus()
+  // isFocusBoundary traps left/right within the row so arrowing off the
+  // first/last card can't fall back to the library's nearest-neighbor search
+  // across the whole page (which is what was launching focus into unrelated
+  // shelves several rows away) — up/down stay open to move between shelves.
+  const { ref: rowRef, focusKey: rowFocusKey } = useFocusable<object, HTMLDivElement>({
+    focusKey: `home-shelf-row-${title}`,
+    trackChildren: true,
+    isFocusBoundary: true,
+    focusBoundaryDirections: ['left', 'right'],
+  })
+  const scroll = (d: 'left' | 'right') =>
+    rowRef.current?.scrollBy({ left: d === 'right' ? 340 : -340, behavior: 'smooth' })
 
   return (
     <div
@@ -735,11 +774,12 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
       </div>
 
       {showArrows && <ShelfArrow side="left"  onClick={() => scroll('left')} />}
-      <div ref={scrollRef} style={{
+      <div ref={rowRef} style={{
         display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
         padding: '8px 24px', scrollbarWidth: 'none', position: 'relative',
       }}>
-        <TravelingFocusFrame rect={travel.rect} />
+        <TravelingFocusFrame rect={travel.rect} active={travel.active} />
+        <FocusContext.Provider value={rowFocusKey}>
         {items.map(item => (
           <ShelfCard
             key={item.id} item={item}
@@ -747,6 +787,8 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
             onHover={() => onItemHover?.(item.id)}
             onActivate={travel.activate}
             onDeactivate={travel.deactivate}
+            libraryName={item.library_id ? libraryNames.get(item.library_id) : undefined}
+            onHideLibrary={item.library_id ? () => onHideLibrary(item.library_id!) : undefined}
           />
         ))}
         {onViewAll && (
@@ -755,6 +797,7 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
             onActivate={travel.activate} onDeactivate={travel.deactivate}
           />
         )}
+        </FocusContext.Provider>
       </div>
       {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
     </div>
@@ -803,12 +846,14 @@ function ShelfEndTile({ focusKey, onClick, onActivate, onDeactivate }: {
   )
 }
 
-function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate }: {
+function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate, libraryName, onHideLibrary }: {
   item: ShelfEntry; onClick: () => void; onHover?: () => void
   onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
+  libraryName?: string; onHideLibrary?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const showImg = item.thumb_url && !imgErr
 
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
@@ -823,7 +868,7 @@ function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate }: {
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
       onMouseEnter={() => { setHovered(true); onHover?.(); onActivate(ref.current) }}
-      onMouseLeave={() => { setHovered(false); onDeactivate() }}
+      onMouseLeave={() => { setHovered(false); setMenuOpen(false); onDeactivate() }}
       style={{
         flexShrink: 0, width: 130, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
         transform: hovered || focused ? 'translateY(-4px)' : 'none',
@@ -847,6 +892,38 @@ function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate }: {
           }}>
             {item.title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
+        )}
+        {libraryName && onHideLibrary && (hovered || focused) && (
+          <button
+            onClick={e => { e.stopPropagation(); setMenuOpen(o => !o) }}
+            aria-label="More options"
+            style={{
+              position: 'absolute', top: 6, right: 6, zIndex: 2,
+              width: 22, height: 22, borderRadius: 6, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: 'none', background: 'oklch(0 0 0 / 0.55)', color: '#fff', fontSize: 13, lineHeight: 1,
+            }}
+          >⋯</button>
+        )}
+        {menuOpen && libraryName && onHideLibrary && (
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'absolute', top: 30, right: 6, zIndex: 3, width: 150,
+              borderRadius: 8, border: '1px solid var(--hds-glass-border)',
+              background: 'var(--hds-bg-2)', boxShadow: '0 8px 24px oklch(0 0 0 / 0.5)',
+              overflow: 'hidden',
+            }}
+          >
+            <button
+              onClick={() => { onHideLibrary(); setMenuOpen(false) }}
+              style={{
+                display: 'block', width: '100%', padding: '8px 10px', textAlign: 'left',
+                border: 'none', background: 'none', cursor: 'pointer', color: 'var(--hds-txt-2)',
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 10, lineHeight: 1.4,
+              }}
+            >Hide "{libraryName}" from Home</button>
+          </div>
         )}
         {(hovered || focused) && (
           <div style={{
@@ -883,11 +960,16 @@ function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate }: {
 }
 
 function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; onNavigate: (path: string) => void }) {
-  const scrollRef = useRef<HTMLDivElement>(null)
   const [showArrows, setShowArrows] = useState(false)
-  const scroll = (d: 'left' | 'right') =>
-    scrollRef.current?.scrollBy({ left: d === 'right' ? 340 : -340, behavior: 'smooth' })
   const travel = useTravelingFocus()
+  const { ref: rowRef, focusKey: rowFocusKey } = useFocusable<object, HTMLDivElement>({
+    focusKey: 'home-shelf-row-continue-watching',
+    trackChildren: true,
+    isFocusBoundary: true,
+    focusBoundaryDirections: ['left', 'right'],
+  })
+  const scroll = (d: 'left' | 'right') =>
+    rowRef.current?.scrollBy({ left: d === 'right' ? 340 : -340, behavior: 'smooth' })
 
   return (
     <div
@@ -903,11 +985,12 @@ function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; 
       </div>
 
       {showArrows && <ShelfArrow side="left" onClick={() => scroll('left')} />}
-      <div ref={scrollRef} style={{
+      <div ref={rowRef} style={{
         display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
         padding: '8px 24px', scrollbarWidth: 'none', position: 'relative',
       }}>
-        <TravelingFocusFrame rect={travel.rect} />
+        <TravelingFocusFrame rect={travel.rect} active={travel.active} />
+        <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
           <ContinueWatchingCard
             key={`${p.content_type}:${p.content_id}`} item={p} onNavigate={onNavigate}
@@ -921,6 +1004,7 @@ function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; 
           focusKey="home-shelf-end-continue-watching" onClick={() => onNavigate('/library')}
           onActivate={travel.activate} onDeactivate={travel.deactivate}
         />
+        </FocusContext.Provider>
       </div>
       {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
     </div>

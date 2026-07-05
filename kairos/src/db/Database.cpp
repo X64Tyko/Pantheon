@@ -1487,6 +1487,11 @@ constexpr Migration kMigrations[] = {
     CREATE UNIQUE INDEX idx_session_session_id ON session(session_id);
 )SQL" }
 
+// ── v65: per-library Home-shelf visibility (filler/bumper libraries opt out) ─
+,{ 65, R"SQL(
+    ALTER TABLE media_library ADD COLUMN show_on_home INTEGER NOT NULL DEFAULT 1;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

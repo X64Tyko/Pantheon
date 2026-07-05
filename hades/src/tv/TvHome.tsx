@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { api, mediaUrl } from '../api/client'
 import type { Show, Movie, ShowDetail, MovieDetail, WatchProgress } from '../api/types'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
@@ -128,6 +129,7 @@ export function TvHome() {
   const goToLibrary = (id: string, type: 'show' | 'movie') => navigate(`/tv/library/${type}/${id}`)
 
   return (
+    <FocusContext.Provider value={homeFocusKey}>
     <div ref={homeRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flexShrink: 0 }}>
         {loading ? (
@@ -223,6 +225,7 @@ export function TvHome() {
         )}
       </div>
     </div>
+    </FocusContext.Provider>
   )
 }
 
@@ -378,17 +381,27 @@ function TvShelf({ title, items, onBlur, endTile }: {
   endTile?: { focusKey: string; onClick: () => void }
 }) {
   const travel = useTravelingFocus()
+  // isFocusBoundary traps left/right within the row — see HomePage's Shelf
+  // for why (arrowing off the row edge was otherwise falling back to a
+  // nearest-neighbor search across the whole page).
+  const { ref: rowRef, focusKey: rowFocusKey } = useFocusable<object, HTMLDivElement>({
+    focusKey: `tv-shelf-row-${title}`,
+    trackChildren: true,
+    isFocusBoundary: true,
+    focusBoundaryDirections: ['left', 'right'],
+  })
   return (
     <div style={{ marginBottom: 32 }} onMouseLeave={onBlur}>
       <div style={{
         fontFamily: "'Chakra Petch', sans-serif", fontSize: 20, fontWeight: 600,
         color: 'var(--hds-txt)', padding: '0 48px 16px',
       }}>{title}</div>
-      <div style={{
+      <div ref={rowRef} style={{
         display: 'flex', gap: 20, overflowX: 'auto', overflowY: 'hidden',
         padding: '8px 48px', scrollbarWidth: 'none', position: 'relative',
       }}>
-        <TravelingFocusFrame rect={travel.rect} />
+        <TravelingFocusFrame rect={travel.rect} active={travel.active} />
+        <FocusContext.Provider value={rowFocusKey}>
         {items.map(item => (
           <div key={item.key} style={{ flexShrink: 0, width: 160 }}>
             <TvShelfCard {...item} onBlur={onBlur} onActivate={travel.activate} onDeactivate={travel.deactivate} />
@@ -400,6 +413,7 @@ function TvShelf({ title, items, onBlur, endTile }: {
             onActivate={travel.activate} onDeactivate={travel.deactivate}
           />
         )}
+        </FocusContext.Provider>
       </div>
     </div>
   )
@@ -511,17 +525,24 @@ function TvShelfEndTile({ focusKey, onClick, onBlur, onActivate, onDeactivate }:
 
 function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; onNavigate: (path: string) => void }) {
   const travel = useTravelingFocus()
+  const { ref: rowRef, focusKey: rowFocusKey } = useFocusable<object, HTMLDivElement>({
+    focusKey: 'tv-shelf-row-continue-watching',
+    trackChildren: true,
+    isFocusBoundary: true,
+    focusBoundaryDirections: ['left', 'right'],
+  })
   return (
     <div style={{ marginBottom: 32 }}>
       <div style={{
         fontFamily: "'Chakra Petch', sans-serif", fontSize: 20, fontWeight: 600,
         color: 'var(--hds-txt)', padding: '0 48px 16px',
       }}>Continue Watching</div>
-      <div style={{
+      <div ref={rowRef} style={{
         display: 'flex', gap: 20, overflowX: 'auto', overflowY: 'hidden',
         padding: '8px 48px', scrollbarWidth: 'none', position: 'relative',
       }}>
-        <TravelingFocusFrame rect={travel.rect} />
+        <TravelingFocusFrame rect={travel.rect} active={travel.active} />
+        <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
           <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 160 }}>
             <TvContinueWatchingCard item={p} onNavigate={onNavigate} onActivate={travel.activate} onDeactivate={travel.deactivate} />
@@ -531,6 +552,7 @@ function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]
           focusKey="tv-shelf-end-continue-watching" onClick={() => onNavigate('/tv/library')}
           onActivate={travel.activate} onDeactivate={travel.deactivate}
         />
+        </FocusContext.Provider>
       </div>
     </div>
   )

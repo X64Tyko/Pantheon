@@ -111,7 +111,7 @@ export default observer(function SourcesPage() {
 
   // ── Library edit state ─────────────────────────────────────────────────────
   const [editingLib, setEditingLib] = useState<string | null>(null)
-  const [editForm, setEditForm]     = useState({ display_name: '', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false })
+  const [editForm, setEditForm]     = useState({ display_name: '', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false, show_on_home: true })
 
   // ── Local folder browser ───────────────────────────────────────────────────
   const [localBrowsePath,    setLocalBrowsePath]   = useState('')
@@ -137,9 +137,9 @@ export default observer(function SourcesPage() {
     setLocalBrowsePath(''); setLocalEntries([])
   }
 
-  const openEditLib = (lib: { library_id: string; display_name: string; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string; include_anidb: boolean }) => {
+  const openEditLib = (lib: { library_id: string; display_name: string; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string; include_anidb: boolean; show_on_home: boolean }) => {
     setEditingLib(lib.library_id)
-    setEditForm({ display_name: lib.display_name, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '', include_anidb: lib.include_anidb })
+    setEditForm({ display_name: lib.display_name, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '', include_anidb: lib.include_anidb, show_on_home: lib.show_on_home })
     setConfirmLib(null)
   }
 
@@ -719,6 +719,9 @@ export default observer(function SourcesPage() {
                         {lib.preferred_language && (
                           <><span>·</span><span className="text-zinc-500">{lib.preferred_language}</span></>
                         )}
+                        {!lib.show_on_home && (
+                          <><span>·</span><span className="text-amber-500">hidden from Home</span></>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -775,6 +778,14 @@ export default observer(function SourcesPage() {
                           onChange={e => setEditForm({ ...editForm, include_anidb: e.target.checked })}
                         />
                         Include AniDB (anime only)
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={editForm.show_on_home}
+                          onChange={e => setEditForm({ ...editForm, show_on_home: e.target.checked })}
+                        />
+                        Show in Home shelves
                       </label>
                       <select
                         value={editForm.preferred_language}

@@ -41,6 +41,12 @@ public:
 
     void removeLibrary(const std::string& library_id);
 
+    // Focused setter for the Home-shelf visibility flag — separate from
+    // updateLibrary so the per-card "hide from Home" shortcut (which only
+    // knows a library_id, not the rest of the edit form's fields) has a
+    // minimal call to make.
+    void setLibraryShowOnHome(const std::string& library_id, bool show_on_home);
+
     // ── Source mapping ────────────────────────────────────────────────────────
 
     // Resolve a source-native external_id to a Kairos internal ID.

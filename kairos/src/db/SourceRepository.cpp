@@ -59,7 +59,7 @@ void SourceRepository::removeSource(const std::string& source_id) {
 std::vector<MediaLibraryConfig> SourceRepository::listLibraries(const std::string& source_id) {
     SQLite::Statement q(db_.get(),
         "SELECT library_id, external_lib_id, display_name, library_type, enabled, "
-        "       preferred_scraper, preferred_language, include_anidb "
+        "       preferred_scraper, preferred_language, include_anidb, show_on_home "
         "FROM media_library WHERE source_id = ? ORDER BY display_name");
     q.bind(1, source_id);
     std::vector<MediaLibraryConfig> result;
@@ -74,6 +74,7 @@ std::vector<MediaLibraryConfig> SourceRepository::listLibraries(const std::strin
         lib.preferred_scraper   = q.getColumn(5).getString();
         lib.preferred_language  = q.getColumn(6).getString();
         lib.include_anidb       = q.getColumn(7).getInt() != 0;
+        lib.show_on_home        = q.getColumn(8).getInt() != 0;
         result.push_back(std::move(lib));
     }
     return result;
@@ -115,6 +116,13 @@ void SourceRepository::updateLibrary(const std::string& library_id,
     s.bind(3, preferred_language);
     s.bind(4, include_anidb ? 1 : 0);
     s.bind(5, library_id);
+    s.exec();
+}
+
+void SourceRepository::setLibraryShowOnHome(const std::string& library_id, bool show_on_home) {
+    SQLite::Statement s(db_.get(), "UPDATE media_library SET show_on_home = ? WHERE library_id = ?");
+    s.bind(1, show_on_home ? 1 : 0);
+    s.bind(2, library_id);
     s.exec();
 }
 

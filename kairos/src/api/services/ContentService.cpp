@@ -291,15 +291,33 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		json result = json::array();
 		for (const auto& r : repo.listLibraries()) {
 			result.push_back({
-				{"library_id",   r.library_id},
-				{"source_id",    r.source_id},
-				{"display_name", r.display_name},
-				{"library_type", r.library_type},
-				{"source_name",  r.source_name},
-				{"source_type",  r.source_type},
+				{"library_id",    r.library_id},
+				{"source_id",     r.source_id},
+				{"display_name",  r.display_name},
+				{"library_type",  r.library_type},
+				{"source_name",   r.source_name},
+				{"source_type",   r.source_type},
+				{"show_on_home",  r.show_on_home},
 			});
 		}
 		route::ok(res, result.dump());
+	});
+
+	// Focused endpoint for the Home shelf cards' "hide from Home" shortcut —
+	// only needs a library_id, unlike SourceService's nested
+	// /api/sources/:id/libraries/:lid which also needs the source_id.
+	svr.Patch("/api/libraries/:id/home-visibility", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		try {
+			auto b = json::parse(req.body);
+			if (!b.contains("show_on_home")) { route::err(res, 400, "show_on_home required"); return; }
+			SourceRepository(db_).setLibraryShowOnHome(req.path_params.at("id"), b["show_on_home"].get<bool>());
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const json::exception& e) {
+			route::err(res, 400, e.what());
+		} catch (const std::exception& e) {
+			route::logErr("PATCH /api/libraries/:id/home-visibility", e); route::err(res, 500, e.what());
+		}
 	});
 
 	// ── Metadata values for filter autocomplete ───────────────────────────────
@@ -350,6 +368,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			              {"thumb",           r.thumb},
 			              {"art",             r.art},
 			              {"source_base_url", r.source_base_url},
+			              {"library_id",      r.library_id},
 			              {"match_status",    r.match_status.empty() ? "unscraped" : r.match_status}};
 			if (r.year)            entry["year"]            = *r.year;
 			if (r.audience_rating) entry["audience_rating"] = *r.audience_rating;
@@ -499,6 +518,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			              {"thumb",           r.thumb},
 			              {"art",             r.art},
 			              {"source_base_url", r.source_base_url},
+			              {"library_id",      r.library_id},
 			              {"match_status",    r.match_status.empty() ? "unscraped" : r.match_status}};
 			if (r.year)            entry["year"]            = *r.year;
 			if (!r.release_date.empty()) entry["release_date"] = r.release_date;

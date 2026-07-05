@@ -608,7 +608,7 @@ void appendRestriction(const RestrictionContext& ctx, const std::string& entity_
 std::vector<LibraryRow> ContentRepository::listLibraries() {
     SQLite::Statement q(db_.get(), R"(
         SELECT ml.library_id, ml.source_id, ml.display_name, ml.library_type,
-               ms.display_name AS source_name, ms.source_type
+               ms.display_name AS source_name, ms.source_type, ml.show_on_home
         FROM media_library ml
         JOIN media_source ms ON ms.source_id = ml.source_id
         ORDER BY ms.display_name, ml.display_name
@@ -622,6 +622,7 @@ std::vector<LibraryRow> ContentRepository::listLibraries() {
         r.library_type = q.getColumn(3).getString();
         r.source_name  = q.getColumn(4).getString();
         r.source_type  = q.getColumn(5).getString();
+        r.show_on_home = q.getColumn(6).getInt() != 0;
         rows.push_back(std::move(r));
     }
     return rows;
@@ -714,7 +715,11 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         COALESCE((SELECT ms.base_url FROM source_mapping sm2
                   JOIN media_source ms ON ms.source_id = sm2.source_id
                   WHERE sm2.kairos_id = s.show_id AND sm2.item_type = 'show'
-                  LIMIT 1), '') AS source_base_url)";
+                  LIMIT 1), '') AS source_base_url,
+        COALESCE((SELECT sm3.library_id FROM source_mapping sm3
+                  WHERE sm3.kairos_id = s.show_id AND sm3.item_type = 'show'
+                        AND sm3.library_id IS NOT NULL
+                  LIMIT 1), '') AS library_id)";
     const std::string order_clause =
         (p.sort == "recently_added") ? " ORDER BY s.rowid DESC" :
         (p.sort == "recently_aired") ? R"( ORDER BY (
@@ -742,18 +747,29 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         r.match_status    = q.getColumn(8).getString();
         if (!q.getColumn(9).isNull()) r.match_score      = q.getColumn(9).getDouble();
         r.source_base_url = q.getColumn(10).getString();
+        r.library_id      = q.getColumn(11).getString();
         return r;
     };
 
+    // Only applied when browsing unscoped (no explicit library_id) — a
+    // filler/bumper library opted out of Home stays fully visible when
+    // browsed directly, e.g. via the Library page's own switcher.
+    const std::string home_exclude = R"(
+        AND NOT EXISTS (
+            SELECT 1 FROM source_mapping sm4
+            JOIN media_library ml4 ON ml4.library_id = sm4.library_id
+            WHERE sm4.kairos_id = s.show_id AND sm4.item_type = 'show' AND ml4.show_on_home = 0
+        ))";
+
     ShowListResult result;
     if (p.library_id.empty()) {
-        SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM show s WHERE 1=1" + extras);
+        SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM show s WHERE 1=1" + extras + home_exclude);
         int idx = 1; bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
         SQLite::Statement q(db_.get(), show_select +
             R"( FROM show s LEFT JOIN episode e ON e.show_id = s.show_id
-            WHERE 1=1)" + extras + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
+            WHERE 1=1)" + extras + home_exclude + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
         idx = 1; bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseShowRow(q));
@@ -811,7 +827,11 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         COALESCE((SELECT ms.base_url FROM source_mapping sm2
                   JOIN media_source ms ON ms.source_id = sm2.source_id
                   WHERE sm2.kairos_id = m.movie_id AND sm2.item_type = 'movie'
-                  LIMIT 1), '') AS source_base_url)";
+                  LIMIT 1), '') AS source_base_url,
+        COALESCE((SELECT sm3.library_id FROM source_mapping sm3
+                  WHERE sm3.kairos_id = m.movie_id AND sm3.item_type = 'movie'
+                        AND sm3.library_id IS NOT NULL
+                  LIMIT 1), '') AS library_id)";
     const std::string morder =
         (p.sort == "recently_added")    ? " ORDER BY m.rowid DESC" :
         (p.sort == "recently_released") ? " ORDER BY m.release_date DESC" :
@@ -835,17 +855,26 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         r.match_status    = q.getColumn(9).getString();
         if (!q.getColumn(10).isNull()) r.match_score     = q.getColumn(10).getDouble();
         r.source_base_url = q.getColumn(11).getString();
+        r.library_id      = q.getColumn(12).getString();
         return r;
     };
 
+    // See searchShows()'s identical home_exclude — same reasoning.
+    const std::string home_exclude = R"(
+        AND NOT EXISTS (
+            SELECT 1 FROM source_mapping sm4
+            JOIN media_library ml4 ON ml4.library_id = sm4.library_id
+            WHERE sm4.kairos_id = m.movie_id AND sm4.item_type = 'movie' AND ml4.show_on_home = 0
+        ))";
+
     MovieListResult result;
     if (p.library_id.empty()) {
-        SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM movie m WHERE 1=1" + extras);
+        SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM movie m WHERE 1=1" + extras + home_exclude);
         int idx = 1; bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
         SQLite::Statement q(db_.get(),
-            movie_select + " FROM movie m WHERE 1=1" + extras + morder + " LIMIT ? OFFSET ?");
+            movie_select + " FROM movie m WHERE 1=1" + extras + home_exclude + morder + " LIMIT ? OFFSET ?");
         idx = 1; bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));

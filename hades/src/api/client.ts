@@ -104,9 +104,13 @@ export const api = {
   getLibraries:     (sourceId: string)                  => request<Library[]>    ('GET',    `/sources/${sourceId}/libraries`),
   addLibrary:       (sourceId: string, b: Pick<Library, 'external_lib_id'|'display_name'|'library_type'|'preferred_scraper'|'preferred_language'|'include_anidb'>) =>
                                                         request<{library_id: string}>('POST', `/sources/${sourceId}/libraries`, b),
-  patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'preferred_scraper'|'preferred_language'|'include_anidb'>>) =>
+  patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'preferred_scraper'|'preferred_language'|'include_anidb'|'show_on_home'>>) =>
                                                         request<void>('PATCH', `/sources/${sourceId}/libraries/${lid}`, b),
   removeLibrary:    (sourceId: string, lid: string)     => request<void>         ('DELETE', `/sources/${sourceId}/libraries/${lid}`),
+  // Focused sibling of patchLibrary for call sites that only have a
+  // library_id (e.g. a Home shelf card) — patchLibrary needs source_id too.
+  setLibraryShowOnHome: (libraryId: string, showOnHome: boolean) =>
+                                                        request<void>('PATCH', `/libraries/${libraryId}/home-visibility`, { show_on_home: showOnHome }),
   triggerSync:      (sourceId: string)                  => request<{status: string}>('POST', `/sources/${sourceId}/sync`),
   syncAll:          ()                                  => request<{status: string}>('POST', '/sync/all'),
 

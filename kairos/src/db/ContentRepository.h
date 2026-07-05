@@ -25,13 +25,14 @@ struct FillerItem {
 struct LibraryRow {
     std::string library_id, source_id, display_name, library_type;
     std::string source_name, source_type;
+    bool show_on_home = true;
 };
 
 struct ShowRow {
     std::string show_id, title, content_rating;
     int episode_count = 0;
     std::optional<int>    year;
-    std::string           thumb, art, source_base_url;
+    std::string           thumb, art, source_base_url, library_id;
     std::optional<double> audience_rating;
     std::string           match_status;
     std::optional<double> match_score;
@@ -91,7 +92,7 @@ struct MovieRow {
     int64_t duration_ms = 0;
     std::optional<int>    year;
     std::string           release_date; // "YYYY-MM-DD"; empty if the source never provided one
-    std::string           thumb, art, source_base_url;
+    std::string           thumb, art, source_base_url, library_id;
     std::optional<double> audience_rating;
     std::string           match_status;
     std::optional<double> match_score;
