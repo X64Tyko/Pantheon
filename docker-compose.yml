@@ -8,7 +8,10 @@
 #   FILLER_PATH — where yt-dlp downloads land; set this same path as the
 #                 Default Download Path in the Hades Downloads page.
 #
-# Kairos stores its database and config in ./data/kairos.
+# Kairos stores its database and config at whatever host path you mount to
+# /data below (default: /mnt/user/appdata/kairos). The paths in this file are
+# Unraid-style examples — any absolute host path works on any Docker host
+# (e.g. ./data/kairos, /home/you/appdata/kairos).
 # On first start, open the Hades UI at http://<host>:8000 and configure
 # your settings through it.
 #

@@ -2,9 +2,9 @@
 
 A media platform built around three pillars:
 
-- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections, filler lists, and content catalogues across sources.
+- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections, and content catalogues across sources.
 - **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, and live EPG. Connect any IPTV client or route through XTeve into Plex DVR.
-- **Media player** — direct playback within Hades, in progress.
+- **Media player** — direct playback within Hades.
 
 **Kairos** is the scheduling and library engine. **Hades** is the management UI. **Hermes** is the public-facing server (streams, HDHomeRun emulation, EPG, media player API). **Hephaestus** handles the FFmpeg transcoding pipeline.
 
@@ -14,24 +14,26 @@ A media platform built around three pillars:
 
 - Docker + Docker Compose
 - A media server with at least one library — **Plex, Jellyfin, Emby**, or a **local filesystem** source are all supported
-- *(Optional)* NVIDIA GPU for hardware-accelerated transcoding
+- *(Optional)* NVIDIA GPU, or AMD/Intel GPU with VAAPI, for hardware-accelerated transcoding — CPU-only works fine without one
 
 ---
 
 ## Quick start
 
-**1. Copy the compose file**
+No source build required — this pulls prebuilt images from GitHub Container Registry.
 
-```yaml
-# docker-compose.yml — or use Unraid Compose Manager:
-# https://raw.githubusercontent.com/X64Tyko/Pantheon/master/docker-compose.yml
+**1. Get the compose file**
+
+```bash
+mkdir pantheon && cd pantheon
+curl -O https://raw.githubusercontent.com/X64Tyko/Pantheon/master/docker-compose.yml
 ```
 
-Download it or paste the contents from this repo's `docker-compose.yml`.
+(Or point Unraid's Compose Manager at that same URL.)
 
 **2. Set your paths**
 
-Open `docker-compose.yml` and update the volume lines under `kairos`:
+Open `docker-compose.yml` and update the volume lines under `kairos` to point at your own directories:
 
 ```yaml
 volumes:
@@ -40,16 +42,17 @@ volumes:
   - /mnt/user/Media/Filler:/downloads       # yt-dlp download destination
 ```
 
-**3. No NVIDIA GPU?**
+These are Unraid-style example paths — any absolute host path works (e.g. `/home/you/media`).
 
-Remove these lines from the `hephaestus` service:
+**3. Pick your transcoding hardware** *(optional)*
 
-```yaml
-runtime: nvidia
-environment:
-  - NVIDIA_VISIBLE_DEVICES=all
-  - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
-```
+The `hephaestus` service transcodes on CPU by default. If you have a GPU, uncomment the matching block in its `environment`/`devices`/`runtime` lines:
+
+| Hardware | What to uncomment |
+|---|---|
+| NVIDIA | the three `NVIDIA_*`/`HEPH_HW_ACCEL=nvidia` lines, and `runtime: nvidia` (requires the [NVIDIA Container Toolkit](https://github.com/NVIDIA/nvidia-container-toolkit) on the host) |
+| AMD / Intel (VAAPI) | `HEPH_HW_ACCEL=amd` and the `devices` block (adjust `/dev/dri/renderD128` if your render node differs) |
+| None | leave everything commented out — CPU transcoding just works |
 
 **4. Start the stack**
 
@@ -57,9 +60,35 @@ environment:
 docker compose up -d
 ```
 
+**5. Check it's up**
+
+```bash
+docker compose ps
+```
+
+All services should show `Up` — except `cloudflared`, which exits cleanly (`Exited (0)`) unless you've set up the optional [Cloudflare Tunnel](#remote-access-optional) token. That's expected, not a failure.
+
 Open **http://your-server:8000** — that's the Hades management UI, served through Hermes.
 
 Direct Kairos access (API, debugging) is on **:8081**.
+
+---
+
+## Remote access *(optional)*
+
+LAN-only `http://your-server:8000` works fine for local use, but some features — notably Chromecast sending from Hades — need a secure (HTTPS) context, which plain HTTP over a LAN address never satisfies.
+
+The compose file ships with an optional `cloudflared` service for exactly this, off by default:
+
+1. In [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → **Networks → Tunnels → Create a tunnel** → connector type **Docker** → copy the token.
+2. In the same wizard, add a **Public Hostname** (e.g. `pantheon.yourdomain.com`) → service type **HTTP** → URL `hermes:8000`.
+3. Put the token in a `.env` file next to `docker-compose.yml`:
+   ```
+   CLOUDFLARE_TUNNEL_TOKEN=eyJ...
+   ```
+4. `docker compose up -d` (or restart the stack) — the `cloudflared` container picks up the token and connects.
+
+No token set? The `cloudflared` container exits cleanly on its own (`Exited (0)`) instead of crash-looping — nothing else to configure, and nothing is exposed.
 
 ---
 
@@ -226,13 +255,13 @@ Kairos publishes what to play and when. Hephaestus renders it to a stream. Herme
 
 Beta.
 
-| Area | State |
-|---|---|
+| Area | State   |
+|---|---------|
 | Library sync (Plex, Jellyfin, Emby, local) | Working |
 | Metadata scraping (TMDB, TVDB, AniDB) | Working |
 | IPTV channel scheduling + EPG | Working |
-| Stream delivery (Hermes + Hephaestus) | In progress |
-| Media player | In progress |
-| HDHomeRun emulation | In progress |
+| Stream delivery (Hermes + Hephaestus) | Working |
+| Media player | Working |
+| HDHomeRun emulation | Working |
 
 Issues and feedback welcome.
