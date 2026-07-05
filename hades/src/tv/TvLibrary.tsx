@@ -56,7 +56,7 @@ export const TvLibrary = observer(function TvLibrary() {
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} className="scrollbar-dark">
         {store.loading ? (
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(176px, 1fr))',
             gap: 24, padding: '8px 48px',
           }}>
             {Array.from({ length: 12 }, (_, i) => (

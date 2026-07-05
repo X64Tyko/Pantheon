@@ -9,6 +9,8 @@ import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { ghostBtnStyle, goldBtnStyle } from '../channel/styles'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useFocusable } from '../nav/useFocusable'
+import { useTravelingFocus } from '../nav/useTravelingFocus'
+import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
 import { libraryStore } from '../stores/LibraryStore'
 import { useCastSession } from '../cast/useCastSession'
 
@@ -707,6 +709,7 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
   const [showArrows, setShowArrows] = useState(false)
   const scroll = (d: 'left' | 'right') =>
     scrollRef.current?.scrollBy({ left: d === 'right' ? 340 : -340, behavior: 'smooth' })
+  const travel = useTravelingFocus()
 
   return (
     <div
@@ -734,16 +737,24 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
       {showArrows && <ShelfArrow side="left"  onClick={() => scroll('left')} />}
       <div ref={scrollRef} style={{
         display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
-        padding: '8px 24px', scrollbarWidth: 'none',
+        padding: '8px 24px', scrollbarWidth: 'none', position: 'relative',
       }}>
+        <TravelingFocusFrame rect={travel.rect} />
         {items.map(item => (
           <ShelfCard
             key={item.id} item={item}
             onClick={() => item.directPlayPath ? onNavigate?.(item.directPlayPath) : onItemClick(item.id, item.content_type)}
             onHover={() => onItemHover?.(item.id)}
+            onActivate={travel.activate}
+            onDeactivate={travel.deactivate}
           />
         ))}
-        {onViewAll && <ShelfEndTile focusKey={`home-shelf-end-${title}`} onClick={onViewAll} />}
+        {onViewAll && (
+          <ShelfEndTile
+            focusKey={`home-shelf-end-${title}`} onClick={onViewAll}
+            onActivate={travel.activate} onDeactivate={travel.deactivate}
+          />
+        )}
       </div>
       {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
     </div>
@@ -755,25 +766,29 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
 // shelf's onViewAll closure in Shelves/HomePage). Lives in the same
 // card-focus flow as ShelfCard, so it's D-pad reachable (right-arrow from
 // the last real card) unlike the header's mouse-only "View All →" link.
-function ShelfEndTile({ focusKey, onClick }: { focusKey: string; onClick: () => void }) {
+function ShelfEndTile({ focusKey, onClick, onActivate, onDeactivate }: {
+  focusKey: string; onClick: () => void
+  onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
+}) {
   const [hovered, setHovered] = useState(false)
-  const { ref, focused } = useFocusable<object, HTMLDivElement>({ focusKey, onEnterPress: onClick })
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({
+    focusKey, onEnterPress: onClick,
+    onFocus: () => onActivate(ref.current), onBlur: onDeactivate,
+  })
   const active = hovered || focused
 
   return (
     <div
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
+      onMouseLeave={() => { setHovered(false); onDeactivate() }}
       style={{
-        flexShrink: 0, width: 150, aspectRatio: '2/3', borderRadius: 10, cursor: 'pointer',
+        flexShrink: 0, width: 130, aspectRatio: '2/3', borderRadius: 10, cursor: 'pointer',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
-        border: `1px dashed ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-        background: active ? 'oklch(0.55 0.14 292 / 0.1)' : 'var(--hds-bg-2)',
-        color: active ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-        transform: active ? 'scale(1.04)' : 'scale(1)',
-        transition: 'transform .15s cubic-bezier(0.2,0,0.2,1), border-color .12s, background .12s, color .12s',
+        border: '1px dashed var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt-3)',
+        transform: active ? 'translateY(-4px)' : 'none',
+        transition: 'transform .18s cubic-bezier(0.22,1,0.36,1)',
         textAlign: 'center', padding: '0 16px',
       }}
     >
@@ -788,7 +803,10 @@ function ShelfEndTile({ focusKey, onClick }: { focusKey: string; onClick: () => 
   )
 }
 
-function ShelfCard({ item, onClick, onHover }: { item: ShelfEntry; onClick: () => void; onHover?: () => void }) {
+function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate }: {
+  item: ShelfEntry; onClick: () => void; onHover?: () => void
+  onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
+}) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = item.thumb_url && !imgErr
@@ -796,20 +814,20 @@ function ShelfCard({ item, onClick, onHover }: { item: ShelfEntry; onClick: () =
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
     focusKey: `home-shelf-card-${item.content_type}-${item.id}`,
     onEnterPress: onClick,
-    onFocus: () => onHover?.(),
+    onFocus: () => { onHover?.(); onActivate(ref.current) },
+    onBlur: onDeactivate,
   })
 
   return (
     <div
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      onMouseEnter={() => { setHovered(true); onHover?.() }}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={() => { setHovered(true); onHover?.(); onActivate(ref.current) }}
+      onMouseLeave={() => { setHovered(false); onDeactivate() }}
       style={{
-        flexShrink: 0, width: 150, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
-        boxShadow: hovered || focused ? '0 0 0 2px var(--hds-violet)' : 'none',
-        transform: hovered || focused ? 'scale(1.04)' : 'scale(1)',
-        transition: 'transform .15s cubic-bezier(0.2,0,0.2,1), box-shadow .15s',
+        flexShrink: 0, width: 130, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
+        transform: hovered || focused ? 'translateY(-4px)' : 'none',
+        transition: 'transform .18s cubic-bezier(0.22,1,0.36,1)',
       }}
     >
       <div style={{
@@ -869,6 +887,7 @@ function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; 
   const [showArrows, setShowArrows] = useState(false)
   const scroll = (d: 'left' | 'right') =>
     scrollRef.current?.scrollBy({ left: d === 'right' ? 340 : -340, behavior: 'smooth' })
+  const travel = useTravelingFocus()
 
   return (
     <div
@@ -886,22 +905,32 @@ function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; 
       {showArrows && <ShelfArrow side="left" onClick={() => scroll('left')} />}
       <div ref={scrollRef} style={{
         display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
-        padding: '8px 24px', scrollbarWidth: 'none',
+        padding: '8px 24px', scrollbarWidth: 'none', position: 'relative',
       }}>
+        <TravelingFocusFrame rect={travel.rect} />
         {items.map(p => (
-          <ContinueWatchingCard key={`${p.content_type}:${p.content_id}`} item={p} onNavigate={onNavigate} />
+          <ContinueWatchingCard
+            key={`${p.content_type}:${p.content_id}`} item={p} onNavigate={onNavigate}
+            onActivate={travel.activate} onDeactivate={travel.deactivate}
+          />
         ))}
         {/* No natural single filter for Continue Watching (mixed shows/movies/
             episodes) — lands on an unfiltered Library, same as the other
             shelves' "View All" did before this feature. */}
-        <ShelfEndTile focusKey="home-shelf-end-continue-watching" onClick={() => onNavigate('/library')} />
+        <ShelfEndTile
+          focusKey="home-shelf-end-continue-watching" onClick={() => onNavigate('/library')}
+          onActivate={travel.activate} onDeactivate={travel.deactivate}
+        />
       </div>
       {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
     </div>
   )
 }
 
-function ContinueWatchingCard({ item, onNavigate }: { item: WatchProgress; onNavigate: (path: string) => void }) {
+function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: {
+  item: WatchProgress; onNavigate: (path: string) => void
+  onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
+}) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
   const thumbPath = item.content_type === 'movie'
@@ -917,19 +946,19 @@ function ContinueWatchingCard({ item, onNavigate }: { item: WatchProgress; onNav
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
     focusKey: `home-cw-card-${item.content_type}-${item.content_id}`,
     onEnterPress: go,
+    onFocus: () => onActivate(ref.current), onBlur: onDeactivate,
   })
 
   return (
     <div
       ref={ref} data-tv-focused={focused}
       onClick={go}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
+      onMouseLeave={() => { setHovered(false); onDeactivate() }}
       style={{
-        flexShrink: 0, width: 150, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
-        boxShadow: hovered || focused ? '0 0 0 2px var(--hds-violet)' : 'none',
-        transform: hovered || focused ? 'scale(1.04)' : 'scale(1)',
-        transition: 'transform .15s cubic-bezier(0.2,0,0.2,1), box-shadow .15s',
+        flexShrink: 0, width: 130, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
+        transform: hovered || focused ? 'translateY(-4px)' : 'none',
+        transition: 'transform .18s cubic-bezier(0.22,1,0.36,1)',
       }}
     >
       <div style={{
@@ -1001,7 +1030,7 @@ function ShelfSkeleton() {
       <div className="hds-skeleton" style={{ height: 14, width: 180, borderRadius: 4, margin: '0 24px 14px' }} />
       <div style={{ display: 'flex', gap: 12, padding: '8px 24px' }}>
         {Array.from({ length: 7 }, (_, i) => (
-          <div key={i} className="hds-skeleton" style={{ width: 150, aspectRatio: '2/3', borderRadius: 10, flexShrink: 0 }} />
+          <div key={i} className="hds-skeleton" style={{ width: 130, aspectRatio: '2/3', borderRadius: 10, flexShrink: 0 }} />
         ))}
       </div>
     </div>
