@@ -12,14 +12,23 @@
 // (once Kairos recovers) looks like "it just needed a retry." Reading from a
 // periodically-refreshed cache means routine session creation never makes a
 // blocking network call at all.
-static constexpr auto kCacheRefreshInterval = std::chrono::seconds(15);
+//
+// Two cadences: 15s while a session is active, 5min while idle — these are
+// admin-edited debug flags/channel defs, not anything that needs sub-minute
+// freshness with nobody watching.
+static constexpr auto kActiveRefreshInterval = std::chrono::seconds(15);
+static constexpr auto kIdleRefreshInterval   = std::chrono::minutes(5);
 
 SessionManager::SessionManager(KairosClient& kairos, std::string ffmpeg_path, StreamOptions opts)
     : kairos(kairos), ffmpeg_path(std::move(ffmpeg_path)), stream_opts(std::move(opts)) {
     refreshCache(); // blocking, but only once, at startup
     refresh_thread = std::thread([this] {
         while (!stop_refresh.load()) {
-            for (int i = 0; i < 15 && !stop_refresh.load(); ++i)
+            bool active;
+            { std::lock_guard<std::mutex> lock(mtx); active = !sessions.empty(); }
+            auto wait = active ? kActiveRefreshInterval : kIdleRefreshInterval;
+            for (auto elapsed = std::chrono::seconds(0); elapsed < wait && !stop_refresh.load();
+                 elapsed += std::chrono::seconds(1))
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             if (stop_refresh.load()) break;
             refreshCache();

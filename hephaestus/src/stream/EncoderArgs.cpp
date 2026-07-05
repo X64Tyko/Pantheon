@@ -90,7 +90,14 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
                            int audio_bitrate_kbps) {
     std::vector<std::string> afParts;
-    if (loudnorm) afParts.push_back("loudnorm=I=-16:TP=-1.5:LRA=11");
+    // dynaudnorm, not loudnorm: loudnorm's single-pass mode is a real-time
+    // estimate with no knowledge of the whole stream, and ffmpeg's own docs
+    // note it "shouldn't be used for VOD" for that reason (see VodSession's
+    // loudnorm=false) — the same instability shows up as audible drift over
+    // a channel's continuous, hours-long runtime. dynaudnorm re-normalizes
+    // on short (<8s) windows instead of one long-running estimate, which is
+    // what ffmpeg recommends for exactly this always-on streaming case.
+    if (loudnorm) afParts.push_back("dynaudnorm");
     if (speed != 1.0) afParts.push_back("atempo=" + fmtSpeed(speed));
 
     // Force stereo: without an explicit -ac, ffmpeg preserves the source's
