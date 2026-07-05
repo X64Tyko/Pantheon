@@ -119,7 +119,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                 : undefined, // episode: no cheap thumb URL without an extra fetch — v1 scope
       },
       route: { contentType: kind, contentId: targetId },
-    })
+    }).catch(err => setPlayerError(err?.message ?? 'Failed to start casting'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCasting])
 

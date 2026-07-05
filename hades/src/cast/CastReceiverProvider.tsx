@@ -56,19 +56,31 @@ export function CastReceiverProvider() {
 
       manager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, data => {
         const custom = data.media?.customData
-        if (isCastCustomData(custom)) {
-          const path = custom.contentType === 'channel'
-            ? `/player/channel/${custom.contentId}`
-            : `/player/${custom.contentType}/${custom.contentId}${custom.positionMs ? `?t=${custom.positionMs}` : ''}`
-          navigate(path)
+        if (!isCastCustomData(custom)) {
+          return new cast.framework.messages.ErrorData(cast.framework.messages.ErrorType.LOAD_FAILED)
         }
-        // Handled ourselves via navigation — Hades' own VideoPlayer/hls.js
-        // drives actual playback once the /player/* route mounts, not CAF's
-        // built-in media engine. Returning null tells CAF exactly that.
-        return null
+        const path = custom.contentType === 'channel'
+          ? `/player/channel/${custom.contentId}`
+          : `/player/${custom.contentType}/${custom.contentId}${custom.positionMs ? `?t=${custom.positionMs}` : ''}`
+        navigate(path)
+        // Resolving with the original data (not null) is what lets the
+        // sender's session.loadMedia() promise actually resolve instead of
+        // hanging until it times out — null tells CAF "don't run your own
+        // default handler," which is what we want (Hades' own VideoPlayer/
+        // hls.js drives real playback once /player/* mounts), but it also
+        // leaves the sender with nothing to resolve against on its own.
+        return data
       })
 
-      context.start()
+      // Default inactivity handling assumes PlayerManager's own engine is
+      // driving playback and reports activity through it — since we bypass
+      // that (see interceptor above), the framework never sees any activity
+      // and kills the app as "idle" after its default timeout, ending the
+      // whole cast session. Same fix pantheon-relay's bootstrap receiver
+      // already needed for the same reason.
+      const options = new cast.framework.CastReceiverOptions()
+      options.maxInactivity = 3600
+      context.start(options)
     }).catch(err => console.error('[cast-receiver]', err))
   }, [navigate])
 

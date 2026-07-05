@@ -25,13 +25,21 @@ declare namespace cast.framework {
     setMediaElement(mediaElement: HTMLMediaElement | Promise<HTMLMediaElement>): void
     setMessageInterceptor<T extends messages.MessageType>(
       type: T,
-      interceptor: (data: messages.MessageTypeDataMap[T]) => messages.MessageTypeDataMap[T] | null,
+      interceptor: (data: messages.MessageTypeDataMap[T]) => messages.MessageTypeDataMap[T] | messages.ErrorData | null,
     ): void
   }
 
   namespace messages {
     enum MessageType {
       LOAD = 'LOAD',
+    }
+
+    enum ErrorType {
+      LOAD_FAILED = 'LOAD_FAILED',
+    }
+
+    class ErrorData {
+      constructor(type: ErrorType)
     }
 
     class MediaInformation {
