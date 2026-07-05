@@ -665,10 +665,10 @@ export default observer(function SourcesPage() {
                     onChange={e => setLibForm({ ...libForm, preferred_scraper: e.target.value as any })}
                     className="input w-full"
                   >
-                    <option value="">Scraper — auto (all enabled)</option>
-                    <option value="tmdb">TMDB</option>
-                    <option value="tvdb">TVDB</option>
-                    <option value="anidb">AniDB</option>
+                    <option value="">No preferred scraper (no tie-break)</option>
+                    <option value="tmdb">Prefer TMDB</option>
+                    <option value="tvdb">Prefer TVDB</option>
+                    <option value="anidb">Prefer AniDB</option>
                   </select>
                   <label className="flex items-center gap-2 text-sm text-zinc-400">
                     <input
@@ -721,7 +721,7 @@ export default observer(function SourcesPage() {
                         <span>·</span>
                         <span>id: {lib.external_lib_id}</span>
                         {lib.preferred_scraper && (
-                          <><span>·</span><span className="text-zinc-500">{lib.preferred_scraper}</span></>
+                          <><span>·</span><span className="text-zinc-500">prefers {lib.preferred_scraper}</span></>
                         )}
                         {lib.preferred_language && (
                           <><span>·</span><span className="text-zinc-500">{lib.preferred_language}</span></>
@@ -773,10 +773,10 @@ export default observer(function SourcesPage() {
                         onChange={e => setEditForm({ ...editForm, preferred_scraper: e.target.value as any })}
                         className="input w-full text-sm"
                       >
-                        <option value="">Scraper — auto (all enabled)</option>
-                        <option value="tmdb">TMDB</option>
-                        <option value="tvdb">TVDB</option>
-                        <option value="anidb">AniDB</option>
+                        <option value="">No preferred scraper (no tie-break)</option>
+                        <option value="tmdb">Prefer TMDB</option>
+                        <option value="tvdb">Prefer TVDB</option>
+                        <option value="anidb">Prefer AniDB</option>
                       </select>
                       <label className="flex items-center gap-2 text-sm text-zinc-400">
                         <input

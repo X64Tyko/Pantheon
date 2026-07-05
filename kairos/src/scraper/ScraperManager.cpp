@@ -86,12 +86,42 @@ std::string candidateKey(const std::string& item_type, const std::string& kairos
 // there's one candidate with that title or five, so a tie here is real
 // ambiguity, not noise, and auto-accepting one anyway means silently picking
 // whichever the source API happened to list first.
+//
+// Exception: if the library has a preferred scraper and one of the near-best
+// candidates comes from it, that's not ambiguity — it's a tie we already know
+// how to break, so it doesn't need to wait for a human.
 template <typename Cand>
-bool isAmbiguousTie(const std::vector<Cand>& candidates, double best, double epsilon = 0.01) {
+bool isAmbiguousTie(const std::vector<Cand>& candidates, double best,
+                     const std::string& preferred_scraper, double epsilon = 0.01) {
     std::set<std::string> near_best_ids;
-    for (const auto& c : candidates)
-        if (best - c.score <= epsilon) near_best_ids.insert(c.ext_id);
+    bool preferred_near_best = false;
+    for (const auto& c : candidates) {
+        if (best - c.score > epsilon) continue;
+        near_best_ids.insert(c.ext_id);
+        if (!preferred_scraper.empty() && c.source == preferred_scraper) preferred_near_best = true;
+    }
+    if (preferred_near_best) return false;
     return near_best_ids.size() > 1;
+}
+
+// Picks the candidate to auto-accept. Ordinarily just the top-scoring one, but
+// when the library has a preferred scraper and one of its candidates is within
+// epsilon of the top score, that candidate wins even if a non-preferred source
+// scored marginally higher — the library owner already told us which source to
+// trust, so a noise-level score difference shouldn't override that.
+template <typename Cand>
+const Cand& pickBest(const std::vector<Cand>& candidates, double best,
+                      const std::string& preferred_scraper, double epsilon = 0.01) {
+    if (!preferred_scraper.empty()) {
+        const Cand* preferred = nullptr;
+        for (const auto& c : candidates) {
+            if (c.source != preferred_scraper || best - c.score > epsilon) continue;
+            if (!preferred || c.score > preferred->score) preferred = &c;
+        }
+        if (preferred) return *preferred;
+    }
+    return *std::max_element(candidates.begin(), candidates.end(),
+        [](const Cand& a, const Cand& b) { return a.score < b.score; });
 }
 
 // Returns true if the mapped path's parent directory exists on disk.
@@ -414,9 +444,6 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
         }
     };
 
-    auto wantScraper = [&](const std::string& src) {
-        return preferred_scraper.empty() || preferred_scraper == src;
-    };
     auto timedSearch = [&](const std::string& src, std::vector<Show> results) {
         DLOG << "[scraper]   " << src << ": " << results.size() << " result(s)\n";
         for (const auto& r : results)
@@ -427,17 +454,35 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
                  << '\n';
         collect(src, std::move(results));
     };
-    if (tmdb_ && wantScraper("tmdb")) {
+    // A library's chosen scraper is a *preference*, not an exclusive filter —
+    // every enabled scraper is still queried so a title missing from the
+    // preferred source can still be found elsewhere; the preference instead
+    // breaks ties in the scoring below (see isAmbiguousTie/pickBest).
+    if (tmdb_) {
         DLOG << "[scraper]   querying tmdb for show \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
         auto results = tmdb_->searchShows(search_title, year);
+        // TMDB/TVDB treat `year` as a hard filter — a locally-parsed year that's
+        // off by one (or just wrong) silently zeroes the whole result set even
+        // when the title matches perfectly. Retry unfiltered rather than let a
+        // bad year turn a real match into "unmatched"; computeScore() already
+        // gives an unknown/mismatched year only partial credit, so this can't
+        // cause a wrong auto-accept, only a candidate worth reviewing.
+        if (results.empty() && year > 0) {
+            DLOG << "[scraper]   tmdb: 0 results with year filter, retrying without year\n";
+            results = tmdb_->searchShows(search_title, 0);
+        }
         DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearch("tmdb", std::move(results));
     }
-    if (tvdb_ && wantScraper("tvdb")) {
+    if (tvdb_) {
         DLOG << "[scraper]   querying tvdb for show \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
         auto results = tvdb_->searchShows(search_title, year);
+        if (results.empty() && year > 0) {
+            DLOG << "[scraper]   tvdb: 0 results with year filter, retrying without year\n";
+            results = tvdb_->searchShows(search_title, 0);
+        }
         DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearch("tvdb", std::move(results));
     }
@@ -445,7 +490,7 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
     // explicitly opted it in (include_anidb) or chose it as this library's
     // one preferred scraper outright. Prevents cross-matching an unrelated
     // general movie/show library against anime titles on title text alone.
-    if (anidb_ && (preferred_scraper == "anidb" || (wantScraper("anidb") && include_anidb))) {
+    if (anidb_ && (preferred_scraper == "anidb" || include_anidb)) {
         DLOG << "[scraper]   querying anidb for show \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
         auto results = anidb_->searchShows(search_title, year);
@@ -463,14 +508,13 @@ void ScraperManager::matchShow(const std::string& kairos_id, const std::string& 
     if (candidates.empty()) {
         std::cout << "[scraper]   \"" << search_title << "\" → unmatched\n";
         setMatchStatus("show", kairos_id, "unmatched", 0.0);
-    } else if (isAmbiguousTie(candidates, best)) {
+    } else if (isAmbiguousTie(candidates, best, preferred_scraper)) {
         std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
                   << " (ambiguous: 2+ distinct candidates tied at "
                   << std::fixed << std::setprecision(2) << best << ")\n";
         setMatchStatus("show", kairos_id, "uncertain", best);
     } else if (best >= threshold()) {
-        const auto& best_c = *std::max_element(candidates.begin(), candidates.end(),
-            [](const Cand& a, const Cand& b){ return a.score < b.score; });
+        const auto& best_c = pickBest(candidates, best, preferred_scraper);
         std::cout << "[scraper]   \"" << search_title << "\" → matched"
                   << " (" << best_c.source << ", "
                   << std::fixed << std::setprecision(2) << best << ")\n";
@@ -548,9 +592,6 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
         }
     };
 
-    auto wantScraper = [&](const std::string& src) {
-        return preferred_scraper.empty() || preferred_scraper == src;
-    };
     auto timedSearchM = [&](const std::string& src, std::vector<Movie> results) {
         DLOG << "[scraper]   " << src << ": " << results.size() << " result(s)\n";
         for (const auto& r : results)
@@ -561,17 +602,31 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
                  << '\n';
         collect(src, std::move(results));
     };
-    if (tmdb_ && wantScraper("tmdb")) {
+    // A library's chosen scraper is a *preference*, not an exclusive filter —
+    // every enabled scraper is still queried so a title missing from the
+    // preferred source can still be found elsewhere; the preference instead
+    // breaks ties in the scoring below (see isAmbiguousTie/pickBest).
+    if (tmdb_) {
         DLOG << "[scraper]   querying tmdb for movie \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
         auto results = tmdb_->searchMovies(search_title, year);
+        // See matchShow(): year is a hard filter on TMDB/TVDB, so fall back to
+        // an unfiltered search rather than lose an otherwise-clean title match.
+        if (results.empty() && year > 0) {
+            DLOG << "[scraper]   tmdb: 0 results with year filter, retrying without year\n";
+            results = tmdb_->searchMovies(search_title, 0);
+        }
         DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearchM("tmdb", std::move(results));
     }
-    if (tvdb_ && wantScraper("tvdb")) {
+    if (tvdb_) {
         DLOG << "[scraper]   querying tvdb for movie \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
         auto results = tvdb_->searchMovies(search_title, year);
+        if (results.empty() && year > 0) {
+            DLOG << "[scraper]   tvdb: 0 results with year filter, retrying without year\n";
+            results = tvdb_->searchMovies(search_title, 0);
+        }
         DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
         timedSearchM("tvdb", std::move(results));
     }
@@ -579,7 +634,7 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
     // explicitly opted it in (include_anidb) or chose it as this library's
     // one preferred scraper outright. Prevents cross-matching an unrelated
     // general movie/show library against anime titles on title text alone.
-    if (anidb_ && (preferred_scraper == "anidb" || (wantScraper("anidb") && include_anidb))) {
+    if (anidb_ && (preferred_scraper == "anidb" || include_anidb)) {
         DLOG << "[scraper]   querying anidb for movie \"" << search_title << "\" year=" << year << '\n';
         const auto t0 = std::chrono::steady_clock::now();
         auto results = anidb_->searchMovies(search_title, year);
@@ -597,14 +652,13 @@ void ScraperManager::matchMovie(const std::string& kairos_id, const std::string&
     if (candidates.empty()) {
         std::cout << "[scraper]   \"" << search_title << "\" → unmatched\n";
         setMatchStatus("movie", kairos_id, "unmatched", 0.0);
-    } else if (isAmbiguousTie(candidates, best)) {
+    } else if (isAmbiguousTie(candidates, best, preferred_scraper)) {
         std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
                   << " (ambiguous: 2+ distinct candidates tied at "
                   << std::fixed << std::setprecision(2) << best << ")\n";
         setMatchStatus("movie", kairos_id, "uncertain", best);
     } else if (best >= threshold()) {
-        const auto& best_c = *std::max_element(candidates.begin(), candidates.end(),
-            [](const Cand& a, const Cand& b){ return a.score < b.score; });
+        const auto& best_c = pickBest(candidates, best, preferred_scraper);
         std::cout << "[scraper]   \"" << search_title << "\" → matched"
                   << " (" << best_c.source << ", "
                   << std::fixed << std::setprecision(2) << best << ")\n";

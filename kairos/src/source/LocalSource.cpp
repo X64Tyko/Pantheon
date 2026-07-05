@@ -30,8 +30,25 @@ const std::regex kEpisodeRe(
     std::regex::icase
 );
 
-// "Title (2023)" — year-in-parens suffix
-const std::regex kYearRe(R"(\((\d{4})\)\s*$)");
+// A standalone 4-digit release year (1900-2099), whether bare ("Title 2023 ...")
+// or parenthesised ("Title (2023)"). Word-bounded so it can't fire inside a
+// resolution/codec tag like "2160p" or "x264".
+const std::regex kYearTokenRe(R"(\b(19\d{2}|20\d{2})\b)");
+
+// Scene-release quality/source/codec/audio/edition tags. The *earliest* match
+// marks where junk starts when no year token is present to anchor the cut —
+// e.g. "The.Toxic.Avenger.UNRATED.BluRay.x264-GROUP" has no year at all.
+const std::regex kJunkTagRe(
+    R"(\b(2160p|1080p|720p|480p|360p|4k|8k|uhd|hdr10?|dolby ?vision|)"
+    R"(bluray|blu-ray|bdrip|brrip|bdremux|remux|webrip|web-?dl|webdl|hdtv|pdtv|)"
+    R"(dvdrip|dvdscr|dvd5|dvd9|hdcam|camrip|cam|telesync|hdrip|)"
+    R"(x264|x265|h ?264|h ?265|hevc|avc1?|xvid|divx|)"
+    R"(aac(?:2 ?0)?|ac3|eac3|dts(?:-?hd)?|ddp?5 ?1|ddp?7 ?1|atmos|truehd|flac|)"
+    R"(proper|repack|internal|limited|extended(?:\s?cut)?|unrated|uncut|)"
+    R"(director'?s cut|theatrical(?:\s?cut)?|remastered|imax|10bit|8bit|)"
+    R"(yify|yts(?:\.mx)?|rarbg)\b)",
+    std::regex::icase
+);
 
 // Season directory name: "Season 1", "Season 01", "S01", "Series 2", etc.
 const std::regex kSeasonDirRe(
@@ -51,17 +68,60 @@ bool isHidden(const fs::path& p) {
     return !name.empty() && name[0] == '.';
 }
 
-// Parse a directory or file stem that may end with "(YYYY)".
-// Returns { cleaned_title, optional<year> }.
-std::pair<std::string, std::optional<int>> parseTitle(const std::string& name) {
-    std::smatch m;
-    if (std::regex_search(name, m, kYearRe)) {
-        std::string title = name.substr(0, static_cast<size_t>(m.position()));
-        while (!title.empty() && (title.back() == ' ' || title.back() == '.' || title.back() == '-'))
-            title.pop_back();
-        return {title, std::stoi(m[1].str())};
+// Parse a directory or file stem into a clean search title + release year.
+// Handles both tidy "Title (YYYY)" names and scene-release names like
+// "The.Thing.1982.1080p.BluRay.x264-GROUP" or "The Toxic Avenger UNRATED
+// BDRip x264-GROUP" (no year at all). Anything from the year token / first
+// recognised quality-or-edition tag onward is dropped as not part of the title.
+std::pair<std::string, std::optional<int>> parseTitle(const std::string& raw) {
+    // Scene releases use '.'/'_' as word separators; normalise to spaces so
+    // the regexes below see real word boundaries ("The.Thing" -> "The Thing").
+    // Collapse runs of spaces this creates (also tidies "Mr. Robot"-style names).
+    std::string name;
+    name.reserve(raw.size());
+    bool prev_space = false;
+    for (char c : raw) {
+        if (c == '.' || c == '_') c = ' ';
+        if (c == ' ') {
+            if (prev_space) continue;
+            prev_space = true;
+        } else {
+            prev_space = false;
+        }
+        name += c;
     }
-    return {name, std::nullopt};
+
+    auto trimmed = [](std::string s) {
+        while (!s.empty() && (s.back() == ' ' || s.back() == '.' ||
+                               s.back() == '-' || s.back() == '('))
+            s.pop_back();
+        size_t start = s.find_first_not_of(' ');
+        return start == std::string::npos ? std::string() : s.substr(start);
+    };
+
+    // Look for a year token, skipping one that sits at the very start of the
+    // name — that's almost always the title itself ("1917", "2001 A Space
+    // Odyssey"), not a release-year marker, so keep scanning for a later one.
+    std::optional<int> year;
+    size_t cut = std::string::npos;
+    for (auto it = std::sregex_iterator(name.begin(), name.end(), kYearTokenRe);
+         it != std::sregex_iterator(); ++it) {
+        size_t pos = static_cast<size_t>(it->position());
+        if (trimmed(name.substr(0, pos)).empty()) continue;
+        year = std::stoi((*it)[1].str());
+        cut = pos;
+        break;
+    }
+
+    // No year marker found: fall back to the first quality/source/edition tag.
+    if (cut == std::string::npos) {
+        std::smatch jm;
+        if (std::regex_search(name, jm, kJunkTagRe) && jm.position() > 0)
+            cut = static_cast<size_t>(jm.position());
+    }
+
+    std::string title = trimmed(cut == std::string::npos ? name : name.substr(0, cut));
+    return {title, year};
 }
 
 // Returns the season index from a directory name, or -1 if not a season dir.
