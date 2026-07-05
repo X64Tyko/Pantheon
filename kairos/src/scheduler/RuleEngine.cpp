@@ -1589,25 +1589,20 @@ void RuleEngine::projectDay(
     pass.last_show_id.clear();
     pass.prev_block_id.clear();
 
-    // Pre-populate exhausted from already-written scheduled_program rows.
-    for (const auto& b : ctx.blocks) {
-        if (b.program_count <= 0) continue;
-        if (!(b.day_mask & day_mask_bit)) continue;
-        SQLite::Statement q(db_.get(), R"(
-            SELECT COUNT(*) FROM scheduled_program
-             WHERE channel_id = ? AND block_id = ?
-               AND wall_clock_start >= ? AND wall_clock_start < ?
-        )");
-        q.bind(1, ctx.channel_id); q.bind(2, b.block_id);
-        q.bind(3, static_cast<int64_t>(day_start));
-        q.bind(4, static_cast<int64_t>(day_end));
-        q.executeStep();
-        if (q.getColumn(0).getInt() >= b.program_count) {
-            exhausted.insert(b.block_id);
-            if (epgDebug())
-                std::cout << "[epg] pre-pop exhausted block=" << b.block_id.substr(0,8) << '\n';
-        }
-    }
+    // exhausted starts empty and is populated purely from scheduleBlock()'s own
+    // return value below as this pass runs — never from scheduled_program. project()
+    // always replays a whole channel continuously from its Monday anchor (see
+    // EPGMaterializer::generate()), so by the time this day is reached, everything
+    // that matters about earlier days/blocks this run is already reflected in
+    // ctx.state/pass, in memory. A DB read here used to seed exhausted from
+    // whatever a *previous, possibly different* run had already committed — which
+    // silently broke the anchor/RNG determinism generate() is supposed to
+    // guarantee: a run that (for whatever reason) took a different path earlier
+    // would read a different exhausted set here and diverge for the rest of the
+    // day, producing a second, overlapping schedule for time ranges that were
+    // already committed. commit() only diffs by exact wall_clock_start, so that
+    // divergence never got cleaned up — it just piled up (see the Disney channel
+    // corruption this replaced).
 
     // Tomorrow's day-mask bit: used when computing cross-midnight preemption windows.
     const int tom_bit = (day_mask_bit < 64) ? day_mask_bit << 1 : 1;

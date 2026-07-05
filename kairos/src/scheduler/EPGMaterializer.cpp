@@ -149,7 +149,7 @@ GenerateResult EPGMaterializer::generate(
 }
 
 void EPGMaterializer::commit(
-    const std::string& channel_id, std::time_t horizon, GenerateResult& result)
+    const std::string& channel_id, std::time_t from, std::time_t horizon, GenerateResult& result)
 {
     using json = nlohmann::json;
     auto now   = static_cast<int64_t>(std::time(nullptr));
@@ -174,6 +174,26 @@ void EPGMaterializer::commit(
     };
 
     db_.get().exec("SAVEPOINT sp_commit");
+
+    // Replace, don't just append: clear any not-yet-aired row in the window this
+    // projection covers before inserting it, so a regenerate can't leave a stale
+    // pick from an earlier call sitting alongside (or overlapping) the new one.
+    // Floored at `now` (never `from` directly) so a rebroadcast can't touch
+    // something already airing or in the past — only content that hasn't started
+    // yet is fair game to replace.
+    {
+        std::time_t clear_from = std::max(from, static_cast<std::time_t>(now));
+        SQLite::Statement del(db_.get(), R"(
+            DELETE FROM scheduled_program
+             WHERE channel_id = ? AND status != 'aired'
+               AND wall_clock_start >= ? AND wall_clock_start < ?
+        )");
+        del.bind(1, channel_id);
+        del.bind(2, static_cast<int64_t>(clear_from));
+        del.bind(3, static_cast<int64_t>(horizon + 7200));
+        del.exec();
+    }
+
     SQLite::Statement ins(db_.get(), R"(
         INSERT OR IGNORE INTO scheduled_program
             (channel_id, block_id, item_type, item_id,
@@ -292,7 +312,7 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
                   << channel_id << " — EPG will be empty\n";
         return;
     }
-    commit(channel_id, horizon, result);
+    commit(channel_id, from, horizon, result);
 }
 
 void EPGMaterializer::notifyPlayed(const std::string& channel_id,

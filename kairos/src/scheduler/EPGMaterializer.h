@@ -41,9 +41,14 @@ public:
                             std::time_t from, int horizon_hours,
                             int seed = -1);
 
-    // Commit a GenerateResult to scheduled_program.
-    // INSERT OR IGNOREs items, applies cursor state, persists anchors.
+    // Commit a GenerateResult to scheduled_program. Replaces, not appends: any
+    // not-yet-aired row from max(from, now) through horizon is deleted before the
+    // fresh projection is inserted, so a regenerate always leaves the future
+    // matching this projection exactly — never stacked alongside a stale one from
+    // an earlier call (see Divergence). Rows at/after "now" but already aired, and
+    // anything before "now", are never touched.
     void commit(const std::string& channel_id,
+                std::time_t from,
                 std::time_t horizon,
                 GenerateResult& result);
 
