@@ -20,13 +20,7 @@ interface MediaDetailHeroProps {
   content_type?:   'show' | 'movie'
   discoverResult?: ScraperSearchResult
   onBack:          () => void
-  /**
-   * Extra library-management controls, rendered between the overview and
-   * the season shelves. A render-prop (not a plain node) so it shares this
-   * component's own useMediaDetail() result — LibraryDetailActions' refresh
-   * action needs to bump *this* hook's refreshKey to bust the poster/backdrop
-   * URL, not a second independent instance's.
-   */
+  /** Extra library-management controls, rendered between the overview and the season shelves. Render-prop so it shares this component's own useMediaDetail() result. */
   actions?:        (media: MediaDetailResult) => ReactNode
   /** Admin/details tooling, rendered at the very bottom, after the season shelves. */
   afterShelves?:   ReactNode

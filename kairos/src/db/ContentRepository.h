@@ -234,12 +234,8 @@ public:
     // Empty in, or no '/' found, -> empty out.
     static std::string parentDir(const std::string& file_path);
 
-    // A show has no file_path of its own — it's a collection of per-episode
-    // files, possibly split across per-season subdirectories. This steps up
-    // from one episode's containing folder past a season-style subfolder
-    // ("Season 1", "S01", ...) when present, landing on the show's own root
-    // folder either way. std::nullopt if the show has no episodes with a
-    // non-empty file_path.
+    // Show's root folder, derived from one episode's path (steps up past a
+    // season subfolder if present). nullopt if no episode has a file_path.
     std::optional<std::string> getShowFolderPath(const std::string& show_id);
 
     void updateShow(const std::string& show_id,

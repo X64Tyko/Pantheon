@@ -9,10 +9,7 @@
 
 namespace {
 
-// Same season-style-folder heuristic as ScraperManager's extractShowFolder
-// (which derives a show's folder *name* from one episode path at match
-// time) — mirrored here to derive the show's full folder *path* from
-// already-imported episodes. "Season 1", "S01", "Specials", etc.
+// Mirrors ScraperManager's extractShowFolder season-name heuristic.
 bool looksLikeSeasonFolder(const std::string& folderName) {
     std::string lower;
     lower.reserve(folderName.size());
@@ -976,16 +973,8 @@ std::string ContentRepository::parentDir(const std::string& file_path) {
 }
 
 std::optional<std::string> ContentRepository::getShowFolderPath(const std::string& show_id) {
-    // Any single episode's own containing folder is enough to derive the
-    // show's root: it's either a per-season subfolder ("Season 1", "S01",
-    // ...) — in which case the show root is one level up — or, for shows
-    // with no season subfolders, the episode's folder IS the show root.
-    // (Previously this diffed every episode's file_path char-by-char to
-    // find a common prefix, which only stepped up past the season folder
-    // when episodes' *season folders* disagreed — a single-season show
-    // has every episode under the same "Season 1" folder, so the prefix
-    // scan instead diverged inside the filenames and stopped one level
-    // too shallow, reporting "Season 1" as the show's folder.)
+    // One episode's folder is enough: step up past a season subfolder if present,
+    // otherwise that folder is already the show root.
     SQLite::Statement q(db_.get(),
         "SELECT file_path FROM episode WHERE show_id = ? AND file_path != '' LIMIT 1");
     q.bind(1, show_id);

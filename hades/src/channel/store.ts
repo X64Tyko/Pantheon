@@ -599,7 +599,14 @@ export class ChannelDetailStore {
   // Saves the current block editor state to the in-memory draft (no DB writes).
   save(channelId: string) {
     this.saving = true; this.saveErr = null
-    const payload = { ...this.draft, end_time: this.draft.end_time ?? '' }
+    const isTimeslot = this.draft.block_type === 'timeslot'
+    // Timeslot blocks derive their length from slots; end_time/program_count
+    // are hidden in the editor for them but may still hold a stale value.
+    const payload = {
+      ...this.draft,
+      end_time:      isTimeslot ? '' : (this.draft.end_time ?? ''),
+      program_count: isTimeslot ? 0  : this.draft.program_count,
+    }
     const { filler_selection, align_to_mins, inter_filler, early_start_secs, start_scope } = this.draft
 
     try {

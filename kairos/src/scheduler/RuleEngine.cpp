@@ -1739,10 +1739,15 @@ void RuleEngine::projectDay(
         // Bounded by the next higher-priority block's start (today or tomorrow morning).
         // Fallback is t_end, NOT day_end — items complete naturally past midnight.
         // Also track that block's late_start_mins: content may finish into that grace.
+        //
+        // Priority-DESC order alone isn't enough to gate this loop: ties break
+        // arbitrarily, so a same-priority block earlier in the list would
+        // otherwise be treated as a preemptor too.
         std::time_t block_window      = t_end;
         int         block_window_late = 0;
         for (const auto& b : ctx.blocks) {
             if (b.block_id == block.block_id) break;
+            if (b.priority <= block.priority) continue;
             auto check = [&](int bit, std::time_t base) {
                 if (!(b.day_mask & bit)) return;
                 std::time_t bs = base
@@ -2105,11 +2110,29 @@ bool RuleEngine::scheduleTimeslotBlock(
         // Guard: if the filler pool was empty and couldn't advance pass.t, force it to
         // loop_end so projectDay moves on rather than spinning on this block.
         if (pass.t < loop_end) pass.t = loop_end;
+        return false;
     }
 
-    // Return true (exhausted) when no slots were active this pass so projectDay
-    // removes the block from the active set for the rest of this calendar day.
-    return !any_slot_ran;
+    // loop_end may be preemption-narrowed rather than the block's real end
+    // (block_end_ts) — check the latter so a preempted-before-next-slot pass
+    // doesn't get marked exhausted and lose its remaining slots for the day.
+    bool more_slots_today = false;
+    for (const auto& slot : block.slots) {
+        std::time_t s_start = block_nominal_start
+            + static_cast<std::time_t>(slot.slot_offset_mins) * 60;
+        std::time_t s_end = std::min(
+            s_start + static_cast<std::time_t>(slot.slot_duration_mins) * 60,
+            block_end_ts);
+        if (s_end > pass.t) { more_slots_today = true; break; }
+    }
+    if (more_slots_today) {
+        // Advance past the preemption boundary so projectDay re-resolves once it clears.
+        if (pass.t < loop_end) fillToTime(ctx, block, loop_end, pass);
+        if (pass.t < loop_end) pass.t = loop_end;
+        return false;
+    }
+
+    return true;
 }
 
 // ── Playback completion ───────────────────────────────────────────────────────

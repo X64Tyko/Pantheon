@@ -16,10 +16,7 @@ interface LibraryDetailActionsProps {
   content_type?:    'show' | 'movie'
   discoverResult?:  ScraperSearchResult
   onViewInLibrary?: (id: string, content_type: 'show' | 'movie') => void
-  // MediaDetailHero's own useMediaDetail() result, handed down instead of
-  // this component fetching its own copy — a second independent fetch had
-  // its own refreshKey, so Refresh Metadata's cache-bust never reached the
-  // poster/backdrop <img> that MediaDetailHero actually renders.
+  // MediaDetailHero's own useMediaDetail() result, shared rather than re-fetched.
   media:            MediaDetailResult
 }
 

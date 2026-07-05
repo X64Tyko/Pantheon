@@ -109,10 +109,5 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   }
 }
 
-// Shared shape so MediaDetailHero (the one place this hook actually runs)
-// can hand its result down to sibling action components — see
-// MediaDetailHero's `actions` render-prop. A second independent
-// useMediaDetail call in a sibling has its own refreshKey/detail state, so
-// a refresh triggered there never busts the poster/backdrop URL this hook
-// renders elsewhere.
+// Lets MediaDetailHero hand its single hook result down via its `actions` render-prop.
 export type MediaDetailResult = ReturnType<typeof useMediaDetail>
