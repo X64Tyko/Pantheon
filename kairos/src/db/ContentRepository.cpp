@@ -945,7 +945,36 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
         applyInt(ov, "year",                    d.year);
     }
 
+    d.folder_path = getShowFolderPath(show_id).value_or("");
+
     return d;
+}
+
+std::string ContentRepository::parentDir(const std::string& file_path) {
+    auto slash = file_path.find_last_of('/');
+    return slash == std::string::npos ? std::string() : file_path.substr(0, slash);
+}
+
+std::optional<std::string> ContentRepository::getShowFolderPath(const std::string& show_id) {
+    SQLite::Statement q(db_.get(),
+        "SELECT DISTINCT file_path FROM episode WHERE show_id = ? AND file_path != ''");
+    q.bind(1, show_id);
+
+    std::vector<std::string> paths;
+    while (q.executeStep()) paths.push_back(q.getColumn(0).getString());
+    if (paths.empty()) return std::nullopt;
+
+    std::string common = paths[0];
+    for (size_t i = 1; i < paths.size() && !common.empty(); ++i) {
+        const std::string& p = paths[i];
+        size_t n = std::min(common.size(), p.size());
+        size_t j = 0;
+        while (j < n && common[j] == p[j]) ++j;
+        common.resize(j);
+    }
+
+    std::string folder = parentDir(common);
+    return folder.empty() ? std::nullopt : std::make_optional(folder);
 }
 
 std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& movie_id) {
@@ -983,6 +1012,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     d.collections    = q.getColumn(19).getString();
     d.release_date   = q.getColumn(20).getString();
     d.file_path      = q.getColumn(21).getString();
+    d.folder_path    = parentDir(d.file_path);
     d.match_status   = q.getColumn(22).getString();
     if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
     d.match_confirmed = q.getColumn(24).getInt() != 0;

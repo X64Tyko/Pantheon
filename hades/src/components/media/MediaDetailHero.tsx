@@ -4,7 +4,7 @@ import { EpisodeShelf } from './EpisodeShelf'
 import { LanguageChips } from './LanguageChips'
 import { useFocusable } from '../../nav/useFocusable'
 import { useNavBack } from '../../nav/back'
-import { useMediaDetail } from './useMediaDetail'
+import { folderBaseName, useMediaDetail } from './useMediaDetail'
 
 function formatVideoInfo(v: VideoInfo): string | null {
   if (!v.codec && !v.height) return null
@@ -187,6 +187,17 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
                 </div>
               )}
               {show?.studio && <MetaRow label="Studio">{show.studio}</MetaRow>}
+              {/* Admin-facing "where does this live on disk" — common ancestor
+                  directory across all of the show's episode files (see
+                  ContentRepository::getShowFolderPath), the show-level analog
+                  of the movie "File" row above. */}
+              {show?.folder_path && (
+                <MetaRow label="Folder">
+                  <span style={{ wordBreak: 'break-all' }} title={show.folder_path}>
+                    {folderBaseName(show.folder_path)}
+                  </span>
+                </MetaRow>
+              )}
 
               {/* Extra library actions — between description and season shelves */}
               {actions}

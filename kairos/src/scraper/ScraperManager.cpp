@@ -3,6 +3,7 @@
 #include "TmdbScraper.h"
 #include "TvdbScraper.h"
 #include "conf/ConfStore.h"
+#include "db/ContentRepository.h"
 #include "db/Database.h"
 #include "log/DebugLog.h"
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -934,6 +935,8 @@ std::vector<QueueItem> ScraperManager::getQueue(const std::string& status_filter
         LIMIT ? OFFSET ?
     )";
 
+    ContentRepository repo(db_);
+
     std::vector<QueueItem> out;
     {
         SQLite::Statement q(db_.get(), sql);
@@ -949,6 +952,7 @@ std::vector<QueueItem> ScraperManager::getQueue(const std::string& status_filter
             qi.source_base_url = q.getColumn(6).isNull() ? "" : q.getColumn(6).getString();
             qi.match_status = q.getColumn(7).getString();
             qi.match_score  = q.getColumn(8).getDouble();
+            qi.folder_path  = repo.getShowFolderPath(qi.kairos_id).value_or("");
             out.push_back(std::move(qi));
         }
     }
@@ -956,7 +960,8 @@ std::vector<QueueItem> ScraperManager::getQueue(const std::string& status_filter
     // Movies
     sql = R"(
         SELECT m.movie_id, 'movie', m.title, COALESCE(m.year,0), m.thumb,
-               sm.source_id, COALESCE(ms.base_url,''), m.match_status, COALESCE(m.match_score,0)
+               sm.source_id, COALESCE(ms.base_url,''), m.match_status, COALESCE(m.match_score,0),
+               m.file_path
         FROM movie m
         LEFT JOIN source_mapping sm ON sm.kairos_id=m.movie_id AND sm.item_type='movie'
         LEFT JOIN media_source ms ON ms.source_id=sm.source_id
@@ -980,6 +985,7 @@ std::vector<QueueItem> ScraperManager::getQueue(const std::string& status_filter
             qi.source_base_url = q.getColumn(6).isNull() ? "" : q.getColumn(6).getString();
             qi.match_status = q.getColumn(7).getString();
             qi.match_score  = q.getColumn(8).getDouble();
+            qi.folder_path  = ContentRepository::parentDir(q.getColumn(9).getString());
             out.push_back(std::move(qi));
         }
     }

@@ -35,6 +35,10 @@ struct QueueItem {
     std::string match_status;
     double      match_score = 0.0;
     std::vector<ScraperCandidate> candidates;
+    // On-disk folder for this item — movie.file_path's parent dir, or (for
+    // shows) the common ancestor across all episode file_paths. Lets a
+    // reviewer tell which physical folder a queue entry corresponds to.
+    std::string folder_path;
 };
 
 struct ScraperStats {

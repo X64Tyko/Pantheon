@@ -209,6 +209,7 @@ export interface ShowDetail {
   match_status?:           MatchStatus
   match_score?:            number
   match_confirmed?:        boolean
+  folder_path?:            string
 }
 
 export interface MovieDetail {
@@ -233,6 +234,7 @@ export interface MovieDetail {
   source_id:        string
   source_base_url:  string
   file_path?:       string
+  folder_path?:     string
   match_status?:    MatchStatus
   match_score?:     number
   match_confirmed?: boolean
@@ -759,6 +761,7 @@ export interface ReviewQueueItem {
   match_status:    'uncertain' | 'unmatched' | 'matched'
   match_score:     number
   candidates:      ItemMatchCandidate[]
+  folder_path?:    string
 }
 
 export interface ScraperStats {

@@ -18,6 +18,17 @@ export function splitFilePath(path?: string): { folderName?: string; fileName?: 
   return { folderName, fileName }
 }
 
+// Last segment of a *folder* path (as opposed to splitFilePath, which expects
+// a file path and strips one segment off first) — e.g.
+// "/media/Shows/Attack on Titan (2013)" -> "Attack on Titan (2013)". Used for
+// the on-disk folder display in FixMatchPanel/ReviewPage/MediaDetailHero: a
+// mismatched folder name is usually the fastest way to spot a bad scrape.
+export function folderBaseName(path?: string): string | undefined {
+  if (!path) return undefined
+  const parts = path.split(/[/\\]/).filter(Boolean)
+  return parts[parts.length - 1]
+}
+
 export interface UseMediaDetailArgs {
   id?:             string
   content_type?:   'show' | 'movie'

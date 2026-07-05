@@ -218,6 +218,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
             contentType={contentType}
             defaultQuery={detailTitle}
             locked={!!detail?.locked}
+            folderPath={detail?.folder_path}
             onMatched={() => { setFixMatchOpen(false); refetchDetail() }}
             onCancel={() => setFixMatchOpen(false)}
           />

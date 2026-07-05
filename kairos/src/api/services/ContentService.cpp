@@ -551,6 +551,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		show["match_status"]    = d->match_status;
 		if (d->match_score) show["match_score"] = *d->match_score;
 		show["match_confirmed"] = d->match_confirmed;
+		if (!d->folder_path.empty()) show["folder_path"] = d->folder_path;
 
 		json seasons = json::array();
 		for (const auto& s : d->seasons)
@@ -701,6 +702,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		movie["source_id"]       = d->source_id;
 		movie["source_base_url"] = d->source_base_url;
 		if (!d->file_path.empty()) movie["file_path"] = d->file_path;
+		if (!d->folder_path.empty()) movie["folder_path"] = d->folder_path;
 		movie["match_status"]    = d->match_status;
 		if (d->match_score) movie["match_score"] = *d->match_score;
 		movie["match_confirmed"] = d->match_confirmed;

@@ -61,6 +61,12 @@ struct ShowDetail {
     std::string           match_status;
     std::optional<double> match_score;
     bool                   match_confirmed = false;
+    // Common ancestor directory across all of this show's episode file_paths
+    // (see ContentRepository::getShowFolderPath) — admin-facing "where does
+    // this actually live on disk" display, the show-level analog of
+    // MovieDetail::file_path. Empty if the show has no episodes with a
+    // file_path yet.
+    std::string folder_path;
 };
 
 struct EpisodeRow {
@@ -110,6 +116,9 @@ struct MovieDetail {
     std::string           match_status;
     std::optional<double> match_score;
     bool                   match_confirmed = false;
+    // Parent directory of file_path (see ContentRepository::parentDir) —
+    // admin-facing "which folder is this in" display, alongside the raw file.
+    std::string folder_path;
 };
 
 struct ItemSource {
@@ -219,6 +228,20 @@ public:
 
     std::optional<ShowDetail>  getShowDetail(const std::string& show_id);
     std::optional<MovieDetail> getMovieDetail(const std::string& movie_id);
+
+    // Strips the last path segment (filename) off a file path, e.g.
+    // "/media/Movies/Foo (2020)/Foo.mkv" -> "/media/Movies/Foo (2020)".
+    // Empty in, or no '/' found, -> empty out.
+    static std::string parentDir(const std::string& file_path);
+
+    // A show has no file_path of its own — it's a collection of per-episode
+    // files, possibly split across per-season subdirectories. This finds the
+    // longest common directory-boundary-aligned prefix across every episode's
+    // file_path, which lands on the show's own root folder even when episodes
+    // are spread across "Season 01"/"Season 02"/... subfolders (those names
+    // diverge and stop the common-prefix scan right at the show root).
+    // std::nullopt if the show has no episodes with a non-empty file_path.
+    std::optional<std::string> getShowFolderPath(const std::string& show_id);
 
     void updateShow(const std::string& show_id,
                     const std::vector<StrField>& str_fields,

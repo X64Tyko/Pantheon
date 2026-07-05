@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { ScraperSearchResult } from '../../api/types'
+import { folderBaseName } from './useMediaDetail'
 
 interface FixMatchPanelProps {
   id:           string
@@ -11,6 +12,11 @@ interface FixMatchPanelProps {
   // poster, etc.) won't change unless the item is unlocked first. Surfaced
   // here rather than silently producing a confusing "nothing happened" result.
   locked:       boolean
+  // The on-disk folder this item actually lives in (movie's own folder, or a
+  // show's common episode-ancestor folder) — the fastest way to tell whether
+  // a match is actually wrong, since a mismatched folder name usually gives
+  // it away immediately. Undefined if not yet known (no episodes/file yet).
+  folderPath?:  string
   onMatched:    () => void
   onCancel:     () => void
 }
@@ -21,7 +27,7 @@ interface FixMatchPanelProps {
 // page. Runs an initial search against the item's own title immediately on
 // open, since the point of opening this is "the current match is wrong,"
 // not "start from a blank search."
-export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched, onCancel }: FixMatchPanelProps) {
+export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPath, onMatched, onCancel }: FixMatchPanelProps) {
   const [query,      setQuery]      = useState(defaultQuery)
   const [results,    setResults]    = useState<ScraperSearchResult[]>([])
   const [loading,    setLoading]    = useState(true)
@@ -72,6 +78,20 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, onMatched
       display: 'flex', flexDirection: 'column', gap: 10, padding: 12,
       borderRadius: 8, background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',
     }}>
+      {folderPath && (
+        <div
+          title={folderPath}
+          style={{
+            padding: '6px 10px', borderRadius: 6, fontSize: 10,
+            fontFamily: "'JetBrains Mono', monospace", color: 'var(--hds-txt-2)',
+            background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line-s)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}
+        >
+          <span style={{ color: 'var(--hds-txt-3)' }}>Folder: </span>{folderBaseName(folderPath)}
+        </div>
+      )}
+
       {locked && (
         <div style={{
           padding: '8px 10px', borderRadius: 6, fontSize: 10, lineHeight: 1.5,

@@ -135,6 +135,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             qj["source_base_url"]= qi.source_base_url;
             qj["match_status"]   = qi.match_status;
             qj["match_score"]    = qi.match_score;
+            if (!qi.folder_path.empty()) qj["folder_path"] = qi.folder_path;
             qj["candidates"] = json::array();
             for (const auto& c : qi.candidates) {
                 json cj;

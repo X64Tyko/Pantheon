@@ -11,6 +11,7 @@ import type {
 } from '../api/types'
 import { MatchBadge } from '../components/media/MatchBadge'
 import type { MatchStatus } from '../components/media/MatchBadge'
+import { folderBaseName } from '../components/media/useMediaDetail'
 import { goldBtnStyle } from '../channel/styles'
 
 // ── Shared chip style ─────────────────────────────────────────────────────────
@@ -408,6 +409,15 @@ function QueueListPanel({
                 }}>
                   {item.item_type}{item.year ? ` · ${item.year}` : ''}
                 </div>
+                {item.folder_path && (
+                  <div
+                    title={item.folder_path}
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)',
+                      marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.75,
+                    }}
+                  >{folderBaseName(item.folder_path)}</div>
+                )}
                 <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
                   <MatchBadge status={item.match_status as MatchStatus} score={item.match_score} size="sm" />
                   {item.match_score > 0 && (
@@ -511,6 +521,17 @@ function CandidatePanel({
             <span style={chip}>{item.item_type}</span>
             <MatchBadge status={item.match_status as MatchStatus} score={item.match_score} />
           </div>
+          {item.folder_path && (
+            <div
+              title={item.folder_path}
+              style={{
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
+                marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ opacity: 0.7 }}>Folder: </span>{folderBaseName(item.folder_path)}
+            </div>
+          )}
         </div>
         <button
           onClick={toggleSearch}
