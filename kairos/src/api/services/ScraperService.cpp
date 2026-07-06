@@ -169,6 +169,8 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             std::string poster_url  = body.value("poster_url",  "");
             std::string overview    = body.value("overview",    "");
             if (item_type.empty() || source.empty() || external_id.empty()) {
+                std::cerr << "[scraper] manual match 400: item_type=" << item_type
+                          << ", source=" << source << ", external_id=" << external_id << "\n";
                 err(res, 400, "item_type, source, and external_id are required");
                 return;
             }
