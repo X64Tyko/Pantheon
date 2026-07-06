@@ -578,6 +578,12 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		show["match_confirmed"] = d->match_confirmed;
 		if (!d->folder_path.empty()) show["folder_path"] = d->folder_path;
 
+		// Full set of sources this show is mapped to (source_id/source_base_url above are just one of them).
+		json sources = json::array();
+		for (const auto& t : SourceRepository(db_).getWritebackTargets("show", id))
+			sources.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"display_name", t.display_name}, {"external_id", t.external_id}});
+		show["sources"] = std::move(sources);
+
 		json seasons = json::array();
 		for (const auto& s : d->seasons)
 			seasons.push_back({{"number", s.number}, {"name", s.name}});
@@ -662,6 +668,39 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		} catch (const std::exception& e) { route::logErr("POST /api/shows/:id/writeback", e); route::err(res, 500, e.what()); }
 	});
 
+	// `:id` survives; body.duplicate_id is absorbed and gone (see mergeShowInto).
+	svr.Post("/api/shows/:id/merge", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			auto b = json::parse(req.body);
+			std::string dup_id = b.value("duplicate_id", "");
+			if (dup_id.empty()) { route::err(res, 400, "duplicate_id required"); return; }
+			bool confirmed = b.value("confirm", false);
+
+			ContentRepository repo(db_);
+			auto d_target = repo.getShowDetail(id);
+			auto d_dup    = repo.getShowDetail(dup_id);
+			if (!d_target) { route::err(res, 404, "show not found"); return; }
+			if (!d_dup)    { route::err(res, 404, "duplicate show not found"); return; }
+
+			if (!confirmed && !d_target->folder_path.empty() && !d_dup->folder_path.empty()
+			        && d_target->folder_path != d_dup->folder_path) {
+				res.status = 409;
+				route::ok(res, json{
+					{"error", "folder_mismatch"},
+					{"target_folder", d_target->folder_path},
+					{"duplicate_folder", d_dup->folder_path},
+				}.dump());
+				return;
+			}
+
+			repo.mergeShowInto(id, dup_id);
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) { route::logErr("POST /api/shows/:id/merge", e); route::err(res, 400, e.what()); }
+	});
+
 	svr.Get("/api/shows/:id/thumb", [this](const Req& req, Res& res) {
 		auto id = req.path_params.at("id");
 		auto item = ContentRepository(db_).getShowThumb(id);
@@ -731,6 +770,13 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		movie["match_status"]    = d->match_status;
 		if (d->match_score) movie["match_score"] = *d->match_score;
 		movie["match_confirmed"] = d->match_confirmed;
+
+		// Full set of sources this movie is mapped to.
+		json sources = json::array();
+		for (const auto& t : SourceRepository(db_).getWritebackTargets("movie", id))
+			sources.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"display_name", t.display_name}, {"external_id", t.external_id}});
+		movie["sources"] = std::move(sources);
+
 		route::ok(res, movie.dump());
 	});
 
@@ -807,6 +853,39 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			}
 			route::ok(res, json{{"results", results}}.dump());
 		} catch (const std::exception& e) { route::logErr("POST /api/movies/:id/writeback", e); route::err(res, 500, e.what()); }
+	});
+
+	// Link a duplicate movie onto this one — see the analogous show route above.
+	svr.Post("/api/movies/:id/merge", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			auto b = json::parse(req.body);
+			std::string dup_id = b.value("duplicate_id", "");
+			if (dup_id.empty()) { route::err(res, 400, "duplicate_id required"); return; }
+			bool confirmed = b.value("confirm", false);
+
+			ContentRepository repo(db_);
+			auto d_target = repo.getMovieDetail(id);
+			auto d_dup    = repo.getMovieDetail(dup_id);
+			if (!d_target) { route::err(res, 404, "movie not found"); return; }
+			if (!d_dup)    { route::err(res, 404, "duplicate movie not found"); return; }
+
+			if (!confirmed && !d_target->folder_path.empty() && !d_dup->folder_path.empty()
+			        && d_target->folder_path != d_dup->folder_path) {
+				res.status = 409;
+				route::ok(res, json{
+					{"error", "folder_mismatch"},
+					{"target_folder", d_target->folder_path},
+					{"duplicate_folder", d_dup->folder_path},
+				}.dump());
+				return;
+			}
+
+			repo.mergeMovieInto(id, dup_id);
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) { route::logErr("POST /api/movies/:id/merge", e); route::err(res, 400, e.what()); }
 	});
 
 	svr.Get("/api/movies/:id/thumb", [this](const Req& req, Res& res) {

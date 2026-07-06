@@ -4,8 +4,11 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <set>
 #include <sstream>
+#include <stdexcept>
+#include <unordered_map>
 
 namespace {
 
@@ -1125,6 +1128,119 @@ void ContentRepository::updateMovie(const std::string& movie_id,
     for (const auto& f : int_fields) s.bind(idx++, f.val);
     s.bind(idx, movie_id);
     s.exec();
+}
+
+void ContentRepository::mergeMovieInto(const std::string& target_id, const std::string& dup_id) {
+    if (target_id == dup_id) throw std::runtime_error("cannot merge an item into itself");
+    SQLite::Transaction txn(db_.get());
+
+    // Move the dup's mappings onto the target, skipping any source the target already has.
+    SQLite::Statement move(db_.get(), R"(
+        UPDATE source_mapping SET kairos_id = ?
+        WHERE item_type = 'movie' AND kairos_id = ?
+          AND source_id NOT IN (
+              SELECT source_id FROM source_mapping WHERE item_type = 'movie' AND kairos_id = ?
+          )
+    )");
+    move.bind(1, target_id); move.bind(2, dup_id); move.bind(3, target_id);
+    move.exec();
+
+    SQLite::Statement dropLeftover(db_.get(),
+        "DELETE FROM source_mapping WHERE item_type='movie' AND kairos_id=?");
+    dropLeftover.bind(1, dup_id);
+    dropLeftover.exec();
+
+    // dup_id has zero mappings now — orphaned, same as SyncManager::runOrphanCleanup leaves a stale item.
+    SQLite::Statement nullCursor(db_.get(), "UPDATE media_cursor SET movie_id = NULL WHERE movie_id = ?");
+    nullCursor.bind(1, dup_id);
+    nullCursor.exec();
+
+    SQLite::Statement del(db_.get(), "DELETE FROM movie WHERE movie_id = ?");
+    del.bind(1, dup_id);
+    del.exec();
+
+    txn.commit();
+}
+
+void ContentRepository::mergeShowInto(const std::string& target_id, const std::string& dup_id) {
+    if (target_id == dup_id) throw std::runtime_error("cannot merge an item into itself");
+    SQLite::Transaction txn(db_.get());
+
+    // (season << 32 | episode) -> episode_id, so a matching dup episode collapses onto it.
+    std::unordered_map<int64_t, std::string> target_ep_by_se;
+    {
+        SQLite::Statement q(db_.get(), "SELECT season, episode, episode_id FROM episode WHERE show_id = ?");
+        q.bind(1, target_id);
+        while (q.executeStep()) {
+            const int64_t key = (static_cast<int64_t>(q.getColumn(0).getInt()) << 32)
+                               | static_cast<uint32_t>(q.getColumn(1).getInt());
+            target_ep_by_se[key] = q.getColumn(2).getString();
+        }
+    }
+
+    struct DupEp { std::string episode_id; int season = 0, episode = 0; };
+    std::vector<DupEp> dup_episodes;
+    {
+        SQLite::Statement q(db_.get(), "SELECT episode_id, season, episode FROM episode WHERE show_id = ?");
+        q.bind(1, dup_id);
+        while (q.executeStep())
+            dup_episodes.push_back({q.getColumn(0).getString(), q.getColumn(1).getInt(), q.getColumn(2).getInt()});
+    }
+
+    SQLite::Statement moveEpMapping(db_.get(), R"(
+        UPDATE source_mapping SET kairos_id = ?
+        WHERE item_type = 'episode' AND kairos_id = ?
+          AND source_id NOT IN (
+              SELECT source_id FROM source_mapping WHERE item_type = 'episode' AND kairos_id = ?
+          )
+    )");
+    SQLite::Statement dropEpMappingLeftover(db_.get(),
+        "DELETE FROM source_mapping WHERE item_type='episode' AND kairos_id=?");
+    SQLite::Statement nullCursorEp(db_.get(), "UPDATE media_cursor SET episode_id = NULL WHERE episode_id = ?");
+    SQLite::Statement deleteEp(db_.get(), "DELETE FROM episode WHERE episode_id = ?");
+    SQLite::Statement reparentEp(db_.get(), "UPDATE episode SET show_id = ? WHERE episode_id = ?");
+
+    for (const auto& ep : dup_episodes) {
+        const int64_t key = (static_cast<int64_t>(ep.season) << 32) | static_cast<uint32_t>(ep.episode);
+        auto it = target_ep_by_se.find(key);
+        if (it != target_ep_by_se.end()) {
+            // Collision — fold the dup's sources onto the existing episode, drop the dup's row.
+            const std::string& target_ep_id = it->second;
+            moveEpMapping.bind(1, target_ep_id); moveEpMapping.bind(2, ep.episode_id); moveEpMapping.bind(3, target_ep_id);
+            moveEpMapping.exec(); moveEpMapping.reset();
+            dropEpMappingLeftover.bind(1, ep.episode_id); dropEpMappingLeftover.exec(); dropEpMappingLeftover.reset();
+            nullCursorEp.bind(1, ep.episode_id); nullCursorEp.exec(); nullCursorEp.reset();
+            deleteEp.bind(1, ep.episode_id); deleteEp.exec(); deleteEp.reset();
+        } else {
+            reparentEp.bind(1, target_id); reparentEp.bind(2, ep.episode_id);
+            reparentEp.exec(); reparentEp.reset();
+        }
+    }
+
+    SQLite::Statement moveShowMapping(db_.get(), R"(
+        UPDATE source_mapping SET kairos_id = ?
+        WHERE item_type = 'show' AND kairos_id = ?
+          AND source_id NOT IN (
+              SELECT source_id FROM source_mapping WHERE item_type = 'show' AND kairos_id = ?
+          )
+    )");
+    moveShowMapping.bind(1, target_id); moveShowMapping.bind(2, dup_id); moveShowMapping.bind(3, target_id);
+    moveShowMapping.exec();
+
+    SQLite::Statement dropShowMappingLeftover(db_.get(),
+        "DELETE FROM source_mapping WHERE item_type='show' AND kairos_id=?");
+    dropShowMappingLeftover.bind(1, dup_id);
+    dropShowMappingLeftover.exec();
+
+    SQLite::Statement delSeason(db_.get(), "DELETE FROM show_season WHERE show_id = ?");
+    delSeason.bind(1, dup_id);
+    delSeason.exec();
+
+    SQLite::Statement delShow(db_.get(), "DELETE FROM show WHERE show_id = ?");
+    delShow.bind(1, dup_id);
+    delShow.exec();
+
+    txn.commit();
 }
 
 std::vector<EpisodeRow> ContentRepository::listEpisodesForShow(const std::string& show_id,

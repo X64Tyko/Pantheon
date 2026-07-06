@@ -1,18 +1,23 @@
 import { observer } from 'mobx-react-lite'
 import { makeAutoObservable, runInAction } from 'mobx'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { api } from '../api/client'
+import { api, mediaUrl, ApiError } from '../api/client'
 import type {
   ReviewQueueItem, ItemMatchCandidate,
   EpisodeGroup, GroupingCandidate, ShowGroupingResult,
   ArrLookupResult, ArrServiceOptions, ContentRequest, RequestStatus,
-  ScraperSearchResult,
+  ScraperSearchResult, ChapterReviewItem, Chapter, ChapterType,
 } from '../api/types'
 import { MatchBadge } from '../components/media/MatchBadge'
 import type { MatchStatus } from '../components/media/MatchBadge'
 import { folderBaseName } from '../components/media/useMediaDetail'
 import { goldBtnStyle } from '../channel/styles'
+import { useDebounce } from '../hooks/useDebounce'
+import { usePlaybackSession } from '../player/usePlaybackSession'
+import type { PlaybackTarget } from '../player/usePlaybackSession'
+import { VideoPlayer } from '../player/VideoPlayer'
+import { LoadingThrobber } from '../player/LoadingThrobber'
 
 // ── Shared chip style ─────────────────────────────────────────────────────────
 
@@ -113,7 +118,7 @@ const groupsStore = new GroupsStore()
 
 // ── Tab type ──────────────────────────────────────────────────────────────────
 
-type Tab = 'queue' | 'groups' | 'requests'
+type Tab = 'queue' | 'groups' | 'requests' | 'chapters'
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -189,11 +194,32 @@ export default observer(function ReviewPage() {
   const visibleRequests = requests.filter(r => reqFilter === 'all' || r.status === reqFilter)
   const pendingReqCount = requests.filter(r => r.status === 'pending').length
 
+  // ── Chapters state ───────────────────────────────────────────────────────────
+  const [chapterItems,     setChapterItems]     = useState<ChapterReviewItem[]>([])
+  const [chapterTotal,     setChapterTotal]     = useState(0)
+  const [chapterLoading,   setChapterLoading]   = useState(false)
+  const [chapterMediaType, setChapterMediaType] = useState<'all'|'episode'|'movie'>('all')
+  const [chapterType,      setChapterType]      = useState<'all'|ChapterType>('all')
+  const [chapterQueryRaw,  setChapterQueryRaw]  = useState('')
+  const chapterQuery = useDebounce(chapterQueryRaw, 300)
+  const [selectedChapterItem, setSelectedChapterItem] = useState<ChapterReviewItem | null>(null)
+
+  const fetchChapterItems = useCallback(() => {
+    setChapterLoading(true)
+    api.getChapterReviewItems({ media_type: chapterMediaType, chapter_type: chapterType, q: chapterQuery, limit: 48 })
+      .then(r => { setChapterItems(r.items); setChapterTotal(r.total) })
+      .catch(() => {})
+      .finally(() => setChapterLoading(false))
+  }, [chapterMediaType, chapterType, chapterQuery])
+
+  useEffect(() => { if (tab === 'chapters') fetchChapterItems() }, [tab, fetchChapterItems])
+
   // ── Tab switch ───────────────────────────────────────────────────────────────
   const switchTab = (t: Tab) => {
     setTab(t)
     setSelectedQueue(null)
     setSelectedReq(null)
+    setSelectedChapterItem(null)
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -214,6 +240,7 @@ export default observer(function ReviewPage() {
             { key: 'queue',    label: 'Queue',    badge: null,                                                            admin: false },
             { key: 'groups',   label: 'Groups',   badge: groupsStore.pendingCount > 0 ? groupsStore.pendingCount : null, admin: false },
             { key: 'requests', label: 'Requests', badge: pendingReqCount > 0 ? pendingReqCount : null,                   admin: true  },
+            { key: 'chapters', label: 'Chapters', badge: null,                                                            admin: false },
           ] as const).filter(t => !t.admin || user?.role === 'admin').map(({ key, label, badge }) => (
             <button
               key={key}
@@ -262,6 +289,15 @@ export default observer(function ReviewPage() {
           onFilterChange={setReqFilter}
           onSelect={r => setSelectedReq(prev => prev?.request_id === r.request_id ? null : r)}
         />}
+        {tab === 'chapters' && <ChaptersListPanel
+          items={chapterItems} total={chapterTotal} loading={chapterLoading}
+          mediaType={chapterMediaType} chapterType={chapterType} query={chapterQueryRaw}
+          selected={selectedChapterItem}
+          onMediaTypeChange={setChapterMediaType}
+          onChapterTypeChange={setChapterType}
+          onQueryChange={setChapterQueryRaw}
+          onSelect={setSelectedChapterItem}
+        />}
       </div>
 
       {/* ── Right panel ────────────────────────────────────────────────────── */}
@@ -289,6 +325,15 @@ export default observer(function ReviewPage() {
               }}
             />
           : <EmptyHint>Select a request to review</EmptyHint>
+      )}
+      {tab === 'chapters' && (
+        selectedChapterItem
+          ? <ChapterInspectorPanel
+              key={selectedChapterItem.media_type + selectedChapterItem.media_id}
+              item={selectedChapterItem}
+              onClose={() => setSelectedChapterItem(null)}
+            />
+          : <EmptyHint>Select an item to inspect its chapters</EmptyHint>
       )}
     </div>
   )
@@ -451,6 +496,14 @@ function QueueListPanel({
 
 // ── Queue candidate panel ─────────────────────────────────────────────────────
 
+// Normalized row from api.getShows()/api.getMovies() for the Link panel.
+interface LinkTarget {
+  kairos_id: string
+  title:     string
+  year?:     number
+  thumb?:    string
+}
+
 function CandidatePanel({
   item, onAccept, onReject, onClose, onMatched,
 }: {
@@ -460,11 +513,17 @@ function CandidatePanel({
   onClose:   () => void
   onMatched: () => void
 }) {
-  const [searchMode,    setSearchMode]    = useState(false)
+  const [mode,          setMode]          = useState<'candidates'|'search'|'link'>('candidates')
   const [searchQuery,   setSearchQuery]   = useState(item.title)
   const [searchResults, setSearchResults] = useState<ScraperSearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [matchingId,    setMatchingId]    = useState<string | null>(null)
+
+  const [linkQuery,   setLinkQuery]   = useState(item.title)
+  const [linkResults, setLinkResults] = useState<LinkTarget[]>([])
+  const [linkLoading, setLinkLoading] = useState(false)
+  const [linkingId,   setLinkingId]   = useState<string | null>(null)
+  const [folderWarning, setFolderWarning] = useState<{ kairos_id: string; targetFolder: string; duplicateFolder: string } | null>(null)
 
   const runSearch = async (q: string) => {
     if (!q.trim()) return
@@ -496,12 +555,41 @@ function CandidatePanel({
     }
   }
 
-  const toggleSearch = () => {
-    setSearchMode(m => !m)
-    if (!searchMode) {
-      setSearchResults([])
-      setSearchQuery(item.title)
+  const runLinkSearch = async (q: string) => {
+    if (!q.trim()) return
+    setLinkLoading(true)
+    setLinkResults([])
+    try {
+      if (item.item_type === 'show') {
+        const r = await api.getShows({ q: q.trim(), limit: 12 })
+        setLinkResults(r.items.filter(s => s.show_id !== item.kairos_id).map(s => ({ kairos_id: s.show_id, title: s.title, year: s.year, thumb: s.thumb })))
+      } else {
+        const r = await api.getMovies({ q: q.trim(), limit: 12 })
+        setLinkResults(r.items.filter(m => m.movie_id !== item.kairos_id).map(m => ({ kairos_id: m.movie_id, title: m.title, year: m.year, thumb: m.thumb })))
+      }
+    } catch {}
+    setLinkLoading(false)
+  }
+
+  const handleLink = async (target: LinkTarget, confirmed = false) => {
+    setLinkingId(target.kairos_id)
+    setFolderWarning(null)
+    try {
+      if (item.item_type === 'show') await api.mergeShow(target.kairos_id, item.kairos_id, confirmed)
+      else                            await api.mergeMovie(target.kairos_id, item.kairos_id, confirmed)
+      onMatched()
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.body?.error === 'folder_mismatch') {
+        setFolderWarning({ kairos_id: target.kairos_id, targetFolder: e.body.target_folder, duplicateFolder: e.body.duplicate_folder })
+      }
+      setLinkingId(null)
     }
+  }
+
+  const switchMode = (m: 'candidates'|'search'|'link') => {
+    setMode(m)
+    if (m === 'search') { setSearchResults([]); setSearchQuery(item.title) }
+    if (m === 'link')   { setLinkResults([]);   setLinkQuery(item.title); setFolderWarning(null) }
   }
 
   return (
@@ -533,25 +621,169 @@ function CandidatePanel({
             </div>
           )}
         </div>
-        <button
-          onClick={toggleSearch}
-          style={{
-            padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 10,
-            fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em',
-            border: `1px solid ${searchMode ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-            background: searchMode ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-            color: searchMode ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-          }}
-        >
-          {searchMode ? 'Candidates' : 'Search'}
-        </button>
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          {([
+            { key: 'candidates', label: 'Candidates' },
+            { key: 'search',     label: 'Search' },
+            { key: 'link',       label: 'Link Existing' },
+          ] as const).map(t => (
+            <button
+              key={t.key}
+              onClick={() => switchMode(t.key)}
+              style={{
+                padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 10,
+                fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em',
+                border: `1px solid ${mode === t.key ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+                background: mode === t.key ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
+                color: mode === t.key ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         <button onClick={onClose} style={{
           background: 'none', border: 'none', cursor: 'pointer',
           color: 'var(--hds-txt-3)', fontSize: 20, lineHeight: 1,
         }}>✕</button>
       </div>
 
-      {searchMode ? (
+      {mode === 'link' ? (
+        /* ── Link Existing panel ── */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
+            <div style={{
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
+              lineHeight: 1.5, marginBottom: 10,
+            }}>
+              Link this to an existing library {item.item_type} — for the same title synced separately
+              from another source (Plex/Jellyfin/local) that didn't auto-merge. The item you pick below
+              survives; this queue item is absorbed into it.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                autoFocus
+                value={linkQuery}
+                onChange={e => setLinkQuery(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && runLinkSearch(linkQuery)}
+                placeholder={`Search existing ${item.item_type}s…`}
+                style={{
+                  flex: 1, padding: '7px 12px', borderRadius: 7,
+                  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
+                  color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => runLinkSearch(linkQuery)}
+                disabled={linkLoading || !linkQuery.trim()}
+                style={{
+                  padding: '7px 16px', borderRadius: 7, cursor: 'pointer',
+                  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
+                  color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 11, opacity: (linkLoading || !linkQuery.trim()) ? 0.5 : 1,
+                }}
+              >
+                {linkLoading ? '…' : 'Search'}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }} className="scrollbar-dark">
+            {linkLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {Array.from({ length: 4 }, (_, i) => (
+                  <div key={i} className="hds-skeleton" style={{ height: 60, borderRadius: 8 }} />
+                ))}
+              </div>
+            ) : linkResults.length === 0 ? (
+              <div style={{
+                padding: '32px 0', textAlign: 'center',
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', lineHeight: 1.6,
+              }}>
+                {linkQuery.trim() ? 'No matches in the library.' : 'Enter a title to search.'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {linkResults.map(r => {
+                  const isLinking = linkingId === r.kairos_id
+                  const warning   = folderWarning?.kairos_id === r.kairos_id ? folderWarning : null
+                  return (
+                    <div key={r.kairos_id} style={{
+                      display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 9,
+                      border: `1px solid ${warning ? 'var(--hds-match-amber)' : 'var(--hds-line)'}`, background: 'var(--hds-bg-2)',
+                      padding: '8px 12px', opacity: isLinking ? 0.6 : 1,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        {r.thumb && (
+                          <img src={mediaUrl(`/api/${item.item_type === 'show' ? 'shows' : 'movies'}/${r.kairos_id}/thumb`)} alt=""
+                            style={{ width: 32, height: 48, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
+                            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                          />
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
+                            color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>{r.title}</div>
+                          {r.year && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>{r.year}</div>}
+                        </div>
+                        {!warning && (
+                          <button
+                            onClick={() => handleLink(r)}
+                            disabled={isLinking}
+                            style={{
+                              flexShrink: 0, padding: '4px 12px', borderRadius: 5, cursor: isLinking ? 'not-allowed' : 'pointer',
+                              border: '1px solid var(--hds-violet)',
+                              background: 'oklch(0.55 0.14 292 / 0.12)',
+                              color: 'var(--hds-violet)',
+                              fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600,
+                            }}
+                          >
+                            {isLinking ? '…' : 'Link'}
+                          </button>
+                        )}
+                      </div>
+                      {warning && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4, borderTop: '1px solid var(--hds-line-s)' }}>
+                          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-amber)', lineHeight: 1.5 }}>
+                            These are in different folders — make sure they're really the same title before merging.
+                            <div style={{ marginTop: 4, color: 'var(--hds-txt-3)', wordBreak: 'break-all' }}>{warning.targetFolder}</div>
+                            <div style={{ color: 'var(--hds-txt-3)', wordBreak: 'break-all' }}>{warning.duplicateFolder}</div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button
+                              onClick={() => handleLink(r, true)}
+                              disabled={isLinking}
+                              style={{
+                                padding: '4px 12px', borderRadius: 5, cursor: isLinking ? 'not-allowed' : 'pointer',
+                                border: '1px solid var(--hds-match-amber)', background: 'oklch(0.75 0.12 80 / 0.12)',
+                                color: 'var(--hds-match-amber)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600,
+                              }}
+                            >
+                              {isLinking ? '…' : 'Merge Anyway'}
+                            </button>
+                            <button
+                              onClick={() => setFolderWarning(null)}
+                              style={{
+                                padding: '4px 12px', borderRadius: 5, cursor: 'pointer',
+                                border: '1px solid var(--hds-line)', background: 'transparent',
+                                color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : mode === 'search' ? (
         /* ── Search panel ── */
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
@@ -1251,4 +1483,304 @@ const selectStyle: React.CSSProperties = {
   border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
   color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
   cursor: 'pointer', outline: 'none',
+}
+
+// ── Chapters tab ──────────────────────────────────────────────────────────────
+// Visual inspection only — no accept/save action.
+
+function fmtMs(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const h  = Math.floor(total / 3600)
+  const m  = Math.floor((total % 3600) / 60)
+  const s  = total % 60
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m)
+  const ss = String(s).padStart(2, '0')
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+}
+
+const CHAPTER_TYPES: ChapterType[] = ['unclassified', 'pre_roll', 'intro', 'recap', 'ad_break', 'chapter', 'credits', 'post_credits', 'outro']
+
+const CHAPTER_TYPE_LABEL: Record<ChapterType, string> = {
+  unclassified: 'Unclassified', pre_roll: 'Pre-Roll', intro: 'Intro', recap: 'Recap',
+  ad_break: 'Ad Break', chapter: 'Chapter', credits: 'Credits', post_credits: 'Post-Credits', outro: 'Outro',
+}
+
+const CHAPTER_TYPE_COLOR: Record<ChapterType, string> = {
+  pre_roll:     'oklch(0.7 0.14 200)',
+  intro:        'oklch(0.7 0.16 150)',
+  recap:        'oklch(0.7 0.16 95)',
+  ad_break:     'var(--hds-match-red)',
+  credits:      'oklch(0.65 0.14 280)',
+  post_credits: 'oklch(0.68 0.18 320)',
+  outro:        'var(--hds-match-amber)',
+  chapter:      'oklch(0.65 0.18 220)',
+  unclassified: 'var(--hds-txt-3)',
+}
+
+function ChaptersListPanel({
+  items, total, loading, mediaType, chapterType, query, selected,
+  onMediaTypeChange, onChapterTypeChange, onQueryChange, onSelect,
+}: {
+  items: ChapterReviewItem[]; total: number; loading: boolean
+  mediaType: 'all'|'episode'|'movie'; chapterType: 'all'|ChapterType; query: string
+  selected: ChapterReviewItem | null
+  onMediaTypeChange: (t: 'all'|'episode'|'movie') => void
+  onChapterTypeChange: (t: 'all'|ChapterType) => void
+  onQueryChange: (q: string) => void
+  onSelect: (item: ChapterReviewItem) => void
+}) {
+  return (
+    <>
+      <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--hds-txt)' }}>
+            Chapters
+          </span>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+            {total} item{total !== 1 ? 's' : ''}
+          </span>
+        </div>
+        <input
+          value={query}
+          onChange={e => onQueryChange(e.target.value)}
+          placeholder="Search title…"
+          style={{
+            width: '100%', padding: '6px 10px', borderRadius: 6, marginBottom: 8,
+            border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
+            color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+            outline: 'none', boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+          {(['all', 'episode', 'movie'] as const).map(t => (
+            <button key={t} onClick={() => onMediaTypeChange(t)} style={{
+              flex: 1, padding: '5px 0', borderRadius: 6,
+              border: `1px solid ${mediaType === t ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+              background: mediaType === t ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
+              color: mediaType === t ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+              cursor: 'pointer', letterSpacing: '0.06em',
+            }}>
+              {t === 'all' ? 'ALL' : t === 'episode' ? 'EPISODES' : 'MOVIES'}
+            </button>
+          ))}
+        </div>
+        <select
+          value={chapterType}
+          onChange={e => onChapterTypeChange(e.target.value as 'all'|ChapterType)}
+          style={{ ...selectStyle, width: '100%' }}
+        >
+          <option value="all">All chapter types</option>
+          {CHAPTER_TYPES.map(t => <option key={t} value={t}>{CHAPTER_TYPE_LABEL[t]}</option>)}
+        </select>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto' }} className="scrollbar-dark">
+        {loading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {Array.from({ length: 8 }, (_, i) => (
+              <div key={i} className="hds-skeleton" style={{ height: 52, margin: '1px 0' }} />
+            ))}
+          </div>
+        ) : items.length === 0 ? (
+          <div style={{
+            padding: 32, textAlign: 'center',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+            color: 'var(--hds-txt-3)', lineHeight: 1.6,
+          }}>
+            No items match these filters.
+          </div>
+        ) : (
+          items.map(item => {
+            const isSelected = selected?.media_type === item.media_type && selected?.media_id === item.media_id
+            const typeCounts = new Map<ChapterType, number>()
+            for (const c of item.chapters) typeCounts.set(c.chapter_type, (typeCounts.get(c.chapter_type) ?? 0) + 1)
+            return (
+              <button
+                key={item.media_type + item.media_id}
+                onClick={() => onSelect(item)}
+                style={{
+                  width: '100%', display: 'flex', flexDirection: 'column', gap: 5,
+                  padding: '10px 16px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                  background: isSelected ? 'var(--hds-bg-3)' : 'transparent',
+                  borderBottom: '1px solid var(--hds-line-s)',
+                }}
+              >
+                <div style={{
+                  fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, fontWeight: 600,
+                  color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{item.title}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>
+                    {fmtMs(item.duration_ms)}
+                  </span>
+                  {[...typeCounts.entries()].map(([t, n]) => (
+                    <span key={t} style={{
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 8,
+                      color: CHAPTER_TYPE_COLOR[t], border: '1px solid currentColor',
+                      borderRadius: 8, padding: '1px 5px',
+                    }}>{CHAPTER_TYPE_LABEL[t]} {n}</span>
+                  ))}
+                </div>
+              </button>
+            )
+          })
+        )}
+      </div>
+    </>
+  )
+}
+
+const chapterActionBtnStyle: React.CSSProperties = {
+  padding: '4px 10px', borderRadius: 6, cursor: 'pointer', flexShrink: 0,
+  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
+  color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: '0.04em',
+}
+
+function ChapterInspectorPanel({ item, onClose }: { item: ChapterReviewItem; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const target: PlaybackTarget = { kind: item.media_type, id: item.media_id }
+  const session = usePlaybackSession(target)
+  const [currentMs, setCurrentMs]   = useState(0)
+  const [playerError, setPlayerError] = useState<string | null>(null)
+
+  // Same buffered-check-then-reload fallback as PlayerPage's handleSeek.
+  const seekTo = (ms: number) => {
+    const video = videoRef.current
+    if (!video) return
+    const targetSec = ms / 1000
+    let withinBuffer = false
+    for (let i = 0; i < video.buffered.length; i++) {
+      if (targetSec >= video.buffered.start(i) && targetSec <= video.buffered.end(i)) { withinBuffer = true; break }
+    }
+    if (withinBuffer) {
+      video.currentTime = targetSec
+      setCurrentMs(ms)
+    } else {
+      session.reload({ positionMs: ms })
+    }
+  }
+
+  const sorted = [...item.chapters].sort((a, b) => a.position - b.position || a.start_ms - b.start_ms)
+  const activeId = sorted.find(c => currentMs >= c.start_ms && currentMs < (c.end_ms || Infinity))?.chapter_id
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{
+        padding: '16px 24px', borderBottom: '1px solid var(--hds-line)', flexShrink: 0,
+        display: 'flex', alignItems: 'flex-start', gap: 12,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={{
+            fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, fontWeight: 700,
+            color: 'var(--hds-txt)', margin: '0 0 6px',
+          }}>{item.title}</h2>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {item.year && <span style={chip}>{item.year}</span>}
+            <span style={chip}>{item.media_type}</span>
+            <span style={chip}>{fmtMs(item.duration_ms)}</span>
+            <span style={chip}>{item.chapters.length} chapter{item.chapters.length !== 1 ? 's' : ''}</span>
+          </div>
+          {item.file_path && (
+            <div
+              title={item.file_path}
+              style={{
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
+                marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ opacity: 0.7 }}>File: </span>{folderBaseName(item.file_path)}
+            </div>
+          )}
+        </div>
+        <button onClick={onClose} style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--hds-txt-3)', fontSize: 20, lineHeight: 1, flexShrink: 0,
+        }}>✕</button>
+      </div>
+
+      <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#000', flexShrink: 0 }}>
+        {session.loading && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <LoadingThrobber label="Starting playback…" />
+          </div>
+        )}
+        {(session.error || playerError) && !session.loading && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--hds-match-red)', padding: 24, textAlign: 'center',
+          }}>{session.error ?? playerError}</div>
+        )}
+        {!session.loading && !session.error && session.manifestUrl && (
+          <VideoPlayer
+            videoRef={videoRef}
+            manifestUrl={session.manifestUrl}
+            subtitleUrl={null}
+            isLive={false}
+            autoPlay={false}
+            controls
+            onTimeUpdate={ms => setCurrentMs(ms)}
+            onEnded={() => {}}
+            onError={setPlayerError}
+          />
+        )}
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }} className="scrollbar-dark">
+        {sorted.length === 0 ? (
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)' }}>No chapters.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {sorted.map(c => (
+              <ChapterRow
+                key={c.chapter_id}
+                chapter={c}
+                active={c.chapter_id === activeId}
+                onSeekStart={() => seekTo(c.start_ms)}
+                onSeekEnd={() => seekTo(Math.max(c.start_ms, c.end_ms - 500))}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ChapterRow({
+  chapter, active, onSeekStart, onSeekEnd,
+}: {
+  chapter: Chapter
+  active: boolean
+  onSeekStart: () => void
+  onSeekEnd:   () => void
+}) {
+  const color = CHAPTER_TYPE_COLOR[chapter.chapter_type]
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8,
+      border: '1px solid var(--hds-line)',
+      borderLeft: `3px solid ${color}`,
+      background: active ? 'var(--hds-bg-3)' : 'var(--hds-bg-2)',
+    }}>
+      <span style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 700,
+        color, border: '1px solid currentColor', borderRadius: 10,
+        padding: '2px 8px', flexShrink: 0,
+      }}>{CHAPTER_TYPE_LABEL[chapter.chapter_type].toUpperCase()}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {chapter.title && (
+          <div style={{
+            fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, color: 'var(--hds-txt)',
+            marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{chapter.title}</div>
+        )}
+        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+          {fmtMs(chapter.start_ms)} – {fmtMs(chapter.end_ms)} · {chapter.source}{chapter.locked ? ' · locked' : ''}
+        </div>
+      </div>
+      <button onClick={onSeekStart} style={chapterActionBtnStyle}>▶ Start</button>
+      <button onClick={onSeekEnd} style={chapterActionBtnStyle}>▶ End</button>
+    </div>
+  )
 }

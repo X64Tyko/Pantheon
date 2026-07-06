@@ -3,6 +3,8 @@
 #include "../RouteHelpers.h"
 #include "../ServiceContext.h"
 #include "../../db/SourceRepository.h"
+#include "../../db/ContentRepository.h"
+#include "../../detect/ChapterDetectionManager.h"
 #include "../../source/SyncManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -13,10 +15,39 @@ using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-ChapterService::ChapterService(const ServiceContext& ctx)
-	: db_(ctx.db), sync_(ctx.sync), repo_(ctx.db) {}
+ChapterService::ChapterService(const ServiceContext& ctx, ChapterDetectionManager& detector)
+	: db_(ctx.db), sync_(ctx.sync), repo_(ctx.db), detector_(detector) {}
 
 void ChapterService::registerRoutes(httplib::Server& svr) {
+
+	// ── Review browsing (admin, read-only) ────────────────────────────────────
+
+	svr.Get("/api/chapters/review", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+
+		std::string media_type   = req.has_param("media_type")   ? req.get_param_value("media_type")   : "all";
+		std::string chapter_type = req.has_param("chapter_type") ? req.get_param_value("chapter_type") : "all";
+		std::string q            = req.has_param("q")             ? req.get_param_value("q")            : "";
+		int limit = 40, offset = 0;
+		if (req.has_param("limit"))  { try { limit  = std::stoi(req.get_param_value("limit"));  } catch (...) {} }
+		if (req.has_param("offset")) { try { offset = std::stoi(req.get_param_value("offset")); } catch (...) {} }
+
+		auto result = repo_.listReviewItems(media_type, chapter_type, q, limit, offset);
+		json arr = json::array();
+		for (const auto& it : result.items) {
+			json ij;
+			ij["media_type"]  = it.media_type;
+			ij["media_id"]    = it.media_id;
+			ij["title"]       = it.title;
+			ij["thumb"]       = it.thumb;
+			ij["file_path"]   = it.file_path;
+			ij["duration_ms"] = it.duration_ms;
+			if (it.year > 0) ij["year"] = it.year;
+			ij["chapters"]    = ChapterRepository::toJson(it.chapters);
+			arr.push_back(std::move(ij));
+		}
+		route::ok(res, json{{"items", arr}, {"total", result.total}}.dump());
+	});
 
 	// ── List ─────────────────────────────────────────────────────────────────
 
@@ -101,6 +132,61 @@ void ChapterService::registerRoutes(httplib::Server& svr) {
 		sync_.syncItemChapters(*src, "movie", kairos_id, resolved->external_id, resolved->file_path);
 		route::ok(res, ChapterRepository::toJson(
 		    repo_.get("movie", kairos_id)).dump());
+	});
+
+	// Show-scoped: loops every episode through the same resolve+sync path as the per-episode route above.
+	svr.Post("/api/shows/:id/chapters/sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		const std::string show_id = req.path_params.at("id");
+		auto episodes = ContentRepository(db_).listEpisodesForShow(show_id, "");
+		if (episodes.empty()) { route::err(res, 404, "show not found or has no episodes"); return; }
+
+		SourceRepository src_repo(db_);
+		int processed = 0, with_chapters = 0;
+		for (const auto& ep : episodes) {
+			auto resolved = src_repo.resolveItemSource("episode", ep.episode_id);
+			if (!resolved) continue;
+			auto* src = sync_.findSource(resolved->source_id);
+			if (!src) continue;
+			sync_.syncItemChapters(*src, "episode", ep.episode_id, resolved->external_id, resolved->file_path);
+			++processed;
+			if (!repo_.get("episode", ep.episode_id).empty()) ++with_chapters;
+		}
+		route::ok(res, json{
+			{"episode_count", static_cast<int>(episodes.size())},
+			{"processed",     processed},
+			{"with_chapters", with_chapters},
+		}.dump());
+	});
+
+	// ── Structure detection (admin, async) ────────────────────────────────────
+	// Slow algorithmic analysis (ffmpeg scene-cut / audio fingerprinting), as
+	// opposed to the fast marker re-probe the routes above run. See
+	// detect/ChapterDetectionManager.h.
+
+	svr.Post("/api/shows/:id/chapters/detect", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
+		const std::string show_id = req.path_params.at("id");
+		if (ContentRepository(db_).listEpisodesForShow(show_id, "").empty()) {
+			route::err(res, 404, "show not found or has no episodes"); return;
+		}
+		res.status = 202;
+		route::ok(res, json{{"status", detector_.triggerShowDetect(show_id) ? "started" : "already_running"}}.dump());
+	});
+
+	svr.Post("/api/movies/:id/chapters/detect", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		if (sync_.isMediaLocked()) { route::err(res, 423, "sync in progress"); return; }
+		const std::string movie_id = req.path_params.at("id");
+		if (!ContentRepository(db_).getMovieDetail(movie_id)) { route::err(res, 404, "movie not found"); return; }
+		res.status = 202;
+		route::ok(res, json{{"status", detector_.triggerMovieDetect(movie_id) ? "started" : "already_running"}}.dump());
+	});
+
+	svr.Get("/api/chapters/detect/status", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		route::ok(res, json{{"running", detector_.isDetecting()}}.dump());
 	});
 
 	// ── Writeback stub ────────────────────────────────────────────────────────

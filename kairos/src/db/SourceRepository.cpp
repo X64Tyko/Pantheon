@@ -262,7 +262,7 @@ std::vector<SourceRepository::WritebackTarget> SourceRepository::getWritebackTar
     const std::string& item_type, const std::string& kairos_id) {
     SQLite::Statement q(db_.get(), R"(
         SELECT ms.source_id, ms.source_type, ms.base_url,
-               sm.external_id, COALESCE(ml.external_lib_id, '')
+               sm.external_id, COALESCE(ml.external_lib_id, ''), ms.display_name
         FROM source_mapping sm
         JOIN media_source ms ON ms.source_id = sm.source_id
         LEFT JOIN media_library ml ON ml.library_id = sm.library_id
@@ -279,6 +279,7 @@ std::vector<SourceRepository::WritebackTarget> SourceRepository::getWritebackTar
             q.getColumn(2).getString(),
             q.getColumn(3).getString(),
             q.getColumn(4).getString(),
+            q.getColumn(5).getString(),
         });
     }
     return out;

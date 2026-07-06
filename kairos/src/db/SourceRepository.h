@@ -92,6 +92,7 @@ public:
         std::string base_url;
         std::string external_id;
         std::string external_lib_id; // Plex "section" id; empty if not tracked for this mapping
+        std::string display_name;   // media_source.display_name — for the detail panel's "Sources" list
     };
     // Every source this show/movie is mapped to, with what's needed to push
     // metadata back to each one. Usually one row, but not assumed — an item

@@ -17,6 +17,7 @@ add_executable(momus_kairos
     db/test_schema_constraints.cpp
     db/test_chapter_repository.cpp
     db/test_block_repository.cpp
+    detect/test_chapter_detector.cpp
     scheduler/test_cursor_state.cpp
     scheduler/test_rule_engine.cpp
     scheduler/test_epg_output.cpp

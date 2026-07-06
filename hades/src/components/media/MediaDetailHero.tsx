@@ -207,6 +207,11 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
                   </span>
                 </MetaRow>
               )}
+              {detail?.sources && detail.sources.length > 0 && (
+                <MetaRow label="Sources">
+                  {detail.sources.map(s => s.display_name || s.source_type).join(', ')}
+                </MetaRow>
+              )}
 
               {/* Extra library actions — between description and season shelves */}
               {actions?.(media)}

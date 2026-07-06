@@ -6,11 +6,11 @@ struct Chapter {
     std::string chapter_id;
     std::string media_type;    // "episode" | "movie"
     std::string media_id;
-    std::string chapter_type;  // "intro" | "ad_break" | "chapter" | "credits" | "outro" | "unclassified"
+    std::string chapter_type;  // "pre_roll" | "intro" | "recap" | "ad_break" | "chapter" | "credits" | "post_credits" | "outro" | "unclassified"
     std::string title;
     int64_t     start_ms  = 0;
     int64_t     end_ms    = 0;
     int         position  = 0;
-    std::string source;        // "manual" | "plex_intro" | "plex_chapters" | "file"
+    std::string source;        // "manual" | "plex_intro" | "plex_chapters" | "file" | "detected"
     bool        locked    = false;
 };

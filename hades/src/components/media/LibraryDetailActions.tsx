@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
@@ -95,6 +95,69 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
     }
   }
 
+  // Process Chapters (admin) — re-probes chapter markers for just this item.
+  const [processingChapters, setProcessingChapters] = useState(false)
+  const [chapterResult,      setChapterResult]      = useState<string | null>(null)
+
+  const handleProcessChapters = async () => {
+    if (!id) return
+    setProcessingChapters(true)
+    setChapterResult(null)
+    try {
+      if (contentType === 'movie') {
+        const chapters = await api.syncMovieChapters(id)
+        setChapterResult(`${chapters.length} chapter${chapters.length !== 1 ? 's' : ''} found`)
+      } else {
+        const r = await api.syncShowChapters(id)
+        setChapterResult(`${r.with_chapters}/${r.episode_count} episode${r.episode_count !== 1 ? 's' : ''} have chapters`)
+      }
+    } catch (e: any) {
+      setChapterResult(e.message ?? 'Failed to process chapters.')
+    } finally {
+      setProcessingChapters(false)
+    }
+  }
+
+  // Detect Structure (admin) — slow async analysis, separate from the fast
+  // marker re-probe above; polls the global status endpoint until done.
+  const [detecting,    setDetecting]    = useState(false)
+  const [detectResult, setDetectResult] = useState<string | null>(null)
+  const detectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => () => { if (detectPollRef.current) clearInterval(detectPollRef.current) }, [])
+
+  const pollDetectStatus = () => {
+    detectPollRef.current = setInterval(async () => {
+      try {
+        const { running } = await api.getChapterDetectStatus()
+        if (!running) {
+          if (detectPollRef.current) clearInterval(detectPollRef.current)
+          detectPollRef.current = null
+          setDetecting(false)
+          setDetectResult('Done — check the Chapters review tab')
+        }
+      } catch {}
+    }, 3000)
+  }
+
+  const handleDetectStructure = async () => {
+    if (!id) return
+    setDetecting(true)
+    setDetectResult(null)
+    try {
+      const r = contentType === 'movie' ? await api.detectMovieChapters(id) : await api.detectShowChapters(id)
+      if (r.status === 'already_running') {
+        setDetecting(false)
+        setDetectResult('Another detection pass is already running — try again shortly.')
+        return
+      }
+      pollDetectStatus()
+    } catch (e: any) {
+      setDetecting(false)
+      setDetectResult(e.message ?? 'Failed to start detection.')
+    }
+  }
+
   // Request state (viewer)
   const [reqStep,      setReqStep]      = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [reqDuplicate, setReqDuplicate] = useState(false)
@@ -121,6 +184,10 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
     setArrError('')
     setAlreadyAdded(false)
     setFixMatchOpen(false)
+    setChapterResult(null)
+    if (detectPollRef.current) { clearInterval(detectPollRef.current); detectPollRef.current = null }
+    setDetecting(false)
+    setDetectResult(null)
   }, [id, discoverResult?.external_id])
 
   const serviceLabel = contentType === 'show' ? 'Sonarr' : 'Radarr'
@@ -257,6 +324,48 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
             {refreshMetadataResult && (
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
                 {refreshMetadataResult}
+              </div>
+            )}
+            <button
+              onClick={handleProcessChapters}
+              disabled={processingChapters}
+              title={contentType === 'movie'
+                ? 'Re-probe this file for chapter markers'
+                : "Re-probe every episode's file for chapter markers"}
+              style={{
+                alignSelf: 'flex-start', padding: '8px 16px', borderRadius: 7,
+                cursor: processingChapters ? 'not-allowed' : 'pointer',
+                border: '1px solid var(--hds-line)', background: 'transparent',
+                color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                opacity: processingChapters ? 0.5 : 1,
+              }}
+            >
+              {processingChapters ? 'Processing…' : 'Process Chapters'}
+            </button>
+            {chapterResult && (
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+                {chapterResult}
+              </div>
+            )}
+            <button
+              onClick={handleDetectStructure}
+              disabled={detecting}
+              title={contentType === 'movie'
+                ? 'Analyze this file for ad-break points'
+                : 'Analyze every episode for intro/credits/ad-break structure'}
+              style={{
+                alignSelf: 'flex-start', padding: '8px 16px', borderRadius: 7,
+                cursor: detecting ? 'not-allowed' : 'pointer',
+                border: '1px solid var(--hds-line)', background: 'transparent',
+                color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                opacity: detecting ? 0.5 : 1,
+              }}
+            >
+              {detecting ? 'Detecting…' : 'Detect Structure'}
+            </button>
+            {detectResult && (
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+                {detectResult}
               </div>
             )}
           </>

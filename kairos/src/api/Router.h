@@ -6,6 +6,7 @@
 #include "ScheduleCache.h"
 
 class AuthStore;
+class ChapterDetectionManager;
 class ConfStore;
 class Database;
 class DownloadManager;
@@ -37,5 +38,6 @@ private:
 
 	ScheduleCache                                schedule_cache_;
 	std::unique_ptr<ScraperManager>              scraper_mgr_;
+	std::unique_ptr<ChapterDetectionManager>     chapter_detect_mgr_;
 	std::vector<std::unique_ptr<IKairosService>> services_;
 };

@@ -246,6 +246,12 @@ public:
                      const std::vector<StrField>& str_fields,
                      const std::vector<IntField>& int_fields);
 
+    // Manual link for cross-source duplicates auto-dedup missed. Moves dup_id's
+    // source_mapping rows onto target_id, then deletes the orphaned dup_id.
+    // Throws std::runtime_error if target_id == dup_id.
+    void mergeMovieInto(const std::string& target_id, const std::string& dup_id);
+    void mergeShowInto(const std::string& target_id, const std::string& dup_id);
+
     std::vector<EpisodeRow>       listEpisodesForShow(const std::string& show_id,
                                                        const std::string& season_filter = "");
     // Most recently aired (real-world air_date, blanks/future excluded)

@@ -8,12 +8,13 @@ interface VideoPlayerProps {
   subtitleUrl:  string | null
   isLive:       boolean
   autoPlay?:    boolean
+  controls?:    boolean // native scrub bar — used by the admin Chapters review panel, not the full player (which has its own PlayerControls)
   onTimeUpdate: (currentMs: number, durationMs: number) => void
   onEnded:      () => void
   onError:      (message: string) => void
 }
 
-export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPlay = true, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
+export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
   useEffect(() => {
     const video = videoRef.current
     if (!video || !manifestUrl) return
@@ -74,6 +75,7 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
       onEnded={onEnded}
       style={{ width: '100%', height: '100%', background: '#000' }}
       playsInline
+      controls={controls}
     >
       {subtitleUrl && <track kind="subtitles" src={subtitleUrl} default label="Subtitles" />}
     </video>

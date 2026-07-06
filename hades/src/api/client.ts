@@ -4,7 +4,7 @@ import type {
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
   CastSessionInfo, CastTokenResponse,
   Channel, ContentOverride, ContentRequest, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
-  ActivitySession,
+  ActivitySession, Chapter, ChapterReviewItem,
   Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, MediaLanguages, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
@@ -40,6 +40,17 @@ export function authHeaders(): Record<string, string> {
   return headers
 }
 
+// Carries status/body for callers that need more than the message (e.g. merge's folder-mismatch confirm).
+export class ApiError extends Error {
+  status: number
+  body:   any
+  constructor(message: string, status: number, body: any) {
+    super(message)
+    this.status = status
+    this.body   = body
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { ...authHeaders() }
   if (body != null) headers['Content-Type'] = 'application/json'
@@ -56,7 +67,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error((payload as any).error ?? res.statusText)
+    throw new ApiError((payload as any).error ?? res.statusText, res.status, payload)
   }
   // 204 / 202 may have no body
   const text = await res.text()
@@ -346,4 +357,21 @@ export const api = {
                          request<{ok: boolean}>('POST', `/scrapers/queue/${kairos_id}/manual-match`, b),
   scraperSearch:       (q: string, type?: 'show' | 'movie')       =>
                          request<{items: ScraperSearchResult[]}>('GET', `/scrapers/search?${qs({ q, type })}`),
+
+  // Chapter review (visual inspection of chapter detection, not a commit flow)
+  getChapterReviewItems: (p: { media_type?: string; chapter_type?: string; q?: string; limit?: number; offset?: number } = {}) =>
+                           request<{items: ChapterReviewItem[]; total: number}>('GET', `/chapters/review?${qs(p)}`),
+
+  // Chapter processing — one-off re-probe for testing detection, without a full source sync
+  syncMovieChapters: (id: string) => request<Chapter[]>('POST', `/movies/${id}/chapters/sync`, {}),
+  syncShowChapters:  (id: string) => request<{ episode_count: number; processed: number; with_chapters: number }>('POST', `/shows/${id}/chapters/sync`, {}),
+
+  // Throws ApiError(409, {target_folder, duplicate_folder}) if folders differ and !confirm.
+  mergeShow:  (id: string, duplicate_id: string, confirm = false) => request<{ok: boolean}>('POST', `/shows/${id}/merge`, { duplicate_id, confirm }),
+  mergeMovie: (id: string, duplicate_id: string, confirm = false) => request<{ok: boolean}>('POST', `/movies/${id}/merge`, { duplicate_id, confirm }),
+
+  // Chapter structure detection (async — ffmpeg scene-cut/fingerprint analysis, not the fast marker re-probe above)
+  detectShowChapters:    (id: string) => request<{status: 'started'|'already_running'}>('POST', `/shows/${id}/chapters/detect`, {}),
+  detectMovieChapters:   (id: string) => request<{status: 'started'|'already_running'}>('POST', `/movies/${id}/chapters/detect`, {}),
+  getChapterDetectStatus: () => request<{running: boolean}>('GET', '/chapters/detect/status'),
 }

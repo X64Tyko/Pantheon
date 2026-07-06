@@ -4,6 +4,7 @@
 #include "auth/AuthStore.h"
 #include "conf/ConfStore.h"
 #include "db/Database.h"
+#include "detect/ChapterDetectionManager.h"
 #include "download/DownloadManager.h"
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
@@ -137,6 +138,7 @@ void Router::registerRoutes() {
 
 	scraper_mgr_ = std::make_unique<ScraperManager>(db_, conf_);
 	sync_.setScraperManager(scraper_mgr_.get());
+	chapter_detect_mgr_ = std::make_unique<ChapterDetectionManager>(db_, conf_, sync_);
 
 	ServiceContext ctx{db_, conf_, sync_, schedule_cache_,
 	                   materializer_, engine_, auth_, logs_, dl_};
@@ -150,7 +152,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<KairosService>(ctx));
 	services_.push_back(std::make_unique<BlockService>(ctx));
 	services_.push_back(std::make_unique<ContentService>(ctx, *scraper_mgr_));
-	services_.push_back(std::make_unique<ChapterService>(ctx));
+	services_.push_back(std::make_unique<ChapterService>(ctx, *chapter_detect_mgr_));
 	services_.push_back(std::make_unique<PlaylistService>(ctx));
 	services_.push_back(std::make_unique<FillerService>(ctx));
 	services_.push_back(std::make_unique<ActivityService>(ctx));

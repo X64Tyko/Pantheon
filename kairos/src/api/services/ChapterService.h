@@ -3,17 +3,19 @@
 #include "../../db/ChapterRepository.h"
 #include <httplib.h>
 
+class ChapterDetectionManager;
 class Database;
 class SyncManager;
 struct ServiceContext;
 
 class ChapterService : public IKairosService {
 public:
-	explicit ChapterService(const ServiceContext& ctx);
+	ChapterService(const ServiceContext& ctx, ChapterDetectionManager& detector);
 	void registerRoutes(httplib::Server& svr) override;
 
 private:
-	Database&         db_;
-	SyncManager&      sync_;
-	ChapterRepository repo_;
+	Database&                db_;
+	SyncManager&              sync_;
+	ChapterRepository         repo_;
+	ChapterDetectionManager&  detector_;
 };

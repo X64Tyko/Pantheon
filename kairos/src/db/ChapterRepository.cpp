@@ -146,3 +146,83 @@ json ChapterRepository::toJson(const std::vector<Chapter>& chapters) {
     for (const auto& c : chapters) arr.push_back(toJson(c));
     return arr;
 }
+
+namespace {
+
+// Shared by listReviewItems' page and count queries.
+constexpr const char* kReviewCombinedCte = R"SQL(
+    WITH combined AS (
+        SELECT 'episode' AS media_type, e.episode_id AS media_id,
+               (sh.title || ' — S' || printf('%02d', e.season) || 'E' || printf('%02d', e.episode) ||
+                CASE WHEN e.title != '' THEN ' ' || e.title ELSE '' END) AS display_title,
+               e.thumb AS thumb, e.file_path AS file_path, e.duration_ms AS duration_ms,
+               0 AS year
+        FROM episode e
+        JOIN show sh ON sh.show_id = e.show_id
+        WHERE EXISTS (
+            SELECT 1 FROM chapter c
+            WHERE c.media_type='episode' AND c.media_id = e.episode_id
+              AND (? = '' OR c.chapter_type = ?)
+        )
+        UNION ALL
+        SELECT 'movie', m.movie_id, m.title, m.thumb, m.file_path, m.duration_ms, COALESCE(m.year, 0)
+        FROM movie m
+        WHERE EXISTS (
+            SELECT 1 FROM chapter c
+            WHERE c.media_type='movie' AND c.media_id = m.movie_id
+              AND (? = '' OR c.chapter_type = ?)
+        )
+    )
+    SELECT media_type, media_id, display_title, thumb, file_path, duration_ms, year
+    FROM combined
+    WHERE (? = '' OR media_type = ?)
+      AND (? = '' OR display_title LIKE '%' || ? || '%')
+)SQL";
+
+int bindReviewFilters(SQLite::Statement& q, const std::string& chapter_type_filter,
+                       const std::string& media_type_filter, const std::string& search_q) {
+    int i = 1;
+    q.bind(i++, chapter_type_filter); q.bind(i++, chapter_type_filter);
+    q.bind(i++, chapter_type_filter); q.bind(i++, chapter_type_filter);
+    q.bind(i++, media_type_filter);   q.bind(i++, media_type_filter);
+    q.bind(i++, search_q);            q.bind(i++, search_q);
+    return i;
+}
+
+} // namespace
+
+ChapterRepository::ReviewResult ChapterRepository::listReviewItems(
+        const std::string& media_type_filter, const std::string& chapter_type_filter,
+        const std::string& q, int limit, int offset) {
+    const std::string mtf = (media_type_filter == "all") ? "" : media_type_filter;
+    const std::string ctf = (chapter_type_filter == "all") ? "" : chapter_type_filter;
+
+    ReviewResult result;
+
+    {
+        SQLite::Statement count(db_.get(),
+            std::string("SELECT COUNT(*) FROM (") + kReviewCombinedCte + ")");
+        bindReviewFilters(count, ctf, mtf, q);
+        if (count.executeStep()) result.total = count.getColumn(0).getInt();
+    }
+
+    SQLite::Statement page(db_.get(),
+        std::string(kReviewCombinedCte) + " ORDER BY display_title LIMIT ? OFFSET ?");
+    int i = bindReviewFilters(page, ctf, mtf, q);
+    page.bind(i++, limit);
+    page.bind(i++, offset);
+
+    while (page.executeStep()) {
+        ReviewItem it;
+        it.media_type   = page.getColumn(0).getString();
+        it.media_id     = page.getColumn(1).getString();
+        it.title        = page.getColumn(2).getString();
+        it.thumb        = page.getColumn(3).getString();
+        it.file_path    = page.getColumn(4).getString();
+        it.duration_ms  = page.getColumn(5).getInt64();
+        it.year         = page.getColumn(6).getInt();
+        it.chapters     = get(it.media_type, it.media_id);
+        result.items.push_back(std::move(it));
+    }
+    return result;
+}

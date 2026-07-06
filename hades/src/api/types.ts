@@ -190,6 +190,14 @@ export interface Movie {
 
 // ── Detail types (full metadata) ─────────────────────────────────────────────
 
+// One media_source (Plex/Jellyfin/local) a show/movie is mapped to — can be more than one.
+export interface MediaSourceRef {
+  source_id:    string
+  source_type:  string
+  display_name: string
+  external_id:  string
+}
+
 export interface ShowDetail {
   show_id:                 string
   title:                   string
@@ -216,6 +224,7 @@ export interface ShowDetail {
   match_score?:            number
   match_confirmed?:        boolean
   folder_path?:            string
+  sources:                 MediaSourceRef[]
 }
 
 export interface MovieDetail {
@@ -244,6 +253,7 @@ export interface MovieDetail {
   match_status?:    MatchStatus
   match_score?:     number
   match_confirmed?: boolean
+  sources:          MediaSourceRef[]
 }
 
 export interface WritebackResult {
@@ -768,6 +778,33 @@ export interface ReviewQueueItem {
   match_score:     number
   candidates:      ItemMatchCandidate[]
   folder_path?:    string
+}
+
+export type ChapterType = 'pre_roll' | 'intro' | 'recap' | 'ad_break' | 'chapter' | 'credits' | 'post_credits' | 'outro' | 'unclassified'
+
+export interface Chapter {
+  chapter_id:   string
+  media_type:   'episode' | 'movie'
+  media_id:     string
+  chapter_type: ChapterType
+  title:        string
+  start_ms:     number
+  end_ms:       number
+  position:     number
+  source:       'manual' | 'plex_intro' | 'plex_chapters' | 'file' | 'detected'
+  locked:       boolean
+}
+
+// One episode/movie with its chapters embedded, for the Chapters review tab.
+export interface ChapterReviewItem {
+  media_type:  'episode' | 'movie'
+  media_id:    string
+  title:       string
+  thumb:       string
+  file_path:   string
+  duration_ms: number
+  year?:       number
+  chapters:    Chapter[]
 }
 
 export interface ScraperStats {
