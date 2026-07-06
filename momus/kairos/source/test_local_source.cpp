@@ -13,6 +13,8 @@
 #include <memory>
 #include <string>
 
+#include "conf/ConfStore.h"
+
 namespace fs = std::filesystem;
 
 // ============================================================================
@@ -23,13 +25,14 @@ class LocalSourceTest : public ::testing::Test {
 protected:
     fs::path                    root_;
     std::unique_ptr<LocalSource> src_;
-
+	std::unique_ptr<ConfStore> conf_ = std::make_unique<ConfStore>("./kairos.conf");
+	
     void SetUp() override {
         root_ = fs::temp_directory_path() /
                 ("momus_local_" + std::to_string(reinterpret_cast<uintptr_t>(this)));
         fs::remove_all(root_);
         fs::create_directories(root_);
-        src_ = std::make_unique<LocalSource>("src", root_.string());
+        src_ = std::make_unique<LocalSource>("src", root_.string(), *conf_);
     }
 
     void TearDown() override {
@@ -337,7 +340,8 @@ TEST_F(LocalSourceTest, FetchEpisodes_EmptyForNonexistentPath) {
 // ============================================================================
 
 TEST(LocalMeta, SourceTypeAndIsSupported) {
-    LocalSource src("s1", "/some/path");
+	std::unique_ptr<ConfStore> conf_ = std::make_unique<ConfStore>("./kairos.conf");
+    LocalSource src("s1", "/some/path", *conf_);
     EXPECT_EQ(src.sourceType(), "local");
     EXPECT_TRUE(src.isSupported());
 }
