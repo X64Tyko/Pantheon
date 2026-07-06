@@ -259,13 +259,15 @@ void SyncManager::syncShows(IMediaSource& src,
             ep_ext_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
     }
 
-    // Cross-source episode dedup: file_path → kairos_ep_id
+    // Cross-source episode dedup: mapped(file_path) → kairos_ep_id
     std::unordered_map<std::string, std::string> ep_path_to_id;
     {
         SQLite::Statement q(sync_db_,
             "SELECT file_path, episode_id FROM episode WHERE file_path != ''");
-        while (q.executeStep())
-            ep_path_to_id[q.getColumn(0).getString()] = q.getColumn(1).getString();
+        while (q.executeStep()) {
+            std::string path = q.getColumn(0).getString();
+            ep_path_to_id[conf_.applyPathMap(path)] = q.getColumn(1).getString();
+        }
     }
 
     // ── Fetch shows ──────────────────────────────────────────────────────────
@@ -482,7 +484,8 @@ void SyncManager::syncShows(IMediaSource& src,
     };
     auto ep_resolve_by_path = [&](const std::string& path) -> std::string {
         if (path.empty()) return "";
-        auto it = ep_path_to_id.find(path);
+        std::string mapped = conf_.applyPathMap(path);
+        auto it = ep_path_to_id.find(mapped);
         return it != ep_path_to_id.end() ? it->second : "";
     };
 
@@ -654,8 +657,18 @@ void SyncManager::syncMovies(IMediaSource& src,
     {
         SQLite::Statement q(sync_db_,
             "SELECT file_path, movie_id FROM movie WHERE file_path != ''");
+        while (q.executeStep()) {
+            std::string path = q.getColumn(0).getString();
+            path_to_kairos[conf_.applyPathMap(path)] = q.getColumn(1).getString();
+        }
+    }
+
+    // Cross-source movie dedup: all movies by lowercase title
+    std::unordered_map<std::string, std::string> movie_title_to_id;
+    {
+        SQLite::Statement q(sync_db_, "SELECT LOWER(title), movie_id FROM movie");
         while (q.executeStep())
-            path_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
+            movie_title_to_id[q.getColumn(0).getString()] = q.getColumn(1).getString();
     }
 
     // ── Fetch ────────────────────────────────────────────────────────────────
@@ -700,12 +713,22 @@ void SyncManager::syncMovies(IMediaSource& src,
             kairos_id = it->second;
             if (!kairos_id.starts_with(movie_prefix)) is_cross_ref = true;
         } else {
-            auto pit = path_to_kairos.find(movie.file_path);
+            std::string mapped = conf_.applyPathMap(movie.file_path);
+            auto pit = path_to_kairos.find(mapped);
             if (pit != path_to_kairos.end()) {
                 kairos_id = pit->second;
                 is_cross_ref = true;
             } else {
-                kairos_id = movie_prefix + ext_id;
+                std::string lower = movie.title;
+                std::transform(lower.begin(), lower.end(), lower.begin(),
+                               [](unsigned char c){ return std::tolower(c); });
+                auto tit = movie_title_to_id.find(lower);
+                if (tit != movie_title_to_id.end()) {
+                    kairos_id = tit->second;
+                    is_cross_ref = true;
+                } else {
+                    kairos_id = movie_prefix + ext_id;
+                }
             }
         }
 
@@ -1096,7 +1119,7 @@ std::unique_ptr<IMediaSource> SyncManager::buildSource(const std::string& source
     if (source_type == "emby")
         return std::make_unique<EmbySource>(source_id, base_url, token, user_id);
     if (source_type == "local")
-        return std::make_unique<LocalSource>(source_id, base_url);
+        return std::make_unique<LocalSource>(source_id, base_url, conf_);
 
     std::cout << "[sync] unknown source type '" << source_type << "' — skipping" << std::endl;
     return nullptr;

@@ -1,4 +1,5 @@
 #include "LocalSource.h"
+#include "conf/ConfStore.h"
 #include "model/Episode.h"
 #include "model/Movie.h"
 #include "model/Show.h"
@@ -165,8 +166,8 @@ std::vector<fs::path> videosIn(const fs::path& dir) {
 
 // ---------------------------------------------------------------------------
 
-LocalSource::LocalSource(const std::string& source_id, const std::string& base_path)
-    : source_id_(source_id), base_path_(base_path) {}
+LocalSource::LocalSource(const std::string& source_id, const std::string& base_path, ConfStore& conf)
+    : source_id_(source_id), base_path_(base_path), conf_(conf) {}
 
 // ---------------------------------------------------------------------------
 // Library discovery — each non-hidden immediate subdirectory of base_path_
@@ -273,7 +274,7 @@ std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
         if (!entry.is_directory() || isHidden(entry.path())) continue;
         auto [title, year] = parseTitle(entry.path().filename().string());
         Show show;
-        show.show_id     = entry.path().string(); // external key; SyncManager resolves
+        show.show_id     = conf_.applyPathMap(entry.path().string()); // mapped path as external key
         show.title       = title;
         show.genres      = "[]";
         show.labels      = "[]";
@@ -307,9 +308,9 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
             if (vfiles.empty()) continue;
             auto [title, year] = parseTitle(p.filename().string());
             Movie movie;
-            movie.movie_id    = p.string();
+            movie.movie_id    = conf_.applyPathMap(p.string());
             movie.title       = title;
-            movie.file_path   = vfiles.front().string();
+            movie.file_path   = conf_.applyPathMap(vfiles.front().string());
             movie.genres      = "[]";
             movie.labels      = "[]";
             movie.actors      = "[]";
@@ -320,9 +321,9 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
         } else if (isVideo(p)) {
             auto [title, year] = parseTitle(p.stem().string());
             Movie movie;
-            movie.movie_id    = p.string();
+            movie.movie_id    = conf_.applyPathMap(p.string());
             movie.title       = title;
-            movie.file_path   = p.string();
+            movie.file_path   = conf_.applyPathMap(p.string());
             movie.genres      = "[]";
             movie.labels      = "[]";
             movie.actors      = "[]";
@@ -350,6 +351,10 @@ std::vector<Episode> LocalSource::fetchEpisodes(const std::string& external_show
     const fs::path showDir(external_show_id);
     std::vector<Episode> result;
 
+    // The caller (SyncManager) passes us the mapped show path if it was mapped,
+    // but we should still handle files inside consistently.
+    // However, external_show_id should already be mapped by SyncManager or LocalSource::fetchShows.
+
     // Collect season subdirectories (recognised by kSeasonDirRe).
     std::vector<fs::path> seasonDirs;
     for (const auto& e : fs::directory_iterator(showDir, ec)) {
@@ -362,9 +367,10 @@ std::vector<Episode> LocalSource::fetchEpisodes(const std::string& external_show
     auto addEpisode = [&](const fs::path& file, int season_hint) {
         auto loc = parseEpisodeFilename(file.stem().string());
         Episode ep;
-        ep.episode_id = file.string();
+        std::string mapped_file = conf_.applyPathMap(file.string());
+        ep.episode_id = mapped_file;
         ep.show_id    = external_show_id;
-        ep.file_path  = file.string();
+        ep.file_path  = mapped_file;
         if (loc) {
             ep.season  = loc->season;
             ep.episode = loc->episode;

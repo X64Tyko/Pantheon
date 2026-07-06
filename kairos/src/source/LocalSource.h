@@ -2,6 +2,8 @@
 #include "IMediaSource.h"
 #include <string>
 
+class ConfStore;
+
 // Local filesystem source. base_path_ is the root directory of the library.
 //
 // Expected layout:
@@ -13,7 +15,7 @@
 // SyncManager calls — this source supports all three layouts.
 class LocalSource final : public IMediaSource {
 public:
-    LocalSource(const std::string& source_id, const std::string& base_path);
+    LocalSource(const std::string& source_id, const std::string& base_path, ConfStore& conf);
 
     std::string sourceId()    const override { return source_id_; }
     std::string sourceType()  const override { return "local"; }
@@ -42,4 +44,5 @@ public:
 private:
     std::string source_id_;
     std::string base_path_;
+    ConfStore&  conf_;
 };
