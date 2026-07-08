@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useCastSession } from '../cast/useCastSession'
+import { startVodPlayback, stopVodPlayback } from '../player/playbackApi'
 import { api, mediaUrl } from '../api/client'
 import type { Show, Movie, ShowDetail, MovieDetail, WatchProgress } from '../api/types'
-import { resolvePlayPath } from '../player/resolvePlayTarget'
+import { resolvePlayTarget } from '../player/resolvePlayTarget'
 import { useFocusable } from '../nav/useFocusable'
 import { useTravelingFocus } from '../nav/useTravelingFocus'
 import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
@@ -25,8 +26,15 @@ function artUrl(item: Show | Movie) {
 
 export function TvHome() {
   const navigate = useNavigate()
-  const cast = useCastSession()
+  const castSession = useCastSession()
+  // Session id of whatever this hero panel last cast — stopped when a new
+  // item is cast or the component unmounts, mirroring usePlaybackSession's
+  // own prevSession teardown (this page owns the session directly instead of
+  // going through that hook since, unlike PlayerPage, it never navigates
+  // away and needs to survive across repeated Play presses).
+  const castVodSessionRef = useRef<string | null>(null)
   const allItemsRef = useRef<Map<string, Show | Movie>>(new Map())
+  const guideRef = useRef<HTMLDivElement>(null)
 
   const [recentShows,      setRecentShows]      = useState<Show[]>([])
   const [recentMovies,     setRecentMovies]     = useState<Movie[]>([])
@@ -124,6 +132,10 @@ export function TvHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroItem?.art])
 
+  useEffect(() => () => {
+    if (castVodSessionRef.current) stopVodPlayback(castVodSessionRef.current)
+  }, [])
+
   const { ref: homeRef, focusKey: homeFocusKey } = useFocusable<object, HTMLDivElement>({
     focusKey: HOME_FOCUS_KEY, trackChildren: true, saveLastFocusedChild: true,
     preferredChildFocusKey: 'tv-hero-play',
@@ -148,27 +160,49 @@ export function TvHome() {
             onPlay={async () => {
               const id = isShow(heroItem) ? heroItem.show_id : heroItem.movie_id
               const type = isShow(heroItem) ? 'show' : 'movie'
-              
-              if (cast.connected) {
-                // If casting, just load it on the remote device and stay here
-                const detail = heroDetail ?? await (isShow(heroItem) ? api.getShow(id) : api.getMovie(id))
-                cast.load({
-                  manifestUrl: `/stream/${type}/${id}/master.m3u8`,
+              const target = await resolvePlayTarget(type, id)
+              if (!target) return
+
+              if (castSession.connected) {
+                // Already connected to a receiver — load onto it directly and
+                // stay on this screen (same D-pad grid) rather than jumping to
+                // Hades' own local /player UI, which nothing is watching here.
+                if (castVodSessionRef.current) stopVodPlayback(castVodSessionRef.current)
+                const vod = await startVodPlayback({
+                  content_type: target.kind,
+                  content_id:   target.id,
+                  position_ms:  target.positionMs,
+                })
+                castVodSessionRef.current = vod.session_id
+                await castSession.load({
+                  manifestUrl: vod.manifest_url,
                   isLive: false,
-                  currentMs: 0, // VOD start from beginning or resume logic could be added
+                  currentMs: target.positionMs,
                   metadata: {
-                    title: heroItem.title,
+                    title: vod.title,
                     imageUrl: artUrl(heroItem),
                     seriesTitle: isShow(heroItem) ? heroItem.title : undefined,
                   },
-                  route: { contentType: type === 'show' ? 'episode' : 'movie', contentId: id }
+                  route: { contentType: target.kind, contentId: target.id },
                 })
                 return
               }
 
-              const path = await resolvePlayPath(type, id)
-              if (path) navigate(path)
+              navigate(target.positionMs > 0
+                ? `/player/${target.kind}/${target.id}?t=${target.positionMs}`
+                : `/player/${target.kind}/${target.id}`)
             }}
+            onCast={async () => {
+              // Connect only — no media load. The user keeps browsing here;
+              // pressing Play (above) is what actually sends something to
+              // the now-connected receiver.
+              if (castSession.connected) return
+              try { await cast.framework.CastContext.getInstance().requestSession() }
+              catch (err) {
+                if (err !== 'cancel') console.error('Cast requestSession() failed:', err)
+              }
+            }}
+            castAvailable={castSession.available}
             onDotClick={i => { startRotation(); goToHero(i) }}
           />
         ) : (
@@ -185,6 +219,7 @@ export function TvHome() {
           padding: '8px 48px 0', flexShrink: 0,
         }}>
           <LibraryButton onClick={() => navigate('/tv/library')} />
+          <GuideButton onClick={() => guideRef.current?.scrollIntoView({ behavior: 'smooth' })} />
         </div>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} className="scrollbar-dark">
@@ -241,7 +276,7 @@ export function TvHome() {
               />
             )}
 
-            <div style={{ padding: '8px 0 64px' }}>
+            <div ref={guideRef} style={{ padding: '8px 0 64px' }}>
               <TvGuideSection />
             </div>
           </>
@@ -273,9 +308,30 @@ function LibraryButton({ onClick }: { onClick: () => void }) {
   )
 }
 
+function GuideButton({ onClick }: { onClick: () => void }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-quickaction-guide', onEnterPress: onClick })
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+        padding: '11px 22px', borderRadius: 10,
+        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
+      }}
+    >
+      <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <rect x="1.5" y="2.5" width="11" height="9" rx="1.5" /><path d="M4 11.5h6" />
+      </svg>
+      Guide
+    </button>
+  )
+}
+
 // ── Hero ─────────────────────────────────────────────────────────────────────
 
-function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onViewDetail, onPlay, onDotClick }: {
+function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onViewDetail, onPlay, onCast, castAvailable, onDotClick }: {
   item: Show | Movie
   detail: ShowDetail | MovieDetail | null
   fading: boolean
@@ -283,6 +339,8 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
   currentIdx: number
   onViewDetail: () => void
   onPlay: () => void
+  onCast: () => void
+  castAvailable: boolean
   onDotClick: (i: number) => void
 }) {
   const backdrop = artUrl(item)
@@ -296,6 +354,7 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
 
   const play       = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-play',   onEnterPress: onPlay,       forceFocus: true })
   const viewDetail = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-detail', onEnterPress: onViewDetail })
+  const castBtn    = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-cast',   onEnterPress: onCast,       focusable: castAvailable })
 
   return (
     <div style={{
@@ -306,11 +365,11 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
     }}>
       <div style={{
         position: 'absolute', inset: 0,
-        background: 'linear-gradient(to right, oklch(0 0 0 / 0.95) 0%, oklch(0 0 0 / 0.4) 48%, transparent 100%)',
+        background: 'linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%)',
       }} />
       <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, height: '42%',
-        background: 'linear-gradient(to top, var(--hds-bg) 0%, oklch(0 0 0 / 0.3) 50%, transparent 100%)',
+        position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%',
+        background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 100%)',
         pointerEvents: 'none',
       }} />
 
@@ -369,6 +428,29 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
           >View Details</button>
         </div>
       </div>
+
+      {/* Cast — fixed top-right, same anchor as the desktop HomePage hero. */}
+      {castAvailable && (
+        <button
+          ref={castBtn.ref} data-tv-focused={castBtn.focused}
+          onClick={onCast}
+          aria-label="Cast"
+          style={{
+            position: 'absolute', top: 18, right: 24, zIndex: 3,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 34, height: 34, borderRadius: '50%',
+            border: '1px solid var(--hds-glass-border)',
+            background: 'var(--hds-glass)', backdropFilter: 'blur(8px)',
+            color: 'oklch(0.92 0.01 285)', cursor: 'pointer',
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <rect x="2" y="2.5" width="14" height="10" rx="1.2" />
+            <path d="M2 15.5a4 4 0 0 0-2-3.5M2 12.5a1.5 1.5 0 0 1 1.5 1.5" fill="none" strokeLinecap="round" />
+            <circle cx="2.3" cy="15.5" r="0.9" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      )}
 
       {totalCandidates > 1 && (
         <div style={{ position: 'absolute', bottom: 20, right: 48, display: 'flex', gap: 6, zIndex: 2 }}>

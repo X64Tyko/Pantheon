@@ -54,6 +54,8 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	if (path.starts_with("/api/playback/")) return true;
 	// Hephaestus fetching runtime flags.
 	if (method == "GET" && path == "/api/config/public-settings") return true;
+	// Hermes aggregating system metrics across services for the Activity page.
+	if (method == "GET" && path == "/api/system/metrics") return true;
 	// Log stream — relayed by Hermes into the unified Hades log view.
 	if (path == "/api/logs/stream") return true;
 	// Hades reporting console errors.

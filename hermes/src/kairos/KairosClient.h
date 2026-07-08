@@ -8,5 +8,4 @@ class KairosClient {
 public:
     explicit KairosClient(std::string base_url);
     std::vector<KairosChannel> getChannels();
-    bool validateToken(const std::string& token);
 };

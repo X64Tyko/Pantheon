@@ -34,16 +34,3 @@ std::vector<KairosChannel> KairosClient::getChannels() {
         return {};
     }
 }
-
-bool KairosClient::validateToken(const std::string& token) {
-    httplib::Client cli(base_url_);
-    cli.set_connection_timeout(5);
-    cli.set_read_timeout(5);
-
-    httplib::Headers headers = {
-        {"Authorization", "Bearer " + token}
-    };
-
-    auto res = cli.Get("/api/auth/me", headers);
-    return res && res->status == 200;
-}
