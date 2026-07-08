@@ -1,4 +1,4 @@
-import { authHeaders } from '../api/client'
+import { authHeaders, isHdrCapableDisplay } from '../api/client'
 
 // These hit Hermes's /stream/* routes directly (Hephaestus's stream engine),
 // not Kairos's /api/* — a separate surface from api/client.ts's request().
@@ -35,7 +35,7 @@ export async function startVodPlayback(params: VodStartParams): Promise<VodStart
   const res = await fetch('/stream/vod/start', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body:    JSON.stringify(params),
+    body:    JSON.stringify({ ...params, hdr_capable: isHdrCapableDisplay() }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))

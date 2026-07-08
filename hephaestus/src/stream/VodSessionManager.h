@@ -21,9 +21,10 @@ public:
     ~VodSessionManager();
 
     // Creates and starts a new session. Returns nullptr if start() fails
-    // (probe failure, bad file, or ffmpeg wouldn't spawn).
+    // (probe failure, bad file, or ffmpeg wouldn't spawn). hdr_capable is the
+    // requesting client's own display capability (see VodSession::start).
     std::shared_ptr<VodSession> create(const std::string& file_path, int64_t position_ms,
-                                        int audio_track, int subtitle_track);
+                                        int audio_track, int subtitle_track, bool hdr_capable);
     std::shared_ptr<VodSession> get(const std::string& sessionId);
     void stop(const std::string& sessionId);
 

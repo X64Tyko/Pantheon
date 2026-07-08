@@ -30,6 +30,20 @@ export function channelLogoUrl(channelId: string): string {
   return mediaUrl(`/api/channels/${channelId}/logo`)
 }
 
+// Whether *this* execution context's display can actually show HDR — reads
+// the real HDMI/EDID-negotiated capability of whatever screen Chrome is
+// driving, not just "does this browser support HDR APIs." Called from
+// wherever a playback session actually starts (playbackApi.ts, previewApi.ts),
+// which naturally runs in the right context either way: a direct/local
+// player call runs in the viewer's own tab, but a Cast session's LOAD
+// interceptor navigates to /player/* *inside the receiver's own Hades
+// instance* (CastReceiverProvider.tsx) — so this reads the actual
+// projector/TV's capability there, not the phone/laptop that initiated the
+// cast. No special-casing needed for either path.
+export function isHdrCapableDisplay(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(video-dynamic-range: high)').matches
+}
+
 // Every request — API and /stream alike — carries X-Pantheon-Surface: tv
 // while under the /tv route tree. Kairos downgrades an admin caller to
 // viewer on that header (Router.cpp), and Hermes forwards it through both

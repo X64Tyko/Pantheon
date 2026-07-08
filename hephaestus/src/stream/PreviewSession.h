@@ -30,8 +30,13 @@ struct PreviewStreamOptions {
 // never remounts its player when the previewed channel changes.
 class PreviewSession {
 public:
+    // hdr_capable is fixed for the session's whole life (like hw_accel in
+    // opts) — set once from the requesting client's own display capability
+    // check (see api/client.ts's isHdrCapableDisplay) at the initial start,
+    // and reused by every later switchChannel() on this same session since
+    // /stream/preview/:id/switch has no reason to re-send it.
     PreviewSession(std::string session_id, std::string ffmpeg_path,
-                   PreviewStreamOptions opts, KairosClient& kairos);
+                   PreviewStreamOptions opts, KairosClient& kairos, bool hdr_capable);
     ~PreviewSession();
 
     PreviewSession(const PreviewSession&)            = delete;
@@ -52,6 +57,7 @@ private:
     std::string   ffmpeg_path;
     PreviewStreamOptions opts;
     KairosClient& kairos;
+    bool          hdr_capable;
 
     std::mutex    ffmpeg_mtx;
     std::unique_ptr<FfmpegProcess> ffmpeg;

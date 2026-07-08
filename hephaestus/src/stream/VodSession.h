@@ -42,9 +42,13 @@ public:
 
     // Probes file_path, decides direct-play vs transcode, and spawns ffmpeg
     // writing an HLS VOD playlist to dir(). Returns false if probing fails
-    // (file missing/unreadable) or ffmpeg won't start.
+    // (file missing/unreadable) or ffmpeg won't start. hdr_capable comes from
+    // the requesting client's own display capability check (see
+    // api/client.ts's isHdrCapableDisplay) — an HDR source gets a real
+    // HEVC Main10 HDR10 re-encode when true, or a real tone-map to correct
+    // SDR when false (see EncoderArgs.cpp's pushVideoEncoderArgs).
     bool start(const std::string& file_path, int64_t position_ms,
-               int audio_track, int subtitle_track);
+               int audio_track, int subtitle_track, bool hdr_capable);
 
     void stop();
     // Called by the HTTP handler on every playlist/segment GET.

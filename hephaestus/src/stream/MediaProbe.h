@@ -18,7 +18,14 @@ struct VideoTrack {
     int         width  = 0;
     int         height = 0;
     int         bit_depth = 8;
+    std::string color_transfer;    // e.g. "smpte2084" (PQ), "arib-std-b67" (HLG), "bt709"
+    std::string color_primaries;   // e.g. "bt2020", "bt709"
+    std::string color_space;       // e.g. "bt2020nc", "bt709"
 };
+
+// True for the two HDR transfer functions ffprobe reports (PQ/HDR10(+) and
+// HLG) — anything else (bt709, empty/"unknown", gamma22, etc.) is SDR.
+bool isHdrTransfer(const std::string& color_transfer);
 
 // Internal parser exposed for testing.
 int parseBitDepthForTest(const std::string& json_str);

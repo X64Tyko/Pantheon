@@ -308,8 +308,9 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         int subtitle_track = body.value("subtitle_track", -1);
         int64_t position_ms = body.value("position_ms", int64_t(0));
         if (position_ms < 0) position_ms = 0;
+        bool hdr_capable = body.value("hdr_capable", false);
 
-        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track);
+        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable);
         if (!session) {
             res.status = 500; res.set_content(json{{"error","failed to start playback"}}.dump(), "application/json"); return;
         }
@@ -398,7 +399,8 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         if (channel_id.empty()) {
             res.status = 400; res.set_content(json{{"error","channel_id required"}}.dump(), "application/json"); return;
         }
-        auto session = previewSessions.create(channel_id);
+        bool hdr_capable = body.value("hdr_capable", false);
+        auto session = previewSessions.create(channel_id, hdr_capable);
         if (!session) {
             res.status = 500; res.set_content(json{{"error","failed to start preview"}}.dump(), "application/json"); return;
         }

@@ -42,6 +42,8 @@ std::vector<std::string> buildPreviewArgs(const std::string& ffmpeg_path,
                                            HwAccel decode_hw_accel,
                                            const std::set<std::string>& decodable_codecs,
                                            const std::string& source_codec,
+                                           const VideoTrack* source_video,
+                                           bool hdr_capable,
                                            bool verbose_transcode_logs,
                                            const std::string& dir) {
     std::vector<std::string> a{ffmpeg_path};
@@ -59,7 +61,7 @@ std::vector<std::string> buildPreviewArgs(const std::string& ffmpeg_path,
 
     std::vector<std::string> vfParts;
     pushScaleFilter(vfParts, kPreviewMaxHeight);
-    pushVideoEncoderArgs(a, vfParts, hw_accel, kPreviewSegmentSecs);
+    pushVideoEncoderArgs(a, vfParts, hw_accel, kPreviewSegmentSecs, source_video, hdr_capable);
     pushVideoFilterArgs(a, vfParts);
     pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/96);
 
@@ -100,9 +102,9 @@ std::vector<std::string> buildPreviewImageArgs(const std::string& ffmpeg_path,
 } // namespace
 
 PreviewSession::PreviewSession(std::string session_id, std::string ffmpeg_path,
-                                PreviewStreamOptions opts, KairosClient& kairos)
+                                PreviewStreamOptions opts, KairosClient& kairos, bool hdr_capable)
     : session_id(std::move(session_id)), ffmpeg_path(std::move(ffmpeg_path)),
-      opts(std::move(opts)), kairos(kairos) {}
+      opts(std::move(opts)), kairos(kairos), hdr_capable(hdr_capable) {}
 
 PreviewSession::~PreviewSession() { stop(); }
 
@@ -138,21 +140,21 @@ bool PreviewSession::switchChannel(const std::string& channel_id) {
         return false;
     } else {
         int64_t offset = computeOffset(*item, nowMs());
-        // Only probed when decode hwaccel is actually in play (zero cost on
-        // amd/none backends that never use it). switchChannel() already does
-        // a synchronous kairos.getNow() HTTP round-trip above, so a local
+        // Always probed now (not just when decode hwaccel is in play) —
+        // correct HDR handling needs this item's source color info
+        // regardless of that setting. switchChannel() already does a
+        // synchronous kairos.getNow() HTTP round-trip above, so a local
         // ffprobe call here doesn't change the latency class of this
         // function — and probeMediaCached makes repeat flips through the
         // same handful of channels/files free after the first probe.
         std::string source_codec;
-        if (opts.decode_hw_accel != HwAccel::none) {
-            auto info = probeMediaCached(opts.ffprobe_path, item->file_path);
-            if (info && !info->video.empty())
-                source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
-        }
+        auto info = probeMediaCached(opts.ffprobe_path, item->file_path);
+        if (info && !info->video.empty())
+            source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
+        const VideoTrack* source_video = (info && !info->video.empty()) ? &info->video[0] : nullptr;
         std::cerr << "[preview:" << session_id << "] spawning ffmpeg: \"" << item->file_path << "\" offset=" << offset << "ms\n";
         args = buildPreviewArgs(ffmpeg_path, *item, offset, opts.hw_accel, opts.vaapi_device,
-                                 opts.decode_hw_accel, opts.decodable_codecs, source_codec,
+                                 opts.decode_hw_accel, opts.decodable_codecs, source_codec, source_video, hdr_capable,
                                  opts.verbose_transcode_logs, d);
     }
 

@@ -36,8 +36,100 @@ void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel decode_backend,
     else if (decode_backend == HwAccel::amd) a.insert(a.end(), {"-hwaccel", "vaapi"});
 }
 
+// ffprobe and zscale/ffmpeg's output color options share the same enum
+// names (both come from ffmpeg's own AVColor* enums), so a probed value can
+// be passed straight through to either without translation. Falls back to
+// the overwhelmingly common HDR10 triple (bt2020/bt2020nc/smpte2084) for any
+// field ffprobe didn't report, rather than leaving it unset — zscale in
+// particular fails outright ("no path between colorspaces") given a
+// half-specified input colorspace instead of guessing.
+std::string orDefaultColorTag(const std::string& v, const char* def) {
+    return v.empty() ? def : v;
+}
+
+// Real HDR (PQ/HLG, BT.2020) -> SDR (BT.709) conversion, not just a metadata
+// relabel. Verified end-to-end against a real ffmpeg n8.1.1 build (libzimg):
+// zscale's auto-detection of embedded frame colorspace is unreliable enough
+// on real-world files (partial/missing tags, common on older or badly-muxed
+// rips) that leaving transferin/primariesin/matrixin unset intermittently
+// fails with "no path between colorspaces" — passing the values MediaProbe
+// already read from ffprobe explicitly makes this deterministic regardless
+// of how complete the source's own tagging is.
+//
+// hable+desat=0 (no automatic desaturation of bright highlights) is a
+// deliberately plain, content-agnostic tone-map operator — no per-title
+// tuning here, this pipeline has no concept of per-file mastering metadata
+// beyond the VUI tags themselves.
+std::string buildHdrToSdrTonemapFilter(const VideoTrack& source_video) {
+    std::string transfer  = orDefaultColorTag(source_video.color_transfer,  "smpte2084");
+    std::string primaries = orDefaultColorTag(source_video.color_primaries, "bt2020");
+    std::string matrix    = orDefaultColorTag(source_video.color_space,     "bt2020nc");
+
+    return "zscale=transferin=" + transfer + ":primariesin=" + primaries + ":matrixin=" + matrix +
+           ":transfer=linear:primaries=" + primaries + ":matrix=" + matrix + ":npl=100"
+           ",format=gbrpf32le"
+           ",zscale=primaries=bt709"
+           ",tonemap=tonemap=hable:desat=0"
+           ",zscale=transfer=bt709:matrix=bt709:primaries=bt709:range=tv"
+           ",format=yuv420p";
+}
+
 void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
-                           HwAccel hw_accel, int keyframeIntervalSecs) {
+                           HwAccel hw_accel, int keyframeIntervalSecs,
+                           const VideoTrack* source_video, bool client_hdr_capable) {
+    bool source_hdr      = source_video && isHdrTransfer(source_video->color_transfer);
+    bool passthrough_hdr = source_hdr && client_hdr_capable;
+
+    if (source_hdr && !passthrough_hdr)
+        vfParts.insert(vfParts.begin(), buildHdrToSdrTonemapFilter(*source_video));
+
+    // Real HDR10 passthrough: re-encode at true 10-bit instead of downgrading
+    // to 8-bit/BT.709, for a client that already told us (via
+    // client_hdr_capable — see Router.cpp's session-start handlers) its
+    // display can actually show the extra range. H.264 has no real-world
+    // HDR10 story, so this is HEVC Main10 across every backend, verified
+    // against a real ffmpeg n8.1.1 build (libx265: Main 10 profile,
+    // yuv420p10le, color_space round-tripped correctly through an .m3u8/.ts
+    // HLS segment). NVENC/VAAPI 10-bit paths follow the same shape as their
+    // existing 8-bit branches below but couldn't be verified end-to-end here
+    // (no GPU in this environment) — pix_fmt choice per backend (p010le for
+    // hardware surfaces vs yuv420p10le for libx265) matches each encoder's
+    // own supported-pixel-format list (`ffmpeg -h encoder=<name>`).
+    //
+    // Deliberately does NOT attempt to carry over the source's static HDR10
+    // metadata (Mastering Display Color Volume / MaxCLL/MaxFALL SEI) — real
+    // benefit (a receiver's own tone-mapping tuned to the actual mastering
+    // range) but meaningfully more work to extract via ffprobe and re-inject
+    // via -master_display/-max_cll, and most receivers fall back to sane
+    // generic assumptions without it. Follow-up if displays look off without it.
+    if (passthrough_hdr) {
+        switch (hw_accel) {
+            case HwAccel::nvidia:
+                a.insert(a.end(), {"-c:v", "hevc_nvenc", "-preset", "p4", "-profile:v", "main10",
+                                    "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "p010le",
+                                    "-forced-idr", "1"}); // see the 8-bit nvenc branch below for why
+                break;
+            case HwAccel::amd:
+                vfParts.push_back("format=p010le,hwupload");
+                a.insert(a.end(), {"-c:v", "hevc_vaapi", "-profile:v", "main10"});
+                break;
+            default:
+                a.insert(a.end(), {"-c:v", "libx265", "-preset", "veryfast", "-crf", "23",
+                                    "-pix_fmt", "yuv420p10le",
+                                    "-x265-params", "hdr10=1:repeat-headers=1"});
+        }
+        a.insert(a.end(), {"-force_key_frames",
+                            "expr:gte(t,n_forced*" + std::to_string(keyframeIntervalSecs) + ")"});
+        // The source's *actual* color info, not bt709 — this is real HDR
+        // output, unlike the forced-bt709 tagging in the SDR path below.
+        a.insert(a.end(), {
+            "-color_primaries", orDefaultColorTag(source_video->color_primaries, "bt2020"),
+            "-color_trc",       orDefaultColorTag(source_video->color_transfer,  "smpte2084"),
+            "-colorspace",      orDefaultColorTag(source_video->color_space,     "bt2020nc"),
+        });
+        return;
+    }
+
     switch (hw_accel) {
         case HwAccel::nvidia:
             a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
@@ -67,23 +159,25 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
     a.insert(a.end(), {"-force_key_frames",
                         "expr:gte(t,n_forced*" + std::to_string(keyframeIntervalSecs) + ")"});
 
-    // This pipeline never does real HDR tone-mapping -- every branch above
-    // targets plain 8-bit yuv420p output regardless of source. For an HDR
-    // (BT.2020/PQ) source, ffmpeg's automatic pix_fmt conversion correctly
-    // truncates the bit depth but leaves the *color tags* copied through
-    // from the input, producing output that's structurally SDR (yuv420p,
-    // naively truncated values) while its VUI metadata still claims
-    // BT.2020/SMPTE ST 2084 (PQ) HDR. Confirmed via ffprobe against a real
-    // transcoded segment: pix_fmt=yuv420p but color_transfer=smpte2084,
-    // color_primaries=bt2020, color_space=bt2020nc. Browsers that respect
-    // embedded HDR signaling (common on hardware-accelerated decode paths)
-    // can silently fail to render that mismatch -- no fatal error surfaces
-    // to hls.js/JS, playback just never starts. Explicitly retagging the
-    // output as bt709 makes the declared color space match what the pixel
-    // data actually is (un-tone-mapped SDR-range values), which is what
-    // actually matters for playback; it doesn't make a naively-truncated HDR source
-    // look *correct* (that needs real tone-mapping, e.g. zscale+tonemap,
-    // future work if visual quality on HDR sources matters), only playable.
+    // Every branch above targets plain 8-bit yuv420p output regardless of
+    // source, so the output is always structurally BT.709 SDR now — for an
+    // HDR source, that's only true *pixel data* because of the tonemap
+    // filter chain inserted above; without it, ffmpeg's automatic pix_fmt
+    // conversion correctly truncates bit depth but leaves un-tone-mapped
+    // PQ-range values in an 8-bit container while copying the *color tags*
+    // through unchanged, producing output that's structurally SDR but whose
+    // VUI metadata still claims BT.2020/SMPTE ST 2084 (PQ) HDR. Confirmed via
+    // ffprobe against a real transcoded segment before the tonemap chain
+    // existed: pix_fmt=yuv420p but color_transfer=smpte2084, color_primaries=
+    // bt2020, color_space=bt2020nc. Browsers that respect embedded HDR
+    // signaling (common on hardware-accelerated decode paths) can silently
+    // fail to render that mismatch (no fatal error surfaces to hls.js/JS,
+    // playback just never starts), and displays that do play it show
+    // washed-out, hazy, crushed-contrast video (PQ-range values decoded
+    // through a standard gamma EOTF). Retagging as bt709 unconditionally
+    // here is what makes the declared color space match what the pixel data
+    // actually is in both cases: genuinely SDR source untouched, HDR source
+    // now genuinely tone-mapped to SDR above.
     a.insert(a.end(), {"-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"});
 }
 

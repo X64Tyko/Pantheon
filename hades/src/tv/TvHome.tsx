@@ -470,6 +470,16 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
 
 // ── Shelves ──────────────────────────────────────────────────────────────────
 
+// useFocusable's scrollIntoView runs on each card's own root element (see
+// nav/useFocusable.ts) with no idea that a shelf title sits above its row —
+// 'center'-aligning just that element can land the title (and the next
+// shelf's, below) right at the clipped edge of the scroll container. Native
+// scrollIntoView respects scroll-margin on the element being scrolled to, so
+// giving every focusable row item the same top margin (sized to a shelf
+// title's rendered height: 17-18px font + up to 12px bottom padding, plus a
+// little slack) reserves room for its title without any custom scroll math.
+const SHELF_TITLE_SCROLL_MARGIN = 44
+
 interface TvShelfEntry {
   key: string; title: string; year?: number; rating?: number
   thumb_url?: string; onClick: () => void; onFocus?: () => void
@@ -541,6 +551,7 @@ function TvShelfCard({ title, year, rating, thumb_url, onClick, onFocus, onBlur,
         borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
         transform: active ? 'translateY(-4px)' : 'none',
         transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
+        scrollMarginTop: SHELF_TITLE_SCROLL_MARGIN,
       }}
     >
       <div style={{
@@ -607,6 +618,7 @@ function TvShelfEndTile({ focusKey, onClick, onBlur, onActivate, onDeactivate }:
         transform: active ? 'translateY(-4px)' : 'none',
         transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
         textAlign: 'center', padding: '0 12px',
+        scrollMarginTop: SHELF_TITLE_SCROLL_MARGIN,
       }}
     >
       <svg width="26" height="26" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -689,6 +701,7 @@ function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: 
         borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
         transform: active ? 'translateY(-4px)' : 'none',
         transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
+        scrollMarginTop: SHELF_TITLE_SCROLL_MARGIN,
       }}
     >
       <div style={{

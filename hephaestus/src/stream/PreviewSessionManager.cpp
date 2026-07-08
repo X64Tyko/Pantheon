@@ -53,7 +53,7 @@ void PreviewSessionManager::refreshSettings() {
     if (bs) cached_buffer_size = *bs * 1024; // KB -> bytes
 }
 
-std::shared_ptr<PreviewSession> PreviewSessionManager::create(const std::string& channel_id) {
+std::shared_ptr<PreviewSession> PreviewSessionManager::create(const std::string& channel_id, bool hdr_capable) {
     PreviewStreamOptions session_opts = opts;
     {
         std::lock_guard<std::mutex> lock(settings_mtx);
@@ -61,7 +61,7 @@ std::shared_ptr<PreviewSession> PreviewSessionManager::create(const std::string&
         if (cached_buffer_size > 0) session_opts.buffer_size = cached_buffer_size;
     }
 
-    auto session = std::make_shared<PreviewSession>(generateSessionId(), ffmpeg_path, session_opts, kairos);
+    auto session = std::make_shared<PreviewSession>(generateSessionId(), ffmpeg_path, session_opts, kairos, hdr_capable);
     if (!session->switchChannel(channel_id)) return nullptr;
 
     std::lock_guard<std::mutex> lock(mtx);

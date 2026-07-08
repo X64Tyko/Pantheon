@@ -1,4 +1,4 @@
-import { authHeaders } from '../api/client'
+import { authHeaders, isHdrCapableDisplay } from '../api/client'
 
 export interface PreviewStartResponse {
   session_id:   string
@@ -9,7 +9,7 @@ export async function startPreview(channelId: string): Promise<PreviewStartRespo
   const res = await fetch('/stream/preview/start', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body:    JSON.stringify({ channel_id: channelId }),
+    body:    JSON.stringify({ channel_id: channelId, hdr_capable: isHdrCapableDisplay() }),
   })
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? res.statusText)
   return res.json()

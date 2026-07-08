@@ -1,5 +1,6 @@
 #pragma once
 #include "ChannelSession.h" // HwAccel
+#include "MediaProbe.h"     // VideoTrack
 #include <set>
 #include <string>
 #include <vector>
@@ -72,8 +73,24 @@ void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel decode_backend,
 // default 250-frame GOP (10s at 25fps) silently overrides any -hls_time
 // value, since HLS can only cut segments at keyframes. Must match (or be a
 // divisor of) the -hls_time the caller uses for the tee/hls output.
+//
+// source_video is the probed video track (MediaProbe), or nullptr when
+// there's no real source to probe (the offline-slate/splash still-image
+// path) or probing failed — either way, treated as "not HDR," matching the
+// pre-existing always-tag-bt709 behavior. When it *is* HDR (color_transfer
+// is PQ or HLG, see MediaProbe::isHdrTransfer), the output depends on
+// client_hdr_capable (see Router.cpp's session-start handlers, sourced from
+// the requesting client's own matchMedia('(video-dynamic-range: high)')
+// check): false re-tone-maps to genuinely correct SDR-range bt709 (a real
+// zscale+tonemap conversion, not the old behavior of just relabeling
+// un-tone-mapped PQ-range pixel values as bt709 — that played, but looked
+// washed out/hazy on any display); true re-encodes as real HEVC Main10
+// HDR10, preserving the source's actual color info instead of downgrading
+// it. See EncoderArgs.cpp for the long version of both.
 void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
-                           HwAccel hw_accel, int keyframeIntervalSecs);
+                           HwAccel hw_accel, int keyframeIntervalSecs,
+                           const VideoTrack* source_video = nullptr,
+                           bool client_hdr_capable = false);
 
 // Audio encoder selection, shared the same way.
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,

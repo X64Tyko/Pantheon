@@ -55,6 +55,8 @@ static std::vector<std::string> buildVodArgs(
     HwAccel decode_hw_accel,
     const std::set<std::string>& decodable_codecs,
     const std::string& source_codec,
+    const VideoTrack* source_video,
+    bool hdr_capable,
     bool verbose_transcode_logs,
     const std::string& dir)
 {
@@ -94,7 +96,7 @@ static std::vector<std::string> buildVodArgs(
         // OCR/text extraction involved. Any other video filters (scale,
         // AMD's hwupload) chain after the overlay in the same linear graph.
         std::vector<std::string> vfParts;
-        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs);
+        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs, source_video, hdr_capable);
         std::string filterComplex = "[0:v:0][0:s:" + std::to_string(subtitleTrack) + "]overlay";
         for (auto& p : vfParts) filterComplex += "," + p;
         filterComplex += "[vout]";
@@ -106,7 +108,7 @@ static std::vector<std::string> buildVodArgs(
         a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:" + std::to_string(audioTrack) + "?"});
         a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
         std::vector<std::string> vfParts;
-        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs);
+        pushVideoEncoderArgs(a, vfParts, hw_accel, kVodHlsSegmentSecs, source_video, hdr_capable);
         pushVideoFilterArgs(a, vfParts);
         pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/192);
     }
@@ -148,7 +150,7 @@ VodSession::VodSession(std::string session_id, std::string ffmpeg_path, VodStrea
 VodSession::~VodSession() { stop(); }
 
 bool VodSession::start(const std::string& file_path, int64_t position_ms,
-                        int audio_track, int subtitle_track) {
+                        int audio_track, int subtitle_track, bool hdr_capable) {
     auto info = probeMediaCached(opts.ffprobe_path, file_path);
     if (!info) {
         std::cerr << "[vod:" << session_id << "] probe failed for \"" << file_path << "\"\n";
@@ -185,9 +187,10 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
         return false;
     }
 
+    const VideoTrack* source_video = media_info.video.empty() ? nullptr : &media_info.video[0];
     auto args = buildVodArgs(ffmpeg_path, file_path, position_ms, audio_track, subtitle_track,
                               direct_play, subtitle_output, subtitle_burn_in, opts.hw_accel, opts.vaapi_device,
-                              opts.decode_hw_accel, opts.decodable_codecs, source_codec,
+                              opts.decode_hw_accel, opts.decodable_codecs, source_codec, source_video, hdr_capable,
                               opts.verbose_transcode_logs, d);
 
     std::cerr << "[vod:" << session_id << "] spawning ffmpeg: \"" << file_path << "\""

@@ -88,6 +88,7 @@ static std::vector<std::string> buildArgs(
     HwAccel decode_hw_accel,
     const std::set<std::string>& decodable_codecs,
     const std::string& source_codec,
+    const VideoTrack* source_video,
     bool verbose_transcode_logs,
     double speed = 1.0,
     const std::string& max_resolution = "source",
@@ -137,7 +138,7 @@ static std::vector<std::string> buildArgs(
     pushScaleFilter(vfParts, resolveMaxHeight(max_resolution));
     if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
 
-    pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs);
+    pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs, source_video);
     pushVideoFilterArgs(a, vfParts);
     // Optional bitrate cap: keeps CRF quality-based encoding but adds an
     // upper bound, preventing huge spikes on complex/high-res content.
@@ -540,28 +541,28 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
         std::cout << " speed=" << speed;
     std::cout << "\n";
 
-    // Audio + subtitle track selection via ffprobe. Also probe whenever
-    // decode hwaccel is in play (even with no lang preferences set) — the
-    // decode-hwaccel decision below needs this item's source video codec.
+    // Audio + subtitle track selection via ffprobe. Always probed now (not
+    // just when hwaccel/lang settings are in play) — correct HDR handling
+    // needs this item's source color info regardless of those other
+    // settings, and probeMediaCached makes every probe past the first one
+    // for a given file free.
     int audioTrack    = 0;
     int subtitleTrack = -1;
     std::string source_codec;
-    if (!opts.audio_lang.empty() || !opts.subtitle_lang.empty() ||
-        opts.decode_hw_accel != HwAccel::none) {
-        auto info = probeMediaCached(opts.ffprobe_path, item.file_path);
-        if (info) {
-            if (!opts.audio_lang.empty())
-                audioTrack    = pickAudioTrack(*info, opts.audio_lang);
-            if (!opts.subtitle_lang.empty())
-                subtitleTrack = pickSubtitleTrack(*info, opts.subtitle_lang);
-            if (!info->video.empty())
-                source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
-        }
+    auto info = probeMediaCached(opts.ffprobe_path, item.file_path);
+    if (info) {
+        if (!opts.audio_lang.empty())
+            audioTrack    = pickAudioTrack(*info, opts.audio_lang);
+        if (!opts.subtitle_lang.empty())
+            subtitleTrack = pickSubtitleTrack(*info, opts.subtitle_lang);
+        if (!info->video.empty())
+            source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
     }
+    const VideoTrack* source_video = (info && !info->video.empty()) ? &info->video[0] : nullptr;
 
     auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack,
                           opts.loudnorm, opts.hw_accel, opts.vaapi_device,
-                          opts.decode_hw_accel, opts.decodable_codecs, source_codec,
+                          opts.decode_hw_accel, opts.decodable_codecs, source_codec, source_video,
                           opts.verbose_transcode_logs, speed,
                           opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
                           hlsDir());

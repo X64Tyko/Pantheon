@@ -37,6 +37,10 @@ static int parseBitDepth(const json& s) {
     return 8;
 }
 
+bool isHdrTransfer(const std::string& color_transfer) {
+    return color_transfer == "smpte2084" || color_transfer == "arib-std-b67";
+}
+
 std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
                                      const std::string& file_path) {
     // Shell-escape the file path by wrapping in single quotes (works for paths
@@ -75,7 +79,10 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
                 v.codec        = s.value("codec_name", "");
                 v.width        = s.value("width",  0);
                 v.height       = s.value("height", 0);
-                v.bit_depth    = parseBitDepth(s);
+                v.bit_depth       = parseBitDepth(s);
+                v.color_transfer  = s.value("color_transfer",  "");
+                v.color_primaries = s.value("color_primaries", "");
+                v.color_space     = s.value("color_space",     "");
                 info.video.push_back(v);
             } else if (codec_type == "audio") {
                 AudioTrack a;
