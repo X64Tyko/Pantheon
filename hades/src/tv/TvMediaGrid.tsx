@@ -17,7 +17,7 @@ export function TvMediaGrid({ shows, movies, onItemClick }: {
 
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(176px, 1fr))',
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
       gap: 24, padding: '8px 48px 64px',
     }}>
       {items.map(item => {

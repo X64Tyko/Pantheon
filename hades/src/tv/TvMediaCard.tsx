@@ -51,7 +51,7 @@ export function TvMediaCard({ title, year, thumb_url, rating, content_type, onCl
         ) : (
           <span style={{
             fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700,
-            fontSize: 40, color: 'var(--hds-violet)', opacity: 0.4,
+            fontSize: 32, color: 'var(--hds-violet)', opacity: 0.4,
           }}>
             {title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>

@@ -134,7 +134,7 @@ export function TvHome() {
     <div ref={homeRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flexShrink: 0 }}>
         {loading ? (
-          <div className="hds-skeleton" style={{ height: '40vh', minHeight: 280 }} />
+          <div className="hds-skeleton" style={{ height: '32vh', minHeight: 220 }} />
         ) : heroItem ? (
           <TvHeroPanel
             item={heroItem}
@@ -151,7 +151,7 @@ export function TvHome() {
           />
         ) : (
           <div style={{
-            height: '40vh', minHeight: 280, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: '32vh', minHeight: 220, display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: 'linear-gradient(135deg, oklch(0.12 0.04 292), oklch(0.16 0.03 280))',
             fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, color: 'var(--hds-txt-3)',
           }}>No content yet</div>
@@ -277,7 +277,7 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
 
   return (
     <div style={{
-      position: 'relative', height: '40vh', minHeight: 280,
+      position: 'relative', height: '32vh', minHeight: 220,
       background: bg, flexShrink: 0,
       opacity: fading ? 0 : 1, transition: 'opacity .26s ease',
       overflow: 'hidden',
@@ -292,13 +292,13 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
         pointerEvents: 'none',
       }} />
 
-      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 48px 40px', maxWidth: 780 }}>
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 48px 24px', maxWidth: 780 }}>
         {genres.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
             {genres.map(g => (
               <span key={g} style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-                padding: '3px 10px', borderRadius: 12,
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                padding: '2px 8px', borderRadius: 12,
                 background: 'var(--hds-glass)', border: '1px solid var(--hds-glass-border)',
                 color: 'var(--hds-txt-2)', letterSpacing: '0.06em',
               }}>{g}</span>
@@ -307,14 +307,14 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
         )}
 
         <h1 style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 38, fontWeight: 700,
+          fontFamily: "'Chakra Petch', sans-serif", fontSize: 32, fontWeight: 700,
           color: 'oklch(1 0 0)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em',
           textShadow: heroTextShadow,
         }}>{item.title}</h1>
 
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 16, marginTop: 10, marginBottom: 14,
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: 'var(--hds-txt-2)',
+          display: 'flex', alignItems: 'center', gap: 16, marginTop: 8, marginBottom: 10,
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--hds-txt-2)',
           textShadow: heroTextShadow,
         }}>
           {item.year && <span>{item.year}</span>}
@@ -324,8 +324,8 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
 
         {overview && (
           <p style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 13, lineHeight: 1.6,
-            color: 'oklch(0.75 0.01 285)', margin: '0 0 22px',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 12, lineHeight: 1.5,
+            color: 'oklch(0.75 0.01 285)', margin: '0 0 18px',
             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
             textShadow: heroTextShadow,
           }}>{overview}</p>
@@ -337,7 +337,7 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
             onClick={onPlay}
             style={{
               display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-              padding: '13px 26px', borderRadius: 10, border: 'none',
+              padding: '10px 22px', borderRadius: 10, border: 'none',
               background: 'var(--hds-gold)', color: 'oklch(0.15 0.02 90)',
               fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700,
             }}
@@ -349,7 +349,7 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
             ref={viewDetail.ref} data-tv-focused={viewDetail.focused}
             onClick={onViewDetail}
             style={{
-              padding: '13px 26px', borderRadius: 10, cursor: 'pointer',
+              padding: '10px 22px', borderRadius: 10, cursor: 'pointer',
               border: '1px solid var(--hds-glass-border)', background: 'var(--hds-glass)', backdropFilter: 'blur(8px)',
               color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
             }}
@@ -407,7 +407,7 @@ function TvShelf({ title, items, onBlur, endTile }: {
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(item => (
-          <div key={item.key} style={{ flexShrink: 0, width: 140 }}>
+          <div key={item.key} style={{ flexShrink: 0, width: 125 }}>
             <TvShelfCard {...item} onBlur={onBlur} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}
@@ -456,7 +456,7 @@ function TvShelfCard({ title, year, rating, thumb_url, onClick, onFocus, onBlur,
         {showImg ? (
           <img src={thumb_url} alt={title} onError={() => setImgErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 32, color: 'var(--hds-violet)', opacity: 0.4 }}>
+          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 24, color: 'var(--hds-violet)', opacity: 0.4 }}>
             {title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
         )}
@@ -506,12 +506,12 @@ function TvShelfEndTile({ focusKey, onClick, onBlur, onActivate, onDeactivate }:
       onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
       onMouseLeave={() => { setHovered(false); onBlur?.(); onDeactivate() }}
       style={{
-        flexShrink: 0, width: 140, aspectRatio: '2/3', borderRadius: 12, cursor: 'pointer',
+        flexShrink: 0, width: 125, aspectRatio: '2/3', borderRadius: 12, cursor: 'pointer',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
         border: '1px dashed var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt-3)',
         transform: active ? 'translateY(-4px)' : 'none',
         transition: 'transform .18s cubic-bezier(0.22,1,0.36,1)',
-        textAlign: 'center', padding: '0 16px',
+        textAlign: 'center', padding: '0 12px',
       }}
     >
       <svg width="26" height="26" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -548,7 +548,7 @@ function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
-          <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 140 }}>
+          <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 125 }}>
             <TvContinueWatchingCard item={p} onNavigate={onNavigate} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}
@@ -604,7 +604,7 @@ function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: 
         {thumbPath && !imgErr ? (
           <img src={mediaUrl(thumbPath)} alt={title} onError={() => setImgErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 32, color: 'var(--hds-violet)', opacity: 0.4 }}>
+          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 24, color: 'var(--hds-violet)', opacity: 0.4 }}>
             {title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
         )}
