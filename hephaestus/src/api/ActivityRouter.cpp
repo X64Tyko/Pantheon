@@ -3,9 +3,47 @@
 #include "../stream/EncoderArgs.h" // hwAccelName
 #include "../stream/SessionManager.h"
 #include "../stream/VodSessionManager.h"
-#include "../../kairos/src/util/MetricsGatherer.h"
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <fstream>
+#include <unistd.h>
+
+// MetricsGatherer inline for shared logic across components without complex relative headers in Docker
+struct ProcessMetrics {
+    double cpu_usage = 0.0;
+    long ram_bytes = 0;
+};
+
+class MetricsGatherer {
+public:
+    static ProcessMetrics getProcessMetrics() {
+        ProcessMetrics m;
+        std::ifstream statm("/proc/self/statm");
+        long rss_pages = 0;
+        if (statm >> rss_pages >> rss_pages) {
+            m.ram_bytes = rss_pages * sysconf(_SC_PAGESIZE);
+        }
+        static long last_utime = 0, last_stime = 0, last_total_time = 0;
+        std::ifstream stat("/proc/self/stat");
+        std::string dummy;
+        for (int i = 0; i < 13; ++i) stat >> dummy;
+        long utime, stime;
+        stat >> utime >> stime;
+        std::ifstream uptime("/proc/stat");
+        std::string cpu;
+        uptime >> cpu;
+        long user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice;
+        uptime >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal >> guest >> guest_nice;
+        long total_time = user + nice + system + idle + iowait + irq + softirq + steal;
+        if (last_total_time > 0) {
+            long total_delta = total_time - last_total_time;
+            long proc_delta = (utime + stime) - (last_utime + last_stime);
+            if (total_delta > 0) m.cpu_usage = 100.0 * proc_delta / total_delta;
+        }
+        last_utime = utime; last_stime = stime; last_total_time = total_time;
+        return m;
+    }
+};
 
 using json = nlohmann::json;
 
