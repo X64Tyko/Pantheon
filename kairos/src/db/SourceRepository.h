@@ -40,6 +40,7 @@ public:
                        bool include_anidb);
 
     void removeLibrary(const std::string& library_id);
+    std::optional<MediaLibraryConfig> getLibrary(const std::string& library_id);
 
     // Focused setter for the Home-shelf visibility flag — separate from
     // updateLibrary so the per-card "hide from Home" shortcut (which only

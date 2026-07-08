@@ -54,12 +54,13 @@ struct ScraperConfig {
     std::string api_key;
     std::string language;
     std::string pin;      // TVDB subscriber pin (optional)
-    bool        enabled   = false;
+    bool        enabled         = false;
+    double      language_weight = 0.1;
 };
 
 struct ScraperSettings {
     std::vector<ScraperConfig> configs;
-    double match_threshold = 1.0;
+    double match_threshold = 0.8;
 };
 
 class ScraperManager {
@@ -82,6 +83,18 @@ public:
     // Settings
     ScraperSettings getSettings() const;
     void            updateSettings(const ScraperSettings& s);
+
+    // Multi-ID and alternate titles
+    struct ExternalId {
+        std::string source;
+        std::string external_id;
+        int         priority = 0;
+    };
+    std::vector<ExternalId> getExternalIds(const std::string& kairos_id, const std::string& item_type) const;
+    void                    setExternalIds(const std::string& kairos_id, const std::string& item_type, const std::vector<ExternalId>& ids);
+
+    std::vector<std::string> getAlternateTitles(const std::string& kairos_id, const std::string& item_type) const;
+    void                     setAlternateTitles(const std::string& kairos_id, const std::string& item_type, const std::vector<std::string>& titles);
 
     // Review queue
     std::vector<QueueItem> getQueue(const std::string& status_filter, // "uncertain"|"unmatched"|"all"
@@ -138,10 +151,10 @@ private:
     void buildScrapers();
     void runMatch(const std::string& target_id, const std::string& item_type);
 
-    void matchShow (const std::string& kairos_id, const std::string& title,
+    void matchShow (const std::string& library_id, const std::string& kairos_id, const std::string& title,
                     int year, const std::string& tmdb_id, const std::string& tvdb_id,
                     const std::string& preferred_scraper = "", bool include_anidb = false);
-    void matchMovie(const std::string& kairos_id, const std::string& title,
+    void matchMovie(const std::string& library_id, const std::string& kairos_id, const std::string& title,
                     int year, const std::string& tmdb_id, const std::string& file_path,
                     const std::string& preferred_scraper = "", bool include_anidb = false);
 
@@ -152,10 +165,17 @@ private:
                          const std::string& overview   = "");
     void  setMatchStatus(const std::string& item_type, const std::string& kairos_id,
                          const std::string& status,   double score);
+    void  upsertExternalId(const std::string& item_type, const std::string& kairos_id,
+                           const std::string& source,    const std::string& external_id,
+                           int priority);
+    void  upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
+                               const std::string& title);
     double threshold() const;
 
     Database&    db_;
     ConfStore&   conf_;
+
+    class SourceRepository& sourceRepo() const;
 
     std::unique_ptr<AnidbScraper> anidb_;
     std::unique_ptr<TmdbScraper> tmdb_;

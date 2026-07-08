@@ -2,22 +2,53 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <fstream>
+#include <iostream>
 #include <mutex>
 #include <ostream>
 #include <string>
 #include <vector>
+#include "scheduler/RuntimeFlags.h"
 
 // ─── Ring buffer ──────────────────────────────────────────────────────────────
 
 class LogBuffer {
 public:
     static constexpr size_t kMax = 2000;
+    static constexpr size_t kMaxFileSize = 10 * 1024 * 1024; // 10 MB
+
+    void setFile(const std::string& path) {
+        std::lock_guard lock(mu_);
+        path_ = path;
+        openFile();
+    }
 
     void push(std::string line) {
         {
             std::lock_guard lock(mu_);
-            entries_.push_back({seq_++, std::move(line)});
-            if (entries_.size() > kMax) entries_.pop_front();
+            if (file_) {
+                file_ << line << std::endl;
+                bytes_written_ += line.size() + 1;
+                if (bytes_written_ > kMaxFileSize) {
+                    rotateFile();
+                }
+            }
+
+            bool should_push = true;
+            if (line.starts_with("[scraper]")) {
+                // Scraper logs are always included in memory for the UI review page.
+            } else if (line.starts_with("[epg]") || line.starts_with("[materializer]")) {
+                if (!g_epg_debug.load(std::memory_order_relaxed)) should_push = false;
+            } else if (line.starts_with("[sync]") || line.starts_with("[probe]") || line.starts_with("[scraper-match]")) {
+                if (!g_debug_logging.load(std::memory_order_relaxed)) should_push = false;
+            } else if (line.starts_with("[hls]") || line.starts_with("[session]")) {
+                if (!g_verbose_transcode_logs.load(std::memory_order_relaxed)) should_push = false;
+            }
+
+            if (should_push) {
+                entries_.push_back({seq_++, std::move(line)});
+                if (entries_.size() > kMax) entries_.pop_front();
+            }
         }
         cv_.notify_all();
     }
@@ -57,7 +88,29 @@ private:
     mutable std::mutex              mu_;
     mutable std::condition_variable cv_;
     std::deque<Entry>               entries_;
+    std::ofstream                   file_;
+    std::string                     path_;
+    size_t                          bytes_written_ = 0;
     uint64_t                        seq_ = 1;  // 0 is the "nothing seen yet" sentinel
+
+    void openFile() {
+        if (path_.empty()) return;
+        file_.open(path_, std::ios::app);
+        if (file_) {
+            file_.seekp(0, std::ios::end);
+            bytes_written_ = static_cast<size_t>(file_.tellp());
+        } else {
+            std::cerr << "[log] failed to open log file: " << path_ << "\n";
+        }
+    }
+
+    void rotateFile() {
+        file_.close();
+        std::string old_path = path_ + ".1";
+        std::remove(old_path.c_str());
+        std::rename(path_.c_str(), old_path.c_str());
+        openFile();
+    }
 };
 
 // ─── Tee streambuf: intercepts an ostream and pushes lines to LogBuffer ───────

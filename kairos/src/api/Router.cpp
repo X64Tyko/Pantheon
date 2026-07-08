@@ -52,8 +52,12 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	if (path.ends_with("/played")) return true;
 	// Hephaestus resolving a library item to a playable file for VOD sessions.
 	if (path.starts_with("/api/playback/")) return true;
+	// Hephaestus fetching runtime flags.
+	if (method == "GET" && path == "/api/config/public-settings") return true;
 	// Log stream — relayed by Hermes into the unified Hades log view.
 	if (path == "/api/logs/stream") return true;
+	// Hades reporting console errors.
+	if (path == "/api/logs/client") return true;
 	// Image proxy — loaded by <img> tags that cannot send Authorization headers.
 	if (path == "/api/images/proxy") return true;
 	// AniDB per-AID poster endpoint — same reason.

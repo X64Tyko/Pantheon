@@ -24,6 +24,7 @@ let readyListeners: Array<(ready: boolean) => void> = []
 let cachedReady = !!window.__pantheonCastReady
 
 window.__pantheonCastReadyListener = (available: boolean) => {
+  console.log('[cast] SDK availability changed:', available)
   cachedReady = available
   readyListeners.forEach(fn => fn(available))
 }
@@ -57,9 +58,14 @@ function setCastConfigured(configured: boolean) {
 }
 
 export function useCastAvailable(): boolean {
-  const [available, setAvailable] = useState(cachedReady && cachedAppIdConfigured)
+  const ready = useCastApiReady()
+  const [available, setAvailable] = useState(ready && cachedAppIdConfigured)
   useEffect(() => {
-    const recompute = () => setAvailable(cachedReady && cachedAppIdConfigured)
+    const recompute = () => {
+      const isReady = !!window.__pantheonCastReady
+      console.log('[cast] recomputing availability: ready=', isReady, 'appIdConfigured=', cachedAppIdConfigured)
+      setAvailable(isReady && cachedAppIdConfigured)
+    }
     recompute()
     readyListeners.push(recompute)
     configuredListeners.push(recompute)
@@ -67,7 +73,7 @@ export function useCastAvailable(): boolean {
       readyListeners = readyListeners.filter(fn => fn !== recompute)
       configuredListeners = configuredListeners.filter(fn => fn !== recompute)
     }
-  }, [])
+  }, [ready])
   return available
 }
 
@@ -88,16 +94,31 @@ export function CastProvider() {
     // on `user` rather than a one-time mount check so it also fires right
     // after login, without requiring a page refresh.
     if (!user) return
-    api.getPublicSettings().then(s => setAppId(s.cast_app_id || null)).catch(() => {})
+    api.getPublicSettings().then(s => {
+      console.log('[cast] fetched appId:', s.cast_app_id)
+      setAppId(s.cast_app_id || null)
+    }).catch(e => {
+      console.error('[cast] failed to fetch public settings:', e)
+    })
   }, [user])
 
   useEffect(() => {
-    if (!ready || !appId) { setCastConfigured(false); return }
-    cast.framework.CastContext.getInstance().setOptions({
-      receiverApplicationId: appId,
-      autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
-    })
-    setCastConfigured(true)
+    if (!ready || !appId) {
+      console.log('[cast] not initializing: ready=', ready, 'appId=', appId)
+      setCastConfigured(false)
+      return
+    }
+    console.log('[cast] initializing CastContext with appId:', appId)
+    try {
+      cast.framework.CastContext.getInstance().setOptions({
+        receiverApplicationId: appId,
+        autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+      })
+      setCastConfigured(true)
+    } catch (e) {
+      console.error('[cast] CastContext.setOptions failed:', e)
+      setCastConfigured(false)
+    }
   }, [ready, appId])
 
   // First cast to a device (pantheon-relay's bootstrap, not yet handed off

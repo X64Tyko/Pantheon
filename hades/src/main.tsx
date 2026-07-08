@@ -6,8 +6,9 @@ import App from './App'
 import { api, TOKEN_KEY } from './api/client'
 import { setConcurrency } from './channel/imageQueue'
 import { initReceiverModeFromUrl } from './cast/receiverMode'
+import { initRemoteLogging } from './remoteLog'
 
-// Must run before AuthProvider's init effect (App.tsx) ever checks
+initRemoteLogging()
 // localStorage — a Cast receiver's first load carries ?castToken= instead of
 // an already-stored token, and extracting it any later (e.g. inside TvShell's
 // own mount effect) would be too late: ProtectedRoute would already have

@@ -229,7 +229,7 @@ const applyBuffer = () => {
     }
   }
 
-  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb', field: string, value: string | boolean) => {
+  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb', field: string, value: string | boolean | number) => {
     if (!scraperSettings) return
     setScraperSettings(prev => prev ? {
       ...prev,
@@ -415,7 +415,7 @@ const applyBuffer = () => {
                             ...inputStyle, width: 120, textAlign: 'right',
                         }}
                     />
-                    <text>KB</text>
+                    <span style={{ fontSize: 12, color: 'var(--hds-txt-3)' }}>KB</span>
                 </div>
             </SettingRow>
         </Section>
@@ -572,6 +572,14 @@ const applyBuffer = () => {
             onChange={e => updateScraperConfig('tmdb', 'language', e.target.value)}
           />
         </SettingRow>
+        <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+          <input
+            type="number" step={0.05} min={0} max={1}
+            style={{ ...inputStyle, width: 80 }}
+            value={tmdb?.language_weight ?? 0.1}
+            onChange={e => updateScraperConfig('tmdb', 'language_weight', parseFloat(e.target.value))}
+          />
+        </SettingRow>
       </Section>
 
       <Section title="TVDB — TheTVDB">
@@ -609,6 +617,14 @@ const applyBuffer = () => {
             onChange={e => updateScraperConfig('tvdb', 'language', e.target.value)}
           />
         </SettingRow>
+        <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+          <input
+            type="number" step={0.05} min={0} max={1}
+            style={{ ...inputStyle, width: 80 }}
+            value={tvdb?.language_weight ?? 0.1}
+            onChange={e => updateScraperConfig('tvdb', 'language_weight', parseFloat(e.target.value))}
+          />
+        </SettingRow>
       </Section>
 
       <Section title="AniDB">
@@ -628,6 +644,14 @@ const applyBuffer = () => {
             onChange={e => updateScraperConfig('anidb', 'api_key', e.target.value)}
           />
         </SettingRow>
+        <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+          <input
+            type="number" step={0.05} min={0} max={1}
+            style={{ ...inputStyle, width: 80 }}
+            value={anidb?.language_weight ?? 0.1}
+            onChange={e => updateScraperConfig('anidb', 'language_weight', parseFloat(e.target.value))}
+          />
+        </SettingRow>
       </Section>
 
       <Section title="Matching">
@@ -638,7 +662,7 @@ const applyBuffer = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <input
               type="range" min={0} max={1} step={0.05}
-              value={scraperSettings?.match_threshold ?? 1}
+              value={scraperSettings?.match_threshold ?? 0.8}
               onChange={e => updateThreshold(parseFloat(e.target.value))}
               disabled={!scraperSettings}
               style={{ width: 110, accentColor: 'var(--hds-violet)' }}
@@ -647,7 +671,7 @@ const applyBuffer = () => {
               fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700,
               color: 'var(--hds-violet)', minWidth: 38, textAlign: 'right',
             }}>
-              {Math.round((scraperSettings?.match_threshold ?? 1) * 100)}%
+              {Math.round((scraperSettings?.match_threshold ?? 0.8) * 100)}%
             </span>
           </div>
         </SettingRow>

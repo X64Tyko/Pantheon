@@ -212,7 +212,10 @@ void ContentService::proxyImage(const Req& req,
 	httplib::Result img;
 	try {
 		httplib::Client client(effective_base);
-		httplib::Headers headers{{"User-Agent", "kairos/1.0 (https://github.com/X64Tyko/Pantheon)"}};
+		httplib::Headers headers{
+			{"User-Agent", "kairos/1.0 (https://github.com/X64Tyko/Pantheon)"},
+			{"Referer", "https://anidb.net/"}
+		};
 		if (!token.empty()) { headers.emplace("X-Plex-Token", token); headers.emplace("Accept", "*/*"); }
 		client.set_default_headers(headers);
 		client.set_connection_timeout(10);

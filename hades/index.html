@@ -17,6 +17,7 @@
          for the React-side half of this. -->
     <script>
       window.__onGCastApiAvailable = function (isAvailable) {
+        console.log('[index] __onGCastApiAvailable called:', isAvailable)
         window.__pantheonCastReady = isAvailable
         if (typeof window.__pantheonCastReadyListener === 'function') {
           window.__pantheonCastReadyListener(isAvailable)

@@ -135,9 +135,9 @@ std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& con
 
 std::optional<int> KairosClient::getBufferSize() {
     auto cli = makeClient(base_url);
-    auto res = cli.Get("/api/config/settings");
+    auto res = cli.Get("/api/config/public-settings");
     if (!res || res->status != 200) {
-        std::cerr << "[kairos] GET /api/config/settings -> "
+        std::cerr << "[kairos] GET /api/config/public-settings -> "
                   << (res ? std::to_string(res->status) : "no response") << "\n";
         return std::nullopt;
     }
@@ -155,9 +155,9 @@ std::optional<int> KairosClient::getBufferSize() {
 
 std::optional<bool> KairosClient::getVerboseTranscodeLogs() {
     auto cli = makeClient(base_url);
-    auto res = cli.Get("/api/config/settings");
+    auto res = cli.Get("/api/config/public-settings");
     if (!res || res->status != 200) {
-        std::cerr << "[kairos] GET /api/config/settings -> "
+        std::cerr << "[kairos] GET /api/config/public-settings -> "
                   << (res ? std::to_string(res->status) : "no response") << "\n";
         return std::nullopt;
     }

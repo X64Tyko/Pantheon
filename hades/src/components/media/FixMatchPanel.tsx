@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api } from '../../api/client'
+import { api, mediaUrl } from '../../api/client'
 import type { ScraperSearchResult } from '../../api/types'
 import { folderBaseName } from './useMediaDetail'
 
@@ -155,7 +155,7 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
                 overflow: 'hidden', opacity: isMatching ? 0.6 : 1,
               }}>
                 {r.poster_url && (
-                  <img src={r.poster_url} alt=""
+                  <img src={mediaUrl(r.poster_url)} alt=""
                     style={{ width: 80, height: 120, objectFit: 'cover', flexShrink: 0 }}
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />

@@ -3,11 +3,13 @@ import { makeAutoObservable, runInAction } from 'mobx'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { api, mediaUrl, ApiError } from '../api/client'
+import { ExternalIdEditor } from '../components/media/LibraryAdminPanel'
 import type {
   ReviewQueueItem, ItemMatchCandidate,
   EpisodeGroup, GroupingCandidate, ShowGroupingResult,
   ArrLookupResult, ArrServiceOptions, ContentRequest, RequestStatus,
   ScraperSearchResult, ChapterReviewItem, Chapter, ChapterType,
+  ItemMetadata, ExternalId,
 } from '../api/types'
 import { MatchBadge } from '../components/media/MatchBadge'
 import type { MatchStatus } from '../components/media/MatchBadge'
@@ -504,6 +506,12 @@ interface LinkTarget {
   thumb?:    string
 }
 
+const labelStyle: React.CSSProperties = {
+  display: 'block', fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+  letterSpacing: '0.1em', color: 'var(--hds-txt-3)', textTransform: 'uppercase',
+  marginBottom: 4,
+}
+
 function CandidatePanel({
   item, onAccept, onReject, onClose, onMatched,
 }: {
@@ -513,6 +521,8 @@ function CandidatePanel({
   onClose:   () => void
   onMatched: () => void
 }) {
+  const { user } = useAuth()
+  const isAdmin  = user?.role === 'admin'
   const [mode,          setMode]          = useState<'candidates'|'search'|'link'>('candidates')
   const [searchQuery,   setSearchQuery]   = useState(item.title)
   const [searchResults, setSearchResults] = useState<ScraperSearchResult[]>([])
@@ -524,6 +534,16 @@ function CandidatePanel({
   const [linkLoading, setLinkLoading] = useState(false)
   const [linkingId,   setLinkingId]   = useState<string | null>(null)
   const [folderWarning, setFolderWarning] = useState<{ kairos_id: string; targetFolder: string; duplicateFolder: string } | null>(null)
+  const [metadata,    setMetadata]    = useState<ItemMetadata | null>(null)
+  const [loadingMeta, setLoadingMeta] = useState(false)
+
+  const loadMeta = async () => {
+    setLoadingMeta(true)
+    try { setMetadata(await api.getItemMetadata(item.item_type, item.kairos_id)) } catch {}
+    setLoadingMeta(false)
+  }
+
+  useEffect(() => { if (mode === 'candidates') loadMeta() }, [item.kairos_id, mode])
 
   const runSearch = async (q: string) => {
     if (!q.trim()) return
@@ -843,7 +863,7 @@ function CandidatePanel({
                       overflow: 'hidden', opacity: isMatching ? 0.6 : 1,
                     }}>
                       {r.poster_url && (
-                        <img src={r.poster_url} alt=""
+                        <img src={mediaUrl(r.poster_url)} alt=""
                           style={{ width: 60, height: 90, objectFit: 'cover', flexShrink: 0 }}
                           onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                         />
@@ -892,6 +912,22 @@ function CandidatePanel({
       ) : (
         /* ── Candidates panel ── */
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }} className="scrollbar-dark">
+          {isAdmin && item.match_status === 'matched' && (
+            <div style={{ marginBottom: 20, padding: 12, border: '1px solid var(--hds-line)', borderRadius: 10, background: 'var(--hds-bg-2)' }}>
+              <span style={{ ...labelStyle, marginBottom: 8, display: 'block' }}>PRIORITY & IDENTIFIERS</span>
+              {loadingMeta ? (
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>Loading…</div>
+              ) : (
+                <ExternalIdEditor
+                  type={item.item_type}
+                  id={item.kairos_id}
+                  metadata={metadata}
+                  isAdmin={isAdmin}
+                  onChanged={setMetadata}
+                />
+              )}
+            </div>
+          )}
           {item.candidates.length === 0 ? (
             <div style={{
               fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
@@ -943,7 +979,7 @@ function CandidateCard({
     }}>
       <div style={{ display: 'flex' }}>
         {candidate.poster_url && (
-          <img src={candidate.poster_url} alt=""
+          <img src={mediaUrl(candidate.poster_url)} alt=""
             style={{ width: 80, height: 120, objectFit: 'cover', flexShrink: 0 }}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
@@ -1266,7 +1302,7 @@ function RequestsListPanel({
                   }}
                 >
                   <div style={{ width: 32, height: 48, borderRadius: 4, overflow: 'hidden', flexShrink: 0, background: 'var(--hds-bg-3)' }}>
-                    {r.poster_url && <img src={r.poster_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />}
+                    {r.poster_url && <img src={mediaUrl(r.poster_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
@@ -1357,7 +1393,7 @@ function RequestDetailPanel({ request: r, onClose, onStatusChange }: {
         <div style={{
           position: 'absolute', inset: 0,
           background: r.poster_url
-            ? `url(${r.poster_url}) center 20%/cover no-repeat`
+            ? `url(${mediaUrl(r.poster_url)}) center 20%/cover no-repeat`
             : 'linear-gradient(135deg, oklch(0.12 0.04 292), oklch(0.16 0.03 280))',
         }} />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, var(--hds-bg) 0%, oklch(0 0 0 / 0.4) 100%)' }} />
@@ -1367,7 +1403,7 @@ function RequestDetailPanel({ request: r, onClose, onStatusChange }: {
           color: 'oklch(0.8 0.01 285)', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>×</button>
         {r.poster_url && (
-          <img src={r.poster_url} alt="" style={{
+          <img src={mediaUrl(r.poster_url)} alt="" style={{
             position: 'absolute', bottom: -32, left: 24,
             width: 60, height: 90, objectFit: 'cover', borderRadius: 6,
             boxShadow: '0 4px 20px oklch(0 0 0 / 0.5)',

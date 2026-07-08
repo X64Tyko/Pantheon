@@ -11,6 +11,7 @@ import type {
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
   Show, ShowDetail, Source, SourceType, User, VideoInfo, WatchProgress, WritebackResult,
+  ItemMetadata, ExternalId,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -18,6 +19,10 @@ export const TOKEN_KEY = 'kairos_token'
 /** Append ?token= to a media proxy path so <img> tags can authenticate. */
 export function mediaUrl(path: string): string {
   const token = localStorage.getItem(TOKEN_KEY)
+  const isExternal = path.startsWith('http://') || path.startsWith('https://')
+  if (isExternal) {
+    return `/api/images/proxy?url=${encodeURIComponent(path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
+  }
   return token ? `${path}?token=${encodeURIComponent(token)}` : path
 }
 
@@ -322,10 +327,10 @@ export const api = {
 
   // Runtime settings
   getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('GET',   '/config/settings'),
-  // Admin-only settings, minus everything a viewer account has no business
-  // reading (thread counts, buffer sizes, debug flags) — for CastProvider,
-  // which needs cast_app_id regardless of the logged-in account's role.
-  getPublicSettings: ()                                                  => request<{ cast_app_id: string }>('GET', '/config/public-settings'),
+  // Public read-only subset for internal services (Hephaestus) and the Hades
+  // frontend (CastProvider, which needs cast_app_id regardless of role).
+  getPublicSettings: ()                                                  => request<{ stream_buffer_size: number; verbose_transcode_logs: boolean; cast_app_id: string }>('GET', '/config/public-settings'),
+  sendClientLog: (level: 'info' | 'warn' | 'error', message: string) => request<{ ok: boolean }>('POST', '/logs/client', { level, message }),
   updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),
@@ -357,6 +362,10 @@ export const api = {
                          request<{ok: boolean}>('POST', `/scrapers/queue/${kairos_id}/manual-match`, b),
   scraperSearch:       (q: string, type?: 'show' | 'movie')       =>
                          request<{items: ScraperSearchResult[]}>('GET', `/scrapers/search?${qs({ q, type })}`),
+
+  getItemMetadata:     (type: 'show'|'movie', id: string)         => request<ItemMetadata>('GET', `/scrapers/metadata/${type}/${id}`),
+  setItemMetadata:     (type: 'show'|'movie', id: string, b: Partial<ItemMetadata>) => request<{ ok: boolean }>('POST', `/scrapers/metadata/${type}/${id}`, b),
+  refreshItemMetadata: (type: 'show'|'movie', id: string)         => request<{ ok: boolean }>('POST', `/scrapers/metadata/${type}/${id}/refresh`),
 
   // Chapter review (visual inspection of chapter detection, not a commit flow)
   getChapterReviewItems: (p: { media_type?: string; chapter_type?: string; q?: string; limit?: number; offset?: number } = {}) =>

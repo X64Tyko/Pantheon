@@ -41,7 +41,11 @@ export async function startVodPlayback(params: VodStartParams): Promise<VodStart
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error((body as { error?: string }).error ?? res.statusText)
   }
-  return res.json()
+  const data = await res.json()
+  if (data.manifest_url && typeof window !== 'undefined' && (window.location.protocol === 'https:' || window.location.hostname !== 'localhost')) {
+    data.manifest_url = window.location.origin + data.manifest_url
+  }
+  return data
 }
 
 // Fire-and-forget — called on unmount/seek/track-switch to tear down the
@@ -52,7 +56,11 @@ export function stopVodPlayback(sessionId: string) {
 }
 
 export function liveChannelManifestUrl(channelId: string): string {
-  return `/stream/hls/channels/${channelId}/playlist.m3u8`
+  const url = `/stream/hls/channels/${channelId}/playlist.m3u8`
+  if (typeof window !== 'undefined' && (window.location.protocol === 'https:' || window.location.hostname !== 'localhost')) {
+    return window.location.origin + url
+  }
+  return url
 }
 
 // Activity page "Now Playing" — see hephaestus/src/api/ActivityRouter.cpp.

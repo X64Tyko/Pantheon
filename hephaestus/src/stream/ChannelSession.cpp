@@ -287,6 +287,7 @@ bool ChannelSession::start() {
     active    = true;
     in_splash = false;
     session_start_ms = nowMs();
+    last_hls_touch_ms = session_start_ms;
 
     auto dir = hlsDir();
     if (!dir.empty()) {

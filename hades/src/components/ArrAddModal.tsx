@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api } from '../api/client'
+import { api, mediaUrl } from '../api/client'
 import type { ArrLookupResult, ArrQualityProfile } from '../api/types'
 
 interface Props {
@@ -161,7 +161,7 @@ export default function ArrAddModal({ type, title, tvdb_id, tmdb_id, imdb_id, on
                     }}
                   >
                     {r.poster_url && (
-                      <img src={r.poster_url} alt="" style={{ width: 36, height: 54, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
+                      <img src={mediaUrl(r.poster_url)} alt="" style={{ width: 36, height: 54, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--hds-txt)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -184,7 +184,7 @@ export default function ArrAddModal({ type, title, tvdb_id, tmdb_id, imdb_id, on
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--hds-bg-3)', borderRadius: 9, border: '1px solid var(--hds-line)' }}>
                 {selected.poster_url && (
-                  <img src={selected.poster_url} alt="" style={{ width: 36, height: 54, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
+                  <img src={mediaUrl(selected.poster_url)} alt="" style={{ width: 36, height: 54, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
                 )}
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--hds-txt)' }}>{selected.title}</div>

@@ -272,6 +272,17 @@ export interface Episode {
   file_path?:  string
 }
 
+export interface ExternalId {
+  source:      string
+  external_id: string
+  priority:    number
+}
+
+export interface ItemMetadata {
+  external_ids:     ExternalId[]
+  alternate_titles: string[]
+}
+
 export interface WatchProgress {
   content_type: 'movie' | 'episode'
   content_id:   string
@@ -742,11 +753,12 @@ export interface MediaHeroItem {
 export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb'
 
 export interface ScraperConfig {
-  source:    ScraperSource
-  api_key:   string
-  enabled:   boolean
-  language:  string
-  pin?:      string  // TVDB subscriber pin
+  source:          ScraperSource
+  api_key:         string
+  enabled:         boolean
+  language:        string
+  language_weight: number
+  pin?:            string  // TVDB subscriber pin
 }
 
 export interface ScraperSettings {

@@ -134,6 +134,29 @@ void SourceRepository::removeLibrary(const std::string& library_id) {
       s.bind(1, library_id); s.exec(); }
 }
 
+std::optional<MediaLibraryConfig> SourceRepository::getLibrary(const std::string& library_id) {
+    SQLite::Statement q(db_.get(),
+        "SELECT library_id, source_id, external_lib_id, display_name, library_type, enabled, "
+        "       preferred_scraper, preferred_language, include_anidb, show_on_home "
+        "FROM media_library WHERE library_id = ?");
+    q.bind(1, library_id);
+    if (q.executeStep()) {
+        MediaLibraryConfig lib;
+        lib.library_id          = q.getColumn(0).getString();
+        lib.source_id           = q.getColumn(1).getString();
+        lib.external_lib_id     = q.getColumn(2).getString();
+        lib.display_name        = q.getColumn(3).getString();
+        lib.library_type        = q.getColumn(4).getString();
+        lib.enabled             = q.getColumn(5).getInt() != 0;
+        lib.preferred_scraper   = q.getColumn(6).getString();
+        lib.preferred_language  = q.getColumn(7).getString();
+        lib.include_anidb       = q.getColumn(8).getInt() != 0;
+        lib.show_on_home        = q.getColumn(9).getInt() != 0;
+        return lib;
+    }
+    return std::nullopt;
+}
+
 std::string SourceRepository::resolveKairosId(const std::string& source_id,
                                                const std::string& external_id,
                                                const std::string& item_type) {

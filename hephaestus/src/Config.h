@@ -16,7 +16,7 @@ struct Config {
     // failure) — independent of ffmpeg_debug_logs above, which only
     // controls whether stderr is streamed live vs just tail-captured.
     bool        verbose_transcode_logs = false;
-    int         session_linger_secs = 60; // keep session alive after last client disconnects
+    int         session_linger_secs = 120; // keep session alive after last client disconnects
 	int		stream_buffer_size = 1048576; // 1024 KB
     HwAccel     hw_accel      = HwAccel::none;
     std::string vaapi_device  = "/dev/dri/renderD128";

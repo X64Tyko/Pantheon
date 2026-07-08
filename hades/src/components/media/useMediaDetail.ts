@@ -78,9 +78,11 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   const bust = (url: string) => refreshKey > 0 ? `${url}${url.includes('?') ? '&' : '?'}v=${refreshKey}` : url
 
   const posterUrl = discoverResult?.poster_url
-    ?? (id && detail?.thumb ? bust(contentType === 'show' ? showThumbUrl(id) : movieThumbUrl(id)) : undefined)
+    ? mediaUrl(discoverResult.poster_url)
+    : (id && detail?.thumb ? bust(contentType === 'show' ? showThumbUrl(id) : movieThumbUrl(id)) : undefined)
   const backdropUrl = discoverResult?.poster_url
-    ?? (id && detail?.art ? bust(contentType === 'show' ? showArtUrl(id) : movieArtUrl(id)) : undefined)
+    ? mediaUrl(discoverResult.poster_url)
+    : (id && detail?.art ? bust(contentType === 'show' ? showArtUrl(id) : movieArtUrl(id)) : undefined)
 
   const title    = discoverResult?.title    ?? detail?.title    ?? ''
   const year     = discoverResult?.year     ?? detail?.year

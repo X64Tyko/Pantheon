@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { MatchStatus } from './MatchBadge'
 import type { LibraryDensity } from '../../api/types'
 import { useFocusable } from '../../nav/useFocusable'
+import { mediaUrl } from '../../api/client'
 
 export interface MediaCardProps {
   id:                string
@@ -97,7 +98,7 @@ export function MediaCard(props: MediaCardProps) {
     <div style={posterStyle}>
       {showImg ? (
         <img
-          src={imgUrl}
+          src={mediaUrl(imgUrl!)}
           alt={title}
           onError={() => setImgError(true)}
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}

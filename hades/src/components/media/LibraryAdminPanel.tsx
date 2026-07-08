@@ -3,7 +3,7 @@ import { api } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import { AccordionSection } from '../../channel/sections'
 import { goldBtnStyle, inputStyle } from '../../channel/styles'
-import type { GroupingCandidate, EpisodeGroup, MovieDetail, ShowDetail } from '../../api/types'
+import type { GroupingCandidate, EpisodeGroup, MovieDetail, ShowDetail, ExternalId, ItemMetadata } from '../../api/types'
 
 type Detail = ShowDetail | MovieDetail
 type Section = 'details' | 'grouping' | 'edit' | null
@@ -36,7 +36,7 @@ export function LibraryAdminPanel({ id, content_type }: { id: string; content_ty
   return (
     <div style={{ marginTop: 32, maxWidth: 640 }}>
       <AccordionSection title="DETAILS" open={open === 'details'} onToggle={() => toggle('details')}>
-        <DetailsSection detail={detail} isShow={isShow} />
+        <DetailsSection detail={detail} isShow={isShow} isAdmin={isAdmin} />
       </AccordionSection>
 
       {isShow && (
@@ -56,18 +56,47 @@ export function LibraryAdminPanel({ id, content_type }: { id: string; content_ty
 
 // ── Details ──────────────────────────────────────────────────────────────────
 
-function DetailsSection({ detail, isShow }: { detail: Detail; isShow: boolean }) {
+function DetailsSection({ detail, isShow, isAdmin }: { detail: Detail; isShow: boolean; isAdmin: boolean }) {
   const show  = isShow ? detail as ShowDetail : null
   const id    = isShow ? (detail as ShowDetail).show_id : (detail as MovieDetail).movie_id
+  const type  = isShow ? 'show' : 'movie'
+
+  const [metadata, setMetadata] = useState<ItemMetadata | null>(null)
+  const [loading,  setLoading]  = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const loadMetadata = async () => {
+    setLoading(true)
+    try { setMetadata(await api.getItemMetadata(type, id)) } catch {}
+    setLoading(false)
+  }
+
+  useEffect(() => { loadMetadata() }, [id, type])
+
   const plexUrl = detail.source_base_url && detail.external_id
     ? `${detail.source_base_url}/web/index.html#!/server/details?key=/library/metadata/${detail.external_id}`
     : null
-  const links = [
-    plexUrl && { label: 'Plex', href: plexUrl, color: 'var(--hds-gold)' },
-    detail.imdb_id && { label: 'IMDb', href: `https://www.imdb.com/title/${detail.imdb_id}`, color: 'oklch(0.78 0.15 84)' },
-    show?.tvdb_id && { label: 'TVDb', href: `https://thetvdb.com/?id=${show.tvdb_id}&tab=series`, color: 'oklch(0.68 0.16 240)' },
-    detail.tmdb_id && { label: 'TMDb', href: `https://www.themoviedb.org/${isShow ? 'tv' : 'movie'}/${detail.tmdb_id}`, color: 'oklch(0.7 0.16 150)' },
-  ].filter(Boolean) as { label: string; href: string; color: string }[]
+
+  // Build links from currently loaded metadata priority
+  const links = (metadata?.external_ids || []).map(eid => {
+    if (eid.source === 'tmdb') return { label: 'TMDb', href: `https://www.themoviedb.org/${isShow ? 'tv' : 'movie'}/${eid.external_id}`, color: 'oklch(0.7 0.16 150)' }
+    if (eid.source === 'tvdb') return { label: 'TVDb', href: `https://thetvdb.com/?id=${eid.external_id}&tab=series`, color: 'oklch(0.68 0.16 240)' }
+    if (eid.source === 'imdb') return { label: 'IMDb', href: `https://www.imdb.com/title/${eid.external_id}`, color: 'oklch(0.78 0.15 84)' }
+    if (eid.source === 'anidb') return { label: 'AniDB', href: `https://anidb.net/a/${eid.external_id}`, color: 'oklch(0.65 0.12 200)' }
+    return null
+  }).filter(Boolean) as { label: string; href: string; color: string }[]
+
+  if (plexUrl) links.unshift({ label: 'Plex', href: plexUrl, color: 'var(--hds-gold)' })
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      await api.refreshItemMetadata(type, id)
+      // Ideally we'd trigger a reload of the main detail too, but let's at least reload IDs
+      await loadMetadata()
+    } catch {}
+    setRefreshing(false)
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 6 }}>
@@ -90,14 +119,23 @@ function DetailsSection({ detail, isShow }: { detail: Detail; isShow: boolean })
       </div>
 
       <div>
-        <span style={labelStyle}>Identifiers</span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <IdRow label="Kairos ID" value={id} />
-          {detail.external_id && <IdRow label="Source ID" value={detail.external_id} />}
-          {detail.imdb_id && <IdRow label="IMDb" value={detail.imdb_id} />}
-          {show?.tvdb_id && <IdRow label="TVDb" value={show.tvdb_id} />}
-          {detail.tmdb_id && <IdRow label="TMDb" value={detail.tmdb_id} />}
-        </div>
+        <span style={labelStyle}>Scraper Priority & Identifiers</span>
+        {loading ? (
+           <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>Loading…</div>
+        ) : (
+          <ExternalIdEditor
+            type={type}
+            id={id}
+            metadata={metadata}
+            isAdmin={isAdmin}
+            onChanged={setMetadata}
+          />
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <IdRow label="Kairos ID" value={id} />
+        {detail.external_id && <IdRow label="Source ID" value={detail.external_id} />}
       </div>
 
       {(detail.source_base_url || detail.locked) && (
@@ -113,6 +151,19 @@ function DetailsSection({ detail, isShow }: { detail: Detail; isShow: boolean })
           )}
         </div>
       )}
+
+      {isAdmin && (
+        <div style={{ marginTop: 8 }}>
+          <button onClick={handleRefresh} disabled={refreshing} style={{
+            ...goldBtnStyle, fontSize: 10, padding: '6px 12px', opacity: refreshing ? 0.6 : 1, cursor: refreshing ? 'wait' : 'pointer'
+          }}>
+            {refreshing ? 'Refreshing…' : 'Refresh Metadata from Scrapers'}
+          </button>
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 6 }}>
+            Re-fetches overview, art, and ratings based on the priority above.
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -122,6 +173,97 @@ function IdRow({ label, value }: { label: string; value: string }) {
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>
       <span style={{ color: 'var(--hds-txt-3)', flexShrink: 0 }}>{label}</span>
       <span style={{ color: 'var(--hds-txt-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+    </div>
+  )
+}
+
+export function ExternalIdEditor({ type, id, metadata, isAdmin, onChanged }: {
+  type: 'show' | 'movie';
+  id: string;
+  metadata: ItemMetadata | null;
+  isAdmin: boolean;
+  onChanged: (m: ItemMetadata) => void;
+}) {
+  const [saving, setSaving] = useState(false)
+
+  if (!metadata) return null
+
+  const move = async (index: number, delta: number) => {
+    if (!isAdmin) return
+    const ids = [...metadata.external_ids]
+    const target = index + delta
+    if (target < 0 || target >= ids.length) return
+
+    const temp = ids[index]
+    ids[index] = ids[target]
+    ids[target] = temp
+
+    // Re-assign priorities based on new order
+    const updated = ids.map((eid, i) => ({ ...eid, priority: i + 1 }))
+    
+    setSaving(true)
+    try {
+      await api.setItemMetadata(type, id, { external_ids: updated })
+      onChanged({ ...metadata, external_ids: updated })
+    } catch {}
+    setSaving(false)
+  }
+
+  const remove = async (index: number) => {
+    if (!isAdmin) return
+    const ids = metadata.external_ids.filter((_, i) => i !== index)
+    const updated = ids.map((eid, i) => ({ ...eid, priority: i + 1 }))
+
+    setSaving(true)
+    try {
+      await api.setItemMetadata(type, id, { external_ids: updated })
+      onChanged({ ...metadata, external_ids: updated })
+    } catch {}
+    setSaving(false)
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+      {metadata.external_ids.length === 0 && (
+        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', padding: '4px 0' }}>
+          No scraper IDs linked.
+        </div>
+      )}
+      {metadata.external_ids.sort((a,b) => a.priority - b.priority).map((eid, i) => (
+        <div key={`${eid.source}:${eid.external_id}`} style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px',
+          background: 'var(--hds-bg-3)', borderRadius: 6, border: '1px solid var(--hds-line)',
+        }}>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-gold)',
+            width: 14, textAlign: 'center', fontWeight: 700
+          }}>{eid.priority}</span>
+          
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', textTransform: 'uppercase' }}>{eid.source}</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-2)' }}>{eid.external_id}</span>
+          </div>
+
+          {isAdmin && (
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button disabled={saving || i === 0} onClick={() => move(i, -1)} style={{
+                background: 'none', border: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 10, padding: 2
+              }}>↑</button>
+              <button disabled={saving || i === metadata.external_ids.length - 1} onClick={() => move(i, 1)} style={{
+                background: 'none', border: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 10, padding: 2
+              }}>↓</button>
+              <button disabled={saving} onClick={() => remove(i)} style={{
+                background: 'none', border: 'none', color: 'var(--hds-match-red)', cursor: 'pointer', fontSize: 10, padding: 2, marginLeft: 4
+              }}>×</button>
+            </div>
+          )}
+        </div>
+      ))}
+      {isAdmin && (
+        <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: 'var(--hds-txt-3)', marginTop: 2 }}>
+          Priority 1 is the primary source. Drag (or use arrows) to reorder.
+        </p>
+      )}
     </div>
   )
 }

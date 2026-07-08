@@ -34,6 +34,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             cj["api_key"]  = c.api_key;
             cj["language"] = c.language;
             cj["enabled"]  = c.enabled;
+            cj["language_weight"] = c.language_weight;
             if (c.source == "tvdb")  cj["pin"] = c.pin;
             if (c.source == "anidb") cj["note"] = "api_key is your registered AniDB client name";
             out["configs"].push_back(cj);
@@ -59,6 +60,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
                         if (cj.contains("api_key"))  c.api_key  = cj["api_key"].get<std::string>();
                         if (cj.contains("language")) c.language = cj["language"].get<std::string>();
                         if (cj.contains("enabled"))  c.enabled  = cj["enabled"].get<bool>();
+                        if (cj.contains("language_weight")) c.language_weight = cj["language_weight"].get<double>();
                         if (src == "tvdb" && cj.contains("pin")) c.pin = cj["pin"].get<std::string>();
                     }
                 }
@@ -187,10 +189,15 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
     svr.Post(R"(/api/scrapers/queue/([^/]+)/accept)", [this](const Req& req, Res& res) {
         if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string cid = req.matches[1];
-        if (scraper_.acceptCandidate(cid))
-            ok(res, json{{"ok", true}});
-        else
-            err(res, 404, "candidate not found");
+        try {
+            if (scraper_.acceptCandidate(cid))
+                ok(res, json{{"ok", true}});
+            else
+                err(res, 404, "candidate not found");
+        } catch (const std::exception& e) {
+            std::cerr << "[scraper] accept error: " << e.what() << "\n";
+            err(res, 500, e.what());
+        }
     });
 
     // POST /api/scrapers/queue/:id/reject
@@ -241,5 +248,58 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             arr.push_back(rj);
         }
         ok(res, json{{"items", arr}});
+    });
+
+    // GET /api/scrapers/metadata/:item_type/:kairos_id
+    svr.Get(R"(/api/scrapers/metadata/(show|movie)/([^/]+))", [this](const Req& req, Res& res) {
+        if (!currentUser()) { err(res, 401, "Unauthorized"); return; }
+        std::string type = req.matches[1];
+        std::string kid  = req.matches[2];
+
+        auto ids = scraper_.getExternalIds(kid, type);
+        auto alts = scraper_.getAlternateTitles(kid, type);
+
+        json j_ids = json::array();
+        for (const auto& id : ids) {
+            j_ids.push_back({{"source", id.source}, {"external_id", id.external_id}, {"priority", id.priority}});
+        }
+
+        ok(res, json{{"external_ids", j_ids}, {"alternate_titles", alts}});
+    });
+
+    // POST /api/scrapers/metadata/:item_type/:kairos_id
+    svr.Post(R"(/api/scrapers/metadata/(show|movie)/([^/]+))", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
+        std::string type = req.matches[1];
+        std::string kid  = req.matches[2];
+
+        try {
+            auto body = json::parse(req.body);
+            if (body.contains("external_ids")) {
+                std::vector<ScraperManager::ExternalId> ids;
+                for (const auto& item : body["external_ids"]) {
+                    ids.push_back({item.value("source", ""), item.value("external_id", ""), item.value("priority", 0)});
+                }
+                scraper_.setExternalIds(kid, type, ids);
+            }
+            if (body.contains("alternate_titles")) {
+                scraper_.setAlternateTitles(kid, type, body["alternate_titles"].get<std::vector<std::string>>());
+            }
+            ok(res, json{{"ok", true}});
+        } catch (const std::exception& e) {
+            err(res, 400, e.what());
+        }
+    });
+
+    // POST /api/scrapers/metadata/:item_type/:kairos_id/refresh
+    svr.Post(R"(/api/scrapers/metadata/(show|movie)/([^/]+)/refresh)", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
+        std::string type = req.matches[1];
+        std::string kid  = req.matches[2];
+
+        if (scraper_.refreshMetadata(kid, type))
+            ok(res, json{{"ok", true}});
+        else
+            err(res, 404, "no metadata sources found for this item");
     });
 }

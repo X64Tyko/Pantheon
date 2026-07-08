@@ -57,6 +57,7 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
       if (autoPlay) video.play().catch(() => {})
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari: native HLS, no hls.js needed.
+      console.log('[player] Using native HLS (Safari/iOS)')
       video.src = manifestUrl
       registerReceiverVideoElement(video)
       if (autoPlay) video.play().catch(() => {})

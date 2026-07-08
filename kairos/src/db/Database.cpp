@@ -1492,6 +1492,44 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE media_library ADD COLUMN show_on_home INTEGER NOT NULL DEFAULT 1;
 )SQL" }
 
+// ── v66: multi-scraper IDs and alternate titles ──────────────────────────────
+,{ 66, R"SQL(
+    -- Multi-scraper IDs with priority
+    CREATE TABLE IF NOT EXISTS item_external_id (
+        item_type   TEXT    NOT NULL CHECK(item_type IN ('show','movie')),
+        kairos_id   TEXT    NOT NULL,
+        source      TEXT    NOT NULL,  -- 'tmdb', 'tvdb', 'anidb', 'imdb', etc.
+        external_id TEXT    NOT NULL,
+        priority    INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (item_type, kairos_id, source)
+    );
+    CREATE INDEX idx_item_ext_kairos ON item_external_id(item_type, kairos_id);
+
+    -- Alternate titles for search and matching
+    CREATE TABLE IF NOT EXISTS item_alternate_title (
+        item_type   TEXT    NOT NULL CHECK(item_type IN ('show','movie')),
+        kairos_id   TEXT    NOT NULL,
+        title       TEXT    NOT NULL,
+        PRIMARY KEY (item_type, kairos_id, title)
+    );
+    CREATE INDEX idx_item_alt_title ON item_alternate_title(title);
+
+    -- Migrate existing IDs from show and movie tables
+    -- Show: tmdb, tvdb, imdb
+    INSERT OR IGNORE INTO item_external_id (item_type, kairos_id, source, external_id, priority)
+    SELECT 'show', show_id, 'tmdb', tmdb_id, 1 FROM show WHERE tmdb_id != '';
+    INSERT OR IGNORE INTO item_external_id (item_type, kairos_id, source, external_id, priority)
+    SELECT 'show', show_id, 'tvdb', tvdb_id, 2 FROM show WHERE tvdb_id != '';
+    INSERT OR IGNORE INTO item_external_id (item_type, kairos_id, source, external_id, priority)
+    SELECT 'show', show_id, 'imdb', imdb_id, 3 FROM show WHERE imdb_id != '';
+
+    -- Movie: tmdb, imdb
+    INSERT OR IGNORE INTO item_external_id (item_type, kairos_id, source, external_id, priority)
+    SELECT 'movie', movie_id, 'tmdb', tmdb_id, 1 FROM movie WHERE tmdb_id != '';
+    INSERT OR IGNORE INTO item_external_id (item_type, kairos_id, source, external_id, priority)
+    SELECT 'movie', movie_id, 'imdb', imdb_id, 2 FROM movie WHERE imdb_id != '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

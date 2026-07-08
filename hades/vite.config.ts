@@ -22,17 +22,16 @@ export default defineConfig({
     outDir: './dist',
     emptyOutDir: true,
     // The default 500kb warning is a raw byte-size check that doesn't know a
-    // chunk is lazily loaded — player/PlayerPage.tsx (hls.js + friends) is
-    // React.lazy()'d in App.tsx specifically so its ~540kb only downloads
-    // when someone opens the player, not on every page load. Bumped just
-    // above that chunk so the warning still fires for anything genuinely
-    // bloating the *eager* bundle.
-    chunkSizeWarningLimit: 600,
+    // chunk is lazily loaded — player/PlayerPage.tsx is React.lazy()'d
+    // in App.tsx. We've moved hls.js to a separate 'player' manual chunk,
+    // and the core application 'index' is now ~600kb.
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
           state:  ['mobx', 'mobx-react-lite'],
+          player: ['hls.js'],
         },
       },
     },

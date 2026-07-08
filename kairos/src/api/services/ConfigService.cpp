@@ -53,19 +53,20 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 		};
 	};
 
-	svr.Get("/api/config/settings", [settingsJson](const Req&, Res& res) {
+	svr.Get("/api/config/settings", [this, settingsJson](const Req&, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		route::ok(res, settingsJson().dump());
 	});
 
-	// Read-only subset any logged-in user (viewer or admin) can fetch — right
-	// now just cast_app_id, since CastProvider.tsx needs it regardless of
-	// role. Everything else in settingsJson() is admin tuning (thread counts,
-	// buffer sizes, debug flags) with no reason for a viewer account to see
-	// it, so this stays its own route rather than loosening the real one.
-	svr.Get("/api/config/public-settings", [castAppId](const Req&, Res& res) {
-		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
-		route::ok(res, json{{"cast_app_id", castAppId()}}.dump());
+	// A public read-only subset for internal services (Hephaestus) and the Hades
+	// frontend. This is marked public in Router.cpp, so it's accessible without
+	// a token (for Hephaestus) or with any valid token (for viewer users).
+	svr.Get("/api/config/public-settings", [this, castAppId](const Req&, Res& res) {
+		route::ok(res, json{
+			{"stream_buffer_size",      g_buffer_size.load()},
+			{"verbose_transcode_logs",  g_verbose_transcode_logs.load()},
+			{"cast_app_id",             castAppId()},
+		}.dump());
 	});
 
 	svr.Patch("/api/config/settings", [this, persistFlag, settingsJson](const Req& req, Res& res) {
@@ -120,6 +121,21 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 		} catch (const std::exception& e) {
 			route::logErr("POST /api/config/epg/clear-all", e);
 			route::err(res, 500, e.what());
+		}
+	});
+
+	// POST /api/logs/client — receive logs from the Hades frontend.
+	svr.Post("/api/logs/client", [this](const Req& req, Res& res) {
+		try {
+			auto b = json::parse(req.body);
+			std::string level = b.value("level", "error");
+			std::string msg   = b.value("message", "");
+			if (!msg.empty()) {
+				std::cerr << "[hades] [" << level << "] " << msg << std::endl;
+			}
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (...) {
+			route::err(res, 400, "invalid body");
 		}
 	});
 
