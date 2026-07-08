@@ -440,7 +440,7 @@ function QueueListPanel({
             >
               {item.thumb && (
                 <img
-                  src={item.source_base_url + item.thumb}
+                  src={mediaUrl(`/api/${item.item_type}s/${item.kairos_id}/thumb`)}
                   alt=""
                   style={{ width: 32, height: 48, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
                   onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
