@@ -1,5 +1,8 @@
 add_executable(momus_hermes
     test_log_buffer.cpp
+    test_channel_broadcaster.cpp
+    test_broadcaster_manager.cpp
+    test_kairos_client.cpp
 )
 
 target_link_libraries(momus_hermes

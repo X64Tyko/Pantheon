@@ -20,10 +20,10 @@ Pantheon is currently in **Alpha**. This is a source-available engineering artif
 |---|---|---|---|---|
 | **Kairos** | Alpha | `momus_kairos` | 304 | ~85% (Core / Scheduler) |
 | **Hades** | Alpha | `vitest` | 133 | ~40% (API / Stores) |
-| **Hermes** | Alpha | `momus_hermes` | 4 | ~10% (Gateway) |
-| **Hephaestus** | Alpha | `momus_hephaestus` | 4 | ~5% (Transcoder) |
+| **Hermes** | Alpha | `momus_hermes` | 12 | ~25% (Gateway) |
+| **Hephaestus** | Alpha | `momus_hephaestus` | 21 | ~25% (Transcoder) |
 
-*Pantheon currently runs **445 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+*Pantheon currently runs **470 automated tests** across the stack using the **Momus** framework and **Vitest**.*
 
 ---
 

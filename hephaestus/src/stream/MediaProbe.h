@@ -17,11 +17,11 @@ struct VideoTrack {
     std::string codec;             // e.g. "h264", "hevc", "av1"
     int         width  = 0;
     int         height = 0;
-    int         bit_depth = 8;     // 8/10/12 — hw decode support for hevc/av1
-                                    // varies by bit depth (see EncoderArgs.h's
-                                    // decodeCodecKey), unlike h264 where it's
-                                    // rare enough in practice to ignore.
+    int         bit_depth = 8;
 };
+
+// Internal parser exposed for testing.
+int parseBitDepthForTest(const std::string& json_str);
 
 struct SubtitleTrack {
     int         stream_index = 0;

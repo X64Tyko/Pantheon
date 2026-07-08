@@ -111,6 +111,17 @@ std::vector<std::string> buildDecodeProbeArgs(HwAccel backend, const std::string
 
 } // namespace
 
+bool mentionsHwaccelFailureForTest(const std::string& output) { return mentionsHwaccelFailure(output); }
+std::vector<std::string> buildEncodeProbeArgsForTest(HwAccel backend, const std::string& ffmpeg_path,
+                                                     const std::string& vaapi_device) {
+    return buildEncodeProbeArgs(backend, ffmpeg_path, vaapi_device);
+}
+std::vector<std::string> buildDecodeProbeArgsForTest(HwAccel backend, const std::string& ffmpeg_path,
+                                                     const std::string& vaapi_device,
+                                                     const std::string& sample_path) {
+    return buildDecodeProbeArgs(backend, ffmpeg_path, vaapi_device, sample_path);
+}
+
 HwCapabilities probeHwCapabilities(HwAccel requested, const std::string& ffmpeg_path,
                                     const std::string& vaapi_device, const std::string& assets_dir,
                                     bool verbose_transcode_logs) {

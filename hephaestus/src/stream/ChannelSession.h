@@ -118,6 +118,14 @@ class ChannelSession {
     static std::optional<double> computeSpeed(int64_t rawDriftMs, int64_t durationMs);
 
 public:
+    // Exposed for testing
+    static int64_t computeOffsetForTest(const KairosNowResponse& item, int64_t atMs) {
+        return computeOffset(item, atMs);
+    }
+    static std::optional<double> computeSpeedForTest(int64_t rawDriftMs, int64_t durationMs) {
+        return computeSpeed(rawDriftMs, durationMs);
+    }
+
     ChannelSession(std::string channel_id, KairosClient& kairos,
                    std::string ffmpeg_path, StreamOptions opts = {});
     ~ChannelSession();
