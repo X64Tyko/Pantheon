@@ -384,4 +384,9 @@ export const api = {
   detectShowChapters:    (id: string) => request<{status: 'started'|'already_running'}>('POST', `/shows/${id}/chapters/detect`, {}),
   detectMovieChapters:   (id: string) => request<{status: 'started'|'already_running'}>('POST', `/movies/${id}/chapters/detect`, {}),
   getChapterDetectStatus: () => request<{running: boolean}>('GET', '/chapters/detect/status'),
+
+  // System
+  getSystemMetrics: () => request<any>('GET', '/api/system/metrics'),
 }
+
+export default api

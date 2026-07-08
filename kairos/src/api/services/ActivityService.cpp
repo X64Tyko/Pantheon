@@ -2,6 +2,7 @@
 #include "../RouteHelpers.h"
 #include "../../log/LogBuffer.h"
 #include "../../source/SyncManager.h"
+#include "../../util/MetricsGatherer.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -57,5 +58,20 @@ void ActivityService::registerRoutes(httplib::Server& svr) {
 				}
 				return true;
 			});
+	});
+
+	svr.Get("/api/system/metrics", [](const Req&, Res& res) {
+		auto pm = MetricsGatherer::getProcessMetrics();
+		auto sm = MetricsGatherer::getSystemMetrics();
+		json j = {
+			{"cpu_usage", pm.cpu_usage},
+			{"ram_bytes", pm.ram_bytes},
+			{"system", {
+				{"cpu_usage", sm.total_cpu_usage},
+				{"ram_total", sm.total_ram_bytes},
+				{"ram_free",  sm.free_ram_bytes}
+			}}
+		};
+		route::ok(res, j.dump());
 	});
 }

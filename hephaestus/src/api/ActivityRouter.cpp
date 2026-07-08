@@ -3,6 +3,7 @@
 #include "../stream/EncoderArgs.h" // hwAccelName
 #include "../stream/SessionManager.h"
 #include "../stream/VodSessionManager.h"
+#include "../../kairos/src/util/MetricsGatherer.h"
 #include <filesystem>
 #include <nlohmann/json.hpp>
 
@@ -93,5 +94,14 @@ void registerActivityRoutes(httplib::Server& svr, SessionManager& sessions,
             matched.erase(matched.begin(), matched.end() - lines);
 
         res.set_content(json(matched).dump(), "application/json");
+    });
+
+    svr.Get("/stream/activity/metrics", [](const httplib::Request&, httplib::Response& res) {
+        auto pm = MetricsGatherer::getProcessMetrics();
+        json j = {
+            {"cpu_usage", pm.cpu_usage},
+            {"ram_bytes", pm.ram_bytes}
+        };
+        res.set_content(j.dump(), "application/json");
     });
 }

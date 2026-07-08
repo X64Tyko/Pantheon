@@ -1,9 +1,10 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useRef } from 'react'
 import { api } from '../api/client'
-import { sourceStore, systemStore, statusStore } from '../stores'
+import { sourceStore, systemStore, statusStore, metricsStore } from '../stores'
 import type { LogEntry } from '../stores'
 import { NowPlayingPanel } from '../components/activity/NowPlayingPanel'
+import { Sparkline } from '../components/activity/Sparkline'
 
 function tagColor(line: string): string {
   if (/^\[error\]/i.test(line)) return 'text-red-400'
@@ -66,6 +67,11 @@ export default observer(function ActivityPage() {
   }
 
   useEffect(() => { sourceStore.fetchAll() }, [])
+
+  useEffect(() => {
+    const timer = setInterval(() => metricsStore.poll(), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   const syncAll = async () => {
     try { await api.syncAll() } catch {}
@@ -137,6 +143,52 @@ export default observer(function ActivityPage() {
       </div>
 
       <NowPlayingPanel />
+
+      {/* System Resources */}
+      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4" style={{ flexShrink: 0 }}>
+        <h2 className="section-label mb-4">System Resources</h2>
+        <div className="flex flex-wrap gap-8 justify-between">
+            <div className="flex gap-8">
+                <Sparkline 
+                    label="System CPU" 
+                    unit="%"
+                    data={metricsStore.history.map(h => h.system.cpu_usage)} 
+                    max={100}
+                    color="#EAB308" 
+                />
+                <Sparkline 
+                    label="RAM Usage" 
+                    unit=" GB"
+                    data={metricsStore.history.map(h => (h.system.ram_total - h.system.ram_free) / 1024 / 1024 / 1024)} 
+                    max={metricsStore.history[0]?.system.ram_total / 1024 / 1024 / 1024}
+                    color="#A855F7" 
+                />
+            </div>
+            <div className="flex flex-wrap gap-6">
+                <Sparkline 
+                    label="Kairos CPU" 
+                    unit="%"
+                    width={120}
+                    data={metricsStore.history.map(h => h.kairos.cpu_usage)} 
+                    color="#10B981" 
+                />
+                <Sparkline 
+                    label="Hermes CPU" 
+                    unit="%"
+                    width={120}
+                    data={metricsStore.history.map(h => h.hermes.cpu_usage)} 
+                    color="#3B82F6" 
+                />
+                <Sparkline 
+                    label="Hephaestus CPU" 
+                    unit="%"
+                    width={120}
+                    data={metricsStore.history.map(h => h.hephaestus.cpu_usage)} 
+                    color="#F43F5E" 
+                />
+            </div>
+        </div>
+      </div>
 
       {/* Log viewer — fills remaining height */}
       <div className="rounded-lg border border-violet-900/50 bg-zinc-900 overflow-hidden"

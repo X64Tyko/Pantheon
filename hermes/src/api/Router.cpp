@@ -1,7 +1,9 @@
 #include "Router.h"
+#include "../../kairos/src/util/MetricsGatherer.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <string>
+#include <future>
 
 using json = nlohmann::json;
 
@@ -293,6 +295,49 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
                 }
                 return true;
             });
+    });
+
+    // ── Aggregated Metrics ────────────────────────────────────────────────────
+    svr.Get("/api/system/metrics", [cfg](const httplib::Request&, httplib::Response& res) {
+        auto pm = MetricsGatherer::getProcessMetrics();
+        auto sm = MetricsGatherer::getSystemMetrics();
+
+        // Aggregate metrics from Kairos and Hephaestus
+        auto fetch_metrics = [](const std::string& url) -> json {
+            httplib::Client cli(url);
+            cli.set_connection_timeout(1);
+            cli.set_read_timeout(1);
+            if (auto r = cli.Get("/api/system/metrics")) {
+                if (r->status == 200) return json::parse(r->body);
+            }
+            if (auto r = cli.Get("/stream/activity/metrics")) { // Hephaestus
+                if (r->status == 200) return json::parse(r->body);
+            }
+            return json::object();
+        };
+
+        auto kairos_f = std::async(std::launch::async, fetch_metrics, cfg.kairos_url);
+        auto heph_f   = std::async(std::launch::async, fetch_metrics, cfg.hephaestus_url);
+
+        json j_kairos = kairos_f.get();
+        json j_heph   = heph_f.get();
+
+        json out = {
+            {"hermes", {
+                {"cpu_usage", pm.cpu_usage},
+                {"ram_bytes", pm.ram_bytes}
+            }},
+            {"kairos", j_kairos},
+            {"hephaestus", j_heph},
+            {"system", {
+                {"cpu_usage", sm.total_cpu_usage},
+                {"ram_total", sm.total_ram_bytes},
+                {"ram_free",  sm.free_ram_bytes}
+            }}
+        };
+
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_content(out.dump(), "application/json");
     });
 
     // ── HDHomeRun device emulation ────────────────────────────────────────────

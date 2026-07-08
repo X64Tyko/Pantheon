@@ -13,3 +13,4 @@ export const userStore    = new UserStore()
 export { statusStore }   from './StatusStore'
 export { helpTipsStore } from './HelpTipsStore'
 export { tourStore }     from './TourStore'
+export { metricsStore } from '../store/MetricsStore'
