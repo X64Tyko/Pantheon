@@ -21,10 +21,12 @@ export const Sparkline: React.FC<SparklineProps> = ({
 }) => {
   if (data.length < 2) return <div className="h-10 flex items-center text-xs text-white/40">Gathering data...</div>;
 
-  const maxValue = forcedMax ?? Math.max(...data, 1);
+  const safeMax = Number.isFinite(forcedMax) ? (forcedMax as number) : undefined;
+  const maxValue = safeMax ?? Math.max(...data.filter(Number.isFinite), 1);
   const points = data.map((v, i) => {
     const x = (i / (data.length - 1)) * width;
-    const y = height - (v / maxValue) * height;
+    const safeV = Number.isFinite(v) ? v : 0;
+    const y = maxValue > 0 ? height - (safeV / maxValue) * height : height;
     return `${x},${y}`;
   }).join(' ');
 
