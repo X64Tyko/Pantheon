@@ -43,8 +43,8 @@ export const TvLibrary = observer(function TvLibrary() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <TvBackButton onClick={() => navigate('/tv')} />
           <h1 style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 22, fontWeight: 700,
-            color: 'var(--hds-txt)', margin: 0,
+            fontFamily: "'Chakra Petch', sans-serif", fontSize: 24, fontWeight: 700,
+            color: 'var(--hds-txt)', margin: 0, letterSpacing: '-0.02em',
           }}>Library</h1>
           <TvSearchField value={rawQ} onChange={setRawQ} />
           <TvFilterToggle active={isFilterOpen} onClick={() => setIsFilterOpen(!isFilterOpen)} />
@@ -234,11 +234,14 @@ function GenreChip({ label, active, onClick }: { label: string; active: boolean;
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
       style={{
-        padding: '6px 14px', borderRadius: 20, cursor: 'pointer',
+        padding: '8px 16px', borderRadius: 20, cursor: 'pointer',
         border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-        background: active ? 'oklch(0.55 0.14 292 / 0.2)' : 'var(--hds-bg-2)',
-        color: active ? 'var(--hds-violet)' : 'var(--hds-txt-2)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 12, whiteSpace: 'nowrap',
+        background: active ? 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))' : 'var(--hds-bg-2)',
+        color: active ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-2)',
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 13, whiteSpace: 'nowrap',
+        fontWeight: active ? 700 : 400,
+        boxShadow: active ? '0 4px 12px -2px oklch(0.83 0.13 84 / 0.3)' : 'none',
+        transition: 'all 0.15s',
       }}
     >{label}</button>
   )

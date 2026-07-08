@@ -32,10 +32,10 @@ export function TvMediaCard({ title, year, thumb_url, rating, content_type, onCl
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
+        borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
         boxShadow: active ? '0 0 0 3px var(--hds-violet), 0 8px 32px oklch(0.55 0.14 292 / 0.35)' : 'none',
         transform: active ? 'scale(1.045)' : 'scale(1)',
-        transition: 'transform .15s cubic-bezier(0.2,0,0.2,1), box-shadow .15s',
+        transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1), box-shadow 0.15s',
       }}
     >
       <div style={{
@@ -70,7 +70,7 @@ export function TvMediaCard({ title, year, thumb_url, rating, content_type, onCl
           color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{title}</div>
         <div style={{
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: 'var(--hds-txt-3)', marginTop: 3,
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: 'var(--hds-txt-3)', marginTop: 4,
         }}>
           {year}{year && ' · '}{content_type}
         </div>
