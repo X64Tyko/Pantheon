@@ -11,7 +11,7 @@ import type {
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
   Show, ShowDetail, Source, SourceType, User, VideoInfo, WatchProgress, WritebackResult,
-  ItemMetadata, ExternalId,
+  ItemMetadata, ExternalId, RokuDevice, RokuDeviceState,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -116,6 +116,16 @@ export const api = {
   mintCastToken:    ()                    => request<CastTokenResponse>('POST',   '/auth/cast-token'),
   getCastSessions:  ()                    => request<CastSessionInfo[]>('GET',    '/auth/sessions?purpose=cast'),
   revokeCastSession: (sessionId: string)  => request<{ ok: boolean }>('DELETE',   `/auth/sessions/${sessionId}`),
+
+  // Roku devices — Kairos-owned/persistent (pairing + "known devices" list)
+  getRokuDevices:   ()                                  => request<RokuDevice[]>('GET', '/roku-devices'),
+  addRokuDevice:    (name: string, ip_address: string)  => request<{ id: string; pairing_status: string }>('POST', '/roku-devices', { name, ip_address }),
+  getRokuDevice:    (id: string)                        => request<RokuDevice>('GET', `/roku-devices/${id}`),
+  deleteRokuDevice: (id: string)                        => request<{ ok: boolean }>('DELETE', `/roku-devices/${id}`),
+
+  // Roku device sessions — Hermes-owned/live (the actual cast/command channel)
+  getRokuDeviceState: (id: string)                                   => request<RokuDeviceState>('GET', `/devices/${id}`),
+  sendRokuCommand:    (id: string, command: Record<string, unknown>) => request<{ ok: boolean; status: string }>('POST', `/devices/${id}/command`, command),
   // User management (admin only)
   getUsers:    ()                                            => request<User[]>('GET',    '/users'),
   createUser:  (username: string, password: string, role: string) => request<void>('POST', '/users', { username, password, role }),

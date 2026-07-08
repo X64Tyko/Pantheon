@@ -25,6 +25,7 @@
 #include "services/DownloadService.h"
 #include "services/FillerService.h"
 #include "services/PlaylistService.h"
+#include "services/RokuDeviceService.h"
 #include "services/ScraperService.h"
 #include "services/SchedulerService.h"
 #include "services/SourceService.h"
@@ -166,6 +167,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<ScraperService>(*scraper_mgr_));
 	services_.push_back(std::make_unique<SchedulerService>(ctx));
 	services_.push_back(std::make_unique<TimeslotService>(ctx));
+	services_.push_back(std::make_unique<RokuDeviceService>(ctx));
 	services_.push_back(std::make_unique<PlaybackService>(ctx));
 
 	for (auto& svc : services_) svc->registerRoutes(svr_);

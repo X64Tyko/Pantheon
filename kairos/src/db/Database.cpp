@@ -1530,6 +1530,25 @@ constexpr Migration kMigrations[] = {
     SELECT 'movie', movie_id, 'imdb', imdb_id, 2 FROM movie WHERE imdb_id != '';
 )SQL" }
 
+// ── v67: roku_device — a user's paired Roku channels. Persists across the
+//   channel being closed/reopened and across Hermes restarts (Hermes's own
+//   live device-session registry is in-memory/ephemeral); pairing_token is
+//   cleared once a channel confirms pairing, ip_address/app_id are what let
+//   Hermes ECP-launch the channel when no live session is registered.
+,{ 67, R"SQL(
+    CREATE TABLE roku_device (
+        id                 TEXT PRIMARY KEY,
+        user_id            TEXT NOT NULL REFERENCES user(user_id) ON DELETE CASCADE,
+        name               TEXT NOT NULL,
+        ip_address         TEXT NOT NULL,
+        app_id             TEXT NOT NULL DEFAULT 'dev',
+        pairing_token      TEXT,
+        pairing_expires_at INTEGER,
+        created_at         INTEGER NOT NULL
+    );
+    CREATE INDEX idx_roku_device_user ON roku_device(user_id);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

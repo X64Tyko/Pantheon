@@ -39,6 +39,11 @@ interface PlayerControlsProps {
   controlsVisible: boolean
   onActivity:      () => void
   cast?:           CastBridge
+  // Same shape as CastBridge — useRokuSession() (hades/src/cast-roku/) returns
+  // an identical interface, so this whole component treats "casting to
+  // Chromecast" and "casting to a paired Roku" as two instances of the same
+  // concept rather than duplicating every branch below.
+  roku?:           CastBridge
 }
 
 function fmtTime(ms: number): string {
@@ -54,15 +59,19 @@ function fmtTime(ms: number): string {
 
 export function PlayerControls({
   videoRef, title, isLive, currentMs, durationMs, onSeek, onBack,
-  onOpenTracks, onOpenSettings, showSettings, controlsVisible, onActivity, cast,
+  onOpenTracks, onOpenSettings, showSettings, controlsVisible, onActivity, cast, roku,
 }: PlayerControlsProps) {
   const [playingLocal, setPlayingLocal] = useState(true)
   const [volume,  setVolume]  = useState(1)
   const [muted,   setMuted]   = useState(false)
   const [scrubMs, setScrubMs] = useState<number | null>(null) // non-null while dragging
 
-  const isCasting = cast?.connected ?? false
-  const playing = isCasting ? !cast!.paused : playingLocal
+  // Whichever remote (if either) is actually connected right now — Chromecast
+  // takes priority in the unlikely case both ended up connected at once,
+  // since that's not a state the UI below tries to prevent, only tolerate.
+  const activeRemote = cast?.connected ? cast : roku?.connected ? roku : null
+  const isCasting = activeRemote !== null
+  const playing = isCasting ? !activeRemote!.paused : playingLocal
 
   useEffect(() => {
     const video = videoRef.current
@@ -78,7 +87,7 @@ export function PlayerControls({
   }, [videoRef])
 
   const togglePlay = () => {
-    if (isCasting) { cast!.togglePlay(); return }
+    if (isCasting) { activeRemote!.togglePlay(); return }
     const video = videoRef.current
     if (!video) return
     if (video.paused) video.play().catch(() => {})
@@ -86,7 +95,7 @@ export function PlayerControls({
   }
 
   const toggleMute = () => {
-    if (isCasting) { cast!.toggleMuted(); return }
+    if (isCasting) { activeRemote!.toggleMuted(); return }
     const video = videoRef.current
     if (!video) return
     video.muted = !video.muted
@@ -94,7 +103,7 @@ export function PlayerControls({
   }
 
   const changeVolume = (v: number) => {
-    if (isCasting) { cast!.setVolumeLevel(v); return }
+    if (isCasting) { activeRemote!.setVolumeLevel(v); return }
     const video = videoRef.current
     if (!video) return
     video.volume = v
@@ -103,8 +112,8 @@ export function PlayerControls({
     setMuted(v === 0)
   }
 
-  const displayVolume = isCasting ? cast!.volumeLevel : volume
-  const displayMuted  = isCasting ? cast!.muted       : muted
+  const displayVolume = isCasting ? activeRemote!.volumeLevel : volume
+  const displayMuted  = isCasting ? activeRemote!.muted       : muted
 
   const toggleFullscreen = () => {
     const el = videoRef.current?.parentElement
@@ -143,7 +152,8 @@ export function PlayerControls({
   const settings         = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-settings',   onEnterPress: onOpenSettings,     onArrowPress: guardArrow(), focusable: showSettings })
   const fullscreen         = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-fullscreen', onEnterPress: toggleFullscreen,   onArrowPress: guardArrow() })
   const castBtn  = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-cast', onEnterPress: () => cast?.onRequestCast(), onArrowPress: guardArrow(), focusable: !!cast?.available && !isCasting })
-  const stopCast = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-stop-cast', onEnterPress: () => cast?.endSession(), onArrowPress: guardArrow(), focusable: isCasting })
+  const rokuBtn  = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-roku', onEnterPress: () => roku?.onRequestCast(), onArrowPress: guardArrow(), focusable: !!roku?.available && !isCasting })
+  const stopCast = useFocusable<object, HTMLButtonElement>({ focusKey: 'player-stop-cast', onEnterPress: () => activeRemote?.endSession(), onArrowPress: guardArrow(), focusable: isCasting })
   const scrub = useFocusable<object, HTMLDivElement>({
     focusKey: 'player-scrub',
     focusable: !isLive && durationMs > 0,
@@ -168,14 +178,23 @@ export function PlayerControls({
         <span style={titleStyle}>{title}</span>
         <div style={{ flex: 1 }} />
         {isCasting ? (
-          <button ref={stopCast.ref} data-tv-focused={stopCast.focused} onClick={() => cast?.endSession()} style={iconBtnStyle} aria-label="Stop casting">
+          <button ref={stopCast.ref} data-tv-focused={stopCast.focused} onClick={() => activeRemote?.endSession()} style={iconBtnStyle} aria-label="Stop casting">
             <CastConnectedIcon />
           </button>
-        ) : cast?.available ? (
-          <button ref={castBtn.ref} data-tv-focused={castBtn.focused} onClick={() => cast.onRequestCast()} style={iconBtnStyle} aria-label="Cast">
-            <CastIcon />
-          </button>
-        ) : null}
+        ) : (
+          <>
+            {cast?.available && (
+              <button ref={castBtn.ref} data-tv-focused={castBtn.focused} onClick={() => cast.onRequestCast()} style={iconBtnStyle} aria-label="Cast">
+                <CastIcon />
+              </button>
+            )}
+            {roku?.available && (
+              <button ref={rokuBtn.ref} data-tv-focused={rokuBtn.focused} onClick={() => roku.onRequestCast()} style={iconBtnStyle} aria-label="Play on Roku">
+                <RokuIcon />
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {/* Bottom bar */}
@@ -219,7 +238,7 @@ export function PlayerControls({
           />
 
           {isCasting ? (
-            <span style={castingLabelStyle}>Casting to {cast!.deviceName ?? 'device'}</span>
+            <span style={castingLabelStyle}>Casting to {activeRemote!.deviceName ?? 'device'}</span>
           ) : isLive ? (
             <span style={liveBadgeStyle}>● LIVE</span>
           ) : (
@@ -348,6 +367,18 @@ function CastIcon() {
       <rect x="2" y="2.5" width="14" height="10" rx="1.2" />
       <path d="M2 15.5a4 4 0 0 0-2-3.5M2 12.5a1.5 1.5 0 0 1 1.5 1.5" fill="none" strokeLinecap="round" />
       <circle cx="2.3" cy="15.5" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+function RokuIcon() {
+  // A plain TV/remote glyph, not Roku's trademarked logo — this is a
+  // generic "cast to a TV device" affordance, distinct enough from
+  // CastIcon's Chromecast-style glyph to tell the two buttons apart.
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x="2" y="3" width="14" height="9" rx="1.2" />
+      <path d="M6.5 15h5" strokeLinecap="round" />
+      <path d="M9 12v3" strokeLinecap="round" />
     </svg>
   )
 }

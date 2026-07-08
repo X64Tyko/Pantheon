@@ -50,3 +50,8 @@ desktop.ini
 # Never tracked: it's not part of this monorepo and the symlink target is an
 # absolute, machine-specific path.
 /pantheon-relay
+
+# ── pantheon-roku ──────────────────────────────────────────────────────────────
+# Symlink to a separate, standalone git repo (native Roku channel) — same
+# rationale as pantheon-relay above.
+/pantheon-roku

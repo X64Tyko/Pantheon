@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "api/Router.h"
 #include "broadcast/BroadcasterManager.h"
+#include "devices/DeviceSessionManager.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
 #include <httplib.h>
@@ -49,6 +50,7 @@ int main(int argc, char* argv[]) {
 
     KairosClient kairos(cfg.kairos_url);
     BroadcasterManager broadcasters(cfg.hephaestus_url, cfg.linger_secs);
+    DeviceSessionManager devices;
 
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(32); };
@@ -62,7 +64,7 @@ int main(int argc, char* argv[]) {
 		}                                                                                           
 	}); 
 	
-    registerRoutes(svr, broadcasters, kairos, log_buffer, cfg);
+    registerRoutes(svr, broadcasters, kairos, log_buffer, cfg, devices);
 
     // Relay upstream log streams so the Hades UI sees all service logs via
     // a single /api/logs/stream endpoint on Hermes.
@@ -81,6 +83,17 @@ int main(int argc, char* argv[]) {
         }
     });
     reaper.detach();
+
+    // Periodic reap of device sessions whose long-poll/state-post hasn't
+    // reconnected in 45s — comfortably past the 25s long-poll timeout plus
+    // a connection hiccup, so a healthy channel is never reaped mid-cycle.
+    std::thread device_reaper([&devices, &svr] {
+        while (svr.is_running()) {
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            devices.reap(45'000);
+        }
+    });
+    device_reaper.detach();
 
     std::cout << "[hermes] listening on :" << cfg.port
               << "  hephaestus=" << cfg.hephaestus_url

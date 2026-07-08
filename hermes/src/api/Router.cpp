@@ -1,4 +1,5 @@
 #include "Router.h"
+#include "../devices/DeviceRouter.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <string>
@@ -226,7 +227,8 @@ static void proxyRequest(const std::string& upstream_base,
 }
 
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
-                    KairosClient& kairos, LogBuffer& logs, const Config& cfg) {
+                    KairosClient& kairos, LogBuffer& logs, const Config& cfg,
+                    DeviceSessionManager& devices) {
 
     // ── Health ────────────────────────────────────────────────────────────────
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
@@ -593,6 +595,12 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         res.status = r->status;
         res.set_content(r->body, "application/xml");
     });
+
+    // ── Roku device sessions ──────────────────────────────────────────────────
+    // Registered before the Kairos API proxy below so /api/devices/* is
+    // handled here in Hermes (it owns the live, in-memory session state) and
+    // never falls through to the Kairos catch-all proxy.
+    registerDeviceRoutes(svr, devices, cfg);
 
     // ── Kairos API proxy (all methods) ────────────────────────────────────────
     // Registered before the Hades catch-all so /api/* routes never reach nginx.

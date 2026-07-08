@@ -7,9 +7,12 @@ import { VideoPlayer } from './VideoPlayer'
 import { PlayerControls } from './PlayerControls'
 import { TrackMenu } from './TrackMenu'
 import { SettingsMenu } from './SettingsMenu'
+import { RokuDeviceMenu } from './RokuDeviceMenu'
 import { LoadingThrobber } from './LoadingThrobber'
 import { useNavBack } from '../nav/back'
 import { useCastSession } from '../cast/useCastSession'
+import { useRokuSession } from '../cast-roku/useRokuSession'
+import type { CastMediaArgs } from '../cast/castMedia'
 
 const TARGET_BUFFER_SECS = 6 // matches the HLS segment length — "fully buffered" for throbber purposes
 
@@ -37,7 +40,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
   const [currentMs,   setCurrentMs]   = useState(initialPositionMs)
   const [playerError, setPlayerError] = useState<string | null>(null)
-  const [menu,         setMenu]        = useState<'tracks' | 'settings' | null>(null)
+  const [menu,         setMenu]        = useState<'tracks' | 'settings' | 'roku-devices' | null>(null)
   const [controlsVisible, setControlsVisible] = useState(true)
   const [liveChannel, setLiveChannel] = useState<Channel | null>(null)
   const [buffering, setBuffering] = useState(false)
@@ -45,7 +48,13 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const castSession = useCastSession()
+  const rokuSession = useRokuSession()
   const isCasting = castSession.connected
+  const isCastingRoku = rokuSession.connected
+  // Either remote means "playback is actually happening on that device, not
+  // in this tab" — governs whether the local VideoPlayer/backdrop and
+  // buffering indicator render, same as isCasting did on its own before Roku.
+  const isRemoteActive = isCasting || isCastingRoku
 
   useEffect(() => {
     const video = videoRef.current
@@ -103,28 +112,48 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
   const title = kind === 'channel' ? (liveChannel?.name ?? 'Live TV') : session.title
 
+  // Shared by both senders — Chromecast's LOAD needs the absolute
+  // manifestUrl (the receiver fetches media itself); Roku's load command
+  // (buildRokuLoadCommand, cast-roku/rokuMedia.ts) only reads .route/.currentMs
+  // off the same object and resolves its own manifest server-side.
+  const buildCastArgs = useCallback((): CastMediaArgs => ({
+    // Safe to assert: every call site is only reachable from inside the JSX
+    // block gated on `session.manifestUrl` truthy (the Cast/Roku buttons and
+    // the device-picker menu only render there).
+    manifestUrl: session.manifestUrl!,
+    isLive:      session.isLive,
+    currentMs,
+    metadata: {
+      title:    title,
+      imageUrl: kind === 'movie' ? mediaUrl(`/api/movies/${targetId}/thumb`)
+              : kind === 'channel' ? channelLogoUrl(targetId)
+              : undefined, // episode: no cheap thumb URL without an extra fetch — v1 scope
+    },
+    route: { contentType: kind, contentId: targetId },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [session.manifestUrl, session.isLive, currentMs, title, kind, targetId])
+
   // Fires once per connect, not on every manifestUrl change — casting mid-
   // track-switch isn't supported in v1 (see castMedia.ts), so there's no
   // "reload the receiver" path to wire up here, only the initial handoff.
   useEffect(() => {
     if (!isCasting || !session.manifestUrl) return
-    castSession.load({
-      manifestUrl: session.manifestUrl,
-      isLive:      session.isLive,
-      currentMs,
-      metadata: {
-        title:    title,
-        imageUrl: kind === 'movie' ? mediaUrl(`/api/movies/${targetId}/thumb`)
-                : kind === 'channel' ? channelLogoUrl(targetId)
-                : undefined, // episode: no cheap thumb URL without an extra fetch — v1 scope
-      },
-      route: { contentType: kind, contentId: targetId },
-    }).catch(err => setPlayerError(err?.message ?? 'Failed to start casting'))
+    castSession.load(buildCastArgs()).catch(err => setPlayerError(err?.message ?? 'Failed to start casting'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCasting])
 
+  const requestRoku = () => {
+    if (rokuSession.devices.length === 1) {
+      rokuSession.load(buildCastArgs(), rokuSession.devices[0].id)
+        .catch(err => setPlayerError(err?.message ?? 'Failed to start casting to Roku'))
+    } else if (rokuSession.devices.length > 1) {
+      setMenu('roku-devices')
+    }
+  }
+
   const handleSeek = (ms: number) => {
     if (isCasting) { castSession.seek(ms); setCurrentMs(ms); return }
+    if (isCastingRoku) { rokuSession.seek(ms); setCurrentMs(ms); return }
     const video = videoRef.current
     if (!video) return
     const targetSec = ms / 1000
@@ -166,7 +195,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
       {!session.loading && !session.error && session.manifestUrl && (
         <>
-          {isCasting ? (
+          {isRemoteActive ? (
             // The local hls.js instance only exists inside VideoPlayer — not
             // rendering it while casting tears it down via its own unmount
             // cleanup (hls?.destroy()), same as navigating away normally.
@@ -182,7 +211,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
               onError={setPlayerError}
             />
           )}
-          {buffering && !isCasting && (
+          {buffering && !isRemoteActive && (
             <div style={{ ...overlayStyle, pointerEvents: 'none' }}>
               <LoadingThrobber percent={bufferPercent} />
             </div>
@@ -192,8 +221,8 @@ export function PlayerPage({ kind }: PlayerPageProps) {
               videoRef={videoRef}
               title={title}
               isLive={session.isLive}
-              currentMs={isCasting ? castSession.currentMs : currentMs}
-              durationMs={isCasting ? castSession.durationMs : session.durationMs}
+              currentMs={isCasting ? castSession.currentMs : isCastingRoku ? rokuSession.currentMs : currentMs}
+              durationMs={isCasting ? castSession.durationMs : isCastingRoku ? rokuSession.durationMs : session.durationMs}
               onSeek={handleSeek}
               onBack={() => navigate(-1)}
               onOpenTracks={() => setMenu(m => m === 'tracks' ? null : 'tracks')}
@@ -220,7 +249,28 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                   if (err !== 'cancel') console.error('Cast requestSession() failed:', err)
                 }),
               }}
+              roku={{
+                available:  rokuSession.available,
+                connected:  rokuSession.connected,
+                deviceName: rokuSession.deviceName,
+                paused:     rokuSession.paused,
+                volumeLevel: rokuSession.volumeLevel,
+                muted:       rokuSession.muted,
+                togglePlay: rokuSession.togglePlay,
+                setVolumeLevel: rokuSession.setVolumeLevel,
+                toggleMuted:    rokuSession.toggleMuted,
+                endSession: rokuSession.endSession,
+                onRequestCast: requestRoku,
+              }}
             />
+            {menu === 'roku-devices' && (
+              <RokuDeviceMenu
+                onClose={() => setMenu(null)}
+                devices={rokuSession.devices}
+                onSelect={deviceId => rokuSession.load(buildCastArgs(), deviceId)
+                  .catch(err => setPlayerError(err?.message ?? 'Failed to start casting to Roku'))}
+              />
+            )}
             {menu === 'tracks' && (
               <TrackMenu
                 onClose={() => setMenu(null)}

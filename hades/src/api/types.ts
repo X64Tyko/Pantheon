@@ -31,6 +31,32 @@ export interface CastSessionInfo {
   last_seen:  number
 }
 
+// A user's paired Roku channel (kairos/src/db/RokuDeviceRepository.h) —
+// "paired" false means it's mid-pairing (waiting for the channel to
+// confirm), not yet a usable cast target.
+export interface RokuDevice {
+  id:         string
+  name:       string
+  ip_address: string
+  app_id:     string
+  paired:     boolean
+  created_at: number
+}
+
+// Live playback state as last reported by the device itself (Hermes-owned,
+// in-memory — hermes/src/devices/DeviceSession.h). Empty object if the
+// device hasn't reported anything yet (e.g. just connected, nothing loaded).
+export interface RokuDeviceState {
+  id:    string
+  state: {
+    playing?:    boolean
+    positionMs?: number
+    durationMs?: number
+    volume?:     number
+    muted?:      boolean
+  }
+}
+
 export interface Source {
   source_id:    string
   source_type:  'plex' | 'jellyfin' | 'emby' | 'local'

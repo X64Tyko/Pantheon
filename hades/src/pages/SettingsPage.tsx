@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { statusStore, helpTipsStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
-import type { ArrConfig, CastSessionInfo, ScraperSettings, ScraperStats } from '../api/types'
+import type { ArrConfig, CastSessionInfo, RokuDevice, ScraperSettings, ScraperStats } from '../api/types'
 import { useFocusable } from '../nav/useFocusable'
 import { HelpTip, HelpSection } from '../channel/HelpTip'
 
@@ -108,6 +108,14 @@ export default observer(function SettingsPage() {
   const [castSessions, setCastSessions] = useState<CastSessionInfo[] | null>(null)
   const [revokingCast, setRevokingCast] = useState<string | null>(null)
 
+  const [rokuDevices, setRokuDevices]   = useState<RokuDevice[] | null>(null)
+  const [rokuName,    setRokuName]      = useState('')
+  const [rokuIp,       setRokuIp]        = useState('')
+  const [addingRoku,  setAddingRoku]    = useState(false)
+  const [rokuError,   setRokuError]     = useState<string | null>(null)
+  const [removingRoku, setRemovingRoku] = useState<string | null>(null)
+  const rokuPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
 
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetting,     setResetting]     = useState(false)
@@ -149,6 +157,39 @@ export default observer(function SettingsPage() {
     finally { setRevokingCast(null) }
   }
 
+  // Self-terminating poll (same pattern as pollMatchStatus below) — only
+  // ticks while at least one device is still mid-pairing (the channel
+  // hasn't confirmed via its ECP-delivered pairingId/pairingToken yet).
+  const pollRokuDevices = () => {
+    api.getRokuDevices().then(devices => {
+      setRokuDevices(devices)
+      if (devices.some(d => !d.paired)) rokuPollRef.current = setTimeout(pollRokuDevices, 3000)
+    }).catch(() => setRokuDevices([]))
+  }
+
+  const addRokuDevice = async () => {
+    if (!rokuName.trim() || !rokuIp.trim()) return
+    setAddingRoku(true)
+    setRokuError(null)
+    try {
+      await api.addRokuDevice(rokuName.trim(), rokuIp.trim())
+      setRokuName('')
+      setRokuIp('')
+      if (rokuPollRef.current) clearTimeout(rokuPollRef.current)
+      pollRokuDevices()
+    } catch (err: any) {
+      setRokuError(err?.message ?? 'Failed to add device')
+    } finally {
+      setAddingRoku(false)
+    }
+  }
+
+  const removeRokuDevice = async (id: string) => {
+    setRemovingRoku(id)
+    try { await api.deleteRokuDevice(id); await api.getRokuDevices().then(setRokuDevices) }
+    finally { setRemovingRoku(null) }
+  }
+
   useEffect(() => {
     api.getSettings().then(s => {
       setSettings(s)
@@ -157,6 +198,7 @@ export default observer(function SettingsPage() {
       setCastAppId(s.cast_app_id)
     }).catch(() => setError('Failed to load settings'))
     loadCastSessions()
+    pollRokuDevices()
     api.getArrConfig().then(setArr).catch(() => {})
     api.getScraperSettings().then(setScraperSettings).catch(() => {})
     api.getScraperStats().then(setScraperStats).catch(() => {})
@@ -164,7 +206,10 @@ export default observer(function SettingsPage() {
     // mount) is still running — pollMatchStatus takes over from here on its
     // own if so, and stays quiet otherwise.
     pollMatchStatus()
-    return () => { if (matchPollRef.current) clearTimeout(matchPollRef.current) }
+    return () => {
+      if (matchPollRef.current) clearTimeout(matchPollRef.current)
+      if (rokuPollRef.current)  clearTimeout(rokuPollRef.current)
+    }
   }, [])
 
   const patch = async (update: Partial<Settings>) => {
@@ -498,6 +543,65 @@ const applyBuffer = () => {
                 }}
               >
                 {revokingCast === s.session_id ? 'Revoking…' : 'Revoke'}
+              </NavButton>
+            </SettingRow>
+          ))
+        )}
+      </Section>
+
+      <Section title="Roku Devices">
+        <SettingRow
+          label="Add a Roku device"
+          hint="Enter the IP address shown on the Roku itself (Settings → Network → About) — the Pantheon channel must already be open and signed in on it once before pairing can complete."
+        >
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="text" placeholder="Living Room TV" value={rokuName}
+              onChange={e => setRokuName(e.target.value)}
+              style={{ width: 140, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)', color: 'var(--hds-txt)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}
+            />
+            <input
+              type="text" placeholder="192.168.1.50" value={rokuIp}
+              onChange={e => setRokuIp(e.target.value)}
+              style={{ width: 120, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)', color: 'var(--hds-txt)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}
+            />
+            <NavButton
+              id="roku-add" onClick={addRokuDevice} disabled={addingRoku || !rokuName.trim() || !rokuIp.trim()}
+              style={{
+                padding: '6px 14px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--hds-violet)',
+                background: 'transparent', color: 'var(--hds-violet)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+                opacity: addingRoku ? 0.5 : 1,
+              }}
+            >
+              {addingRoku ? 'Adding…' : 'Add'}
+            </NavButton>
+          </div>
+        </SettingRow>
+        {rokuError && <div style={{ padding: '6px 0', fontSize: 12, color: 'oklch(0.65 0.2 25)' }}>{rokuError}</div>}
+
+        {rokuDevices === null ? (
+          <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>Loading…</div>
+        ) : rokuDevices.length === 0 ? (
+          <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>No Roku devices added yet.</div>
+        ) : (
+          rokuDevices.map(d => (
+            <SettingRow
+              key={d.id}
+              label={d.name}
+              hint={d.paired ? d.ip_address : `${d.ip_address} — waiting for the channel to confirm pairing…`}
+            >
+              <NavButton
+                id={`roku-remove-${d.id}`}
+                onClick={() => removeRokuDevice(d.id)}
+                disabled={removingRoku === d.id}
+                style={{
+                  padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+                  border: '1px solid oklch(0.4 0.15 25)', background: 'transparent',
+                  color: 'oklch(0.65 0.2 25)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+                  opacity: removingRoku === d.id ? 0.5 : 1,
+                }}
+              >
+                {removingRoku === d.id ? 'Removing…' : 'Remove'}
               </NavButton>
             </SettingRow>
           ))
