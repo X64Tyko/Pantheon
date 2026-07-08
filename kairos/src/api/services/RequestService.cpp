@@ -3,6 +3,8 @@
 #include "../RouteHelpers.h"
 #include "../../db/Database.h"
 #include "../../db/DbHelpers.h"
+#include "../../arr/ArrServiceFactory.h"
+#include "../../arr/IArrService.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <ctime>
@@ -116,6 +118,20 @@ void RequestService::registerRoutes(httplib::Server& svr) {
 				route::err(res, 400, "status must be 'approved' or 'rejected'"); return;
 			}
 			auto id = req.path_params.at("id");
+
+			// If approving, we might have add_data to push to Sonarr/Radarr immediately
+			if (status == "approved" && b.contains("arr_add") && b["arr_add"].is_object()) {
+				auto arr_data = b["arr_add"];
+				auto type = arr_data.value("type", "");
+				auto svc  = ArrServiceFactory::make(type, db_);
+				if (svc) {
+					if (!svc->addFromRequest(arr_data)) {
+						route::err(res, 502, "Content marked approved but *arr add failed");
+						return;
+					}
+				}
+			}
+
 			SQLite::Statement upd(db_.get(), "UPDATE content_request SET status=? WHERE request_id=?");
 			upd.bind(1, status); upd.bind(2, id);
 			upd.exec();

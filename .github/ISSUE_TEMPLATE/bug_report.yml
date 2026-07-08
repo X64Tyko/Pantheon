@@ -1,0 +1,70 @@
+name: Bug Report
+description: Report a bug to help us improve Pantheon
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug! Please provide as much information as possible.
+        **Note:** Issues without logs will be closed.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: "Example: 1. Go to '...' 2. Click on '....' 3. Scroll down to '....' 4. See error"
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Please provide the relevant sections from your `kairos.log`.
+        Required path: `data/kairos.log`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        Docker version:
+        GPU driver version (if applicable):
+        Host OS:
+        Browser (if UI issue):
+      value: |
+        Docker:
+        GPU:
+        OS:
+        Browser:
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Self-Check
+      options:
+        - label: I have searched existing issues.
+          required: true
+        - label: I have included logs from `kairos.log`.
+          required: true

@@ -4,17 +4,26 @@ A media platform built around three pillars:
 
 - **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections, and content catalogues across sources.
 - **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, and live EPG. Connect any IPTV client or route through XTeve into Plex DVR.
-- **Media player** — direct playback within Hades.
+- **Media player** — direct playback within Hades and native client applications.
 
-**Kairos** is the scheduling and library engine. **Hades** is the management UI. **Hermes** is the public-facing server (streams, HDHomeRun emulation, EPG, media player API). **Hephaestus** handles the FFmpeg transcoding pipeline.
+## Alpha Release Notice
+
+Pantheon is currently in **Alpha**. This is a source-available engineering artifact. We do not accept unsolicited pull requests. If you encounter an issue, please read our [Contributing Guidelines](CONTRIBUTING.md), check the [Roadmap](docs/ROADMAP.md), and use the [Issue Template](.github/ISSUE_TEMPLATE/bug_report.yml).
 
 ---
 
-## Requirements
+## Status & Coverage
 
-- Docker + Docker Compose
-- A media server with at least one library — **Plex, Jellyfin, Emby**, or a **local filesystem** source are all supported
-- *(Optional)* NVIDIA GPU, or AMD/Intel GPU with VAAPI, for hardware-accelerated transcoding — CPU-only works fine without one
+[![CI](https://github.com/X64Tyko/Pantheon/actions/workflows/ci.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions)
+
+| Component | Status | Test Suite | Coverage (Target) |
+|---|---|---|---|
+| **Kairos** | Alpha | `momus_kairos` | ~85% (Core / Scheduler) |
+| **Hades** | Alpha | `vitest` | ~40% (API / Stores) |
+| **Hermes** | Alpha | `hermes_core` | ~60% (Gateway) |
+| **Hephaestus** | Alpha | `hephaestus_core` | ~70% (Transcoder) |
+
+*Pantheon uses the **Momus** test framework for backend validation and **Vitest** for frontend unit testing.*
 
 ---
 
@@ -111,7 +120,11 @@ Enter the connection details and test the connection.
 
 ### 2. Add libraries and sync
 
-After saving the source, go back into it and add the libraries you want Kairos to know about (TV Shows, Movies). Hit **Sync** — Kairos fetches all episode metadata and file paths. Large libraries take a few minutes; progress is visible in the **Activity** log.
+After saving the source, go back into it and add the libraries you want Kairos to know about (TV Shows, Movies). Hit **Sync** — Kairos fetches all episode metadata and file paths. 
+
+> **Important:** If you have the same media on multiple sources (e.g., Plex and a local mount), make sure to configure **Path Maps** (Step 3) *before* syncing. This allows Pantheon to deduplicate items and register them as the same piece of media rather than creating duplicates.
+
+Large libraries take a few minutes; progress is visible in the **Activity** log.
 
 ### 3. Set the path map
 
@@ -171,7 +184,7 @@ Channels are built from **blocks** — recurring time slots on chosen days, each
 | **Block** | Owns a time window on specific days. Higher priority wins when blocks overlap. |
 | **Advancement** | How the block walks its list: `sequential`, `shuffle`, `smart_shuffle`, `rerun_shuffle`, `rerun_smart` |
 | **Cursor** | Bookmark inside a show — global (shared everywhere), channel (shared on this channel), or block (private). |
-| **Premier block** | Airs each show's next first-run episode in order. Aired episodes enter the rerun pool. |
+| **Timeslot block** | Allows fixed-time programming slots (e.g. "Toonami") with multiple rotating shows and premiere dates. |
 | **Filler** | Patches gaps between programs so the channel never goes dark. Duration-aware: fits clips to the seam. |
 | **Bumpers** | Intro/outro branding clips at block boundaries, plus interstitials every N programs. |
 
@@ -179,9 +192,12 @@ For a full visual breakdown of how all these interact, see the scheduling diagra
 
 ---
 
-## Downloading filler
+## Discovery & Downloads
 
-Kairos includes yt-dlp. Go to **Downloads** in Hades, paste a URL (YouTube playlist, video, etc.), and set the destination path. Point that path at a folder your media server watches so the content shows up as a library item you can add to a filler list.
+Kairos includes yt-dlp integration and *arr stack support:
+
+- **Discovery:** Search TMDB, TVDB, or AniDB directly from Hades and request new content. Requests can be approved to automatically push the media to your Sonarr or Radarr stack.
+- **yt-dlp:** Paste a URL (YouTube playlist, video, etc.) in the Downloads page to pull bumpers and filler directly to your local media folders.
 
 ---
 
@@ -227,41 +243,25 @@ Run both together with `./dev.sh` — starts Kairos on `:8080` and the Hades dev
 
 ## Architecture
 
-```
-                         ┌──────────────────────────────┐
-                         │  Hermes (:8000)               │
-                         │  Public endpoint              │
-                         │  M3U · XMLTV · HDHomeRun      │
-                         │  Hades UI reverse proxy       │
-                         └──────────┬───────────────────┘
-                                    │
-               ┌────────────────────┼────────────────────┐
-               ▼                    ▼                    ▼
-  ┌────────────────────┐  ┌──────────────────┐  ┌─────────────┐
-  │  Kairos (:8080)    │  │  Hephaestus      │  │  Hades      │
-  │  Scheduling engine │  │  FFmpeg pipeline │  │  React UI   │
-  │  EPG materialization│  │  HLS · TS output │  │             │
-  │  Library sync      │  │                  │  │             │
-  │  Plex/Jellyfin/    │  │                  │  │             │
-  │  Emby/Local        │  │                  │  │             │
-  └────────────────────┘  └──────────────────┘  └─────────────┘
-```
-
-Kairos publishes what to play and when. Hephaestus renders it to a stream. Hermes ties everything together into a single user-facing endpoint.
+For a deep-dive into the services, data flow, and technical principles (Manifest Management, Drift Correction, Memory-First Projection), see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
 ## Status
 
-Beta.
+Alpha.
 
 | Area | State   |
 |---|---------|
 | Library sync (Plex, Jellyfin, Emby, local) | Working |
-| Metadata scraping (TMDB, TVDB, AniDB) | Working |
+| Metadata scraping (TMDB, TVDB, AniDB) | Working <experimental> |
+| Discovery & Requests (*arr stack integration) | Working <experimental> |
 | IPTV channel scheduling + EPG | Working |
 | Stream delivery (Hermes + Hephaestus) | Working |
 | Media player | Working |
+| Chromecast | Working <experimental> |
+| Multi-User & Parental Controls | Working <experimental> |
 | HDHomeRun emulation | Working |
+| Log Centralization | Working |
 
 Issues and feedback welcome.

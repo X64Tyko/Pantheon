@@ -156,7 +156,8 @@ export const api = {
   getRequests:    ()                                                                           => request<ContentRequest[]>('GET',    '/requests'),
   createRequest:  (b: { content_type: 'show'|'movie'; source: 'tmdb'|'tvdb'|'anidb'; external_id: string; title: string; year?: number; poster_url?: string }) =>
                     request<{ request_id: string; status: string; duplicate?: boolean }>('POST', '/requests', b),
-  updateRequest:  (id: string, status: 'approved'|'rejected')                                => request<{ok: boolean}>('PATCH',  `/requests/${id}`, { status }),
+  updateRequest:  (id: string, status: 'approved'|'rejected', arr_add?: { type: 'show'|'movie'; add_data: unknown; quality_profile_id: number; root_folder: string; search_on_add?: boolean }) =>
+                    request<{ok: boolean}>('PATCH',  `/requests/${id}`, { status, arr_add }),
   deleteRequest:  (id: string)                                                                => request<{ok: boolean}>('DELETE', `/requests/${id}`),
 
   // Channel filler entries

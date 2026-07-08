@@ -67,10 +67,9 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <HelpSection title="Movie">
               Plays individual movies, one per selection. The block advances through your movie list according to the ORDER setting.
             </HelpSection>
-            <HelpSection title="Premier">
-              <p style={{ margin: '0 0 10px' }}>First-run only — only plays episodes that have never aired on this channel. Before scheduling, the engine checks play history; only unseen episodes are eligible.</p>
-              <p style={{ margin: '0 0 10px' }}>Pair a Premier block with a Rerun block (<b style={{ color: 'var(--hds-txt)' }}>rerun_shuffle</b> or <b style={{ color: 'var(--hds-txt)' }}>rerun_smart</b>) covering the same shows. Once an episode premieres it automatically enters the rerun pool — no manual maintenance needed.</p>
-              <GifSlot label="Premier block paired with Rerun block — new episodes premiere once, then feed into the rerun rotation" />
+            <HelpSection title="Timeslot">
+              <p style={{ margin: '0 0 10px' }}>Fixed-time scheduling for classic programming blocks (e.g., <b>Toonami</b>, <b>One Saturday Morning</b>).</p>
+              <p style={{ margin: '0 0 10px' }}>Timeslot blocks contain multiple slots at exact times. Each slot can rotate through a list of shows based on premiere dates or simple exhaustion, ensuring your schedule stays perfectly aligned with the wall clock.</p>
             </HelpSection>
             <HelpSection title="Filler">
               Fills dead air with short clips (commercials, bumpers) from a filler pool. Filler blocks draw from filler lists attached to any block's FILLER section, or the channel default if none are set. No main content list is needed.

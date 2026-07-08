@@ -12,14 +12,20 @@ cmake_install.cmake
 Makefile
 _deps/
 
+# ── Credentials ───────────────────────────────────────────────────────────────
+kairos.conf
+.env
+*.env
+auth.json
+
 # ── Runtime data (host-volume state — never commit) ───────────────────────────
 data/
 *.db
 *.db-shm
 *.db-wal
-
-# ── Credentials ───────────────────────────────────────────────────────────────
-kairos.conf
+*.log
+image-cache/
+anidb-xml-cache/
 
 # ── IDE ───────────────────────────────────────────────────────────────────────
 .idea/

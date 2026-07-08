@@ -160,6 +160,7 @@ export default observer(function SourcesPage() {
   const [confirmSrc, setConfirmSrc]   = useState<string | null>(null)  // source_id pending removal
   const [confirmLib, setConfirmLib]   = useState<string | null>(null)  // library_id pending removal
   const [confirmPm,  setConfirmPm]    = useState<number  | null>(null) // path-map index pending removal
+  const [confirmSync, setConfirmSync] = useState<string | null>(null) // source_id pending sync confirmation
 
   // ── Path maps ──────────────────────────────────────────────────────────────
   const [pathMaps, setPathMaps]   = useState<PathMap[]>([])
@@ -328,16 +329,47 @@ export default observer(function SourcesPage() {
               </div>
               <div className="text-xs text-zinc-600 truncate">{src.base_url}</div>
               <div className="flex gap-2 pt-0.5">
-                <button
-                  onClick={e => { e.stopPropagation(); store.triggerSync(src.source_id) }}
-                  disabled={store.syncing}
-                  data-tour="sync-source-btn"
-                  className="text-xs px-2 py-0.5 bg-violet-900/30 hover:bg-violet-800/40
-                             text-violet-300 rounded border border-violet-800/30
-                             disabled:opacity-40 transition-colors"
-                >
-                  {store.syncing ? 'Syncing…' : 'Sync'}
-                </button>
+                {confirmSync === src.source_id ? (
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="text-amber-400">Path maps recommended. Sync anyway?</span>
+                    <button
+                      onClick={e => { e.stopPropagation(); store.triggerSync(src.source_id); setConfirmSync(null) }}
+                      className="px-2 py-0.5 rounded bg-amber-900/60 border border-amber-700/50 text-amber-200 hover:bg-amber-800/60 transition-colors"
+                    >Yes</button>
+                    <button
+                      onClick={e => { e.stopPropagation(); setConfirmSync(null) }}
+                      className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+                    >No</button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={async e => {
+                      e.stopPropagation()
+                      let hasMaps = pathMaps.length > 0
+                      // If we're clicking sync on a source that isn't currently selected,
+                      // we need to check its path maps specifically.
+                      if (store.selectedId !== src.source_id) {
+                        try {
+                          const maps = await api.getPathMaps(src.source_id)
+                          hasMaps = maps.length > 0
+                        } catch { hasMaps = true } // fallback to allowing if API fails
+                      }
+
+                      if (!hasMaps && src.source_type !== 'local') {
+                        setConfirmSync(src.source_id)
+                      } else {
+                        store.triggerSync(src.source_id)
+                      }
+                    }}
+                    disabled={store.syncing}
+                    data-tour="sync-source-btn"
+                    className="text-xs px-2 py-0.5 bg-violet-900/30 hover:bg-violet-800/40
+                               text-violet-300 rounded border border-violet-800/30
+                               disabled:opacity-40 transition-colors"
+                  >
+                    {store.syncing ? 'Syncing…' : 'Sync'}
+                  </button>
+                )}
                 {confirmSrc === src.source_id ? (
                   <span className="flex items-center gap-1.5 text-xs">
                     <span className="text-red-400">Remove source + all libraries?</span>
