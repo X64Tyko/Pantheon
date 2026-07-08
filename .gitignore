@@ -17,6 +17,7 @@ kairos.conf
 .env
 *.env
 auth.json
+:memory:
 
 # ── Runtime data (host-volume state — never commit) ───────────────────────────
 data/

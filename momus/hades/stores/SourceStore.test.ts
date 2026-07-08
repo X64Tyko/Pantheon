@@ -241,7 +241,7 @@ describe('SourceStore', () => {
       await store.addLibrary('s1', 'extB', 'TV', 'show')
       expect(mockApi.addLibrary).toHaveBeenCalledWith('s1', {
         external_lib_id: 'extB', display_name: 'TV', library_type: 'show',
-        preferred_scraper: '', preferred_language: '',
+        preferred_scraper: '', preferred_language: '', include_anidb: false
       })
       expect(mockApi.getLibraries).toHaveBeenCalledWith('s1')
       expect(store.libraries).toHaveLength(2)

@@ -14,16 +14,16 @@ Pantheon is currently in **Alpha**. This is a source-available engineering artif
 
 ## Status & Coverage
 
-[![CI](https://github.com/X64Tyko/Pantheon/actions/workflows/ci.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions)
+[![CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-kairos.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions)
 
-| Component | Status | Test Suite | Coverage (Target) |
-|---|---|---|---|
-| **Kairos** | Alpha | `momus_kairos` | ~85% (Core / Scheduler) |
-| **Hades** | Alpha | `vitest` | ~40% (API / Stores) |
-| **Hermes** | Alpha | `hermes_core` | ~60% (Gateway) |
-| **Hephaestus** | Alpha | `hephaestus_core` | ~70% (Transcoder) |
+| Component | Status | Test Suite | Tests | Coverage (Target) |
+|---|---|---|---|---|
+| **Kairos** | Alpha | `momus_kairos` | 304 | ~85% (Core / Scheduler) |
+| **Hades** | Alpha | `vitest` | 133 | ~40% (API / Stores) |
+| **Hermes** | Alpha | `momus_hermes` | 4 | ~10% (Gateway) |
+| **Hephaestus** | Alpha | `momus_hephaestus` | 4 | ~5% (Transcoder) |
 
-*Pantheon uses the **Momus** test framework for backend validation and **Vitest** for frontend unit testing.*
+*Pantheon currently runs **445 automated tests** across the stack using the **Momus** framework and **Vitest**.*
 
 ---
 

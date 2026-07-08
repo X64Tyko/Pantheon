@@ -8,7 +8,7 @@ import { availablePickerTabs } from './utils'
 import { inputStyle } from './styles'
 import { FilterSection } from '../components/PickerFilters'
 import { HelpTip, HelpSection, GifSlot } from './HelpTip'
-import { MediaTile, ShowMediaTile, MediaInfoPanel, useDetailPanel, LoadMoreSentinel, BrowserEmpty } from './BrowserTiles'
+import { MediaTile, ShowMediaTile, MovieMediaTile, MediaInfoPanel, useDetailPanel, LoadMoreSentinel, BrowserEmpty } from './BrowserTiles'
 import type { AddContentParams, InfoItem } from './BrowserTiles'
 import type { ChannelDetailStore } from './store'
 
@@ -165,14 +165,13 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd 
       <div style={{ overflow: 'auto', flex: 1 }} className="scrollbar-dark">
         <div style={gridStyle}>
           {items.map(m => (
-            <MediaTile key={m.movie_id}
-              imgUrl={mediaUrl(`/api/movies/${m.movie_id}/thumb`)}
-              title={m.title}
-              sub={m.year ? String(m.year) : undefined}
-              badge={store.draftContent.some(c => c.content_type === 'movie' && c.content_id === m.movie_id)}
+            <MovieMediaTile key={m.movie_id}
+              movie={m}
+              onAdd={onAdd}
+              onInfoOpen={() => onSelect({ kind: 'movie', id: m.movie_id, seed: m })}
+              isAdded={store.draftContent.some(c => c.content_type === 'movie' && c.content_id === m.movie_id)}
               onDragStart={e => startDrag(e, 'movie', m.movie_id, m.title)}
               onDragEnd={endDrag}
-              onClick={() => onSelect({ kind: 'movie', id: m.movie_id, seed: m })}
             />
           ))}
         </div>

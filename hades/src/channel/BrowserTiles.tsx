@@ -161,8 +161,8 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
               <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', textAlign: 'center', fontFamily: "'JetBrains Mono', monospace" }}>loading…</span>
             ) : seasons !== null ? (
               <>
-                <HoverSeasonBtn onClick={e => add(e, null, show.title, true)}>All</HoverSeasonBtn>
-                {hasSpecials && <HoverSeasonBtn gold onClick={e => add(e, 0, `${show.title} S00`, true)}>S00</HoverSeasonBtn>}
+                <HoverSeasonBtn onClick={e => add(e, null, show.title, true)}>All Episodes</HoverSeasonBtn>
+                {hasSpecials && <HoverSeasonBtn gold onClick={e => add(e, 0, `${show.title} S00`, true)}>S00 Only</HoverSeasonBtn>}
                 {visible.map(s => (
                   <HoverSeasonBtn key={s.number} onClick={e => add(e, s.number, `${show.title} ${seasonLabel(s)}`)}>
                     {seasonLabel(s)}
@@ -184,6 +184,83 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
           <span ref={titleRef} style={{ display: 'block', transition: 'transform 0.35s ease' }}>{show.title}</span>
         </div>
         {show.year && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2 }}>{show.year}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ─── Movie tile with hover add ──────────────────────────────────────────────
+
+export function MovieMediaTile({ movie, onAdd, onInfoOpen, onDragStart, onDragEnd, isAdded }: {
+  movie:       Movie
+  onAdd:       (params: AddContentParams) => void
+  onInfoOpen:  () => void
+  onDragStart?: (e: React.DragEvent) => void
+  onDragEnd?:   () => void
+  isAdded?:     boolean
+}) {
+  const [imgReady, setImgReady] = useState(false)
+  const [hovering, setHovering] = useState(false)
+  const titleRef = useRef<HTMLSpanElement>(null)
+  const imgUrl   = mediaUrl(`/api/movies/${movie.movie_id}/thumb`)
+
+  useEffect(() => {
+    setImgReady(false)
+    const ctrl = new AbortController()
+    imageQueue.load(imgUrl, ctrl.signal).then(() => setImgReady(true)).catch(() => {})
+    return () => ctrl.abort()
+  }, [imgUrl])
+
+  const onMouseEnter = () => {
+    setHovering(true)
+    if (titleRef.current) { const ov = titleRef.current.scrollHeight - 30; if (ov > 0) titleRef.current.style.transform = `translateY(-${ov}px)` }
+  }
+  const onMouseLeave = () => {
+    setHovering(false)
+    if (titleRef.current) titleRef.current.style.transform = ''
+  }
+
+  const add = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onAdd({ content_type: 'movie', content_id: movie.movie_id, title: movie.title })
+  }
+
+  return (
+    <div
+      draggable={!!onDragStart}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onClick={onInfoOpen}
+      style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: `1px solid ${hovering ? 'var(--hds-violet)' : 'var(--hds-line-s)'}`, background: 'var(--hds-bg-2)', transition: 'border-color .1s', position: 'relative' }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg-3)', position: 'relative', overflow: 'hidden' }}>
+        <img src={imgReady ? imgUrl : ''} alt=""
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: imgReady ? 1 : 0, transition: 'opacity .2s' }} />
+
+        {isAdded && !hovering && (
+          <div style={{ position: 'absolute', top: 5, right: 5, width: 18, height: 18, borderRadius: '50%', background: 'var(--hds-violet)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', fontWeight: 700 }}>✓</div>
+        )}
+
+        {hovering && (
+          <div
+            style={{ position: 'absolute', inset: 0, background: 'oklch(0.1 0.02 286 / 0.9)', backdropFilter: 'blur(3px)', display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 3, padding: '8px 12px' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <HoverSeasonBtn onClick={add}>Quick Add</HoverSeasonBtn>
+            <button
+              onClick={e => { e.stopPropagation(); onInfoOpen() }}
+              style={{ padding: '2px 4px', border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, cursor: 'pointer', textAlign: 'center' }}
+            >view details →</button>
+          </div>
+        )}
+      </div>
+      <div style={{ padding: '5px 7px 7px' }}>
+        <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.35, height: 30, overflow: 'hidden' }}>
+          <span ref={titleRef} style={{ display: 'block', transition: 'transform 0.35s ease' }}>{movie.title}</span>
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2 }}>{movie.year || fmtMs(movie.duration_ms)}</div>
       </div>
     </div>
   )

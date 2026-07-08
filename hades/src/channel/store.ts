@@ -805,6 +805,18 @@ export class ChannelDetailStore {
     this.contentDirty = true
   }
 
+  reorderSlots(fromId: string, toId: string, half: 'top' | 'bottom') {
+    const items   = [...this.draftSlots]
+    const fromIdx = items.findIndex(s => s.slot_id === fromId)
+    const toIdx   = items.findIndex(s => s.slot_id === toId)
+    if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return
+    const [moved] = items.splice(fromIdx, 1)
+    const newTo   = items.findIndex(s => s.slot_id === toId)
+    items.splice(half === 'top' ? newTo : newTo + 1, 0, moved)
+    recomputeSlotOffsets(items)
+    this.draftSlots = items
+  }
+
   updateContentField(channelId: string, cid: number, field: 'weight' | 'run_count' | 'episode_order' | 'include_specials', value: number | string | boolean) {
     this.draftContent = this.draftContent.map(c => c.id === cid ? { ...c, [field]: value } : c)
     this.contentDirty = true
