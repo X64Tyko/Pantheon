@@ -148,7 +148,7 @@ export function TvHome() {
     <div ref={homeRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flexShrink: 0 }}>
         {loading ? (
-          <div className="hds-skeleton" style={{ height: '36vh', minHeight: 280 }} />
+          <div className="hds-skeleton" style={{ height: '24vh', minHeight: 190 }} />
         ) : heroItem ? (
           <TvHeroPanel
             item={heroItem}
@@ -207,7 +207,7 @@ export function TvHome() {
           />
         ) : (
           <div style={{
-            height: '36vh', minHeight: 280, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: '24vh', minHeight: 190, display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: 'linear-gradient(135deg, oklch(0.12 0.04 292), oklch(0.16 0.03 280))',
             fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, color: 'var(--hds-txt-3)',
           }}>No content yet</div>
@@ -216,7 +216,7 @@ export function TvHome() {
 
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10,
-          padding: '8px 48px 0', flexShrink: 0,
+          padding: '6px 48px 0', flexShrink: 0,
         }}>
           <LibraryButton onClick={() => navigate('/tv/library')} />
           <GuideButton onClick={() => guideRef.current?.scrollIntoView({ behavior: 'smooth' })} />
@@ -295,7 +295,7 @@ function LibraryButton({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       style={{
         display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-        padding: '11px 22px', borderRadius: 10,
+        padding: '8px 20px', borderRadius: 10,
         border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
         fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
       }}
@@ -316,7 +316,7 @@ function GuideButton({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       style={{
         display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-        padding: '11px 22px', borderRadius: 10,
+        padding: '8px 20px', borderRadius: 10,
         border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
         fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
       }}
@@ -358,7 +358,7 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
 
   return (
     <div style={{
-      position: 'relative', height: '36vh', minHeight: 280,
+      position: 'relative', height: '24vh', minHeight: 190,
       background: bg, flexShrink: 0,
       opacity: fading ? 0 : 1, transition: 'opacity .26s ease',
       overflow: 'hidden',
@@ -373,13 +373,13 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
         pointerEvents: 'none',
       }} />
 
-      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 48px 32px', maxWidth: 780 }}>
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 48px 18px', maxWidth: 780 }}>
         {genres.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
             {genres.map(g => (
               <span key={g} style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                padding: '3px 10px', borderRadius: 12,
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+                padding: '2px 8px', borderRadius: 12,
                 background: 'var(--hds-glass)', border: '1px solid var(--hds-glass-border)',
                 color: 'var(--hds-txt-2)', letterSpacing: '0.06em',
               }}>{g}</span>
@@ -388,14 +388,14 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
         )}
 
         <h1 style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 34, fontWeight: 700,
+          fontFamily: "'Chakra Petch', sans-serif", fontSize: 24, fontWeight: 700,
           color: 'oklch(1 0 0)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em',
           textShadow: heroTextShadow,
         }}>{item.title}</h1>
 
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 16, marginTop: 10, marginBottom: 14,
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-2)',
+          display: 'flex', alignItems: 'center', gap: 16, marginTop: 6, marginBottom: 8,
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-2)',
           textShadow: heroTextShadow,
         }}>
           {item.year && <span>{item.year}</span>}
@@ -405,9 +405,9 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
 
         {overview && (
           <p style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 12, lineHeight: 1.6,
-            color: 'oklch(0.75 0.01 285)', margin: '0 0 22px',
-            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, lineHeight: 1.5,
+            color: 'oklch(0.75 0.01 285)', margin: '0 0 12px',
+            display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden',
             textShadow: heroTextShadow,
           }}>{overview}</p>
         )}
@@ -416,7 +416,7 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
           <button
             ref={play.ref} data-tv-focused={play.focused}
             onClick={onPlay}
-            style={{ ...goldBtnStyle, display: 'flex', alignItems: 'center', gap: 8 }}
+            style={{ ...goldBtnStyle, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 18px' }}
           >
             <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
             Play
@@ -424,7 +424,7 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
           <button
             ref={viewDetail.ref} data-tv-focused={viewDetail.focused}
             onClick={onViewDetail}
-            style={{ ...ghostBtnStyle, backdropFilter: 'blur(8px)' }}
+            style={{ ...ghostBtnStyle, backdropFilter: 'blur(8px)', padding: '8px 18px' }}
           >View Details</button>
         </div>
       </div>
@@ -470,16 +470,6 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
 
 // ── Shelves ──────────────────────────────────────────────────────────────────
 
-// useFocusable's scrollIntoView runs on each card's own root element (see
-// nav/useFocusable.ts) with no idea that a shelf title sits above its row —
-// 'center'-aligning just that element can land the title (and the next
-// shelf's, below) right at the clipped edge of the scroll container. Native
-// scrollIntoView respects scroll-margin on the element being scrolled to, so
-// giving every focusable row item the same top margin (sized to a shelf
-// title's rendered height: 17-18px font + up to 12px bottom padding, plus a
-// little slack) reserves room for its title without any custom scroll math.
-const SHELF_TITLE_SCROLL_MARGIN = 44
-
 interface TvShelfEntry {
   key: string; title: string; year?: number; rating?: number
   thumb_url?: string; onClick: () => void; onFocus?: () => void
@@ -500,19 +490,19 @@ function TvShelf({ title, items, onBlur, endTile }: {
     focusBoundaryDirections: ['left', 'right'],
   })
   return (
-    <div style={{ marginBottom: 16 }} onMouseLeave={onBlur}>
+    <div style={{ marginBottom: 10 }} onMouseLeave={onBlur}>
       <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 17, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 10px',
+        fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
+        color: 'var(--hds-txt)', padding: '0 48px 6px',
       }}>{title}</div>
       <div ref={rowRef} style={{
-        display: 'flex', gap: 16, overflowX: 'auto', overflowY: 'hidden',
-        padding: '2px 48px 10px', scrollbarWidth: 'none', position: 'relative',
+        display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
+        padding: '2px 48px 8px', scrollbarWidth: 'none', position: 'relative',
       }}>
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(item => (
-          <div key={item.key} style={{ flexShrink: 0, width: 125 }}>
+          <div key={item.key} style={{ flexShrink: 0, width: 108 }}>
             <TvShelfCard {...item} onBlur={onBlur} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}
@@ -551,7 +541,6 @@ function TvShelfCard({ title, year, rating, thumb_url, onClick, onFocus, onBlur,
         borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
         transform: active ? 'translateY(-4px)' : 'none',
         transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
-        scrollMarginTop: SHELF_TITLE_SCROLL_MARGIN,
       }}
     >
       <div style={{
@@ -612,13 +601,12 @@ function TvShelfEndTile({ focusKey, onClick, onBlur, onActivate, onDeactivate }:
       onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
       onMouseLeave={() => { setHovered(false); onBlur?.(); onDeactivate() }}
       style={{
-        flexShrink: 0, width: 125, aspectRatio: '2/3', borderRadius: 10, cursor: 'pointer',
+        flexShrink: 0, width: 108, aspectRatio: '2/3', borderRadius: 10, cursor: 'pointer',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
         border: '1px dashed var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt-3)',
         transform: active ? 'translateY(-4px)' : 'none',
         transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
         textAlign: 'center', padding: '0 12px',
-        scrollMarginTop: SHELF_TITLE_SCROLL_MARGIN,
       }}
     >
       <svg width="26" height="26" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -643,19 +631,19 @@ function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]
     focusBoundaryDirections: ['left', 'right'],
   })
   return (
-    <div style={{ marginBottom: 20 }}>
+    <div style={{ marginBottom: 10 }}>
       <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 12px',
+        fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
+        color: 'var(--hds-txt)', padding: '0 48px 6px',
       }}>Continue Watching</div>
       <div ref={rowRef} style={{
-        display: 'flex', gap: 16, overflowX: 'auto', overflowY: 'hidden',
-        padding: '4px 48px 12px', scrollbarWidth: 'none', position: 'relative',
+        display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
+        padding: '4px 48px 8px', scrollbarWidth: 'none', position: 'relative',
       }}>
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
-          <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 125 }}>
+          <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 108 }}>
             <TvContinueWatchingCard item={p} onNavigate={onNavigate} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}
@@ -701,7 +689,6 @@ function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: 
         borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
         transform: active ? 'translateY(-4px)' : 'none',
         transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
-        scrollMarginTop: SHELF_TITLE_SCROLL_MARGIN,
       }}
     >
       <div style={{
