@@ -80,6 +80,7 @@ export const TvLibrary = observer(function TvLibrary() {
             )}
           </>
         )}
+        </div>
       </div>
     </div>
   )
