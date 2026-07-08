@@ -5,8 +5,8 @@ on:
     branches: [master]
     paths:
       - "kairos/**"
-      - "hades/**"
-      - "momus/**"
+      - "momus/kairos/**"
+      - "momus/CMakeLists.txt"
       - ".github/workflows/docker-kairos.yml"
   workflow_dispatch:
 
