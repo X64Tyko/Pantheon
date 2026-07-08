@@ -89,7 +89,8 @@ export default observer(function ActivityPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 24, gap: 20, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 24, gap: 20, overflowY: 'auto' }}
+         className="scrollbar-dark">
 
       {/* Header */}
       <div className="flex items-center justify-between" style={{ flexShrink: 0 }}>
@@ -190,9 +191,12 @@ export default observer(function ActivityPage() {
         </div>
       </div>
 
-      {/* Log viewer — fills remaining height */}
+      {/* Log viewer — fills remaining height, but never shrinks below a
+          readable floor. Without minHeight here, the page's other sections
+          (Sync Status, Now Playing, System Resources) push it down to
+          nothing on a short mobile viewport instead of the page scrolling. */}
       <div className="rounded-lg border border-violet-900/50 bg-zinc-900 overflow-hidden"
-           style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+           style={{ flex: 1, minHeight: 320, display: 'flex', flexDirection: 'column' }}>
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/80" style={{ flexShrink: 0 }}>
           <h2 className="section-label">Engine Logs</h2>
           <div className="flex items-center gap-4">

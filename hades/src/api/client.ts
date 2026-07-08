@@ -386,7 +386,7 @@ export const api = {
   getChapterDetectStatus: () => request<{running: boolean}>('GET', '/chapters/detect/status'),
 
   // System
-  getSystemMetrics: () => request<any>('GET', '/api/system/metrics'),
+  getSystemMetrics: () => request<any>('GET', '/system/metrics'),
 }
 
 export default api
