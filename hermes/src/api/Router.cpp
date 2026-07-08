@@ -62,6 +62,29 @@ static std::string urlEncodeValue(const std::string& s) {
     return out;
 }
 
+static std::string urlDecodeValue(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            int hi = s[i + 1], lo = s[i + 2];
+            if (std::isxdigit(hi) && std::isxdigit(lo)) {
+                if (hi >= '0' && hi <= '9') hi -= '0';
+                else if (hi >= 'a' && hi <= 'f') hi -= 'a' - 10;
+                else if (hi >= 'A' && hi <= 'F') hi -= 'A' - 10;
+                if (lo >= '0' && lo <= '9') lo -= '0';
+                else if (lo >= 'a' && lo <= 'f') lo -= 'a' - 10;
+                else if (lo >= 'A' && lo <= 'F') lo -= 'A' - 10;
+                out += static_cast<char>((hi << 4) | lo);
+                i += 2;
+                continue;
+            }
+        }
+        out += s[i];
+    }
+    return out;
+}
+
 // Build query string from httplib params map, re-encoding values.
 static std::string buildQuery(const httplib::Params& params) {
     std::string q;
@@ -265,6 +288,51 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
             });
         }
         res.set_content(lineup.dump(), "application/json");
+    });
+
+    // ── Image proxy (for CORS/PNA bypass on external art like Plex) ──────────
+    svr.Get("/api/images/proxy", [&cfg](const httplib::Request& req, httplib::Response& res) {
+        auto url = req.get_param_value("url");
+        auto token = req.get_param_value("token");
+        if (url.empty()) {
+            res.status = 400;
+            return;
+        }
+
+        // Validate token via Kairos before fetching external resource
+        httplib::Client authCli(cfg.kairos_url);
+        authCli.set_connection_timeout(5);
+        authCli.set_read_timeout(5);
+        auto authRes = authCli.Get("/api/auth/me", httplib::Headers{{"Authorization", "Bearer " + token}});
+        if (!authRes || authRes->status != 200) {
+            res.status = 401;
+            return;
+        }
+
+        // Split URL into base and path
+        size_t proto = url.find("://");
+        if (proto == std::string::npos) { res.status = 400; return; }
+        size_t host_start = proto + 3;
+        size_t path_start = url.find('/', host_start);
+        std::string base = url.substr(0, path_start);
+        std::string path = (path_start == std::string::npos) ? "/" : url.substr(path_start);
+
+        httplib::Client cli(base);
+        cli.set_connection_timeout(5);
+        cli.set_read_timeout(10);
+        cli.set_follow_location(true);
+        auto r = cli.Get(path);
+
+        if (!r || r->status == 0) {
+            res.status = 502;
+            return;
+        }
+
+        res.status = r->status;
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Cache-Control", "public, max-age=86400"); // 24h
+        auto resp_ct = r->get_header_value("Content-Type");
+        res.set_content(r->body, resp_ct.empty() ? "image/jpeg" : resp_ct);
     });
 
     // ── MPEG-TS live stream ───────────────────────────────────────────────────
