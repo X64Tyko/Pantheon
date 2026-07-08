@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- **Hermes**: Added `/api/images/proxy` endpoint to safely fetch external media art (like Plex thumbnails) from public domains, bypassing browser Private Network Access (PNA) and CORS restrictions.
+- **Hades**: Implemented `mediaUrl` helper to automatically route external URLs through the Hermes image proxy.
+- **Testing**: Expanded Kairos test suite with unit and integration tests for image URL generation (TMDB) and database persistence across shows, movies, and episodes.
+
+### Fixed
+- **Hades TV**: Harmonized TV mode visuals with the main Hades design system, including hero banner vignettes and glassmorphism effects.
+- **Hades TV**: Relocated the library button and optimized vertical shelf spacing for better 10-foot navigation.
+- **CI**: Fixed `NOT_BUILT` test errors by scoping CTest execution to specific targets in component workflows.
+
 ## [v0.1.0-alpha.1] - 2024-05-20
 
 ### Added

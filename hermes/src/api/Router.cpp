@@ -181,6 +181,72 @@ static void proxyRequest(const std::string& upstream_base,
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
                     KairosClient& kairos, LogBuffer& logs, const Config& cfg) {
 
+    // ── Image Proxy ──────────────────────────────────────────────────────────
+    svr.Get("/api/images/proxy", [&kairos](const httplib::Request& req, httplib::Response& res) {
+        auto url_raw = req.get_param_value("url");
+        if (url_raw.empty()) {
+            res.status = 400;
+            res.set_content("Missing url parameter", "text/plain");
+            return;
+        }
+        auto url = urlDecodeValue(url_raw);
+
+        auto token = req.get_param_value("token");
+        if (token.empty()) {
+            res.status = 401;
+            res.set_content("Missing token", "text/plain");
+            return;
+        }
+
+        if (!kairos.validateToken(token)) {
+            res.status = 403;
+            res.set_content("Invalid token", "text/plain");
+            return;
+        }
+
+        // We use a separate httplib client to fetch the remote image
+        // To handle both http and https, we'd ideally need a more robust fetcher
+        // but for now we'll support basic http/https via simple string parsing
+        // and a fresh client per request (inefficient but safe for images).
+        
+        std::string scheme;
+        auto pos = url.find("://");
+        if (pos == std::string::npos) {
+            res.status = 400;
+            res.set_content("Invalid URL scheme", "text/plain");
+            return;
+        }
+        scheme = url.substr(0, pos);
+
+        std::unique_ptr<httplib::Client> cli;
+        if (scheme == "https") {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+            cli = std::make_unique<httplib::Client>(url);
+#else
+            res.status = 500;
+            res.set_content("HTTPS not supported in this build", "text/plain");
+            return;
+#endif
+        } else {
+            cli = std::make_unique<httplib::Client>(url);
+        }
+
+        cli->set_follow_location(true);
+        cli->set_connection_timeout(5);
+        cli->set_read_timeout(10);
+
+        auto r = cli->Get(""); // httplib::Client(url) already contains the path
+        if (r && r->status == 200) {
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_header("Cache-Control", "public, max-age=86400"); // Cache for 1 day
+            auto ct = r->get_header_value("Content-Type");
+            res.set_content(r->body, ct.empty() ? "image/jpeg" : ct);
+        } else {
+            res.status = r ? r->status : 502;
+            res.set_content("Failed to fetch upstream image", "text/plain");
+        }
+    });
+
     // ── Health ────────────────────────────────────────────────────────────────
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(
