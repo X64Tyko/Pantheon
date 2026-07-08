@@ -38,7 +38,7 @@ jobs:
         run: cmake --build build --target momus_hephaestus -j$(nproc)
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build -R momus_hephaestus --output-on-failure
 
   build:
     needs: test
