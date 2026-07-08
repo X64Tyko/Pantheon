@@ -3,7 +3,7 @@ FROM ubuntu:24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake ninja-build g++ git ca-certificates \
-    libssl-dev \
+    libssl-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
