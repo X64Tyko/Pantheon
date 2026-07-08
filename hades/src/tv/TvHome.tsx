@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
+import { useCastSession } from '../cast/useCastSession'
 import { api, mediaUrl } from '../api/client'
 import type { Show, Movie, ShowDetail, MovieDetail, WatchProgress } from '../api/types'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
@@ -24,6 +25,7 @@ function artUrl(item: Show | Movie) {
 
 export function TvHome() {
   const navigate = useNavigate()
+  const cast = useCastSession()
   const allItemsRef = useRef<Map<string, Show | Movie>>(new Map())
 
   const [recentShows,      setRecentShows]      = useState<Show[]>([])
@@ -144,7 +146,27 @@ export function TvHome() {
             currentIdx={heroIdx.current}
             onViewDetail={() => goToLibrary(isShow(heroItem) ? heroItem.show_id : heroItem.movie_id, isShow(heroItem) ? 'show' : 'movie')}
             onPlay={async () => {
-              const path = await resolvePlayPath(isShow(heroItem) ? 'show' : 'movie', isShow(heroItem) ? heroItem.show_id : heroItem.movie_id)
+              const id = isShow(heroItem) ? heroItem.show_id : heroItem.movie_id
+              const type = isShow(heroItem) ? 'show' : 'movie'
+              
+              if (cast.connected) {
+                // If casting, just load it on the remote device and stay here
+                const detail = heroDetail ?? await (isShow(heroItem) ? api.getShow(id) : api.getMovie(id))
+                cast.load({
+                  manifestUrl: `/stream/${type}/${id}/master.m3u8`,
+                  isLive: false,
+                  currentMs: 0, // VOD start from beginning or resume logic could be added
+                  metadata: {
+                    title: heroItem.title,
+                    imageUrl: artUrl(heroItem),
+                    seriesTitle: isShow(heroItem) ? heroItem.title : undefined,
+                  },
+                  route: { contentType: type === 'show' ? 'episode' : 'movie', contentId: id }
+                })
+                return
+              }
+
+              const path = await resolvePlayPath(type, id)
               if (path) navigate(path)
             }}
             onDotClick={i => { startRotation(); goToHero(i) }}
@@ -160,7 +182,7 @@ export function TvHome() {
 
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10,
-          padding: '12px 48px 0', flexShrink: 0,
+          padding: '8px 48px 0', flexShrink: 0,
         }}>
           <LibraryButton onClick={() => navigate('/tv/library')} />
         </div>
@@ -284,11 +306,11 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
     }}>
       <div style={{
         position: 'absolute', inset: 0,
-        background: 'linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%)',
+        background: 'linear-gradient(to right, oklch(0 0 0 / 0.95) 0%, oklch(0 0 0 / 0.4) 48%, transparent 100%)',
       }} />
       <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%',
-        background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 100%)',
+        position: 'absolute', left: 0, right: 0, bottom: 0, height: '42%',
+        background: 'linear-gradient(to top, var(--hds-bg) 0%, oklch(0 0 0 / 0.3) 50%, transparent 100%)',
         pointerEvents: 'none',
       }} />
 
@@ -386,14 +408,14 @@ function TvShelf({ title, items, onBlur, endTile }: {
     focusBoundaryDirections: ['left', 'right'],
   })
   return (
-    <div style={{ marginBottom: 20 }} onMouseLeave={onBlur}>
+    <div style={{ marginBottom: 16 }} onMouseLeave={onBlur}>
       <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 12px',
+        fontFamily: "'Chakra Petch', sans-serif", fontSize: 17, fontWeight: 600,
+        color: 'var(--hds-txt)', padding: '0 48px 10px',
       }}>{title}</div>
       <div ref={rowRef} style={{
         display: 'flex', gap: 16, overflowX: 'auto', overflowY: 'hidden',
-        padding: '4px 48px 12px', scrollbarWidth: 'none', position: 'relative',
+        padding: '2px 48px 10px', scrollbarWidth: 'none', position: 'relative',
       }}>
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>

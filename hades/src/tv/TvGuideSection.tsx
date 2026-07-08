@@ -22,8 +22,8 @@ export function TvGuideSection() {
   return (
     <div>
       <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 12px',
+        fontFamily: "'Chakra Petch', sans-serif", fontSize: 17, fontWeight: 600,
+        color: 'var(--hds-txt)', padding: '0 48px 10px',
       }}>Live Guide</div>
       <GuidePreview channel={focusedChannel} nowProgram={nowProgram} manifestUrl={manifestUrl} onWatch={() => focusedId && watchChannel(focusedId)} />
       <GuideGrid
