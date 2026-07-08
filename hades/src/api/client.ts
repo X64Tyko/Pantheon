@@ -30,18 +30,24 @@ export function channelLogoUrl(channelId: string): string {
   return mediaUrl(`/api/channels/${channelId}/logo`)
 }
 
-// Set while the /tv route tree is mounted (TvShell) so every request — API
-// and /stream alike — carries X-Pantheon-Surface: tv. Kairos downgrades an
-// admin caller to viewer on that header (Router.cpp), and Hermes forwards it
-// through both proxy paths; this is the one place in Hades that toggles it.
-let activeSurface: 'tv' | null = null
-export function setSurface(s: 'tv' | null) { activeSurface = s }
+// Every request — API and /stream alike — carries X-Pantheon-Surface: tv
+// while under the /tv route tree. Kairos downgrades an admin caller to
+// viewer on that header (Router.cpp), and Hermes forwards it through both
+// proxy paths. Derived straight from window.location.pathname (BrowserRouter
+// keeps it in sync on every navigation) rather than a flag toggled by
+// TvShell's mount/unmount effect — a stateful flag can desync from the
+// actual route (e.g. a lazy chunk load racing a fast navigation away) and
+// silently strip admin access on every other page for the rest of the tab.
+function isTvSurface(): boolean {
+  const p = window.location.pathname
+  return p === '/tv' || p.startsWith('/tv/')
+}
 
 /** For fetch() calls to Hermes's /stream/* routes, which sit outside request()'s /api prefix. */
 export function authHeaders(): Record<string, string> {
   const token = localStorage.getItem(TOKEN_KEY)
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
-  if (activeSurface) headers['X-Pantheon-Surface'] = activeSurface
+  if (isTvSurface()) headers['X-Pantheon-Surface'] = 'tv'
   return headers
 }
 

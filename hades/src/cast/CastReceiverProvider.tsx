@@ -85,14 +85,23 @@ export function CastReceiverProvider() {
         return null
       })
 
-      // Default inactivity handling assumes PlayerManager's own engine is
-      // driving playback and reports activity through it — since we bypass
-      // that (see interceptor above), the framework never sees any activity
-      // and kills the app as "idle" after its default timeout, ending the
-      // whole cast session. Same fix pantheon-relay's bootstrap receiver
-      // already needed for the same reason.
+      // Two separate CAF timeouts, easy to conflate:
+      //  - maxInactivity closes the *sender connection* if the receiver can't
+      //    communicate with it — not what's happening here, but bumped anyway
+      //    so a flaky connection doesn't compound the real problem below.
+      //  - disableIdleTimeout is the one that actually matters: by default CAF
+      //    closes the whole receiver app once *it* thinks active playback has
+      //    stopped, which it tracks through PlayerManager's own default engine.
+      //    Since the LOAD interceptor above hands playback off to Hades' own
+      //    VideoPlayer/hls.js instead of letting that default engine drive it,
+      //    CAF never sees confirmation that playback is ongoing and decides
+      //    it's stopped — ending the session after its default grace period.
+      //    Google's own docs call this out as required for exactly this
+      //    "custom player, not the framework's" setup. Same fix pantheon-relay's
+      //    bootstrap receiver already needed for the same reason.
       const options = new cast.framework.CastReceiverOptions()
       options.maxInactivity = 3600
+      options.disableIdleTimeout = true
       context.start(options)
     }).catch(err => console.error('[cast-receiver]', err))
   }, [navigate])

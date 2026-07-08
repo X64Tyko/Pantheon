@@ -175,58 +175,83 @@ void EPGMaterializer::commit(
 
     db_.get().exec("SAVEPOINT sp_commit");
 
-    // Floored at `now`, not `from` — never touch something already airing or past.
-    {
-        std::time_t clear_from = std::max(from, static_cast<std::time_t>(now));
-        SQLite::Statement del(db_.get(), R"(
-            DELETE FROM scheduled_program
-             WHERE channel_id = ? AND status != 'aired'
-               AND wall_clock_start >= ? AND wall_clock_start < ?
+    // Everything below runs inside sp_commit. project() (in generate(), before
+    // commit() is even called) reads blocks fresh from the DB, but a block can
+    // still be deleted by a concurrent request in the gap between that read and
+    // this insert — the block_id FK then aborts the statement. Without this
+    // try/catch that exception unwound straight past RELEASE SAVEPOINT below,
+    // leaving sp_commit open on this connection forever (SQLite has no
+    // destructor-based savepoint guard), so every later commit on any channel
+    // would start failing too. Roll back and release before rethrowing so a
+    // stale reference only ever costs this one request.
+    try {
+        // Floored at `now`, not `from` — never touch something already airing or past.
+        {
+            std::time_t clear_from = std::max(from, static_cast<std::time_t>(now));
+            SQLite::Statement del(db_.get(), R"(
+                DELETE FROM scheduled_program
+                 WHERE channel_id = ? AND status != 'aired'
+                   AND wall_clock_start >= ? AND wall_clock_start < ?
+            )");
+            del.bind(1, channel_id);
+            del.bind(2, static_cast<int64_t>(clear_from));
+            del.bind(3, static_cast<int64_t>(horizon + 7200));
+            del.exec();
+        }
+
+        SQLite::Statement ins(db_.get(), R"(
+            INSERT OR IGNORE INTO scheduled_program
+                (channel_id, block_id, item_type, item_id,
+                 wall_clock_start, wall_clock_end, cursor_json, created_at, is_filler)
+            VALUES (?,?,?,?,?,?,?,?,?)
         )");
-        del.bind(1, channel_id);
-        del.bind(2, static_cast<int64_t>(clear_from));
-        del.bind(3, static_cast<int64_t>(horizon + 7200));
-        del.exec();
+
+        int inserted = 0, skipped = 0;
+        for (const auto& item : result.items) {
+            std::time_t item_end = item.wall_clock_end_ms / 1000;
+            if (item_end > horizon + 7200) break;
+            ins.bind(1, channel_id);
+            if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
+            ins.bind(3, item.item_type);
+            ins.bind(4, item.item_id);
+            ins.bind(5, item.wall_clock_start_ms / 1000);
+            ins.bind(6, item_end);
+            ins.bind(7, item.cursor_json);
+            ins.bind(8, now);
+            ins.bind(9, item.is_filler ? 1 : 0);
+            try {
+                ins.exec();
+                if (db_.get().getChanges() > 0) ++inserted; else ++skipped;
+            } catch (const std::exception& e) {
+                // Most likely a block deleted out from under this projection —
+                // drop just this item rather than failing the whole channel's EPG.
+                std::cerr << "[epg] commit() skipping item channel=" << channel_id
+                          << " block=" << item.block_id << " item=" << item.item_id
+                          << ": " << e.what() << '\n';
+                ++skipped;
+            }
+            ins.reset();
+        }
+        CursorRepository(db_).apply(channel_id, result.cursor_state);
+
+        ScheduleRepository sched_repo(db_);
+        for (const auto& r : result.play_records)
+            sched_repo.recordScheduledPlayHistory(r.item_type, r.item_id, r.channel_id, r.block_id, r.aired_at);
+        for (const auto& r : result.filler_records)
+            sched_repo.recordScheduledFillerHistory(r.item_id, r.channel_id, r.block_id, r.aired_at);
+
+        db_.get().exec("RELEASE SAVEPOINT sp_commit");
+
+        if (epgDebug())
+            std::cout << "[epg] commit() channel=" << channel_id
+                      << " inserted=" << inserted << " skipped=" << skipped << '\n';
+    } catch (...) {
+        try { db_.get().exec("ROLLBACK TO SAVEPOINT sp_commit; RELEASE SAVEPOINT sp_commit"); }
+        catch (...) {}
+        throw;
     }
 
-    SQLite::Statement ins(db_.get(), R"(
-        INSERT OR IGNORE INTO scheduled_program
-            (channel_id, block_id, item_type, item_id,
-             wall_clock_start, wall_clock_end, cursor_json, created_at, is_filler)
-        VALUES (?,?,?,?,?,?,?,?,?)
-    )");
-
-    int inserted = 0, skipped = 0;
-    for (const auto& item : result.items) {
-        std::time_t item_end = item.wall_clock_end_ms / 1000;
-        if (item_end > horizon + 7200) break;
-        ins.bind(1, channel_id);
-        if (item.block_id.empty()) ins.bind(2); else ins.bind(2, item.block_id);
-        ins.bind(3, item.item_type);
-        ins.bind(4, item.item_id);
-        ins.bind(5, item.wall_clock_start_ms / 1000);
-        ins.bind(6, item_end);
-        ins.bind(7, item.cursor_json);
-        ins.bind(8, now);
-        ins.bind(9, item.is_filler ? 1 : 0);
-        ins.exec();
-        if (db_.get().getChanges() > 0) ++inserted; else ++skipped;
-        ins.reset();
-    }
-    CursorRepository(db_).apply(channel_id, result.cursor_state);
-
-    ScheduleRepository sched_repo(db_);
-    for (const auto& r : result.play_records)
-        sched_repo.recordScheduledPlayHistory(r.item_type, r.item_id, r.channel_id, r.block_id, r.aired_at);
-    for (const auto& r : result.filler_records)
-        sched_repo.recordScheduledFillerHistory(r.item_id, r.channel_id, r.block_id, r.aired_at);
-
-    db_.get().exec("RELEASE SAVEPOINT sp_commit");
     persistAnchors();
-
-    if (epgDebug())
-        std::cout << "[epg] commit() channel=" << channel_id
-                  << " inserted=" << inserted << " skipped=" << skipped << '\n';
 }
 
 void EPGMaterializer::ensureScheduled(const std::string& channel_id,

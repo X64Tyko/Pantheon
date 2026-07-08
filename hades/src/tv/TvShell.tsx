@@ -1,18 +1,10 @@
-import { useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
-import { setSurface } from '../api/client'
 
 // Outermost /tv element. No admin sidebar/chrome — mirrors /player/*'s
-// full-screen takeover. Scopes the X-Pantheon-Surface: tv header to exactly
-// the time spent under this route (Kairos downgrades admin->viewer on that
-// header; leaving it set outside /tv would silently strip admin access on
-// every other page in the same tab).
+// full-screen takeover. The X-Pantheon-Surface: tv header (which Kairos uses
+// to downgrade admin->viewer, see api/client.ts) is derived from the current
+// path there, not toggled by this component.
 export function TvShell() {
-  useEffect(() => {
-    setSurface('tv')
-    return () => setSurface(null)
-  }, [])
-
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'var(--hds-bg)',
