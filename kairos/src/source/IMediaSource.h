@@ -53,10 +53,8 @@ public:
     // only LocalSource uses it (to decide, per subdirectory, whether an item
     // belongs in a "mixed" library's show or movie table); every other source
     // gets unambiguous content typing from the server itself and ignores it.
-    virtual std::vector<Show>     fetchShows(const std::string& external_lib_id,
-                                              const std::string& library_type)     = 0;
-    virtual std::vector<Movie>    fetchMovies(const std::string& external_lib_id,
-                                               const std::string& library_type)    = 0;
+    virtual std::vector<Show>     fetchShows(const std::string& external_lib_id)     = 0;
+    virtual std::vector<Movie>    fetchMovies(const std::string& external_lib_id)    = 0;
     // fetchEpisodes is called concurrently — implementations must be thread-safe.
     virtual std::vector<Episode>  fetchEpisodes(const std::string& external_show_id) = 0;
     virtual std::vector<Playlist> fetchPlaylists(const std::string& external_lib_id) = 0;

@@ -137,7 +137,7 @@ std::vector<LibraryInfo> JellyfinBaseSource::listAvailableLibraries() {
 // Shows
 // ---------------------------------------------------------------------------
 
-std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib_id, const std::string& /*library_type*/) {
+std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib_id) {
     const std::string base_path =
         "/Users/" + user_id_ + "/Items"
         "?ParentId=" + external_lib_id +
@@ -218,7 +218,7 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
 // Movies
 // ---------------------------------------------------------------------------
 
-std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_lib_id, const std::string& /*library_type*/) {
+std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_lib_id) {
     const std::string base_path =
         "/Users/" + user_id_ + "/Items"
         "?ParentId=" + external_lib_id +

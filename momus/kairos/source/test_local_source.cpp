@@ -135,7 +135,7 @@ TEST_F(LocalSourceTest, ListSubdirectories_ListsNonHiddenSortedSubdirs) {
 // ============================================================================
 
 TEST_F(LocalSourceTest, FetchShows_ParsesTitleAndYear) {
-    fs::create_directories(root_ / "tv" / "Breaking Bad (2008)");
+    fs::create_directories(root_ / "tv" / "Breaking Bad (2008)" / "Season 01");
     const auto shows = src_->fetchShows((root_ / "tv").string());
     ASSERT_EQ(shows.size(), 1u);
     EXPECT_EQ(shows[0].title, "Breaking Bad");
@@ -144,7 +144,7 @@ TEST_F(LocalSourceTest, FetchShows_ParsesTitleAndYear) {
 }
 
 TEST_F(LocalSourceTest, FetchShows_TitleWithoutYear) {
-    fs::create_directories(root_ / "tv" / "Anime Show");
+    fs::create_directories(root_ / "tv" / "Anime Show" / "Season 01");
     const auto shows = src_->fetchShows((root_ / "tv").string());
     ASSERT_EQ(shows.size(), 1u);
     EXPECT_EQ(shows[0].title, "Anime Show");
@@ -152,16 +152,16 @@ TEST_F(LocalSourceTest, FetchShows_TitleWithoutYear) {
 }
 
 TEST_F(LocalSourceTest, FetchShows_SkipsHiddenDirs) {
-    fs::create_directories(root_ / "tv" / ".hidden_show");
-    fs::create_directories(root_ / "tv" / "Normal Show");
+    fs::create_directories(root_ / "tv" / ".hidden_show" / "Season 01");
+    fs::create_directories(root_ / "tv" / "Normal Show" / "Season 01");
     const auto shows = src_->fetchShows((root_ / "tv").string());
     ASSERT_EQ(shows.size(), 1u);
     EXPECT_EQ(shows[0].title, "Normal Show");
 }
 
 TEST_F(LocalSourceTest, FetchShows_SortedByTitle) {
-    fs::create_directories(root_ / "tv" / "Zorro (1990)");
-    fs::create_directories(root_ / "tv" / "Archer (2009)");
+    fs::create_directories(root_ / "tv" / "Zorro (1990)" / "Season 01");
+    fs::create_directories(root_ / "tv" / "Archer (2009)" / "Season 01");
     const auto shows = src_->fetchShows((root_ / "tv").string());
     ASSERT_EQ(shows.size(), 2u);
     EXPECT_EQ(shows[0].title, "Archer");
@@ -169,7 +169,7 @@ TEST_F(LocalSourceTest, FetchShows_SortedByTitle) {
 }
 
 TEST_F(LocalSourceTest, FetchShows_ShowIdIsFullPath) {
-    fs::create_directories(root_ / "tv" / "Firefly (2002)");
+    fs::create_directories(root_ / "tv" / "Firefly (2002)" / "Season 01");
     const auto shows = src_->fetchShows((root_ / "tv").string());
     ASSERT_EQ(shows.size(), 1u);
     EXPECT_EQ(shows[0].show_id, (root_ / "tv" / "Firefly (2002)").string());

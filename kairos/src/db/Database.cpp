@@ -1583,6 +1583,50 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE movie         ADD COLUMN skip_scraping INTEGER NOT NULL DEFAULT 0;
 )SQL" }
 
+// ── v70: show specials linked to a movie-library file ────────────────────────
+//   A show's special/OVA/TV-movie is often filed as a standalone file in a
+//   Movies library rather than under the show's own folder. linked_movie_id
+//   lets a season-0 episode row resolve playback through that movie's file
+//   while the movie stays fully independent (still browsable/playable on its
+//   own) — see PlaybackService's live join and SyncManager's orphan-cleanup
+//   guard, both of which depend on this column existing.
+//   find_specials is a per-show opt-in so the scan only runs (automatically,
+//   during normal sync) for shows the user actually wants this for.
+//   episode_display_order controls how season-0 episodes are grouped for VOD
+//   browsing: 'season' (default, unchanged) buckets them into one "Specials"
+//   group; 'aired' interleaves them between numbered seasons by air date
+//   (e.g. Gundam movies/OVAs between Season 1 and Season 2).
+//   special_link_candidate is deliberately a new table, not item_match_candidate
+//   — that table keys on (item_type, kairos_id, source, external_id), modelling
+//   alternate identities of ONE item; this is a cross-item link (show + episode
+//   number -> movie) with its own tri-state per candidate.
+,{ 70, R"SQL(
+    ALTER TABLE episode ADD COLUMN linked_movie_id TEXT REFERENCES movie(movie_id) ON DELETE SET NULL;
+    ALTER TABLE show    ADD COLUMN find_specials INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE show    ADD COLUMN episode_display_order TEXT NOT NULL DEFAULT 'season'
+                         CHECK(episode_display_order IN ('season','aired'));
+
+    CREATE TABLE IF NOT EXISTS special_link_candidate (
+        candidate_id      TEXT    PRIMARY KEY,
+        show_id           TEXT    NOT NULL REFERENCES show(show_id) ON DELETE CASCADE,
+        episode_number    INTEGER NOT NULL,
+        special_title     TEXT    NOT NULL,
+        special_overview  TEXT    NOT NULL DEFAULT '',
+        special_air_date  TEXT    NOT NULL DEFAULT '',
+        special_thumb     TEXT    NOT NULL DEFAULT '',
+        source            TEXT    NOT NULL CHECK(source IN ('tmdb','tvdb','anidb')),
+        source_episode_id TEXT    NOT NULL DEFAULT '',
+        movie_id          TEXT    NOT NULL REFERENCES movie(movie_id) ON DELETE CASCADE,
+        score             REAL    NOT NULL DEFAULT 0,
+        accepted          INTEGER,
+        created_at        TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        decided_at        TEXT,
+        UNIQUE(show_id, episode_number, movie_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_special_candidate_show    ON special_link_candidate(show_id);
+    CREATE INDEX IF NOT EXISTS idx_special_candidate_pending ON special_link_candidate(show_id, accepted) WHERE accepted IS NULL;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

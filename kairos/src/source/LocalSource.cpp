@@ -296,22 +296,17 @@ std::vector<LibraryInfo> LocalSource::listSubdirectories(const std::string& path
 }
 
 // ---------------------------------------------------------------------------
-// Shows — each non-hidden top-level subdirectory is a show.
+// Shows — each non-hidden top-level subdirectory is a show validte with looksLikeShowDir.
 // ---------------------------------------------------------------------------
 
-std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id, const std::string& library_type) {
+std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
     std::error_code ec;
     if (!fs::is_directory(external_lib_id, ec)) return {};
-
-    // Only a "mixed" library needs per-subdirectory routing — a library
-    // explicitly typed "show" keeps today's fully-permissive behavior (every
-    // subdirectory is a show), so a correctly-typed library can't regress.
-    const bool filter_mixed = (library_type == "mixed");
 
     std::vector<Show> result;
     for (const auto& entry : fs::directory_iterator(external_lib_id, ec)) {
         if (!entry.is_directory() || isHidden(entry.path())) continue;
-        if (filter_mixed && !looksLikeShowDir(entry.path())) continue;
+        if (!looksLikeShowDir(entry.path())) continue;
         auto [title, year] = parseTitle(entry.path().filename().string());
         Show show;
         show.show_id     = conf_.applyPathMap(entry.path().string()); // mapped path as external key
@@ -334,13 +329,9 @@ std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id, co
 // Movies — subdirectory-per-movie or bare video files at root level.
 // ---------------------------------------------------------------------------
 
-std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id, const std::string& library_type) {
+std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) {
     std::error_code ec;
     if (!fs::is_directory(external_lib_id, ec)) return {};
-
-    // Same reasoning as fetchShows: only "mixed" needs to tell movie folders
-    // apart from show folders; "movie"-typed libraries keep every child.
-    const bool filter_mixed = (library_type == "mixed");
 
     std::vector<Movie> result;
     for (const auto& entry : fs::directory_iterator(external_lib_id, ec)) {
@@ -348,7 +339,7 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id, 
         if (isHidden(p)) continue;
 
         if (entry.is_directory()) {
-            if (filter_mixed && !looksLikeMovieDir(p)) continue;
+            if (!looksLikeMovieDir(p)) continue;
             auto vfiles = videosIn(p);
             if (vfiles.empty()) continue;
             auto [title, year] = parseTitle(p.filename().string());

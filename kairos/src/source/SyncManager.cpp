@@ -332,7 +332,7 @@ void SyncManager::syncShows(IMediaSource& src,
     // ── Fetch shows ──────────────────────────────────────────────────────────
     std::cout << "[sync]   fetching shows: " << label << std::endl;
     const auto t_shows = std::chrono::steady_clock::now();
-    auto shows = src.fetchShows(external_lib_id, library_type);
+    auto shows = src.fetchShows(external_lib_id);
     std::cout << "[sync]   " << label << ": " << shows.size()
               << " show(s) (" << elapsedMs(t_shows, std::chrono::steady_clock::now()) << "ms)"
               << std::endl;
@@ -760,7 +760,7 @@ void SyncManager::syncMovies(IMediaSource& src,
     // ── Fetch ────────────────────────────────────────────────────────────────
     std::cout << "[sync]   fetching movies: " << label << std::endl;
     const auto t_fetch = std::chrono::steady_clock::now();
-    auto movies = src.fetchMovies(external_lib_id, library_type);
+    auto movies = src.fetchMovies(external_lib_id);
     std::cout << "[sync]   " << label << ": " << movies.size()
               << " movie(s) (" << elapsedMs(t_fetch, std::chrono::steady_clock::now()) << "ms)"
               << std::endl;

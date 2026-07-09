@@ -33,12 +33,10 @@ public:
     // like a show (season subdirectories, or episode-numbered filenames) are
     // included, so a mixed library doesn't also create a fake show for every
     // movie folder.
-    std::vector<Show>    fetchShows(const std::string& external_lib_id,
-                                     const std::string& library_type)       override;
+    std::vector<Show>    fetchShows(const std::string& external_lib_id)       override;
     // Each top-level subdirectory (or bare video file) is treated as a movie —
     // same "mixed" filtering as fetchShows, in reverse.
-    std::vector<Movie>   fetchMovies(const std::string& external_lib_id,
-                                      const std::string& library_type)      override;
+    std::vector<Movie>   fetchMovies(const std::string& external_lib_id)      override;
     // external_show_id is the show directory path returned by fetchShows.
     std::vector<Episode> fetchEpisodes(const std::string& external_show_id) override;
 
