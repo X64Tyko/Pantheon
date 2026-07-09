@@ -65,6 +65,28 @@ export function authHeaders(): Record<string, string> {
   return headers
 }
 
+// Fetches the sanitized library/matching-tables sqlite snapshot (see Kairos's
+// GET /api/config/debug-dump) and saves it via the browser's normal download
+// flow. Bypasses request() because the response is a binary sqlite file, not
+// JSON — reuses its Content-Disposition filename so it matches what Kairos
+// actually named the snapshot.
+export async function downloadDebugDump(): Promise<void> {
+  const res = await fetch('/api/config/debug-dump', { headers: authHeaders() })
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError((payload as any).error ?? res.statusText, res.status, payload)
+  }
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1]
+    ?? `kairos-analysis-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.db`
+
+  const blob = await res.blob()
+  const url  = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
 // Carries status/body for callers that need more than the message (e.g. merge's folder-mismatch confirm).
 export class ApiError extends Error {
   status: number

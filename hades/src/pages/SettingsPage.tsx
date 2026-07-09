@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
-import { api } from '../api/client'
+import { api, downloadDebugDump } from '../api/client'
 import { statusStore, helpTipsStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
@@ -120,6 +120,9 @@ export default observer(function SettingsPage() {
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetting,     setResetting]     = useState(false)
   const [resetMsg,      setResetMsg]      = useState<string | null>(null)
+
+  const [dumping, setDumping]   = useState(false)
+  const [dumpMsg, setDumpMsg]   = useState<string | null>(null)
 
   const [arr,     setArr]     = useState<ArrConfig>({ sonarr_url: '', sonarr_api_key: '', radarr_url: '', radarr_api_key: '' })
   const [arrSave, setArrSave] = useState<'idle'|'saving'|'ok'|'err'>('idle')
@@ -261,6 +264,18 @@ const applyBuffer = () => {
     }
   }
 
+  const dumpDebugDb = async () => {
+    setDumping(true)
+    setDumpMsg(null)
+    try {
+      await downloadDebugDump()
+    } catch (e: any) {
+      setDumpMsg(`Error: ${e.message ?? 'Unknown error'}`)
+    } finally {
+      setDumping(false)
+    }
+  }
+
   const clearAllEpg = async () => {
     setClearing(true)
     setClearMsg(null)
@@ -373,6 +388,27 @@ const applyBuffer = () => {
             onChange={v => patch({ verbose_transcode_logs: v })}
           />
         </SettingRow>
+        <SettingRow
+          label="Download DB Snapshot"
+          hint="Downloads a sqlite file with just the library/matching tables (shows, movies, episodes, source mappings, scraper/review-queue data) — no login or session data. For sharing with support or digging into library-count/matching discrepancies offline."
+        >
+          <NavButton
+            id="debug-dump"
+            onClick={dumpDebugDb}
+            disabled={dumping}
+            style={{
+              padding: '5px 14px', borderRadius: 6, border: '1px solid oklch(0.3 0.01 286)',
+              background: 'oklch(0.18 0.01 286)', color: 'var(--hds-txt)',
+              fontSize: 12, cursor: dumping ? 'not-allowed' : 'pointer',
+              fontFamily: "'JetBrains Mono', monospace", opacity: dumping ? 0.6 : 1,
+            }}
+          >
+            {dumping ? 'Preparing…' : 'Download'}
+          </NavButton>
+        </SettingRow>
+        {dumpMsg && (
+          <div style={{ padding: '10px 0 14px', fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{dumpMsg}</div>
+        )}
       </Section>
 
       <Section title="Performance">

@@ -9,6 +9,9 @@
 #include "../../scheduler/RuntimeFlags.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -184,6 +187,69 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("POST /api/config/library/reset", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	// Sanitized snapshot of just the library/matching tables (no user/session
+	// data) for offline analysis of dedupe/scraper issues. Reads via ATTACH
+	// against the live db file rather than the shared connection, so it's
+	// WAL-safe alongside an in-progress sync — never blocks or is blocked by
+	// one. The temp copy lives under the OS temp dir and is deleted again
+	// before the response returns.
+	svr.Get("/api/config/debug-dump", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		namespace fs = std::filesystem;
+		fs::path out_path;
+		try {
+			const std::time_t now = std::time(nullptr);
+			std::tm tm{};
+			gmtime_r(&now, &tm);
+			char stamp[32];
+			std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
+			const std::string filename = std::string("kairos-analysis-") + stamp + ".db";
+			out_path = fs::temp_directory_path() / filename;
+
+			static const std::vector<std::string> kTables = {
+				"media_source", "media_library", "source_mapping",
+				"show", "movie", "episode",
+				"scraper_job", "scanned_file", "match_candidate",
+				"item_match_candidate", "metadata_override",
+			};
+
+			{
+				// Scoped so `out` (and its file handle) closes before we read
+				// the file back below.
+				SQLite::Database out(out_path.string(), SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+				SQLite::Statement attach(out, "ATTACH DATABASE ? AS src");
+				attach.bind(1, db_.get().getFilename());
+				attach.exec();
+
+				SQLite::Transaction txn(out);
+				for (const auto& t : kTables) {
+					SQLite::Statement sq(out, "SELECT sql FROM src.sqlite_master WHERE type='table' AND name=?");
+					sq.bind(1, t);
+					if (!sq.executeStep()) continue; // older schema without this table — skip
+					out.exec(sq.getColumn(0).getString());
+					out.exec("INSERT INTO main." + t + " SELECT * FROM src." + t);
+				}
+				txn.commit();
+				out.exec("DETACH DATABASE src");
+			}
+
+			std::ifstream f(out_path, std::ios::binary);
+			std::string body((std::istreambuf_iterator<char>(f)), {});
+			f.close();
+
+			std::error_code ec;
+			fs::remove(out_path, ec);
+
+			res.set_header("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+			res.set_content(body, "application/octet-stream");
+		} catch (const std::exception& e) {
+			std::error_code ec;
+			if (!out_path.empty()) fs::remove(out_path, ec);
+			route::logErr("GET /api/config/debug-dump", e);
 			route::err(res, 500, e.what());
 		}
 	});
