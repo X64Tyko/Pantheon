@@ -153,10 +153,10 @@ private:
 
     void matchShow (const std::string& library_id, const std::string& kairos_id, const std::string& title,
                     int year, const std::string& tmdb_id, const std::string& tvdb_id,
-                    const std::string& preferred_scraper = "", bool include_anidb = false);
+                    bool include_anidb = false);
     void matchMovie(const std::string& library_id, const std::string& kairos_id, const std::string& title,
                     int year, const std::string& tmdb_id, const std::string& file_path,
-                    const std::string& preferred_scraper = "", bool include_anidb = false);
+                    bool include_anidb = false);
 
     void  storeCandidate(const std::string& item_type, const std::string& kairos_id,
                          const std::string& source,    const std::string& external_id,
@@ -168,6 +168,9 @@ private:
     void  upsertExternalId(const std::string& item_type, const std::string& kairos_id,
                            const std::string& source,    const std::string& external_id,
                            int priority);
+    void  linkExternalId(const std::string& item_type, const std::string& kairos_id,
+                         const std::string& source,    const std::string& external_id,
+                         bool promote_to_primary);
     void  upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
                                const std::string& title);
     double threshold() const;

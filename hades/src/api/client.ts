@@ -153,6 +153,10 @@ export const api = {
   patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'preferred_scraper'|'preferred_language'|'include_anidb'|'show_on_home'>>) =>
                                                         request<void>('PATCH', `/sources/${sourceId}/libraries/${lid}`, b),
   removeLibrary:    (sourceId: string, lid: string)     => request<void>         ('DELETE', `/sources/${sourceId}/libraries/${lid}`),
+  getScraperPriority: (sourceId: string, lid: string, itemType: 'show'|'movie') =>
+                                                        request<{order: string[]}>('GET', `/sources/${sourceId}/libraries/${lid}/scraper-priority?item_type=${itemType}`),
+  setScraperPriority: (sourceId: string, lid: string, itemType: 'show'|'movie', order: string[]) =>
+                                                        request<{ok: boolean}>('PUT', `/sources/${sourceId}/libraries/${lid}/scraper-priority`, { item_type: itemType, order }),
   // Focused sibling of patchLibrary for call sites that only have a
   // library_id (e.g. a Home shelf card) — patchLibrary needs source_id too.
   setLibraryShowOnHome: (libraryId: string, showOnHome: boolean) =>

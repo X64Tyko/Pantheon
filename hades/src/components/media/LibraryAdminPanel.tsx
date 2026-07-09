@@ -185,8 +185,46 @@ export function ExternalIdEditor({ type, id, metadata, isAdmin, onChanged }: {
   onChanged: (m: ItemMetadata) => void;
 }) {
   const [saving, setSaving] = useState(false)
+  const [addValue, setAddValue] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
 
   if (!metadata) return null
+
+  // Accepts "source:id" (e.g. "tmdb:603") — the power-user shortcut for
+  // dropping in a known id without going through search. If that source is
+  // already linked, this updates its id in place rather than erroring or
+  // creating a second row for the same source (item_external_id's key is
+  // item_type+kairos_id+source, so a duplicate source can't coexist anyway).
+  const addId = async () => {
+    const raw = addValue.trim()
+    const sep = raw.indexOf(':')
+    if (sep < 1 || sep === raw.length - 1) {
+      setAddError('Format: source:id — e.g. tmdb:603')
+      return
+    }
+    const source = raw.slice(0, sep).trim().toLowerCase()
+    const external_id = raw.slice(sep + 1).trim()
+    if (!source || !external_id) {
+      setAddError('Format: source:id — e.g. tmdb:603')
+      return
+    }
+
+    setAddError(null)
+    const existing = metadata.external_ids.find(eid => eid.source === source)
+    const ids = existing
+      ? metadata.external_ids.map(eid => eid.source === source ? { ...eid, external_id } : eid)
+      : [...metadata.external_ids, { source, external_id, priority: metadata.external_ids.length + 1 }]
+
+    setSaving(true)
+    try {
+      await api.setItemMetadata(type, id, { external_ids: ids })
+      onChanged({ ...metadata, external_ids: ids })
+      setAddValue('')
+    } catch {
+      setAddError('Failed to add.')
+    }
+    setSaving(false)
+  }
 
   const move = async (index: number, delta: number) => {
     if (!isAdmin) return
@@ -260,9 +298,35 @@ export function ExternalIdEditor({ type, id, metadata, isAdmin, onChanged }: {
         </div>
       ))}
       {isAdmin && (
-        <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: 'var(--hds-txt-3)', marginTop: 2 }}>
-          Priority 1 is the primary source. Drag (or use arrows) to reorder.
-        </p>
+        <>
+          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+            <input
+              value={addValue}
+              onChange={e => { setAddValue(e.target.value); setAddError(null) }}
+              onKeyDown={e => e.key === 'Enter' && addId()}
+              placeholder="source:id — e.g. tmdb:603"
+              disabled={saving}
+              style={{
+                flex: 1, padding: '5px 8px', borderRadius: 6,
+                border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
+                color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                outline: 'none',
+              }}
+            />
+            <button disabled={saving || !addValue.trim()} onClick={addId} style={{
+              padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+              border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
+              color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+              opacity: (saving || !addValue.trim()) ? 0.5 : 1,
+            }}>Add</button>
+          </div>
+          {addError && (
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-match-red)' }}>{addError}</div>
+          )}
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: 'var(--hds-txt-3)', marginTop: 2 }}>
+            Priority 1 is the primary source. Use arrows to reorder — new ids are added at the bottom.
+          </p>
+        </>
       )}
     </div>
   )

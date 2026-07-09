@@ -1549,6 +1549,28 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_roku_device_user ON roku_device(user_id);
 )SQL" }
 
+// ── v68: per-library scraper priority order, split by item_type ─────────────
+//   Replaces the single media_library.preferred_scraper "tie-break only"
+//   field with a real ordered list, so a mixed (show+movie) library can rank
+//   its scrapers differently for each. preferred_scraper is left in place
+//   (some old code paths still display it) but matching no longer reads it —
+//   this table is seeded from it once so existing preferences carry over.
+,{ 68, R"SQL(
+    CREATE TABLE IF NOT EXISTS library_scraper_priority (
+        library_id TEXT    NOT NULL,
+        item_type  TEXT    NOT NULL CHECK(item_type IN ('show','movie')),
+        source     TEXT    NOT NULL,
+        priority   INTEGER NOT NULL,
+        PRIMARY KEY (library_id, item_type, source)
+    );
+    CREATE INDEX idx_lib_scraper_priority ON library_scraper_priority(library_id, item_type);
+
+    INSERT OR IGNORE INTO library_scraper_priority (library_id, item_type, source, priority)
+    SELECT library_id, 'show', preferred_scraper, 1 FROM media_library WHERE preferred_scraper != '';
+    INSERT OR IGNORE INTO library_scraper_priority (library_id, item_type, source, priority)
+    SELECT library_id, 'movie', preferred_scraper, 1 FROM media_library WHERE preferred_scraper != '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

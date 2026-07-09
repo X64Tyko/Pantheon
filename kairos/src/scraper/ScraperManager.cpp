@@ -88,39 +88,47 @@ std::string candidateKey(const std::string& item_type, const std::string& kairos
 // ambiguity, not noise, and auto-accepting one anyway means silently picking
 // whichever the source API happened to list first.
 //
-// Exception: if the library has a preferred scraper and one of the near-best
-// candidates comes from it, that's not ambiguity — it's a tie we already know
-// how to break, so it doesn't need to wait for a human.
+// Exception: if the library has a scraper priority order and one of the
+// near-best candidates comes from a source on that list, that's not
+// ambiguity — it's a tie we already know how to break, so it doesn't need
+// to wait for a human.
 template <typename Cand>
 bool isAmbiguousTie(const std::vector<Cand>& candidates, double best,
-                     const std::string& preferred_scraper, double epsilon = 0.01) {
+                     const std::vector<std::string>& priority_order, double epsilon = 0.01) {
     std::set<std::string> near_best_ids;
-    bool preferred_near_best = false;
+    bool priority_near_best = false;
     for (const auto& c : candidates) {
         if (best - c.score > epsilon) continue;
         near_best_ids.insert(c.ext_id);
-        if (!preferred_scraper.empty() && c.source == preferred_scraper) preferred_near_best = true;
+        if (std::find(priority_order.begin(), priority_order.end(), c.source) != priority_order.end())
+            priority_near_best = true;
     }
-    if (preferred_near_best) return false;
+    if (priority_near_best) return false;
     return near_best_ids.size() > 1;
 }
 
-// Picks the candidate to auto-accept. Ordinarily just the top-scoring one, but
-// when the library has a preferred scraper and one of its candidates is within
-// epsilon of the top score, that candidate wins even if a non-preferred source
-// scored marginally higher — the library owner already told us which source to
-// trust, so a noise-level score difference shouldn't override that.
+// Picks the candidate to auto-accept. Ordinarily just the top-scoring one,
+// but when the library has a scraper priority order, the near-best candidate
+// whose source ranks earliest in that order wins even if a lower-ranked (or
+// unranked) source scored marginally higher — the library owner already told
+// us which sources to trust and in what order, so a noise-level score
+// difference shouldn't override that.
 template <typename Cand>
 const Cand& pickBest(const std::vector<Cand>& candidates, double best,
-                      const std::string& preferred_scraper, double epsilon = 0.01) {
-    if (!preferred_scraper.empty()) {
-        const Cand* preferred = nullptr;
-        for (const auto& c : candidates) {
-            if (c.source != preferred_scraper || best - c.score > epsilon) continue;
-            if (!preferred || c.score > preferred->score) preferred = &c;
+                      const std::vector<std::string>& priority_order, double epsilon = 0.01) {
+    const Cand* best_ranked = nullptr;
+    size_t best_rank = priority_order.size();
+    for (const auto& c : candidates) {
+        if (best - c.score > epsilon) continue;
+        auto it = std::find(priority_order.begin(), priority_order.end(), c.source);
+        if (it == priority_order.end()) continue;
+        size_t rank = static_cast<size_t>(it - priority_order.begin());
+        if (rank < best_rank || (rank == best_rank && (!best_ranked || c.score > best_ranked->score))) {
+            best_rank   = rank;
+            best_ranked = &c;
         }
-        if (preferred) return *preferred;
     }
+    if (best_ranked) return *best_ranked;
     return *std::max_element(candidates.begin(), candidates.end(),
         [](const Cand& a, const Cand& b) { return a.score < b.score; });
 }
@@ -324,6 +332,49 @@ void ScraperManager::upsertExternalId(const std::string& item_type, const std::s
     q.exec();
 }
 
+// Links (source, external_id) to this item without ever silently discarding
+// another already-linked source's entry.
+//
+// promote_to_primary=true means a human explicitly chose this as *the*
+// match (queue accept, manual "Fix Match" pick) — it becomes priority 1 and
+// every other id shifts down to make room, but none of them are deleted.
+// Before this existed, accepting a candidate from a source other than the
+// current primary just upserted priority=1 onto that one source's row,
+// leaving the old primary's row still at priority 1 too — two rows tied for
+// "the" primary source, with the tie broken only by incidental row order.
+//
+// promote_to_primary=false is for ids a scraper's own API response
+// cross-references (e.g. TMDB's show payload also naming a TVDB id) — it
+// only fills in a source that has no entry yet, appended after the current
+// max priority. If that source is already linked, this is a no-op: an
+// automatic cross-reference must never overwrite something a human already
+// set for that source.
+void ScraperManager::linkExternalId(const std::string& item_type, const std::string& kairos_id,
+                                     const std::string& source,    const std::string& external_id,
+                                     bool promote_to_primary) {
+    if (external_id.empty()) return;
+    auto ids = getExternalIds(kairos_id, item_type); // priority ASC
+    bool has_source = std::any_of(ids.begin(), ids.end(),
+        [&](const ExternalId& e) { return e.source == source; });
+
+    if (!promote_to_primary) {
+        if (has_source) return;
+        int next_priority = 1;
+        for (const auto& e : ids) next_priority = std::max(next_priority, e.priority + 1);
+        upsertExternalId(item_type, kairos_id, source, external_id, next_priority);
+        return;
+    }
+
+    std::vector<ExternalId> reordered;
+    reordered.push_back({source, external_id, 1});
+    int next = 2;
+    for (const auto& e : ids) {
+        if (e.source == source) continue;
+        reordered.push_back({e.source, e.external_id, next++});
+    }
+    setExternalIds(kairos_id, item_type, reordered);
+}
+
 void ScraperManager::upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
                                            const std::string& title) {
     if (title.empty()) return;
@@ -420,9 +471,8 @@ void ScraperManager::runMatch(const std::string& target_id,
         std::string sql = R"(
             SELECT s.show_id, s.title, COALESCE(s.year,0), s.tmdb_id, s.tvdb_id,
               COALESCE(ml.library_id, '') AS library_id,
-              COALESCE(ml.preferred_scraper, '') AS preferred_scraper,
               COALESCE(ml.include_anidb, 0) AS include_anidb
-            FROM show s 
+            FROM show s
             LEFT JOIN source_mapping sm ON sm.kairos_id = s.show_id AND sm.item_type = 'show'
             LEFT JOIN media_library ml ON ml.library_id = sm.library_id
             WHERE s.match_status IN ('unscraped','uncertain','unmatched')
@@ -440,8 +490,7 @@ void ScraperManager::runMatch(const std::string& target_id,
                       q.getColumn(2).getInt(),     // year
                       q.getColumn(3).getString(),  // tmdb_id
                       q.getColumn(4).getString(),  // tvdb_id
-                      q.getColumn(6).getString(),  // preferred_scraper
-                      q.getColumn(7).getInt() != 0); // include_anidb
+                      q.getColumn(6).getInt() != 0); // include_anidb
         }
     }
 
@@ -450,7 +499,6 @@ void ScraperManager::runMatch(const std::string& target_id,
         std::string sql = R"(
             SELECT m.movie_id, m.title, COALESCE(m.year,0), m.tmdb_id, COALESCE(m.file_path,''),
               COALESCE(ml.library_id, '') AS library_id,
-              COALESCE(ml.preferred_scraper, '') AS preferred_scraper,
               COALESCE(ml.include_anidb, 0) AS include_anidb
             FROM movie m
             LEFT JOIN source_mapping sm ON sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
@@ -470,8 +518,7 @@ void ScraperManager::runMatch(const std::string& target_id,
                        q.getColumn(2).getInt(),     // year
                        q.getColumn(3).getString(),  // tmdb_id
                        q.getColumn(4).getString(),  // file_path
-                       q.getColumn(6).getString(),  // preferred_scraper
-                       q.getColumn(7).getInt() != 0); // include_anidb
+                       q.getColumn(6).getInt() != 0); // include_anidb
         }
     }
     std::cout << "[scraper] match complete ("
@@ -483,7 +530,7 @@ void ScraperManager::runMatch(const std::string& target_id,
 void ScraperManager::matchShow(const std::string& library_id, const std::string& kairos_id, const std::string& title,
                                 int year, const std::string& tmdb_id,
                                 const std::string& tvdb_id,
-                                const std::string& preferred_scraper, bool include_anidb) {
+                                bool include_anidb) {
     // Resolve the effective search title. When the on-disk folder name disagrees
     // with the source-provided title, the folder is more trustworthy.
     std::string search_title = title;
@@ -539,6 +586,7 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
     if (auto lib = sourceRepo().getLibrary(library_id)) {
         pref_lang = lib->preferred_language;
     }
+    std::vector<std::string> priority = sourceRepo().getScraperPriority(library_id, "show");
 
     // Every enabled source is queried once per candidate title — the
     // folder/source-resolved title plus any admin-supplied alternate titles —
@@ -637,10 +685,11 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
             timedSearch("tvdb", qt, std::move(results));
         }
         // AniDB is anime-only — never queried for a library unless the admin
-        // explicitly opted it in (include_anidb) or chose it as this library's
-        // one preferred scraper outright. Prevents cross-matching an unrelated
-        // general movie/show library against anime titles on title text alone.
-        if (anidb_ && (preferred_scraper == "anidb" || include_anidb)) {
+        // explicitly opted it in (include_anidb) or placed it anywhere in
+        // this library's scraper priority order. Prevents cross-matching an
+        // unrelated general movie/show library against anime titles on
+        // title text alone.
+        if (anidb_ && (include_anidb || std::find(priority.begin(), priority.end(), "anidb") != priority.end())) {
             DLOG << "[scraper]   querying anidb for show \"" << qt << "\" year=" << year << '\n';
             const auto t0 = std::chrono::steady_clock::now();
             auto results = anidb_->searchShows(qt, year);
@@ -659,13 +708,13 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
     if (candidates.empty()) {
         std::cout << "[scraper]   \"" << search_title << "\" → unmatched\n";
         setMatchStatus("show", kairos_id, "unmatched", 0.0);
-    } else if (isAmbiguousTie(candidates, best, preferred_scraper)) {
+    } else if (isAmbiguousTie(candidates, best, priority)) {
         std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
                   << " (ambiguous: 2+ distinct candidates tied at "
                   << std::fixed << std::setprecision(2) << best << ")\n";
         setMatchStatus("show", kairos_id, "uncertain", best);
     } else if (best >= threshold()) {
-        const auto& best_c = pickBest(candidates, best, preferred_scraper);
+        const auto& best_c = pickBest(candidates, best, priority);
         std::cout << "[scraper]   \"" << search_title << "\" → matched"
                   << " (" << best_c.source << ", "
                   << std::fixed << std::setprecision(2) << best << ")\n";
@@ -684,7 +733,7 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
 void ScraperManager::matchMovie(const std::string& library_id, const std::string& kairos_id, const std::string& title,
                                  int year, const std::string& tmdb_id,
                                  const std::string& file_path,
-                                 const std::string& preferred_scraper, bool include_anidb) {
+                                 bool include_anidb) {
     // Resolve the effective search title. When the on-disk folder name disagrees
     // with the source-provided title, the folder is more trustworthy.
     std::string search_title = title;
@@ -730,6 +779,7 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
     if (auto lib = sourceRepo().getLibrary(library_id)) {
         pref_lang = lib->preferred_language;
     }
+    std::vector<std::string> priority = sourceRepo().getScraperPriority(library_id, "movie");
 
     // See matchShow() for why this loops over query titles (real + alternate)
     // and merges into one candidate pool instead of the caller invoking this
@@ -816,10 +866,11 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
             timedSearchM("tvdb", qt, std::move(results));
         }
         // AniDB is anime-only — never queried for a library unless the admin
-        // explicitly opted it in (include_anidb) or chose it as this library's
-        // one preferred scraper outright. Prevents cross-matching an unrelated
-        // general movie/show library against anime titles on title text alone.
-        if (anidb_ && (preferred_scraper == "anidb" || include_anidb)) {
+        // explicitly opted it in (include_anidb) or placed it anywhere in
+        // this library's scraper priority order. Prevents cross-matching an
+        // unrelated general movie/show library against anime titles on
+        // title text alone.
+        if (anidb_ && (include_anidb || std::find(priority.begin(), priority.end(), "anidb") != priority.end())) {
             DLOG << "[scraper]   querying anidb for movie \"" << qt << "\" year=" << year << '\n';
             const auto t0 = std::chrono::steady_clock::now();
             auto results = anidb_->searchMovies(qt, year);
@@ -838,13 +889,13 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
     if (candidates.empty()) {
         std::cout << "[scraper]   \"" << search_title << "\" → unmatched\n";
         setMatchStatus("movie", kairos_id, "unmatched", 0.0);
-    } else if (isAmbiguousTie(candidates, best, preferred_scraper)) {
+    } else if (isAmbiguousTie(candidates, best, priority)) {
         std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
                   << " (ambiguous: 2+ distinct candidates tied at "
                   << std::fixed << std::setprecision(2) << best << ")\n";
         setMatchStatus("movie", kairos_id, "uncertain", best);
     } else if (best >= threshold()) {
-        const auto& best_c = pickBest(candidates, best, preferred_scraper);
+        const auto& best_c = pickBest(candidates, best, priority);
         std::cout << "[scraper]   \"" << search_title << "\" → matched"
                   << " (" << best_c.source << ", "
                   << std::fixed << std::setprecision(2) << best << ")\n";
@@ -970,12 +1021,12 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
 
     // Best-effort: fetch and apply full metadata from the scraper
     try {
-        upsertExternalId(item_type, kairos_id, source, external_id, 1);
+        linkExternalId(item_type, kairos_id, source, external_id, /*promote_to_primary=*/true);
         if (source == "anidb" && anidb_) {
             if (item_type == "show") {
                 auto show = anidb_->fetchShow(external_id, language);
                 if (show) {
-                    upsertExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, 2);
+                    linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
                     SQLite::Statement app(db_.get(), R"(
                         UPDATE show SET
                             tvdb_id       = CASE WHEN locked THEN tvdb_id       ELSE ? END,
@@ -1016,8 +1067,8 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
         if (item_type == "show") {
             auto show = tmdb_->fetchShow(external_id, language);
             if (show) {
-                upsertExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, 2);
-                upsertExternalId(item_type, kairos_id, "imdb", show->imdb_id, 3);
+                linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
+                linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE show SET
                         tmdb_id   = CASE WHEN locked THEN tmdb_id   ELSE ? END,
@@ -1043,7 +1094,7 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
         } else if (item_type == "movie") {
             auto movie = tmdb_->fetchMovie(external_id, language);
             if (movie) {
-                upsertExternalId(item_type, kairos_id, "imdb", movie->imdb_id, 2);
+                linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
                 SQLite::Statement app(db_.get(), R"(
                     UPDATE movie SET
                         tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE ? END,
@@ -1071,8 +1122,8 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
             if (item_type == "show") {
                 auto show = tvdb_->fetchShow(external_id, language);
                 if (show) {
-                    upsertExternalId(item_type, kairos_id, "tmdb", show->tmdb_id, 2);
-                    upsertExternalId(item_type, kairos_id, "imdb", show->imdb_id, 3);
+                    linkExternalId(item_type, kairos_id, "tmdb", show->tmdb_id, /*promote_to_primary=*/false);
+                    linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
                     SQLite::Statement app(db_.get(), R"(
                         UPDATE show SET
                             tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE ? END,
@@ -1344,8 +1395,8 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                 if (item_type == "show") {
                     auto show = tmdb_->fetchShow(id.external_id, language);
                     if (show) {
-                        upsertExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, 2);
-                        upsertExternalId(item_type, kairos_id, "imdb", show->imdb_id, 3);
+                        linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
+                        linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
                         SQLite::Statement app(db_.get(), R"(
                             UPDATE show SET
                                 tmdb_id   = CASE WHEN locked THEN tmdb_id   ELSE COALESCE(NULLIF(?, ''), tmdb_id) END,
@@ -1372,7 +1423,7 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                 } else if (item_type == "movie") {
                     auto movie = tmdb_->fetchMovie(id.external_id, language);
                     if (movie) {
-                        upsertExternalId(item_type, kairos_id, "imdb", movie->imdb_id, 2);
+                        linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
                         SQLite::Statement app(db_.get(), R"(
                             UPDATE movie SET
                                 tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE COALESCE(NULLIF(?, ''), tmdb_id)      END,
@@ -1400,8 +1451,8 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                 if (item_type == "show") {
                     auto show = tvdb_->fetchShow(id.external_id, language);
                     if (show) {
-                        upsertExternalId(item_type, kairos_id, "tmdb", show->tmdb_id, 2);
-                        upsertExternalId(item_type, kairos_id, "imdb", show->imdb_id, 3);
+                        linkExternalId(item_type, kairos_id, "tmdb", show->tmdb_id, /*promote_to_primary=*/false);
+                        linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
                         SQLite::Statement app(db_.get(), R"(
                             UPDATE show SET
                                 tvdb_id  = CASE WHEN locked THEN tvdb_id  ELSE COALESCE(NULLIF(?, ''), tvdb_id) END,
@@ -1425,8 +1476,8 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                 } else if (item_type == "movie") {
                     auto movie = tvdb_->fetchMovie(id.external_id, language);
                     if (movie) {
-                        upsertExternalId(item_type, kairos_id, "tmdb", movie->tmdb_id, 2);
-                        upsertExternalId(item_type, kairos_id, "imdb", movie->imdb_id, 3);
+                        linkExternalId(item_type, kairos_id, "tmdb", movie->tmdb_id, /*promote_to_primary=*/false);
+                        linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
                         SQLite::Statement app(db_.get(), R"(
                             UPDATE movie SET
                                 tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE COALESCE(NULLIF(?, ''), tmdb_id)      END,
@@ -1450,7 +1501,7 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                 if (item_type == "show") {
                     auto show = anidb_->fetchShow(id.external_id, language);
                     if (show) {
-                        upsertExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, 2);
+                        linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
                         SQLite::Statement app(db_.get(), R"(
                             UPDATE show SET
                                 tvdb_id        = CASE WHEN locked THEN tvdb_id        ELSE COALESCE(NULLIF(?, ''), tvdb_id)        END,

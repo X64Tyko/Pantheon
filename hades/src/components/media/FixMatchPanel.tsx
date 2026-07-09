@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, mediaUrl } from '../../api/client'
-import type { ScraperSearchResult } from '../../api/types'
+import type { ItemMetadata, ScraperSearchResult } from '../../api/types'
 import { folderBaseName } from './useMediaDetail'
+import { ExternalIdEditor } from './LibraryAdminPanel'
 
 interface FixMatchPanelProps {
   id:           string
@@ -34,6 +35,15 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
   const [matchingKey, setMatchingKey] = useState<string | null>(null)
   const [error,      setError]      = useState<string | null>(null)
 
+  const [metadata,    setMetadata]    = useState<ItemMetadata | null>(null)
+  const [loadingMeta, setLoadingMeta] = useState(true)
+
+  const loadMetadata = async () => {
+    setLoadingMeta(true)
+    try { setMetadata(await api.getItemMetadata(contentType, id)) } catch {}
+    setLoadingMeta(false)
+  }
+
   const runSearch = async (q: string) => {
     if (!q.trim()) return
     setLoading(true)
@@ -49,14 +59,23 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
 
   useEffect(() => {
     runSearch(defaultQuery)
+    loadMetadata()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const [justMatchedKey, setJustMatchedKey] = useState<string | null>(null)
 
   const handleMatch = async (result: ScraperSearchResult) => {
     const key = `${result.source}:${result.external_id}`
     setMatchingKey(key)
+    setJustMatchedKey(null)
     setError(null)
     try {
+      // manualMatch() promotes this to the primary (priority 1) source
+      // without deleting any other ids already linked — see linkExternalId()
+      // in ScraperManager.cpp. The panel stays open (onMatched no longer
+      // closes it — see LibraryDetailActions), so reload the list below to
+      // reflect the new order right away rather than only on next open.
       await api.manualMatch(id, {
         item_type:   contentType,
         source:      result.source,
@@ -66,11 +85,13 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
         poster_url:  result.poster_url,
         overview:    result.overview,
       })
+      await loadMetadata()
+      setJustMatchedKey(key)
       onMatched()
     } catch {
       setError('Failed to apply match.')
-      setMatchingKey(null)
     }
+    setMatchingKey(null)
   }
 
   return (
@@ -102,6 +123,18 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
           won't be overwritten. Unlock it in Library to update everything.
         </div>
       )}
+
+      <div>
+        <span style={{
+          display: 'block', fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+          letterSpacing: '0.08em', color: 'var(--hds-txt-3)', marginBottom: 5,
+        }}>Linked Ids</span>
+        {loadingMeta ? (
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>Loading…</div>
+        ) : (
+          <ExternalIdEditor type={contentType} id={id} metadata={metadata} isAdmin onChanged={setMetadata} />
+        )}
+      </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
         <input
@@ -169,12 +202,13 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
                     <button
                       onClick={() => handleMatch(r)}
                       disabled={isMatching}
+                      title="Set as the primary match — other linked ids stay put, just reordered below it"
                       style={{
                         flexShrink: 0, padding: '7px 16px', borderRadius: 6, cursor: isMatching ? 'not-allowed' : 'pointer',
                         border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.1)',
                         color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600,
                       }}
-                    >{isMatching ? '…' : 'Use'}</button>
+                    >{isMatching ? '…' : justMatchedKey === key ? '✓ Primary' : 'Use'}</button>
                   </div>
                   <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
                     {r.year && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>{r.year}</span>}

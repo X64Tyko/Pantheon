@@ -48,6 +48,15 @@ public:
     // minimal call to make.
     void setLibraryShowOnHome(const std::string& library_id, bool show_on_home);
 
+    // Ordered scraper preference for this library, split by item_type so a
+    // mixed library can rank differently for shows vs movies. Empty = no
+    // preference (matching falls back to score alone, same as an empty
+    // preferred_scraper did before this existed).
+    std::vector<std::string> getScraperPriority(const std::string& library_id,
+                                                 const std::string& item_type);
+    void setScraperPriority(const std::string& library_id, const std::string& item_type,
+                            const std::vector<std::string>& order);
+
     // ── Source mapping ────────────────────────────────────────────────────────
 
     // Resolve a source-native external_id to a Kairos internal ID.

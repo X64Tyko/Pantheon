@@ -64,6 +64,76 @@ function SourceHelpGuide({ sourceType }: { sourceType: string }) {
   )
 }
 
+// Ordered scraper preference for one library + item type. Replaces the old
+// single "preferred scraper" dropdown — near-best candidates are broken by
+// rank (see ScraperManager.cpp's isAmbiguousTie/pickBest), so this is a real
+// fallback chain, not just a single tie-breaker.
+function ScraperPriorityEditor({ sourceId, libraryId, itemType, availableScrapers }: {
+  sourceId: string
+  libraryId: string
+  itemType: 'show' | 'movie'
+  availableScrapers: string[]
+}) {
+  const [order,  setOrder]  = useState<string[] | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api.getScraperPriority(sourceId, libraryId, itemType).then(r => setOrder(r.order)).catch(() => setOrder([]))
+  }, [sourceId, libraryId, itemType])
+
+  const persist = async (next: string[]) => {
+    setOrder(next)
+    setSaving(true)
+    try { await api.setScraperPriority(sourceId, libraryId, itemType, next) } catch {}
+    setSaving(false)
+  }
+
+  const move = (i: number, delta: number) => {
+    if (!order) return
+    const j = i + delta
+    if (j < 0 || j >= order.length) return
+    const next = [...order]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    persist(next)
+  }
+
+  const remove = (i: number) => { if (order) persist(order.filter((_, idx) => idx !== i)) }
+  const add    = (source: string) => { if (order && source) persist([...order, source]) }
+
+  if (order === null) return <div className="text-xs text-zinc-600">Loading…</div>
+
+  const addable = availableScrapers.filter(s => !order.includes(s))
+
+  return (
+    <div className="space-y-1">
+      <div className="text-[10px] uppercase tracking-wide text-zinc-600">{itemType === 'show' ? 'Shows' : 'Movies'}</div>
+      {order.length === 0 && (
+        <div className="text-xs text-zinc-600">No preference — matching goes purely by score.</div>
+      )}
+      {order.map((source, i) => (
+        <div key={source} className="flex items-center gap-2 px-2 py-1 rounded bg-zinc-950/60 border border-zinc-800/60 text-xs">
+          <span className="text-amber-500 w-4 text-center font-medium">{i + 1}</span>
+          <span className="flex-1 uppercase text-zinc-300">{source}</span>
+          <button disabled={saving || i === 0} onClick={() => move(i, -1)} className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30">↑</button>
+          <button disabled={saving || i === order.length - 1} onClick={() => move(i, 1)} className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30">↓</button>
+          <button disabled={saving} onClick={() => remove(i)} className="text-red-400 hover:text-red-300">×</button>
+        </div>
+      ))}
+      {addable.length > 0 && (
+        <select
+          value=""
+          disabled={saving}
+          onChange={e => add(e.target.value)}
+          className="input w-full text-xs"
+        >
+          <option value="">+ add scraper to priority…</option>
+          {addable.map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+        </select>
+      )}
+    </div>
+  )
+}
+
 export default observer(function SourcesPage() {
   const store = sourceStore
 
@@ -177,6 +247,14 @@ export default observer(function SourcesPage() {
     api.getSamplePath(store.selectedId).then(r => setSample(r.path)).catch(() => setSample(null))
   }, [store.selectedId])
   useEffect(() => { store.fetchAll() }, [])
+
+  // Enabled scrapers, for the per-library priority editor's "add" list.
+  const [enabledScrapers, setEnabledScrapers] = useState<string[]>([])
+  useEffect(() => {
+    api.getScraperSettings()
+      .then(s => setEnabledScrapers(s.configs.filter(c => c.enabled).map(c => c.source)))
+      .catch(() => setEnabledScrapers([]))
+  }, [])
 
   const savePathMaps = async (maps: PathMap[]) => {
     if (!store.selectedId) return
@@ -720,16 +798,6 @@ export default observer(function SourcesPage() {
                       <option value="photo">Photos</option>
                     </select>
                   )}
-                  <select
-                    value={libForm.preferred_scraper}
-                    onChange={e => setLibForm({ ...libForm, preferred_scraper: e.target.value as any })}
-                    className="input w-full"
-                  >
-                    <option value="">No preferred scraper (no tie-break)</option>
-                    <option value="tmdb">Prefer TMDB</option>
-                    <option value="tvdb">Prefer TVDB</option>
-                    <option value="anidb">Prefer AniDB</option>
-                  </select>
                   <label className="flex items-center gap-2 text-sm text-zinc-400">
                     <input
                       type="checkbox"
@@ -828,16 +896,18 @@ export default observer(function SourcesPage() {
                         placeholder="Display name"
                         className="input w-full text-sm"
                       />
-                      <select
-                        value={editForm.preferred_scraper}
-                        onChange={e => setEditForm({ ...editForm, preferred_scraper: e.target.value as any })}
-                        className="input w-full text-sm"
-                      >
-                        <option value="">No preferred scraper (no tie-break)</option>
-                        <option value="tmdb">Prefer TMDB</option>
-                        <option value="tvdb">Prefer TVDB</option>
-                        <option value="anidb">Prefer AniDB</option>
-                      </select>
+                      {(lib.library_type === 'show' || lib.library_type === 'mixed') && (
+                        <ScraperPriorityEditor
+                          sourceId={store.selectedId!} libraryId={lib.library_id}
+                          itemType="show" availableScrapers={enabledScrapers}
+                        />
+                      )}
+                      {(lib.library_type === 'movie' || lib.library_type === 'mixed') && (
+                        <ScraperPriorityEditor
+                          sourceId={store.selectedId!} libraryId={lib.library_id}
+                          itemType="movie" availableScrapers={enabledScrapers}
+                        />
+                      )}
                       <label className="flex items-center gap-2 text-sm text-zinc-400">
                         <input
                           type="checkbox"

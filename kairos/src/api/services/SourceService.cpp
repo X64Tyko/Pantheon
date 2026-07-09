@@ -273,6 +273,35 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		}
 	});
 
+	// GET /api/sources/:id/libraries/:lid/scraper-priority?item_type=show|movie
+	svr.Get("/api/sources/:id/libraries/:lid/scraper-priority", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto lid = req.path_params.at("lid");
+		auto item_type = req.has_param("item_type") ? req.get_param_value("item_type") : "show";
+		if (item_type != "show" && item_type != "movie") { route::err(res, 400, "item_type must be show or movie"); return; }
+		auto order = SourceRepository(db_).getScraperPriority(lid, item_type);
+		route::ok(res, json{{"order", order}}.dump());
+	});
+
+	// PUT /api/sources/:id/libraries/:lid/scraper-priority  body {item_type, order:["tvdb","tmdb"]}
+	svr.Put("/api/sources/:id/libraries/:lid/scraper-priority", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto lid = req.path_params.at("lid");
+		try {
+			auto b = json::parse(req.body);
+			std::string item_type = b.value("item_type", "");
+			if (item_type != "show" && item_type != "movie") { route::err(res, 400, "item_type must be show or movie"); return; }
+			auto order = b.value("order", std::vector<std::string>{});
+			SourceRepository(db_).setScraperPriority(lid, item_type, order);
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const json::exception& e) {
+			route::err(res, 400, e.what());
+		} catch (const std::exception& e) {
+			route::logErr("PUT /api/sources/:id/libraries/:lid/scraper-priority", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
 	svr.Delete("/api/sources/:id/libraries/:lid", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id  = req.path_params.at("id");

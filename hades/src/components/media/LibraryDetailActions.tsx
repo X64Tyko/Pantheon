@@ -283,7 +283,11 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
             defaultQuery={detailTitle}
             locked={!!detail?.locked}
             folderPath={detail?.folder_path}
-            onMatched={() => { setFixMatchOpen(false); refetchDetail() }}
+            // Picking a search result no longer closes the panel — it only
+            // sets the new primary and refreshes the detail's match badge,
+            // so the linked-ids list stays open for further add/remove/
+            // reorder right after. "Close" (onCancel) is the explicit exit.
+            onMatched={refetchDetail}
             onCancel={() => setFixMatchOpen(false)}
           />
         )}
