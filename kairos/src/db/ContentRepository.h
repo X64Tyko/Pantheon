@@ -55,6 +55,7 @@ struct ShowDetail {
     std::optional<int>    year;
     std::optional<double> audience_rating;
     bool locked = false;
+    bool skip_scraping = false;
     int  episode_count = 0;
     std::string labels, network, actors, countries, collections;
     std::string external_id, source_id, source_base_url;
@@ -110,6 +111,7 @@ struct MovieDetail {
     std::string           release_date; // "YYYY-MM-DD"; empty if the source never provided one
     std::optional<double> audience_rating;
     bool locked = false;
+    bool skip_scraping = false;
     std::string overview, tagline, studio, director, genres, thumb, art, imdb_id, tmdb_id;
     std::string labels, actors, countries, collections;
     std::string external_id, source_id, source_base_url;
@@ -245,6 +247,21 @@ public:
     void updateMovie(const std::string& movie_id,
                      const std::vector<StrField>& str_fields,
                      const std::vector<IntField>& int_fields);
+
+    // Toggles per-item scrape exemption. Deliberately separate from
+    // updateShow/updateMovie above, which always set `locked = 1` as a side
+    // effect (correct for metadata-field edits, wrong for this orthogonal
+    // flag). Flipping to true also resets any pending 'uncertain'/'unmatched'
+    // state back to 'unscraped' and clears stale candidates, so the item
+    // disappears from the review queue immediately rather than waiting for
+    // an unrelated match pass to notice.
+    void setShowSkipScraping(const std::string& show_id, bool skip);
+    void setMovieSkipScraping(const std::string& movie_id, bool skip);
+
+    // Bulk version of the above cleanup, for when a whole library's
+    // skip_scraping flag flips true — every mapped show/movie currently
+    // 'uncertain'/'unmatched' resets to 'unscraped' with candidates cleared.
+    void clearPendingMatchStateForLibrary(const std::string& library_id);
 
     // Manual link for cross-source duplicates auto-dedup missed. Moves dup_id's
     // source_mapping rows onto target_id, then deletes the orphaned dup_id.

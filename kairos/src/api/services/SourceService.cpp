@@ -1,6 +1,7 @@
 #include "SourceService.h"
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
+#include "../../db/ContentRepository.h"
 #include "../../db/SourceRepository.h"
 #include "../../log/LogBuffer.h"
 #include "../../source/SyncManager.h"
@@ -214,7 +215,8 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			                  {"preferred_language", lib.preferred_language},
 			                  {"include_anidb", lib.include_anidb},
 			                  {"enabled", lib.enabled},
-			                  {"show_on_home", lib.show_on_home}});
+			                  {"show_on_home", lib.show_on_home},
+			                  {"skip_scraping", lib.skip_scraping}});
 		route::ok(res, result.dump());
 	});
 
@@ -231,6 +233,9 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			bool        include_anidb      = b.value("include_anidb",      false);
 			if (external_lib_id.empty() || display_name.empty()) {
 				route::err(res, 400, "external_lib_id and display_name required"); return;
+			}
+			if (library_type != "show" && library_type != "movie" && library_type != "mixed") {
+				route::err(res, 400, "library_type must be one of: show, movie, mixed"); return;
 			}
 			std::string library_id = SourceRepository(db_).createLibrary(
 				source_id, external_lib_id, display_name, library_type,
@@ -258,10 +263,22 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 				[&lid](const MediaLibraryConfig& l){ return l.library_id == lid; });
 			if (it == libs.end()) { route::err(res, 404, "library not found"); return; }
 			std::string display_name      = b.value("display_name",      it->display_name);
+			std::string library_type      = b.value("library_type",      it->library_type);
 			std::string preferred_scraper = b.value("preferred_scraper", it->preferred_scraper);
 			std::string preferred_language= b.value("preferred_language",it->preferred_language);
 			bool        include_anidb     = b.value("include_anidb",     it->include_anidb);
-			repo.updateLibrary(lid, display_name, preferred_scraper, preferred_language, include_anidb);
+			bool        skip_scraping     = b.value("skip_scraping",     it->skip_scraping);
+			if (library_type != "show" && library_type != "movie" && library_type != "mixed") {
+				route::err(res, 400, "library_type must be one of: show, movie, mixed");
+				return;
+			}
+			repo.updateLibrary(lid, display_name, library_type, preferred_scraper, preferred_language,
+			                   include_anidb, skip_scraping);
+			// Skip-scraping just turned on — clear this library's existing
+			// uncertain/unmatched backlog immediately rather than leaving it
+			// to sit until an unrelated match pass happens to notice.
+			if (skip_scraping && !it->skip_scraping)
+				ContentRepository(db_).clearPendingMatchStateForLibrary(lid);
 			if (b.contains("show_on_home"))
 				repo.setLibraryShowOnHome(lid, b["show_on_home"].get<bool>());
 			route::ok(res, json{{"ok", true}}.dump());

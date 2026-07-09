@@ -35,9 +35,11 @@ public:
 
     void updateLibrary(const std::string& library_id,
                        const std::string& display_name,
+                       const std::string& library_type,
                        const std::string& preferred_scraper,
                        const std::string& preferred_language,
-                       bool include_anidb);
+                       bool include_anidb,
+                       bool skip_scraping);
 
     void removeLibrary(const std::string& library_id);
     std::optional<MediaLibraryConfig> getLibrary(const std::string& library_id);

@@ -67,7 +67,7 @@ std::vector<LibraryInfo> PlexSource::listAvailableLibraries() {
 
 // ---------------------------------------------------------------------------
 
-std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
+std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id, const std::string& /*library_type*/) {
     // Paginated (see fetchMovies for why) — a single request for the whole
     // section is what forced the read timeout up to 120s in the first place,
     // and large enough libraries can still exceed that in one shot.
@@ -167,7 +167,7 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
 
 // ---------------------------------------------------------------------------
 
-std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
+std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id, const std::string& /*library_type*/) {
     // Paginated with X-Plex-Container-Start/Size — a single request for the
     // whole section is what forced the read timeout up to 120s (see the
     // client_ setup in the constructor), and large enough libraries (or slow

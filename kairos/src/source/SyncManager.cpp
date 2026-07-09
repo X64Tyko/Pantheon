@@ -172,6 +172,18 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live) {
     IMediaSource* src = findSource(source_id);
     if (!src || !src->isSupported()) return;
 
+    // Touch all three per-source sets unconditionally, even if this source
+    // ends up with zero show/movie libraries this round (e.g. its only
+    // library's type just flipped to "movie"). Without this, syncShows()/
+    // syncMovies() never running at all leaves no key for this source_id in
+    // by_source_shows/by_source_movies, so runOrphanCleanup's pruneMapping()
+    // can't tell "this source reported zero shows" from "this source was
+    // never considered" — it silently skips pruning and old mappings (plus
+    // their show/episode rows) linger forever instead of self-healing.
+    live.by_source_shows[source_id];
+    live.by_source_episodes[source_id];
+    live.by_source_movies[source_id];
+
     std::cout << "[sync] content: " << source_id << std::endl;
 
     // Drain the cursor before calling syncShows/syncMovies so no read cursor
@@ -204,9 +216,9 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live) {
     for (const auto& lib : libs) {
         const std::string label = source_display + " / " + lib.display_name;
         if (lib.library_type == "show" || lib.library_type == "mixed")
-            syncShows(*src, source_id, lib.library_id, lib.external_lib_id, label, live);
+            syncShows(*src, source_id, lib.library_id, lib.external_lib_id, lib.library_type, label, live);
         if (lib.library_type == "movie" || lib.library_type == "mixed")
-            syncMovies(*src, source_id, lib.library_id, lib.external_lib_id, label, live);
+            syncMovies(*src, source_id, lib.library_id, lib.external_lib_id, lib.library_type, label, live);
     }
 
     syncPlexLinks(source_id);
@@ -260,6 +272,7 @@ void SyncManager::syncShows(IMediaSource& src,
                              const std::string& source_id,
                              const std::string& library_id,
                              const std::string& external_lib_id,
+                             const std::string& library_type,
                              const std::string& label,
                              SyncLiveIds& live) {
     // ── Snapshot load ────────────────────────────────────────────────────────
@@ -319,7 +332,7 @@ void SyncManager::syncShows(IMediaSource& src,
     // ── Fetch shows ──────────────────────────────────────────────────────────
     std::cout << "[sync]   fetching shows: " << label << std::endl;
     const auto t_shows = std::chrono::steady_clock::now();
-    auto shows = src.fetchShows(external_lib_id);
+    auto shows = src.fetchShows(external_lib_id, library_type);
     std::cout << "[sync]   " << label << ": " << shows.size()
               << " show(s) (" << elapsedMs(t_shows, std::chrono::steady_clock::now()) << "ms)"
               << std::endl;
@@ -702,6 +715,7 @@ void SyncManager::syncMovies(IMediaSource& src,
                               const std::string& source_id,
                               const std::string& library_id,
                               const std::string& external_lib_id,
+                              const std::string& library_type,
                               const std::string& label,
                               SyncLiveIds& live) {
     // ── Snapshot load ────────────────────────────────────────────────────────
@@ -746,7 +760,7 @@ void SyncManager::syncMovies(IMediaSource& src,
     // ── Fetch ────────────────────────────────────────────────────────────────
     std::cout << "[sync]   fetching movies: " << label << std::endl;
     const auto t_fetch = std::chrono::steady_clock::now();
-    auto movies = src.fetchMovies(external_lib_id);
+    auto movies = src.fetchMovies(external_lib_id, library_type);
     std::cout << "[sync]   " << label << ": " << movies.size()
               << " movie(s) (" << elapsedMs(t_fetch, std::chrono::steady_clock::now()) << "ms)"
               << std::endl;

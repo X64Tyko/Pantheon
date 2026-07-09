@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { LibraryInfo, PathMap } from '../api/types'
+import type { Library, LibraryInfo, PathMap } from '../api/types'
 import { sourceStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
@@ -183,7 +183,7 @@ export default observer(function SourcesPage() {
 
   // ── Library edit state ─────────────────────────────────────────────────────
   const [editingLib, setEditingLib] = useState<string | null>(null)
-  const [editForm, setEditForm]     = useState({ display_name: '', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false, show_on_home: true })
+  const [editForm, setEditForm]     = useState({ display_name: '', library_type: 'show' as Library['library_type'], preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false, show_on_home: true, skip_scraping: false })
 
   // ── Local folder browser ───────────────────────────────────────────────────
   const [localBrowsePath,    setLocalBrowsePath]   = useState('')
@@ -209,9 +209,9 @@ export default observer(function SourcesPage() {
     setLocalBrowsePath(''); setLocalEntries([])
   }
 
-  const openEditLib = (lib: { library_id: string; display_name: string; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string; include_anidb: boolean; show_on_home: boolean }) => {
+  const openEditLib = (lib: { library_id: string; display_name: string; library_type: Library['library_type']; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string; include_anidb: boolean; show_on_home: boolean; skip_scraping: boolean }) => {
     setEditingLib(lib.library_id)
-    setEditForm({ display_name: lib.display_name, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '', include_anidb: lib.include_anidb, show_on_home: lib.show_on_home })
+    setEditForm({ display_name: lib.display_name, library_type: lib.library_type, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '', include_anidb: lib.include_anidb, show_on_home: lib.show_on_home, skip_scraping: lib.skip_scraping })
     setConfirmLib(null)
   }
 
@@ -857,6 +857,9 @@ export default observer(function SourcesPage() {
                         {!lib.show_on_home && (
                           <><span>·</span><span className="text-amber-500">hidden from Home</span></>
                         )}
+                        {lib.skip_scraping && (
+                          <><span>·</span><span className="text-zinc-500">scraping off</span></>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -896,6 +899,20 @@ export default observer(function SourcesPage() {
                         placeholder="Display name"
                         className="input w-full text-sm"
                       />
+                      <select
+                        value={editForm.library_type}
+                        onChange={e => setEditForm({ ...editForm, library_type: e.target.value as Library['library_type'] })}
+                        className="input w-full text-sm"
+                      >
+                        <option value="show">Show</option>
+                        <option value="movie">Movie</option>
+                        <option value="mixed">Mixed (shows and movies together)</option>
+                      </select>
+                      {editForm.library_type !== lib.library_type && (
+                        <p className="text-xs text-amber-500">
+                          Changing this reclassifies the library's items on the next sync.
+                        </p>
+                      )}
                       {(lib.library_type === 'show' || lib.library_type === 'mixed') && (
                         <ScraperPriorityEditor
                           sourceId={store.selectedId!} libraryId={lib.library_id}
@@ -923,6 +940,14 @@ export default observer(function SourcesPage() {
                           onChange={e => setEditForm({ ...editForm, show_on_home: e.target.checked })}
                         />
                         Show in Home shelves
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={editForm.skip_scraping}
+                          onChange={e => setEditForm({ ...editForm, skip_scraping: e.target.checked })}
+                        />
+                        Skip scraping (filler, bumpers, home videos)
                       </label>
                       <select
                         value={editForm.preferred_language}

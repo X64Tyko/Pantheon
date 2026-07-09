@@ -28,10 +28,17 @@ public:
     // Used by the /api/sources/:id/fs endpoint for the folder browser.
     std::vector<LibraryInfo> listSubdirectories(const std::string& path);
 
-    // Each top-level subdirectory is treated as a show.
-    std::vector<Show>    fetchShows(const std::string& external_lib_id)     override;
-    // Each top-level subdirectory (or bare video file) is treated as a movie.
-    std::vector<Movie>   fetchMovies(const std::string& external_lib_id)    override;
+    // Each top-level subdirectory is treated as a show — unless library_type
+    // is "mixed", in which case only subdirectories that structurally look
+    // like a show (season subdirectories, or episode-numbered filenames) are
+    // included, so a mixed library doesn't also create a fake show for every
+    // movie folder.
+    std::vector<Show>    fetchShows(const std::string& external_lib_id,
+                                     const std::string& library_type)       override;
+    // Each top-level subdirectory (or bare video file) is treated as a movie —
+    // same "mixed" filtering as fetchShows, in reverse.
+    std::vector<Movie>   fetchMovies(const std::string& external_lib_id,
+                                      const std::string& library_type)      override;
     // external_show_id is the show directory path returned by fetchShows.
     std::vector<Episode> fetchEpisodes(const std::string& external_show_id) override;
 

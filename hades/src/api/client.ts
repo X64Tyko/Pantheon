@@ -172,7 +172,7 @@ export const api = {
   getLibraries:     (sourceId: string)                  => request<Library[]>    ('GET',    `/sources/${sourceId}/libraries`),
   addLibrary:       (sourceId: string, b: Pick<Library, 'external_lib_id'|'display_name'|'library_type'|'preferred_scraper'|'preferred_language'|'include_anidb'>) =>
                                                         request<{library_id: string}>('POST', `/sources/${sourceId}/libraries`, b),
-  patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'preferred_scraper'|'preferred_language'|'include_anidb'|'show_on_home'>>) =>
+  patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'library_type'|'preferred_scraper'|'preferred_language'|'include_anidb'|'show_on_home'|'skip_scraping'>>) =>
                                                         request<void>('PATCH', `/sources/${sourceId}/libraries/${lid}`, b),
   removeLibrary:    (sourceId: string, lid: string)     => request<void>         ('DELETE', `/sources/${sourceId}/libraries/${lid}`),
   getScraperPriority: (sourceId: string, lid: string, itemType: 'show'|'movie') =>
@@ -371,6 +371,12 @@ export const api = {
                     request<WritebackResult>('POST', `/${contentType}s/${id}/writeback`),
   refreshMetadata: (id: string, contentType: 'show' | 'movie') =>
                     request<{ ok: boolean }>('POST', `/${contentType}s/${id}/refresh-metadata`),
+  // Separate from updateShow/updateMovie, which always lock the record as a
+  // side effect of a metadata edit — this flag is orthogonal to that.
+  setShowSkipScraping:  (id: string, skip_scraping: boolean) =>
+                    request<{ ok: boolean }>('PATCH', `/shows/${id}/skip-scraping`, { skip_scraping }),
+  setMovieSkipScraping: (id: string, skip_scraping: boolean) =>
+                    request<{ ok: boolean }>('PATCH', `/movies/${id}/skip-scraping`, { skip_scraping }),
   getShowLanguages:  (id: string) => request<MediaLanguages>('GET', `/shows/${id}/languages`),
   getMovieLanguages: (id: string) => request<MediaLanguages>('GET', `/movies/${id}/languages`),
   getShowVideoInfo:  (id: string) => request<VideoInfo>('GET', `/shows/${id}/videoinfo`),

@@ -162,6 +162,37 @@ std::vector<fs::path> videosIn(const fs::path& dir) {
     return out;
 }
 
+// Whether `dir` structurally looks like a show folder: a lone season-named
+// directory itself, a season subdirectory one level deeper, or a flat layout
+// (no season wrapper) with multiple video files where at least one filename
+// carries an episode number. Shared by guessLibraryType() (initial per-library
+// suggestion) and fetchShows()/fetchMovies() (per-subdirectory routing inside
+// an actual "mixed" library) so both agree on what counts as a show.
+bool looksLikeShowDir(const fs::path& dir) {
+    if (parseSeasonDir(dir.filename().string()) >= 0) return true;
+
+    std::error_code ec;
+    int video_count = 0;
+    bool has_episode_numbered_video = false;
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        if (isHidden(e.path())) continue;
+        if (e.is_directory()) {
+            if (parseSeasonDir(e.path().filename().string()) >= 0) return true;
+        } else if (isVideo(e.path())) {
+            ++video_count;
+            if (std::regex_search(e.path().stem().string(), kEpisodeRe))
+                has_episode_numbered_video = true;
+        }
+    }
+    return video_count >= 2 && has_episode_numbered_video;
+}
+
+// Whether `dir` structurally looks like a movie folder: has video file(s)
+// directly inside, and doesn't already look like a show.
+bool looksLikeMovieDir(const fs::path& dir) {
+    return !looksLikeShowDir(dir) && !videosIn(dir).empty();
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -178,26 +209,29 @@ LocalSource::LocalSource(const std::string& source_id, const std::string& base_p
 //   • Otherwise → "mixed"
 // ---------------------------------------------------------------------------
 
+// Tallies show/movie evidence across every child instead of returning on the
+// first match — a single stray subdirectory that happens to look season-shaped
+// (a boxset extra, an oddly-named folder, even a movie title starting with
+// "S1...") no longer flips an entire library of otherwise-clean movie folders
+// to "show". Both signals present → "mixed" (safe: fetchShows()/fetchMovies()
+// route each subdirectory individually in that case, see below). Neither
+// signal → "mixed" too, same safe fallback as the previous empty-library case.
 static std::string guessLibraryType(const fs::path& dir) {
     std::error_code ec;
-    bool hasVideos = false;
+    bool hasShowSignal = false, hasMovieSignal = false;
     for (const auto& child : fs::directory_iterator(dir, ec)) {
         if (isHidden(child.path())) continue;
         if (child.is_directory()) {
-            // Season dir directly inside? → show library
-            if (parseSeasonDir(child.path().filename().string()) >= 0) return "show";
-            // Grandchild season dir? → show library
-            for (const auto& gc : fs::directory_iterator(child.path(), ec)) {
-                if (!gc.is_directory() || isHidden(gc.path())) continue;
-                if (parseSeasonDir(gc.path().filename().string()) >= 0) return "show";
-            }
-            // Child dir contains videos → likely movie-per-folder layout
-            if (!videosIn(child.path()).empty()) hasVideos = true;
+            if (looksLikeShowDir(child.path())) hasShowSignal = true;
+            else if (!videosIn(child.path()).empty()) hasMovieSignal = true;
         } else if (isVideo(child.path())) {
-            hasVideos = true;
+            hasMovieSignal = true;
         }
     }
-    return hasVideos ? "movie" : "mixed";
+    if (hasShowSignal && hasMovieSignal) return "mixed";
+    if (hasShowSignal)  return "show";
+    if (hasMovieSignal) return "movie";
+    return "mixed";
 }
 
 std::vector<LibraryInfo> LocalSource::listAvailableLibraries() {
@@ -265,13 +299,19 @@ std::vector<LibraryInfo> LocalSource::listSubdirectories(const std::string& path
 // Shows — each non-hidden top-level subdirectory is a show.
 // ---------------------------------------------------------------------------
 
-std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
+std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id, const std::string& library_type) {
     std::error_code ec;
     if (!fs::is_directory(external_lib_id, ec)) return {};
+
+    // Only a "mixed" library needs per-subdirectory routing — a library
+    // explicitly typed "show" keeps today's fully-permissive behavior (every
+    // subdirectory is a show), so a correctly-typed library can't regress.
+    const bool filter_mixed = (library_type == "mixed");
 
     std::vector<Show> result;
     for (const auto& entry : fs::directory_iterator(external_lib_id, ec)) {
         if (!entry.is_directory() || isHidden(entry.path())) continue;
+        if (filter_mixed && !looksLikeShowDir(entry.path())) continue;
         auto [title, year] = parseTitle(entry.path().filename().string());
         Show show;
         show.show_id     = conf_.applyPathMap(entry.path().string()); // mapped path as external key
@@ -294,9 +334,13 @@ std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
 // Movies — subdirectory-per-movie or bare video files at root level.
 // ---------------------------------------------------------------------------
 
-std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) {
+std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id, const std::string& library_type) {
     std::error_code ec;
     if (!fs::is_directory(external_lib_id, ec)) return {};
+
+    // Same reasoning as fetchShows: only "mixed" needs to tell movie folders
+    // apart from show folders; "movie"-typed libraries keep every child.
+    const bool filter_mixed = (library_type == "mixed");
 
     std::vector<Movie> result;
     for (const auto& entry : fs::directory_iterator(external_lib_id, ec)) {
@@ -304,6 +348,7 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
         if (isHidden(p)) continue;
 
         if (entry.is_directory()) {
+            if (filter_mixed && !looksLikeMovieDir(p)) continue;
             auto vfiles = videosIn(p);
             if (vfiles.empty()) continue;
             auto [title, year] = parseTitle(p.filename().string());

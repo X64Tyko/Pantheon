@@ -47,6 +47,9 @@ struct ScraperStats {
     int uncertain = 0;
     int unmatched = 0;
     int unscraped = 0;
+    // skip_scraping items (item-level or via their library) — never queued,
+    // counted separately so they don't read as permanently-stuck "unscraped".
+    int skipped   = 0;
 };
 
 struct ScraperConfig {

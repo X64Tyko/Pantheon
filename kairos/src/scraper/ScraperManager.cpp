@@ -444,16 +444,30 @@ void ScraperManager::runMatchSync(const std::string& target_id,
 void ScraperManager::runMatch(const std::string& target_id,
                                const std::string& item_type) {
     // Count pending items so the log line gives useful context up front.
+    // Same LEFT JOIN shape as the selection queries below, so a library-level
+    // skip_scraping exemption is reflected in both places consistently.
     int pending_shows = 0, pending_movies = 0;
     if (item_type.empty() || item_type == "show") {
-        std::string csql = "SELECT COUNT(*) FROM show WHERE match_status IN ('unscraped','uncertain','unmatched')";
-        if (!target_id.empty()) csql += " AND show_id='" + target_id + "'";
+        std::string csql = R"(
+            SELECT COUNT(*) FROM show s
+            LEFT JOIN source_mapping sm ON sm.kairos_id = s.show_id AND sm.item_type = 'show'
+            LEFT JOIN media_library ml ON ml.library_id = sm.library_id
+            WHERE s.match_status IN ('unscraped','uncertain','unmatched')
+              AND s.skip_scraping = 0 AND COALESCE(ml.skip_scraping, 0) = 0
+        )";
+        if (!target_id.empty()) csql += " AND s.show_id='" + target_id + "'";
         SQLite::Statement cq(db_.get(), csql);
         if (cq.executeStep()) pending_shows = cq.getColumn(0).getInt();
     }
     if (item_type.empty() || item_type == "movie") {
-        std::string csql = "SELECT COUNT(*) FROM movie WHERE match_status IN ('unscraped','uncertain','unmatched')";
-        if (!target_id.empty()) csql += " AND movie_id='" + target_id + "'";
+        std::string csql = R"(
+            SELECT COUNT(*) FROM movie m
+            LEFT JOIN source_mapping sm ON sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
+            LEFT JOIN media_library ml ON ml.library_id = sm.library_id
+            WHERE m.match_status IN ('unscraped','uncertain','unmatched')
+              AND m.skip_scraping = 0 AND COALESCE(ml.skip_scraping, 0) = 0
+        )";
+        if (!target_id.empty()) csql += " AND m.movie_id='" + target_id + "'";
         SQLite::Statement cq(db_.get(), csql);
         if (cq.executeStep()) pending_movies = cq.getColumn(0).getInt();
     }
@@ -476,6 +490,7 @@ void ScraperManager::runMatch(const std::string& target_id,
             LEFT JOIN source_mapping sm ON sm.kairos_id = s.show_id AND sm.item_type = 'show'
             LEFT JOIN media_library ml ON ml.library_id = sm.library_id
             WHERE s.match_status IN ('unscraped','uncertain','unmatched')
+              AND s.skip_scraping = 0 AND COALESCE(ml.skip_scraping, 0) = 0
         )";
         if (!target_id.empty()) sql += " AND s.show_id = '" + target_id + "'";
 
@@ -504,6 +519,7 @@ void ScraperManager::runMatch(const std::string& target_id,
             LEFT JOIN source_mapping sm ON sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
             LEFT JOIN media_library ml ON ml.library_id = sm.library_id
             WHERE m.match_status IN ('unscraped','uncertain','unmatched')
+              AND m.skip_scraping = 0 AND COALESCE(ml.skip_scraping, 0) = 0
         )";
         if (!target_id.empty()) sql += " AND m.movie_id = '" + target_id + "'";
 
@@ -1709,13 +1725,31 @@ ScraperStats ScraperManager::stats() const {
         q.bind(1, status);
         return q.executeStep() ? q.getColumn(0).getInt() : 0;
     };
+    // Subset of "unscraped" that will never actually be attempted, because the
+    // item or its library opts out of scraping — reported separately so
+    // "unscraped" keeps meaning "pending," not "opted out forever."
+    auto countSkipped = [&](const std::string& tbl) {
+        std::string sql =
+            "SELECT COUNT(*) FROM " + tbl + " t "
+            "LEFT JOIN source_mapping sm ON sm.kairos_id = t." + tbl + "_id AND sm.item_type = '" + tbl + "' "
+            "LEFT JOIN media_library ml ON ml.library_id = sm.library_id "
+            "WHERE t.match_status = 'unscraped' AND (t.skip_scraping = 1 OR COALESCE(ml.skip_scraping, 0) = 1)";
+        SQLite::Statement q(db_.get(), sql);
+        return q.executeStep() ? q.getColumn(0).getInt() : 0;
+    };
     for (const auto* tbl : { "show", "movie" }) {
-        s.total     += count(tbl, "matched")   + count(tbl, "uncertain")
-                      + count(tbl, "unmatched") + count(tbl, "unscraped");
-        s.matched   += count(tbl, "matched");
-        s.uncertain += count(tbl, "uncertain");
-        s.unmatched += count(tbl, "unmatched");
-        s.unscraped += count(tbl, "unscraped");
+        int matched_c   = count(tbl, "matched");
+        int uncertain_c = count(tbl, "uncertain");
+        int unmatched_c = count(tbl, "unmatched");
+        int unscraped_c = count(tbl, "unscraped");
+        int skipped_c   = countSkipped(tbl);
+
+        s.total     += matched_c + uncertain_c + unmatched_c + unscraped_c;
+        s.matched   += matched_c;
+        s.uncertain += uncertain_c;
+        s.unmatched += unmatched_c;
+        s.unscraped += unscraped_c - skipped_c;
+        s.skipped   += skipped_c;
     }
     return s;
 }

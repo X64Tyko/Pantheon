@@ -112,6 +112,14 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
                     flexShrink: 0, marginTop: 5,
                   }}>LOCKED</span>
                 )}
+                {detail?.skip_scraping && (
+                  <span style={{
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 9, padding: '2px 8px',
+                    borderRadius: 8, background: 'oklch(0.3 0.01 286 / 0.5)',
+                    border: '1px solid oklch(0.4 0.01 286 / 0.6)', color: 'var(--hds-txt-3)',
+                    flexShrink: 0, marginTop: 5,
+                  }}>SCRAPING OFF</span>
+                )}
               </div>
 
               {/* Meta chips */}

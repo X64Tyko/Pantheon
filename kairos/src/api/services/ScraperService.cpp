@@ -110,6 +110,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             {"uncertain", s.uncertain},
             {"unmatched", s.unmatched},
             {"unscraped", s.unscraped},
+            {"skipped",   s.skipped},
         });
     });
 

@@ -909,7 +909,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
                s.originally_available_at, s.year, s.audience_rating, s.locked,
                COUNT(e.episode_id) AS episode_count,
                s.labels, s.network, s.actors, s.countries, s.collections,
-               s.match_status, s.match_score, s.match_confirmed
+               s.match_status, s.match_score, s.match_confirmed, s.skip_scraping
         FROM show s
         LEFT JOIN episode e ON e.show_id = s.show_id
         WHERE s.show_id = ?
@@ -944,6 +944,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
     d.match_status  = q.getColumn(22).getString();
     if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
     d.match_confirmed = q.getColumn(24).getInt() != 0;
+    d.skip_scraping   = q.getColumn(25).getInt() != 0;
 
     {
         SQLite::Statement sm(db_.get(), R"(
@@ -1027,7 +1028,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
                overview, tagline, studio, director, genres, thumb, art,
                imdb_id, tmdb_id, audience_rating, locked,
                labels, actors, countries, collections, release_date,
-               file_path, match_status, match_score, match_confirmed
+               file_path, match_status, match_score, match_confirmed, skip_scraping
         FROM movie WHERE movie_id = ?
     )");
     q.bind(1, movie_id);
@@ -1060,6 +1061,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     d.match_status   = q.getColumn(22).getString();
     if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
     d.match_confirmed = q.getColumn(24).getInt() != 0;
+    d.skip_scraping   = q.getColumn(25).getInt() != 0;
 
     SQLite::Statement sm(db_.get(), R"(
         SELECT sm.external_id, sm.source_id, ms.base_url
@@ -1128,6 +1130,77 @@ void ContentRepository::updateMovie(const std::string& movie_id,
     for (const auto& f : int_fields) s.bind(idx++, f.val);
     s.bind(idx, movie_id);
     s.exec();
+}
+
+void ContentRepository::setShowSkipScraping(const std::string& show_id, bool skip) {
+    { SQLite::Statement s(db_.get(), "UPDATE show SET skip_scraping = ? WHERE show_id = ?");
+      s.bind(1, skip ? 1 : 0); s.bind(2, show_id); s.exec(); }
+    if (!skip) return;
+
+    SQLite::Statement q(db_.get(), "SELECT match_status FROM show WHERE show_id = ?");
+    q.bind(1, show_id);
+    if (!q.executeStep()) return;
+    const std::string status = q.getColumn(0).getString();
+    if (status != "uncertain" && status != "unmatched") return;
+
+    { SQLite::Statement d(db_.get(), "DELETE FROM item_match_candidate WHERE item_type='show' AND kairos_id = ?");
+      d.bind(1, show_id); d.exec(); }
+    { SQLite::Statement u(db_.get(), "UPDATE show SET match_status='unscraped', match_score=NULL WHERE show_id = ?");
+      u.bind(1, show_id); u.exec(); }
+}
+
+void ContentRepository::setMovieSkipScraping(const std::string& movie_id, bool skip) {
+    { SQLite::Statement s(db_.get(), "UPDATE movie SET skip_scraping = ? WHERE movie_id = ?");
+      s.bind(1, skip ? 1 : 0); s.bind(2, movie_id); s.exec(); }
+    if (!skip) return;
+
+    SQLite::Statement q(db_.get(), "SELECT match_status FROM movie WHERE movie_id = ?");
+    q.bind(1, movie_id);
+    if (!q.executeStep()) return;
+    const std::string status = q.getColumn(0).getString();
+    if (status != "uncertain" && status != "unmatched") return;
+
+    { SQLite::Statement d(db_.get(), "DELETE FROM item_match_candidate WHERE item_type='movie' AND kairos_id = ?");
+      d.bind(1, movie_id); d.exec(); }
+    { SQLite::Statement u(db_.get(), "UPDATE movie SET match_status='unscraped', match_score=NULL WHERE movie_id = ?");
+      u.bind(1, movie_id); u.exec(); }
+}
+
+void ContentRepository::clearPendingMatchStateForLibrary(const std::string& library_id) {
+    // Delete stale candidates before flipping match_status — both queries key
+    // off the same "currently uncertain/unmatched" condition, so the DELETE
+    // has to run while that's still true.
+    { SQLite::Statement d(db_.get(), R"(
+        DELETE FROM item_match_candidate
+        WHERE item_type='show' AND kairos_id IN (
+            SELECT s.show_id FROM show s
+            JOIN source_mapping sm ON sm.kairos_id = s.show_id AND sm.item_type='show'
+            WHERE sm.library_id = ? AND s.match_status IN ('uncertain','unmatched')
+        )
+      )");
+      d.bind(1, library_id); d.exec(); }
+    { SQLite::Statement u(db_.get(), R"(
+        UPDATE show SET match_status='unscraped', match_score=NULL
+        WHERE match_status IN ('uncertain','unmatched')
+          AND show_id IN (SELECT kairos_id FROM source_mapping WHERE item_type='show' AND library_id=?)
+      )");
+      u.bind(1, library_id); u.exec(); }
+
+    { SQLite::Statement d(db_.get(), R"(
+        DELETE FROM item_match_candidate
+        WHERE item_type='movie' AND kairos_id IN (
+            SELECT m.movie_id FROM movie m
+            JOIN source_mapping sm ON sm.kairos_id = m.movie_id AND sm.item_type='movie'
+            WHERE sm.library_id = ? AND m.match_status IN ('uncertain','unmatched')
+        )
+      )");
+      d.bind(1, library_id); d.exec(); }
+    { SQLite::Statement u(db_.get(), R"(
+        UPDATE movie SET match_status='unscraped', match_score=NULL
+        WHERE match_status IN ('uncertain','unmatched')
+          AND movie_id IN (SELECT kairos_id FROM source_mapping WHERE item_type='movie' AND library_id=?)
+      )");
+      u.bind(1, library_id); u.exec(); }
 }
 
 void ContentRepository::mergeMovieInto(const std::string& target_id, const std::string& dup_id) {

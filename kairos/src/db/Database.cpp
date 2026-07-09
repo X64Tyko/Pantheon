@@ -1571,6 +1571,18 @@ constexpr Migration kMigrations[] = {
     SELECT library_id, 'movie', preferred_scraper, 1 FROM media_library WHERE preferred_scraper != '';
 )SQL" }
 
+// ── v69: scrape exemption — library-level and per-item ───────────────────────
+//   For content that should never be sent to TMDB/TVDB at all (filler/bumper
+//   libraries, individual home videos mixed into an otherwise normal library).
+//   Deliberately not reusing match_status (conflates "matching progress" with
+//   "opted out") or locked (only guards per-field overwrite on sync — doesn't
+//   stop an item from being queried against scrapers at all).
+,{ 69, R"SQL(
+    ALTER TABLE media_library ADD COLUMN skip_scraping INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE show          ADD COLUMN skip_scraping INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE movie         ADD COLUMN skip_scraping INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

@@ -83,6 +83,7 @@ private:
                    const std::string& source_id,
                    const std::string& library_id,
                    const std::string& external_lib_id,
+                   const std::string& library_type,
                    const std::string& label,
                    SyncLiveIds& live);
 
@@ -90,6 +91,7 @@ private:
                     const std::string& source_id,
                     const std::string& library_id,
                     const std::string& external_lib_id,
+                    const std::string& library_type,
                     const std::string& label,
                     SyncLiveIds& live);
 

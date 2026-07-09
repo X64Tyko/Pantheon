@@ -36,7 +36,7 @@ export function LibraryAdminPanel({ id, content_type }: { id: string; content_ty
   return (
     <div style={{ marginTop: 32, maxWidth: 640 }}>
       <AccordionSection title="DETAILS" open={open === 'details'} onToggle={() => toggle('details')}>
-        <DetailsSection detail={detail} isShow={isShow} isAdmin={isAdmin} />
+        <DetailsSection detail={detail} isShow={isShow} isAdmin={isAdmin} onDetailChanged={setDetail} />
       </AccordionSection>
 
       {isShow && (
@@ -56,7 +56,7 @@ export function LibraryAdminPanel({ id, content_type }: { id: string; content_ty
 
 // ── Details ──────────────────────────────────────────────────────────────────
 
-function DetailsSection({ detail, isShow, isAdmin }: { detail: Detail; isShow: boolean; isAdmin: boolean }) {
+function DetailsSection({ detail, isShow, isAdmin, onDetailChanged }: { detail: Detail; isShow: boolean; isAdmin: boolean; onDetailChanged: (d: Detail) => void }) {
   const show  = isShow ? detail as ShowDetail : null
   const id    = isShow ? (detail as ShowDetail).show_id : (detail as MovieDetail).movie_id
   const type  = isShow ? 'show' : 'movie'
@@ -64,6 +64,18 @@ function DetailsSection({ detail, isShow, isAdmin }: { detail: Detail; isShow: b
   const [metadata, setMetadata] = useState<ItemMetadata | null>(null)
   const [loading,  setLoading]  = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [togglingScrape, setTogglingScrape] = useState(false)
+
+  const handleToggleSkipScraping = async () => {
+    const next = !detail.skip_scraping
+    setTogglingScrape(true)
+    try {
+      if (isShow) await api.setShowSkipScraping(id, next)
+      else        await api.setMovieSkipScraping(id, next)
+      onDetailChanged({ ...detail, skip_scraping: next })
+    } catch {}
+    setTogglingScrape(false)
+  }
 
   const loadMetadata = async () => {
     setLoading(true)
@@ -138,7 +150,7 @@ function DetailsSection({ detail, isShow, isAdmin }: { detail: Detail; isShow: b
         {detail.external_id && <IdRow label="Source ID" value={detail.external_id} />}
       </div>
 
-      {(detail.source_base_url || detail.locked) && (
+      {(detail.source_base_url || detail.locked || isAdmin) && (
         <div>
           <span style={labelStyle}>Technical</span>
           {detail.source_base_url && <IdRow label="Source URL" value={detail.source_base_url} />}
@@ -148,6 +160,21 @@ function DetailsSection({ detail, isShow, isAdmin }: { detail: Detail; isShow: b
               color: 'var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.12)',
               border: '1px solid oklch(0.7 0.13 287 / 0.3)', borderRadius: 7, padding: '7px 10px',
             }}>Locked — manual edits won't be overwritten by future syncs.</div>
+          )}
+          {isAdmin && (
+            <label style={{
+              marginTop: 6, display: 'flex', alignItems: 'center', gap: 6,
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
+              cursor: togglingScrape ? 'wait' : 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={detail.skip_scraping}
+                disabled={togglingScrape}
+                onChange={handleToggleSkipScraping}
+              />
+              Exclude from scraping (never sent to TMDB/TVDB)
+            </label>
           )}
         </div>
       )}

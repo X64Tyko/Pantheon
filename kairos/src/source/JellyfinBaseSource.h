@@ -11,8 +11,10 @@ public:
     bool isSupported() const override { return true; }
 
     std::vector<LibraryInfo>       listAvailableLibraries()                           override;
-    std::vector<Show>              fetchShows(const std::string& external_lib_id)     override;
-    std::vector<Movie>             fetchMovies(const std::string& external_lib_id)    override;
+    std::vector<Show>              fetchShows(const std::string& external_lib_id,
+                                               const std::string& library_type)       override;
+    std::vector<Movie>             fetchMovies(const std::string& external_lib_id,
+                                                const std::string& library_type)      override;
     std::vector<Episode>           fetchEpisodes(const std::string& external_show_id) override;
     std::vector<Playlist>          fetchPlaylists(const std::string& external_lib_id) override;
 

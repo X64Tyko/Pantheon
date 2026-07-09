@@ -25,6 +25,9 @@ struct MediaLibraryConfig {
     // (no library_id) show/movie queries backing Home's shelves, but still
     // fully usable for channel building and direct Library browsing.
     bool        show_on_home = true;
+    // On for filler/bumper/home-video libraries — this library's items never
+    // enter the scraper match queue at all (see ScraperManager::runMatch()).
+    bool        skip_scraping = false;
 };
 
 // Returned by MediaSource::listAvailableLibraries() — live from the server

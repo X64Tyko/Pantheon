@@ -107,6 +107,9 @@ export interface Library {
   // Off for filler/bumper/commercial libraries — excluded from Home's
   // unscoped shelves, still fully usable for channel building and Library browsing.
   show_on_home:        boolean
+  // On for filler/bumper/home-video libraries — this library's items never
+  // enter the scraper match queue at all.
+  skip_scraping:       boolean
 }
 
 export type AdvanceMode = 'scheduled' | 'on_play'
@@ -241,6 +244,7 @@ export interface ShowDetail {
   originally_available_at: string
   audience_rating?:        number
   locked:                  boolean
+  skip_scraping:           boolean
   episode_count:           number
   seasons:                 { number: number; name: string }[]
   external_id:             string
@@ -271,6 +275,7 @@ export interface MovieDetail {
   tmdb_id:          string
   audience_rating?: number
   locked:           boolean
+  skip_scraping:    boolean
   external_id:      string
   source_id:        string
   source_base_url:  string
@@ -851,6 +856,7 @@ export interface ScraperStats {
   uncertain: number
   unmatched: number
   unscraped: number
+  skipped:   number
 }
 
 export interface ScraperSearchResult {

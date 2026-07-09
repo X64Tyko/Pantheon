@@ -824,6 +824,7 @@ const applyBuffer = () => {
               { label: 'Uncertain', value: scraperStats.uncertain, color: 'var(--hds-match-amber)' },
               { label: 'Unmatched', value: scraperStats.unmatched, color: 'var(--hds-match-red)' },
               { label: 'Unscraped', value: scraperStats.unscraped, color: 'var(--hds-txt-3)' },
+              { label: 'Skipped',   value: scraperStats.skipped,   color: 'var(--hds-txt-3)' },
             ] as const).map(({ label, value, color }) => (
               <div key={label} style={{
                 flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid oklch(0.22 0.01 286)',

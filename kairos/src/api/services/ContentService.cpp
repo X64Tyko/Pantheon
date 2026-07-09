@@ -312,6 +312,29 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, json{{"ok", true}}.dump());
 	});
 
+	// Per-item scrape exemption — deliberately separate from PATCH /api/shows/:id
+	// (which always locks the record as a side effect of a metadata edit; this
+	// flag is orthogonal to that). Turning it on also clears any pending
+	// uncertain/unmatched state immediately (see ContentRepository::setShowSkipScraping).
+	svr.Patch("/api/shows/:id/skip-scraping", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			auto b = json::parse(req.body);
+			ContentRepository(db_).setShowSkipScraping(id, b.at("skip_scraping").get<bool>());
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
+	});
+	svr.Patch("/api/movies/:id/skip-scraping", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			auto b = json::parse(req.body);
+			ContentRepository(db_).setMovieSkipScraping(id, b.at("skip_scraping").get<bool>());
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
+	});
+
 	// ── Libraries ────────────────────────────────────────────────────────────
 
 	svr.Get("/api/libraries", [this](const Req&, Res& res) {
@@ -592,6 +615,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (d->year)            show["year"]            = *d->year;
 		if (d->audience_rating) show["audience_rating"] = *d->audience_rating;
 		show["locked"]          = d->locked;
+		show["skip_scraping"]   = d->skip_scraping;
 		show["episode_count"]   = d->episode_count;
 		show["labels"]          = parseArr(d->labels);
 		show["network"]         = d->network;
@@ -786,6 +810,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		movie["imdb_id"]         = d->imdb_id;
 		movie["tmdb_id"]         = d->tmdb_id;
 		movie["locked"]          = d->locked;
+		movie["skip_scraping"]   = d->skip_scraping;
 		movie["labels"]          = parseArr(d->labels);
 		movie["actors"]          = parseArr(d->actors);
 		movie["countries"]       = parseArr(d->countries);
