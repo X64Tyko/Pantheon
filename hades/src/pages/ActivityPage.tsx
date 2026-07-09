@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { sourceStore, systemStore, statusStore, metricsStore } from '../stores'
 import type { LogEntry } from '../stores'
@@ -77,6 +77,12 @@ export default observer(function ActivityPage() {
     try { await api.syncAll() } catch {}
   }
 
+  const [confirmHardSyncAll, setConfirmHardSyncAll] = useState(false)
+  const syncAllHard = async () => {
+    setConfirmHardSyncAll(false)
+    try { await api.syncAllHard() } catch {}
+  }
+
   const liveColors = {
     connecting:   'text-amber-400',
     live:         'text-emerald-400',
@@ -95,16 +101,45 @@ export default observer(function ActivityPage() {
       {/* Header */}
       <div className="flex items-center justify-between" style={{ flexShrink: 0 }}>
         <h1 className="text-xl font-semibold text-zinc-100">Activity</h1>
-        <button
-          onClick={syncAll}
-          disabled={statusStore.anyRunning}
-          className="flex items-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400
-                     disabled:bg-amber-500/40 text-black text-sm rounded font-medium transition-colors"
-        >
-          {statusStore.anyRunning
-            ? <><Spinner className="text-black/70" /> Syncing…</>
-            : '▶ Sync All'}
-        </button>
+        <div className="flex items-center gap-2">
+          {confirmHardSyncAll ? (
+            <span className="flex items-center gap-1.5 text-xs">
+              <span className="text-orange-400">
+                Re-resolves every item on every source from scratch, like a first-ever sync.
+                Also drops all manual cross-source links. Continue?
+              </span>
+              <button
+                onClick={syncAllHard}
+                className="px-2 py-1 rounded bg-orange-900/60 border border-orange-700/50 text-orange-200 hover:bg-orange-800/60 transition-colors"
+              >Yes</button>
+              <button
+                onClick={() => setConfirmHardSyncAll(false)}
+                className="px-2 py-1 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+              >No</button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmHardSyncAll(true)}
+              disabled={statusStore.anyRunning}
+              title="Forces a full recheck of every source, as if each were being synced for the first time"
+              className="flex items-center gap-2 px-3 py-1.5 bg-orange-900/30 hover:bg-orange-800/40
+                         disabled:opacity-40 text-orange-300 text-sm rounded border border-orange-800/30
+                         font-medium transition-colors"
+            >
+              Hard Sync All
+            </button>
+          )}
+          <button
+            onClick={syncAll}
+            disabled={statusStore.anyRunning}
+            className="flex items-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400
+                       disabled:bg-amber-500/40 text-black text-sm rounded font-medium transition-colors"
+          >
+            {statusStore.anyRunning
+              ? <><Spinner className="text-black/70" /> Syncing…</>
+              : '▶ Sync All'}
+          </button>
+        </div>
       </div>
 
       {/* Sync status */}

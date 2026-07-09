@@ -1,4 +1,5 @@
 #include "ActivityService.h"
+#include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../log/LogBuffer.h"
 #include "../../source/SyncManager.h"
@@ -16,6 +17,17 @@ void ActivityService::registerRoutes(httplib::Server& svr) {
 
 	svr.Post("/api/sync/all", [this](const Req&, Res& res) {
 		sync_.triggerSync("");
+		res.status = 202;
+		route::ok(res, json{{"status", "started"}}.dump());
+	});
+
+	// Wipes source_mapping for every source first, so the whole library is
+	// re-resolved from scratch — same as triggering a Hard Sync per source,
+	// just all at once. Admin-gated, unlike the plain sync-all above, since
+	// it also discards any manual cross-source links system-wide.
+	svr.Post("/api/sync/all-hard", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		sync_.triggerHardSync("");
 		res.status = 202;
 		route::ok(res, json{{"status", "started"}}.dump());
 	});

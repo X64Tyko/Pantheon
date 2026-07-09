@@ -160,6 +160,7 @@ export const api = {
   triggerSync:      (sourceId: string)                  => request<{status: string}>('POST', `/sources/${sourceId}/sync`),
   triggerHardSync:  (sourceId: string)                  => request<{status: string}>('POST', `/sources/${sourceId}/hard-sync`),
   syncAll:          ()                                  => request<{status: string}>('POST', '/sync/all'),
+  syncAllHard:      ()                                  => request<{status: string}>('POST', '/sync/all-hard'),
 
   // Media language catalog (probed from library sample via ffprobe, cached 1 h)
   getMediaLanguages: () => request<MediaLanguages>('GET', '/media/languages'),

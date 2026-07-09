@@ -97,7 +97,10 @@ void SyncManager::triggerHardSync(const std::string& source_id) {
     std::thread([this, source_id]() {
         try {
             clearSourceMapping(source_id);
-            syncSource(source_id);
+            if (source_id.empty())
+                syncAll();
+            else
+                syncSource(source_id);
         } catch (const std::exception& e) {
             std::cerr << "[sync] hard sync error: " << e.what() << std::endl;
         }
@@ -105,18 +108,24 @@ void SyncManager::triggerHardSync(const std::string& source_id) {
     }).detach();
 }
 
-// Wipes every source_mapping row this source owns so the next syncContent()
-// pass can't take the "already known" fast path for any of its items —
-// path/title dedup and fresh-id assignment run exactly as they would the
-// first time this source was ever synced. Note this also discards any
-// manual cross-source links ("Link Existing") involving this source's
-// items; that's expected, since a first-ever sync couldn't have had any
-// either.
+// Wipes source_mapping (this source only, or every row when source_id is
+// empty) so the next syncContent() pass can't take the "already known" fast
+// path for any affected item — path/title dedup and fresh-id assignment run
+// exactly as they would the first time that source was ever synced. Note
+// this also discards any manual cross-source links ("Link Existing")
+// involving the affected item(s); that's expected, since a first-ever sync
+// couldn't have had any either.
 void SyncManager::clearSourceMapping(const std::string& source_id) {
-    std::cout << "[sync] hard sync: clearing existing mappings for " << source_id << std::endl;
-    SQLite::Statement d(db_.get(), "DELETE FROM source_mapping WHERE source_id = ?");
-    d.bind(1, source_id);
-    d.exec();
+    std::cout << "[sync] hard sync: clearing existing mappings"
+              << (source_id.empty() ? " (all sources)" : " for " + source_id) << std::endl;
+    if (source_id.empty()) {
+        SQLite::Statement d(db_.get(), "DELETE FROM source_mapping");
+        d.exec();
+    } else {
+        SQLite::Statement d(db_.get(), "DELETE FROM source_mapping WHERE source_id = ?");
+        d.bind(1, source_id);
+        d.exec();
+    }
 }
 
 void SyncManager::syncAll() {
