@@ -223,7 +223,7 @@ static std::string guessLibraryType(const fs::path& dir) {
         if (isHidden(child.path())) continue;
         if (child.is_directory()) {
             if (looksLikeShowDir(child.path())) hasShowSignal = true;
-            else if (!videosIn(child.path()).empty()) hasMovieSignal = true;
+            else if (looksLikeMovieDir(child.path())) hasMovieSignal = true;
         } else if (isVideo(child.path())) {
             hasMovieSignal = true;
         }
