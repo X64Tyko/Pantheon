@@ -58,7 +58,8 @@ const std::regex kSeasonDirRe(
 );
 
 bool isVideo(const fs::path& p) {
-    if (!fs::is_regular_file(p)) return false;
+    std::error_code ec;
+    if (!fs::is_regular_file(p, ec)) return false;
     std::string ext = p.extension().string();
     for (char& c : ext) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
     return kVideoExts.count(ext) > 0;
@@ -176,9 +177,10 @@ bool looksLikeShowDir(const fs::path& dir) {
     bool has_episode_numbered_video = false;
     for (const auto& e : fs::directory_iterator(dir, ec)) {
         if (isHidden(e.path())) continue;
-        if (e.is_directory()) {
+        std::error_code dtype_ec;
+        if (e.is_directory(dtype_ec)) {
             if (parseSeasonDir(e.path().filename().string()) >= 0) return true;
-        } else if (isVideo(e.path())) {
+        } else if (!dtype_ec && isVideo(e.path())) {
             ++video_count;
             if (std::regex_search(e.path().stem().string(), kEpisodeRe))
                 has_episode_numbered_video = true;
@@ -221,10 +223,14 @@ static std::string guessLibraryType(const fs::path& dir) {
     bool hasShowSignal = false, hasMovieSignal = false;
     for (const auto& child : fs::directory_iterator(dir, ec)) {
         if (isHidden(child.path())) continue;
-        if (child.is_directory()) {
+        std::error_code dtype_ec;
+        if (child.is_directory(dtype_ec)) {
+            // looksLikeMovieDir() re-derives "not a show dir", which we already
+            // know here — call videosIn() directly to avoid re-walking child's
+            // children a second (and, via looksLikeShowDir, sometimes third) time.
             if (looksLikeShowDir(child.path())) hasShowSignal = true;
-            else if (looksLikeMovieDir(child.path())) hasMovieSignal = true;
-        } else if (isVideo(child.path())) {
+            else if (!videosIn(child.path()).empty()) hasMovieSignal = true;
+        } else if (!dtype_ec && isVideo(child.path())) {
             hasMovieSignal = true;
         }
     }
@@ -244,7 +250,8 @@ std::vector<LibraryInfo> LocalSource::listAvailableLibraries() {
 
     std::vector<LibraryInfo> result;
     for (const auto& entry : fs::directory_iterator(root, ec)) {
-        if (!entry.is_directory() || isHidden(entry.path())) continue;
+        std::error_code dtype_ec;
+        if (!entry.is_directory(dtype_ec) || dtype_ec || isHidden(entry.path())) continue;
         LibraryInfo info;
         info.external_lib_id = entry.path().string();
         info.name            = entry.path().filename().string();
@@ -282,7 +289,8 @@ std::vector<LibraryInfo> LocalSource::listSubdirectories(const std::string& path
 
     std::vector<LibraryInfo> result;
     for (const auto& entry : fs::directory_iterator(normTarget, ec)) {
-        if (!entry.is_directory() || isHidden(entry.path())) continue;
+        std::error_code dtype_ec;
+        if (!entry.is_directory(dtype_ec) || dtype_ec || isHidden(entry.path())) continue;
         LibraryInfo info;
         info.external_lib_id = entry.path().string();
         info.name            = entry.path().filename().string();
@@ -305,7 +313,8 @@ std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
 
     std::vector<Show> result;
     for (const auto& entry : fs::directory_iterator(external_lib_id, ec)) {
-        if (!entry.is_directory() || isHidden(entry.path())) continue;
+        std::error_code dtype_ec;
+        if (!entry.is_directory(dtype_ec) || dtype_ec || isHidden(entry.path())) continue;
         if (!looksLikeShowDir(entry.path())) continue;
         auto [title, year] = parseTitle(entry.path().filename().string());
         Show show;
@@ -338,8 +347,9 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
         const fs::path p = entry.path();
         if (isHidden(p)) continue;
 
-        if (entry.is_directory()) {
-            if (!looksLikeMovieDir(p)) continue;
+        std::error_code dtype_ec;
+        if (entry.is_directory(dtype_ec)) {
+            if (dtype_ec || !looksLikeMovieDir(p)) continue;
             auto vfiles = videosIn(p);
             if (vfiles.empty()) continue;
             auto [title, year] = parseTitle(p.filename().string());

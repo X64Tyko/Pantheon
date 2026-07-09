@@ -196,11 +196,16 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		auto* local = dynamic_cast<LocalSource*>(src);
 		if (!local)                       { route::err(res, 400, "not a local source"); return; }
 		std::string path = req.has_param("path") ? req.get_param_value("path") : "";
-		auto entries = local->listSubdirectories(path);
-		json result = json::array();
-		for (const auto& e : entries)
-			result.push_back({{"external_lib_id", e.external_lib_id}, {"name", e.name}, {"type", e.type}});
-		route::ok(res, result.dump());
+		try {
+			auto entries = local->listSubdirectories(path);
+			json result = json::array();
+			for (const auto& e : entries)
+				result.push_back({{"external_lib_id", e.external_lib_id}, {"name", e.name}, {"type", e.type}});
+			route::ok(res, result.dump());
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/sources/" + id + "/fs", e);
+			route::err(res, 500, e.what());
+		}
 	});
 
 	svr.Get("/api/sources/:id/libraries", [this](const Req& req, Res& res) {
