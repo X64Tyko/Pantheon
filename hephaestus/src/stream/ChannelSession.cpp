@@ -9,6 +9,7 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
+#include <fstream>
 
 using clock_t_ = std::chrono::system_clock;
 using steady_  = std::chrono::steady_clock;
@@ -223,6 +224,8 @@ ChannelSession::~ChannelSession() {
     stop();
     hls_watcher_stop.store(true);
     if (hls_watcher.joinable()) hls_watcher.join();
+    hls_patch_stop.store(true);
+    if (hls_patch_thread.joinable()) hls_patch_thread.join();
 }
 
 std::string ChannelSession::hlsDir() const {
@@ -253,6 +256,70 @@ void ChannelSession::hlsWatchLoop() {
         if (!active.load()) return;
         if (client_count.load() == 0 && hlsIdle()) { stop(); return; }
     }
+}
+
+// Ticks faster than hlsWatchLoop (segments are only kLiveHlsSegmentSecs
+// long, so a stale discontinuity-sequence needs correcting well within one
+// segment interval, not one linger-check interval) — kept as its own
+// thread/loop rather than folded into hlsWatchLoop so shortening this one's
+// cadence doesn't also change the idle/linger check's timing.
+void ChannelSession::hlsPatchLoop() {
+    while (!hls_patch_stop.load() && active.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kLiveHlsSegmentSecs * 500));
+        if (!active.load()) return;
+        patchDiscontinuitySequence();
+    }
+}
+
+void ChannelSession::patchDiscontinuitySequence() {
+    std::string path = hlsDir() + "/playlist.m3u8";
+
+    std::ifstream in(path);
+    if (!in) return;
+    std::vector<std::string> lines;
+    std::string line;
+    int visible = 0;
+    while (std::getline(in, line)) {
+        if (line == "#EXT-X-DISCONTINUITY") ++visible;
+        lines.push_back(line);
+    }
+    in.close();
+    // ffmpeg (no hls_flags=temp_file) rewrites this file in place rather
+    // than atomically — a read can land mid-rewrite. A missing/garbled
+    // header is the unambiguous sign of that; skip and let the next tick
+    // (half a segment interval away) retry against a settled file.
+    if (lines.empty() || lines[0] != "#EXTM3U") return;
+
+    int wanted = discontinuity_count_.load() - visible;
+    if (wanted < 0) wanted = 0; // defensive only — should never actually go negative
+
+    std::string wantedLine = "#EXT-X-DISCONTINUITY-SEQUENCE:" + std::to_string(wanted);
+
+    int existingIdx = -1;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].rfind("#EXT-X-DISCONTINUITY-SEQUENCE:", 0) == 0) { existingIdx = static_cast<int>(i); break; }
+    }
+    if (existingIdx >= 0 && lines[static_cast<size_t>(existingIdx)] == wantedLine) return; // already correct
+
+    if (existingIdx >= 0) {
+        lines[static_cast<size_t>(existingIdx)] = wantedLine;
+    } else {
+        // Standard placement: right after #EXT-X-VERSION (falls back to
+        // right after #EXTM3U if that's somehow absent), before any Media
+        // Segment — same neighborhood ffmpeg already puts #EXT-X-TARGETDURATION.
+        size_t insertAt = 1;
+        for (size_t i = 0; i < lines.size(); ++i) {
+            if (lines[i].rfind("#EXT-X-VERSION", 0) == 0) { insertAt = i + 1; break; }
+        }
+        lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insertAt), wantedLine);
+    }
+
+    // Same non-atomic in-place rewrite ffmpeg itself does to this file —
+    // acceptable here for the same reason: worst case a reader catches one
+    // half-written read and this loop corrects it again next tick.
+    std::ofstream out(path, std::ios::trunc);
+    if (!out) return;
+    for (auto& l : lines) out << l << "\n";
 }
 
 // Computes how far into `item` playback should start, given true wall-clock
@@ -299,7 +366,8 @@ bool ChannelSession::start() {
                       << dir << "\": " << ec.message() << " — HLS output disabled for this session\n";
             opts.hls_root.clear();
         } else {
-            hls_watcher = std::thread([this] { hlsWatchLoop(); });
+            hls_watcher    = std::thread([this] { hlsWatchLoop(); });
+            hls_patch_thread = std::thread([this] { hlsPatchLoop(); });
         }
     }
 
@@ -519,6 +587,11 @@ void ChannelSession::transition() {
         return;
     }
 
+    // Every transition spawns a brand new ffmpeg process into the same
+    // output file (see launchFfmpeg's swap-under-mutex tail) — ffmpeg's own
+    // HLS muxer marks that restart with #EXT-X-DISCONTINUITY, so this needs
+    // to count in step with it for patchDiscontinuitySequence() below.
+    discontinuity_count_.fetch_add(1);
     spawnFfmpeg(*next, startOffset, speed);
 }
 

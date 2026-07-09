@@ -88,6 +88,22 @@ class ChannelSession {
     void hlsWatchLoop();
     bool hlsIdle() const;
 
+    // ffmpeg's HLS muxer (append_list+delete_segments) inserts
+    // #EXT-X-DISCONTINUITY at each new spawnFfmpeg() (a new process
+    // restart), but never maintains #EXT-X-DISCONTINUITY-SEQUENCE once an
+    // earlier one rolls off the sliding window — an HLS-spec requirement
+    // (RFC 8216 §4.3.3) Roku's player enforces strictly and stops playback
+    // over. No ffmpeg hls_flags option controls this (checked against
+    // ffmpeg n8.1.1's own muxer help), so a small background loop patches
+    // the on-disk playlist.m3u8 directly. One count per spawnFfmpeg() after
+    // the very first (transition() increments it); the first spawn isn't a
+    // discontinuity.
+    std::atomic<int>  discontinuity_count_{0};
+    std::thread       hls_patch_thread;
+    std::atomic<bool> hls_patch_stop{false};
+    void hlsPatchLoop();
+    void patchDiscontinuitySequence();
+
     void onData(const uint8_t* data, size_t len);
     void onExit(int code);
     void transition();
@@ -125,6 +141,8 @@ public:
     static std::optional<double> computeSpeedForTest(int64_t rawDriftMs, int64_t durationMs) {
         return computeSpeed(rawDriftMs, durationMs);
     }
+    void setDiscontinuityCountForTest(int n) { discontinuity_count_.store(n); }
+    void patchDiscontinuitySequenceForTest() { patchDiscontinuitySequence(); }
 
     ChannelSession(std::string channel_id, KairosClient& kairos,
                    std::string ffmpeg_path, StreamOptions opts = {});
