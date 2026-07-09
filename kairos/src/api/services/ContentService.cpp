@@ -186,6 +186,7 @@ void ContentService::proxyImage(const Req& req,
 	try { fs::create_directories(cache_dir); } catch (...) {}
 	fs::path cache_file = cache_dir / hash;
 	fs::path ct_file    = cache_dir / (hash + ".ct");
+	fs::path fail_file  = cache_dir / (hash + ".fail");
 
 	struct stat st{};
 	long long ttl_secs = (long long)conf_.getImageCacheTtlHours() * 3600;
@@ -204,12 +205,32 @@ void ContentService::proxyImage(const Req& req,
 		return;
 	}
 
+	// Negative cache: a fetch that failed recently is not retried immediately.
+	// Without this, a poster URL that 404s (a fairly common state — missing
+	// AniDB art, a stale scrape, etc.) got re-fetched from scratch on every
+	// single render anywhere in the app, and for AniDB every one of those
+	// re-fetches also re-paid the 2.1 s global rate-limit wait below — a
+	// library with even a handful of broken posters was enough to serialize
+	// tens of seconds of blocked backend worker threads per page view,
+	// which is what was actually stalling the rest of the app (client-side
+	// request cancellation can't help here: the browser dropping its side
+	// of the connection doesn't stop this thread's blocking rate-limit wait
+	// or the synchronous upstream fetch already in flight).
+	constexpr long long kNegativeCacheTtlSecs = 3600;
+	struct stat fst{};
+	if (stat(fail_file.c_str(), &fst) == 0 && (time(nullptr) - fst.st_mtime < kNegativeCacheTtlSecs)) {
+		res.set_header("Cache-Control", "public, max-age=1800");
+		res.status = 404;
+		return;
+	}
+
 	// cdn.anidb.net has its own hotlink/abuse protection, separate from the API rate limit.
 	if (is_cdn && effective_base.find("anidb.net") != std::string::npos)
 		scraper_.anidbRateLimitImage();
 
 	std::string token = is_cdn ? "" : conf_.token(sourceId);
 	httplib::Result img;
+	auto markFailed = [&]() { try { std::ofstream f(fail_file); f << "1"; } catch (...) {} };
 	try {
 		httplib::Client client(effective_base);
 		httplib::Headers headers{
@@ -218,11 +239,15 @@ void ContentService::proxyImage(const Req& req,
 		};
 		if (!token.empty()) { headers.emplace("X-Plex-Token", token); headers.emplace("Accept", "*/*"); }
 		client.set_default_headers(headers);
-		client.set_connection_timeout(10);
-		client.set_read_timeout(15);
+		client.set_connection_timeout(5);
+		client.set_read_timeout(8);
 		img = client.Get(fetch_path);
-	} catch (const std::exception&) { res.status = 502; return; }
-	if (!img || img->status != 200) { res.status = 502; return; }
+	} catch (const std::exception&) { markFailed(); res.status = 502; return; }
+	if (!img || img->status != 200) { markFailed(); res.status = 502; return; }
+
+	// A retry that now succeeds (upstream came back, art got fixed, etc.)
+	// clears any stale negative-cache marker from an earlier failure.
+	{ std::error_code ec; fs::remove(fail_file, ec); }
 
 	auto ct = img->get_header_value("Content-Type");
 	if (ct.empty()) ct = "image/jpeg";

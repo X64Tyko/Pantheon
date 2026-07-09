@@ -545,15 +545,21 @@ function CandidatePanel({
 
   useEffect(() => { if (mode === 'candidates') loadMeta() }, [item.kairos_id, mode])
 
+  // Guards against an earlier, slower search response (AniDB in particular
+  // is rate-limited to ~1 req/2s server-side, so an in-flight search can
+  // easily still be running when a newer one is fired) landing after a
+  // more recent search and clobbering its results.
+  const searchSeq = useRef(0)
   const runSearch = async (q: string) => {
     if (!q.trim()) return
+    const seq = ++searchSeq.current
     setSearchLoading(true)
     setSearchResults([])
     try {
       const r = await api.scraperSearch(q.trim(), item.item_type)
-      setSearchResults(r.items)
+      if (seq === searchSeq.current) setSearchResults(r.items)
     } catch {}
-    setSearchLoading(false)
+    if (seq === searchSeq.current) setSearchLoading(false)
   }
 
   const handleManualMatch = async (result: ScraperSearchResult) => {

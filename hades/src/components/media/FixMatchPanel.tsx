@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, mediaUrl } from '../../api/client'
 import type { ItemMetadata, ScraperSearchResult } from '../../api/types'
 import { folderBaseName } from './useMediaDetail'
@@ -44,17 +44,23 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
     setLoadingMeta(false)
   }
 
+  // Guards against an earlier, slower search response (AniDB is rate-limited
+  // to ~1 req/2s server-side, so an in-flight search can easily still be
+  // running when a newer one is fired) landing after a more recent search
+  // and clobbering its results.
+  const searchSeq = useRef(0)
   const runSearch = async (q: string) => {
     if (!q.trim()) return
+    const seq = ++searchSeq.current
     setLoading(true)
     setError(null)
     try {
       const r = await api.scraperSearch(q.trim(), contentType)
-      setResults(r.items)
+      if (seq === searchSeq.current) setResults(r.items)
     } catch {
-      setError('Search failed.')
+      if (seq === searchSeq.current) setError('Search failed.')
     }
-    setLoading(false)
+    if (seq === searchSeq.current) setLoading(false)
   }
 
   useEffect(() => {
