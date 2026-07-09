@@ -161,6 +161,7 @@ export default observer(function SourcesPage() {
   const [confirmLib, setConfirmLib]   = useState<string | null>(null)  // library_id pending removal
   const [confirmPm,  setConfirmPm]    = useState<number  | null>(null) // path-map index pending removal
   const [confirmSync, setConfirmSync] = useState<string | null>(null) // source_id pending sync confirmation
+  const [confirmHardSync, setConfirmHardSync] = useState<string | null>(null) // source_id pending hard-sync confirmation
 
   // ── Path maps ──────────────────────────────────────────────────────────────
   const [pathMaps, setPathMaps]   = useState<PathMap[]>([])
@@ -368,6 +369,33 @@ export default observer(function SourcesPage() {
                                disabled:opacity-40 transition-colors"
                   >
                     {store.syncing ? 'Syncing…' : 'Sync'}
+                  </button>
+                )}
+                {confirmHardSync === src.source_id ? (
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="text-orange-400">
+                      Re-resolves every item from scratch, like the first sync ever. Also drops
+                      any manual cross-source links for this source. Continue?
+                    </span>
+                    <button
+                      onClick={e => { e.stopPropagation(); store.triggerHardSync(src.source_id); setConfirmHardSync(null) }}
+                      className="px-2 py-0.5 rounded bg-orange-900/60 border border-orange-700/50 text-orange-200 hover:bg-orange-800/60 transition-colors"
+                    >Yes</button>
+                    <button
+                      onClick={e => { e.stopPropagation(); setConfirmHardSync(null) }}
+                      className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+                    >No</button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={e => { e.stopPropagation(); setConfirmHardSync(src.source_id) }}
+                    disabled={store.syncing}
+                    title="Forces a full recheck of this source, as if it were being synced for the first time"
+                    className="text-xs px-2 py-0.5 bg-orange-900/30 hover:bg-orange-800/40
+                               text-orange-300 rounded border border-orange-800/30
+                               disabled:opacity-40 transition-colors"
+                  >
+                    Hard Sync
                   </button>
                 )}
                 {confirmSrc === src.source_id ? (

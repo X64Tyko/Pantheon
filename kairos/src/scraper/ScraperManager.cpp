@@ -349,11 +349,13 @@ void ScraperManager::buildScrapers() {
 }
 
 double ScraperManager::threshold() const {
-    SQLite::Statement q(db_.get(), "SELECT value FROM app_config WHERE key='match_threshold'");
-    if (q.executeStep()) {
-        try { return std::stod(q.getColumn(0).getString()); } catch (...) {}
-    }
-    return 1.0;
+    // Delegates to getSettings() so there's exactly one place that defines
+    // the default match_threshold — this used to hardcode its own fallback
+    // (1.0) that had drifted out of sync with getSettings()'s (0.8), so a
+    // fresh app_config with no match_threshold row silently required a
+    // perfect score to auto-accept while Settings displayed 0.8.
+    try { return getSettings().match_threshold; }
+    catch (...) { return 0.8; }
 }
 
 // ── Trigger / background match ────────────────────────────────────────────────
@@ -429,25 +431,17 @@ void ScraperManager::runMatch(const std::string& target_id,
 
         SQLite::Statement q(db_.get(), sql);
         while (q.executeStep()) {
-            std::string kid = q.getColumn(0).getString();
-            std::string title = q.getColumn(1).getString();
-            int year = q.getColumn(2).getInt();
-            std::string lid = q.getColumn(5).getString();
-            std::string pref = q.getColumn(6).getString();
-            bool ani = q.getColumn(7).getInt() != 0;
-
-            matchShow(lid, kid, title, year,
-                      q.getColumn(3).getString(),
-                      q.getColumn(4).getString(),
-                      pref, ani);
-            
-            // Also try matching by alternate titles
-            auto alts = getAlternateTitles(kid, "show");
-            for (const auto& alt : alts) {
-                if (alt != title) {
-                    matchShow(lid, kid, alt, year, "", "", pref, ani);
-                }
-            }
+            // matchShow() itself folds in any alternate titles for kid into a
+            // single search/score/accept decision — it must only be called
+            // once per item per pass (see matchShow's own comment for why).
+            matchShow(q.getColumn(5).getString(),  // library_id
+                      q.getColumn(0).getString(),  // kairos_id
+                      q.getColumn(1).getString(),  // title
+                      q.getColumn(2).getInt(),     // year
+                      q.getColumn(3).getString(),  // tmdb_id
+                      q.getColumn(4).getString(),  // tvdb_id
+                      q.getColumn(6).getString(),  // preferred_scraper
+                      q.getColumn(7).getInt() != 0); // include_anidb
         }
     }
 
@@ -467,25 +461,17 @@ void ScraperManager::runMatch(const std::string& target_id,
 
         SQLite::Statement q(db_.get(), sql);
         while (q.executeStep()) {
-            std::string kid = q.getColumn(0).getString();
-            std::string title = q.getColumn(1).getString();
-            int year = q.getColumn(2).getInt();
-            std::string lid = q.getColumn(5).getString();
-            std::string pref = q.getColumn(6).getString();
-            bool ani = q.getColumn(7).getInt() != 0;
-
-            matchMovie(lid, kid, title, year,
-                       q.getColumn(3).getString(),
-                       q.getColumn(4).getString(),
-                       pref, ani);
-
-            // Also try matching by alternate titles
-            auto alts = getAlternateTitles(kid, "movie");
-            for (const auto& alt : alts) {
-                if (alt != title) {
-                    matchMovie(lid, kid, alt, year, "", "", pref, ani);
-                }
-            }
+            // matchMovie() itself folds in any alternate titles for kid into
+            // a single search/score/accept decision — it must only be called
+            // once per item per pass (see matchMovie's own comment for why).
+            matchMovie(q.getColumn(5).getString(),  // library_id
+                       q.getColumn(0).getString(),  // kairos_id
+                       q.getColumn(1).getString(),  // title
+                       q.getColumn(2).getInt(),     // year
+                       q.getColumn(3).getString(),  // tmdb_id
+                       q.getColumn(4).getString(),  // file_path
+                       q.getColumn(6).getString(),  // preferred_scraper
+                       q.getColumn(7).getInt() != 0); // include_anidb
         }
     }
     std::cout << "[scraper] match complete ("
@@ -554,10 +540,29 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
         pref_lang = lib->preferred_language;
     }
 
+    // Every enabled source is queried once per candidate title — the
+    // folder/source-resolved title plus any admin-supplied alternate titles —
+    // so the item gets exactly ONE scoring/accept decision per matchShow()
+    // call. This used to be the caller's job (runMatch() invoked matchShow()
+    // once per alternate title), which meant each alt-title call independently
+    // overwrote match_status/match_score and could auto-accept a *different*
+    // candidate without clearing the previous call's accepted flag — a noisy
+    // alternate title searched after the real title could silently downgrade
+    // (or double-accept) an otherwise-clean match within the same run.
+    std::vector<std::string> query_titles = { search_title };
+    for (const auto& alt : getAlternateTitles(kairos_id, "show")) {
+        if (!alt.empty() && std::find(query_titles.begin(), query_titles.end(), alt) == query_titles.end())
+            query_titles.push_back(alt);
+    }
+
     struct Cand { std::string source, ext_id, cand_title, poster, overview; int cand_year; double score; };
     std::vector<Cand> candidates;
 
-    auto collect = [&](const std::string& source, std::vector<Show> results) {
+    // Merges a search result into `candidates`, keyed by (source, ext_id), so
+    // the same external show turning up under two different query titles
+    // collapses into one candidate that keeps the higher of the two scores
+    // instead of one search's result silently clobbering the other's.
+    auto collect = [&](const std::string& source, const std::string& query_title, std::vector<Show> results) {
         double lang_bonus = 0.0;
         for (const auto& cfg : getSettings().configs) {
             if (cfg.source == source && !pref_lang.empty() && cfg.language == pref_lang) {
@@ -567,7 +572,7 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
         }
 
         for (auto& r : results) {
-            double sc = computeScore(search_title, year, r.title,
+            double sc = computeScore(query_title, year, r.title,
                                      r.year.has_value() ? r.year.value() : 0);
             sc += lang_bonus;
             std::string ext;
@@ -575,63 +580,73 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
             else if (source == "tvdb")  ext = r.tvdb_id;
             else if (source == "anidb") ext = r.show_id;  // AID stored in show_id
             if (ext.empty()) continue;
-            candidates.push_back({ source, ext, r.title, r.thumb, r.overview,
-                                   r.year.has_value() ? r.year.value() : 0, sc });
+
+            auto it = std::find_if(candidates.begin(), candidates.end(),
+                [&](const Cand& c) { return c.source == source && c.ext_id == ext; });
+            if (it != candidates.end()) {
+                if (sc > it->score) *it = { source, ext, r.title, r.thumb, r.overview,
+                                            r.year.has_value() ? r.year.value() : 0, sc };
+            } else {
+                candidates.push_back({ source, ext, r.title, r.thumb, r.overview,
+                                       r.year.has_value() ? r.year.value() : 0, sc });
+            }
         }
     };
 
-    auto timedSearch = [&](const std::string& src, std::vector<Show> results) {
-        DLOG << "[scraper]   " << src << ": " << results.size() << " result(s)\n";
+    auto timedSearch = [&](const std::string& src, const std::string& query_title, std::vector<Show> results) {
+        DLOG << "[scraper]   " << src << " (\"" << query_title << "\"): " << results.size() << " result(s)\n";
         for (const auto& r : results)
             DLOG << "[scraper]     " << src << " candidate: \"" << r.title << "\""
                  << " (" << (r.year.has_value() ? r.year.value() : 0) << ")"
                  << " score=" << std::fixed << std::setprecision(3)
-                 << computeScore(search_title, year, r.title, r.year.has_value() ? r.year.value() : 0)
+                 << computeScore(query_title, year, r.title, r.year.has_value() ? r.year.value() : 0)
                  << '\n';
-        collect(src, std::move(results));
+        collect(src, query_title, std::move(results));
     };
     // A library's chosen scraper is a *preference*, not an exclusive filter —
     // every enabled scraper is still queried so a title missing from the
     // preferred source can still be found elsewhere; the preference instead
     // breaks ties in the scoring below (see isAmbiguousTie/pickBest).
-    if (tmdb_) {
-        DLOG << "[scraper]   querying tmdb for show \"" << search_title << "\" year=" << year << '\n';
-        const auto t0 = std::chrono::steady_clock::now();
-        auto results = tmdb_->searchShows(search_title, year);
-        // TMDB/TVDB treat `year` as a hard filter — a locally-parsed year that's
-        // off by one (or just wrong) silently zeroes the whole result set even
-        // when the title matches perfectly. Retry unfiltered rather than let a
-        // bad year turn a real match into "unmatched"; computeScore() already
-        // gives an unknown/mismatched year only partial credit, so this can't
-        // cause a wrong auto-accept, only a candidate worth reviewing.
-        if (results.empty() && year > 0) {
-            DLOG << "[scraper]   tmdb: 0 results with year filter, retrying without year\n";
-            results = tmdb_->searchShows(search_title, 0);
+    for (const auto& qt : query_titles) {
+        if (tmdb_) {
+            DLOG << "[scraper]   querying tmdb for show \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = tmdb_->searchShows(qt, year);
+            // TMDB/TVDB treat `year` as a hard filter — a locally-parsed year that's
+            // off by one (or just wrong) silently zeroes the whole result set even
+            // when the title matches perfectly. Retry unfiltered rather than let a
+            // bad year turn a real match into "unmatched"; computeScore() already
+            // gives an unknown/mismatched year only partial credit, so this can't
+            // cause a wrong auto-accept, only a candidate worth reviewing.
+            if (results.empty() && year > 0) {
+                DLOG << "[scraper]   tmdb: 0 results with year filter, retrying without year\n";
+                results = tmdb_->searchShows(qt, 0);
+            }
+            DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearch("tmdb", qt, std::move(results));
         }
-        DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
-        timedSearch("tmdb", std::move(results));
-    }
-    if (tvdb_) {
-        DLOG << "[scraper]   querying tvdb for show \"" << search_title << "\" year=" << year << '\n';
-        const auto t0 = std::chrono::steady_clock::now();
-        auto results = tvdb_->searchShows(search_title, year);
-        if (results.empty() && year > 0) {
-            DLOG << "[scraper]   tvdb: 0 results with year filter, retrying without year\n";
-            results = tvdb_->searchShows(search_title, 0);
+        if (tvdb_) {
+            DLOG << "[scraper]   querying tvdb for show \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = tvdb_->searchShows(qt, year);
+            if (results.empty() && year > 0) {
+                DLOG << "[scraper]   tvdb: 0 results with year filter, retrying without year\n";
+                results = tvdb_->searchShows(qt, 0);
+            }
+            DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearch("tvdb", qt, std::move(results));
         }
-        DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
-        timedSearch("tvdb", std::move(results));
-    }
-    // AniDB is anime-only — never queried for a library unless the admin
-    // explicitly opted it in (include_anidb) or chose it as this library's
-    // one preferred scraper outright. Prevents cross-matching an unrelated
-    // general movie/show library against anime titles on title text alone.
-    if (anidb_ && (preferred_scraper == "anidb" || include_anidb)) {
-        DLOG << "[scraper]   querying anidb for show \"" << search_title << "\" year=" << year << '\n';
-        const auto t0 = std::chrono::steady_clock::now();
-        auto results = anidb_->searchShows(search_title, year);
-        DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
-        timedSearch("anidb", std::move(results));
+        // AniDB is anime-only — never queried for a library unless the admin
+        // explicitly opted it in (include_anidb) or chose it as this library's
+        // one preferred scraper outright. Prevents cross-matching an unrelated
+        // general movie/show library against anime titles on title text alone.
+        if (anidb_ && (preferred_scraper == "anidb" || include_anidb)) {
+            DLOG << "[scraper]   querying anidb for show \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = anidb_->searchShows(qt, year);
+            DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearch("anidb", qt, std::move(results));
+        }
     }
 
     double best = 0.0;
@@ -716,10 +731,21 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
         pref_lang = lib->preferred_language;
     }
 
+    // See matchShow() for why this loops over query titles (real + alternate)
+    // and merges into one candidate pool instead of the caller invoking this
+    // function once per alternate title.
+    std::vector<std::string> query_titles = { search_title };
+    for (const auto& alt : getAlternateTitles(kairos_id, "movie")) {
+        if (!alt.empty() && std::find(query_titles.begin(), query_titles.end(), alt) == query_titles.end())
+            query_titles.push_back(alt);
+    }
+
     struct Cand { std::string source, ext_id, cand_title, poster, overview; int cand_year; double score; };
     std::vector<Cand> candidates;
 
-    auto collect = [&](const std::string& source, std::vector<Movie> results) {
+    // Merges by (source, ext_id), keeping the higher score when the same
+    // external movie turns up under two different query titles.
+    auto collect = [&](const std::string& source, const std::string& query_title, std::vector<Movie> results) {
         double lang_bonus = 0.0;
         for (const auto& cfg : getSettings().configs) {
             if (cfg.source == source && !pref_lang.empty() && cfg.language == pref_lang) {
@@ -729,7 +755,7 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
         }
 
         for (auto& r : results) {
-            double sc = computeScore(search_title, year, r.title,
+            double sc = computeScore(query_title, year, r.title,
                                      r.year.has_value() ? r.year.value() : 0);
             sc += lang_bonus;
             std::string ext;
@@ -737,59 +763,69 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
             else if (source == "tvdb")  ext = r.imdb_id;
             else if (source == "anidb") ext = r.movie_id;  // AID stored in movie_id
             if (ext.empty()) continue;
-            candidates.push_back({ source, ext, r.title, r.thumb, r.overview,
-                                   r.year.has_value() ? r.year.value() : 0, sc });
+
+            auto it = std::find_if(candidates.begin(), candidates.end(),
+                [&](const Cand& c) { return c.source == source && c.ext_id == ext; });
+            if (it != candidates.end()) {
+                if (sc > it->score) *it = { source, ext, r.title, r.thumb, r.overview,
+                                            r.year.has_value() ? r.year.value() : 0, sc };
+            } else {
+                candidates.push_back({ source, ext, r.title, r.thumb, r.overview,
+                                       r.year.has_value() ? r.year.value() : 0, sc });
+            }
         }
     };
 
-    auto timedSearchM = [&](const std::string& src, std::vector<Movie> results) {
-        DLOG << "[scraper]   " << src << ": " << results.size() << " result(s)\n";
+    auto timedSearchM = [&](const std::string& src, const std::string& query_title, std::vector<Movie> results) {
+        DLOG << "[scraper]   " << src << " (\"" << query_title << "\"): " << results.size() << " result(s)\n";
         for (const auto& r : results)
             DLOG << "[scraper]     " << src << " candidate: \"" << r.title << "\""
                  << " (" << (r.year.has_value() ? r.year.value() : 0) << ")"
                  << " score=" << std::fixed << std::setprecision(3)
-                 << computeScore(search_title, year, r.title, r.year.has_value() ? r.year.value() : 0)
+                 << computeScore(query_title, year, r.title, r.year.has_value() ? r.year.value() : 0)
                  << '\n';
-        collect(src, std::move(results));
+        collect(src, query_title, std::move(results));
     };
     // A library's chosen scraper is a *preference*, not an exclusive filter —
     // every enabled scraper is still queried so a title missing from the
     // preferred source can still be found elsewhere; the preference instead
     // breaks ties in the scoring below (see isAmbiguousTie/pickBest).
-    if (tmdb_) {
-        DLOG << "[scraper]   querying tmdb for movie \"" << search_title << "\" year=" << year << '\n';
-        const auto t0 = std::chrono::steady_clock::now();
-        auto results = tmdb_->searchMovies(search_title, year);
-        // See matchShow(): year is a hard filter on TMDB/TVDB, so fall back to
-        // an unfiltered search rather than lose an otherwise-clean title match.
-        if (results.empty() && year > 0) {
-            DLOG << "[scraper]   tmdb: 0 results with year filter, retrying without year\n";
-            results = tmdb_->searchMovies(search_title, 0);
+    for (const auto& qt : query_titles) {
+        if (tmdb_) {
+            DLOG << "[scraper]   querying tmdb for movie \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = tmdb_->searchMovies(qt, year);
+            // See matchShow(): year is a hard filter on TMDB/TVDB, so fall back to
+            // an unfiltered search rather than lose an otherwise-clean title match.
+            if (results.empty() && year > 0) {
+                DLOG << "[scraper]   tmdb: 0 results with year filter, retrying without year\n";
+                results = tmdb_->searchMovies(qt, 0);
+            }
+            DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearchM("tmdb", qt, std::move(results));
         }
-        DLOG << "[scraper]   tmdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
-        timedSearchM("tmdb", std::move(results));
-    }
-    if (tvdb_) {
-        DLOG << "[scraper]   querying tvdb for movie \"" << search_title << "\" year=" << year << '\n';
-        const auto t0 = std::chrono::steady_clock::now();
-        auto results = tvdb_->searchMovies(search_title, year);
-        if (results.empty() && year > 0) {
-            DLOG << "[scraper]   tvdb: 0 results with year filter, retrying without year\n";
-            results = tvdb_->searchMovies(search_title, 0);
+        if (tvdb_) {
+            DLOG << "[scraper]   querying tvdb for movie \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = tvdb_->searchMovies(qt, year);
+            if (results.empty() && year > 0) {
+                DLOG << "[scraper]   tvdb: 0 results with year filter, retrying without year\n";
+                results = tvdb_->searchMovies(qt, 0);
+            }
+            DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearchM("tvdb", qt, std::move(results));
         }
-        DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
-        timedSearchM("tvdb", std::move(results));
-    }
-    // AniDB is anime-only — never queried for a library unless the admin
-    // explicitly opted it in (include_anidb) or chose it as this library's
-    // one preferred scraper outright. Prevents cross-matching an unrelated
-    // general movie/show library against anime titles on title text alone.
-    if (anidb_ && (preferred_scraper == "anidb" || include_anidb)) {
-        DLOG << "[scraper]   querying anidb for movie \"" << search_title << "\" year=" << year << '\n';
-        const auto t0 = std::chrono::steady_clock::now();
-        auto results = anidb_->searchMovies(search_title, year);
-        DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
-        timedSearchM("anidb", std::move(results));
+        // AniDB is anime-only — never queried for a library unless the admin
+        // explicitly opted it in (include_anidb) or chose it as this library's
+        // one preferred scraper outright. Prevents cross-matching an unrelated
+        // general movie/show library against anime titles on title text alone.
+        if (anidb_ && (preferred_scraper == "anidb" || include_anidb)) {
+            DLOG << "[scraper]   querying anidb for movie \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = anidb_->searchMovies(qt, year);
+            DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearchM("anidb", qt, std::move(results));
+        }
     }
 
     double best = 0.0;
@@ -1292,7 +1328,17 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
     if (ids.empty()) return false;
 
     bool any_success = false;
-    for (const auto& id : ids) {
+    // getExternalIds() returns priority ascending (1 = primary, per the
+    // "Priority & Identifiers" editor). Every UPDATE below only overwrites a
+    // field when the freshly-fetched value is non-empty, so applying in that
+    // same ascending order meant whichever source was processed LAST (i.e.
+    // the lowest-priority one) always won for any field two sources both
+    // populate — the opposite of what the priority list promises. Iterating
+    // in reverse makes the highest-priority source the last write, so it
+    // wins for the fields it has, and lower-priority sources only fill in
+    // whatever it leaves blank.
+    for (auto rit = ids.rbegin(); rit != ids.rend(); ++rit) {
+        const auto& id = *rit;
         try {
             if (id.source == "tmdb" && tmdb_) {
                 if (item_type == "show") {

@@ -158,6 +158,7 @@ export const api = {
   setLibraryShowOnHome: (libraryId: string, showOnHome: boolean) =>
                                                         request<void>('PATCH', `/libraries/${libraryId}/home-visibility`, { show_on_home: showOnHome }),
   triggerSync:      (sourceId: string)                  => request<{status: string}>('POST', `/sources/${sourceId}/sync`),
+  triggerHardSync:  (sourceId: string)                  => request<{status: string}>('POST', `/sources/${sourceId}/hard-sync`),
   syncAll:          ()                                  => request<{status: string}>('POST', '/sync/all'),
 
   // Media language catalog (probed from library sample via ffprobe, cached 1 h)

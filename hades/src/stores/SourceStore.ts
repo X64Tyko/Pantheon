@@ -125,4 +125,13 @@ export class SourceStore {
       runInAction(() => { this.syncing = false })
     }
   }
+
+  async triggerHardSync(sourceId: string) {
+    this.syncing = true
+    try {
+      await api.triggerHardSync(sourceId)
+    } finally {
+      runInAction(() => { this.syncing = false })
+    }
+  }
 }

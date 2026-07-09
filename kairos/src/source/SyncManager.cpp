@@ -88,6 +88,37 @@ void SyncManager::triggerSync(const std::string& source_id) {
     }).detach();
 }
 
+void SyncManager::triggerHardSync(const std::string& source_id) {
+    bool expected = false;
+    if (!sync_running_.compare_exchange_strong(expected, true)) {
+        std::cout << "[sync] already running — ignoring hard-sync trigger" << std::endl;
+        return;
+    }
+    std::thread([this, source_id]() {
+        try {
+            clearSourceMapping(source_id);
+            syncSource(source_id);
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] hard sync error: " << e.what() << std::endl;
+        }
+        sync_running_.store(false);
+    }).detach();
+}
+
+// Wipes every source_mapping row this source owns so the next syncContent()
+// pass can't take the "already known" fast path for any of its items —
+// path/title dedup and fresh-id assignment run exactly as they would the
+// first time this source was ever synced. Note this also discards any
+// manual cross-source links ("Link Existing") involving this source's
+// items; that's expected, since a first-ever sync couldn't have had any
+// either.
+void SyncManager::clearSourceMapping(const std::string& source_id) {
+    std::cout << "[sync] hard sync: clearing existing mappings for " << source_id << std::endl;
+    SQLite::Statement d(db_.get(), "DELETE FROM source_mapping WHERE source_id = ?");
+    d.bind(1, source_id);
+    d.exec();
+}
+
 void SyncManager::syncAll() {
     sync_db_ = db_.openConnection(60000);
     media_locked_.store(true);
@@ -240,12 +271,18 @@ void SyncManager::syncShows(IMediaSource& src,
             show_ext_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
     }
 
-    // Cross-source dedup: all shows by lowercase title
+    // Cross-source dedup: lowercase title + year — title alone collides on
+    // real shows (UK/US "The Office"/"Shameless", reboots sharing a name,
+    // etc.), so this only merges when both sides agree on year or neither
+    // has one. See the matching movie-dedup key below for the same reasoning.
     std::unordered_map<std::string, std::string> show_title_to_id;
     {
-        SQLite::Statement q(sync_db_, "SELECT LOWER(title), show_id FROM show");
-        while (q.executeStep())
-            show_title_to_id[q.getColumn(0).getString()] = q.getColumn(1).getString();
+        SQLite::Statement q(sync_db_, "SELECT LOWER(title), year, show_id FROM show");
+        while (q.executeStep()) {
+            std::string key = q.getColumn(0).getString() + "|" +
+                (q.getColumn(1).isNull() ? "" : std::to_string(q.getColumn(1).getInt()));
+            show_title_to_id[key] = q.getColumn(2).getString();
+        }
     }
 
     // source_mapping for episodes from this source: ext_ep_id → kairos_ep_id
@@ -297,10 +334,19 @@ void SyncManager::syncShows(IMediaSource& src,
             std::string lower = show.title;
             std::transform(lower.begin(), lower.end(), lower.begin(),
                            [](unsigned char c){ return std::tolower(c); });
-            auto tit = show_title_to_id.find(lower);
+            std::string key = lower + "|" +
+                (show.year.has_value() ? std::to_string(show.year.value()) : "");
+            auto tit = show_title_to_id.find(key);
             if (tit != show_title_to_id.end()) {
                 kairos_id = tit->second;
-                is_cross_ref = true;
+                // Only a genuine cross-source dedup when the match belongs to
+                // someone else's prefix. A title/year match resolving back to
+                // this source's own deterministic id (e.g. after a hard sync
+                // clears source_mapping and this show's row is rediscovered
+                // by title) is this source re-finding itself, not a merge —
+                // treating it as cross-ref would wrongly skip the metadata
+                // upsert below.
+                if (!kairos_id.starts_with(show_prefix)) is_cross_ref = true;
             } else {
                 kairos_id = show_prefix + ext_id;
             }
@@ -547,10 +593,16 @@ void SyncManager::syncShows(IMediaSource& src,
                 bool ep_cross_ref = false;
                 std::string ep_kairos_id;
 
+                // In both branches, a path/id match only counts as cross-ref
+                // when it belongs to another source's prefix — a match that
+                // resolves back to this source's own deterministic id (e.g.
+                // rediscovering its own episode row by path after a hard
+                // sync clears source_mapping) must still hit the upsert
+                // below so its metadata actually gets refreshed.
                 if (cross_show) {
                     ep_kairos_id = ep_resolve_by_path(ep.file_path);
                     if (!ep_kairos_id.empty()) {
-                        ep_cross_ref = true;
+                        if (!ep_kairos_id.starts_with(ep_prefix)) ep_cross_ref = true;
                     } else {
                         ep_kairos_id = ep_resolve_id(ext_ep_id);
                     }
@@ -558,7 +610,10 @@ void SyncManager::syncShows(IMediaSource& src,
                     ep_kairos_id = ep_resolve_id(ext_ep_id);
                     if (ep_kairos_id == ep_prefix + ext_ep_id) {
                         const std::string existing = ep_resolve_by_path(ep.file_path);
-                        if (!existing.empty()) { ep_kairos_id = existing; ep_cross_ref = true; }
+                        if (!existing.empty()) {
+                            ep_kairos_id = existing;
+                            if (!existing.starts_with(ep_prefix)) ep_cross_ref = true;
+                        }
                     } else if (!ep_kairos_id.starts_with(ep_prefix)) {
                         ep_cross_ref = true;
                     }
@@ -663,12 +718,20 @@ void SyncManager::syncMovies(IMediaSource& src,
         }
     }
 
-    // Cross-source movie dedup: all movies by lowercase title
+    // Cross-source movie dedup: lowercase title + year. Title alone isn't
+    // safe to merge on — remakes share a title across different years (e.g.
+    // "Dune" 1984 vs 2021) — so this only fires when both sides agree on
+    // year, or neither side has one; anything else falls through to a new
+    // kairos entry (the Review queue's "Link Existing" flow is for exactly
+    // this missed-dedup case — see the cross-source-merge notes).
     std::unordered_map<std::string, std::string> movie_title_to_id;
     {
-        SQLite::Statement q(sync_db_, "SELECT LOWER(title), movie_id FROM movie");
-        while (q.executeStep())
-            movie_title_to_id[q.getColumn(0).getString()] = q.getColumn(1).getString();
+        SQLite::Statement q(sync_db_, "SELECT LOWER(title), year, movie_id FROM movie");
+        while (q.executeStep()) {
+            std::string key = q.getColumn(0).getString() + "|" +
+                (q.getColumn(1).isNull() ? "" : std::to_string(q.getColumn(1).getInt()));
+            movie_title_to_id[key] = q.getColumn(2).getString();
+        }
     }
 
     // ── Fetch ────────────────────────────────────────────────────────────────
@@ -717,15 +780,22 @@ void SyncManager::syncMovies(IMediaSource& src,
             auto pit = path_to_kairos.find(mapped);
             if (pit != path_to_kairos.end()) {
                 kairos_id = pit->second;
-                is_cross_ref = true;
+                // Same reasoning as the ext_id branch above: only cross-ref
+                // when the path match belongs to another source's prefix.
+                // A self-match (this source rediscovering its own row by
+                // path, e.g. after a hard sync clears source_mapping) must
+                // still go through the metadata upsert below.
+                if (!kairos_id.starts_with(movie_prefix)) is_cross_ref = true;
             } else {
                 std::string lower = movie.title;
                 std::transform(lower.begin(), lower.end(), lower.begin(),
                                [](unsigned char c){ return std::tolower(c); });
-                auto tit = movie_title_to_id.find(lower);
+                std::string key = lower + "|" +
+                    (movie.year.has_value() ? std::to_string(movie.year.value()) : "");
+                auto tit = movie_title_to_id.find(key);
                 if (tit != movie_title_to_id.end()) {
                     kairos_id = tit->second;
-                    is_cross_ref = true;
+                    if (!kairos_id.starts_with(movie_prefix)) is_cross_ref = true;
                 } else {
                     kairos_id = movie_prefix + ext_id;
                 }

@@ -295,6 +295,16 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, json{{"status","started"}, {"source_id", id}}.dump());
 	});
 
+	// Wipes this source's source_mapping first, so every item is re-resolved
+	// as if this were its very first sync (fresh dedup, not trusting stale ids).
+	svr.Post("/api/sources/:id/hard-sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		sync_.triggerHardSync(id);
+		res.status = 202;
+		route::ok(res, json{{"status","started"}, {"source_id", id}}.dump());
+	});
+
 	svr.Get("/api/sources/:id/browse/:kind", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto source_id = req.path_params.at("id");

@@ -40,6 +40,14 @@ public:
     void triggerSync(const std::string& source_id = "");
     bool isSyncing() const { return sync_running_.load(); }
 
+    // Like triggerSync(), but first wipes source_mapping for source_id so
+    // every item is re-resolved from scratch (path/title dedup, fresh ids)
+    // instead of trusting whatever it was already mapped to — the same
+    // resolution a source gets the very first time it's ever synced. Use
+    // when mappings are suspected stale/wrong rather than the library
+    // having genuinely changed (that's what a normal sync already handles).
+    void triggerHardSync(const std::string& source_id);
+
     // Re-syncs all Plex-linked playlists/filler-lists without a full library scan
     void triggerPlexLinkSync();
     bool isPlexLinkSyncing() const { return plex_sync_running_.load(); }
@@ -68,6 +76,7 @@ public:
 private:
     void syncContent(const std::string& source_id, SyncLiveIds& live);
     void syncPlexLinks(const std::string& source_id);
+    void clearSourceMapping(const std::string& source_id);
 
     void syncShows(IMediaSource& src,
                    const std::string& source_id,
