@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -177,6 +179,32 @@ std::string extractShowFolder(const fs::path& p) {
 // Near-identical names only: a mismatch here means the source metadata is
 // likely wrong and we should re-scrape using the folder name instead.
 constexpr double kFolderTitleThreshold = 0.95;
+
+// Rough day-count for a "YYYY-MM-DD" date string, for distance comparisons
+// only (not calendar-correct, just monotonic enough to diff).
+long dateToDayCount(const std::string& d) {
+    if (d.size() < 10) return 0;
+    try {
+        std::tm tm{};
+        tm.tm_year = std::stoi(d.substr(0, 4)) - 1900;
+        tm.tm_mon  = std::stoi(d.substr(5, 2)) - 1;
+        tm.tm_mday = std::stoi(d.substr(8, 2));
+        return static_cast<long>(std::mktime(&tm)) / 86400;
+    } catch (...) { return 0; }
+}
+
+// Whether two season-0 specials found via different scrapers are likely the
+// same underlying special — high title similarity, and (when both sides
+// have a date) air dates within ~60 days. Titles alone aren't enough:
+// different specials of the same show ("Recap Special", "OVA 1") are
+// often similarly generic-titled.
+bool sameSpecial(const std::string& title_a, const std::string& air_date_a,
+                  const std::string& title_b, const std::string& air_date_b) {
+    if (titleSimilarity(title_a, title_b) < 0.75) return false;
+    long da = dateToDayCount(air_date_a), db2 = dateToDayCount(air_date_b);
+    if (da == 0 || db2 == 0) return true; // no reliable date on one side — trust title alone
+    return std::labs(da - db2) <= 60;
+}
 
 } // namespace
 
@@ -1713,6 +1741,372 @@ std::string ScraperManager::anidbPosterUrl(const std::string& aid) const {
 
 void ScraperManager::anidbRateLimitImage() const {
     if (anidb_) anidb_->rateLimitImageWait();
+}
+
+// ── Show specials linking ───────────────────────────────────────────────────
+
+std::vector<std::pair<std::string, std::string>>
+ScraperManager::confirmedShowSourceIds(const std::string& show_id) const {
+    std::vector<std::pair<std::string, std::string>> out;
+    std::set<std::string> seen;
+
+    // Richest source: populated once a human confirms via acceptCandidate().
+    for (const auto& eid : getExternalIds(show_id, "show"))
+        if (!eid.external_id.empty() && seen.insert(eid.source).second)
+            out.push_back({eid.source, eid.external_id});
+
+    // Fallback: an auto-matched item that hasn't been human-confirmed yet
+    // never reaches acceptCandidate(), so item_external_id is empty — the
+    // winning id only lives on the item_match_candidate row itself.
+    {
+        SQLite::Statement q(db_.get(),
+            "SELECT source, external_id FROM item_match_candidate "
+            "WHERE item_type='show' AND kairos_id=? AND accepted=1");
+        q.bind(1, show_id);
+        while (q.executeStep()) {
+            std::string src = q.getColumn(0).getString();
+            std::string ext = q.getColumn(1).getString();
+            if (!ext.empty() && seen.insert(src).second) out.push_back({src, ext});
+        }
+    }
+
+    // Fallback: the trusted-ID short-circuit in matchShow() sets match_status
+    // directly from the show's own tvdb_id/tmdb_id columns without ever
+    // querying a scraper or touching either table above.
+    {
+        SQLite::Statement q(db_.get(), "SELECT tvdb_id, tmdb_id FROM show WHERE show_id=?");
+        q.bind(1, show_id);
+        if (q.executeStep()) {
+            std::string tvdb = q.getColumn(0).getString();
+            std::string tmdb = q.getColumn(1).getString();
+            if (!tvdb.empty() && seen.insert("tvdb").second) out.push_back({"tvdb", tvdb});
+            if (!tmdb.empty() && seen.insert("tmdb").second) out.push_back({"tmdb", tmdb});
+        }
+    }
+    return out;
+}
+
+std::vector<SpecialCandidate> ScraperManager::scanSpecialsForShow(const std::string& show_id) {
+    std::string show_title;
+    {
+        SQLite::Statement q(db_.get(), "SELECT title FROM show WHERE show_id=?");
+        q.bind(1, show_id);
+        if (!q.executeStep()) return {};
+        show_title = q.getColumn(0).getString();
+    }
+
+    auto source_ids = confirmedShowSourceIds(show_id);
+
+    // Query every confirmed source, not just the top-priority one, and keep
+    // only season-0 (specials) entries from each.
+    struct SourceSpecials { std::string source; std::vector<Episode> specials; };
+    std::vector<SourceSpecials> per_source;
+    for (const auto& [source, ext_id] : source_ids) {
+        std::vector<Episode> eps;
+        if      (source == "tmdb"  && tmdb_)  eps = tmdb_->fetchEpisodes(ext_id);
+        else if (source == "tvdb"  && tvdb_)  eps = tvdb_->fetchEpisodes(ext_id);
+        else if (source == "anidb" && anidb_) eps = anidb_->fetchEpisodes(ext_id);
+        else continue;
+
+        std::vector<Episode> specials;
+        for (auto& ep : eps) if (ep.season == 0) specials.push_back(std::move(ep));
+        if (!specials.empty())
+            per_source.push_back({source, std::move(specials)});
+    }
+
+    // Every scraper either isn't reachable or genuinely has nothing to say
+    // right now — leave existing candidates untouched rather than risk
+    // wiping pending review rows because of a transient failure we can't
+    // tell apart from "no specials" (fetchEpisodes returns {} either way).
+    if (per_source.empty()) {
+        std::cout << "[scraper] specials scan: \"" << show_title << "\" — no source data, skipping\n";
+        return getSpecialCandidates(show_id);
+    }
+
+    // Merge duplicates across sources into one canonical list. per_source is
+    // already in confirmedShowSourceIds' priority order, so the first source
+    // to report a given special "wins" its title/overview/number; later
+    // sources only fill in blanks.
+    struct Merged {
+        std::string title, overview, air_date, thumb, source, source_episode_id;
+        int number = 0;
+    };
+    std::vector<Merged> merged;
+    for (const auto& src : per_source) {
+        for (const auto& ep : src.specials) {
+            bool found = false;
+            for (auto& m : merged) {
+                if (sameSpecial(ep.title, ep.air_date, m.title, m.air_date)) {
+                    if (m.overview.empty())  m.overview  = ep.overview;
+                    if (m.thumb.empty())     m.thumb     = ep.thumb;
+                    if (m.air_date.empty())  m.air_date  = ep.air_date;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                merged.push_back({ep.title, ep.overview, ep.air_date, ep.thumb,
+                                   src.source, ep.episode_id, ep.episode});
+            }
+        }
+    }
+
+    // Specials that already have a real on-disk episode row need no link.
+    std::set<int> already_filed;
+    {
+        SQLite::Statement q(db_.get(),
+            "SELECT episode FROM episode WHERE show_id=? AND season=0 AND file_path != ''");
+        q.bind(1, show_id);
+        while (q.executeStep()) already_filed.insert(q.getColumn(0).getInt());
+    }
+
+    struct MovieRow { std::string id, title; int year; };
+    std::vector<MovieRow> movies;
+    {
+        SQLite::Statement q(db_.get(), R"(
+            SELECT movie_id, title, COALESCE(year,0) FROM movie
+            WHERE skip_scraping = 0
+              AND movie_id NOT IN (SELECT linked_movie_id FROM episode WHERE linked_movie_id IS NOT NULL)
+        )");
+        while (q.executeStep())
+            movies.push_back({q.getColumn(0).getString(), q.getColumn(1).getString(), q.getColumn(2).getInt()});
+    }
+
+    constexpr double kFloor         = 0.35; // keeps the list signal-heavy; linking always needs a human accept
+    constexpr size_t kMaxPerSpecial = 5;
+
+    std::set<int> reported_numbers;
+    {
+        SQLite::Transaction txn(db_.get());
+        for (const auto& m : merged) {
+            if (already_filed.count(m.number)) continue;
+            reported_numbers.insert(m.number);
+
+            int special_year = 0;
+            if (m.air_date.size() >= 4) {
+                try { special_year = std::stoi(m.air_date.substr(0, 4)); } catch (...) {}
+            }
+
+            std::vector<std::pair<double, const MovieRow*>> scored;
+            for (const auto& mv : movies) {
+                double sc = computeScore(m.title, special_year, mv.title, mv.year);
+                if (sc >= kFloor) scored.push_back({sc, &mv});
+            }
+            std::sort(scored.begin(), scored.end(),
+                      [](const auto& a, const auto& b) { return a.first > b.first; });
+            if (scored.size() > kMaxPerSpecial) scored.resize(kMaxPerSpecial);
+
+            for (const auto& [score, mv] : scored) {
+                std::string cid = "special:" + show_id + ":" + std::to_string(m.number) + ":" + mv->id;
+                SQLite::Statement up(db_.get(), R"(
+                    INSERT INTO special_link_candidate
+                        (candidate_id, show_id, episode_number, special_title, special_overview,
+                         special_air_date, special_thumb, source, source_episode_id, movie_id, score)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(show_id, episode_number, movie_id) DO UPDATE SET
+                        special_title     = excluded.special_title,
+                        special_overview  = excluded.special_overview,
+                        special_air_date  = excluded.special_air_date,
+                        special_thumb     = excluded.special_thumb,
+                        source            = excluded.source,
+                        source_episode_id = excluded.source_episode_id,
+                        score             = excluded.score
+                    WHERE accepted IS NULL
+                )");
+                up.bind(1, cid); up.bind(2, show_id); up.bind(3, m.number);
+                up.bind(4, m.title); up.bind(5, m.overview); up.bind(6, m.air_date);
+                up.bind(7, m.thumb); up.bind(8, m.source); up.bind(9, m.source_episode_id);
+                up.bind(10, mv->id); up.bind(11, score);
+                up.exec();
+            }
+        }
+
+        // A pending candidate for an episode-number this scan no longer
+        // reports has nothing left to preserve — decided (accepted/rejected)
+        // rows are untouched regardless.
+        std::vector<int> stale;
+        {
+            SQLite::Statement q(db_.get(),
+                "SELECT DISTINCT episode_number FROM special_link_candidate "
+                "WHERE show_id=? AND accepted IS NULL");
+            q.bind(1, show_id);
+            while (q.executeStep()) {
+                int n = q.getColumn(0).getInt();
+                if (!reported_numbers.count(n)) stale.push_back(n);
+            }
+        }
+        for (int n : stale) {
+            SQLite::Statement d(db_.get(),
+                "DELETE FROM special_link_candidate WHERE show_id=? AND episode_number=? AND accepted IS NULL");
+            d.bind(1, show_id); d.bind(2, n); d.exec();
+        }
+
+        txn.commit();
+    }
+
+    std::cout << "[scraper] specials scan: \"" << show_title << "\" — "
+              << merged.size() << " special(s) across " << per_source.size()
+              << " source(s)\n";
+
+    return getSpecialCandidates(show_id);
+}
+
+std::vector<SpecialCandidate> ScraperManager::getSpecialCandidates(const std::string& show_id) const {
+    std::vector<SpecialCandidate> out;
+    SQLite::Statement q(db_.get(), R"(
+        SELECT c.candidate_id, c.episode_number, c.special_title, c.special_overview,
+               c.special_air_date, c.special_thumb, c.source, c.source_episode_id,
+               c.movie_id, m.title, COALESCE(m.year,0), c.score, COALESCE(c.accepted,-1)
+        FROM special_link_candidate c
+        JOIN movie m ON m.movie_id = c.movie_id
+        WHERE c.show_id = ?
+        ORDER BY c.episode_number ASC, c.score DESC
+    )");
+    q.bind(1, show_id);
+    while (q.executeStep()) {
+        SpecialCandidate c;
+        c.candidate_id      = q.getColumn(0).getString();
+        c.show_id           = show_id;
+        c.episode_number    = q.getColumn(1).getInt();
+        c.special_title     = q.getColumn(2).getString();
+        c.special_overview  = q.getColumn(3).getString();
+        c.special_air_date  = q.getColumn(4).getString();
+        c.special_thumb     = q.getColumn(5).getString();
+        c.source            = q.getColumn(6).getString();
+        c.source_episode_id = q.getColumn(7).getString();
+        c.movie_id          = q.getColumn(8).getString();
+        c.movie_title       = q.getColumn(9).getString();
+        c.movie_year        = q.getColumn(10).getInt();
+        c.score              = q.getColumn(11).getDouble();
+        c.accepted           = q.getColumn(12).getInt();
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+std::vector<LinkedSpecial> ScraperManager::getLinkedSpecials(const std::string& show_id) const {
+    std::vector<LinkedSpecial> out;
+    SQLite::Statement q(db_.get(), R"(
+        SELECT e.episode_id, e.episode, e.title, e.linked_movie_id, m.title
+        FROM episode e
+        JOIN movie m ON m.movie_id = e.linked_movie_id
+        WHERE e.show_id = ? AND e.season = 0 AND e.linked_movie_id IS NOT NULL
+        ORDER BY e.episode ASC
+    )");
+    q.bind(1, show_id);
+    while (q.executeStep()) {
+        out.push_back({
+            q.getColumn(0).getString(),
+            q.getColumn(1).getInt(),
+            q.getColumn(2).getString(),
+            q.getColumn(3).getString(),
+            q.getColumn(4).getString(),
+        });
+    }
+    return out;
+}
+
+bool ScraperManager::acceptSpecialCandidate(const std::string& candidate_id) {
+    std::string show_id, title, overview, air_date, thumb, movie_id;
+    int number = 0;
+    {
+        SQLite::Statement q(db_.get(), R"(
+            SELECT show_id, episode_number, special_title, special_overview,
+                   special_air_date, special_thumb, movie_id
+            FROM special_link_candidate WHERE candidate_id = ?
+        )");
+        q.bind(1, candidate_id);
+        if (!q.executeStep()) return false;
+        show_id  = q.getColumn(0).getString();
+        number   = q.getColumn(1).getInt();
+        title    = q.getColumn(2).getString();
+        overview = q.getColumn(3).getString();
+        air_date = q.getColumn(4).getString();
+        thumb    = q.getColumn(5).getString();
+        movie_id = q.getColumn(6).getString();
+    }
+
+    int64_t movie_duration_ms = 0;
+    std::string movie_thumb;
+    {
+        SQLite::Statement q(db_.get(), "SELECT duration_ms, thumb FROM movie WHERE movie_id=?");
+        q.bind(1, movie_id);
+        if (q.executeStep()) {
+            movie_duration_ms = q.getColumn(0).getInt64();
+            movie_thumb       = q.getColumn(1).getString();
+        }
+    }
+    const std::string effective_thumb = !thumb.empty() ? thumb : movie_thumb;
+
+    SQLite::Transaction txn(db_.get());
+
+    // An existing (show_id, season=0, episode=number) row covers re-accepting
+    // after a reject-then-reconsider — update it in place instead of
+    // colliding on a fresh id.
+    std::string episode_id;
+    {
+        SQLite::Statement q(db_.get(),
+            "SELECT episode_id FROM episode WHERE show_id=? AND season=0 AND episode=?");
+        q.bind(1, show_id); q.bind(2, number);
+        if (q.executeStep()) episode_id = q.getColumn(0).getString();
+    }
+
+    if (episode_id.empty()) {
+        episode_id = "special:" + show_id + ":" + std::to_string(number);
+        SQLite::Statement ins(db_.get(), R"(
+            INSERT INTO episode (episode_id, show_id, season, episode, title, file_path,
+                                  duration_ms, overview, air_date, thumb, linked_movie_id, locked)
+            VALUES (?, ?, 0, ?, ?, '', ?, ?, ?, ?, ?, 1)
+        )");
+        ins.bind(1, episode_id); ins.bind(2, show_id); ins.bind(3, number);
+        ins.bind(4, title); ins.bind(5, movie_duration_ms); ins.bind(6, overview);
+        ins.bind(7, air_date); ins.bind(8, effective_thumb); ins.bind(9, movie_id);
+        ins.exec();
+    } else {
+        SQLite::Statement upd(db_.get(), R"(
+            UPDATE episode SET title=?, file_path='', duration_ms=?, overview=?, air_date=?,
+                                thumb=?, linked_movie_id=?, locked=1
+            WHERE episode_id=?
+        )");
+        upd.bind(1, title); upd.bind(2, movie_duration_ms); upd.bind(3, overview);
+        upd.bind(4, air_date); upd.bind(5, effective_thumb); upd.bind(6, movie_id);
+        upd.bind(7, episode_id);
+        upd.exec();
+    }
+
+    {
+        SQLite::Statement u(db_.get(),
+            "UPDATE special_link_candidate SET accepted=1, decided_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE candidate_id=?");
+        u.bind(1, candidate_id); u.exec();
+    }
+    // Only one movie can back one special — supersede sibling pending
+    // candidates for the same (show, episode-number) without deleting them.
+    {
+        SQLite::Statement u(db_.get(), R"(
+            UPDATE special_link_candidate
+            SET accepted=0, decided_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+            WHERE show_id=? AND episode_number=? AND candidate_id != ? AND accepted IS NULL
+        )");
+        u.bind(1, show_id); u.bind(2, number); u.bind(3, candidate_id);
+        u.exec();
+    }
+
+    txn.commit();
+    return true;
+}
+
+bool ScraperManager::rejectSpecialCandidate(const std::string& candidate_id) {
+    SQLite::Statement rd(db_.get(), "SELECT 1 FROM special_link_candidate WHERE candidate_id=?");
+    rd.bind(1, candidate_id);
+    if (!rd.executeStep()) return false;
+
+    SQLite::Statement u(db_.get(),
+        "UPDATE special_link_candidate SET accepted=0, decided_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+        "WHERE candidate_id=?");
+    u.bind(1, candidate_id);
+    u.exec();
+    return true;
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────

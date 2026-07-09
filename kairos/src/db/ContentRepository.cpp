@@ -111,7 +111,10 @@ std::vector<Episode> ContentRepository::getEpisodes(const std::string& show_id,
     std::string sql =
         "SELECT episode_id, show_id, season, episode, title, file_path, duration_ms,"
         " overview, air_date, thumb, tvdb_id, tmdb_id, imdb_id"
-        " FROM episode WHERE show_id = ?";
+        // Linked specials (see ScraperManager's specials linking) are VOD-only
+        // for now — excluded from linear scheduling, which is the only
+        // caller of this function (listEpisodesForShow, the VOD path, is separate).
+        " FROM episode WHERE show_id = ? AND linked_movie_id IS NULL";
     if (season)                         sql += " AND season = ?";
     if (!season && !include_specials)   sql += " AND season != 0";
     if (episode_order == "absolute")
@@ -909,7 +912,8 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
                s.originally_available_at, s.year, s.audience_rating, s.locked,
                COUNT(e.episode_id) AS episode_count,
                s.labels, s.network, s.actors, s.countries, s.collections,
-               s.match_status, s.match_score, s.match_confirmed, s.skip_scraping
+               s.match_status, s.match_score, s.match_confirmed, s.skip_scraping,
+               s.find_specials, s.episode_display_order
         FROM show s
         LEFT JOIN episode e ON e.show_id = s.show_id
         WHERE s.show_id = ?
@@ -945,6 +949,8 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
     if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
     d.match_confirmed = q.getColumn(24).getInt() != 0;
     d.skip_scraping   = q.getColumn(25).getInt() != 0;
+    d.find_specials   = q.getColumn(26).getInt() != 0;
+    d.episode_display_order = q.getColumn(27).getString();
 
     {
         SQLite::Statement sm(db_.get(), R"(
@@ -1201,6 +1207,20 @@ void ContentRepository::clearPendingMatchStateForLibrary(const std::string& libr
           AND movie_id IN (SELECT kairos_id FROM source_mapping WHERE item_type='movie' AND library_id=?)
       )");
       u.bind(1, library_id); u.exec(); }
+}
+
+void ContentRepository::setShowFindSpecials(const std::string& show_id, bool find_specials) {
+    SQLite::Statement s(db_.get(), "UPDATE show SET find_specials = ? WHERE show_id = ?");
+    s.bind(1, find_specials ? 1 : 0);
+    s.bind(2, show_id);
+    s.exec();
+}
+
+void ContentRepository::setShowEpisodeDisplayOrder(const std::string& show_id, const std::string& order) {
+    SQLite::Statement s(db_.get(), "UPDATE show SET episode_display_order = ? WHERE show_id = ?");
+    s.bind(1, order);
+    s.bind(2, show_id);
+    s.exec();
 }
 
 void ContentRepository::mergeMovieInto(const std::string& target_id, const std::string& dup_id) {

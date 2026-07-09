@@ -426,7 +426,9 @@ Movie AnidbScraper::movieFromXml(const std::string& xml, const std::string& aid)
 
 // ---------------------------------------------------------------------------
 // Parse anime detail XML → Episodes
-// Only regular episodes (epno type="1") are returned; specials/trailers skipped.
+// Regular episodes (epno type="1") get season=1; specials (type="2") get
+// season=0. Other AniDB types (trailers/parodies/other, type="3"+) are still
+// skipped — not real content.
 // ---------------------------------------------------------------------------
 
 std::vector<Episode> AnidbScraper::episodesFromXml(const std::string& xml,
@@ -435,17 +437,17 @@ std::vector<Episode> AnidbScraper::episodesFromXml(const std::string& xml,
     std::vector<Episode> out;
 
     for (auto& [etag, econtent] : xmlAll(eps_sec, "episode")) {
-        // Only regular episodes
-        std::string epno_text;
+        std::string epno_text, epno_type;
         for (auto& [pt, ptext] : xmlAll(econtent, "epno")) {
-            if (xmlAttr(pt, "type") == "1") { epno_text = ptext; break; }
+            const std::string t = xmlAttr(pt, "type");
+            if (t == "1" || t == "2") { epno_text = ptext; epno_type = t; break; }
         }
         if (epno_text.empty()) continue;
 
         Episode ep;
         ep.episode_id = "anidb:" + xmlAttr(etag, "id");
         ep.show_id    = show_id;
-        ep.season     = 1;
+        ep.season     = (epno_type == "2") ? 0 : 1;
         try { ep.episode = std::stoi(epno_text); } catch (...) { continue; }
 
         ep.air_date = xmlText(econtent, "airdate");

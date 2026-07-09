@@ -3,12 +3,14 @@
 #include "../ServiceContext.h"
 
 class Database;
+class ScraperManager;
 
 class KairosService : public IKairosService {
 public:
-	explicit KairosService(const ServiceContext& ctx);
+	KairosService(const ServiceContext& ctx, ScraperManager& scraper);
 	void registerRoutes(httplib::Server& svr) override;
 
 private:
-	Database& db_;
+	Database&       db_;
+	ScraperManager& scraper_;
 };

@@ -52,6 +52,25 @@ struct ScraperStats {
     int skipped   = 0;
 };
 
+struct SpecialCandidate {
+    std::string candidate_id, show_id;
+    int         episode_number = 0;
+    std::string special_title, special_overview, special_air_date, special_thumb;
+    std::string source, source_episode_id;
+    std::string movie_id, movie_title;
+    int         movie_year = 0;
+    double      score = 0.0;
+    int         accepted = -1; // -1=pending, 1=accepted, 0=rejected
+};
+
+struct LinkedSpecial {
+    std::string episode_id;
+    int         episode_number = 0;
+    std::string title;
+    std::string linked_movie_id;
+    std::string linked_movie_title;
+};
+
 struct ScraperConfig {
     std::string source;
     std::string api_key;
@@ -144,6 +163,17 @@ public:
 
     ScraperStats stats() const;
 
+    // Show specials <-> movie-library-file linking. Scans every scraper the
+    // show has a confirmed ID with for season-0 (specials/OVA/TV-movie)
+    // entries, merges duplicates found across sources, and scores them
+    // against the movie catalog. Never auto-links — always goes through
+    // accept/reject, same as the main review queue.
+    std::vector<SpecialCandidate> scanSpecialsForShow(const std::string& show_id);
+    std::vector<SpecialCandidate> getSpecialCandidates(const std::string& show_id) const;
+    std::vector<LinkedSpecial>    getLinkedSpecials(const std::string& show_id) const;
+    bool acceptSpecialCandidate(const std::string& candidate_id);
+    bool rejectSpecialCandidate(const std::string& candidate_id);
+
     // Returns the CDN poster URL for an AniDB AID, or empty if unavailable/disabled.
     std::string anidbPosterUrl(const std::string& aid) const;
 
@@ -177,6 +207,16 @@ private:
     void  upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
                                const std::string& title);
     double threshold() const;
+
+    // Every (source, external_id) this show is confirmed to be identified by,
+    // merging all three places that fact can live: item_external_id (richest —
+    // populated once a human confirms via acceptCandidate), the winning
+    // item_match_candidate row (set for an auto-matched-but-not-yet-confirmed
+    // item), and the show's own tvdb_id/tmdb_id columns (set for the
+    // trusted-ID short-circuit path in matchShow, which never touches either
+    // of the other two). De-duplicated by source, richest-first.
+    std::vector<std::pair<std::string, std::string>>
+        confirmedShowSourceIds(const std::string& show_id) const;
 
     Database&    db_;
     ConfStore&   conf_;

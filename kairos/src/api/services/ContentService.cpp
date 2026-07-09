@@ -335,6 +335,37 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
 	});
 
+	// Per-show opt-in for the automatic specials scan (runs during normal
+	// sync — see SyncManager::scanSpecialsForEligibleShows). Separate route
+	// for the same reason as skip-scraping above.
+	svr.Patch("/api/shows/:id/find-specials", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			auto b = json::parse(req.body);
+			ContentRepository(db_).setShowFindSpecials(id, b.at("find_specials").get<bool>());
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
+	});
+
+	// 'season' (default) buckets season-0 episodes into one Specials group;
+	// 'aired' interleaves them between numbered seasons by air date — see
+	// useMediaDetail.ts's grouping logic on the frontend.
+	svr.Patch("/api/shows/:id/episode-display-order", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			auto b = json::parse(req.body);
+			std::string order = b.at("episode_display_order").get<std::string>();
+			if (order != "season" && order != "aired") {
+				route::err(res, 400, "episode_display_order must be 'season' or 'aired'");
+				return;
+			}
+			ContentRepository(db_).setShowEpisodeDisplayOrder(id, order);
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
+	});
+
 	// ── Libraries ────────────────────────────────────────────────────────────
 
 	svr.Get("/api/libraries", [this](const Req&, Res& res) {
@@ -616,6 +647,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (d->audience_rating) show["audience_rating"] = *d->audience_rating;
 		show["locked"]          = d->locked;
 		show["skip_scraping"]   = d->skip_scraping;
+		show["find_specials"]   = d->find_specials;
+		show["episode_display_order"] = d->episode_display_order;
 		show["episode_count"]   = d->episode_count;
 		show["labels"]          = parseArr(d->labels);
 		show["network"]         = d->network;

@@ -156,6 +156,10 @@ void SyncManager::syncAll() {
     DLOG << "[sync] === phase 2: scraper match ===\n";
     if (scraper_) scraper_->runMatchSync();
 
+    // Phase 2b: specials scan — opt-in per show, only for shows already matched.
+    DLOG << "[sync] === phase 2b: specials scan ===\n";
+    scanSpecialsForEligibleShows();
+
     // Phase 3: chapter sync.
     DLOG << "[sync] === phase 3: chapter sync ===\n";
     for (const auto& src : sources_) {
@@ -231,6 +235,7 @@ void SyncManager::syncSource(const std::string& source_id) {
     syncContent(source_id, live);
     runOrphanCleanup(live);
     if (scraper_) scraper_->runMatchSync();
+    scanSpecialsForEligibleShows();
     syncChaptersFromFiles(source_id);
     media_locked_.store(false);
     std::cout << "[sync] done: " << source_id << std::endl;
@@ -1004,17 +1009,26 @@ void SyncManager::runOrphanCleanup(const SyncLiveIds& live) {
     try {
         SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
 
+        // A linked special (episode.linked_movie_id set — see ScraperManager's
+        // specials linking) has no underlying synced file, so it can never
+        // gain a source_mapping row — without this guard, every linked
+        // special would look orphaned and get deleted on the very next sync.
+        // q1/q2 use the identical condition since q1 exists purely to keep
+        // cursor refs in sync with what q2 is about to delete.
+
         // Nullify channel cursor refs before deleting episodes (FK constraint).
         SQLite::Statement q1(sync_db_,
             "UPDATE media_cursor SET episode_id = NULL "
             "WHERE episode_id NOT IN "
-            "(SELECT kairos_id FROM source_mapping WHERE item_type='episode')");
+            "(SELECT kairos_id FROM source_mapping WHERE item_type='episode') "
+            "AND episode_id NOT IN (SELECT episode_id FROM episode WHERE linked_movie_id IS NOT NULL)");
         q1.exec();
 
         SQLite::Statement q2(sync_db_,
             "DELETE FROM episode "
             "WHERE episode_id NOT IN "
-            "(SELECT kairos_id FROM source_mapping WHERE item_type='episode')");
+            "(SELECT kairos_id FROM source_mapping WHERE item_type='episode') "
+            "AND linked_movie_id IS NULL");
         q2.exec();
 
         SQLite::Statement q3(sync_db_,
@@ -1039,6 +1053,28 @@ void SyncManager::runOrphanCleanup(const SyncLiveIds& live) {
         std::cout << "[sync] orphan cleanup complete" << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "[sync] error during orphan cleanup: " << e.what() << " — skipping\n";
+    }
+}
+
+void SyncManager::scanSpecialsForEligibleShows() {
+    if (!scraper_) return;
+
+    std::vector<std::string> show_ids;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT show_id FROM show WHERE find_specials = 1 AND match_status = 'matched'");
+        while (q.executeStep()) show_ids.push_back(q.getColumn(0).getString());
+    }
+    if (show_ids.empty()) return;
+
+    std::cout << "[sync] specials scan: " << show_ids.size() << " show(s) opted in" << std::endl;
+    for (const auto& show_id : show_ids) {
+        yieldIfRequested();
+        try {
+            scraper_->scanSpecialsForShow(show_id);
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] specials scan error for " << show_id << ": " << e.what() << std::endl;
+        }
     }
 }
 

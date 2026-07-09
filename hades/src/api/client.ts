@@ -10,7 +10,7 @@ import type {
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
-  Show, ShowDetail, Source, SourceType, User, VideoInfo, WatchProgress, WritebackResult,
+  Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState,
 } from './types'
 
@@ -286,6 +286,16 @@ export const api = {
   removeGroupMember:      (showId: string, groupId: string, memberId: number)      => request<void>('DELETE', `/shows/${showId}/groups/${groupId}/members/${memberId}`),
   getGroupingCandidates:       (showId: string) => request<GroupingCandidatesResult>('GET', `/shows/${showId}/grouping-candidates`),
   getAllGroupingCandidates:    ()               => request<ShowGroupingResult[]>('GET', '/grouping-candidates'),
+
+  // Show specials linking — see ScraperManager::scanSpecialsForShow
+  scanSpecials:           (showId: string) => request<{ candidates: SpecialCandidate[] }>('POST', `/shows/${showId}/specials/scan`),
+  getSpecialCandidates:   (showId: string) => request<{ candidates: SpecialCandidate[] }>('GET',  `/shows/${showId}/specials/candidates`),
+  getLinkedSpecials:      (showId: string) => request<LinkedSpecial[]>('GET', `/shows/${showId}/specials`),
+  acceptSpecialCandidate: (showId: string, candidateId: string) => request<{ ok: boolean }>('POST', `/shows/${showId}/specials/candidates/${candidateId}/accept`),
+  rejectSpecialCandidate: (showId: string, candidateId: string) => request<{ ok: boolean }>('POST', `/shows/${showId}/specials/candidates/${candidateId}/reject`),
+  setShowFindSpecials:    (showId: string, find_specials: boolean) => request<{ ok: boolean }>('PATCH', `/shows/${showId}/find-specials`, { find_specials }),
+  setEpisodeDisplayOrder: (showId: string, episode_display_order: 'season' | 'aired') =>
+                            request<{ ok: boolean }>('PATCH', `/shows/${showId}/episode-display-order`, { episode_display_order }),
 
   // Block filler entries
   addBlockFiller:    (channelId: string, blockId: string, b: { content_type: string; content_id: string; advancement: FillerEntryAdvancement; weight?: number; season_filter?: number }) =>

@@ -3,6 +3,7 @@
 #include "../RouteHelpers.h"
 #include "../../db/BlockRepository.h"
 #include "../../db/GroupRepository.h"
+#include "../../scraper/ScraperManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -16,8 +17,8 @@ using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-KairosService::KairosService(const ServiceContext& ctx)
-	: db_(ctx.db)
+KairosService::KairosService(const ServiceContext& ctx, ScraperManager& scraper)
+	: db_(ctx.db), scraper_(scraper)
 {}
 
 namespace {
@@ -108,6 +109,23 @@ json buildGroupingCandidates(const std::vector<EpRow>& eps,
 		candidates.push_back(std::move(group));
 	}
 	return candidates;
+}
+
+json specialCandidateJson(const SpecialCandidate& c) {
+	return json{
+		{"candidate_id",      c.candidate_id},
+		{"episode_number",    c.episode_number},
+		{"special_title",     c.special_title},
+		{"special_overview",  c.special_overview},
+		{"special_air_date",  c.special_air_date},
+		{"special_thumb",     c.special_thumb},
+		{"source",            c.source},
+		{"score",             c.score},
+		{"accepted",          c.accepted},
+		{"movie_id",          c.movie_id},
+		{"movie_title",       c.movie_title},
+		{"movie_year",        c.movie_year},
+	};
 }
 
 } // namespace
@@ -243,6 +261,82 @@ void KairosService::registerRoutes(httplib::Server& svr) {
 				                   {"candidates", candidates}});
 			}
 			route::ok(res, result.dump());
+		} catch (const std::exception& e) {
+			route::err(res, 500, e.what());
+		}
+	});
+
+	// ── Show specials linking ─────────────────────────────────────────────────
+	// A show's special/OVA/TV-movie often lives as a standalone file in a
+	// Movies library rather than under the show's own folder — these routes
+	// find and link it. Never auto-links: scan only ever produces candidates,
+	// same accept/reject-driven review as the main match queue.
+
+	svr.Post("/api/shows/:id/specials/scan", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto show_id = req.path_params.at("id");
+		try {
+			auto candidates = scraper_.scanSpecialsForShow(show_id);
+			json out = json::array();
+			for (const auto& c : candidates) out.push_back(specialCandidateJson(c));
+			route::ok(res, json{{"candidates", out}}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("POST /api/shows/:id/specials/scan", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	svr.Get("/api/shows/:id/specials/candidates", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto show_id = req.path_params.at("id");
+		try {
+			auto candidates = scraper_.getSpecialCandidates(show_id);
+			json out = json::array();
+			for (const auto& c : candidates) out.push_back(specialCandidateJson(c));
+			route::ok(res, json{{"candidates", out}}.dump());
+		} catch (const std::exception& e) {
+			route::err(res, 500, e.what());
+		}
+	});
+
+	svr.Get("/api/shows/:id/specials", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto show_id = req.path_params.at("id");
+		try {
+			json out = json::array();
+			for (const auto& s : scraper_.getLinkedSpecials(show_id)) {
+				out.push_back({
+					{"episode_id",         s.episode_id},
+					{"episode_number",     s.episode_number},
+					{"title",              s.title},
+					{"linked_movie_id",    s.linked_movie_id},
+					{"linked_movie_title", s.linked_movie_title},
+				});
+			}
+			route::ok(res, out.dump());
+		} catch (const std::exception& e) {
+			route::err(res, 500, e.what());
+		}
+	});
+
+	svr.Post("/api/shows/:id/specials/candidates/:cid/accept", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto cid = req.path_params.at("cid");
+		try {
+			if (!scraper_.acceptSpecialCandidate(cid)) { route::err(res, 404, "candidate not found"); return; }
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("POST /api/shows/:id/specials/candidates/:cid/accept", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	svr.Post("/api/shows/:id/specials/candidates/:cid/reject", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto cid = req.path_params.at("cid");
+		try {
+			if (!scraper_.rejectSpecialCandidate(cid)) { route::err(res, 404, "candidate not found"); return; }
+			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
 			route::err(res, 500, e.what());
 		}

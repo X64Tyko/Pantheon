@@ -258,7 +258,7 @@ std::vector<Episode> TmdbScraper::fetchEpisodes(const std::string& external_id, 
         auto sj = json::parse(show_res->body);
         for (const auto& s : sj.value("seasons", json::array())) {
             int n = safeInt(s, "season_number");
-            if (n > 0) season_nums.push_back(n);  // skip specials (season 0)
+            if (n >= 0) season_nums.push_back(n);  // include specials (season 0)
         }
     } catch (...) { return {}; }
 

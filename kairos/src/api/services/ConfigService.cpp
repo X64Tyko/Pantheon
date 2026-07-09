@@ -162,6 +162,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 
 			// Scraper match/override data tied to kairos IDs.
 			db_.get().exec("DELETE FROM item_match_candidate");
+			db_.get().exec("DELETE FROM special_link_candidate");
 			db_.get().exec("DELETE FROM metadata_override");
 			db_.get().exec("DELETE FROM scraper_job");
 
@@ -214,7 +215,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 				"media_source", "media_library", "source_mapping",
 				"show", "movie", "episode",
 				"scraper_job", "scanned_file", "match_candidate",
-				"item_match_candidate", "metadata_override",
+				"item_match_candidate", "metadata_override", "special_link_candidate",
 			};
 
 			{

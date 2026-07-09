@@ -156,7 +156,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<ArrService>(ctx));
 	services_.push_back(std::make_unique<RequestService>(ctx));
 	services_.push_back(std::make_unique<ChannelService>(ctx));
-	services_.push_back(std::make_unique<KairosService>(ctx));
+	services_.push_back(std::make_unique<KairosService>(ctx, *scraper_mgr_));
 	services_.push_back(std::make_unique<BlockService>(ctx));
 	services_.push_back(std::make_unique<ContentService>(ctx, *scraper_mgr_));
 	services_.push_back(std::make_unique<ChapterService>(ctx, *chapter_detect_mgr_));

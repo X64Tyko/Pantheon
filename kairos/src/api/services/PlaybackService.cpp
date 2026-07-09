@@ -32,9 +32,19 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 		if (!validContentType(content_type)) { route::err(res, 400, "content_type must be movie or episode"); return; }
 
 		try {
+			// A linked special (episode.linked_movie_id set — see ScraperManager's
+			// specials linking) has no file of its own; its file_path/duration_ms
+			// must live-resolve through the movie it's linked to, never a stale
+			// copy, so a re-scanned/moved movie file is always reflected here.
 			const char* sql = content_type == "movie"
 				? "SELECT file_path, duration_ms, title FROM movie WHERE movie_id = ?"
-				: "SELECT file_path, duration_ms, title FROM episode WHERE episode_id = ?";
+				: R"(
+					SELECT COALESCE(m.file_path, e.file_path),
+					       COALESCE(m.duration_ms, e.duration_ms),
+					       e.title
+					FROM episode e LEFT JOIN movie m ON m.movie_id = e.linked_movie_id
+					WHERE e.episode_id = ?
+				)";
 			SQLite::Statement q(db_.get(), sql);
 			q.bind(1, id);
 			if (!q.executeStep()) { route::err(res, 404, "not found"); return; }

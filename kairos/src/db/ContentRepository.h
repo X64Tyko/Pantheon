@@ -56,6 +56,8 @@ struct ShowDetail {
     std::optional<double> audience_rating;
     bool locked = false;
     bool skip_scraping = false;
+    bool find_specials = false;
+    std::string episode_display_order = "season"; // "season" | "aired"
     int  episode_count = 0;
     std::string labels, network, actors, countries, collections;
     std::string external_id, source_id, source_base_url;
@@ -262,6 +264,11 @@ public:
     // skip_scraping flag flips true — every mapped show/movie currently
     // 'uncertain'/'unmatched' resets to 'unscraped' with candidates cleared.
     void clearPendingMatchStateForLibrary(const std::string& library_id);
+
+    // Same "separate from updateShow" reasoning as setShowSkipScraping above —
+    // plain settings toggles, not metadata edits, so they shouldn't lock the record.
+    void setShowFindSpecials(const std::string& show_id, bool find_specials);
+    void setShowEpisodeDisplayOrder(const std::string& show_id, const std::string& order);
 
     // Manual link for cross-source duplicates auto-dedup missed. Moves dup_id's
     // source_mapping rows onto target_id, then deletes the orphaned dup_id.

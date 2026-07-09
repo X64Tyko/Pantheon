@@ -99,6 +99,12 @@ private:
     // per source, then deletes media rows that have no remaining mappings.
     void runOrphanCleanup(const SyncLiveIds& live);
 
+    // Runs the specials scan (ScraperManager::scanSpecialsForShow) for every
+    // show that opted in (find_specials=1) and already has a confirmed match
+    // (there's nothing to query a scraper with otherwise). No-op if no
+    // ScraperManager is wired up.
+    void scanSpecialsForEligibleShows();
+
     void syncChaptersFromFiles(const std::string& source_id);
 
     std::unique_ptr<IMediaSource> buildSource(const std::string& source_id,

@@ -3,10 +3,10 @@ import { api } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import { AccordionSection } from '../../channel/sections'
 import { goldBtnStyle, inputStyle } from '../../channel/styles'
-import type { GroupingCandidate, EpisodeGroup, MovieDetail, ShowDetail, ExternalId, ItemMetadata } from '../../api/types'
+import type { GroupingCandidate, EpisodeGroup, MovieDetail, ShowDetail, ExternalId, ItemMetadata, SpecialCandidate, LinkedSpecial } from '../../api/types'
 
 type Detail = ShowDetail | MovieDetail
-type Section = 'details' | 'grouping' | 'edit' | null
+type Section = 'details' | 'grouping' | 'specials' | 'edit' | null
 
 const labelStyle: React.CSSProperties = {
   display: 'block', fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
@@ -42,6 +42,17 @@ export function LibraryAdminPanel({ id, content_type }: { id: string; content_ty
       {isShow && (
         <AccordionSection title="EPISODE GROUPING" open={open === 'grouping'} onToggle={() => toggle('grouping')}>
           <GroupingSection showId={(detail as ShowDetail).show_id} isAdmin={isAdmin} active={open === 'grouping'} />
+        </AccordionSection>
+      )}
+
+      {isShow && (
+        <AccordionSection title="SPECIALS" open={open === 'specials'} onToggle={() => toggle('specials')}>
+          <SpecialsSection
+            show={detail as ShowDetail}
+            isAdmin={isAdmin}
+            active={open === 'specials'}
+            onShowChanged={setDetail}
+          />
         </AccordionSection>
       )}
 
@@ -475,6 +486,177 @@ function GroupingSection({ showId, isAdmin, active }: { showId: string; isAdmin:
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── Specials ─────────────────────────────────────────────────────────────────
+// A show's special/OVA/TV-movie often lives as a standalone file in a Movies
+// library rather than under the show's own folder — this scans every scraper
+// the show has a confirmed ID with, merges what they report, and matches
+// against the movie catalog. Never auto-links: scanning only ever produces
+// candidates for Accept/Reject, same review-driven flow as GroupingSection.
+
+function SpecialsSection({ show, isAdmin, active, onShowChanged }: {
+  show: ShowDetail; isAdmin: boolean; active: boolean; onShowChanged: (d: Detail) => void
+}) {
+  const [linked,     setLinked]     = useState<LinkedSpecial[]>([])
+  const [candidates, setCandidates] = useState<SpecialCandidate[]>([])
+  const [loading,    setLoading]    = useState(false)
+  const [scanning,   setScanning]   = useState(false)
+  const [saving,     setSaving]     = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    Promise.all([api.getLinkedSpecials(show.show_id), api.getSpecialCandidates(show.show_id)])
+      .then(([l, c]) => { setLinked(l); setCandidates(c.candidates) })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { if (active) load() }, [active, show.show_id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const scan = async () => {
+    setScanning(true)
+    try {
+      const { candidates } = await api.scanSpecials(show.show_id)
+      setCandidates(candidates)
+    } catch { /* surfaced via unchanged list on reload */ }
+    setScanning(false)
+    load()
+  }
+
+  const accept = async (c: SpecialCandidate) => {
+    setSaving(true)
+    try { await api.acceptSpecialCandidate(show.show_id, c.candidate_id) } catch {}
+    setSaving(false)
+    load()
+  }
+
+  const reject = async (c: SpecialCandidate) => {
+    setSaving(true)
+    try { await api.rejectSpecialCandidate(show.show_id, c.candidate_id) } catch {}
+    setSaving(false)
+    load()
+  }
+
+  const toggleFindSpecials = async (checked: boolean) => {
+    onShowChanged({ ...show, find_specials: checked })
+    try { await api.setShowFindSpecials(show.show_id, checked) } catch {}
+  }
+
+  const changeOrder = async (order: 'season' | 'aired') => {
+    onShowChanged({ ...show, episode_display_order: order })
+    try { await api.setEpisodeDisplayOrder(show.show_id, order) } catch {}
+  }
+
+  const pending = candidates.filter(c => c.accepted === -1)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 6 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt)' }}>
+          <input
+            type="checkbox"
+            disabled={!isAdmin}
+            checked={show.find_specials}
+            onChange={e => toggleFindSpecials(e.target.checked)}
+          />
+          Automatically look for specials during sync
+        </label>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)' }}>Episode order</span>
+          <select
+            disabled={!isAdmin}
+            value={show.episode_display_order}
+            onChange={e => changeOrder(e.target.value as 'season' | 'aired')}
+            style={inputStyle}
+          >
+            <option value="season">Season (Specials grouped together)</option>
+            <option value="aired">Aired (interleaved between seasons)</option>
+          </select>
+        </div>
+
+        {isAdmin && (
+          <button disabled={scanning} onClick={scan} style={{
+            ...goldBtnStyle, fontSize: 10, padding: '6px 12px', alignSelf: 'flex-start',
+            opacity: scanning ? 0.6 : 1, cursor: scanning ? 'wait' : 'pointer',
+          }}>
+            {scanning ? 'Scanning…' : 'Scan for Specials'}
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)' }}>Loading…</div>
+      ) : (
+        <>
+          <div>
+            <span style={labelStyle}>Confirmed Specials</span>
+            {linked.length === 0 ? (
+              <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+                No linked specials yet.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {linked.map(s => (
+                  <div key={s.episode_id} style={{
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
+                    border: '1px solid oklch(0.7 0.16 150 / 0.35)', background: 'oklch(0.7 0.16 150 / 0.06)',
+                    borderRadius: 8, padding: '9px 11px',
+                  }}>
+                    S00E{String(s.episode_number).padStart(2, '0')} · {s.title} → linked to "{s.linked_movie_title}"
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <span style={labelStyle}>Detected Candidates</span>
+            {pending.length === 0 ? (
+              <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+                {candidates.length === 0 ? 'No candidates found yet — try scanning.' : 'All detected candidates are already decided.'}
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {[...pending].sort((a, b) => a.episode_number - b.episode_number || b.score - a.score).map(c => (
+                  <div key={c.candidate_id} style={{
+                    border: `1px solid ${c.score >= 0.6 ? 'oklch(0.6 0.18 260 / 0.4)' : 'var(--hds-line-s)'}`,
+                    borderRadius: 8, padding: '9px 11px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ flex: 1, fontFamily: "'Chakra Petch', sans-serif", fontSize: 11, fontWeight: 600, color: 'var(--hds-txt)' }}>
+                        S00E{String(c.episode_number).padStart(2, '0')} · {c.special_title}
+                      </span>
+                      <span style={{
+                        fontFamily: "'JetBrains Mono', monospace", fontSize: 9, padding: '2px 6px', borderRadius: 6,
+                        color: c.score >= 0.6 ? 'oklch(0.75 0.18 260)' : 'var(--hds-txt-3)',
+                        background: c.score >= 0.6 ? 'oklch(0.55 0.18 260 / 0.18)' : 'var(--hds-bg-3)',
+                      }}>{Math.round(c.score * 100)}%</span>
+                      {isAdmin && (
+                        <>
+                          <button disabled={saving} onClick={() => accept(c)} style={{
+                            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, padding: '3px 9px', borderRadius: 6,
+                            border: '1px solid var(--hds-violet)', background: 'transparent', color: 'var(--hds-violet)', cursor: 'pointer',
+                          }}>Accept</button>
+                          <button disabled={saving} onClick={() => reject(c)} style={{
+                            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)',
+                            background: 'none', border: 'none', cursor: 'pointer',
+                          }}>Reject</button>
+                        </>
+                      )}
+                    </div>
+                    <div style={{ marginTop: 5, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+                      matched to "{c.movie_title}"{c.movie_year ? ` (${c.movie_year})` : ''} · via {c.source}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

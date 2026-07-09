@@ -90,11 +90,42 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   const genres   = detail?.genres ?? []
   const rating   = detail?.audience_rating
 
-  const seasonsWithEpisodes = show
-    ? show.seasons
-        .map(s => ({ ...s, episodes: episodes.filter(e => e.season === s.number).sort((a, b) => a.episode - b.episode) }))
-        .filter(s => s.episodes.length > 0)
-    : []
+  // 'season' (default): unchanged — one shelf per show.seasons entry, season 0
+  // (specials) bucketed together like any other season. 'aired': season-0
+  // episodes (a show's OVAs/movies — including ones linked in via the
+  // specials-linking feature) are NOT bucketed; each becomes its own
+  // single-episode shelf, positioned by air_date between whichever two
+  // numbered seasons it chronologically falls between — e.g. a Gundam movie
+  // shows up between Season 1 and Season 2 instead of in a generic Specials
+  // pile at the end.
+  const seasonsWithEpisodes = (() => {
+    if (!show) return []
+    const grouped = show.seasons
+      .map(s => ({ ...s, episodes: episodes.filter(e => e.season === s.number).sort((a, b) => a.episode - b.episode) }))
+      .filter(s => s.episodes.length > 0)
+
+    if (show.episode_display_order !== 'aired') return grouped
+
+    const numbered = grouped.filter(s => s.number !== 0).sort((a, b) => a.number - b.number)
+    const specials = grouped.find(s => s.number === 0)?.episodes ?? []
+    if (specials.length === 0) return grouped
+
+    const seasonStart = (s: (typeof numbered)[number]) => s.episodes[0]?.air_date || ''
+    const dated   = [...specials].filter(e => e.air_date).sort((a, b) => a.air_date.localeCompare(b.air_date))
+    const undated = specials.filter(e => !e.air_date)
+
+    const result: { number: number; name: string; episodes: typeof episodes }[] = []
+    let si = 0
+    for (const special of dated) {
+      while (si < numbered.length && seasonStart(numbered[si]) && seasonStart(numbered[si]) <= special.air_date) {
+        result.push(numbered[si]); si++
+      }
+      result.push({ number: 0, name: special.title, episodes: [special] })
+    }
+    while (si < numbered.length) { result.push(numbered[si]); si++ }
+    for (const special of undated) result.push({ number: 0, name: special.title, episodes: [special] })
+    return result
+  })()
 
   // Movies only — shows are a collection of per-episode files, no single
   // path to show at the show level (see splitFilePath's own comment).

@@ -245,6 +245,8 @@ export interface ShowDetail {
   audience_rating?:        number
   locked:                  boolean
   skip_scraping:           boolean
+  find_specials:           boolean
+  episode_display_order:   'season' | 'aired'
   episode_count:           number
   seasons:                 { number: number; name: string }[]
   external_id:             string
@@ -566,6 +568,31 @@ export interface ShowGroupingResult {
   show_id:    string
   show_title: string
   candidates: GroupingCandidate[]
+}
+
+// ── Show specials linking ─────────────────────────────────────────────────────
+
+export interface SpecialCandidate {
+  candidate_id:     string
+  episode_number:   number
+  special_title:    string
+  special_overview: string
+  special_air_date: string
+  special_thumb:    string
+  source:           'tmdb' | 'tvdb' | 'anidb'
+  score:            number   // 0-1
+  accepted:         -1 | 0 | 1
+  movie_id:         string
+  movie_title:      string
+  movie_year:       number
+}
+
+export interface LinkedSpecial {
+  episode_id:         string
+  episode_number:     number
+  title:              string
+  linked_movie_id:    string
+  linked_movie_title: string
 }
 
 // ── Plex link metadata ────────────────────────────────────────────────────────
