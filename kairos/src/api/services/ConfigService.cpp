@@ -86,7 +86,13 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			}
 			if (b.contains("sync_threads") && b["sync_threads"].is_number_integer()) {
 				int n = b["sync_threads"].get<int>();
-				if (n >= 1 && n <= 32) sync_.setThreadCount(n);
+				// setThreadCount alone only ever lived in SyncManager's
+				// in-memory atomic — conf_.setSyncThreadsOverride persists it,
+				// so a restart doesn't silently revert to KAIROS_SYNC_THREADS.
+				if (n >= 1 && n <= 32) {
+					sync_.setThreadCount(n);
+					conf_.setSyncThreadsOverride(n);
+				}
 			}
 			if (b.contains("stream_buffer_size") && b["stream_buffer_size"].is_number_integer()) {
 				int n = b["stream_buffer_size"].get<int>();

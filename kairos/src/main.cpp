@@ -80,6 +80,13 @@ int main(int argc, char* argv[]) {
     Database         db(db_path);
     ConfStore        conf(conf_path);
     SyncManager      sync(db, conf);
+    // A previously-saved Settings-page override takes priority over
+    // KAIROS_SYNC_THREADS (which SyncManager only ever falls back to when
+    // no override is set) — otherwise every restart silently reverts to
+    // whatever the compose file/env sets, discarding what was configured.
+    if (int persisted = conf.getSyncThreadsOverride(); persisted > 0) {
+        sync.setThreadCount(persisted);
+    }
     RuleEngine       engine(db);
     EPGMaterializer  materializer(db, engine);
     DownloadManager  dl;

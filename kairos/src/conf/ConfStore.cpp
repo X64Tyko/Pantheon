@@ -103,6 +103,9 @@ void ConfStore::parseLocked(const std::string& text) {
         			g_buffer_size.store(buffer_size_ / 1024);
         		} catch (...) {}
         	}
+            if (key == "sync_threads_override") {
+                try { sync_threads_override_ = std::stoi(val); } catch (...) {}
+            }
             continue;
         }
         if (key == "token")   entries_[section].token   = val;
@@ -241,6 +244,26 @@ void ConfStore::setBufferSize(int size)
 	std::lock_guard lock(mu_);
 	g_buffer_size.store(size);
 	if (size >= 1024) buffer_size_ = size * 1024; // Convert to B
+	// Was missing entirely — every other setter here persists via
+	// saveLocked(); without it this only ever lived in memory and silently
+	// reverted to the file's last-saved value (or the 1024KB default) on
+	// every restart, same bug class as sync_threads_override_ below.
+	saveLocked();
+	std::error_code ec;
+	mtime_ = std::filesystem::last_write_time(path_, ec);
+}
+
+int ConfStore::getSyncThreadsOverride() const {
+    std::lock_guard lock(mu_);
+    return sync_threads_override_;
+}
+
+void ConfStore::setSyncThreadsOverride(int n) {
+    std::lock_guard lock(mu_);
+    sync_threads_override_ = n > 0 ? n : 0;
+    saveLocked();
+    std::error_code ec;
+    mtime_ = std::filesystem::last_write_time(path_, ec);
 }
 
 void ConfStore::saveLocked() const
@@ -248,7 +271,7 @@ void ConfStore::saveLocked() const
 	std::ofstream f(path_);
 	f << "# Kairos credentials — do not commit\n"
 	  << "# Managed by Hades UI\n\n";
-	if (!download_path_.empty() || image_cache_ttl_hours_ != 2 || buffer_size_ != 1048576) {
+	if (!download_path_.empty() || image_cache_ttl_hours_ != 2 || buffer_size_ != 1048576 || sync_threads_override_ != 0) {
         f << "[_global]\n";
         if (!download_path_.empty())
             f << "download_path = " << download_path_ << "\n";
@@ -256,6 +279,8 @@ void ConfStore::saveLocked() const
             f << "image_cache_ttl_hours = " << image_cache_ttl_hours_ << "\n";
 		if (buffer_size_ != 1048576)
 			f << "stream_buffer_size = " << buffer_size_ << "\n";
+        if (sync_threads_override_ != 0)
+            f << "sync_threads_override = " << sync_threads_override_ << "\n";
         f << "\n";
     }
     for (const auto& [sid, e] : entries_) {

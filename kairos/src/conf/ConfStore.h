@@ -41,6 +41,14 @@ public:
 	int  getBufferSize() const;
 	void setBufferSize(int size);
 
+    // 0 = unset — SyncManager falls back to KAIROS_SYNC_THREADS / hardware
+    // concurrency (see SyncManager::defaultSyncThreadCount). Persisted here
+    // (unlike SyncManager's own in-memory override_thread_count_) so a
+    // Settings-page change survives a restart instead of reverting to
+    // whatever KAIROS_SYNC_THREADS the compose file happens to set.
+    int  getSyncThreadsOverride() const;
+    void setSyncThreadsOverride(int n);
+
     // Rewrite a file path by applying the first matching path_map prefix across
     // all configured sources. Returns the path unchanged if no mapping matches.
     std::string applyPathMap(const std::string& path) const;
@@ -71,6 +79,7 @@ private:
     std::string                              download_path_;
 	int buffer_size_ = 1048576; // 1024 KB
     int                                      image_cache_ttl_hours_ = 2;
+    int                                      sync_threads_override_ = 0;
     mutable std::mutex                       mu_;
 
     // Throttle maybeReload() to at most once per 30 seconds.
