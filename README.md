@@ -14,16 +14,18 @@ Pantheon is currently in **Alpha**. This is a source-available engineering artif
 
 ## Status & Coverage
 
-[![CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-kairos.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions)
+[![Kairos CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-kairos.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-kairos.yml)
+[![Hephaestus CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hephaestus.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hephaestus.yml)
+[![Hermes CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hermes.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hermes.yml)
 
 | Component | Status | Test Suite | Tests | Coverage (Target) |
 |---|---|---|---|---|
-| **Kairos** | Alpha | `momus_kairos` | 304 | ~85% (Core / Scheduler) |
+| **Kairos** | Alpha | `momus_kairos` | 312 | ~85% (Core / Scheduler) |
 | **Hades** | Alpha | `vitest` | 133 | ~40% (API / Stores) |
-| **Hermes** | Alpha | `momus_hermes` | 12 | ~25% (Gateway) |
-| **Hephaestus** | Alpha | `momus_hephaestus` | 21 | ~25% (Transcoder) |
+| **Hermes** | Alpha | `momus_hermes` | 19 | ~25% (Gateway) |
+| **Hephaestus** | Alpha | `momus_hephaestus` | 26 | ~25% (Transcoder) |
 
-*Pantheon currently runs **470 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+*Pantheon currently runs **490 automated tests** across the stack using the **Momus** framework and **Vitest**.*
 
 ---
 
@@ -247,6 +249,14 @@ For a deep-dive into the services, data flow, and technical principles (Manifest
 
 ---
 
+## API Reference
+
+Kairos exposes the full admin/management REST API that Hades itself is built on — sources, libraries, channels, blocks, scrapers and matching, discovery/requests, chapters, playback, Roku pairing, and more. It's the same surface you'd use to script Pantheon or build an alternate client.
+
+Full endpoint-by-endpoint reference: **[x64tyko.github.io/Pantheon/API.html](https://x64tyko.github.io/Pantheon/API.html)**
+
+---
+
 ## Status
 
 Alpha.
@@ -254,12 +264,18 @@ Alpha.
 | Area | State   |
 |---|---------|
 | Library sync (Plex, Jellyfin, Emby, local) | Working |
+| Cross-source merge & canonical settings | Working |
 | Metadata scraping (TMDB, TVDB, AniDB) | Working <experimental> |
+| Metadata writeback (Plex, Jellyfin) | Working <experimental> |
 | Discovery & Requests (*arr stack integration) | Working <experimental> |
+| Chapter detection & review | Working <experimental> |
+| Show specials linking | Working |
 | IPTV channel scheduling + EPG | Working |
 | Stream delivery (Hermes + Hephaestus) | Working |
 | Media player | Working |
-| Chromecast | Working <experimental> |
+| Chromecast (browser) | Working <experimental> |
+| Chromecast relay (pantheon-relay) | Working |
+| Roku native app (pantheon-roku) | Code-complete, untested on hardware |
 | Multi-User & Parental Controls | Working <experimental> |
 | HDHomeRun emulation | Working |
 | Log Centralization | Working |

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { api, authHeaders, setSurface, TOKEN_KEY } from '@/api/client'
+import { api, authHeaders, TOKEN_KEY } from '@/api/client'
 
 // ---------------------------------------------------------------------------
 // Mock global fetch for all tests in this file
@@ -188,14 +188,16 @@ describe('api client — EPG endpoints', () => {
 // ---------------------------------------------------------------------------
 // authHeaders() / X-Pantheon-Surface — used directly by playbackApi.ts's
 // /stream/* fetches (outside request()'s /api prefix), and folded into every
-// request() call via authHeaders() itself (see client.ts).
+// request() call via authHeaders() itself (see client.ts). The surface is
+// derived from window.location.pathname (isTvSurface() in client.ts), not a
+// settable flag, so these tests drive it by changing the route.
 // ---------------------------------------------------------------------------
 
 describe('api client — auth headers and X-Pantheon-Surface', () => {
   beforeEach(() => mockFetch.mockReset())
   afterEach(() => {
     localStorage.removeItem(TOKEN_KEY)
-    setSurface(null) // module-level state — must not leak into other tests
+    window.location.pathname = '/' // module-level-ish state — must not leak into other tests
   })
 
   it('authHeaders() is empty with no token and no active surface', () => {
@@ -207,14 +209,19 @@ describe('api client — auth headers and X-Pantheon-Surface', () => {
     expect(authHeaders()).toEqual({ Authorization: 'Bearer tok123' })
   })
 
-  it('authHeaders() includes X-Pantheon-Surface once setSurface is called', () => {
-    setSurface('tv')
+  it('authHeaders() includes X-Pantheon-Surface while on the /tv route', () => {
+    window.location.pathname = '/tv'
     expect(authHeaders()).toMatchObject({ 'X-Pantheon-Surface': 'tv' })
   })
 
-  it('setSurface(null) clears the header again', () => {
-    setSurface('tv')
-    setSurface(null)
+  it('authHeaders() includes X-Pantheon-Surface on a /tv/* subroute too', () => {
+    window.location.pathname = '/tv/guide'
+    expect(authHeaders()).toMatchObject({ 'X-Pantheon-Surface': 'tv' })
+  })
+
+  it('authHeaders() omits X-Pantheon-Surface once navigated away from /tv', () => {
+    window.location.pathname = '/tv'
+    window.location.pathname = '/'
     expect(authHeaders()).not.toHaveProperty('X-Pantheon-Surface')
   })
 
@@ -234,7 +241,7 @@ describe('api client — auth headers and X-Pantheon-Surface', () => {
   })
 
   it('request() carries X-Pantheon-Surface while the /tv surface is active', async () => {
-    setSurface('tv')
+    window.location.pathname = '/tv'
     respondOk([])
     await api.getChannels()
     const [, opts] = mockFetch.mock.calls[0]

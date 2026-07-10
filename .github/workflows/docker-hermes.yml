@@ -1,4 +1,4 @@
-name: Build & publish Hermes image
+name: Hermes CI
 
 on:
   push:

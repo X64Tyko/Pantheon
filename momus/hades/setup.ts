@@ -28,12 +28,17 @@ class MemoryStorage implements Storage {
 // toAbsoluteStreamUrl() reads it the same way real Hades code does — Hades
 // is always same-origin with Hermes (vite.config.ts proxies /api and
 // /stream), so a fixed fake origin is a faithful enough stand-in for tests.
+// `pathname` is stubbed too (default '/') since client.ts's isTvSurface()
+// reads it on every request to decide whether the caller is under /tv —
+// without it, that read hits `undefined.startsWith` and throws for every
+// single test that goes through authHeaders(), not just /tv-specific ones.
 if (typeof (globalThis as any).window === 'undefined') {
   const win = new EventTarget() as unknown as Window
-  ;(win as any).location = { origin: 'http://pantheon.local' }
+  ;(win as any).location = { origin: 'http://pantheon.local', pathname: '/' }
   ;(globalThis as any).window = win
 }
 
 beforeEach(() => {
   globalThis.localStorage.clear()
+  ;(globalThis.window as any).location.pathname = '/'
 })

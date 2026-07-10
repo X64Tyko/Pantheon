@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pantheon — API Reference</title>
+<style>
+  :root {
+    --bg: oklch(0.152 0.016 286);
+    --bg2: oklch(0.19 0.018 286);
+    --bg3: oklch(0.21 0.026 290 / 0.6);
+    --line: oklch(0.45 0.05 290 / 0.32);
+    --txt: oklch(0.94 0.008 90);
+    --txt2: oklch(0.68 0.02 288);
+    --txt3: oklch(0.54 0.025 290);
+    --gold: oklch(0.83 0.13 84);
+    --violet: oklch(0.72 0.15 290);
+    --get: oklch(0.75 0.13 210);
+    --post: oklch(0.78 0.15 145);
+    --write: oklch(0.83 0.13 84);
+    --del: oklch(0.72 0.17 25);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 60px 24px 100px;
+  }
+  main { width: 100%; max-width: 920px; }
+  a { color: var(--violet); }
+  .back { display: inline-block; font-size: 13px; color: var(--txt3); text-decoration: none; margin-bottom: 24px; }
+  .back:hover { color: var(--txt2); }
+  h1 { font-weight: 800; font-size: 34px; letter-spacing: 0.01em; margin: 0 0 6px; }
+  .sub { color: var(--txt2); font-size: 15px; line-height: 1.55; margin: 0 0 28px; max-width: 680px; }
+  .note {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 14px 16px; border-radius: 10px; margin: 0 0 32px;
+    border: 1px solid oklch(0.72 0.15 290 / 0.35);
+    background: oklch(0.72 0.15 290 / 0.08);
+    font-size: 13px; line-height: 1.6; color: var(--txt2);
+  }
+  .note b { color: var(--txt); }
+
+  code {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    background: oklch(0.1 0.016 285 / 0.6); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 6px; color: oklch(0.9 0.05 90);
+    white-space: nowrap;
+  }
+  pre {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    background: oklch(0.1 0.016 285 / 0.7); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; color: oklch(0.9 0.05 90);
+    overflow-x: auto; margin: 0 0 12px; line-height: 1.6;
+  }
+  pre code { background: none; border: none; padding: 0; white-space: pre; }
+
+  /* legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 36px; font-size: 12.5px; color: var(--txt2); }
+  .legend .row { display: flex; align-items: center; gap: 7px; }
+
+  /* method + auth badges */
+  .m {
+    display: inline-block; min-width: 52px; text-align: center;
+    font-family: ui-monospace, monospace; font-size: 10.5px; font-weight: 800;
+    letter-spacing: 0.03em; border-radius: 5px; padding: 2px 7px;
+  }
+  .m-get    { background: oklch(0.75 0.13 210 / 0.16); color: var(--get); }
+  .m-post   { background: oklch(0.78 0.15 145 / 0.16); color: var(--post); }
+  .m-patch, .m-put { background: oklch(0.83 0.13 84 / 0.16); color: var(--write); }
+  .m-delete { background: oklch(0.72 0.17 25 / 0.16); color: var(--del); }
+
+  .a {
+    display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+  .a-public { color: var(--txt3); border: 1px solid var(--line); }
+  .a-auth   { color: var(--violet); border: 1px solid oklch(0.72 0.15 290 / 0.4); }
+  .a-admin  { color: var(--gold); border: 1px solid oklch(0.83 0.13 84 / 0.4); }
+  .internal { color: var(--txt3); font-style: italic; }
+
+  /* table of contents */
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 44px; }
+  .toc a {
+    font-size: 12.5px; font-weight: 600; text-decoration: none; color: var(--txt2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px;
+    background: var(--bg3);
+  }
+  .toc a:hover { color: var(--txt); border-color: var(--violet); }
+
+  section { margin-bottom: 40px; scroll-margin-top: 20px; }
+  h2 {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 18px; font-weight: 700; color: var(--txt); margin: 0 0 6px;
+  }
+  h2 a.hash { font-size: 13px; color: var(--txt3); text-decoration: none; font-weight: 400; }
+  .group-desc { color: var(--txt3); font-size: 13px; margin: 0 0 14px; line-height: 1.5; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 640px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  th { color: var(--txt3); font-weight: 600; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; background: var(--bg2); }
+  td { color: var(--txt2); }
+  td.path { white-space: nowrap; }
+  td.desc { color: var(--txt2); }
+  td.desc .fields { display: block; margin-top: 4px; font-size: 11.5px; color: var(--txt3); }
+  td.auth { white-space: nowrap; }
+
+  footer { margin-top: 20px; font-size: 11px; color: var(--txt3); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  footer a { color: var(--txt3); }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="index.html">← Docs</a>
+  <h1>API Reference</h1>
+  <p class="sub">Kairos exposes the same REST API that Hades itself is built on — sources, libraries, channels, scheduling, scrapers, discovery, chapters, and more. This is the surface to build against if you want to script Pantheon or write an alternate client. It's a large, actively-growing API; if something here looks off, the source of truth is always <code>kairos/src/api/services/</code> in the repo.</p>
+
+  <div class="note">
+    💡 <span><b>Base URL &amp; auth.</b> Every path below is relative to your Kairos host — direct (default <code>:8081</code>) or through Hermes' gateway (default <code>:8000</code>), which transparently proxies the entire <code>/api/*</code> surface to Kairos. Authenticate once with <code>POST /api/auth/login</code>, then send the returned token as <code>Authorization: Bearer &lt;token&gt;</code> on every subsequent request (a <code>?token=</code> query param also works, for contexts that can't set headers — e.g. an <code>&lt;img&gt;</code> tag or an EventSource stream).</span>
+  </div>
+
+  <pre><code># Log in, grab a token, list channels
+curl -sX POST http://your-server:8081/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"••••••••"}'
+# → {"token":"...", "user": {"role":"admin", ...}}
+
+curl -s http://your-server:8081/api/channels \
+  -H 'Authorization: Bearer &lt;token&gt;'</code></pre>
+
+  <div class="legend">
+    <div class="row"><span class="m m-get">GET</span> read</div>
+    <div class="row"><span class="m m-post">POST</span> create / action</div>
+    <div class="row"><span class="m m-patch">PATCH</span> partial update</div>
+    <div class="row"><span class="m m-delete">DELETE</span> remove</div>
+    <div class="row"><span class="a a-public">public</span> no token required</div>
+    <div class="row"><span class="a a-auth">auth</span> any logged-in user</div>
+    <div class="row"><span class="a a-admin">admin</span> admin role required</div>
+  </div>
+
+  <nav class="toc">
+    <a href="#auth">Auth &amp; Users</a>
+    <a href="#sources">Sources &amp; Libraries</a>
+    <a href="#config">Config &amp; Settings</a>
+    <a href="#arr">Arr Integration</a>
+    <a href="#requests">Content Requests</a>
+    <a href="#channels">Channels</a>
+    <a href="#blocks">Blocks, Content &amp; Bumpers</a>
+    <a href="#groups">Episode Groups &amp; Specials</a>
+    <a href="#content">Shows, Movies &amp; Episodes</a>
+    <a href="#chapters">Chapters</a>
+    <a href="#playlists">Playlists</a>
+    <a href="#filler">Filler Lists</a>
+    <a href="#activity">Activity, Logs &amp; Metrics</a>
+    <a href="#downloads">Downloads (yt-dlp)</a>
+    <a href="#scrapers">Scrapers &amp; Matching</a>
+    <a href="#scheduler">Scheduler, EPG &amp; IPTV Feed</a>
+    <a href="#timeslots">Timeslots</a>
+    <a href="#roku">Roku Devices</a>
+    <a href="#playback">Playback &amp; Watch Progress</a>
+  </nav>
+
+  <section id="auth">
+    <h2>Auth &amp; Users <a class="hash" href="#auth">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/auth/setup</code></td><td class="desc">Whether initial admin setup is still needed</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/auth/setup</code></td><td class="desc">Create the first admin account<span class="fields">body: username, password</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/auth/login</code></td><td class="desc">Body: username, password → token</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/auth/logout</code></td><td class="desc">No-op without a token</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/auth/me</code></td><td class="desc">Current user profile</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/users</code></td><td class="desc">List all users</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/users</code></td><td class="desc">Create a user<span class="fields">body: username, password, role</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/users/:id</code></td><td class="desc">Change password/role<span class="fields">body: password, role</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/users/:id</code></td><td class="desc">Blocked for self-delete or the last remaining admin</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/users/:id/restriction</code></td><td class="desc">Set parental-control ceilings<span class="fields">body: restricted, max_tv_rating, max_movie_rating, max_channel_rating</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/users/:id/overrides</code></td><td class="desc">Per-title allow/block overrides for a user</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/users/:id/overrides</code></td><td class="desc">Body: entity_type (show/movie/channel), entity_id, mode (allow/block)</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/users/:id/overrides/:entity_type/:entity_id</code></td><td class="desc">Remove an override</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/auth/cast-token</code></td><td class="desc">Mint a viewer-capped token for Cast/relay handoff</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/auth/sessions</code></td><td class="desc">List the caller's own device/Cast sessions<span class="fields">query: purpose (default cast)</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/auth/sessions/:id</code></td><td class="desc">Revoke one of the caller's own sessions</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="sources">
+    <h2>Sources &amp; Libraries <a class="hash" href="#sources">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/types</code></td><td class="desc">Supported source types (plex, jellyfin, emby, local)</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources</code></td><td class="desc">List configured sources</td><td class="auth"><span class="a a-admin">admin</span> <span class="internal">(GET also public, for internal service use)</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/sources</code></td><td class="desc">Add a source<span class="fields">body: source_id, source_type, display_name, base_url</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/sources/test</code></td><td class="desc">Test a connection before saving<span class="fields">body: source_type, base_url, token, user_id</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/sources/:id</code></td><td class="desc">Remove a source</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/libraries/available</code></td><td class="desc">Libraries discoverable on the remote server</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/fs</code></td><td class="desc">Browse local filesystem subdirectories (local source only)<span class="fields">query: path</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/libraries</code></td><td class="desc">Libraries registered on this source</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/sources/:id/libraries</code></td><td class="desc">Register a library<span class="fields">body: external_lib_id, display_name, library_type (show/movie/mixed), preferred_scraper, preferred_language, include_anidb</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/sources/:id/libraries/:lid</code></td><td class="desc">Update a library<span class="fields">body: display_name, library_type, preferred_scraper, preferred_language, include_anidb, skip_scraping, show_on_home</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/libraries/:lid/scraper-priority</code></td><td class="desc">Scraper priority order<span class="fields">query: item_type</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-put">PUT</span></td><td class="path"><code>/api/sources/:id/libraries/:lid/scraper-priority</code></td><td class="desc">Body: item_type, order[]</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/sources/:id/libraries/:lid</code></td><td class="desc">Remove a library</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/sources/:id/sync</code></td><td class="desc">Trigger an incremental sync</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/sources/:id/hard-sync</code></td><td class="desc">Wipe source_mapping and resync from scratch</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/browse/playlists</code></td><td class="desc">Remote playlists visible on this source</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/browse/collections</code></td><td class="desc">Remote collections<span class="fields">query: library_id</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/browse/playlists/:eid</code></td><td class="desc">Items inside a remote playlist</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/browse/collections/:eid</code></td><td class="desc">Items inside a remote collection</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sources/:id/sample-path</code></td><td class="desc">One sample file path, for the Path Map UI</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/sync/status</code></td><td class="desc">Whether any sync is currently running</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="config">
+    <h2>Config &amp; Settings <a class="hash" href="#config">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/config/settings</code></td><td class="desc">Full runtime settings</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/config/public-settings</code></td><td class="desc">Subset of settings needed by Hephaestus/Hades</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/config/settings</code></td><td class="desc">Body: epg_debug, sync_debug, sync_threads, stream_buffer_size, image_cache_ttl_hours, verbose_transcode_logs, cast_app_id</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/config/epg/clear-all</code></td><td class="desc">Wipe all materialized schedule data</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/logs/client</code></td><td class="desc">Frontend error reporting<span class="fields">body: level, message</span></td><td class="auth"><span class="a a-public">public</span> <span class="internal">(internal: Hades)</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/config/library/reset</code></td><td class="desc">Wipe the entire media index (keeps sources/channels/users)</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/config/debug-dump</code></td><td class="desc">Download a sanitized SQLite snapshot of library/matching tables</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/config/credentials</code></td><td class="desc">Per-source token/user-id presence flags (not the values)</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/config/credentials/:source_id</code></td><td class="desc">Same, for one source</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-put">PUT</span></td><td class="path"><code>/api/config/credentials/:source_id</code></td><td class="desc">Body: token, user_id</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/config/credentials/:source_id</code></td><td class="desc">Clear stored credentials</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/config/path-maps/:source_id</code></td><td class="desc">Path maps for a source</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-put">PUT</span></td><td class="path"><code>/api/config/path-maps/:source_id</code></td><td class="desc">Body: maps: [{from, to}]</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="arr">
+    <h2>Arr Integration — Sonarr / Radarr <a class="hash" href="#arr">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/config/arr</code></td><td class="desc">Sonarr/Radarr connection config</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/config/arr</code></td><td class="desc">Body: sonarr_url, sonarr_api_key, radarr_url, radarr_api_key</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/arr/lookup</code></td><td class="desc">Search Sonarr/Radarr by title or external id<span class="fields">body: type (show/movie), title | tvdb_id | tmdb_id | imdb_id</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/arr/options/:type</code></td><td class="desc">Quality profiles + root folders</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/arr/add</code></td><td class="desc">Push a title to Sonarr/Radarr<span class="fields">body: type, add_data</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="requests">
+    <h2>Content Requests <a class="hash" href="#requests">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/requests</code></td><td class="desc">Admin sees every request, viewer sees only their own</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/requests</code></td><td class="desc">Request a piece of content<span class="fields">body: content_type, source, external_id, title, year, poster_url</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/requests/:id</code></td><td class="desc">Approve/reject, optionally auto-push to arr<span class="fields">body: status (approved/rejected), arr_add {type, add_data}</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/requests/:id</code></td><td class="desc">Remove a request</td><td class="auth"><span class="a a-auth">auth</span> <span class="internal">(owner or admin)</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="channels">
+    <h2>Channels <a class="hash" href="#channels">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels</code></td><td class="desc">List channels (parental-filtered)</td><td class="auth"><span class="a a-public">public</span> <span class="internal">(GET)</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/access-check</code></td><td class="desc">Parental-control gate before live playback</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels</code></td><td class="desc">Body: name, number, timezone, advance_mode</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/channels/:id</code></td><td class="desc">Body: name, timezone, offline media, stream_resolution/bitrates, seed, content_tag, anchor_hashes, and more</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/channels/:id</code></td><td class="desc">Remove a channel</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/logo</code></td><td class="desc">Serves local file or redirects to a remote logo URL</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/export</code></td><td class="desc">Export channel config as JSON<span class="fields">query: depth (deep/shallow)</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/import/preview</code></td><td class="desc">Preview an exported channel JSON before importing</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/import</code></td><td class="desc">Import a previously exported channel</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/filler</code></td><td class="desc">Add a channel-level filler entry<span class="fields">body: content_type, content_id, advancement, weight, season_filter</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/channels/:id/filler/:eid</code></td><td class="desc">Body: advancement, weight</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/channels/:id/filler/:eid</code></td><td class="desc">Remove a filler entry</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="blocks">
+    <h2>Blocks, Content &amp; Bumpers <a class="hash" href="#blocks">#</a></h2>
+    <p class="group-desc">A block owns a recurring time window on a channel; content and filler/bumper entries hang off it.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/blocks</code></td><td class="desc">List blocks on a channel</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/blocks</code></td><td class="desc">Full block object: block_type, day_mask, start_time, priority, advancement, etc.</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/channels/:id/blocks/:bid</code></td><td class="desc">~25 optional fields — scheduling/filler/bumper tuning</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/channels/:id/blocks/:bid</code></td><td class="desc">Remove a block</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/blocks/:bid/content</code></td><td class="desc">Add a show/movie/list to a block</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/channels/:id/blocks/:bid/content/:cid</code></td><td class="desc">Body: season_filter, position, weight, run_count, include_specials, episode_order</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/channels/:id/blocks/:bid/content/:cid</code></td><td class="desc">Remove a content entry</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/channels/:id/blocks/:bid/content/:cid/cursor</code></td><td class="desc">Reset a content item's playback cursor</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/blocks/:bid/playlist</code></td><td class="desc">Materialize block content into a Kairos playlist, optionally push to Plex<span class="fields">body: title, source_id</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/blocks/:bid/filler</code></td><td class="desc">Body: content_id, content_type, advancement, weight, season_filter</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/channels/:id/blocks/:bid/filler/:eid</code></td><td class="desc">Update a block-level filler entry</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/channels/:id/blocks/:bid/filler/:eid</code></td><td class="desc">Remove it</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/bumpers</code></td><td class="desc">List bumpers on a channel</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/bumpers</code></td><td class="desc">Body: content_type, content_id, mode (between/...), every_n, season_filter</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/channels/:id/bumpers/:bid</code></td><td class="desc">Update a bumper</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/channels/:id/bumpers/:bid</code></td><td class="desc">Remove a bumper</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="groups">
+    <h2>Episode Groups &amp; Show Specials Linking <a class="hash" href="#groups">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/groups</code></td><td class="desc">Multi-part episode groupings</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/groups</code></td><td class="desc">Body: name, group_type</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/shows/:id/groups/:gid</code></td><td class="desc">Remove a grouping</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/groups/:gid/members</code></td><td class="desc">Body: episode_id, part_num</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/shows/:id/groups/:gid/members/:mid</code></td><td class="desc">Remove a member</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/grouping-candidates</code></td><td class="desc">Auto-detected multi-part groupings for one show</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/grouping-candidates</code></td><td class="desc">Same, across every show with an unconfirmed candidate</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/specials/scan</code></td><td class="desc">Scan the movie library for this show's OVA/special</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/specials/candidates</code></td><td class="desc">Candidate matches awaiting confirmation</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/specials</code></td><td class="desc">Specials already linked via <code>episode.linked_movie_id</code></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/specials/candidates/:cid/accept</code></td><td class="desc">Confirm a link</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/specials/candidates/:cid/reject</code></td><td class="desc">Dismiss a candidate</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="content">
+    <h2>Shows, Movies &amp; Episodes <a class="hash" href="#content">#</a></h2>
+    <p class="group-desc">The largest single resource group — library browsing, metadata editing, matching state, and writeback.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/content/:type/:id/access-check</code></td><td class="desc">Parental gate used before VOD start<span class="fields">type: movie | episode | show</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/images/proxy</code></td><td class="desc">Fetch + cache any external image URL<span class="fields">query: url</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/refresh-metadata</code></td><td class="desc">Re-pull metadata from the confirmed scraper match</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/movies/:id/refresh-metadata</code></td><td class="desc">Same, for a movie</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/shows/:id/skip-scraping</code></td><td class="desc">Body: skip_scraping</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/movies/:id/skip-scraping</code></td><td class="desc">Body: skip_scraping</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/shows/:id/find-specials</code></td><td class="desc">Opt in/out of auto specials scanning<span class="fields">body: find_specials</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/shows/:id/episode-display-order</code></td><td class="desc">Body: episode_display_order (season/aired)</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/libraries</code></td><td class="desc">List libraries</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/libraries/:id/home-visibility</code></td><td class="desc">Body: show_on_home</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/metadata/values</code></td><td class="desc">Distinct values for a metadata field, for filter autocomplete<span class="fields">query: field, type, library_id</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows</code></td><td class="desc">Search/browse, paginated + parental-filtered<span class="fields">query: q, genre, year, content_rating, label, network, actor, country, collection, studio, sort, library_id, limit, offset</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/episodes</code></td><td class="desc">Query: season</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/seasons</code></td><td class="desc">Season list</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/languages</code></td><td class="desc">Probed audio/subtitle languages</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/videoinfo</code></td><td class="desc">Probed codec/resolution/bit-depth</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/episodes</code></td><td class="desc">Search<span class="fields">query: show_id, q, season, limit, offset</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/movies</code></td><td class="desc">Search/browse — same filter family as /api/shows</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id</code></td><td class="desc">Full detail incl. every linked source (404 instead of 403 if restricted)</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/shows/:id</code></td><td class="desc">Manual metadata edit, records a per-field override<span class="fields">body: title, overview, studio, status, content_rating, genres, labels, network, actors, countries, collections, year, imdb_id, tvdb_id, tmdb_id, thumb, art</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/writeback</code></td><td class="desc">Push metadata back to Plex/Jellyfin — 403 unless the match is human-confirmed</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/merge</code></td><td class="desc">Merge a duplicate show into this one<span class="fields">body: duplicate_id, confirm</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/shows/:id/thumb</code>, <code>/art</code></td><td class="desc">Proxied poster/art</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/episodes/:id/thumb</code></td><td class="desc">Proxied episode thumbnail</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/movies/:id</code></td><td class="desc">Full detail</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/movies/:id</code></td><td class="desc">Similar field set to shows, minus season/network</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/movies/:id/writeback</code></td><td class="desc">Same confirmed-match gate as shows</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/movies/:id/merge</code></td><td class="desc">Body: duplicate_id, confirm</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/movies/:id/thumb</code>, <code>/art</code></td><td class="desc">Proxied poster/art</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/movies/:id/languages</code>, <code>/videoinfo</code></td><td class="desc">Probed language/video info</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="chapters">
+    <h2>Chapters <a class="hash" href="#chapters">#</a></h2>
+    <p class="group-desc">Ad-break / intro-outro detection and manual chapter markers. Not yet consumed by the scheduler.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/chapters/review</code></td><td class="desc">Browse detected chapters for QA against the actual media<span class="fields">query: media_type, chapter_type, q, limit, offset</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/episodes/:id/chapters</code>, <code>/api/movies/:id/chapters</code></td><td class="desc">Chapters for an item</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/episodes/:id/chapters</code>, <code>/api/movies/:id/chapters</code></td><td class="desc">Add a chapter manually<span class="fields">body: type, start, end (see ChapterRepository)</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/chapters/:id</code></td><td class="desc">Edit a chapter</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/chapters/:id</code></td><td class="desc">Remove a chapter</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/episodes/:id/chapters/sync</code>, <code>/api/movies/:id/chapters/sync</code></td><td class="desc">Re-probe existing chapter markers from the source file</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/chapters/sync</code></td><td class="desc">Same, looped over every episode</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/shows/:id/chapters/detect</code>, <code>/api/movies/:id/chapters/detect</code></td><td class="desc">Trigger async ffmpeg-based scene/ad-break detection (202 accepted)</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/chapters/detect/status</code></td><td class="desc">Detection job status</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/chapters/:id/writeback</code></td><td class="desc"><b>Stub</b> — currently returns 501 Not Implemented</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="playlists">
+    <h2>Playlists <a class="hash" href="#playlists">#</a></h2>
+    <p class="group-desc">Named, orderable item lists, optionally mirrored to a Plex/source playlist or collection. Distinct from the M3U/XMLTV IPTV feed (see Scheduler below).</p>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/playlists</code></td><td class="desc">List playlists</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/playlists/plex-sync-all</code>, <code>/source-sync-all</code></td><td class="desc">Sync every linked playlist</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/playlists</code></td><td class="desc">Body: title</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/playlists/:id</code></td><td class="desc">Detail + items</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/playlists/:id/plex-sync</code></td><td class="desc">Body: source_id, external_id, plex_type (playlist/collection)</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/playlists/:id/source-sync</code></td><td class="desc">Body: source_id, external_id, list_kind</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/playlists/:id/plex-link</code>, <code>/source-link</code></td><td class="desc">Unlink from the remote list</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/playlists/:id</code></td><td class="desc">Body: title, mode (sequential/show_collection)</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/playlists/:id</code></td><td class="desc">Remove a playlist</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/playlists/:id/items</code></td><td class="desc">Body: item_type, item_id</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/playlists/:id/items/bulk</code></td><td class="desc">Body: items: [{item_type, item_id}]</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/playlists/:id/items/:iid</code></td><td class="desc">Remove an item</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/playlists/:id/items/:iid</code></td><td class="desc">Reorder<span class="fields">body: position</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="filler">
+    <h2>Filler Lists <a class="hash" href="#filler">#</a></h2>
+    <p class="group-desc">Same CRUD shape as Playlists, as a separate resource used for channel gap-filling. All routes are <span class="a a-admin">admin</span>-gated with the same body shapes as their Playlists equivalents.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/filler-lists</code></td><td class="desc">List filler lists</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/filler-lists/plex-sync-all</code>, <code>/source-sync-all</code></td><td class="desc">Sync all linked lists</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/filler-lists</code></td><td class="desc">Create a list</td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/filler-lists/:id</code></td><td class="desc">Detail + items</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/filler-lists/:id/plex-sync</code>, <code>/source-sync</code></td><td class="desc">Sync one list</td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/filler-lists/:id/plex-link</code>, <code>/source-link</code></td><td class="desc">Unlink from remote list</td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/filler-lists/:id</code></td><td class="desc">Update</td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/filler-lists/:id</code></td><td class="desc">Remove</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/filler-lists/:id/items</code></td><td class="desc">Add an item</td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/filler-lists/:id/items/bulk</code></td><td class="desc">Add items in bulk</td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/filler-lists/:id/items/:iid</code></td><td class="desc">Remove an item</td></tr>
+    </table></div>
+  </section>
+
+  <section id="activity">
+    <h2>Activity, Logs &amp; Metrics <a class="hash" href="#activity">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/sync/all</code></td><td class="desc">Trigger sync on every source <span class="internal">(no admin check — any logged-in user)</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/sync/all-hard</code></td><td class="desc">Force a hard sync on every source</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/logs/stream</code></td><td class="desc">Server-Sent-Events log tail</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/system/metrics</code></td><td class="desc">CPU/RAM for this process + host</td><td class="auth"><span class="a a-public">public</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="downloads">
+    <h2>Downloads — yt-dlp <a class="hash" href="#downloads">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/config/download</code></td><td class="desc">Configured download destination path</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-put">PUT</span></td><td class="path"><code>/api/config/download</code></td><td class="desc">Body: path</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/download/jobs</code></td><td class="desc">Start a yt-dlp job<span class="fields">body: url, path</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/download/jobs</code></td><td class="desc">List jobs with progress/log</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="scrapers">
+    <h2>Scrapers &amp; Matching <a class="hash" href="#scrapers">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/scrapers/config</code></td><td class="desc">Scraper configuration</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/scrapers/config</code></td><td class="desc">Body: match_threshold, configs: [{source, api_key, language, enabled, language_weight, pin}]</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/scrapers/match</code></td><td class="desc">Trigger a match pass (202 async, or already_running)<span class="fields">body: target_id, item_type</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/scrapers/match/status</code></td><td class="desc">Match job status</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/scrapers/stats</code></td><td class="desc">Counts by match_status</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/scrapers/queue</code></td><td class="desc">Review queue with candidates<span class="fields">query: status, limit, offset</span></td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/scrapers/queue/:kairos_id/manual-match</code></td><td class="desc">Body: item_type, source, external_id, title, year, poster_url, overview</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/scrapers/queue/:id/accept</code></td><td class="desc">Confirm a candidate match</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/scrapers/queue/:id/reject</code></td><td class="desc">Reject a candidate match</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/scrapers/anidb/poster/:aid</code></td><td class="desc">Redirects to the image proxy</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/scrapers/search</code></td><td class="desc">Direct scraper search — powers the Discovery feature<span class="fields">query: q, type</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/scrapers/metadata/:item_type/:kairos_id</code></td><td class="desc">External IDs + alternate titles</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/scrapers/metadata/:item_type/:kairos_id</code></td><td class="desc">Body: external_ids[], alternate_titles[]</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/scrapers/metadata/:item_type/:kairos_id/refresh</code></td><td class="desc">Re-fetch alternate titles/external ids</td><td class="auth"><span class="a a-admin">admin</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="scheduler">
+    <h2>Scheduler, EPG &amp; IPTV Feed <a class="hash" href="#scheduler">#</a></h2>
+    <p class="group-desc">The endpoints DVR clients (XTeve, TiViMate, Plex Live TV) actually consume, alongside the EPG preview/materialization API Hades uses.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/playlist.m3u</code></td><td class="desc">The IPTV M3U playlist</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/media/languages</code></td><td class="desc">Library-wide distinct audio/subtitle languages (sampled, cached 1h)</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/epg.xml</code>, <code>/api/epg.xml</code>, <code>/api/xmltv.xml</code>, <code>/api/channels.xml</code></td><td class="desc">All four alias the same XMLTV generator<span class="fields">query: hours (max 72)</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/now</code></td><td class="desc">What's playing right now, with filler/offline fallback<span class="fields">query: at</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/next</code></td><td class="desc">What plays next</td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/played</code></td><td class="desc">Report playback completion, advances the cursor<span class="fields">body: item_type, item_id, block_id, duration_actual_ms</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/epg/preview</code></td><td class="desc">Preview a schedule without committing — supports draft blocks + a seed override<span class="fields">body: hours, seed, blocks[]</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/epg/clear</code></td><td class="desc">Clear cached preview/materialization</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/epg</code></td><td class="desc">Materialized EPG grid<span class="fields">query: hours, from</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="timeslots">
+    <h2>Timeslots <a class="hash" href="#timeslots">#</a></h2>
+    <p class="group-desc">Fixed-time rotating slots inside a block (e.g. a 7pm "Toonami" slot). Every route here relies solely on the global Bearer-token requirement — none currently add an explicit admin-role check, unlike the rest of the scheduling API.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/blocks/:bid/slots</code></td><td class="desc">Create a timeslot</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/blocks/:bid/slots/:sid</code></td><td class="desc">Body: slot_offset_mins, slot_duration_mins, overflow, late_start_mins, early_start_secs, align_to_mins, start_scope</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/blocks/:bid/slots/:sid</code></td><td class="desc">Remove a slot</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/blocks/:bid/slots/reorder</code></td><td class="desc">Body: [{slot_id}]</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/blocks/:bid/slots/:sid/cursor/reset</code></td><td class="desc">Reset the slot's rotation cursor</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/blocks/:bid/slots/:sid/queue</code></td><td class="desc">Add a rotating show/movie to the slot</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-patch">PATCH</span></td><td class="path"><code>/api/blocks/:bid/slots/:sid/queue/:eid</code></td><td class="desc">Body: premiere_date, pre_premiere_behavior</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/blocks/:bid/slots/:sid/queue/:eid</code></td><td class="desc">Remove from the rotation</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/blocks/:bid/slots/:sid/queue/reorder</code></td><td class="desc">Body: [{entry_id}]</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="roku">
+    <h2>Roku Devices <a class="hash" href="#roku">#</a></h2>
+    <p class="group-desc">Pairing and management for the native <a href="https://github.com/X64Tyko/pantheon-roku">pantheon-roku</a> channel.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/roku-devices</code></td><td class="desc">Caller's own paired devices</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/roku-devices</code></td><td class="desc">Create + start an ECP-launch pairing flow<span class="fields">body: name, ip_address</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/roku-devices/:id</code></td><td class="desc">Own devices only</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/roku-devices/:id</code></td><td class="desc">Unpair a device</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/roku-devices/:id/confirm-pairing</code></td><td class="desc">Confirm pairing<span class="fields">body: pairing_token</span></td><td class="auth"><span class="a a-auth">auth</span> <span class="internal">(internal: relayed by Hermes from the Roku device itself)</span></td></tr>
+    </table></div>
+  </section>
+
+  <section id="playback">
+    <h2>Playback &amp; Watch Progress <a class="hash" href="#playback">#</a></h2>
+    <div class="tablewrap"><table>
+      <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/playback/:content_type/:id</code></td><td class="desc">Resolve a library item to a playable file path — also resolves linked specials through their movie</td><td class="auth"><span class="a a-public">public</span> <span class="internal">(internal: called by Hephaestus)</span></td></tr>
+      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/watch-progress</code></td><td class="desc">Caller's continue-watching list<span class="fields">query: limit</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-put">PUT</span></td><td class="path"><code>/api/watch-progress/:content_type/:id</code></td><td class="desc">Upsert position, auto-clears at ≥95% watched<span class="fields">body: position_ms, duration_ms</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+      <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/watch-progress/:content_type/:id</code></td><td class="desc">Clear saved progress</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
+    </table></div>
+  </section>
+
+  <footer>~185 routes across 19 services. See <a href="index.html">docs index</a> and <a href="ARCHITECTURE.md">ARCHITECTURE.md</a> for how these services fit together.</footer>
+</main>
+</body>
+</html>

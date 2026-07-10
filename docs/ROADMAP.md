@@ -13,14 +13,19 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [x] **Chromecast Support:** Basic casting to Google Cast devices <experimental>.
 - [x] **Log Centralization:** unify frontend and backend logs for better debugging.
 - [x] **Metadata Manager:** user-controlled priority reordering and multi-source linking.
-- [ ] **Multi-User & Parental Controls:** Multi-account support with rating-based content restrictions <experimental>.
-- [ ] **Bi-Directional Metadata Sync:** Writeback of matches and status to sources (Plex/Jellyfin) <experimental>.
+- [x] **Cross-Source Merge:** Manual link/merge of duplicate shows and movies discovered across Plex/Jellyfin/local sources.
+- [x] **Canonical Settings Model:** Per-item settings (library type, scraper priority, language, etc.) merge into one conflict-checked row instead of being tracked per-source.
+- [x] **Multi-User & Parental Controls:** Admin/viewer roles with per-user rating ceilings (TV/movie/channel), enforced on both API and stream requests <experimental>.
+- [x] **Bi-Directional Metadata Sync:** Writeback of confirmed matches to Plex/Jellyfin, gated strictly on human-confirmed matches <experimental>.
+- [x] **Chapter Detection:** Automatic ad-break/intro-outro detection, with a read-only review tab for QA against the source video <experimental>.
+- [x] **Show Specials Linking:** Link a show's OVA/special episode to a movie-library file so it plays via live join while the movie stays independently scheduled.
+- [x] **Sync Controls:** Per-library scraper priority, per-item "Skip Scraping" exemption, and "Hard Sync" / "Hard Sync All" to force a full re-sync.
+- [x] **Admin Tooling:** Downloadable debug dump and a metrics dashboard on the Activity page.
 - [ ] **Hardware Acceleration Polish:** Broaden support for VAAPI and QuickSync profiles.
 
 ## Phase 2: Beta (Q3 2026)
 *Focus: Feature completeness, user experience, and expanded hardware support.*
 
-- [ ] **Chapter Detection:** Automatic scene/intro/outro detection for media files <experimental>.
 - [ ] **Chapter-Aware Scheduling:** Use detected chapters for precise program start/end and bumper placement.
 - [ ] **Advanced Scheduling UI:** Drag-and-drop EPG builder with real-time collision detection.
 - [ ] **Collection Management:** Dynamic collections that auto-update based on metadata filters.
@@ -34,7 +39,7 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] **Security Audit:** Full review of the Hermes gateway and authentication flow.
 - [ ] **Public Plugin API:** Allow community-developed scrapers and source providers.
 - [ ] **Stable API:** Versioned REST API for third-party integrations.
-- [ ] **Client Ecosystem:** Development of native applications for TV (Android TV/Apple TV) and mobile.
+- [ ] **Client Ecosystem:** Native applications for TV and mobile. A native Roku channel (`pantheon-roku`) is code-complete but not yet verified on physical hardware, and a Chromecast HTTPS relay (`pantheon-relay`) is live; Android TV, Apple TV, and mobile remain future work.
 
 ---
 

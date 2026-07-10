@@ -1,4 +1,4 @@
-name: Build & publish Kairos image
+name: Kairos CI
 
 on:
   push:

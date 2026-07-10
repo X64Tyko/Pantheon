@@ -20,7 +20,7 @@ Pantheon is led by a Principal Architect who defines the technical roadmap and i
 ## Bug Reporting Process
 
 1.  Check the existing issues to see if your problem has already been reported.
-2.  Use the [Bug Report Template](.github/ISSUE_TEMPLATE/bug_report.md) when opening a new issue.
+2.  Use the [Bug Report Template](.github/ISSUE_TEMPLATE/bug_report.yml) when opening a new issue.
 3.  Include your environment details (Docker version, GPU drivers, Host OS).
 4.  Attach the relevant sections of your `kairos.log`.
 
