@@ -28,6 +28,18 @@
 
 using json = nlohmann::json;
 
+namespace {
+// Guarantees media_locked_ clears on every exit path out of syncAll()/
+// syncSource() — including an exception thrown mid-phase — so a failure
+// partway through a sync can't leave every show/movie/chapter mutation
+// endpoint permanently 423-locked until the process restarts.
+struct MediaLockGuard {
+    std::atomic<bool>& flag;
+    explicit MediaLockGuard(std::atomic<bool>& f) : flag(f) { flag.store(true); }
+    ~MediaLockGuard() { flag.store(false); }
+};
+} // namespace
+
 SyncManager::SyncManager(Database& db, ConfStore& conf)
     : db_(db), conf_(conf), sync_db_(db.openConnection(60000)) {}
 
@@ -131,7 +143,7 @@ void SyncManager::clearSourceMapping(const std::string& source_id) {
 
 void SyncManager::syncAll() {
     sync_db_ = db_.openConnection(60000);
-    media_locked_.store(true);
+    MediaLockGuard media_lock(media_locked_);
     const auto t_total = std::chrono::steady_clock::now();
 
     // Phase 1: ingest content from every source.
@@ -168,7 +180,6 @@ void SyncManager::syncAll() {
             syncChaptersFromFiles(src->sourceId());
     }
 
-    media_locked_.store(false);
     std::cout << "[sync] all sources done (total "
               << elapsedMs(t_total, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }
@@ -272,14 +283,13 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live) {
 
 void SyncManager::syncSource(const std::string& source_id) {
     sync_db_ = db_.openConnection(60000);
-    media_locked_.store(true);
+    MediaLockGuard media_lock(media_locked_);
     SyncLiveIds live;
     syncContent(source_id, live);
     runOrphanCleanup(live);
     if (scraper_) scraper_->runMatchSync();
     scanSpecialsForEligibleShows();
     syncChaptersFromFiles(source_id);
-    media_locked_.store(false);
     std::cout << "[sync] done: " << source_id << std::endl;
 }
 

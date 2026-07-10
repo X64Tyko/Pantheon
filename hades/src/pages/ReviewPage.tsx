@@ -534,6 +534,7 @@ function CandidatePanel({
   const [linkLoading, setLinkLoading] = useState(false)
   const [linkingId,   setLinkingId]   = useState<string | null>(null)
   const [folderWarning, setFolderWarning] = useState<{ kairos_id: string; targetFolder: string; duplicateFolder: string } | null>(null)
+  const [linkError,   setLinkError]   = useState<string | null>(null)
   const [metadata,    setMetadata]    = useState<ItemMetadata | null>(null)
   const [loadingMeta, setLoadingMeta] = useState(false)
 
@@ -600,6 +601,7 @@ function CandidatePanel({
   const handleLink = async (target: LinkTarget, confirmed = false) => {
     setLinkingId(target.kairos_id)
     setFolderWarning(null)
+    setLinkError(null)
     try {
       if (item.item_type === 'show') await api.mergeShow(target.kairos_id, item.kairos_id, confirmed)
       else                            await api.mergeMovie(target.kairos_id, item.kairos_id, confirmed)
@@ -607,6 +609,12 @@ function CandidatePanel({
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.body?.error === 'folder_mismatch') {
         setFolderWarning({ kairos_id: target.kairos_id, targetFolder: e.body.target_folder, duplicateFolder: e.body.duplicate_folder })
+      } else if (e instanceof ApiError && e.status === 423) {
+        setLinkError('Library sync is in progress — try linking again in a moment.')
+      } else if (e instanceof ApiError) {
+        setLinkError(e.body?.error || 'Unable to link — please try again.')
+      } else {
+        setLinkError('Unable to link — please try again.')
       }
       setLinkingId(null)
     }
@@ -615,7 +623,7 @@ function CandidatePanel({
   const switchMode = (m: 'candidates'|'search'|'link') => {
     setMode(m)
     if (m === 'search') { setSearchResults([]); setSearchQuery(item.title) }
-    if (m === 'link')   { setLinkResults([]);   setLinkQuery(item.title); setFolderWarning(null) }
+    if (m === 'link')   { setLinkResults([]);   setLinkQuery(item.title); setFolderWarning(null); setLinkError(null) }
   }
 
   return (
@@ -714,6 +722,16 @@ function CandidatePanel({
               </button>
             </div>
           </div>
+
+          {linkError && (
+            <div style={{
+              margin: '0 24px 12px', padding: '8px 12px', borderRadius: 7,
+              border: '1px solid var(--hds-match-red)', background: 'oklch(0.62 0.2 22 / 0.12)',
+              color: 'var(--hds-match-red)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5,
+            }}>
+              {linkError}
+            </div>
+          )}
 
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }} className="scrollbar-dark">
             {linkLoading ? (
