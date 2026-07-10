@@ -1073,9 +1073,19 @@ function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: {
             fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'oklch(0.9 0.01 285)',
           }}>{epCode}</span>
         )}
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'oklch(0 0 0 / 0.5)' }}>
-          <div style={{ height: '100%', width: `${progress * 100}%`, background: 'var(--hds-violet)' }} />
-        </div>
+        {item.up_next && (
+          <span style={{
+            position: 'absolute', top: 6, right: 6,
+            background: 'var(--hds-violet)', borderRadius: 4, padding: '2px 6px',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 700,
+            letterSpacing: '0.04em', color: 'oklch(0.13 0.02 285)',
+          }}>UP NEXT</span>
+        )}
+        {!item.up_next && (
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'oklch(0 0 0 / 0.5)' }}>
+            <div style={{ height: '100%', width: `${progress * 100}%`, background: 'var(--hds-violet)' }} />
+          </div>
+        )}
       </div>
       <div style={{ padding: '8px 4px 4px' }}>
         <div style={{

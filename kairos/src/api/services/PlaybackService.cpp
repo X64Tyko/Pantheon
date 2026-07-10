@@ -4,10 +4,12 @@
 #include "../../conf/ConfStore.h"
 #include "../../db/Database.h"
 #include "../../db/WatchProgressRepository.h"
+#include "../../db/ContentRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <ctime>
+#include <vector>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -64,6 +66,15 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	});
 
 	// ── GET /api/watch-progress ────────────────────────────────────────────────
+	// Movies: one card per in-progress movie, same as always. Shows: one card
+	// per show, from that show's most-recently-touched episode. If that
+	// episode was completed (finished naturally, skipped, or auto-advanced
+	// past via the player's Up Next), the show only stays in Continue
+	// Watching when there's a next episode to resume into — surfaced as a
+	// fresh, unstarted "up next" card (position_ms=0, up_next=true) rather
+	// than the show just vanishing until the viewer manually starts it again.
+	// Mirrors resolvePlayTarget.ts's client-side resume logic, computed here
+	// once per show for the shelf instead of on demand.
 	svr.Get("/api/watch-progress", [this](const Req& req, Res& res) {
 		auto user = currentUser();
 		if (!user) { route::err(res, 401, "Unauthorized"); return; }
@@ -74,47 +85,89 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 		}
 
 		try {
-			SQLite::Statement q(db_.get(), R"SQL(
-				SELECT content_type, content_id, position_ms, duration_ms, updated_at
-				FROM watch_progress WHERE user_id = ? AND completed = 0 ORDER BY updated_at DESC LIMIT ?
-			)SQL");
-			q.bind(1, user->user_id);
-			q.bind(2, limit);
-
 			json out = json::array();
-			while (q.executeStep()) {
-				auto content_type = q.getColumn(0).getString();
-				auto content_id   = q.getColumn(1).getString();
+
+			SQLite::Statement movies(db_.get(), R"SQL(
+				SELECT content_id, position_ms, duration_ms, updated_at
+				FROM watch_progress WHERE user_id = ? AND content_type = 'movie' AND completed = 0
+			)SQL");
+			movies.bind(1, user->user_id);
+			while (movies.executeStep()) {
+				auto content_id = movies.getColumn(0).getString();
+				SQLite::Statement m(db_.get(), "SELECT title FROM movie WHERE movie_id = ?");
+				m.bind(1, content_id);
+				if (!m.executeStep()) continue; // stale reference (deleted item)
 
 				json r;
-				r["content_type"] = content_type;
+				r["content_type"] = "movie";
 				r["content_id"]   = content_id;
-				r["position_ms"]  = q.getColumn(2).getInt64();
-				r["duration_ms"]  = q.getColumn(3).getInt64();
-				r["updated_at"]   = q.getColumn(4).getInt64();
-
-				if (content_type == "movie") {
-					SQLite::Statement m(db_.get(), "SELECT title FROM movie WHERE movie_id = ?");
-					m.bind(1, content_id);
-					if (!m.executeStep()) continue; // stale reference (deleted item)
-					r["title"] = m.getColumn(0).getString();
-				} else {
-					SQLite::Statement e(db_.get(),
-						"SELECT title, season, episode, show_id FROM episode WHERE episode_id = ?");
-					e.bind(1, content_id);
-					if (!e.executeStep()) continue;
-					r["title"]   = e.getColumn(0).getString();
-					r["season"]  = e.getColumn(1).getInt();
-					r["episode"] = e.getColumn(2).getInt();
-					auto show_id = e.getColumn(3).getString();
-					r["show_id"] = show_id;
-
-					SQLite::Statement s(db_.get(), "SELECT title FROM show WHERE show_id = ?");
-					s.bind(1, show_id);
-					r["show_title"] = s.executeStep() ? s.getColumn(0).getString() : "";
-				}
+				r["position_ms"]  = movies.getColumn(1).getInt64();
+				r["duration_ms"]  = movies.getColumn(2).getInt64();
+				r["updated_at"]   = movies.getColumn(3).getInt64();
+				r["title"]        = m.getColumn(0).getString();
 				out.push_back(std::move(r));
 			}
+
+			SQLite::Statement showsQ(db_.get(), R"SQL(
+				SELECT DISTINCT e.show_id
+				FROM watch_progress wp JOIN episode e ON e.episode_id = wp.content_id
+				WHERE wp.user_id = ? AND wp.content_type = 'episode'
+			)SQL");
+			showsQ.bind(1, user->user_id);
+			std::vector<std::string> show_ids;
+			while (showsQ.executeStep()) show_ids.push_back(showsQ.getColumn(0).getString());
+
+			WatchProgressRepository wpRepo(db_);
+			ContentRepository contentRepo(db_);
+			for (auto& show_id : show_ids) {
+				auto state = wpRepo.getLatestForShow(user->user_id, show_id);
+				if (!state) continue;
+
+				auto content_id  = state->content_id;
+				auto position_ms = state->position_ms;
+				auto duration_ms = state->duration_ms;
+				bool up_next     = false;
+
+				if (state->completed) {
+					auto next = contentRepo.getNextEpisode(state->content_id);
+					if (!next) continue; // finale watched — nothing to continue into
+					content_id  = next->episode_id;
+					position_ms = 0;
+					duration_ms = next->duration_ms;
+					up_next     = true;
+				}
+
+				SQLite::Statement e(db_.get(), "SELECT title, season, episode FROM episode WHERE episode_id = ?");
+				e.bind(1, content_id);
+				if (!e.executeStep()) continue;
+
+				json r;
+				r["content_type"] = "episode";
+				r["content_id"]   = content_id;
+				r["position_ms"]  = position_ms;
+				r["duration_ms"]  = duration_ms;
+				// Kept as the completed episode's timestamp (not "now") when
+				// synthesizing an up_next card, so shelf ordering still
+				// reflects how recently the show was actually watched.
+				r["updated_at"]   = state->updated_at;
+				r["title"]        = e.getColumn(0).getString();
+				r["season"]       = e.getColumn(1).getInt();
+				r["episode"]      = e.getColumn(2).getInt();
+				r["show_id"]      = show_id;
+				if (up_next) r["up_next"] = true;
+
+				SQLite::Statement s(db_.get(), "SELECT title FROM show WHERE show_id = ?");
+				s.bind(1, show_id);
+				r["show_title"] = s.executeStep() ? s.getColumn(0).getString() : "";
+
+				out.push_back(std::move(r));
+			}
+
+			std::sort(out.begin(), out.end(), [](const json& a, const json& b) {
+				return a["updated_at"].get<int64_t>() > b["updated_at"].get<int64_t>();
+			});
+			if (out.size() > static_cast<size_t>(limit)) out.erase(out.begin() + limit, out.end());
+
 			route::ok(res, out.dump());
 		} catch (const std::exception& e) {
 			route::logErr("GET /api/watch-progress", e); route::err(res, 500, e.what());

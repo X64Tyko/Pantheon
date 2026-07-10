@@ -47,6 +47,15 @@
   to   { opacity: 1; transform: none; }
 }
 
+/* Up Next countdown bar (PlayerPage/UpNextOverlay) — width drains from full
+   to empty over the overlay's own auto-play countdown; duration is set
+   per-instance via an inline animationDuration so it always matches
+   UpNextOverlay's COUNTDOWN_SECS constant. */
+@keyframes hds-upnext-drain {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
 .hds-in { animation: hds-in 0.17s ease both; }
 
 /* ─── Base ─────────────────────────────────────────────────────────────────── */

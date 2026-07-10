@@ -308,7 +308,15 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const showSkipIntro = activeChapter?.chapter_type === 'intro'
 
   const hasCreditsChapterData = chapters.some(c => isCreditsType(c.chapter_type))
-  const inCreditsChapter = !!activeChapter && isCreditsType(activeChapter.chapter_type)
+  // If this episode has a post-credits scene, don't trigger during the
+  // 'credits' chapter itself (that would cover/spoil the scene) — wait until
+  // the post_credits chapter is actually reached, same as Netflix holding
+  // off Up Next for a Marvel-style stinger.
+  const hasPostCreditsChapter = chapters.some(c => c.chapter_type === 'post_credits')
+  const inCreditsChapter = !!activeChapter && (
+    activeChapter.chapter_type === 'post_credits' ||
+    (isCreditsType(activeChapter.chapter_type) && !hasPostCreditsChapter)
+  )
   const nearEnd = session.durationMs > 0 && currentMs > 0 &&
     (session.durationMs - currentMs) < UP_NEXT_FALLBACK_WINDOW_MS
   const showUpNext = !isRemoteActive && !!nextEpisode && !upNextDismissed &&
@@ -396,7 +404,16 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                   subtitleUrl={session.subtitleUrl}
                   isLive={session.isLive}
                   onTimeUpdate={(ms) => setCurrentMs(ms)}
-                  onEnded={() => { if (nextEpisode) handleAdvanceToNext(); else handleNaturalEnd() }}
+                  // Dismissing Up Next means "don't continue into the next
+                  // episode" — without the upNextDismissed check here, simply
+                  // letting playback run to the true end of the file would
+                  // silently override that and auto-advance anyway. A
+                  // dismissed-and-finished episode still just completes
+                  // normally (handleNaturalEnd), same as a movie or series
+                  // finale; the next episode stays reachable from Continue
+                  // Watching (see Kairos's up_next synthesis) instead of
+                  // auto-playing.
+                  onEnded={() => { if (nextEpisode && !upNextDismissed) handleAdvanceToNext(); else handleNaturalEnd() }}
                   onError={setPlayerError}
                 />
               </div>

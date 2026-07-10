@@ -376,6 +376,11 @@ export interface WatchProgress {
   episode?:     number
   show_id?:     string
   show_title?:  string
+  // true when this card is a synthesized "next episode" placeholder for a
+  // show whose most recently watched episode was completed — position_ms is
+  // always 0 here since it hasn't actually been started (see Kairos's
+  // GET /api/watch-progress).
+  up_next?:     boolean
 }
 
 export interface CredentialStatus {
