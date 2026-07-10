@@ -7,6 +7,7 @@
 #include "conf/ConfStore.h"
 #include "db/ChapterRepository.h"
 #include "db/Database.h"
+#include "detect/ChapterDetectionManager.h"
 #include "log/DebugLog.h"
 #include "scraper/ScraperManager.h"
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -1473,6 +1474,7 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
         std::string kairos_id;
         std::string media_type;
         std::string mapped_path;
+        std::string show_id;    // episodes only — empty for movies
         std::string show_title; // for logging
     };
     std::vector<ProbeItem> items;
@@ -1497,6 +1499,7 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
                 q.getColumn(0).getString(),
                 "episode",
                 mapped,
+                q.getColumn(2).getString(),
                 q.getColumn(3).getString()
             });
         }
@@ -1514,7 +1517,7 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
             if (file_path.empty()) continue;
             const std::string mapped = conf_.applyPathMap(file_path);
             if (!std::filesystem::exists(mapped)) continue;
-            items.push_back({q.getColumn(0).getString(), "movie", mapped, ""});
+            items.push_back({q.getColumn(0).getString(), "movie", mapped, "", ""});
         }
     }
 
@@ -1562,4 +1565,30 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
     std::cout << "[sync] chapter sync done: " << source_id
               << " (" << written << " item(s) with chapters, "
               << elapsedMs(t_ch_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
+
+    // Opportunistically kick off cross-episode intro/credits/recap/etc.
+    // detection (ChapterDetector.h) for one show that doesn't have it yet.
+    // Deliberately one show per sync pass, not every eligible one at once —
+    // ChapterDetectionManager is single-flight and CPU/IO-heavy (full-file
+    // audio fingerprinting per episode), so this trickles coverage across
+    // the library over successive syncs instead of turning a routine sync
+    // into a long detection marathon or silently dropping all but the first
+    // trigger in a burst.
+    if (chapter_detect_ && !chapter_detect_->isDetecting()) {
+        std::unordered_set<std::string> seen;
+        for (const auto& it : items) {
+            if (it.show_id.empty() || seen.count(it.show_id)) continue;
+            seen.insert(it.show_id);
+
+            SQLite::Statement already(sync_db_, R"(
+                SELECT 1 FROM chapter c JOIN episode e ON e.episode_id = c.media_id
+                WHERE c.media_type='episode' AND e.show_id=? AND c.source='detected'
+                  AND c.chapter_type IN ('intro','credits') LIMIT 1
+            )");
+            already.bind(1, it.show_id);
+            if (already.executeStep()) continue; // already has detected anchors
+
+            if (chapter_detect_->triggerShowDetect(it.show_id)) break; // one per sync pass
+        }
+    }
 }

@@ -20,12 +20,12 @@ Pantheon is currently in **Alpha**. This is a source-available engineering artif
 
 | Component | Status | Test Suite | Tests | Coverage (Target) |
 |---|---|---|---|---|
-| **Kairos** | Alpha | `momus_kairos` | 312 | ~85% (Core / Scheduler) |
-| **Hades** | Alpha | `vitest` | 133 | ~40% (API / Stores) |
+| **Kairos** | Alpha | `momus_kairos` | 352 | ~85% (Core / Scheduler) |
+| **Hades** | Alpha | `vitest` | 135 | ~40% (API / Stores) |
 | **Hermes** | Alpha | `momus_hermes` | 19 | ~25% (Gateway) |
 | **Hephaestus** | Alpha | `momus_hephaestus` | 26 | ~25% (Transcoder) |
 
-*Pantheon currently runs **490 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+*Pantheon currently runs **532 automated tests** across the stack using the **Momus** framework and **Vitest**.*
 
 ---
 
@@ -269,6 +269,7 @@ Alpha.
 | Metadata writeback (Plex, Jellyfin) | Working <experimental> |
 | Discovery & Requests (*arr stack integration) | Working <experimental> |
 | Chapter detection & review | Working <experimental> |
+| Series continuation (skip intro/credits, up next, auto-advance) | Code-complete, untested against a real library |
 | Show specials linking | Working |
 | IPTV channel scheduling + EPG | Working |
 | Stream delivery (Hermes + Hephaestus) | Working |
