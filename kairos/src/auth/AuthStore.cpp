@@ -226,11 +226,17 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	// holder cooperates with sending it.
 	if (q.getColumn(7).getString() == "cast") user.role = "viewer";
 
-	SQLite::Statement upd(db_.get(),
-		"UPDATE session SET last_seen = ? WHERE token = ?");
-	upd.bind(1, now);
-	upd.bind(2, token);
-	upd.exec();
+	// Best-effort bookkeeping only (session expiry is driven by expires_at,
+	// checked above, not last_seen) — every authenticated request runs this in
+	// the pre-routing handler, so a write-lock collision with a sync in
+	// progress must not fail the whole request with an uncaught SQLITE_BUSY.
+	try {
+		SQLite::Statement upd(db_.get(),
+			"UPDATE session SET last_seen = ? WHERE token = ?");
+		upd.bind(1, now);
+		upd.bind(2, token);
+		upd.exec();
+	} catch (const SQLite::Exception&) {}
 
 	return user;
 }

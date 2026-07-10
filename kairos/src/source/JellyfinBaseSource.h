@@ -23,6 +23,11 @@ public:
 
     std::vector<SourceUserInfo>    listServerUsers()                                 override;
 
+    bool pushMetadata(const std::string& external_id,
+                       const std::string& external_lib_id,
+                       const std::string& item_type,
+                       const WritebackFields& fields)                                override;
+
 protected:
     JellyfinBaseSource(const std::string& source_id,
                        const std::string& base_url,

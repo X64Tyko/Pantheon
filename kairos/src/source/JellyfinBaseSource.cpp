@@ -557,6 +557,59 @@ std::vector<SourceUserInfo> JellyfinBaseSource::listServerUsers() {
 }
 
 // ---------------------------------------------------------------------------
+// Metadata writeback
+// ---------------------------------------------------------------------------
+
+// Jellyfin's update endpoint (POST /Items/{itemId}) takes a full BaseItemDto,
+// unlike Plex's per-field query-string PATCH (PlexSource::pushMetadata) — so
+// this fetches the existing item, merges in only the changed fields, and
+// posts the whole thing back. Scalar text fields only for v1, mirroring
+// Plex's own deferral of array fields (genres/actors/countries/collections):
+// Jellyfin's merge semantics for those need live verification before it's
+// safe to guess at, same reasoning as Plex's multi-value tag convention.
+bool JellyfinBaseSource::pushMetadata(const std::string& external_id,
+                                       const std::string& /*external_lib_id*/,
+                                       const std::string& /*item_type*/,
+                                       const WritebackFields& fields) {
+    auto getRes = get("/Users/" + user_id_ + "/Items/" + external_id);
+    if (!getRes || getRes->status != 200) {
+        std::cerr << "[" << sourceType() << ":" << source_id_
+                  << "] pushMetadata: couldn't fetch existing item (id=" << external_id << ")\n";
+        return false;
+    }
+
+    json item;
+    try {
+        item = json::parse(getRes->body);
+    } catch (const json::exception& e) {
+        std::cerr << "[" << sourceType() << ":" << source_id_
+                  << "] pushMetadata: parse error (id=" << external_id << "): " << e.what() << '\n';
+        return false;
+    }
+
+    if (!fields.title.empty())          item["Name"]          = fields.title;
+    if (!fields.overview.empty())       item["Overview"]      = fields.overview;
+    if (!fields.content_rating.empty()) item["OfficialRating"] = fields.content_rating;
+    if (!fields.tagline.empty())        item["Taglines"]      = json::array({fields.tagline});
+    if (!fields.studio.empty())         item["Studios"]       = json::array({json{{"Name", fields.studio}}});
+    if (!fields.release_date.empty())   item["PremiereDate"]  = fields.release_date + "T00:00:00.0000000Z";
+
+    auto res = client_.Post(("/Items/" + external_id).c_str(), item.dump(), "application/json");
+    if (!res) {
+        std::cerr << "[" << sourceType() << ":" << source_id_
+                  << "] pushMetadata failed (id=" << external_id
+                  << "): " << httplib::to_string(res.error()) << '\n';
+        return false;
+    }
+    if (res->status != 200 && res->status != 204) {
+        std::cerr << "[" << sourceType() << ":" << source_id_
+                  << "] pushMetadata HTTP " << res->status << " (id=" << external_id << ")\n";
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Browse — collections (BoxSets)
 // ---------------------------------------------------------------------------
 

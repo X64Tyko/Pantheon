@@ -614,12 +614,16 @@ std::vector<SourceUserInfo> PlexSource::listServerUsers() {
         merge(parsePlexTvUsers(res->body));
     else if (!res)
         std::cerr << "[plex:" << source_id_ << "] /api/home/users — " << httplib::to_string(res.error()) << '\n';
+    else
+        std::cerr << "[plex:" << source_id_ << "] /api/home/users — HTTP " << res->status << '\n';
 
     // Shared ("Friends") access — separate Plex accounts, which do carry email.
     if (auto res = account_client.Get("/api/users"); res && res->status == 200)
         merge(parsePlexTvUsers(res->body));
     else if (!res)
         std::cerr << "[plex:" << source_id_ << "] /api/users — " << httplib::to_string(res.error()) << '\n';
+    else
+        std::cerr << "[plex:" << source_id_ << "] /api/users — HTTP " << res->status << '\n';
 
     return merged;
 }

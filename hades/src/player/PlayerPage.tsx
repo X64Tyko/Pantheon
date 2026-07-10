@@ -61,6 +61,14 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const [nextEpisode, setNextEpisode] = useState<NextEpisode | null>(null)
   const [upNextDismissed, setUpNextDismissed] = useState(false)
   const skipCleanupPingRef = useRef(false)
+  // Mirrors currentMs for the ping effect below, which intentionally doesn't
+  // depend on currentMs (see that effect's own comment) — reading through a
+  // ref keeps every ping's position fresh without restarting the interval
+  // (and re-arming the exit-flush) on every timeupdate tick.
+  const currentMsRef = useRef(initialPositionMs)
+  // Mirrors isRemoteActive for the same reason — read fresh inside the ping
+  // interval without restarting it on every cast/Roku connect/disconnect.
+  const isRemoteActiveRef = useRef(false)
 
   // Live-channel credits PiP — driven purely by the currently-airing item's
   // own chapter data + wall-clock elapsed position, not a separate schedule
@@ -154,26 +162,41 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
   useEffect(() => {
     setCurrentMs(initialPositionMs)
+    currentMsRef.current = initialPositionMs
     setUpNextDismissed(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetId])
 
-  // Periodic + on-unmount watch-progress pings (VOD only). Skipped once by
-  // handleAdvanceToNext, which already sent its own definitive completed=true
-  // write for the episode being left — without this guard, this effect's own
-  // cleanup (still closed over the outgoing episode's stale currentMs) would
-  // fire right after and could overwrite that back to completed=false.
+  useEffect(() => { currentMsRef.current = currentMs }, [currentMs])
+  useEffect(() => { isRemoteActiveRef.current = isRemoteActive }, [isRemoteActive])
+
+  // Periodic + on-unmount watch-progress pings (VOD only). Reads currentMs
+  // through a ref (kept fresh by the effect above) rather than depending on
+  // currentMs directly — this interval must survive for the whole playback
+  // session rather than restarting on every timeupdate tick, so each ping
+  // still needs to see the *latest* position at the moment it fires. Skipped
+  // once by handleAdvanceToNext/onEnded, which already send their own
+  // definitive completed=true write for the item being left — without this
+  // guard, this effect's cleanup would fire right after and could overwrite
+  // that back to completed=false with a lower, pre-completion position.
+  // Also suppressed entirely while casting/Roku-mirroring: the receiver
+  // device (Chromecast) or the Roku app itself is the one actually playing
+  // and reports its own real position — this tab's currentMs doesn't track
+  // it (no local video element is mounted, see isRemoteActive above), so
+  // pinging here would just overwrite the receiver's correct value with a
+  // stale one every 15s. handleStopCast/handleStopRoku send an explicit
+  // flush using the live remote position at the moment of disconnect.
   useEffect(() => {
     if (kind === 'channel') return
     const interval = setInterval(() => {
-      if (currentMs > 0 && session.durationMs > 0)
-        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMs), duration_ms: Math.round(session.durationMs) }).catch(() => {})
+      if (!isRemoteActiveRef.current && currentMsRef.current > 0 && session.durationMs > 0)
+        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMsRef.current), duration_ms: Math.round(session.durationMs) }).catch(() => {})
     }, PROGRESS_PING_MS)
     return () => {
       clearInterval(interval)
       if (skipCleanupPingRef.current) { skipCleanupPingRef.current = false; return }
-      if (currentMs > 0 && session.durationMs > 0)
-        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMs), duration_ms: Math.round(session.durationMs) }).catch(() => {})
+      if (!isRemoteActiveRef.current && currentMsRef.current > 0 && session.durationMs > 0)
+        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMsRef.current), duration_ms: Math.round(session.durationMs) }).catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, targetId, session.durationMs])
@@ -232,6 +255,27 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     }
   }
 
+  // Explicit flush at the moment the user disconnects from this tab, using
+  // the remote device's own live-reported position — the periodic ping is
+  // suppressed throughout the whole session (see the ping effect above), so
+  // without this nothing here writes a final position for whatever the
+  // remote device was actually showing before endSession() tears it down.
+  const handleStopCast = useCallback(() => {
+    if (kind !== 'channel' && castSession.currentMs > 0 && castSession.durationMs > 0)
+      api.putWatchProgress(kind, targetId, {
+        position_ms: Math.round(castSession.currentMs), duration_ms: Math.round(castSession.durationMs),
+      }).catch(() => {})
+    castSession.endSession()
+  }, [kind, targetId, castSession])
+
+  const handleStopRoku = useCallback(() => {
+    if (kind !== 'channel' && rokuSession.currentMs > 0 && rokuSession.durationMs > 0)
+      api.putWatchProgress(kind, targetId, {
+        position_ms: Math.round(rokuSession.currentMs), duration_ms: Math.round(rokuSession.durationMs),
+      }).catch(() => {})
+    rokuSession.endSession()
+  }, [kind, targetId, rokuSession])
+
   const handleSeek = (ms: number) => {
     if (isCasting) { castSession.seek(ms); setCurrentMs(ms); return }
     if (isCastingRoku) { rokuSession.seek(ms); setCurrentMs(ms); return }
@@ -286,6 +330,20 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextEpisode, targetId, session.durationMs, navigate])
 
+  // Movie, or last episode of a series: nothing to auto-advance into, so
+  // (unlike handleAdvanceToNext) explicitly mark this item completed rather
+  // than trusting the exit-ping's 95%-threshold heuristic to land in time.
+  const handleNaturalEnd = useCallback(() => {
+    skipCleanupPingRef.current = true
+    if (kind !== 'channel' && session.durationMs > 0) {
+      api.putWatchProgress(kind, targetId, {
+        position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
+      }).catch(() => {})
+    }
+    navigate(-1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, targetId, session.durationMs, navigate])
+
   // Re-evaluated on every render (piggybacking on the live video's own
   // onTimeUpdate-driven re-renders for freshness — a live channel has no
   // scrubber/duration to key an effect off of), purely from the currently-
@@ -338,7 +396,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                   subtitleUrl={session.subtitleUrl}
                   isLive={session.isLive}
                   onTimeUpdate={(ms) => setCurrentMs(ms)}
-                  onEnded={() => { if (nextEpisode) handleAdvanceToNext(); else navigate(-1) }}
+                  onEnded={() => { if (nextEpisode) handleAdvanceToNext(); else handleNaturalEnd() }}
                   onError={setPlayerError}
                 />
               </div>
@@ -385,7 +443,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                 togglePlay: castSession.togglePlay,
                 setVolumeLevel: castSession.setVolumeLevel,
                 toggleMuted:    castSession.toggleMuted,
-                endSession: castSession.endSession,
+                endSession: handleStopCast,
                 onRequestCast: () => cast.framework.CastContext.getInstance().requestSession().catch(err => {
                   // 'cancel' is the normal "closed the device picker" case —
                   // anything else was previously silent here with zero
@@ -404,7 +462,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                 togglePlay: rokuSession.togglePlay,
                 setVolumeLevel: rokuSession.setVolumeLevel,
                 toggleMuted:    rokuSession.toggleMuted,
-                endSession: rokuSession.endSession,
+                endSession: handleStopRoku,
                 onRequestCast: requestRoku,
               }}
             />
