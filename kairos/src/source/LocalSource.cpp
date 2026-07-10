@@ -219,14 +219,29 @@ LocalSource::LocalSource(const std::string& source_id, const std::string& base_p
 static std::string guessLibraryType(const fs::path& dir) {
     std::error_code ec;
     bool hasShowSignal = false, hasMovieSignal = false;
+    int scanned = 0;
+    // Bounded so a library with thousands of entries — especially over
+    // network/FUSE-backed storage (e.g. Unraid's shfs), where every
+    // directory read costs real round-trip latency — can't turn a single UI
+    // browse click into a multi-second-or-worse stall. A few hundred
+    // children is already far more evidence than the single early-return
+    // this tally replaced ever looked at, so the cap doesn't reintroduce
+    // that bug. Stops even earlier once both signals are already confirmed,
+    // since no further child can change a "mixed" verdict.
+    constexpr int kMaxScan = 300;
     for (const auto& child : fs::directory_iterator(dir, ec)) {
         if (isHidden(child.path())) continue;
         if (child.is_directory()) {
+            // looksLikeShowDir() is checked once and reused directly here
+            // instead of via looksLikeMovieDir() (which would re-run it) —
+            // avoids scanning the same subdirectory's contents twice.
             if (looksLikeShowDir(child.path())) hasShowSignal = true;
-            else if (looksLikeMovieDir(child.path())) hasMovieSignal = true;
+            else if (!videosIn(child.path()).empty()) hasMovieSignal = true;
         } else if (isVideo(child.path())) {
             hasMovieSignal = true;
         }
+        if (hasShowSignal && hasMovieSignal) break;
+        if (++scanned >= kMaxScan) break;
     }
     if (hasShowSignal && hasMovieSignal) return "mixed";
     if (hasShowSignal)  return "show";
