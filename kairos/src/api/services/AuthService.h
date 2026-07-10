@@ -4,6 +4,7 @@
 
 class AuthStore;
 class Database;
+class EmailService;
 
 class AuthService : public IKairosService {
 public:
@@ -11,6 +12,7 @@ public:
 	void registerRoutes(httplib::Server& svr) override;
 
 private:
-	AuthStore& auth_;
-	Database&  db_;
+	AuthStore&    auth_;
+	Database&     db_;
+	EmailService& email_;
 };

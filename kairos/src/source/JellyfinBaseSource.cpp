@@ -4,6 +4,7 @@
 #include "model/Playlist.h"
 #include "model/Show.h"
 #include <algorithm>
+#include <ctime>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <unordered_map>
@@ -55,6 +56,16 @@ namespace {
 // Trims an ISO 8601 timestamp to "YYYY-MM-DD".
 std::string isoDate(const std::string& s) {
     return (s.size() >= 10) ? s.substr(0, 10) : s;
+}
+
+// Parses the leading "YYYY-MM-DDTHH:MM:SS" of a Jellyfin ISO 8601 timestamp
+// (e.g. "2024-05-01T12:34:56.7890000Z") to epoch seconds (UTC). Trailing
+// fractional seconds / zone suffix are ignored — second resolution is all
+// watch-state freshness comparisons need. Returns 0 on parse failure.
+int64_t parseIsoToEpoch(const std::string& s) {
+    std::tm tm{};
+    if (!strptime(s.c_str(), "%Y-%m-%dT%H:%M:%S", &tm)) return 0;
+    return static_cast<int64_t>(timegm(&tm));
 }
 
 // Builds a JSON-array string from a JSON array of strings.
@@ -225,7 +236,7 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
         "&IncludeItemTypes=Movie&Recursive=true"
         "&Fields=Overview,Genres,Studios,People,ProviderIds,Tags,ProductionYear,"
         "OfficialRating,CommunityRating,Tagline,MediaSources,ImageTags,"
-        "BackdropImageTags,ProductionLocations,PremiereDate"
+        "BackdropImageTags,ProductionLocations,PremiereDate,UserData"
         "&Limit=500";
 
     std::vector<Movie> result;
@@ -293,6 +304,19 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
                 movie.imdb_id = pids.value("Imdb", "");
                 movie.tmdb_id = pids.value("Tmdb", "");
 
+                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at.
+                if (item.contains("UserData")) {
+                    const auto& ud = item["UserData"];
+                    if (ud.contains("Played") && !ud["Played"].is_null())
+                        movie.src_watched = ud["Played"].get<bool>();
+                    if (ud.contains("PlaybackPositionTicks") && !ud["PlaybackPositionTicks"].is_null())
+                        movie.src_position_ms = ud["PlaybackPositionTicks"].get<int64_t>() / 10000;
+                    if (ud.contains("LastPlayedDate") && !ud["LastPlayedDate"].is_null()) {
+                        int64_t epoch = parseIsoToEpoch(ud["LastPlayedDate"].get<std::string>());
+                        if (epoch > 0) movie.src_watched_at = epoch;
+                    }
+                }
+
                 result.push_back(std::move(movie));
             }
         } catch (const json::exception& e) {
@@ -343,7 +367,7 @@ std::vector<Episode> JellyfinBaseSource::fetchEpisodes(const std::string& extern
     const std::string base_epath =
         "/Shows/" + external_show_id + "/Episodes"
         "?UserId=" + user_id_ +
-        "&Fields=Overview,MediaSources,PremiereDate&EnableTotalRecordCount=false"
+        "&Fields=Overview,MediaSources,PremiereDate,UserData&EnableTotalRecordCount=false"
         "&Limit=500";
 
     std::vector<Episode> result;
@@ -407,6 +431,19 @@ std::vector<Episode> JellyfinBaseSource::fetchEpisodes(const std::string& extern
                 auto sn_it = season_names.find(season);
                 if (sn_it != season_names.end())
                     ep.season_name = sn_it->second;
+
+                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at.
+                if (item.contains("UserData")) {
+                    const auto& ud = item["UserData"];
+                    if (ud.contains("Played") && !ud["Played"].is_null())
+                        ep.src_watched = ud["Played"].get<bool>();
+                    if (ud.contains("PlaybackPositionTicks") && !ud["PlaybackPositionTicks"].is_null())
+                        ep.src_position_ms = ud["PlaybackPositionTicks"].get<int64_t>() / 10000;
+                    if (ud.contains("LastPlayedDate") && !ud["LastPlayedDate"].is_null()) {
+                        int64_t epoch = parseIsoToEpoch(ud["LastPlayedDate"].get<std::string>());
+                        if (epoch > 0) ep.src_watched_at = epoch;
+                    }
+                }
 
                 result.push_back(std::move(ep));
             }
@@ -487,6 +524,34 @@ std::vector<BrowseContentItem> JellyfinBaseSource::browsePlaylistItems(const std
     } catch (const json::exception& e) {
         std::cerr << "[" << sourceType() << ":" << source_id_
                   << "] parse error (browse playlist items): " << e.what() << '\n';
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// User discovery
+// ---------------------------------------------------------------------------
+
+std::vector<SourceUserInfo> JellyfinBaseSource::listServerUsers() {
+    // Requires the configured token to have admin rights — same assumption
+    // already made for library sync (/Users/{user_id_}/Views etc.).
+    auto res = get("/Users");
+    if (!res || res->status != 200) return {};
+
+    std::vector<SourceUserInfo> result;
+    try {
+        auto j = json::parse(res->body);
+        for (const auto& u : j) {
+            SourceUserInfo info;
+            info.external_user_id = u.value("Id", "");
+            if (info.external_user_id.empty()) continue;
+            info.display_name = u.value("Name", "");
+            // Stock Jellyfin/Emby user objects don't carry an email address.
+            result.push_back(std::move(info));
+        }
+    } catch (const json::exception& e) {
+        std::cerr << "[" << sourceType() << ":" << source_id_
+                  << "] parse error (users): " << e.what() << '\n';
     }
     return result;
 }

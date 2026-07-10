@@ -13,5 +13,12 @@ export default function ProtectedRoute() {
       : <Navigate to="/login" state={{ from: location }} replace />
   }
 
+  // Invite-created account that hasn't replaced its temp/placeholder
+  // password yet — block the rest of the app behind /set-password until it
+  // does (setPassword() clears the flag and this gate releases).
+  if (user.must_change_password && location.pathname !== '/set-password') {
+    return <Navigate to="/set-password" replace />
+  }
+
   return <Outlet />
 }

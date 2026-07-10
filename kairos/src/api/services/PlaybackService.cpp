@@ -3,6 +3,7 @@
 #include "../RouteHelpers.h"
 #include "../../conf/ConfStore.h"
 #include "../../db/Database.h"
+#include "../../db/WatchProgressRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -138,29 +139,13 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 			if (position_ms < 0) position_ms = 0;
 
 			if (duration_ms > 0 && position_ms >= static_cast<int64_t>(duration_ms * 0.95)) {
-				SQLite::Statement del(db_.get(),
-					"DELETE FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
-				del.bind(1, user->user_id); del.bind(2, content_type); del.bind(3, content_id);
-				del.exec();
+				WatchProgressRepository(db_).remove(user->user_id, content_type, content_id);
 				route::ok(res, json{{"ok", true}, {"watched", true}}.dump());
 				return;
 			}
 
-			SQLite::Statement ins(db_.get(), R"SQL(
-				INSERT INTO watch_progress (user_id, content_type, content_id, position_ms, duration_ms, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?)
-				ON CONFLICT(user_id, content_type, content_id) DO UPDATE SET
-					position_ms = excluded.position_ms,
-					duration_ms = excluded.duration_ms,
-					updated_at  = excluded.updated_at
-			)SQL");
-			ins.bind(1, user->user_id);
-			ins.bind(2, content_type);
-			ins.bind(3, content_id);
-			ins.bind(4, position_ms);
-			ins.bind(5, duration_ms);
-			ins.bind(6, static_cast<int64_t>(std::time(nullptr)));
-			ins.exec();
+			WatchProgressRepository(db_).upsert(user->user_id, content_type, content_id,
+				position_ms, duration_ms, static_cast<int64_t>(std::time(nullptr)));
 
 			route::ok(res, json{{"ok", true}, {"watched", false}}.dump());
 		} catch (const std::exception& e) {
@@ -177,10 +162,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 		auto content_id    = req.path_params.at("id");
 
 		try {
-			SQLite::Statement del(db_.get(),
-				"DELETE FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
-			del.bind(1, user->user_id); del.bind(2, content_type); del.bind(3, content_id);
-			del.exec();
+			WatchProgressRepository(db_).remove(user->user_id, content_type, content_id);
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("DELETE /api/watch-progress/:content_type/:id", e); route::err(res, 400, e.what());

@@ -11,6 +11,7 @@
 #include "conf/ConfStore.h"
 #include "db/Database.h"
 #include "download/DownloadManager.h"
+#include "email/EmailService.h"
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuntimeFlags.h"
@@ -91,6 +92,7 @@ int main(int argc, char* argv[]) {
     EPGMaterializer  materializer(db, engine);
     DownloadManager  dl;
     AuthStore        auth(db);
+    EmailService     email(db);
     sync.loadSources();
 
     // Load persisted runtime flags from app_config.
@@ -122,7 +124,7 @@ int main(int argc, char* argv[]) {
         res.set_content(R"({"status":"ok","service":"kairos"})", "application/json");
     });
 
-    Router router(svr, db, sync, conf, log_buffer, engine, materializer, dl, auth);
+    Router router(svr, db, sync, conf, log_buffer, engine, materializer, dl, auth, email);
     router.registerRoutes();
 
     if (g_debug_logging.load()) std::cout << "[kairos] sync debug logging enabled\n";

@@ -225,11 +225,11 @@ private:
 
     // Every (source, external_id) this show is confirmed to be identified by,
     // merging all three places that fact can live: item_external_id (richest —
-    // populated once a human confirms via acceptCandidate), the winning
-    // item_match_candidate row (set for an auto-matched-but-not-yet-confirmed
-    // item), and the show's own tvdb_id/tmdb_id columns (set for the
-    // trusted-ID short-circuit path in matchShow, which never touches either
-    // of the other two). De-duplicated by source, richest-first.
+    // populated once a human confirms via acceptCandidate, and since the auto-
+    // match paths now also call linkExternalId(), most auto-matches too), the
+    // winning item_match_candidate row (belt-and-suspenders for any auto-match
+    // predating that), and the show's own tvdb_id/tmdb_id columns (covers rows
+    // synced before either code path ran). De-duplicated by source, richest-first.
     std::vector<std::pair<std::string, std::string>>
         confirmedShowSourceIds(const std::string& show_id) const;
 

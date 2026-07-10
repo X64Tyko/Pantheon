@@ -5,6 +5,7 @@ import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useFocusable } from '../nav/useFocusable'
 import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
+import type { UnmappedSourceUser } from '../api/types'
 import { systemStore, statusStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourPill } from './tour/TourPill'
@@ -122,6 +123,16 @@ export default observer(function Layout() {
   useEffect(() => {
     if (onActivity) systemStore.clearUnreadErrors()
   }, [onActivity])
+
+  // Poll for source-reported accounts with no local Pantheon account yet —
+  // admin-only, same gating as the pending-requests fetch above. Runs
+  // independent of which page the admin is on, so the corner notice can
+  // surface even without visiting Sources.
+  useEffect(() => {
+    if (user?.role !== 'admin') { systemStore.stopUnmappedUsersPolling(); return }
+    systemStore.startUnmappedUsersPolling()
+    return () => systemStore.stopUnmappedUsersPolling()
+  }, [user?.role])
 
   const hasErrors = systemStore.unreadErrors > 0
   const col = navCollapsed
@@ -389,6 +400,15 @@ export default observer(function Layout() {
           toast={systemStore.toast}
           onViewLogs={() => { systemStore.dismissToast(); navigate('/activity') }}
           onDismiss={() => systemStore.dismissToast()}
+        />
+      )}
+
+      {/* ── Unregistered source users notice ────────────────────────────────── */}
+      {user?.role === 'admin' && !systemStore.unmappedUsersDismissed && systemStore.unmappedSourceUsers.length > 0 && (
+        <UnmappedUsersNotice
+          users={systemStore.unmappedSourceUsers}
+          onReview={() => { systemStore.dismissUnmappedUsersNotice(); navigate('/sources') }}
+          onDismiss={() => systemStore.dismissUnmappedUsersNotice()}
         />
       )}
     </div>
@@ -675,6 +695,104 @@ function ErrorToast({
           }}
         >
           View Logs →
+        </button>
+        <button
+          onClick={onDismiss}
+          style={{
+            padding: '7px 14px',
+            background: 'transparent',
+            border: '1px solid var(--hds-line)',
+            borderRadius: 7,
+            color: 'var(--hds-txt-3)',
+            fontSize: 11, cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Same fixed-card shape as ErrorToast, but bottom-left (so it never collides
+// with an error toast that shows up at the same time), neutral gold styling
+// instead of the error-red treatment, and no auto-dismiss timer — this
+// persists until the admin dismisses it or the list resolves down to zero
+// (imported users drop off automatically; see SourceRepository::listUnmappedSourceUsers).
+function UnmappedUsersNotice({
+  users, onReview, onDismiss,
+}: {
+  users:     UnmappedSourceUser[]
+  onReview:  () => void
+  onDismiss: () => void
+}) {
+  return (
+    <div style={{
+      position: 'fixed', bottom: 24, left: 24, zIndex: 9999,
+      width: 360, maxWidth: 'calc(100vw - 48px)',
+      background: 'oklch(0.16 0.022 286)',
+      border: '1px solid oklch(0.5 0.1 84 / 0.5)',
+      borderLeft: '4px solid var(--hds-gold)',
+      borderRadius: 10,
+      boxShadow: '0 8px 32px -4px rgba(0,0,0,0.7), 0 0 0 1px oklch(0.83 0.13 84 / 0.12)',
+      fontFamily: "'JetBrains Mono', monospace",
+      overflow: 'hidden',
+      animation: 'hds-toast-in 0.22s cubic-bezier(0.22,1,0.36,1)',
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '10px 12px 8px',
+        borderBottom: '1px solid oklch(0.25 0.02 286)',
+      }}>
+        <span style={{
+          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+          background: 'var(--hds-gold)',
+        }} />
+        <span style={{ fontSize: 10, letterSpacing: '0.18em', color: 'var(--hds-gold-2)', fontWeight: 700, flex: 1 }}>
+          UNREGISTERED USERS
+        </span>
+        <button
+          onClick={onDismiss}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 14, lineHeight: 1, padding: '0 2px' }}
+          title="Dismiss"
+        >✕</button>
+      </div>
+
+      {/* Message */}
+      <div style={{ padding: '10px 14px 4px', fontSize: 12, color: 'var(--hds-txt-2)', lineHeight: 1.55 }}>
+        Your sources have {users.length} user{users.length === 1 ? '' : 's'} not registered here:
+      </div>
+      <div style={{ padding: '4px 14px 8px', display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 120, overflowY: 'auto' }}>
+        {users.slice(0, 8).map(u => (
+          <div key={`${u.source_id}:${u.external_user_id}`} style={{ fontSize: 11.5, color: 'var(--hds-txt)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.display_name || u.external_user_id}</span>
+            <span style={{ color: 'var(--hds-txt-3)', flexShrink: 0 }}>{u.source_display_name}</span>
+          </div>
+        ))}
+        {users.length > 8 && (
+          <div style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>+{users.length - 8} more</div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: '4px 12px 12px', display: 'flex', gap: 8 }}>
+        <button
+          onClick={onReview}
+          style={{
+            flex: 1, padding: '7px 0',
+            background: 'oklch(0.83 0.13 84 / 0.16)',
+            border: '1px solid oklch(0.83 0.13 84 / 0.45)',
+            borderRadius: 7,
+            color: 'var(--hds-gold-2)',
+            fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: '0.06em',
+            transition: 'background .12s',
+          }}
+        >
+          Review in Sources →
         </button>
         <button
           onClick={onDismiss}

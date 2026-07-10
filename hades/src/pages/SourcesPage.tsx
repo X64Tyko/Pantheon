@@ -1,8 +1,8 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { Library, LibraryInfo, PathMap } from '../api/types'
-import { sourceStore } from '../stores'
+import type { ImportUserResult, Library, LibraryInfo, PathMap } from '../api/types'
+import { sourceStore, systemStore, userStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
 
@@ -134,6 +134,109 @@ function ScraperPriorityEditor({ sourceId, libraryId, itemType, availableScraper
   )
 }
 
+// Per-source-card pill listing accounts the source reports that have no
+// local Pantheon account imported yet (see SystemStore.unmappedSourceUsers,
+// populated globally by Layout's poll — this just filters the shared list
+// rather than fetching its own copy). Expands inline to Import/Import All;
+// no separate mapping/merge UI, per explicit scope.
+const UnmappedUsersPill = observer(function UnmappedUsersPill({ sourceId }: { sourceId: string }) {
+  const users = systemStore.unmappedSourceUsers.filter(u => u.source_id === sourceId)
+  const [expanded, setExpanded]   = useState(false)
+  const [importing, setImporting] = useState<string | null>(null) // external_user_id in flight
+  const [bulkImporting, setBulkImporting] = useState(false)
+  const [results, setResults]     = useState<Record<string, ImportUserResult>>({})
+
+  if (users.length === 0) return null
+
+  const doImport = async (externalUserId: string) => {
+    setImporting(externalUserId)
+    try {
+      const result = await api.importSourceUser(sourceId, externalUserId)
+      setResults(prev => ({ ...prev, [externalUserId]: result }))
+      await systemStore.refreshUnmappedUsers()
+    } catch (e: any) {
+      setResults(prev => ({ ...prev, [externalUserId]: { ok: false, user_id: '', username: '', invite_method: 'temp_password', invite_error: e.message } as ImportUserResult }))
+    } finally {
+      setImporting(null)
+    }
+  }
+
+  const importAll = async () => {
+    setBulkImporting(true)
+    try {
+      for (const u of users) await doImport(u.external_user_id)
+    } finally {
+      setBulkImporting(false)
+    }
+  }
+
+  return (
+    <div onClick={e => e.stopPropagation()} className="pt-1">
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="text-xs px-2 py-0.5 bg-amber-900/25 hover:bg-amber-800/35
+                   text-amber-300 rounded border border-amber-700/30 transition-colors"
+      >
+        {users.length} unregistered {expanded ? '▲' : '▼'}
+      </button>
+      {expanded && (
+        <div className="mt-2 space-y-1.5 bg-zinc-950/60 border border-amber-900/25 rounded-lg p-2.5">
+          {users.map(u => {
+            const result = results[u.external_user_id]
+            return (
+              <div key={u.external_user_id} className="text-xs space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-zinc-300 truncate">{u.display_name || u.external_user_id}</span>
+                  {!result && (
+                    <button
+                      onClick={() => doImport(u.external_user_id)}
+                      disabled={importing === u.external_user_id || bulkImporting}
+                      className="text-xs px-2 py-0.5 bg-violet-900/30 hover:bg-violet-800/40
+                                 text-violet-300 rounded border border-violet-800/30
+                                 disabled:opacity-40 transition-colors shrink-0"
+                    >
+                      {importing === u.external_user_id ? 'Importing…' : 'Import'}
+                    </button>
+                  )}
+                </div>
+                {result && (
+                  result.ok ? (
+                    <div className="bg-emerald-950/30 border border-emerald-800/30 rounded px-2 py-1.5 text-emerald-300">
+                      {result.invite_method === 'temp_password' ? (
+                        <>
+                          Account created. Temp password (share once, then discard):{' '}
+                          <code className="text-emerald-200 select-all">{result.temp_password}</code>
+                        </>
+                      ) : (
+                        <>Account created. Invite email {result.invite_sent ? 'sent' : `could not be sent (${result.invite_error ?? 'unknown error'})`} — link: <code className="text-emerald-200 select-all break-all">{result.invite_link}</code></>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-red-950/30 border border-red-800/30 rounded px-2 py-1.5 text-red-300">
+                      Import failed{result.invite_error ? `: ${result.invite_error}` : ''}
+                    </div>
+                  )
+                )}
+              </div>
+            )
+          })}
+          {users.length > 1 && (
+            <button
+              onClick={importAll}
+              disabled={bulkImporting || importing !== null}
+              className="text-xs px-2 py-0.5 bg-amber-900/25 hover:bg-amber-800/35
+                         text-amber-300 rounded border border-amber-700/30
+                         disabled:opacity-40 transition-colors"
+            >
+              {bulkImporting ? 'Importing all…' : 'Import All'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+})
+
 export default observer(function SourcesPage() {
   const store = sourceStore
 
@@ -246,7 +349,7 @@ export default observer(function SourcesPage() {
     api.getPathMaps(store.selectedId).then(setPathMaps).catch(() => setPathMaps([]))
     api.getSamplePath(store.selectedId).then(r => setSample(r.path)).catch(() => setSample(null))
   }, [store.selectedId])
-  useEffect(() => { store.fetchAll() }, [])
+  useEffect(() => { store.fetchAll(); userStore.fetchAll() }, [])
 
   // Enabled scrapers, for the per-library priority editor's "add" list.
   const [enabledScrapers, setEnabledScrapers] = useState<string[]>([])
@@ -497,6 +600,7 @@ export default observer(function SourcesPage() {
                   </button>
                 )}
               </div>
+              <UnmappedUsersPill sourceId={src.source_id} />
             </div>
           ))}
         </div>
@@ -570,6 +674,28 @@ export default observer(function SourcesPage() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Watch history sync */}
+            {store.selected?.source_type !== 'local' && (
+              <div className="card p-3 space-y-2">
+                <span className="section-label">Watch History Sync</span>
+                <p className="text-xs text-zinc-600">
+                  Seed a Pantheon user's Continue Watching from this source's watch/resume state
+                  during sync. Only ever fills in progress that isn't already there — never
+                  overwrites what you've watched through Hades itself.
+                </p>
+                <select
+                  value={store.selected?.synced_user_id ?? ''}
+                  onChange={e => store.setSyncedUser(store.selectedId!, e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="">— off —</option>
+                  {userStore.users.map(u => (
+                    <option key={u.user_id} value={u.user_id}>{u.username}</option>
+                  ))}
+                </select>
               </div>
             )}
 

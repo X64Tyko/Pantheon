@@ -10,6 +10,7 @@ class ChapterDetectionManager;
 class ConfStore;
 class Database;
 class DownloadManager;
+class EmailService;
 class EPGMaterializer;
 class LogBuffer;
 class RuleEngine;
@@ -21,7 +22,7 @@ public:
 	Router(httplib::Server& svr, Database& db, SyncManager& sync,
 	       ConfStore& conf, LogBuffer& logs,
 	       RuleEngine& engine, EPGMaterializer& materializer,
-	       DownloadManager& dl, AuthStore& auth);
+	       DownloadManager& dl, AuthStore& auth, EmailService& email);
 	~Router();
 	void registerRoutes();
 
@@ -35,6 +36,7 @@ private:
 	EPGMaterializer&  materializer_;
 	DownloadManager&  dl_;
 	AuthStore&        auth_;
+	EmailService&     email_;
 
 	ScheduleCache                                schedule_cache_;
 	std::unique_ptr<ScraperManager>              scraper_mgr_;

@@ -2,25 +2,29 @@
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../auth/AuthStore.h"
+#include "../../db/ConfigRepository.h"
 #include "../../db/RestrictionRepository.h"
+#include "../../email/EmailService.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-AuthService::AuthService(const ServiceContext& ctx) : auth_(ctx.auth), db_(ctx.db) {}
+AuthService::AuthService(const ServiceContext& ctx)
+	: auth_(ctx.auth), db_(ctx.db), email_(ctx.email) {}
 
 namespace {
 json userJson(const AuthUser& u) {
 	return {
-		{"user_id",             u.user_id},
-		{"username",            u.username},
-		{"role",                u.role},
-		{"restricted",          u.restricted},
-		{"max_tv_rating",       u.max_tv_rating},
-		{"max_movie_rating",    u.max_movie_rating},
-		{"max_channel_rating",  u.max_channel_rating},
+		{"user_id",              u.user_id},
+		{"username",             u.username},
+		{"role",                 u.role},
+		{"restricted",           u.restricted},
+		{"max_tv_rating",        u.max_tv_rating},
+		{"max_movie_rating",     u.max_movie_rating},
+		{"max_channel_rating",   u.max_channel_rating},
+		{"must_change_password", u.must_change_password},
 	};
 }
 }
@@ -69,6 +73,39 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, userJson(*currentUser()).dump());
 	});
 
+	// Invite-claim flow — unauthenticated (see Router::isPublicPath), reached
+	// before the person has any session at all. Only actionable with the
+	// unguessable token in the path itself; see AuthStore::claimInvite.
+	svr.Get("/api/auth/invite/:token", [this](const Req& req, Res& res) {
+		auto username = auth_.getInviteUsername(req.path_params.at("token"));
+		if (!username) { route::err(res, 404, "Invalid or expired invite"); return; }
+		route::ok(res, json{{"username", *username}}.dump());
+	});
+
+	svr.Post("/api/auth/invite/:token", [this](const Req& req, Res& res) {
+		json body;
+		try { body = json::parse(req.body); } catch (...) { route::err(res, 400, "Invalid JSON"); return; }
+		const std::string password = body.value("password", "");
+		if (password.empty()) { route::err(res, 400, "password required"); return; }
+		const std::string token = auth_.claimInvite(req.path_params.at("token"), password);
+		if (token.empty()) { route::err(res, 404, "Invalid or expired invite"); return; }
+		auto user = auth_.validate(token);
+		route::ok(res, json{{"token", token}, {"user", userJson(*user)}}.dump());
+	});
+
+	// Re-issues a fresh invite link for an account that never claimed its
+	// first one (e.g. the email never arrived) — the old token is left to
+	// expire naturally rather than explicitly invalidated.
+	svr.Post("/api/users/:id/resend-invite", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		const std::string invite_token = auth_.resendInvite(req.path_params.at("id"));
+		if (invite_token.empty()) { route::err(res, 400, "No pending invite for this user"); return; }
+
+		std::string base_url = ConfigRepository(db_).getValue("smtp_public_base_url");
+		while (!base_url.empty() && base_url.back() == '/') base_url.pop_back();
+		route::ok(res, json{{"ok", true}, {"invite_link", base_url + "/invite/" + invite_token}}.dump());
+	});
+
 	svr.Get("/api/users", [this](const Req&, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json arr = json::array();
@@ -77,13 +114,46 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, arr.dump());
 	});
 
+	// invite.method: 'password' (default — client supplies `password` directly,
+	// identical to this route's original behavior), 'temp_password' (server
+	// generates one, returned once in the response for the admin to relay),
+	// or 'email' (no password set yet; a claim link is emailed to invite.email
+	// if SMTP is configured — the link is also always returned so the admin
+	// can hand it out manually if sending fails or SMTP isn't set up).
 	svr.Post("/api/users", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json body;
 		try { body = json::parse(req.body); } catch (...) { route::err(res, 400, "Invalid JSON"); return; }
 		const std::string username = body.value("username", "");
-		const std::string password = body.value("password", "");
 		const std::string role     = body.value("role", "viewer");
+		const std::string method   = body.contains("invite") ? body["invite"].value("method", "password") : "password";
+
+		if (method == "temp_password") {
+			auto [user_id, temp_password] = auth_.createUserWithTempPassword(username, role);
+			if (user_id.empty()) { route::err(res, 409, "Username taken or invalid input"); return; }
+			route::ok(res, json{{"ok", true}, {"user_id", user_id}, {"temp_password", temp_password}}.dump());
+			return;
+		}
+
+		if (method == "email") {
+			const std::string invite_email = body["invite"].value("email", "");
+			if (invite_email.empty()) { route::err(res, 400, "invite.email required for method 'email'"); return; }
+			auto [user_id, invite_token] = auth_.createUserWithEmailInvite(username, role);
+			if (user_id.empty()) { route::err(res, 409, "Username taken or invalid input"); return; }
+
+			std::string base_url = ConfigRepository(db_).getValue("smtp_public_base_url");
+			while (!base_url.empty() && base_url.back() == '/') base_url.pop_back();
+			const std::string invite_link = base_url + "/invite/" + invite_token;
+
+			std::string send_error;
+			const bool sent = email_.sendInviteEmail(invite_email, username, invite_link, &send_error);
+			json out{{"ok", true}, {"user_id", user_id}, {"invite_link", invite_link}, {"invite_sent", sent}};
+			if (!sent) out["invite_error"] = send_error;
+			route::ok(res, out.dump());
+			return;
+		}
+
+		const std::string password = body.value("password", "");
 		if (!auth_.createUser(username, password, role)) { route::err(res, 409, "Username taken or invalid input"); return; }
 		route::ok(res, json{{"ok", true}}.dump());
 	});

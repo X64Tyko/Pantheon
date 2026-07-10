@@ -31,6 +31,19 @@ export class UserStore {
     await this.fetchAll()
   }
 
+  // Invite-based creation — no password typed by the admin. Returns the
+  // temp password / invite link once, for the caller to display; not stored
+  // on the store (nowhere safe to keep it once the calling component unmounts).
+  async invite(username: string, role: 'admin' | 'viewer', invite: { method: 'temp_password' } | { method: 'email'; email: string }) {
+    const result = await api.inviteUser(username, role, invite)
+    await this.fetchAll()
+    return result
+  }
+
+  async resendInvite(userId: string) {
+    return api.resendInvite(userId)
+  }
+
   async update(userId: string, data: { password?: string; role?: 'admin' | 'viewer' }) {
     await api.updateUser(userId, data)
     await this.fetchAll()

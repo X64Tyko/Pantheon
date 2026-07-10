@@ -85,6 +85,13 @@ public:
         return {};
     }
 
+    // ── User discovery ───────────────────────────────────────────────────────
+    // Every account/profile that exists on the source server (Plex Home
+    // users, Jellyfin/Emby server users). Default: unsupported — sources that
+    // are inherently single-identity (e.g. LocalSource) just report none.
+    // Identity metadata only; never returns or requests passwords/tokens.
+    virtual std::vector<SourceUserInfo> listServerUsers() { return {}; }
+
     // ── Metadata writeback ───────────────────────────────────────────────────
     // Pushes corrected metadata back into the source library for one item.
     // Default: unsupported. Callers must check the return value — false means

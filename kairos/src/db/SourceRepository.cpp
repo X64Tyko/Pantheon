@@ -20,16 +20,18 @@ SourceRepository::SourceRepository(Database& db) : db_(db) {}
 
 std::vector<MediaSourceConfig> SourceRepository::listSources() {
     SQLite::Statement q(db_.get(),
-        "SELECT source_id, source_type, display_name, COALESCE(base_url,''), enabled "
+        "SELECT source_id, source_type, display_name, COALESCE(base_url,''), enabled, "
+        "       COALESCE(synced_user_id,'') "
         "FROM media_source ORDER BY display_name");
     std::vector<MediaSourceConfig> result;
     while (q.executeStep()) {
         MediaSourceConfig s;
-        s.source_id    = q.getColumn(0).getString();
-        s.source_type  = q.getColumn(1).getString();
-        s.display_name = q.getColumn(2).getString();
-        s.base_url     = q.getColumn(3).getString();
-        s.enabled      = q.getColumn(4).getInt() != 0;
+        s.source_id       = q.getColumn(0).getString();
+        s.source_type     = q.getColumn(1).getString();
+        s.display_name    = q.getColumn(2).getString();
+        s.base_url        = q.getColumn(3).getString();
+        s.enabled         = q.getColumn(4).getInt() != 0;
+        s.synced_user_id  = q.getColumn(5).getString();
         result.push_back(std::move(s));
     }
     return result;
@@ -301,16 +303,18 @@ std::string SourceRepository::getSourceBaseUrl(const std::string& source_id) {
 
 std::optional<MediaSourceConfig> SourceRepository::getSource(const std::string& source_id) {
     SQLite::Statement q(db_.get(),
-        "SELECT source_id, source_type, display_name, COALESCE(base_url,''), enabled "
+        "SELECT source_id, source_type, display_name, COALESCE(base_url,''), enabled, "
+        "       COALESCE(synced_user_id,'') "
         "FROM media_source WHERE source_id = ?");
     q.bind(1, source_id);
     if (!q.executeStep()) return std::nullopt;
     MediaSourceConfig s;
-    s.source_id    = q.getColumn(0).getString();
-    s.source_type  = q.getColumn(1).getString();
-    s.display_name = q.getColumn(2).getString();
-    s.base_url     = q.getColumn(3).getString();
-    s.enabled      = q.getColumn(4).getInt() != 0;
+    s.source_id      = q.getColumn(0).getString();
+    s.source_type    = q.getColumn(1).getString();
+    s.display_name   = q.getColumn(2).getString();
+    s.base_url       = q.getColumn(3).getString();
+    s.enabled        = q.getColumn(4).getInt() != 0;
+    s.synced_user_id = q.getColumn(5).getString();
     return s;
 }
 
@@ -349,4 +353,83 @@ std::vector<SourceRepository::WritebackTarget> SourceRepository::getWritebackTar
         });
     }
     return out;
+}
+
+void SourceRepository::upsertSourceUsers(const std::string& source_id,
+                                          const std::vector<SourceUserInfo>& users,
+                                          int64_t now) {
+    SQLite::Statement s(db_.get(), R"(
+        INSERT INTO source_user (source_id, external_user_id, display_name, email, last_seen_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(source_id, external_user_id) DO UPDATE SET
+            display_name = excluded.display_name,
+            email        = excluded.email,
+            last_seen_at = excluded.last_seen_at
+    )");
+    for (const auto& u : users) {
+        s.bind(1, source_id);
+        s.bind(2, u.external_user_id);
+        s.bind(3, u.display_name);
+        s.bind(4, u.email);
+        s.bind(5, now);
+        s.exec();
+        s.reset();
+    }
+}
+
+std::optional<SourceRepository::SourceUserRow>
+SourceRepository::getSourceUser(const std::string& source_id, const std::string& external_user_id) {
+    SQLite::Statement q(db_.get(),
+        "SELECT display_name, email, COALESCE(imported_user_id,'') "
+        "FROM source_user WHERE source_id = ? AND external_user_id = ?");
+    q.bind(1, source_id);
+    q.bind(2, external_user_id);
+    if (!q.executeStep()) return std::nullopt;
+    return SourceUserRow{q.getColumn(0).getString(), q.getColumn(1).getString(), q.getColumn(2).getString()};
+}
+
+std::vector<SourceRepository::UnmappedSourceUserRow> SourceRepository::listUnmappedSourceUsers() {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT su.source_id, ms.display_name, su.external_user_id, su.display_name, su.email
+        FROM source_user su
+        JOIN media_source ms ON ms.source_id = su.source_id
+        WHERE su.imported_user_id IS NULL
+        ORDER BY ms.display_name, su.display_name
+    )");
+    std::vector<UnmappedSourceUserRow> out;
+    while (q.executeStep()) {
+        out.push_back({
+            q.getColumn(0).getString(),
+            q.getColumn(1).getString(),
+            q.getColumn(2).getString(),
+            q.getColumn(3).getString(),
+            q.getColumn(4).getString(),
+        });
+    }
+    return out;
+}
+
+void SourceRepository::setImportedUserId(const std::string& source_id,
+                                          const std::string& external_user_id,
+                                          const std::string& user_id) {
+    SQLite::Statement s(db_.get(),
+        "UPDATE source_user SET imported_user_id = ? WHERE source_id = ? AND external_user_id = ?");
+    s.bind(1, user_id);
+    s.bind(2, source_id);
+    s.bind(3, external_user_id);
+    s.exec();
+}
+
+void SourceRepository::setSyncedUserId(const std::string& source_id, const std::string& user_id) {
+    SQLite::Statement s(db_.get(), "UPDATE media_source SET synced_user_id = ? WHERE source_id = ?");
+    if (user_id.empty()) s.bind(1); else s.bind(1, user_id);
+    s.bind(2, source_id);
+    s.exec();
+}
+
+std::string SourceRepository::getSyncedUserId(const std::string& source_id) {
+    SQLite::Statement q(db_.get(), "SELECT synced_user_id FROM media_source WHERE source_id = ?");
+    q.bind(1, source_id);
+    if (!q.executeStep() || q.getColumn(0).isNull()) return "";
+    return q.getColumn(0).getString();
 }

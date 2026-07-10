@@ -4,6 +4,7 @@
 
 class ConfStore;
 class Database;
+class EmailService;
 class SyncManager;
 
 class ConfigService : public IKairosService {
@@ -12,7 +13,8 @@ public:
 	void registerRoutes(httplib::Server& svr) override;
 
 private:
-	Database&    db_;
-	ConfStore&   conf_;
-	SyncManager& sync_;
+	Database&     db_;
+	ConfStore&    conf_;
+	SyncManager&  sync_;
+	EmailService& email_;
 };

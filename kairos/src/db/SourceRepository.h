@@ -112,6 +112,50 @@ public:
     std::vector<WritebackTarget> getWritebackTargets(const std::string& item_type,
                                                       const std::string& kairos_id);
 
+    // ── User discovery ───────────────────────────────────────────────────────
+
+    // Upserts discovered server accounts for a source (identity metadata
+    // only). imported_user_id is preserved on conflict — this never un-imports
+    // a row. Callers (SyncManager) are expected to have already excluded the
+    // source's own configured primary account from `users`, so this table
+    // only ever holds accounts Pantheon doesn't already treat as "the" sync
+    // identity for that source.
+    void upsertSourceUsers(const std::string& source_id,
+                           const std::vector<SourceUserInfo>& users,
+                           int64_t now);
+
+    // imported_user_id is empty when this source user hasn't been imported
+    // yet — the import route checks it to reject a re-import of an already-
+    // imported account instead of silently creating a duplicate.
+    struct SourceUserRow { std::string display_name, email, imported_user_id; };
+    // Looked up by the import route to resolve display_name/email before
+    // creating the local account.
+    std::optional<SourceUserRow> getSourceUser(const std::string& source_id,
+                                                const std::string& external_user_id);
+
+    struct UnmappedSourceUserRow {
+        std::string source_id;
+        std::string source_display_name;
+        std::string external_user_id;
+        std::string display_name;
+        std::string email;
+    };
+    // Every discovered account with no local Pantheon account imported for it yet.
+    std::vector<UnmappedSourceUserRow> listUnmappedSourceUsers();
+
+    // Marks a discovered source user as imported — it drops out of
+    // listUnmappedSourceUsers() from this point on.
+    void setImportedUserId(const std::string& source_id, const std::string& external_user_id,
+                           const std::string& user_id);
+
+    // ── Watch-state sync target ──────────────────────────────────────────────
+
+    // Which local user (if any) should have watch/resume state pulled from
+    // this source's configured primary account during sync. Empty user_id clears it.
+    void setSyncedUserId(const std::string& source_id, const std::string& user_id);
+    // Returns "" if unset.
+    std::string getSyncedUserId(const std::string& source_id);
+
 private:
     Database& db_;
 };

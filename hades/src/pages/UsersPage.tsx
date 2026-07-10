@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { userStore } from '../stores'
 import { TV_RATINGS, MOVIE_RATINGS } from '../api/ratingScales'
-import type { User } from '../api/types'
+import type { InviteUserResult, User } from '../api/types'
 import UserOverridesOverlay from './UserOverridesOverlay'
 
 const inputStyle: React.CSSProperties = {
@@ -28,7 +28,8 @@ const btnStyle = (variant: 'primary' | 'ghost' | 'danger'): React.CSSProperties 
        : 'var(--hds-txt-2)',
 })
 
-interface NewUserForm { username: string; password: string; role: 'admin' | 'viewer' }
+type CreateMode = 'password' | 'temp_password' | 'email'
+interface NewUserForm { username: string; password: string; role: 'admin' | 'viewer'; mode: CreateMode; email: string }
 interface EditState {
   userId:     string
   password:   string
@@ -49,9 +50,10 @@ export default observer(function UsersPage() {
   const store = userStore
 
   const [showNew,   setShowNew]   = useState(false)
-  const [newForm,   setNewForm]   = useState<NewUserForm>({ username: '', password: '', role: 'viewer' })
+  const [newForm,   setNewForm]   = useState<NewUserForm>({ username: '', password: '', role: 'viewer', mode: 'password', email: '' })
   const [newError,  setNewError]  = useState('')
   const [newBusy,   setNewBusy]   = useState(false)
+  const [newResult, setNewResult] = useState<InviteUserResult | null>(null)
 
   const [editing,   setEditing]   = useState<EditState | null>(null)
   const [editError, setEditError] = useState('')
@@ -72,12 +74,22 @@ export default observer(function UsersPage() {
 
   const submitNew = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newForm.username || !newForm.password) { setNewError('Username and password required'); return }
+    if (!newForm.username) { setNewError('Username required'); return }
+    if (newForm.mode === 'password' && !newForm.password) { setNewError('Password required'); return }
+    if (newForm.mode === 'email' && !newForm.email) { setNewError('Email required for invite-by-email'); return }
     setNewError(''); setNewBusy(true)
     try {
-      await store.create(newForm.username, newForm.password, newForm.role)
-      setShowNew(false)
-      setNewForm({ username: '', password: '', role: 'viewer' })
+      if (newForm.mode === 'password') {
+        await store.create(newForm.username, newForm.password, newForm.role)
+        setShowNew(false)
+        setNewForm({ username: '', password: '', role: 'viewer', mode: 'password', email: '' })
+      } else {
+        const result = await store.invite(newForm.username, newForm.role,
+          newForm.mode === 'email' ? { method: 'email', email: newForm.email } : { method: 'temp_password' })
+        // Stay open, showing the result — the temp password/invite link is
+        // only ever shown here, once, so don't let the form close it away.
+        setNewResult(result)
+      }
     } catch (err: any) {
       setNewError(err.message ?? 'Failed to create user')
     } finally { setNewBusy(false) }
@@ -119,7 +131,7 @@ export default observer(function UsersPage() {
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--hds-txt)', letterSpacing: '0.04em' }}>Users</div>
           <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginTop: 3 }}>Manage who can access Hades.</div>
         </div>
-        <button style={btnStyle('primary')} onClick={() => { setShowNew(v => !v); setNewError('') }}>
+        <button style={btnStyle('primary')} onClick={() => { setShowNew(v => !v); setNewError(''); setNewResult(null) }}>
           {showNew ? 'Cancel' : '+ New User'}
         </button>
       </div>
@@ -139,18 +151,39 @@ export default observer(function UsersPage() {
           animation: 'hds-in 0.15s ease both',
         }}>
           <div style={{ fontSize: 11, color: 'var(--hds-txt-2)', fontWeight: 600, letterSpacing: '0.08em' }}>NEW USER</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>ACCOUNT SETUP</label>
+            <select value={newForm.mode}
+              onChange={e => { setNewForm(f => ({ ...f, mode: e.target.value as CreateMode })); setNewResult(null) }}
+              style={inputStyle}>
+              <option value="password">I'll set their password</option>
+              <option value="temp_password">Invite — I'll relay a one-time password</option>
+              <option value="email">Invite — email them a setup link</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: newForm.mode === 'password' ? '1fr 1fr' : '1fr', gap: 10 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>USERNAME</label>
               <input type="text" required autoFocus value={newForm.username}
                 onChange={e => setNewForm(f => ({ ...f, username: e.target.value }))} style={inputStyle} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>PASSWORD</label>
-              <input type="password" required value={newForm.password}
-                onChange={e => setNewForm(f => ({ ...f, password: e.target.value }))} style={inputStyle} />
-            </div>
+            {newForm.mode === 'password' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>PASSWORD</label>
+                <input type="password" required value={newForm.password}
+                  onChange={e => setNewForm(f => ({ ...f, password: e.target.value }))} style={inputStyle} />
+              </div>
+            )}
           </div>
+          {newForm.mode === 'email' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>EMAIL</label>
+              <input type="email" required value={newForm.email}
+                onChange={e => setNewForm(f => ({ ...f, email: e.target.value }))} style={inputStyle} />
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>ROLE</label>
             <select value={newForm.role}
@@ -161,9 +194,26 @@ export default observer(function UsersPage() {
             </select>
           </div>
           {newError && <div style={{ fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{newError}</div>}
+
+          {newResult && (
+            newResult.ok ? (
+              <div style={{ fontSize: 11.5, color: 'oklch(0.75 0.16 145)', padding: '10px 12px', background: 'oklch(0.5 0.15 145 / 0.1)', borderRadius: 7, border: '1px solid oklch(0.5 0.15 145 / 0.3)', lineHeight: 1.6 }}>
+                {newForm.mode === 'temp_password' ? (
+                  <>Account created. Temp password (share once, then discard):{' '}
+                    <code style={{ userSelect: 'all', color: 'oklch(0.85 0.14 145)' }}>{newResult.temp_password}</code>
+                  </>
+                ) : (
+                  <>Account created. Invite email {newResult.invite_sent ? 'sent' : `could not be sent (${newResult.invite_error ?? 'unknown error'})`} — link:{' '}
+                    <code style={{ userSelect: 'all', wordBreak: 'break-all', color: 'oklch(0.85 0.14 145)' }}>{newResult.invite_link}</code>
+                  </>
+                )}
+              </div>
+            ) : null
+          )}
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="submit" disabled={newBusy} style={btnStyle('primary')}>
-              {newBusy ? 'Creating…' : 'Create'}
+              {newBusy ? 'Creating…' : newForm.mode === 'password' ? 'Create' : newResult ? 'Send Another' : 'Create & Invite'}
             </button>
             <button type="button" style={btnStyle('ghost')} onClick={() => setShowNew(false)}>Cancel</button>
           </div>

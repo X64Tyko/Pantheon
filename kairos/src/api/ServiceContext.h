@@ -4,6 +4,7 @@ class AuthStore;
 class ConfStore;
 class Database;
 class DownloadManager;
+class EmailService;
 class EPGMaterializer;
 class LogBuffer;
 class RuleEngine;
@@ -22,4 +23,5 @@ struct ServiceContext {
 	AuthStore&       auth;
 	LogBuffer&       logs;
 	DownloadManager& dl;
+	EmailService&    email;
 };

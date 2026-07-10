@@ -21,6 +21,8 @@ public:
     std::vector<BrowseListItem>    browseCollections(const std::string& ext_lib_id)   override;
     std::vector<BrowseContentItem> browseCollectionItems(const std::string& id)       override;
 
+    std::vector<SourceUserInfo>    listServerUsers()                                 override;
+
 protected:
     JellyfinBaseSource(const std::string& source_id,
                        const std::string& base_url,

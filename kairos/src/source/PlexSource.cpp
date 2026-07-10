@@ -266,6 +266,15 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
                         if (id.rfind("tmdb://", 0) == 0)  movie.tmdb_id = id.substr(7);
                     }
                 }
+
+                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at.
+                if (item.contains("viewCount") && !item["viewCount"].is_null())
+                    movie.src_watched = item["viewCount"].get<int64_t>() > 0;
+                if (item.contains("viewOffset") && !item["viewOffset"].is_null())
+                    movie.src_position_ms = item["viewOffset"].get<int64_t>();
+                if (item.contains("lastViewedAt") && !item["lastViewedAt"].is_null())
+                    movie.src_watched_at = item["lastViewedAt"].get<int64_t>();
+
                 result.push_back(std::move(movie));
             }
         } catch (const json::exception& e) {
@@ -352,6 +361,15 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
                 ep.thumb       = item.value("thumb", "");
                 if (item.contains("absoluteIndex") && !item["absoluteIndex"].is_null())
                     ep.absolute_index = item["absoluteIndex"].get<int>();
+
+                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at.
+                if (item.contains("viewCount") && !item["viewCount"].is_null())
+                    ep.src_watched = item["viewCount"].get<int64_t>() > 0;
+                if (item.contains("viewOffset") && !item["viewOffset"].is_null())
+                    ep.src_position_ms = item["viewOffset"].get<int64_t>();
+                if (item.contains("lastViewedAt") && !item["lastViewedAt"].is_null())
+                    ep.src_watched_at = item["lastViewedAt"].get<int64_t>();
+
                 result.push_back(std::move(ep));
             }
         } catch (const json::exception& e) {
@@ -542,6 +560,68 @@ std::vector<Chapter> PlexSource::fetchChapters(const std::string& external_id) {
                   << "): " << e.what() << '\n';
     }
     return result;
+}
+
+namespace {
+// Shared parser for both plex.tv user-listing endpoints — they return the
+// same MediaContainer.User[] shape with id/title/username/email fields.
+std::vector<SourceUserInfo> parsePlexTvUsers(const std::string& body) {
+    std::vector<SourceUserInfo> result;
+    try {
+        auto j = json::parse(body);
+        if (!j.contains("MediaContainer") || !j["MediaContainer"].contains("User")) return result;
+        for (const auto& u : j["MediaContainer"]["User"]) {
+            SourceUserInfo info;
+            info.external_user_id = u.value("id", "");
+            if (info.external_user_id.empty()) continue;
+            info.display_name = u.value("title", u.value("username", ""));
+            info.email         = u.value("email", "");
+            result.push_back(std::move(info));
+        }
+    } catch (const json::exception&) {
+        // Best-effort: user discovery failing shouldn't break sync.
+    }
+    return result;
+}
+}
+
+std::vector<SourceUserInfo> PlexSource::listServerUsers() {
+    // plex.tv is a different host than base_url_ (the local server), but the
+    // same account token authenticates both — no new credentials needed.
+    httplib::Client account_client("https://plex.tv");
+    account_client.set_default_headers({
+        {"X-Plex-Token", token_},
+        {"Accept",       "application/json"}
+    });
+    account_client.set_connection_timeout(10);
+    account_client.set_read_timeout(15);
+
+    std::vector<SourceUserInfo> merged;
+    auto merge = [&](std::vector<SourceUserInfo> batch) {
+        for (auto& u : batch) {
+            auto it = std::find_if(merged.begin(), merged.end(),
+                [&](const SourceUserInfo& e) { return e.external_user_id == u.external_user_id; });
+            if (it == merged.end()) {
+                merged.push_back(std::move(u));
+            } else if (it->email.empty() && !u.email.empty()) {
+                it->email = std::move(u.email);
+            }
+        }
+    };
+
+    // Home/managed users — PIN-only kid profiles typically have no email.
+    if (auto res = account_client.Get("/api/home/users"); res && res->status == 200)
+        merge(parsePlexTvUsers(res->body));
+    else if (!res)
+        std::cerr << "[plex:" << source_id_ << "] /api/home/users — " << httplib::to_string(res.error()) << '\n';
+
+    // Shared ("Friends") access — separate Plex accounts, which do carry email.
+    if (auto res = account_client.Get("/api/users"); res && res->status == 200)
+        merge(parsePlexTvUsers(res->body));
+    else if (!res)
+        std::cerr << "[plex:" << source_id_ << "] /api/users — " << httplib::to_string(res.error()) << '\n';
+
+    return merged;
 }
 
 namespace {

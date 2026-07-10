@@ -25,30 +25,137 @@ bool AuthStore::hasAnyUser() const {
 	return q.executeStep();
 }
 
-bool AuthStore::createUser(const std::string& username,
-                           const std::string& password,
-                           const std::string& role) {
-	if (username.empty() || password.empty()) return false;
-	if (role != "admin" && role != "viewer") return false;
+std::string AuthStore::insertUser(const std::string& username, const std::string& password_hash,
+                                  const std::string& role, bool must_change_password) {
+	if (username.empty()) return "";
+	if (role != "admin" && role != "viewer") return "";
 
-	const std::string hash    = hashPassword(password);
 	const std::string user_id = generateToken().substr(0, 16);
 	const int64_t     now     = static_cast<int64_t>(std::time(nullptr));
 
 	try {
 		SQLite::Statement ins(db_.get(),
-			"INSERT INTO user (user_id, username, password_hash, role, created_at)"
-			" VALUES (?,?,?,?,?)");
+			"INSERT INTO user (user_id, username, password_hash, role, created_at, must_change_password)"
+			" VALUES (?,?,?,?,?,?)");
 		ins.bind(1, user_id);
 		ins.bind(2, username);
-		ins.bind(3, hash);
+		ins.bind(3, password_hash);
 		ins.bind(4, role);
 		ins.bind(5, now);
+		ins.bind(6, must_change_password ? 1 : 0);
 		ins.exec();
-		return true;
+		return user_id;
 	} catch (const SQLite::Exception&) {
-		return false;   // UNIQUE constraint on username
+		return "";   // UNIQUE constraint on username
 	}
+}
+
+bool AuthStore::createUser(const std::string& username,
+                           const std::string& password,
+                           const std::string& role) {
+	if (password.empty()) return false;
+	return !insertUser(username, hashPassword(password), role, /*must_change_password=*/false).empty();
+}
+
+std::pair<std::string, std::string> AuthStore::createUserWithTempPassword(
+    const std::string& username, const std::string& role) {
+	// Random plaintext, hex from the same CSPRNG source as session tokens —
+	// plenty of entropy for a one-time credential the admin relays and the
+	// user immediately replaces.
+	const std::string temp_password = generateToken().substr(0, 20);
+	const std::string user_id = insertUser(username, hashPassword(temp_password), role,
+	                                        /*must_change_password=*/true);
+	if (user_id.empty()) return {"", ""};
+	return {user_id, temp_password};
+}
+
+std::pair<std::string, std::string> AuthStore::createUserWithEmailInvite(
+    const std::string& username, const std::string& role, int64_t invite_ttl_seconds) {
+	// Unguessable placeholder — hashed and the plaintext immediately
+	// discarded, so nobody (including this process) ever knows a usable
+	// password for the account until claimInvite() sets a real one.
+	const std::string placeholder_hash = hashPassword(generateToken());
+	const std::string user_id = insertUser(username, placeholder_hash, role,
+	                                        /*must_change_password=*/true);
+	if (user_id.empty()) return {"", ""};
+
+	const std::string invite_token = generateToken();
+	const int64_t     now          = static_cast<int64_t>(std::time(nullptr));
+	SQLite::Statement ins(db_.get(),
+		"INSERT INTO user_invite (invite_id, user_id, created_at, expires_at) VALUES (?,?,?,?)");
+	ins.bind(1, invite_token);
+	ins.bind(2, user_id);
+	ins.bind(3, now);
+	ins.bind(4, now + invite_ttl_seconds);
+	ins.exec();
+
+	return {user_id, invite_token};
+}
+
+std::optional<std::string> AuthStore::getInviteUsername(const std::string& invite_token) const {
+	const int64_t now = static_cast<int64_t>(std::time(nullptr));
+	SQLite::Statement q(db_.get(), R"(
+		SELECT u.username FROM user_invite i
+		JOIN user u ON u.user_id = i.user_id
+		WHERE i.invite_id = ? AND i.used_at IS NULL AND i.expires_at > ?
+	)");
+	q.bind(1, invite_token);
+	q.bind(2, now);
+	if (!q.executeStep()) return std::nullopt;
+	return q.getColumn(0).getString();
+}
+
+std::string AuthStore::claimInvite(const std::string& invite_token, const std::string& new_password) {
+	if (new_password.empty()) return "";
+	const int64_t now = static_cast<int64_t>(std::time(nullptr));
+
+	SQLite::Statement q(db_.get(), R"(
+		SELECT user_id FROM user_invite WHERE invite_id = ? AND used_at IS NULL AND expires_at > ?
+	)");
+	q.bind(1, invite_token);
+	q.bind(2, now);
+	if (!q.executeStep()) return "";
+	const std::string user_id = q.getColumn(0).getString();
+
+	SQLite::Statement upd(db_.get(),
+		"UPDATE user SET password_hash = ?, must_change_password = 0 WHERE user_id = ?");
+	upd.bind(1, hashPassword(new_password));
+	upd.bind(2, user_id);
+	upd.exec();
+
+	SQLite::Statement mark(db_.get(), "UPDATE user_invite SET used_at = ? WHERE invite_id = ?");
+	mark.bind(1, now);
+	mark.bind(2, invite_token);
+	mark.exec();
+
+	const std::string token = generateToken();
+	SQLite::Statement ins(db_.get(),
+		"INSERT INTO session (token, user_id, created_at, expires_at, last_seen) VALUES (?,?,?,?,?)");
+	ins.bind(1, token);
+	ins.bind(2, user_id);
+	ins.bind(3, now);
+	ins.bind(4, now + SESSION_TTL);
+	ins.bind(5, now);
+	ins.exec();
+
+	return token;
+}
+
+std::string AuthStore::resendInvite(const std::string& user_id, int64_t invite_ttl_seconds) {
+	SQLite::Statement q(db_.get(), "SELECT must_change_password FROM user WHERE user_id = ?");
+	q.bind(1, user_id);
+	if (!q.executeStep() || q.getColumn(0).getInt() == 0) return "";
+
+	const std::string invite_token = generateToken();
+	const int64_t     now          = static_cast<int64_t>(std::time(nullptr));
+	SQLite::Statement ins(db_.get(),
+		"INSERT INTO user_invite (invite_id, user_id, created_at, expires_at) VALUES (?,?,?,?)");
+	ins.bind(1, invite_token);
+	ins.bind(2, user_id);
+	ins.bind(3, now);
+	ins.bind(4, now + invite_ttl_seconds);
+	ins.exec();
+	return invite_token;
 }
 
 std::string AuthStore::login(const std::string& username,
@@ -93,7 +200,7 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	SQLite::Statement q(db_.get(), R"(
 		SELECT u.user_id, u.username, u.role,
 		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating,
-		       s.purpose
+		       s.purpose, u.must_change_password
 		FROM session s
 		JOIN user u ON u.user_id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
@@ -110,6 +217,7 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	user.max_tv_rating       = q.getColumn(4).getString();
 	user.max_movie_rating    = q.getColumn(5).getString();
 	user.max_channel_rating  = q.getColumn(6).getString();
+	user.must_change_password = q.getColumn(8).getInt() != 0;
 
 	// A 'cast'-purpose session (minted for handing off to a Cast receiver,
 	// see mintCastToken) is always viewer-capped — this is the actual
@@ -130,7 +238,7 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 std::vector<AuthUser> AuthStore::listUsers() const {
 	SQLite::Statement q(db_.get(),
 		"SELECT user_id, username, role, "
-		"       restricted, max_tv_rating, max_movie_rating, max_channel_rating "
+		"       restricted, max_tv_rating, max_movie_rating, max_channel_rating, must_change_password "
 		"FROM user ORDER BY username");
 	std::vector<AuthUser> result;
 	while (q.executeStep()) {
@@ -142,6 +250,7 @@ std::vector<AuthUser> AuthStore::listUsers() const {
 			q.getColumn(4).getString(),
 			q.getColumn(5).getString(),
 			q.getColumn(6).getString(),
+			q.getColumn(7).getInt() != 0,
 		});
 	}
 	return result;
@@ -177,8 +286,11 @@ bool AuthStore::updateUser(const std::string& user_id,
                            const std::string& new_role) {
 	if (!new_password.empty()) {
 		const std::string hash = hashPassword(new_password);
+		// Any successful password change — self-service or admin-initiated —
+		// satisfies must_change_password, whether it was set (temp-password
+		// invite path) or already clear (no-op update in that case).
 		SQLite::Statement u(db_.get(),
-			"UPDATE user SET password_hash = ? WHERE user_id = ?");
+			"UPDATE user SET password_hash = ?, must_change_password = 0 WHERE user_id = ?");
 		u.bind(1, hash);
 		u.bind(2, user_id);
 		u.exec();

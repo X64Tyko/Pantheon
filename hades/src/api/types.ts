@@ -1,11 +1,14 @@
 export interface User {
-  user_id:            string
-  username:           string
-  role:               'admin' | 'viewer'
-  restricted:         boolean
-  max_tv_rating:      string
-  max_movie_rating:   string
-  max_channel_rating: string
+  user_id:              string
+  username:             string
+  role:                 'admin' | 'viewer'
+  restricted:           boolean
+  max_tv_rating:        string
+  max_movie_rating:     string
+  max_channel_rating:   string
+  // Set on invite-created accounts until the owner replaces the temp/
+  // placeholder password with one of their own — gates the app shell.
+  must_change_password: boolean
 }
 
 export interface ContentOverride {
@@ -63,6 +66,51 @@ export interface Source {
   display_name: string
   base_url:     string
   enabled:      boolean
+  // Local user (if any) whose watch/resume state is seeded from this
+  // source's primary account during sync. Empty = off.
+  synced_user_id: string
+}
+
+// A source-reported account with no local Pantheon account imported for it
+// yet — see SourceRepository::listUnmappedSourceUsers().
+export interface UnmappedSourceUser {
+  source_id:           string
+  source_display_name: string
+  external_user_id:    string
+  display_name:        string
+  email:                string
+}
+
+export interface ImportUserResult {
+  ok:             boolean
+  user_id:        string
+  username:       string
+  invite_method:  'email' | 'temp_password'
+  temp_password?: string
+  invite_link?:   string
+  invite_sent?:   boolean
+  invite_error?:  string
+}
+
+// Response shape for POST /api/users with an invite mode — same idea as
+// ImportUserResult but without invite_method/username (the caller already
+// knows both, since it's the one supplying them).
+export interface InviteUserResult {
+  ok:             boolean
+  user_id:        string
+  temp_password?: string
+  invite_link?:   string
+  invite_sent?:   boolean
+  invite_error?:  string
+}
+
+export interface SmtpConfig {
+  host:            string
+  port:            string
+  username:        string
+  has_password:    boolean
+  from_address:    string
+  public_base_url: string
 }
 
 export interface SourceType {

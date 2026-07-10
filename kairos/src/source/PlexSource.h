@@ -34,6 +34,8 @@ public:
     std::vector<Chapter> fetchIntroMarkers(const std::string& external_id) override;
     std::vector<Chapter> fetchChapters(const std::string& external_id)     override;
 
+    std::vector<SourceUserInfo> listServerUsers() override;
+
     bool pushMetadata(const std::string& external_id,
                        const std::string& external_lib_id,
                        const std::string& item_type,

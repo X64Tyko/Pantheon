@@ -18,6 +18,10 @@ struct AuthUser {
 	std::string max_tv_rating      = "TV-Y";
 	std::string max_movie_rating   = "G";
 	std::string max_channel_rating = "TV-Y";
+	// Set on invite-created accounts until the owner replaces the temp/
+	// placeholder password with one of their own choosing (updateUser and
+	// claimInvite both clear it on a successful password change).
+	bool        must_change_password = false;
 };
 
 // One active session, as surfaced to the owning user for review/revocation.
@@ -39,6 +43,41 @@ public:
 	bool createUser(const std::string& username,
 	                const std::string& password,
 	                const std::string& role);
+
+	// Creates an account with a server-generated temp password instead of one
+	// the admin typed — must_change_password is set so the account is gated
+	// (see Router/Hades app-shell) until it's replaced. Returns
+	// {user_id, temp_password} on success, {"",""} on failure (e.g. username
+	// taken). The plaintext temp password is returned exactly once here and
+	// never persisted or logged — callers must relay it out-of-band and must
+	// not hold onto it longer than needed to display it once.
+	std::pair<std::string, std::string> createUserWithTempPassword(
+	    const std::string& username, const std::string& role);
+
+	// Creates an account nobody can log into yet — password_hash is an
+	// unguessable random value discarded immediately after hashing — and
+	// mints a single-use, expiring invite token for the email-invite claim
+	// flow (see claimInvite). Returns {user_id, invite_token} on success,
+	// {"",""} on failure.
+	std::pair<std::string, std::string> createUserWithEmailInvite(
+	    const std::string& username, const std::string& role,
+	    int64_t invite_ttl_seconds = 7LL * 24 * 3600);
+
+	// Username for a valid (unexpired, unused) invite token, or nullopt.
+	std::optional<std::string> getInviteUsername(const std::string& invite_token) const;
+
+	// Validates the token, sets the chosen password, clears
+	// must_change_password, marks the token used, and mints a normal login
+	// session. Returns the session token on success, "" on failure (invalid,
+	// expired, or already-claimed token).
+	std::string claimInvite(const std::string& invite_token, const std::string& new_password);
+
+	// Re-issues a fresh invite token for an account that never claimed its
+	// first one (the old token is left to expire naturally, not explicitly
+	// invalidated). Returns the new token, or "" if the user doesn't exist or
+	// no longer needs one (must_change_password already cleared).
+	std::string resendInvite(const std::string& user_id,
+	                         int64_t invite_ttl_seconds = 7LL * 24 * 3600);
 
 	// Returns session token on success, empty string on bad credentials.
 	std::string login(const std::string& username, const std::string& password);
@@ -82,6 +121,12 @@ public:
 
 private:
 	Database& db_;
+
+	// Shared INSERT for all three creation paths (createUser,
+	// createUserWithTempPassword, createUserWithEmailInvite) — returns the
+	// new user_id, or "" if username is taken or role is invalid.
+	std::string insertUser(const std::string& username, const std::string& password_hash,
+	                       const std::string& role, bool must_change_password);
 
 	static std::string hashPassword(const std::string& password);
 	static bool        checkPassword(const std::string& password,

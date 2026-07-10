@@ -12,6 +12,7 @@ import type {
   Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState,
+  UnmappedSourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -135,6 +136,10 @@ export const api = {
   login:       (username: string, password: string)          => request<AuthResponse>('POST', '/auth/login', { username, password }),
   logout:      ()                                            => request<void>('POST', '/auth/logout'),
   getMe:       ()                                            => request<User>('GET',  '/auth/me'),
+  // Invite-claim flow — unauthenticated, reached before the person has any
+  // session at all; only actionable with the unguessable token in the path.
+  getInvite:   (token: string)                     => request<{ username: string }>('GET', `/auth/invite/${token}`),
+  claimInvite: (token: string, password: string)   => request<AuthResponse>('POST', `/auth/invite/${token}`, { password }),
   mintCastToken:    ()                    => request<CastTokenResponse>('POST',   '/auth/cast-token'),
   getCastSessions:  ()                    => request<CastSessionInfo[]>('GET',    '/auth/sessions?purpose=cast'),
   revokeCastSession: (sessionId: string)  => request<{ ok: boolean }>('DELETE',   `/auth/sessions/${sessionId}`),
@@ -151,6 +156,13 @@ export const api = {
   // User management (admin only)
   getUsers:    ()                                            => request<User[]>('GET',    '/users'),
   createUser:  (username: string, password: string, role: string) => request<void>('POST', '/users', { username, password, role }),
+  // Invite-based creation — no password supplied by the admin. 'temp_password'
+  // returns {temp_password} once for the admin to relay; 'email' emails a
+  // claim link if SMTP is configured (also always returns {invite_link} so
+  // the admin can hand it out manually either way).
+  inviteUser:  (username: string, role: string, invite: { method: 'temp_password' } | { method: 'email'; email: string }) =>
+                 request<InviteUserResult>('POST', '/users', { username, role, invite }),
+  resendInvite: (id: string) => request<{ ok: boolean; invite_link: string }>('POST', `/users/${id}/resend-invite`),
   updateUser:  (id: string, patch: { password?: string; role?: string }) => request<void>('PATCH', `/users/${id}`, patch),
   deleteUser:  (id: string)                                 => request<void>('DELETE', `/users/${id}`),
   updateUserRestriction: (id: string, patch: { restricted: boolean; max_tv_rating: string; max_movie_rating: string; max_channel_rating: string }) =>
@@ -163,8 +175,16 @@ export const api = {
   // Sources
   getSources:       ()                                  => request<Source[]>    ('GET',    '/sources'),
   getSourceTypes:   ()                                  => request<SourceType[]>('GET',    '/sources/types'),
-  createSource:     (b: Omit<Source, 'enabled'>)        => request<{source_id: string}>('POST', '/sources', b),
+  createSource:     (b: Omit<Source, 'enabled' | 'synced_user_id'>) => request<{source_id: string}>('POST', '/sources', b),
   deleteSource:     (id: string)                        => request<void>        ('DELETE', `/sources/${id}`),
+  // Which local user (if any) should have watch/resume state pulled from
+  // this source's primary account during sync — empty string clears it.
+  setSourceSyncedUser: (id: string, userId: string)     => request<{ok: boolean}>('PATCH', `/sources/${id}`, { synced_user_id: userId || null }),
+
+  // Source-reported accounts with no local Pantheon account imported yet.
+  getUnmappedSourceUsers: () => request<UnmappedSourceUser[]>('GET', '/sources/unmapped-users'),
+  importSourceUser: (sourceId: string, externalUserId: string, role: 'admin' | 'viewer' = 'viewer') =>
+                       request<ImportUserResult>('POST', `/sources/${sourceId}/users/${externalUserId}/import`, { role }),
 
   // Libraries
   getAvailableLibs: (sourceId: string)                  => request<LibraryInfo[]>('GET',    `/sources/${sourceId}/libraries/available`),
@@ -409,6 +429,12 @@ export const api = {
   updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),
+
+  // SMTP (invite emails + Settings page "Send Test Email")
+  getSmtpConfig:  ()                                                     => request<SmtpConfig>('GET', '/config/smtp'),
+  setSmtpConfig:  (b: Partial<{ host: string; port: string; username: string; password: string; from_address: string; public_base_url: string }>) =>
+                                                                             request<{ ok: boolean }>('POST', '/config/smtp', b),
+  testSmtp:       (to: string)                                           => request<{ ok: boolean }>('POST', '/config/smtp/test', { to }),
 
   // Downloads
   getDownloadConfig:  ()                                              => request<{path: string}>('GET', '/config/download'),

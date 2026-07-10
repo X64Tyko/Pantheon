@@ -61,7 +61,7 @@ export class SourceStore {
     }
   }
 
-  async addSource(data: Omit<Source, 'enabled'>) {
+  async addSource(data: Omit<Source, 'enabled' | 'synced_user_id'>) {
     await api.createSource(data)
     await this.fetchAll()
   }
@@ -114,6 +114,14 @@ export class SourceStore {
     runInAction(() => {
       const idx = this.libraries.findIndex(l => l.library_id === libraryId)
       if (idx !== -1) this.libraries.splice(idx, 1)
+    })
+  }
+
+  async setSyncedUser(sourceId: string, userId: string) {
+    await api.setSourceSyncedUser(sourceId, userId)
+    runInAction(() => {
+      const src = this.sources.find(s => s.source_id === sourceId)
+      if (src) src.synced_user_id = userId
     })
   }
 

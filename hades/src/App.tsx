@@ -6,6 +6,8 @@ import LoginPage              from './auth/LoginPage'
 import ProtectedRoute         from './auth/ProtectedRoute'
 import AdminRoute             from './auth/AdminRoute'
 import SetupPage              from './auth/SetupPage'
+import SetPasswordPage        from './auth/SetPasswordPage'
+import InvitePage             from './auth/InvitePage'
 import Layout                 from './components/Layout'
 import { FocusRoot }          from './nav/FocusRoot'
 import { CastProvider }       from './cast/CastProvider'
@@ -50,8 +52,17 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
+        {/* Unauthenticated invite-claim flow — only actionable with the
+            unguessable token in the URL itself; see AuthStore::claimInvite. */}
+        <Route path="/invite/:token" element={<InvitePage />} />
 
         <Route element={<ProtectedRoute />}>
+          {/* Mandatory gate for invite-created (temp-password) accounts —
+              reached via ProtectedRoute's must_change_password redirect, not
+              a normal nav target. Deliberately outside <Layout>: the rest of
+              the app is blocked until this is done. */}
+          <Route path="set-password" element={<SetPasswordPage />} />
+
           {/* Full-screen takeover — no sidebar chrome during playback. */}
           <Route path="player/movie/:id" element={
             <Suspense fallback={playerFallback}><PlayerPage kind="movie" /></Suspense>

@@ -7,6 +7,10 @@ struct MediaSourceConfig {
     std::string display_name;
     std::string base_url;    // empty for local sources
     bool        enabled = true;
+    // Which local user (if any) should have watch/resume state pulled from
+    // this source's configured primary account during sync. Empty = unset —
+    // see SourceRepository::setSyncedUserId / SyncManager::syncMovies.
+    std::string synced_user_id;
 };
 
 struct MediaLibraryConfig {
@@ -35,4 +39,14 @@ struct LibraryInfo {
     std::string external_lib_id;
     std::string name;
     std::string type; // "show" | "movie" | "mixed" | "music" | "photo"
+};
+
+// An account/profile that exists on the source server — identity metadata
+// only (never credentials). Returned by MediaSource::listServerUsers() — live
+// from the server. Used to detect source-side users Pantheon doesn't know
+// about yet.
+struct SourceUserInfo {
+    std::string external_user_id;
+    std::string display_name;
+    std::string email; // empty if the source doesn't expose one for this account
 };

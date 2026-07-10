@@ -5,6 +5,7 @@
 #include "../../db/ConfigRepository.h"
 #include "../../db/ScheduleRepository.h"
 #include "../../db/SourceRepository.h"
+#include "../../email/EmailService.h"
 #include "../../source/SyncManager.h"
 #include "../../scheduler/RuntimeFlags.h"
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -24,7 +25,7 @@ using Res  = httplib::Response;
 static constexpr const char* kDefaultCastAppId = "FA339D2D";
 
 ConfigService::ConfigService(const ServiceContext& ctx)
-	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync) {}
+	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync), email_(ctx.email) {}
 
 void ConfigService::registerRoutes(httplib::Server& svr) {
 
@@ -337,6 +338,60 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 		  catch (const std::exception& e)  {
 			route::logErr("PUT /api/config/path-maps/:source_id", e);
 			route::err(res, 500, e.what());
+		}
+	});
+
+	// SMTP settings — backs invite emails (AuthService) and this section's own
+	// "Send Test Email" button. Password is never read back (same
+	// don't-leak-secrets shape as /api/config/credentials/:source_id above) —
+	// GET reports only whether one is set; a blank password field on save
+	// preserves whatever's already stored.
+	svr.Get("/api/config/smtp", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		ConfigRepository repo(db_);
+		route::ok(res, json{
+			{"host",             repo.getValue("smtp_host")},
+			{"port",             repo.getValue("smtp_port")},
+			{"username",         repo.getValue("smtp_username")},
+			{"has_password",     !repo.getValue("smtp_password").empty()},
+			{"from_address",     repo.getValue("smtp_from_address")},
+			{"public_base_url",  repo.getValue("smtp_public_base_url")},
+		}.dump());
+	});
+
+	svr.Post("/api/config/smtp", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		try {
+			auto b = json::parse(req.body);
+			ConfigRepository repo(db_);
+			if (b.contains("host"))            repo.setValue("smtp_host",            b["host"].get<std::string>());
+			if (b.contains("port"))            repo.setValue("smtp_port",            b["port"].get<std::string>());
+			if (b.contains("username"))        repo.setValue("smtp_username",        b["username"].get<std::string>());
+			if (b.contains("password") && !b["password"].get<std::string>().empty())
+				repo.setValue("smtp_password", b["password"].get<std::string>());
+			if (b.contains("from_address"))    repo.setValue("smtp_from_address",    b["from_address"].get<std::string>());
+			if (b.contains("public_base_url")) repo.setValue("smtp_public_base_url", b["public_base_url"].get<std::string>());
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const json::exception& e) {
+			route::err(res, 400, e.what());
+		} catch (const std::exception& e) {
+			route::logErr("POST /api/config/smtp", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	svr.Post("/api/config/smtp/test", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		try {
+			auto b = json::parse(req.body);
+			const std::string to = b.value("to", "");
+			if (to.empty()) { route::err(res, 400, "'to' address required"); return; }
+			std::string error;
+			const bool ok = email_.testConnection(to, &error);
+			if (!ok) { route::err(res, 502, error.empty() ? "send failed" : error); return; }
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const json::exception& e) {
+			route::err(res, 400, e.what());
 		}
 	});
 }

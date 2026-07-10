@@ -1,8 +1,11 @@
 #include "SourceService.h"
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
+#include "../../auth/AuthStore.h"
+#include "../../db/ConfigRepository.h"
 #include "../../db/ContentRepository.h"
 #include "../../db/SourceRepository.h"
+#include "../../email/EmailService.h"
 #include "../../log/LogBuffer.h"
 #include "../../source/SyncManager.h"
 #include "../../source/IMediaSource.h"
@@ -18,7 +21,7 @@ using Req  = httplib::Request;
 using Res  = httplib::Response;
 
 SourceService::SourceService(const ServiceContext& ctx)
-	: db_(ctx.db), sync_(ctx.sync), logs_(ctx.logs) {}
+	: db_(ctx.db), sync_(ctx.sync), logs_(ctx.logs), auth_(ctx.auth), email_(ctx.email) {}
 
 void SourceService::registerRoutes(httplib::Server& svr) {
 
@@ -39,7 +42,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		for (const auto& s : SourceRepository(db_).listSources())
 			result.push_back({{"source_id", s.source_id}, {"source_type", s.source_type},
 			                  {"display_name", s.display_name}, {"base_url", s.base_url},
-			                  {"enabled", s.enabled}});
+			                  {"enabled", s.enabled}, {"synced_user_id", s.synced_user_id}});
 		route::ok(res, result.dump());
 	});
 
@@ -170,6 +173,125 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			route::ok(res, json{{"deleted", id}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("DELETE /api/sources/" + id, e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	// Source-level settings not tied to a specific library. Currently just
+	// synced_user_id (watch-state sync target) — see WatchProgressRepository /
+	// SyncManager::syncMovies for how it's consumed.
+	svr.Patch("/api/sources/:id", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			auto b = json::parse(req.body);
+			SourceRepository repo(db_);
+			if (!repo.getSource(id)) { route::err(res, 404, "source not found"); return; }
+			if (b.contains("synced_user_id")) {
+				std::string user_id = b["synced_user_id"].is_null() ? "" : b["synced_user_id"].get<std::string>();
+				repo.setSyncedUserId(id, user_id);
+			}
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const json::exception& e) {
+			route::err(res, 400, e.what());
+		} catch (const std::exception& e) {
+			route::logErr("PATCH /api/sources/:id", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	// Every source-reported account with no local Pantheon account imported
+	// for it yet — see SourceRepository::listUnmappedSourceUsers().
+	svr.Get("/api/sources/unmapped-users", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		try {
+			json result = json::array();
+			for (const auto& u : SourceRepository(db_).listUnmappedSourceUsers())
+				result.push_back({{"source_id", u.source_id},
+				                  {"source_display_name", u.source_display_name},
+				                  {"external_user_id", u.external_user_id},
+				                  {"display_name", u.display_name},
+				                  {"email", u.email}});
+			route::ok(res, result.dump());
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/sources/unmapped-users", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	// Creates a local Pantheon account for a discovered source user (see
+	// Feature 3/4 — invite-based account creation). Picks the invite method
+	// automatically: email (if the source gave one AND SMTP is configured),
+	// else a server-generated temp password the admin relays manually.
+	svr.Post("/api/sources/:id/users/:external_id/import", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto source_id        = req.path_params.at("id");
+		auto external_user_id = req.path_params.at("external_id");
+		try {
+			json b = req.body.empty() ? json::object() : json::parse(req.body);
+			std::string role = b.value("role", "viewer");
+			if (role != "admin" && role != "viewer") { route::err(res, 400, "role must be admin or viewer"); return; }
+
+			SourceRepository repo(db_);
+			auto su = repo.getSourceUser(source_id, external_user_id);
+			if (!su) { route::err(res, 404, "source user not found"); return; }
+			// Without this, a double-click or a retried request after a network
+			// hiccup silently creates a second local account for the same
+			// source user — the route otherwise has no way to tell "already
+			// imported" from "never imported".
+			if (!su->imported_user_id.empty()) { route::err(res, 409, "already imported"); return; }
+
+			// Dedupe the source's display name against existing usernames
+			// (unlike the single-account create form, a bulk import shouldn't
+			// hard-fail on a name collision) — "Chris", "Chris2", "Chris3", ...
+			const std::string base_username = su->display_name.empty() ? external_user_id : su->display_name;
+			std::string username = base_username;
+			{
+				auto existing = auth_.listUsers();
+				auto taken = [&](const std::string& u) {
+					return std::any_of(existing.begin(), existing.end(),
+						[&](const AuthUser& e) { return e.username == u; });
+				};
+				for (int suffix = 2; taken(username); ++suffix)
+					username = base_username + std::to_string(suffix);
+			}
+
+			ConfigRepository cfg_repo(db_);
+			const bool smtp_configured = !cfg_repo.getValue("smtp_host").empty()
+			                           && !cfg_repo.getValue("smtp_from_address").empty();
+
+			json out{{"ok", true}, {"username", username}};
+			std::string user_id;
+			if (!su->email.empty() && smtp_configured) {
+				auto [uid, invite_token] = auth_.createUserWithEmailInvite(username, role);
+				if (uid.empty()) { route::err(res, 409, "failed to create account"); return; }
+				user_id = uid;
+
+				std::string base_url = cfg_repo.getValue("smtp_public_base_url");
+				while (!base_url.empty() && base_url.back() == '/') base_url.pop_back();
+				const std::string invite_link = base_url + "/invite/" + invite_token;
+
+				std::string send_error;
+				const bool sent = email_.sendInviteEmail(su->email, username, invite_link, &send_error);
+				out["invite_method"] = "email";
+				out["invite_link"]   = invite_link;
+				out["invite_sent"]   = sent;
+				if (!sent) out["invite_error"] = send_error;
+			} else {
+				auto [uid, temp_password] = auth_.createUserWithTempPassword(username, role);
+				if (uid.empty()) { route::err(res, 409, "failed to create account"); return; }
+				user_id = uid;
+				out["invite_method"] = "temp_password";
+				out["temp_password"] = temp_password;
+			}
+
+			out["user_id"] = user_id;
+			repo.setImportedUserId(source_id, external_user_id, user_id);
+			route::ok(res, out.dump());
+		} catch (const json::exception& e) {
+			route::err(res, 400, e.what());
+		} catch (const std::exception& e) {
+			route::logErr("POST /api/sources/:id/users/:external_id/import", e);
 			route::err(res, 500, e.what());
 		}
 	});

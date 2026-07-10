@@ -1627,6 +1627,52 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX IF NOT EXISTS idx_special_candidate_pending ON special_link_candidate(show_id, accepted) WHERE accepted IS NULL;
 )SQL" }
 
+// ── v71: source-side user discovery + opt-in watch-state sync target ─────────
+//   source_user is populated by IMediaSource::listServerUsers() during sync —
+//   every account/profile that exists on a Plex/Jellyfin/Emby server, so
+//   Pantheon can flag ones with no corresponding local account. imported_user_id
+//   is set once an admin imports a discovered user into a local account (see
+//   the source import route); a row with it set is excluded from the
+//   "unregistered" list instead of being re-offered every sync.
+//   media_source.synced_user_id is a separate, narrower link: which local
+//   user (if any) should have watch/resume state pulled from this source's
+//   already-configured primary account during sync. Unset = feature off.
+,{ 71, R"SQL(
+    CREATE TABLE source_user (
+        source_id        TEXT    NOT NULL REFERENCES media_source(source_id) ON DELETE CASCADE,
+        external_user_id TEXT    NOT NULL,
+        display_name     TEXT    NOT NULL DEFAULT '',
+        email            TEXT    NOT NULL DEFAULT '',
+        last_seen_at     INTEGER NOT NULL,
+        imported_user_id TEXT    REFERENCES user(user_id) ON DELETE SET NULL,
+        PRIMARY KEY (source_id, external_user_id)
+    );
+
+    ALTER TABLE media_source ADD COLUMN synced_user_id TEXT REFERENCES user(user_id) ON DELETE SET NULL;
+)SQL" }
+
+// ── v72: invite-based account creation ────────────────────────────────────────
+//   must_change_password gates a fresh account created without the owner
+//   having chosen their own password yet — either a temp password an admin
+//   relays out-of-band, or (before the invite link is claimed) an unguessable
+//   placeholder hash nobody knows. Cleared by any successful password change,
+//   whether self-service or admin-initiated (see AuthStore::updateUser).
+//   user_invite backs the email-invite path only (temp_password logs in with
+//   the existing /api/auth/login and needs no token): a single-use, expiring
+//   claim link since there's no password yet to authenticate with.
+,{ 72, R"SQL(
+    ALTER TABLE user ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
+
+    CREATE TABLE user_invite (
+        invite_id  TEXT    PRIMARY KEY,
+        user_id    TEXT    NOT NULL REFERENCES user(user_id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at    INTEGER
+    );
+    CREATE INDEX idx_user_invite_user ON user_invite(user_id);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

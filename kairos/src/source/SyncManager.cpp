@@ -217,6 +217,47 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live) {
         }
     }
 
+    // User discovery — every account/profile the source reports, so admins can
+    // see who exists on their servers that Pantheon doesn't have a local
+    // account for yet. One cheap extra request per source per sync. Raw SQL
+    // against sync_db_ rather than SourceRepository (which wraps the primary
+    // connection) — same reasoning as every other write in this file: this
+    // runs on syncSource's own connection, not the one repositories use.
+    // Jellyfin/Emby's own configured primary account (the identity syncing
+    // runs as) is excluded so it's never offered as "unregistered" itself;
+    // Plex has no such concept (identity is implicit in the token) so nothing
+    // is excluded there — best-effort, not a guarantee, per
+    // IMediaSource::listServerUsers's doc comment.
+    {
+        auto users = src->listServerUsers();
+        const std::string primary_user_id = conf_.userId(source_id);
+        if (!primary_user_id.empty()) {
+            users.erase(std::remove_if(users.begin(), users.end(),
+                [&](const SourceUserInfo& u) { return u.external_user_id == primary_user_id; }),
+                users.end());
+        }
+        if (!users.empty()) {
+            SQLite::Statement s(sync_db_, R"(
+                INSERT INTO source_user (source_id, external_user_id, display_name, email, last_seen_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, external_user_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    email        = excluded.email,
+                    last_seen_at = excluded.last_seen_at
+            )");
+            const int64_t now = static_cast<int64_t>(std::time(nullptr));
+            for (const auto& u : users) {
+                s.bind(1, source_id);
+                s.bind(2, u.external_user_id);
+                s.bind(3, u.display_name);
+                s.bind(4, u.email);
+                s.bind(5, now);
+                s.exec();
+                s.reset();
+            }
+        }
+    }
+
     for (const auto& lib : libs) {
         const std::string label = source_display + " / " + lib.display_name;
         if (lib.library_type == "show" || lib.library_type == "mixed")
@@ -605,6 +646,27 @@ void SyncManager::syncShows(IMediaSource& src,
     SQLite::Statement s_insert_season(sync_db_,
         "INSERT INTO show_season (show_id, season, season_name) VALUES (?,?,?)");
 
+    // Watch-state seeding — see syncMovies()'s identical block for the
+    // freshness/overwrite policy this follows.
+    const std::string synced_user_id = [&] {
+        SQLite::Statement q(sync_db_, "SELECT synced_user_id FROM media_source WHERE source_id = ?");
+        q.bind(1, source_id);
+        if (q.executeStep() && !q.getColumn(0).isNull()) return q.getColumn(0).getString();
+        return std::string();
+    }();
+    SQLite::Statement s_watch_get(sync_db_,
+        "SELECT updated_at FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
+    SQLite::Statement s_watch_upsert(sync_db_, R"(
+        INSERT INTO watch_progress (user_id, content_type, content_id, position_ms, duration_ms, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, content_type, content_id) DO UPDATE SET
+            position_ms = excluded.position_ms,
+            duration_ms = excluded.duration_ms,
+            updated_at  = excluded.updated_at
+    )");
+    SQLite::Statement s_watch_delete(sync_db_,
+        "DELETE FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
+
     for (size_t i = 0; i < shows.size(); ++i) {
         auto& show     = shows[i];
         auto& episodes = episodes_by_show[i];
@@ -675,6 +737,42 @@ void SyncManager::syncShows(IMediaSource& src,
                     s_ep_mapping.bind(3, library_id);
                     s_ep_mapping.bind(4, ext_ep_id);
                     s_ep_mapping.exec();
+
+                    if (!synced_user_id.empty() &&
+                            (ep.src_watched.has_value() || ep.src_position_ms.has_value())) {
+                        s_watch_get.reset();
+                        s_watch_get.bind(1, synced_user_id);
+                        s_watch_get.bind(2, "episode");
+                        s_watch_get.bind(3, ep.episode_id);
+                        const bool has_local = s_watch_get.executeStep();
+                        const int64_t local_updated_at = has_local ? s_watch_get.getColumn(0).getInt64() : 0;
+
+                        const bool source_fresher = ep.src_watched_at.has_value()
+                            ? (ep.src_watched_at.value() > local_updated_at)
+                            : !has_local; // no timestamp from source: seed once, never overwrite
+
+                        if (source_fresher) {
+                            if (ep.src_watched.value_or(false)) {
+                                if (has_local) {
+                                    s_watch_delete.reset();
+                                    s_watch_delete.bind(1, synced_user_id);
+                                    s_watch_delete.bind(2, "episode");
+                                    s_watch_delete.bind(3, ep.episode_id);
+                                    s_watch_delete.exec();
+                                }
+                            } else if (ep.src_position_ms.has_value()) {
+                                s_watch_upsert.reset();
+                                s_watch_upsert.bind(1, synced_user_id);
+                                s_watch_upsert.bind(2, "episode");
+                                s_watch_upsert.bind(3, ep.episode_id);
+                                s_watch_upsert.bind(4, ep.src_position_ms.value());
+                                s_watch_upsert.bind(5, ep.duration_ms);
+                                s_watch_upsert.bind(6, ep.src_watched_at.value_or(
+                                    static_cast<int64_t>(std::time(nullptr))));
+                                s_watch_upsert.exec();
+                            }
+                        }
+                    }
                 } catch (const std::exception& e) {
                     std::cerr << "[sync] skipping episode " << ep.file_path
                               << ": " << e.what() << '\n';
@@ -895,6 +993,34 @@ void SyncManager::syncMovies(IMediaSource& src,
             external_id = excluded.external_id
     )");
 
+    // Watch-state seeding — only when this source is opted in (media_source.
+    // synced_user_id set). Policy applied per item below: a source write only
+    // wins when it's provably fresher (src_watched_at newer than the local
+    // row's updated_at) or there's no local row yet at all — this seeds
+    // Continue Watching from the source once, but never clobbers progress the
+    // user just made in Hades itself. A source-reported "fully watched" with
+    // no local row is skipped entirely (not seeded) rather than inserted at
+    // 100%, matching watch_progress's existing convention that a missing row
+    // means "not in progress" (PlaybackService deletes on >=95% watched).
+    const std::string synced_user_id = [&] {
+        SQLite::Statement q(sync_db_, "SELECT synced_user_id FROM media_source WHERE source_id = ?");
+        q.bind(1, source_id);
+        if (q.executeStep() && !q.getColumn(0).isNull()) return q.getColumn(0).getString();
+        return std::string();
+    }();
+    SQLite::Statement s_watch_get(sync_db_,
+        "SELECT updated_at FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
+    SQLite::Statement s_watch_upsert(sync_db_, R"(
+        INSERT INTO watch_progress (user_id, content_type, content_id, position_ms, duration_ms, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, content_type, content_id) DO UPDATE SET
+            position_ms = excluded.position_ms,
+            duration_ms = excluded.duration_ms,
+            updated_at  = excluded.updated_at
+    )");
+    SQLite::Statement s_watch_delete(sync_db_,
+        "DELETE FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
+
     for (size_t batch_start = 0; batch_start < movies.size(); batch_start += kMovieBatchSize) {
         yieldIfRequested();
         const size_t batch_end = std::min(batch_start + kMovieBatchSize, movies.size());
@@ -937,6 +1063,42 @@ void SyncManager::syncMovies(IMediaSource& src,
                 s_movie_mapping.bind(3, library_id);
                 s_movie_mapping.bind(4, res.ext_id);
                 s_movie_mapping.exec();
+
+                if (!synced_user_id.empty() &&
+                        (movie.src_watched.has_value() || movie.src_position_ms.has_value())) {
+                    s_watch_get.reset();
+                    s_watch_get.bind(1, synced_user_id);
+                    s_watch_get.bind(2, "movie");
+                    s_watch_get.bind(3, movie.movie_id);
+                    const bool has_local = s_watch_get.executeStep();
+                    const int64_t local_updated_at = has_local ? s_watch_get.getColumn(0).getInt64() : 0;
+
+                    const bool source_fresher = movie.src_watched_at.has_value()
+                        ? (movie.src_watched_at.value() > local_updated_at)
+                        : !has_local; // no timestamp from source: seed once, never overwrite
+
+                    if (source_fresher) {
+                        if (movie.src_watched.value_or(false)) {
+                            if (has_local) {
+                                s_watch_delete.reset();
+                                s_watch_delete.bind(1, synced_user_id);
+                                s_watch_delete.bind(2, "movie");
+                                s_watch_delete.bind(3, movie.movie_id);
+                                s_watch_delete.exec();
+                            }
+                        } else if (movie.src_position_ms.has_value()) {
+                            s_watch_upsert.reset();
+                            s_watch_upsert.bind(1, synced_user_id);
+                            s_watch_upsert.bind(2, "movie");
+                            s_watch_upsert.bind(3, movie.movie_id);
+                            s_watch_upsert.bind(4, movie.src_position_ms.value());
+                            s_watch_upsert.bind(5, movie.duration_ms);
+                            s_watch_upsert.bind(6, movie.src_watched_at.value_or(
+                                static_cast<int64_t>(std::time(nullptr))));
+                            s_watch_upsert.exec();
+                        }
+                    }
+                }
             }
             txn.commit();
             std::cout << "[sync]   wrote movies: "

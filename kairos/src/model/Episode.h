@@ -21,4 +21,11 @@ struct Episode {
     std::string      tvdb_id;
     std::string      tmdb_id;
     std::string      imdb_id;
+
+    // Watch state as reported by the source for its configured primary
+    // account — transient, sync-time-only fields; never written to the
+    // `episode` table. See Movie.h's identical fields for the full rationale.
+    std::optional<bool>    src_watched;
+    std::optional<int64_t> src_position_ms;
+    std::optional<int64_t> src_watched_at;
 };

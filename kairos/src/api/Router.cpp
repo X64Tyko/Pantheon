@@ -6,6 +6,7 @@
 #include "db/Database.h"
 #include "detect/ChapterDetectionManager.h"
 #include "download/DownloadManager.h"
+#include "email/EmailService.h"
 #include "log/LogBuffer.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
@@ -40,6 +41,10 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	if (!path.starts_with("/api/")) return true;
 	if (path == "/api/auth/setup") return true;
 	if (path == "/api/auth/login") return true;
+	// Invite-claim flow — reached before the person has any session at all;
+	// only actionable with the unguessable token in the path itself (see
+	// AuthStore::claimInvite).
+	if (path.starts_with("/api/auth/invite/")) return true;
 	if (path.ends_with("/now") || path.ends_with("/next") || path.ends_with("/epg"))
 		return true;
 	// Paths called by internal services (Hermes, Hephaestus) with no user session
@@ -78,9 +83,9 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 Router::Router(httplib::Server& svr, Database& db, SyncManager& sync,
                ConfStore& conf, LogBuffer& logs,
                RuleEngine& engine, EPGMaterializer& materializer,
-               DownloadManager& dl, AuthStore& auth)
+               DownloadManager& dl, AuthStore& auth, EmailService& email)
 	: svr_(svr), db_(db), sync_(sync), conf_(conf), logs_(logs),
-	  engine_(engine), materializer_(materializer), dl_(dl), auth_(auth),
+	  engine_(engine), materializer_(materializer), dl_(dl), auth_(auth), email_(email),
 	  schedule_cache_(db)
 {}
 
@@ -148,7 +153,7 @@ void Router::registerRoutes() {
 	chapter_detect_mgr_ = std::make_unique<ChapterDetectionManager>(db_, conf_, sync_);
 
 	ServiceContext ctx{db_, conf_, sync_, schedule_cache_,
-	                   materializer_, engine_, auth_, logs_, dl_};
+	                   materializer_, engine_, auth_, logs_, dl_, email_};
 
 	services_.push_back(std::make_unique<AuthService>(ctx));
 	services_.push_back(std::make_unique<SourceService>(ctx));

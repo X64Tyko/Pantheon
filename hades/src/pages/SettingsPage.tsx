@@ -5,6 +5,15 @@ import { statusStore, helpTipsStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
 import type { ArrConfig, CastSessionInfo, RokuDevice, ScraperSettings, ScraperStats } from '../api/types'
+
+interface SmtpForm {
+  host:            string
+  port:            string
+  username:        string
+  password:        string
+  from_address:    string
+  public_base_url: string
+}
 import { useFocusable } from '../nav/useFocusable'
 import { HelpTip, HelpSection } from '../channel/HelpTip'
 
@@ -127,6 +136,17 @@ export default observer(function SettingsPage() {
   const [arr,     setArr]     = useState<ArrConfig>({ sonarr_url: '', sonarr_api_key: '', radarr_url: '', radarr_api_key: '' })
   const [arrSave, setArrSave] = useState<'idle'|'saving'|'ok'|'err'>('idle')
 
+  // Password starts blank regardless of whether one is already stored —
+  // GET /api/config/smtp never returns it (same don't-leak-secrets shape as
+  // source credentials elsewhere); has_password just tells the field what
+  // "leave blank to keep" means here. A save only overwrites it when non-empty.
+  const [smtp,            setSmtp]            = useState<SmtpForm>({ host: '', port: '587', username: '', password: '', from_address: '', public_base_url: '' })
+  const [smtpHasPassword, setSmtpHasPassword] = useState(false)
+  const [smtpSave,        setSmtpSave]        = useState<'idle'|'saving'|'ok'|'err'>('idle')
+  const [testEmailTo,     setTestEmailTo]     = useState('')
+  const [testSend,        setTestSend]        = useState<'idle'|'sending'|'ok'|'err'>('idle')
+  const [testError,       setTestError]       = useState('')
+
   const [scraperSettings, setScraperSettings] = useState<ScraperSettings | null>(null)
   const [scraperStats,    setScraperStats]    = useState<ScraperStats | null>(null)
   const [scraperDirty,    setScraperDirty]    = useState(false)
@@ -203,6 +223,10 @@ export default observer(function SettingsPage() {
     loadCastSessions()
     pollRokuDevices()
     api.getArrConfig().then(setArr).catch(() => {})
+    api.getSmtpConfig().then(c => {
+      setSmtp({ host: c.host, port: c.port || '587', username: c.username, password: '', from_address: c.from_address, public_base_url: c.public_base_url })
+      setSmtpHasPassword(c.has_password)
+    }).catch(() => {})
     api.getScraperSettings().then(setScraperSettings).catch(() => {})
     api.getScraperStats().then(setScraperStats).catch(() => {})
     // One-time check in case a match kicked off elsewhere (or before this
@@ -681,6 +705,88 @@ const applyBuffer = () => {
         <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>
           Used when adding missing media from the import preview.
         </span>
+      </div>
+
+      <Section title="Email / SMTP">
+        <ArrField label="Host" hint="e.g. smtp.gmail.com" value={smtp.host}
+          onChange={v => setSmtp(s => ({ ...s, host: v }))} />
+        <ArrField label="Port" hint="STARTTLS only — 587 is the common case" value={smtp.port}
+          onChange={v => setSmtp(s => ({ ...s, port: v }))} />
+        <ArrField label="Username" value={smtp.username}
+          onChange={v => setSmtp(s => ({ ...s, username: v }))} />
+        <SettingRow label="Password" hint={smtpHasPassword ? 'Leave blank to keep the current one' : undefined}>
+          <input
+            type="password"
+            placeholder={smtpHasPassword ? '••••••••  (unchanged)' : ''}
+            value={smtp.password}
+            onChange={e => setSmtp(s => ({ ...s, password: e.target.value }))}
+            style={{ ...inputStyle, width: 240 }}
+          />
+        </SettingRow>
+        <ArrField label="From address" hint="What recipients see as the sender" value={smtp.from_address}
+          onChange={v => setSmtp(s => ({ ...s, from_address: v }))} />
+        <ArrField label="Public base URL" hint="e.g. https://pantheon.example.com — used to build invite links" value={smtp.public_base_url}
+          onChange={v => setSmtp(s => ({ ...s, public_base_url: v }))} />
+      </Section>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <NavButton
+          id="save-smtp"
+          onClick={async () => {
+            setSmtpSave('saving')
+            try {
+              const body: Partial<Record<keyof SmtpForm, string>> = {
+                host: smtp.host, port: smtp.port, username: smtp.username,
+                from_address: smtp.from_address, public_base_url: smtp.public_base_url,
+              }
+              if (smtp.password) body.password = smtp.password
+              await api.setSmtpConfig(body)
+              setSmtpSave('ok')
+              if (smtp.password) { setSmtpHasPassword(true); setSmtp(s => ({ ...s, password: '' })) }
+            } catch { setSmtpSave('err') }
+            setTimeout(() => setSmtpSave('idle'), 2000)
+          }}
+          disabled={smtpSave === 'saving'}
+          style={{
+            padding: '6px 18px', borderRadius: 6,
+            border: '1px solid oklch(0.72 0.18 84 / 0.6)',
+            background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
+            fontSize: 12, cursor: smtpSave === 'saving' ? 'not-allowed' : 'pointer',
+            fontFamily: "'JetBrains Mono', monospace", opacity: smtpSave === 'saving' ? 0.6 : 1,
+          }}
+        >
+          {smtpSave === 'saving' ? 'Saving…' : smtpSave === 'ok' ? 'Saved' : smtpSave === 'err' ? 'Error' : 'Save Settings'}
+        </NavButton>
+
+        <input
+          placeholder="you@example.com"
+          value={testEmailTo}
+          onChange={e => setTestEmailTo(e.target.value)}
+          style={{ ...inputStyle, width: 200 }}
+        />
+        <NavButton
+          id="test-smtp"
+          onClick={async () => {
+            if (!testEmailTo) return
+            setTestSend('sending'); setTestError('')
+            try { await api.testSmtp(testEmailTo); setTestSend('ok') }
+            catch (e: any) { setTestSend('err'); setTestError(e.message ?? 'Send failed') }
+            setTimeout(() => setTestSend('idle'), 4000)
+          }}
+          disabled={testSend === 'sending' || !testEmailTo}
+          style={{
+            padding: '6px 18px', borderRadius: 6,
+            border: '1px solid var(--hds-line)',
+            background: 'transparent', color: 'var(--hds-txt-2)',
+            fontSize: 12, cursor: testSend === 'sending' || !testEmailTo ? 'not-allowed' : 'pointer',
+            fontFamily: "'JetBrains Mono', monospace", opacity: testSend === 'sending' || !testEmailTo ? 0.5 : 1,
+          }}
+        >
+          {testSend === 'sending' ? 'Sending…' : testSend === 'ok' ? 'Sent ✓' : testSend === 'err' ? 'Failed' : 'Send Test Email'}
+        </NavButton>
+        {testSend === 'err' && testError && (
+          <span style={{ fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{testError}</span>
+        )}
       </div>
 
       {/* ── Metadata scrapers ───────────────────────────────────────────────── */}

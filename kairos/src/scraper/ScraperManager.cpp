@@ -656,7 +656,16 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
         }
         if (search_title == title) {
             std::cout << "[scraper]   \"" << title << "\" → matched\n";
+            const std::string src = !tmdb_id.empty() ? "tmdb" : "tvdb";
+            const std::string eid = !tmdb_id.empty() ? tmdb_id : tvdb_id;
+            linkExternalId("show", kairos_id, src, eid, /*promote_to_primary=*/true);
             setMatchStatus("show", kairos_id, "matched", 1.0);
+            // Auto-match only flips status/score — local metadata (release_date,
+            // overview, genres, ...) still needs fetching so shelves that sort on
+            // it (e.g. Recently Released) see this item without waiting on a
+            // human review-queue accept. match_confirmed stays unset, so
+            // writeback-to-source still gates on an explicit human accept.
+            refreshMetadata(kairos_id, "show");
             return;
         }
         // Folder mismatch: ignore the provided ID and search with the folder name.
@@ -804,7 +813,10 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
         SQLite::Statement upd(db_.get(),
             "UPDATE item_match_candidate SET accepted=1 WHERE candidate_id=?");
         upd.bind(1, cid); upd.exec();
+        linkExternalId("show", kairos_id, best_c.source, best_c.ext_id, /*promote_to_primary=*/true);
         setMatchStatus("show", kairos_id, "matched", best);
+        // See the trusted-ID branch above for why this is needed here too.
+        refreshMetadata(kairos_id, "show");
     } else {
         std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
                   << " (" << std::fixed << std::setprecision(2) << best << ")\n";
@@ -845,7 +857,11 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
     if (!tmdb_id.empty() && search_title == title) {
         // Folder matched (or no file path to check) — trust the provided ID.
         std::cout << "[scraper]   \"" << title << "\" → matched\n";
+        linkExternalId("movie", kairos_id, "tmdb", tmdb_id, /*promote_to_primary=*/true);
         setMatchStatus("movie", kairos_id, "matched", 1.0);
+        // See matchShow()'s trusted-ID branch for why this fetch is needed —
+        // same local-metadata gap (release_date etc.) otherwise.
+        refreshMetadata(kairos_id, "movie");
         return;
     }
 
@@ -980,7 +996,10 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
         SQLite::Statement upd(db_.get(),
             "UPDATE item_match_candidate SET accepted=1 WHERE candidate_id=?");
         upd.bind(1, cid); upd.exec();
+        linkExternalId("movie", kairos_id, best_c.source, best_c.ext_id, /*promote_to_primary=*/true);
         setMatchStatus("movie", kairos_id, "matched", best);
+        // See the trusted-ID branch above for why this is needed here too.
+        refreshMetadata(kairos_id, "movie");
     } else {
         std::cout << "[scraper]   \"" << search_title << "\" → uncertain"
                   << " (" << std::fixed << std::setprecision(2) << best << ")\n";
