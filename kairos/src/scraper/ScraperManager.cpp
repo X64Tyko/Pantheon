@@ -472,16 +472,20 @@ void ScraperManager::runMatchSync(const std::string& target_id,
 void ScraperManager::runMatch(const std::string& target_id,
                                const std::string& item_type) {
     // Count pending items so the log line gives useful context up front.
-    // Same LEFT JOIN shape as the selection queries below, so a library-level
-    // skip_scraping exemption is reflected in both places consistently.
+    // An item opted out via ANY library it's mapped to is opted out
+    // entirely (EXISTS, not a join) — same rule the selection queries below
+    // use, so the two stay consistent.
     int pending_shows = 0, pending_movies = 0;
     if (item_type.empty() || item_type == "show") {
         std::string csql = R"(
             SELECT COUNT(*) FROM show s
-            LEFT JOIN source_mapping sm ON sm.kairos_id = s.show_id AND sm.item_type = 'show'
-            LEFT JOIN media_library ml ON ml.library_id = sm.library_id
             WHERE s.match_status IN ('unscraped','uncertain','unmatched')
-              AND s.skip_scraping = 0 AND COALESCE(ml.skip_scraping, 0) = 0
+              AND s.skip_scraping = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM source_mapping sm
+                JOIN media_library ml ON ml.library_id = sm.library_id
+                WHERE sm.kairos_id = s.show_id AND sm.item_type = 'show' AND ml.skip_scraping = 1
+              )
         )";
         if (!target_id.empty()) csql += " AND s.show_id='" + target_id + "'";
         SQLite::Statement cq(db_.get(), csql);
@@ -490,10 +494,13 @@ void ScraperManager::runMatch(const std::string& target_id,
     if (item_type.empty() || item_type == "movie") {
         std::string csql = R"(
             SELECT COUNT(*) FROM movie m
-            LEFT JOIN source_mapping sm ON sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
-            LEFT JOIN media_library ml ON ml.library_id = sm.library_id
             WHERE m.match_status IN ('unscraped','uncertain','unmatched')
-              AND m.skip_scraping = 0 AND COALESCE(ml.skip_scraping, 0) = 0
+              AND m.skip_scraping = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM source_mapping sm
+                JOIN media_library ml ON ml.library_id = sm.library_id
+                WHERE sm.kairos_id = m.movie_id AND sm.item_type = 'movie' AND ml.skip_scraping = 1
+              )
         )";
         if (!target_id.empty()) csql += " AND m.movie_id='" + target_id + "'";
         SQLite::Statement cq(db_.get(), csql);
@@ -511,58 +518,58 @@ void ScraperManager::runMatch(const std::string& target_id,
     // ── Shows ────────────────────────────────────────────────────────────────
     if (item_type.empty() || item_type == "show") {
         std::string sql = R"(
-            SELECT s.show_id, s.title, COALESCE(s.year,0), s.tmdb_id, s.tvdb_id,
-              COALESCE(ml.library_id, '') AS library_id,
-              COALESCE(ml.include_anidb, 0) AS include_anidb
+            SELECT s.show_id, s.title, COALESCE(s.year,0), s.tmdb_id, s.tvdb_id
             FROM show s
-            LEFT JOIN source_mapping sm ON sm.kairos_id = s.show_id AND sm.item_type = 'show'
-            LEFT JOIN media_library ml ON ml.library_id = sm.library_id
             WHERE s.match_status IN ('unscraped','uncertain','unmatched')
-              AND s.skip_scraping = 0 AND COALESCE(ml.skip_scraping, 0) = 0
+              AND s.skip_scraping = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM source_mapping sm
+                JOIN media_library ml ON ml.library_id = sm.library_id
+                WHERE sm.kairos_id = s.show_id AND sm.item_type = 'show' AND ml.skip_scraping = 1
+              )
         )";
         if (!target_id.empty()) sql += " AND s.show_id = '" + target_id + "'";
 
         SQLite::Statement q(db_.get(), sql);
         while (q.executeStep()) {
-            // matchShow() itself folds in any alternate titles for kid into a
-            // single search/score/accept decision — it must only be called
-            // once per item per pass (see matchShow's own comment for why).
-            matchShow(q.getColumn(5).getString(),  // library_id
-                      q.getColumn(0).getString(),  // kairos_id
+            // One row per show now (no per-library join), so matchShow()
+            // really is only called once per item per pass — settings from
+            // every library the item is mapped to are merged below instead
+            // of the query silently picking (and re-picking) just one.
+            std::string kairos_id = q.getColumn(0).getString();
+            auto settings = resolveMatchSettings("show", kairos_id);
+            matchShow(settings, kairos_id,
                       q.getColumn(1).getString(),  // title
                       q.getColumn(2).getInt(),     // year
                       q.getColumn(3).getString(),  // tmdb_id
-                      q.getColumn(4).getString(),  // tvdb_id
-                      q.getColumn(6).getInt() != 0); // include_anidb
+                      q.getColumn(4).getString()); // tvdb_id
         }
     }
 
     // ── Movies ───────────────────────────────────────────────────────────────
     if (item_type.empty() || item_type == "movie") {
         std::string sql = R"(
-            SELECT m.movie_id, m.title, COALESCE(m.year,0), m.tmdb_id, COALESCE(m.file_path,''),
-              COALESCE(ml.library_id, '') AS library_id,
-              COALESCE(ml.include_anidb, 0) AS include_anidb
+            SELECT m.movie_id, m.title, COALESCE(m.year,0), m.tmdb_id, COALESCE(m.file_path,'')
             FROM movie m
-            LEFT JOIN source_mapping sm ON sm.kairos_id = m.movie_id AND sm.item_type = 'movie'
-            LEFT JOIN media_library ml ON ml.library_id = sm.library_id
             WHERE m.match_status IN ('unscraped','uncertain','unmatched')
-              AND m.skip_scraping = 0 AND COALESCE(ml.skip_scraping, 0) = 0
+              AND m.skip_scraping = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM source_mapping sm
+                JOIN media_library ml ON ml.library_id = sm.library_id
+                WHERE sm.kairos_id = m.movie_id AND sm.item_type = 'movie' AND ml.skip_scraping = 1
+              )
         )";
         if (!target_id.empty()) sql += " AND m.movie_id = '" + target_id + "'";
 
         SQLite::Statement q(db_.get(), sql);
         while (q.executeStep()) {
-            // matchMovie() itself folds in any alternate titles for kid into
-            // a single search/score/accept decision — it must only be called
-            // once per item per pass (see matchMovie's own comment for why).
-            matchMovie(q.getColumn(5).getString(),  // library_id
-                       q.getColumn(0).getString(),  // kairos_id
+            std::string kairos_id = q.getColumn(0).getString();
+            auto settings = resolveMatchSettings("movie", kairos_id);
+            matchMovie(settings, kairos_id,
                        q.getColumn(1).getString(),  // title
                        q.getColumn(2).getInt(),     // year
                        q.getColumn(3).getString(),  // tmdb_id
-                       q.getColumn(4).getString(),  // file_path
-                       q.getColumn(6).getInt() != 0); // include_anidb
+                       q.getColumn(4).getString()); // file_path
         }
     }
     std::cout << "[scraper] match complete ("
@@ -571,10 +578,45 @@ void ScraperManager::runMatch(const std::string& target_id,
 
 // ── Per-item matching ─────────────────────────────────────────────────────────
 
-void ScraperManager::matchShow(const std::string& library_id, const std::string& kairos_id, const std::string& title,
+ScraperManager::MatchSettings
+ScraperManager::resolveMatchSettings(const std::string& item_type, const std::string& kairos_id) const {
+    MatchSettings out;
+
+    std::vector<std::string> library_ids;
+    {
+        SQLite::Statement q(db_.get(), R"(
+            SELECT DISTINCT library_id FROM source_mapping
+            WHERE kairos_id = ? AND item_type = ? AND library_id IS NOT NULL
+        )");
+        q.bind(1, kairos_id);
+        q.bind(2, item_type);
+        while (q.executeStep()) library_ids.push_back(q.getColumn(0).getString());
+    }
+
+    std::set<std::string> seen_priority;
+    for (const auto& lib_id : library_ids) {
+        if (auto lib = sourceRepo().getLibrary(lib_id)) {
+            if (!lib->preferred_language.empty()) out.preferred_languages.insert(lib->preferred_language);
+            if (lib->include_anidb) out.include_anidb = true;
+        }
+        for (const auto& src : sourceRepo().getScraperPriority(lib_id, item_type))
+            if (seen_priority.insert(src).second) out.priority.push_back(src);
+    }
+
+    if (out.preferred_languages.size() > 1) {
+        std::string joined;
+        for (const auto& lang : out.preferred_languages) joined += (joined.empty() ? "" : ", ") + lang;
+        std::cerr << "[scraper] settings conflict: " << item_type << " " << kairos_id
+                  << " is mapped to libraries with differing preferred_language (" << joined
+                  << ") — scoring credits a match against any of them, none is enforced\n";
+    }
+
+    return out;
+}
+
+void ScraperManager::matchShow(const MatchSettings& settings, const std::string& kairos_id, const std::string& title,
                                 int year, const std::string& tmdb_id,
-                                const std::string& tvdb_id,
-                                bool include_anidb) {
+                                const std::string& tvdb_id) {
     // Resolve the effective search title. When the on-disk folder name disagrees
     // with the source-provided title, the folder is more trustworthy.
     std::string search_title = title;
@@ -626,11 +668,7 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
         return;
     }
 
-    std::string pref_lang;
-    if (auto lib = sourceRepo().getLibrary(library_id)) {
-        pref_lang = lib->preferred_language;
-    }
-    std::vector<std::string> priority = sourceRepo().getScraperPriority(library_id, "show");
+    const std::vector<std::string>& priority = settings.priority;
 
     // Every enabled source is queried once per candidate title — the
     // folder/source-resolved title plus any admin-supplied alternate titles —
@@ -657,7 +695,7 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
     auto collect = [&](const std::string& source, const std::string& query_title, std::vector<Show> results) {
         double lang_bonus = 0.0;
         for (const auto& cfg : getSettings().configs) {
-            if (cfg.source == source && !pref_lang.empty() && cfg.language == pref_lang) {
+            if (cfg.source == source && settings.preferred_languages.count(cfg.language)) {
                 lang_bonus = cfg.language_weight;
                 break;
             }
@@ -733,7 +771,7 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
         // this library's scraper priority order. Prevents cross-matching an
         // unrelated general movie/show library against anime titles on
         // title text alone.
-        if (anidb_ && (include_anidb || std::find(priority.begin(), priority.end(), "anidb") != priority.end())) {
+        if (anidb_ && (settings.include_anidb || std::find(priority.begin(), priority.end(), "anidb") != priority.end())) {
             DLOG << "[scraper]   querying anidb for show \"" << qt << "\" year=" << year << '\n';
             const auto t0 = std::chrono::steady_clock::now();
             auto results = anidb_->searchShows(qt, year);
@@ -774,10 +812,9 @@ void ScraperManager::matchShow(const std::string& library_id, const std::string&
     }
 }
 
-void ScraperManager::matchMovie(const std::string& library_id, const std::string& kairos_id, const std::string& title,
+void ScraperManager::matchMovie(const MatchSettings& settings, const std::string& kairos_id, const std::string& title,
                                  int year, const std::string& tmdb_id,
-                                 const std::string& file_path,
-                                 bool include_anidb) {
+                                 const std::string& file_path) {
     // Resolve the effective search title. When the on-disk folder name disagrees
     // with the source-provided title, the folder is more trustworthy.
     std::string search_title = title;
@@ -819,11 +856,7 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
         return;
     }
 
-    std::string pref_lang;
-    if (auto lib = sourceRepo().getLibrary(library_id)) {
-        pref_lang = lib->preferred_language;
-    }
-    std::vector<std::string> priority = sourceRepo().getScraperPriority(library_id, "movie");
+    const std::vector<std::string>& priority = settings.priority;
 
     // See matchShow() for why this loops over query titles (real + alternate)
     // and merges into one candidate pool instead of the caller invoking this
@@ -842,7 +875,7 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
     auto collect = [&](const std::string& source, const std::string& query_title, std::vector<Movie> results) {
         double lang_bonus = 0.0;
         for (const auto& cfg : getSettings().configs) {
-            if (cfg.source == source && !pref_lang.empty() && cfg.language == pref_lang) {
+            if (cfg.source == source && settings.preferred_languages.count(cfg.language)) {
                 lang_bonus = cfg.language_weight;
                 break;
             }
@@ -914,7 +947,7 @@ void ScraperManager::matchMovie(const std::string& library_id, const std::string
         // this library's scraper priority order. Prevents cross-matching an
         // unrelated general movie/show library against anime titles on
         // title text alone.
-        if (anidb_ && (include_anidb || std::find(priority.begin(), priority.end(), "anidb") != priority.end())) {
+        if (anidb_ && (settings.include_anidb || std::find(priority.begin(), priority.end(), "anidb") != priority.end())) {
             DLOG << "[scraper]   querying anidb for movie \"" << qt << "\" year=" << year << '\n';
             const auto t0 = std::chrono::steady_clock::now();
             auto results = anidb_->searchMovies(qt, year);

@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -184,12 +185,26 @@ private:
     void buildScrapers();
     void runMatch(const std::string& target_id, const std::string& item_type);
 
-    void matchShow (const std::string& library_id, const std::string& kairos_id, const std::string& title,
-                    int year, const std::string& tmdb_id, const std::string& tvdb_id,
-                    bool include_anidb = false);
-    void matchMovie(const std::string& library_id, const std::string& kairos_id, const std::string& title,
-                    int year, const std::string& tmdb_id, const std::string& file_path,
-                    bool include_anidb = false);
+    // An item can be mapped to more than one media_library (cross-source
+    // dedup — e.g. the same show synced from both a Plex library and a Local
+    // library that disagree on preferred_language/scraper priority). There is
+    // deliberately no single "winning" library: settings are merged instead —
+    // scraper priority lists concatenated de-duplicated (earlier-mapped
+    // library's order wins ties), include_anidb is true if ANY mapped library
+    // wants it, and preferred_language becomes a set (a scraper matching ANY
+    // member gets the language bonus) rather than one value silently
+    // overwriting the other. See resolveMatchSettings().
+    struct MatchSettings {
+        std::set<std::string>    preferred_languages;
+        std::vector<std::string> priority;
+        bool                     include_anidb = false;
+    };
+    MatchSettings resolveMatchSettings(const std::string& item_type, const std::string& kairos_id) const;
+
+    void matchShow (const MatchSettings& settings, const std::string& kairos_id, const std::string& title,
+                    int year, const std::string& tmdb_id, const std::string& tvdb_id);
+    void matchMovie(const MatchSettings& settings, const std::string& kairos_id, const std::string& title,
+                    int year, const std::string& tmdb_id, const std::string& file_path);
 
     void  storeCandidate(const std::string& item_type, const std::string& kairos_id,
                          const std::string& source,    const std::string& external_id,
