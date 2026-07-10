@@ -781,6 +781,48 @@ export interface ImportPreviewResult {
   unresolved_count: number
 }
 
+// ── Playlist export/import — same portable-JSON pattern as ChannelExport,
+// letting a playlist be shared/moved between Pantheon instances (or people).
+export interface PlaylistExportItem {
+  content_type:  'movie' | 'episode'
+  title:         string
+  year?:         number
+  season?:       number
+  episode?:      number
+  tvdb_id?:      string
+  imdb_id?:      string
+  tmdb_id?:      string
+}
+
+export interface PlaylistExport {
+  kairos_export: number
+  depth:         ExportDepth
+  playlist: {
+    title: string
+    mode:  PlaylistMode
+  }
+  items: PlaylistExportItem[]
+}
+
+export interface PlaylistImportResult {
+  playlist_id: string
+  unresolved:  { content_type: string; title: string; reason: string }[]
+}
+
+export interface PlaylistImportPreviewItem {
+  content_type: string
+  title:        string
+  resolved:     boolean
+  year?:        number
+  season?:      number
+  episode?:     number
+}
+
+export interface PlaylistImportPreviewResult {
+  items:            PlaylistImportPreviewItem[]
+  unresolved_count: number
+}
+
 // ── Arr integrations ──────────────────────────────────────────────────────────
 
 // ── Content requests ──────────────────────────────────────────────────────────

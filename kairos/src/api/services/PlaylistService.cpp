@@ -3,6 +3,7 @@
 #include "../RouteHelpers.h"
 #include "PlexSyncHelper.h"
 #include "../../db/PlaylistRepository.h"
+#include "../../db/PlaylistSerializer.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include "../../source/SyncManager.h"
 #include <nlohmann/json.hpp>
@@ -96,6 +97,51 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 				{"mode",        d->mode},
 				{"items",       items}}.dump());
 		} catch (const std::exception& e) { route::logErr("GET /api/playlists/:id", e); route::err(res, 500, e.what()); }
+	});
+
+	// Portable JSON export/import — same pattern as channel export/import, lets
+	// a playlist be shared/moved between Pantheon instances (or people).
+	// Must register the literal "import"/"import/preview" paths before any
+	// bare POST /api/playlists/:id/... pattern that could otherwise swallow
+	// them — there isn't one today, but keeping the same registration-order
+	// discipline ChannelService follows.
+	svr.Get("/api/playlists/:id/export", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id   = req.path_params.at("id");
+		bool deep = req.has_param("deep") && req.get_param_value("deep") == "true";
+		try {
+			route::ok(res, PlaylistSerializer(db_).exportPlaylist(id, deep).dump(2));
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/playlists/:id/export", e);
+			route::err(res, 404, e.what());
+		}
+	});
+
+	svr.Post("/api/playlists/import/preview", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		try {
+			auto body = json::parse(req.body);
+			bool deep = body.value("depth", "shallow") == "deep";
+			route::ok(res, PlaylistSerializer(db_).previewImport(body, deep).dump());
+		} catch (const std::exception& e) {
+			route::logErr("POST /api/playlists/import/preview", e);
+			route::err(res, 400, e.what());
+		}
+	});
+
+	svr.Post("/api/playlists/import", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		try {
+			auto body = json::parse(req.body);
+			if (!body.value("kairos_export", 0)) { route::err(res, 400, "not a valid Kairos playlist export"); return; }
+			bool deep = body.value("depth", "shallow") == "deep";
+			auto [playlist_id, unresolved] = PlaylistSerializer(db_).importPlaylist(body, deep);
+			res.status = 201;
+			route::ok(res, json{{"playlist_id", playlist_id}, {"unresolved", unresolved}}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("POST /api/playlists/import", e);
+			route::err(res, 400, e.what());
+		}
 	});
 
 	svr.Post("/api/playlists/:id/plex-sync", [this](const Req& req, Res& res) {

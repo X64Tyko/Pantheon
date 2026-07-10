@@ -9,7 +9,8 @@ import type {
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
-  Playlist, PlaylistDetail, ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
+  Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult,
+  ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState,
   UnmappedSourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
@@ -359,6 +360,11 @@ export const api = {
                        request<{id: number, position: number}>('POST',   `/playlists/${id}/items`, b),
   removePlaylistItem:(id: string, iid: number)                => request<void>          ('DELETE', `/playlists/${id}/items/${iid}`),
   movePlaylistItem:  (id: string, iid: number, position: number) => request<void>       ('PATCH',  `/playlists/${id}/items/${iid}`, { position }),
+
+  // Playlist export/import — same portable-JSON pattern as channel export/import.
+  exportPlaylist:      (id: string, deep = true) => request<PlaylistExport>('GET', `/playlists/${id}/export${deep ? '?deep=true' : ''}`),
+  previewPlaylistImport: (data: PlaylistExport)   => request<PlaylistImportPreviewResult>('POST', '/playlists/import/preview', data),
+  importPlaylist:      (data: PlaylistExport)     => request<PlaylistImportResult>('POST', '/playlists/import', data),
 
   // Filler lists
   getFillerLists:       ()                                              => request<FillerList[]>    ('GET',    '/filler-lists'),

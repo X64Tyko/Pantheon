@@ -1,13 +1,22 @@
 import { observer } from 'mobx-react-lite'
 import { makeAutoObservable, runInAction } from 'mobx'
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import type {
   EpisodeSearchResult, LibraryWithSource, Movie, Playlist, PlexBrowseItem, PlexBrowseList,
-  PlaylistDetail, PlaylistItem, PlaylistMode, Show, Source,
+  PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult,
+  PlaylistItem, PlaylistMode, Show, Source,
 } from '../api/types'
 import { FilterSection, FIELD_DEFS } from '../components/PickerFilters'
 import type { FilterField, FilterOp, FilterRule } from '../components/PickerFilters'
+
+function triggerJsonDownload(data: object, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
@@ -362,6 +371,66 @@ class PlaylistPageStore {
     runInAction(() => { this.detail = d })
     this.load()
   }
+
+  // ── Export/import — portable JSON, same pattern as channel export/import ──
+
+  importError:   string | null = null
+  importResult:  PlaylistImportResult | null = null
+  importPending: { data: PlaylistExport; title: string } | null = null
+  importPreview: PlaylistImportPreviewResult | null = null
+  importingFile: boolean = false
+
+  async exportPlaylist(playlist: Playlist) {
+    try {
+      // Always deep — playlists are episode-heavy, and shallow export can't
+      // round-trip episodes at all (BlockSerializer::resolveSlot's episode
+      // branch only resolves with deep IDs; see project_kairos memory).
+      const data = await api.exportPlaylist(playlist.playlist_id, true)
+      triggerJsonDownload(data, `${playlist.title.replace(/[^a-z0-9]/gi, '_')}.json`)
+    } catch (e: any) {
+      runInAction(() => { this.error = `Export failed: ${e.message}` })
+    }
+  }
+
+  async handleImportFile(file: File) {
+    runInAction(() => {
+      this.importError = null; this.importResult = null
+      this.importPending = null; this.importPreview = null
+    })
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text) as PlaylistExport
+      if (!data.kairos_export || !data.playlist) throw new Error('Not a valid Kairos playlist export.')
+      runInAction(() => { this.importPending = { data, title: data.playlist.title } })
+      api.previewPlaylistImport(data).then(p => runInAction(() => { this.importPreview = p })).catch(() => {})
+    } catch (err: any) {
+      runInAction(() => { this.importError = err.message ?? 'Could not parse file' })
+    }
+  }
+
+  async confirmImport() {
+    if (!this.importPending) return
+    this.importingFile = true; this.importError = null
+    try {
+      const payload: PlaylistExport = {
+        ...this.importPending.data,
+        playlist: { ...this.importPending.data.playlist, title: this.importPending.title },
+      }
+      const result = await api.importPlaylist(payload)
+      runInAction(() => {
+        this.importResult = result
+        this.importPending = null; this.importPreview = null
+        this.importingFile = false
+      })
+      this.load()
+    } catch (err: any) {
+      runInAction(() => { this.importError = err.message ?? 'Import failed'; this.importingFile = false })
+    }
+  }
+
+  cancelImport() {
+    this.importPending = null; this.importPreview = null; this.importError = null
+  }
 }
 
 const store = new PlaylistPageStore()
@@ -383,6 +452,7 @@ export default observer(function PlaylistPage() {
   useEffect(() => { store.load() }, [])
 
   const hasPlexLinks = store.playlists.some(p => p.plex_link)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   return (
     <div className="space-y-5">
@@ -395,6 +465,11 @@ export default observer(function PlaylistPage() {
               ↺ Sync all Plex links
             </button>
           )}
+          <input ref={fileRef} type="file" accept=".json" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) store.handleImportFile(f) }} />
+          <button onClick={() => fileRef.current?.click()} className="btn-secondary">
+            Import Playlist
+          </button>
           <button onClick={() => runInAction(() => { store.creating = !store.creating })}
             className="btn-primary">+ New Playlist</button>
         </div>
@@ -415,6 +490,44 @@ export default observer(function PlaylistPage() {
         <div className="text-red-400 text-sm bg-red-950/30 border border-red-900/40 rounded-lg p-3">{store.error}</div>
       )}
 
+      {store.importError && (
+        <div className="text-red-400 text-sm bg-red-950/30 border border-red-900/40 rounded-lg p-3 flex items-center justify-between">
+          <span>{store.importError}</span>
+          <button onClick={() => runInAction(() => { store.importError = null })} className="text-xs text-zinc-500 hover:text-zinc-300">Dismiss</button>
+        </div>
+      )}
+
+      {store.importResult && (
+        <div className="text-sm bg-emerald-950/30 border border-emerald-900/40 rounded-lg p-3 space-y-1">
+          <div className="text-emerald-400 font-medium">Playlist imported successfully.</div>
+          {store.importResult.unresolved.length > 0 && (
+            <div className="text-zinc-400 text-xs space-y-0.5 mt-1">
+              <div className="text-zinc-500 font-semibold mb-1">
+                {store.importResult.unresolved.length} item{store.importResult.unresolved.length !== 1 ? 's' : ''} could not be resolved:
+              </div>
+              {store.importResult.unresolved.map((u, i) => (
+                <div key={i} className="font-mono">{u.content_type}: {u.title}</div>
+              ))}
+            </div>
+          )}
+          <button onClick={() => runInAction(() => { store.importResult = null })} className="text-xs text-zinc-600 hover:text-zinc-400 mt-1">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {store.importPending && (
+        <ImportPreviewPanel
+          data={store.importPending.data}
+          title={store.importPending.title}
+          preview={store.importPreview}
+          importing={store.importingFile}
+          onTitleChange={t => runInAction(() => { if (store.importPending) store.importPending.title = t })}
+          onConfirm={() => store.confirmImport()}
+          onCancel={() => store.cancelImport()}
+        />
+      )}
+
       <div className="space-y-2">
         {store.playlists.length === 0 && !store.loading && (
           <p className="text-zinc-600 text-sm">No playlists yet.</p>
@@ -422,6 +535,62 @@ export default observer(function PlaylistPage() {
         {store.playlists.map(pl => (
           <PlaylistCard key={pl.playlist_id} playlist={pl} />
         ))}
+      </div>
+    </div>
+  )
+})
+
+const ImportPreviewPanel = observer(function ImportPreviewPanel({
+  data, title, preview, importing, onTitleChange, onConfirm, onCancel,
+}: {
+  data:      PlaylistExport
+  title:     string
+  preview:   PlaylistImportPreviewResult | null
+  importing: boolean
+  onTitleChange: (t: string) => void
+  onConfirm: () => void
+  onCancel:  () => void
+}) {
+  return (
+    <div className="card p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="section-label">Import Preview</h2>
+        <div className="flex items-center gap-3">
+          {preview && preview.unresolved_count > 0 && (
+            <span className="text-[10px] font-mono text-amber-500">{preview.unresolved_count} unresolved</span>
+          )}
+          {preview && preview.unresolved_count === 0 && (
+            <span className="text-[10px] font-mono text-emerald-500">all resolved</span>
+          )}
+          {!preview && <span className="text-[10px] font-mono text-zinc-600">resolving…</span>}
+          <span className="text-[10px] font-mono text-zinc-600 uppercase">
+            {data.depth} export · {data.items.length} item{data.items.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Playlist Title</div>
+        <input value={title} onChange={e => onTitleChange(e.target.value)} className="input w-full" />
+      </div>
+
+      {preview && (
+        <div className="max-h-64 overflow-y-auto scrollbar-dark space-y-1 rounded-lg border border-zinc-800/60 p-2">
+          {preview.items.map((item, i) => (
+            <div key={i} className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${item.resolved ? 'bg-zinc-900/40' : 'bg-red-950/20'}`}>
+              <span className={item.resolved ? 'text-emerald-500' : 'text-red-500'}>{item.resolved ? '✓' : '✕'}</span>
+              <span className="text-zinc-600">{item.content_type}</span>
+              <span className="text-zinc-300 truncate flex-1">{item.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button onClick={onConfirm} disabled={importing} className="btn-primary disabled:opacity-40">
+          {importing ? 'Importing…' : 'Confirm Import'}
+        </button>
+        <button onClick={onCancel} className="btn-ghost">Cancel</button>
       </div>
     </div>
   )
@@ -471,6 +640,8 @@ const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Pl
             </button>
           </>
         )}
+        <button onClick={() => store.exportPlaylist(playlist)}
+          className="btn-secondary text-xs shrink-0">Export</button>
         <button onClick={() => store.deletePlaylist(playlist.playlist_id)}
           className="btn-danger text-xs shrink-0">Delete</button>
       </div>
