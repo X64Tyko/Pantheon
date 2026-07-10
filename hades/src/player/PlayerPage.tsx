@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, mediaUrl, channelLogoUrl } from '../api/client'
-import type { Channel } from '../api/types'
+import type { Channel, ChannelNow, Chapter, NextEpisode } from '../api/types'
 import { usePlaybackSession, type PlaybackTarget } from './usePlaybackSession'
 import { VideoPlayer } from './VideoPlayer'
 import { PlayerControls } from './PlayerControls'
@@ -9,6 +9,7 @@ import { TrackMenu } from './TrackMenu'
 import { SettingsMenu } from './SettingsMenu'
 import { RokuDeviceMenu } from './RokuDeviceMenu'
 import { LoadingThrobber } from './LoadingThrobber'
+import { UpNextOverlay } from './UpNextOverlay'
 import { useNavBack } from '../nav/back'
 import { useCastSession } from '../cast/useCastSession'
 import { useRokuSession } from '../cast-roku/useRokuSession'
@@ -22,6 +23,15 @@ interface PlayerPageProps {
 
 const PROGRESS_PING_MS = 15_000
 const CONTROLS_IDLE_MS = 3_000
+// Up Next trigger when there's no credits/outro chapter data for this item
+// yet (most libraries, until Kairos's detector has covered them) — last 30s
+// of the episode, Netflix-style.
+const UP_NEXT_FALLBACK_WINDOW_MS = 30_000
+// Live channels: how often to re-poll "what's on now" — a live schedule has
+// no scrubber to derive position from, so this also re-derives PiP state.
+const CHANNEL_NOW_POLL_MS = 7_000
+
+function isCreditsType(t: Chapter['chapter_type']) { return t === 'credits' || t === 'outro' }
 
 export function PlayerPage({ kind }: PlayerPageProps) {
   const { id, channelId } = useParams<{ id: string; channelId: string }>()
@@ -45,6 +55,19 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const [liveChannel, setLiveChannel] = useState<Channel | null>(null)
   const [buffering, setBuffering] = useState(false)
   const [bufferPercent, setBufferPercent] = useState(0)
+
+  // Series continuation — skip intro, credits/up-next detection, played-marking.
+  const [chapters, setChapters] = useState<Chapter[]>([])
+  const [nextEpisode, setNextEpisode] = useState<NextEpisode | null>(null)
+  const [upNextDismissed, setUpNextDismissed] = useState(false)
+  const skipCleanupPingRef = useRef(false)
+
+  // Live-channel credits PiP — driven purely by the currently-airing item's
+  // own chapter data + wall-clock elapsed position, not a separate schedule
+  // concept (see plan: "credits == pip, post_credits == restore, otherwise
+  // normal").
+  const [channelNow, setChannelNow] = useState<ChannelNow | null>(null)
+  const [channelChapters, setChannelChapters] = useState<Chapter[]>([])
 
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const castSession = useCastSession()
@@ -82,7 +105,64 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     api.getChannels().then(chs => setLiveChannel(chs.find(c => c.channel_id === targetId) ?? null)).catch(() => {})
   }, [kind, targetId])
 
-  // Periodic + on-unmount watch-progress pings (VOD only).
+  // Poll "what's on now" for the credits PiP. On item_id change, fetch that
+  // item's chapters — the currently-airing item's own credits/post_credits
+  // chapters drive the PiP, not anything about the filler/bumper that
+  // eventually follows (that's just whatever /now reports once the schedule
+  // naturally moves on, no separate fetch needed for it).
+  useEffect(() => {
+    if (kind !== 'channel') { setChannelNow(null); setChannelChapters([]); return }
+    let cancelled = false
+    let lastItemId = ''
+
+    const tick = () => {
+      api.getChannelNow(targetId).then(now => {
+        if (cancelled) return
+        setChannelNow(now)
+        if (now.item_id === lastItemId) return
+        lastItemId = now.item_id
+        const fetchChapters = now.item_type === 'episode' ? api.getEpisodeChapters(now.item_id)
+                             : now.item_type === 'movie'   ? api.getMovieChapters(now.item_id)
+                             : Promise.resolve<Chapter[]>([])
+        fetchChapters.catch(() => []).then(ch => { if (!cancelled) setChannelChapters(ch) })
+      }).catch(() => {})
+    }
+
+    tick()
+    const interval = setInterval(tick, CHANNEL_NOW_POLL_MS)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [kind, targetId])
+
+  // Chapters + next-episode info for series continuation. PlayerPage doesn't
+  // remount when advancing episode-to-episode (same route, just a new :id),
+  // so targetId changing is also what resets currentMs/upNextDismissed below.
+  useEffect(() => {
+    if (kind !== 'episode') { setChapters([]); setNextEpisode(null); return }
+    let cancelled = false
+    setChapters([])
+    setNextEpisode(null)
+    Promise.all([
+      api.getEpisodeChapters(targetId).catch(() => []),
+      api.getNextEpisode(targetId).catch(() => null),
+    ]).then(([ch, next]) => {
+      if (cancelled) return
+      setChapters(ch)
+      setNextEpisode(next)
+    })
+    return () => { cancelled = true }
+  }, [kind, targetId])
+
+  useEffect(() => {
+    setCurrentMs(initialPositionMs)
+    setUpNextDismissed(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetId])
+
+  // Periodic + on-unmount watch-progress pings (VOD only). Skipped once by
+  // handleAdvanceToNext, which already sent its own definitive completed=true
+  // write for the episode being left — without this guard, this effect's own
+  // cleanup (still closed over the outgoing episode's stale currentMs) would
+  // fire right after and could overwrite that back to completed=false.
   useEffect(() => {
     if (kind === 'channel') return
     const interval = setInterval(() => {
@@ -91,6 +171,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     }, PROGRESS_PING_MS)
     return () => {
       clearInterval(interval)
+      if (skipCleanupPingRef.current) { skipCleanupPingRef.current = false; return }
       if (currentMs > 0 && session.durationMs > 0)
         api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMs), duration_ms: Math.round(session.durationMs) }).catch(() => {})
     }
@@ -172,6 +253,49 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const handleSelectAudio    = (index: number) => session.reload({ positionMs: currentMs, audioTrack: index })
   const handleSelectSubtitle = (index: number) => session.reload({ positionMs: currentMs, subtitleTrack: index })
 
+  // Not shown while casting/Roku-mirroring — the sender tab's own navigate()
+  // wouldn't affect what's actually playing on the receiver (queuing a new
+  // title mid-cast isn't supported yet, see useCastSession), so acting on
+  // either affordance here wouldn't do what it visually promises.
+  const activeChapter = !isRemoteActive
+    ? chapters.find(c => currentMs >= c.start_ms && currentMs < (c.end_ms || Infinity))
+    : undefined
+
+  const showSkipIntro = activeChapter?.chapter_type === 'intro'
+
+  const hasCreditsChapterData = chapters.some(c => isCreditsType(c.chapter_type))
+  const inCreditsChapter = !!activeChapter && isCreditsType(activeChapter.chapter_type)
+  const nearEnd = session.durationMs > 0 && currentMs > 0 &&
+    (session.durationMs - currentMs) < UP_NEXT_FALLBACK_WINDOW_MS
+  const showUpNext = !isRemoteActive && !!nextEpisode && !upNextDismissed &&
+    (inCreditsChapter || (!hasCreditsChapterData && nearEnd))
+
+  // Marks the episode being left as played (regardless of its actual
+  // position — the whole point of skipping/auto-advancing is doing this
+  // before naturally reaching the 95% threshold) and moves on.
+  const handleAdvanceToNext = useCallback(() => {
+    if (!nextEpisode) return
+    skipCleanupPingRef.current = true
+    // nextEpisode is only ever populated while kind === 'episode' (see the
+    // chapters/next-episode fetch effect above), so the outgoing item here
+    // is always an episode too.
+    api.putWatchProgress('episode', targetId, {
+      position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
+    }).catch(() => {})
+    navigate(`/player/episode/${nextEpisode.episode_id}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextEpisode, targetId, session.durationMs, navigate])
+
+  // Re-evaluated on every render (piggybacking on the live video's own
+  // onTimeUpdate-driven re-renders for freshness — a live channel has no
+  // scrubber/duration to key an effect off of), purely from the currently-
+  // airing item's chapters + wall-clock elapsed position.
+  const channelElapsedMs = channelNow ? Date.now() - channelNow.wall_clock_start_ms : 0
+  const channelActiveChapter = channelChapters.find(
+    c => channelElapsedMs >= c.start_ms && channelElapsedMs < (c.end_ms || Infinity))
+  const channelPip = kind === 'channel' && !isRemoteActive &&
+    !!channelActiveChapter && isCreditsType(channelActiveChapter.chapter_type)
+
   return (
     <div
       style={pageStyle}
@@ -201,20 +325,41 @@ export function PlayerPage({ kind }: PlayerPageProps) {
             // cleanup (hls?.destroy()), same as navigating away normally.
             <div style={castingBackdropStyle} />
           ) : (
-            <VideoPlayer
-              videoRef={videoRef}
-              manifestUrl={session.manifestUrl}
-              subtitleUrl={session.subtitleUrl}
-              isLive={session.isLive}
-              onTimeUpdate={(ms) => setCurrentMs(ms)}
-              onEnded={() => navigate(-1)}
-              onError={setPlayerError}
-            />
+            <>
+              {channelPip && (
+                <div style={pipBackdropStyle}>
+                  <img src={channelLogoUrl(targetId)} alt="" style={pipBackdropLogoStyle} />
+                </div>
+              )}
+              <div style={channelPip ? pipVideoContainerStyle : fullVideoContainerStyle}>
+                <VideoPlayer
+                  videoRef={videoRef}
+                  manifestUrl={session.manifestUrl}
+                  subtitleUrl={session.subtitleUrl}
+                  isLive={session.isLive}
+                  onTimeUpdate={(ms) => setCurrentMs(ms)}
+                  onEnded={() => { if (nextEpisode) handleAdvanceToNext(); else navigate(-1) }}
+                  onError={setPlayerError}
+                />
+              </div>
+            </>
           )}
           {buffering && !isRemoteActive && (
             <div style={{ ...overlayStyle, pointerEvents: 'none' }}>
               <LoadingThrobber percent={bufferPercent} />
             </div>
+          )}
+          {showSkipIntro && (
+            <button onClick={() => handleSeek(activeChapter!.end_ms)} style={skipIntroBtnStyle}>
+              Skip Intro
+            </button>
+          )}
+          {showUpNext && nextEpisode && (
+            <UpNextOverlay
+              nextEpisode={nextEpisode}
+              onPlayNow={handleAdvanceToNext}
+              onDismiss={() => setUpNextDismissed(true)}
+            />
           )}
           <div style={{ opacity: controlsVisible || menu ? 1 : 0, transition: 'opacity .25s', pointerEvents: controlsVisible || menu ? 'auto' : 'none' }}>
             <PlayerControls
@@ -307,10 +452,45 @@ const castingBackdropStyle: React.CSSProperties = {
   width: '100%', height: '100%', background: '#000',
 }
 
+const fullVideoContainerStyle: React.CSSProperties = {
+  position: 'absolute', inset: 0,
+}
+
+// Shrinks the still-airing feed into a corner while its credits play out —
+// the same continuous live stream, just re-laid-out; once the schedule
+// naturally moves past credits (post_credits, or the item itself changes),
+// this reverts to fullVideoContainerStyle and the same <video> is already
+// showing whatever's actually on next.
+const pipVideoContainerStyle: React.CSSProperties = {
+  position: 'absolute', right: 24, bottom: 24, zIndex: 56,
+  width: 320, height: 180, borderRadius: 8, overflow: 'hidden',
+  boxShadow: '0 8px 28px rgba(0,0,0,0.6)',
+  border: '1px solid var(--hds-line, rgba(255,255,255,0.15))',
+  transition: 'all .3s ease',
+}
+
+const pipBackdropStyle: React.CSSProperties = {
+  position: 'absolute', inset: 0, zIndex: 40,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: '#000',
+}
+
+const pipBackdropLogoStyle: React.CSSProperties = {
+  maxWidth: '30%', maxHeight: '30%', opacity: 0.85,
+}
+
 const overlayStyle: React.CSSProperties = {
   position: 'absolute', inset: 0, zIndex: 50,
   display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
   fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: 'var(--hds-txt-2)',
+}
+
+const skipIntroBtnStyle: React.CSSProperties = {
+  position: 'absolute', right: 28, bottom: 110, zIndex: 60,
+  padding: '10px 20px', borderRadius: 6, cursor: 'pointer',
+  border: '1px solid var(--hds-line, rgba(255,255,255,0.12))',
+  background: 'var(--hds-bg-2, rgba(20,20,24,0.92))', color: 'var(--hds-txt, #eee)',
+  fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 600,
 }
 
 const backBtnStyle: React.CSSProperties = {

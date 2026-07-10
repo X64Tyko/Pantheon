@@ -76,7 +76,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 		try {
 			SQLite::Statement q(db_.get(), R"SQL(
 				SELECT content_type, content_id, position_ms, duration_ms, updated_at
-				FROM watch_progress WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?
+				FROM watch_progress WHERE user_id = ? AND completed = 0 ORDER BY updated_at DESC LIMIT ?
 			)SQL");
 			q.bind(1, user->user_id);
 			q.bind(2, limit);
@@ -122,8 +122,12 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	});
 
 	// ── PUT /api/watch-progress/:content_type/:id ─────────────────────────────
-	// Upserts position. An item finished (>=95% through) is treated as watched
-	// and its progress row is cleared instead, so it drops off Continue Watching.
+	// Upserts position. An item finished (>=95% through, or explicit
+	// {"completed":true} — used by the player's skip-credits/up-next action to
+	// mark an episode played before it's actually reached 95%) is stored with
+	// completed=1 and position clamped to duration, rather than deleted, so
+	// "played" survives as a durable fact (see migration v73). Ordinary pings
+	// with no "completed" field behave exactly as before.
 	svr.Put("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res) {
 		auto user = currentUser();
 		if (!user) { route::err(res, 401, "Unauthorized"); return; }
@@ -138,18 +142,42 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 			int64_t duration_ms = b.value("duration_ms", int64_t{0});
 			if (position_ms < 0) position_ms = 0;
 
-			if (duration_ms > 0 && position_ms >= static_cast<int64_t>(duration_ms * 0.95)) {
-				WatchProgressRepository(db_).remove(user->user_id, content_type, content_id);
-				route::ok(res, json{{"ok", true}, {"watched", true}}.dump());
-				return;
-			}
+			bool completed = b.value("completed", false) ||
+				(duration_ms > 0 && position_ms >= static_cast<int64_t>(duration_ms * 0.95));
+			if (completed && duration_ms > 0) position_ms = duration_ms;
 
 			WatchProgressRepository(db_).upsert(user->user_id, content_type, content_id,
-				position_ms, duration_ms, static_cast<int64_t>(std::time(nullptr)));
+				position_ms, duration_ms, static_cast<int64_t>(std::time(nullptr)), completed);
 
-			route::ok(res, json{{"ok", true}, {"watched", false}}.dump());
+			route::ok(res, json{{"ok", true}, {"watched", completed}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("PUT /api/watch-progress/:content_type/:id", e); route::err(res, 400, e.what());
+		}
+	});
+
+	// ── GET /api/shows/:id/watch-state ────────────────────────────────────────
+	// The most-recently-touched episode watch_progress row for this show,
+	// completed or not — lets the player distinguish "resume mid-episode"
+	// from "the last episode was finished, continue at the next one" (see
+	// hades/src/player/resolvePlayTarget.ts). Unlike the Continue Watching
+	// list above, this deliberately does not filter out completed rows.
+	svr.Get("/api/shows/:id/watch-state", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+
+		try {
+			auto state = WatchProgressRepository(db_).getLatestForShow(user->user_id, req.path_params.at("id"));
+			if (!state) { route::ok(res, "null"); return; }
+
+			route::ok(res, json{
+				{"content_id",  state->content_id},
+				{"position_ms", state->position_ms},
+				{"duration_ms", state->duration_ms},
+				{"completed",   state->completed},
+				{"updated_at",  state->updated_at},
+			}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/shows/:id/watch-state", e); route::err(res, 500, e.what());
 		}
 	});
 

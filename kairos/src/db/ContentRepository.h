@@ -278,6 +278,13 @@ public:
 
     std::vector<EpisodeRow>       listEpisodesForShow(const std::string& show_id,
                                                        const std::string& season_filter = "");
+    // The next playable episode after episode_id, honoring the show's
+    // episode_display_order ('season': season/episode order; 'aired': air_date
+    // order, falling back to season/episode if the current episode has no
+    // air_date). Includes linked specials (playable via linked_movie_id) but
+    // skips any episode with neither a file_path nor a linked_movie_id.
+    // nullopt if episode_id doesn't exist or is the last playable episode.
+    std::optional<EpisodeRow>     getNextEpisode(const std::string& episode_id);
     // Most recently aired (real-world air_date, blanks/future excluded)
     // episode of a show — used by Home's Recently Aired shelf.
     std::optional<EpisodeRow>     getLatestAiredEpisode(const std::string& show_id);

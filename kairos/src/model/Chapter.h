@@ -6,7 +6,7 @@ struct Chapter {
     std::string chapter_id;
     std::string media_type;    // "episode" | "movie"
     std::string media_id;
-    std::string chapter_type;  // "pre_roll" | "intro" | "recap" | "ad_break" | "chapter" | "credits" | "post_credits" | "outro" | "unclassified"
+    std::string chapter_type;  // "pre_roll" | "intro" | "recap" | "ad_break" | "chapter" | "credits" | "post_credits" | "outro" | "next_time" | "unclassified"
     std::string title;
     int64_t     start_ms  = 0;
     int64_t     end_ms    = 0;

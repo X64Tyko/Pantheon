@@ -4,24 +4,27 @@ import { api } from '@/api/client'
 
 vi.mock('@/api/client', () => ({
   api: {
-    getWatchProgress: vi.fn(),
-    getEpisodes:      vi.fn(),
+    getShowWatchState: vi.fn(),
+    getNextEpisode:    vi.fn(),
+    getEpisodes:       vi.fn(),
   },
 }))
 
-const mockApi = api as Record<'getWatchProgress' | 'getEpisodes', ReturnType<typeof vi.fn>>
+const mockApi = api as Record<'getShowWatchState' | 'getNextEpisode' | 'getEpisodes', ReturnType<typeof vi.fn>>
 
 function ep(episode_id: string, season: number, episode: number) {
   return { episode_id, season, episode, title: '', duration_ms: 0 }
 }
 
-function progress(overrides: Partial<{
-  content_type: 'episode' | 'movie'; content_id: string; show_id: string
-  position_ms: number; updated_at: number
+function nextEp(episode_id: string, season = 1, episode = 2) {
+  return { episode_id, season, episode, title: '', duration_ms: 0, overview: '', air_date: '', thumb: '' }
+}
+
+function watchState(overrides: Partial<{
+  content_id: string; position_ms: number; duration_ms: number; completed: boolean; updated_at: number
 }> = {}) {
   return {
-    content_type: 'episode' as const, content_id: 'e1', show_id: 'sh1',
-    title: '', duration_ms: 100_000, position_ms: 1000, updated_at: 1,
+    content_id: 'e1', position_ms: 1000, duration_ms: 100_000, completed: false, updated_at: 1,
     ...overrides,
   }
 }
@@ -29,59 +32,64 @@ function progress(overrides: Partial<{
 describe('resolvePlayPath', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    mockApi.getWatchProgress.mockResolvedValue([])
+    mockApi.getShowWatchState.mockResolvedValue(null)
+    mockApi.getNextEpisode.mockResolvedValue(null)
     mockApi.getEpisodes.mockResolvedValue([])
   })
 
   it('movies resolve directly with no API calls', async () => {
     const path = await resolvePlayPath('movie', 'm1')
     expect(path).toBe('/player/movie/m1')
-    expect(mockApi.getWatchProgress).not.toHaveBeenCalled()
+    expect(mockApi.getShowWatchState).not.toHaveBeenCalled()
+    expect(mockApi.getNextEpisode).not.toHaveBeenCalled()
     expect(mockApi.getEpisodes).not.toHaveBeenCalled()
   })
 
-  it('a show with no progress and no episodes resolves to null', async () => {
+  it('a show with no watch state and no episodes resolves to null', async () => {
     const path = await resolvePlayPath('show', 'sh1')
     expect(path).toBeNull()
   })
 
-  it('a show with episodes but no progress starts at the earliest episode', async () => {
+  it('a show with episodes but no watch state starts at the earliest episode', async () => {
     mockApi.getEpisodes.mockResolvedValue([ep('e3', 2, 1), ep('e1', 1, 1), ep('e2', 1, 2)])
     const path = await resolvePlayPath('show', 'sh1')
     expect(path).toBe('/player/episode/e1')
   })
 
-  it('resumes the most recently updated in-progress episode for this show', async () => {
-    mockApi.getEpisodes.mockResolvedValue([ep('e1', 1, 1)])
-    mockApi.getWatchProgress.mockResolvedValue([
-      progress({ content_id: 'e-old', updated_at: 1, position_ms: 5000 }),
-      progress({ content_id: 'e-new', updated_at: 99, position_ms: 42_000 }),
-    ])
+  it('resumes an in-progress episode at its saved position', async () => {
+    mockApi.getShowWatchState.mockResolvedValue(watchState({ content_id: 'e2', position_ms: 42_000, completed: false }))
     const path = await resolvePlayPath('show', 'sh1')
-    expect(path).toBe('/player/episode/e-new?t=42000')
+    expect(path).toBe('/player/episode/e2?t=42000')
+    expect(mockApi.getNextEpisode).not.toHaveBeenCalled()
   })
 
-  it('ignores progress entries for other shows', async () => {
-    mockApi.getEpisodes.mockResolvedValue([ep('e1', 1, 1)])
-    mockApi.getWatchProgress.mockResolvedValue([
-      progress({ show_id: 'other-show', content_id: 'e-other', updated_at: 99 }),
-    ])
+  it('continues at the next episode once the last-watched one was completed', async () => {
+    mockApi.getShowWatchState.mockResolvedValue(watchState({ content_id: 'e1', completed: true }))
+    mockApi.getNextEpisode.mockResolvedValue(nextEp('e2'))
     const path = await resolvePlayPath('show', 'sh1')
-    expect(path).toBe('/player/episode/e1') // falls through to first-episode logic
+    expect(path).toBe('/player/episode/e2')
+    expect(mockApi.getNextEpisode).toHaveBeenCalledWith('e1')
   })
 
-  it('ignores non-episode progress entries (movies)', async () => {
+  it('falls back to the earliest episode when the completed episode was the last one', async () => {
     mockApi.getEpisodes.mockResolvedValue([ep('e1', 1, 1)])
-    mockApi.getWatchProgress.mockResolvedValue([
-      progress({ content_type: 'movie', content_id: 'm1', show_id: 'sh1', updated_at: 99 }),
-    ])
+    mockApi.getShowWatchState.mockResolvedValue(watchState({ content_id: 'e1', completed: true }))
+    mockApi.getNextEpisode.mockResolvedValue(null)
     const path = await resolvePlayPath('show', 'sh1')
     expect(path).toBe('/player/episode/e1')
   })
 
-  it('treats a getWatchProgress failure as no progress rather than rejecting', async () => {
+  it('treats a getShowWatchState failure as no watch state rather than rejecting', async () => {
     mockApi.getEpisodes.mockResolvedValue([ep('e1', 1, 1)])
-    mockApi.getWatchProgress.mockRejectedValue(new Error('network error'))
+    mockApi.getShowWatchState.mockRejectedValue(new Error('network error'))
+    const path = await resolvePlayPath('show', 'sh1')
+    expect(path).toBe('/player/episode/e1')
+  })
+
+  it('treats a getNextEpisode failure as no next episode rather than rejecting', async () => {
+    mockApi.getEpisodes.mockResolvedValue([ep('e1', 1, 1)])
+    mockApi.getShowWatchState.mockResolvedValue(watchState({ content_id: 'e1', completed: true }))
+    mockApi.getNextEpisode.mockRejectedValue(new Error('network error'))
     const path = await resolvePlayPath('show', 'sh1')
     expect(path).toBe('/player/episode/e1')
   })

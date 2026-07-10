@@ -501,6 +501,32 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, result.dump());
 	});
 
+	// Next playable episode after :id, honoring the show's episode_display_order
+	// (see ContentRepository::getNextEpisode) — used by the player's up-next/
+	// auto-advance and by resolvePlayTarget once the last-watched episode is
+	// completed. "null" (not 404) when :id is the last playable episode.
+	// Deliberately NOT named ".../next" — Router.cpp's isPublicPath exempts
+	// any path ending in "/next" from auth (for GET /api/channels/:id/next,
+	// a live-channel schedule lookup Hephaestus/DVR clients hit with no
+	// session) — this route would otherwise silently leak episode metadata
+	// (including of restricted/parental-gated content) unauthenticated.
+	svr.Get("/api/episodes/:id/next-episode", [this](const Req& req, Res& res) {
+		ContentRepository repo(db_);
+		auto next = repo.getNextEpisode(req.path_params.at("id"));
+		if (!next) { route::ok(res, "null"); return; }
+
+		route::ok(res, json{
+			{"episode_id",  next->episode_id},
+			{"season",      next->season},
+			{"episode",     next->episode},
+			{"title",       next->title},
+			{"duration_ms", next->duration_ms},
+			{"overview",    next->overview},
+			{"air_date",    next->air_date},
+			{"thumb",       next->thumb},
+		}.dump());
+	});
+
 	svr.Get("/api/shows/:id/seasons", [this](const Req& req, Res& res) {
 		auto id = req.path_params.at("id");
 		ContentRepository repo(db_);

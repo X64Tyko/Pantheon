@@ -11,6 +11,7 @@
 class Database;
 class ConfStore;
 class ScraperManager;
+class ChapterDetectionManager;
 
 // Tracks every kairos_id that was live at the end of a full sync run.
 // Passed through syncContent → syncShows / syncMovies so the global
@@ -68,6 +69,14 @@ public:
 
     void setScraperManager(ScraperManager* s) { scraper_ = s; }
 
+    // Late-bound same as setScraperManager above (avoids a circular include —
+    // ChapterDetectionManager already depends on SyncManager). When set,
+    // syncChaptersFromFiles opportunistically kicks off cross-episode
+    // intro/credits/recap/etc. detection (ChapterDetector.h) for one
+    // not-yet-detected show per sync pass — see its doc comment for why only
+    // one, not every eligible show at once.
+    void setChapterDetectionManager(ChapterDetectionManager* m) { chapter_detect_ = m; }
+
     void syncItemChapters(IMediaSource& src,
                           const std::string& media_type,
                           const std::string& kairos_id,
@@ -123,4 +132,5 @@ private:
     std::atomic<int>                           override_thread_count_{0};
     std::atomic<bool>                          yield_requested_{false};
     ScraperManager*                            scraper_{nullptr};
+    ChapterDetectionManager*                   chapter_detect_{nullptr};
 };

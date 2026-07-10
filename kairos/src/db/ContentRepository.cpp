@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -1387,6 +1388,58 @@ std::optional<EpisodeRow> ContentRepository::getLatestAiredEpisode(const std::st
     r.overview    = q.getColumn(5).getString();
     r.air_date    = q.getColumn(6).getString();
     r.thumb       = q.getColumn(7).getString();
+    return r;
+}
+
+// The next playable episode after episode_id — see header comment for the
+// season/aired ordering rules. Includes linked specials (playable via a live
+// join through linked_movie_id, see PlaybackService) but skips episodes with
+// no file of their own and no linked movie.
+std::optional<EpisodeRow> ContentRepository::getNextEpisode(const std::string& episode_id) {
+    SQLite::Statement cur(db_.get(), R"(
+        SELECT e.show_id, e.season, e.episode, e.air_date, s.episode_display_order
+        FROM episode e JOIN show s ON s.show_id = e.show_id
+        WHERE e.episode_id = ?
+    )");
+    cur.bind(1, episode_id);
+    if (!cur.executeStep()) return std::nullopt;
+
+    auto show_id  = cur.getColumn(0).getString();
+    int  season   = cur.getColumn(1).getInt();
+    int  episode  = cur.getColumn(2).getInt();
+    auto air_date = cur.getColumn(3).getString();
+    bool aired_order = cur.getColumn(4).getString() == "aired" && !air_date.empty();
+
+    const std::string cols =
+        "SELECT episode_id, season, episode, title, duration_ms, overview, air_date, thumb, file_path "
+        "FROM episode WHERE show_id = ? AND (file_path != '' OR linked_movie_id IS NOT NULL) ";
+
+    std::unique_ptr<SQLite::Statement> q;
+    if (aired_order) {
+        q = std::make_unique<SQLite::Statement>(db_.get(), cols +
+            "AND air_date != '' AND air_date > ? ORDER BY air_date, season, episode LIMIT 1");
+        q->bind(1, show_id);
+        q->bind(2, air_date);
+    } else {
+        q = std::make_unique<SQLite::Statement>(db_.get(), cols +
+            "AND (season > ? OR (season = ? AND episode > ?)) ORDER BY season, episode LIMIT 1");
+        q->bind(1, show_id);
+        q->bind(2, season);
+        q->bind(3, season);
+        q->bind(4, episode);
+    }
+    if (!q->executeStep()) return std::nullopt;
+
+    EpisodeRow r;
+    r.episode_id  = q->getColumn(0).getString();
+    r.season      = q->getColumn(1).getInt();
+    r.episode     = q->getColumn(2).getInt();
+    r.title       = q->getColumn(3).getString();
+    r.duration_ms = q->getColumn(4).getInt64();
+    r.overview    = q->getColumn(5).getString();
+    r.air_date    = q->getColumn(6).getString();
+    r.thumb       = q->getColumn(7).getString();
+    r.file_path   = q->getColumn(8).getString();
     return r;
 }
 

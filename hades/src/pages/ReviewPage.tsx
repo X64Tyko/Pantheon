@@ -1540,11 +1540,12 @@ function fmtMs(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
-const CHAPTER_TYPES: ChapterType[] = ['unclassified', 'pre_roll', 'intro', 'recap', 'ad_break', 'chapter', 'credits', 'post_credits', 'outro']
+const CHAPTER_TYPES: ChapterType[] = ['unclassified', 'pre_roll', 'intro', 'recap', 'ad_break', 'chapter', 'credits', 'post_credits', 'outro', 'next_time']
 
 const CHAPTER_TYPE_LABEL: Record<ChapterType, string> = {
   unclassified: 'Unclassified', pre_roll: 'Pre-Roll', intro: 'Intro', recap: 'Recap',
   ad_break: 'Ad Break', chapter: 'Chapter', credits: 'Credits', post_credits: 'Post-Credits', outro: 'Outro',
+  next_time: 'Next Time',
 }
 
 const CHAPTER_TYPE_COLOR: Record<ChapterType, string> = {
@@ -1557,6 +1558,7 @@ const CHAPTER_TYPE_COLOR: Record<ChapterType, string> = {
   outro:        'var(--hds-match-amber)',
   chapter:      'oklch(0.65 0.18 220)',
   unclassified: 'var(--hds-txt-3)',
+  next_time:    'oklch(0.7 0.16 40)',
 }
 
 function ChaptersListPanel({

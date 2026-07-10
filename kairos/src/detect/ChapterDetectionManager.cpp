@@ -50,9 +50,16 @@ void ChapterDetectionManager::runShowDetect(const std::string& show_id) {
     }
     if (items.empty()) return;
 
-    // Workers only run ffmpeg and fill their own index — no DB access from
-    // worker threads, same split SyncManager::syncChaptersFromFiles uses.
-    struct Result { std::string episode_id; std::vector<Chapter> chapters; };
+    // Workers only run ffmpeg/fpcalc and fill their own index — no DB access
+    // from worker threads, same split SyncManager::syncChaptersFromFiles uses.
+    // Scene cuts are needed both for ad_break (existing) and, later in this
+    // function, to confirm pre_roll/recap/post_credits/next_time boundaries
+    // once intro/credits anchors are known — computed once here either way.
+    struct Result {
+        std::vector<Chapter>  ad_breaks;
+        std::vector<int64_t>  cuts;
+        std::vector<uint32_t> fingerprint;
+    };
     std::vector<Result> results(items.size());
     {
         std::atomic<size_t> next{0};
@@ -62,24 +69,45 @@ void ChapterDetectionManager::runShowDetect(const std::string& show_id) {
         for (int w = 0; w < worker_count; ++w) {
             workers.emplace_back([&]() {
                 for (size_t i = next.fetch_add(1); i < items.size(); i = next.fetch_add(1)) {
-                    auto chapters = detectAdBreaks(items[i].mapped_path, items[i].duration_ms, "episode");
-                    if (!chapters.empty())
-                        results[i] = {items[i].episode_id, std::move(chapters)};
+                    results[i].cuts        = sceneChangeTimeline(items[i].mapped_path);
+                    results[i].ad_breaks   = detectAdBreaks(items[i].mapped_path, items[i].duration_ms, "episode");
+                    results[i].fingerprint = computeAudioFingerprint(items[i].mapped_path);
                 }
             });
         }
         for (auto& t : workers) t.join();
     }
 
+    // Cross-episode intro/credits alignment needs every episode's fingerprint
+    // together — sequential, after the parallel per-episode work above.
+    std::vector<EpisodeFingerprint> fps;
+    fps.reserve(items.size());
+    for (size_t i = 0; i < items.size(); ++i)
+        fps.push_back({items[i].episode_id, items[i].duration_ms, results[i].fingerprint});
+    auto recurring = detectRecurringSegments(fps);
+
     ChapterRepository repo(db_);
     int written = 0;
-    for (auto& res : results) {
-        if (!res.chapters.empty()) {
-            repo.syncChapters("episode", res.episode_id, "detected", std::move(res.chapters));
+    for (size_t i = 0; i < items.size(); ++i) {
+        std::vector<Chapter> chapters = results[i].ad_breaks;
+
+        std::optional<Chapter> intro, credits;
+        if (auto it = recurring.find(items[i].episode_id); it != recurring.end()) {
+            for (const auto& c : it->second) {
+                if (c.chapter_type == "intro")   intro   = c;
+                if (c.chapter_type == "credits") credits = c;
+            }
+            chapters.insert(chapters.end(), it->second.begin(), it->second.end());
+        }
+        auto boundary = deriveBoundaryChapters(intro, credits, results[i].cuts, items[i].duration_ms);
+        chapters.insert(chapters.end(), boundary.begin(), boundary.end());
+
+        if (!chapters.empty()) {
+            repo.syncChapters("episode", items[i].episode_id, "detected", std::move(chapters));
             ++written;
         }
     }
-    std::cout << "[detect] show " << show_id << ": ad_break detection wrote " << written
+    std::cout << "[detect] show " << show_id << ": detection wrote " << written
                << "/" << items.size() << " episode(s)\n";
 }
 

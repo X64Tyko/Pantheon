@@ -383,6 +383,27 @@ export interface CredentialStatus {
   has_user_id: boolean
 }
 
+// GET /api/channels/:id/now — what's currently airing on a linear channel,
+// including wall-clock timing so the player can compute elapsed position
+// within the item (there's no per-item scrubber for a live channel).
+export interface ChannelNow {
+  item_type:           string
+  item_id:             string
+  file_path:           string
+  duration_ms:         number
+  title:               string
+  block_id:            string
+  wall_clock_start_ms: number
+  wall_clock_end_ms:   number
+  is_filler:           boolean
+  show_title?:         string
+  show_id?:            string
+  season?:             number
+  episode_num?:        number
+  source_id?:          string
+  external_id?:        string
+}
+
 export interface PathMap {
   from: string
   to:   string
@@ -940,7 +961,7 @@ export interface ReviewQueueItem {
   folder_path?:    string
 }
 
-export type ChapterType = 'pre_roll' | 'intro' | 'recap' | 'ad_break' | 'chapter' | 'credits' | 'post_credits' | 'outro' | 'unclassified'
+export type ChapterType = 'pre_roll' | 'intro' | 'recap' | 'ad_break' | 'chapter' | 'credits' | 'post_credits' | 'outro' | 'next_time' | 'unclassified'
 
 export interface Chapter {
   chapter_id:   string
@@ -965,6 +986,29 @@ export interface ChapterReviewItem {
   duration_ms: number
   year?:       number
   chapters:    Chapter[]
+}
+
+// GET /api/episodes/:id/next — the next playable episode after this one, or
+// null if it's the last (see ContentRepository::getNextEpisode).
+export interface NextEpisode {
+  episode_id:  string
+  season:      number
+  episode:     number
+  title:       string
+  duration_ms: number
+  overview:    string
+  air_date:    string
+  thumb:       string
+}
+
+// GET /api/shows/:id/watch-state — the most-recently-touched episode's watch
+// progress for a show, completed or not (see resolvePlayTarget.ts).
+export interface ShowWatchState {
+  content_id:  string
+  position_ms: number
+  duration_ms: number
+  completed:   boolean
+  updated_at:  number
 }
 
 export interface ScraperStats {

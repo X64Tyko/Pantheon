@@ -12,6 +12,7 @@ import type {
   Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult,
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
+  NextEpisode, ShowWatchState, ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState,
   UnmappedSourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
 } from './types'
@@ -215,6 +216,7 @@ export const api = {
   // Channels
   getChannels:      ()                                                            => request<Channel[]>('GET',    '/channels'),
   checkChannelAccess: (id: string)                                                => request<{ allowed: boolean }>('GET', `/channels/${id}/access-check`),
+  getChannelNow:      (id: string)                                                => request<ChannelNow>('GET', `/channels/${id}/now`),
   createChannel:    (b: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection'>) => request<{channel_id: string}>('POST', '/channels', b),
   updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes' | 'audio_lang' | 'subtitle_lang' | 'stream_resolution' | 'stream_video_bitrate' | 'stream_audio_bitrate' | 'content_tag'>>) => request<void>('PATCH', `/channels/${id}`, b),
   deleteChannel:    (id: string)                                                  => request<void>('DELETE', `/channels/${id}`),
@@ -279,9 +281,15 @@ export const api = {
 
   // Watch progress
   getWatchProgress:   (limit?: number)                                     => request<WatchProgress[]>('GET', `/watch-progress${limit != null ? '?limit=' + limit : ''}`),
-  putWatchProgress:   (contentType: 'movie' | 'episode', id: string, b: { position_ms: number; duration_ms: number }) =>
+  putWatchProgress:   (contentType: 'movie' | 'episode', id: string, b: { position_ms: number; duration_ms: number; completed?: boolean }) =>
                         request<{ ok: boolean; watched: boolean }>('PUT', `/watch-progress/${contentType}/${id}`, b),
   clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
+  getShowWatchState:  (showId: string)                                     => request<ShowWatchState | null>('GET', `/shows/${showId}/watch-state`),
+
+  // Series continuation. Deliberately not ".../next" — see the Kairos route's
+  // own comment (ContentService.cpp): that suffix is exempted from auth for
+  // the live-channel schedule lookup and would leak episode metadata unauthenticated.
+  getNextEpisode:     (episodeId: string)                                  => request<NextEpisode | null>('GET', `/episodes/${episodeId}/next-episode`),
 
   // Blocks
   getBlocks:         (channelId: string)                                          => request<Block[]>('GET', `/channels/${channelId}/blocks`),
@@ -477,6 +485,10 @@ export const api = {
   // Chapter review (visual inspection of chapter detection, not a commit flow)
   getChapterReviewItems: (p: { media_type?: string; chapter_type?: string; q?: string; limit?: number; offset?: number } = {}) =>
                            request<{items: ChapterReviewItem[]; total: number}>('GET', `/chapters/review?${qs(p)}`),
+
+  // Chapters for the currently-playing item (skip-intro / credits detection)
+  getEpisodeChapters: (id: string) => request<Chapter[]>('GET', `/episodes/${id}/chapters`),
+  getMovieChapters:   (id: string) => request<Chapter[]>('GET', `/movies/${id}/chapters`),
 
   // Chapter processing — one-off re-probe for testing detection, without a full source sync
   syncMovieChapters: (id: string) => request<Chapter[]>('POST', `/movies/${id}/chapters/sync`, {}),

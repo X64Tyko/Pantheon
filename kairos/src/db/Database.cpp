@@ -1673,6 +1673,19 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_user_invite_user ON user_invite(user_id);
 )SQL" }
 
+// ── v73: durable "played" state on watch_progress. Previously, crossing the
+//         95%-watched threshold deleted the row outright — that made "played"
+//         indistinguishable from "never started" once the row was gone, which
+//         broke series-continuation (resuming a show after finishing an
+//         episode fell back to episode 1 instead of the next one). Finished
+//         items now stay as a row with completed=1 (position_ms clamped to
+//         duration_ms) instead of being removed; Continue Watching queries
+//         add "AND completed = 0" to keep the externally-visible behavior
+//         identical to before.
+,{ 73, R"SQL(
+    ALTER TABLE watch_progress ADD COLUMN completed INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

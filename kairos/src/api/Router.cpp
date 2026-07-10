@@ -151,6 +151,7 @@ void Router::registerRoutes() {
 	scraper_mgr_ = std::make_unique<ScraperManager>(db_, conf_);
 	sync_.setScraperManager(scraper_mgr_.get());
 	chapter_detect_mgr_ = std::make_unique<ChapterDetectionManager>(db_, conf_, sync_);
+	sync_.setChapterDetectionManager(chapter_detect_mgr_.get());
 
 	ServiceContext ctx{db_, conf_, sync_, schedule_cache_,
 	                   materializer_, engine_, auth_, logs_, dl_, email_};

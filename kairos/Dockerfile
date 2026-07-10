@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
     libssl3 \
     ffmpeg \
+    libchromaprint-tools \
     curl \
     ca-certificates \
     unzip \
