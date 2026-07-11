@@ -6,6 +6,11 @@ export class StatusStore {
   matching     = false
   syncDebug    = false
   epgDebug     = false
+  // Which source's content-ingestion phase is running right now — undefined
+  // when idle, or during phases that aren't per-source (orphan cleanup,
+  // scraper matching, chapter sync). Drives the Activity page's per-source
+  // "currently active" indicator.
+  currentSourceId: string | undefined = undefined
 
   private _timer: ReturnType<typeof setTimeout> | null = null
 
@@ -38,10 +43,11 @@ export class StatusStore {
         api.getSettings(),
       ])
       runInAction(() => {
-        this.syncing   = sync.running
-        this.matching  = match.running
-        this.syncDebug = settings.sync_debug
-        this.epgDebug  = settings.epg_debug
+        this.syncing         = sync.running
+        this.matching        = match.running
+        this.syncDebug       = settings.sync_debug
+        this.epgDebug        = settings.epg_debug
+        this.currentSourceId = sync.current_source_id
       })
     } catch {}
     this._timer = setTimeout(() => this._poll(), this.anyRunning ? 2000 : 15000)

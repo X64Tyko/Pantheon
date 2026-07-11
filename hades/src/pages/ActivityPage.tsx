@@ -163,17 +163,24 @@ export default observer(function ActivityPage() {
           <p className="text-xs text-zinc-600">No sources configured.</p>
         ) : (
           <div className="grid grid-cols-2 gap-2">
-            {sourceStore.sources.map(src => (
-              <div key={src.source_id}
-                   className="flex items-center gap-2 px-3 py-2 rounded
-                              bg-zinc-950/60 border border-zinc-800/60 text-xs">
-                <span className={`w-1.5 h-1.5 rounded-full ${
-                  statusStore.anyRunning ? 'bg-violet-400 animate-pulse' : 'bg-zinc-600'
-                }`} />
-                <span className="text-zinc-300 font-medium">{src.display_name}</span>
-                <span className="text-zinc-600 ml-auto uppercase">{src.source_type}</span>
-              </div>
-            ))}
+            {sourceStore.sources.map(src => {
+              // Pulses only for the source whose content-ingestion phase is
+              // actually running right now — undefined (idle, or a
+              // not-per-source phase like scraper matching/chapter sync)
+              // means no single source's dot should claim to be "the" active one.
+              const isActive = statusStore.currentSourceId === src.source_id
+              return (
+                <div key={src.source_id}
+                     className="flex items-center gap-2 px-3 py-2 rounded
+                                bg-zinc-950/60 border border-zinc-800/60 text-xs">
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    isActive ? 'bg-violet-400 animate-pulse' : 'bg-zinc-600'
+                  }`} />
+                  <span className="text-zinc-300 font-medium">{src.display_name}</span>
+                  <span className="text-zinc-600 ml-auto uppercase">{src.source_type}</span>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

@@ -142,4 +142,13 @@ export class SourceStore {
       runInAction(() => { this.syncing = false })
     }
   }
+
+  async triggerLibrarySync(sourceId: string, libraryId: string) {
+    this.syncing = true
+    try {
+      await api.triggerLibrarySync(sourceId, libraryId)
+    } finally {
+      runInAction(() => { this.syncing = false })
+    }
+  }
 }

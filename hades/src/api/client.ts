@@ -197,6 +197,11 @@ export const api = {
   patchLibrary:     (sourceId: string, lid: string, b: Partial<Pick<Library, 'display_name'|'library_type'|'preferred_scraper'|'preferred_language'|'include_anidb'|'show_on_home'|'skip_scraping'>>) =>
                                                         request<void>('PATCH', `/sources/${sourceId}/libraries/${lid}`, b),
   removeLibrary:    (sourceId: string, lid: string)     => request<void>         ('DELETE', `/sources/${sourceId}/libraries/${lid}`),
+  // Content ingestion only for this one library — no orphan cleanup, no
+  // source-wide chapter/specials rescans (see Kairos's SyncManager::syncLibrary).
+  // Picks up new/changed content quickly; removals still need a full
+  // triggerSync/triggerHardSync on the source to be noticed.
+  triggerLibrarySync: (sourceId: string, lid: string)   => request<{status: string}>('POST', `/sources/${sourceId}/libraries/${lid}/sync`),
   getScraperPriority: (sourceId: string, lid: string, itemType: 'show'|'movie') =>
                                                         request<{order: string[]}>('GET', `/sources/${sourceId}/libraries/${lid}/scraper-priority?item_type=${itemType}`),
   setScraperPriority: (sourceId: string, lid: string, itemType: 'show'|'movie', order: string[]) =>
@@ -267,7 +272,7 @@ export const api = {
   getSamplePath:     (id: string)                       => request<{path: string | null}>('GET', `/sources/${id}/sample-path`),
 
   // Sync status
-  getSyncStatus:    ()                                  => request<{running: boolean}>('GET', '/sync/status'),
+  getSyncStatus:    ()                                  => request<{running: boolean; current_source_id?: string}>('GET', '/sync/status'),
 
   // Content — list
   getAllLibraries: ()                                    => request<LibraryWithSource[]>('GET', '/libraries'),
