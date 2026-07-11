@@ -1781,7 +1781,9 @@ function ChapterInspectorPanel({ item, onClose }: { item: ChapterReviewItem; onC
             isLive={false}
             autoPlay={false}
             controls
-            onTimeUpdate={ms => setCurrentMs(ms)}
+            // ms is relative to the current manifest, not absolute — see
+            // usePlaybackSession's basePositionMs comment.
+            onTimeUpdate={ms => setCurrentMs(session.basePositionMs + ms)}
             onEnded={() => {}}
             onError={setPlayerError}
           />

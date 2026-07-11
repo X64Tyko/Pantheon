@@ -334,7 +334,11 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     api.putWatchProgress('episode', targetId, {
       position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
     }).catch(() => {})
-    navigate(`/player/episode/${nextEpisode.episode_id}`)
+    // replace, not push: this is a continuation of the same viewing session,
+    // not a new navigation the viewer chose — pushing would leave the
+    // just-finished episode's route on the history stack, so Back after an
+    // auto-advance stepped into it instead of leaving the player entirely.
+    navigate(`/player/episode/${nextEpisode.episode_id}`, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextEpisode, targetId, session.durationMs, navigate])
 
@@ -403,7 +407,11 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                   manifestUrl={session.manifestUrl}
                   subtitleUrl={session.subtitleUrl}
                   isLive={session.isLive}
-                  onTimeUpdate={(ms) => setCurrentMs(ms)}
+                  // ms is relative to the *current* manifest (which starts
+                  // its own timeline at 0 regardless of where in the source
+                  // file it begins) — add basePositionMs to get the true
+                  // absolute position. See usePlaybackSession's comment.
+                  onTimeUpdate={(ms) => setCurrentMs(session.basePositionMs + ms)}
                   // Dismissing Up Next means "don't continue into the next
                   // episode" — without the upNextDismissed check here, simply
                   // letting playback run to the true end of the file would

@@ -20,6 +20,14 @@ export interface PlaybackSession {
   tracks:        VodTracks | null // null: loading, or n/a (live)
   audioTrack:    number
   subtitleTrack: number
+  // Absolute position (source-file ms) the *current* manifest's own t=0
+  // represents. Every (re)load — initial mount, a seek outside the buffered
+  // range, or a track switch — starts a brand new VOD encode/manifest whose
+  // internal HLS timeline begins at 0 regardless of where in the source file
+  // it actually starts (VideoPlayer forces hls.js startPosition:0 for VOD).
+  // Callers must add this to the <video> element's own currentTime to get
+  // the true position — see PlayerPage's onTimeUpdate.
+  basePositionMs: number
   // VOD only — restarts the session at the given position/track selection.
   // Both share one code path: a track switch is "seek to current position
   // with a different track," a seek is "same tracks, different position."
@@ -39,6 +47,7 @@ export function usePlaybackSession(target: PlaybackTarget, initialPositionMs = 0
   const [tracks,        setTracks]        = useState<VodTracks | null>(null)
   const [audioTrack,    setAudioTrack]    = useState(-1)
   const [subtitleTrack, setSubtitleTrack] = useState(-1)
+  const [basePositionMs, setBasePositionMs] = useState(initialPositionMs)
 
   const sessionIdRef = useRef<string | null>(null)
   const genRef        = useRef(0) // guards against a stale reload's response landing after a newer one starts
@@ -51,6 +60,11 @@ export function usePlaybackSession(target: PlaybackTarget, initialPositionMs = 0
     sessionIdRef.current = null
 
     if (prevSession) stopVodPlayback(prevSession)
+
+    // Set synchronously (not inside the .then() below) so it's already
+    // correct by the time the new manifest's first onTimeUpdate tick lands,
+    // rather than racing it.
+    setBasePositionMs(positionMs)
 
     if (isLive) {
       setLoading(true)
@@ -120,6 +134,6 @@ export function usePlaybackSession(target: PlaybackTarget, initialPositionMs = 0
 
   return {
     loading, error, manifestUrl, subtitleUrl, isLive, directPlay,
-    title, durationMs, tracks, audioTrack, subtitleTrack, reload,
+    title, durationMs, tracks, audioTrack, subtitleTrack, reload, basePositionMs,
   }
 }
