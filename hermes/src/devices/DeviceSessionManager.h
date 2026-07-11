@@ -22,6 +22,11 @@ public:
 
     std::vector<std::shared_ptr<DeviceSession>> listForUser(const std::string& user_id);
 
+    // Every live session regardless of owner — admin-only "who's connected"
+    // view (DeviceRouter.cpp's GET /api/devices/all), unlike listForUser
+    // above (the cast-device-picker's "my own devices" scope).
+    std::vector<std::shared_ptr<DeviceSession>> listAll();
+
     // Drops sessions whose long-poll/state-post hasn't reconnected within grace_ms.
     void reap(int64_t grace_ms);
 

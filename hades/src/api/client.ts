@@ -13,7 +13,7 @@ import type {
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ChannelNow,
-  ItemMetadata, ExternalId, RokuDevice, RokuDeviceState,
+  ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection,
   UnmappedSourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
 } from './types'
 
@@ -155,6 +155,9 @@ export const api = {
   // Roku device sessions — Hermes-owned/live (the actual cast/command channel)
   getRokuDeviceState: (id: string)                                   => request<RokuDeviceState>('GET', `/devices/${id}`),
   sendRokuCommand:    (id: string, command: Record<string, unknown>) => request<{ ok: boolean; status: string }>('POST', `/devices/${id}/command`, command),
+  // Admin-only — every connected Roku across every user, for the Activity
+  // page's "how many people are connected and what are they watching" view.
+  getAllDeviceConnections: () => request<DeviceConnection[]>('GET', '/devices/all'),
   // User management (admin only)
   getUsers:    ()                                            => request<User[]>('GET',    '/users'),
   createUser:  (username: string, password: string, role: string) => request<void>('POST', '/users', { username, password, role }),
@@ -415,6 +418,10 @@ export const api = {
   getShow:        (id: string)                          => request<ShowDetail>('GET',   `/shows/${id}`),
   updateShow:     (id: string, b: Partial<ShowDetail>)  => request<void>      ('PATCH', `/shows/${id}`, b),
   getMovie:       (id: string)                          => request<MovieDetail>('GET',  `/movies/${id}`),
+  // Minimal single-episode lookup (title/show_title/season/episode only) —
+  // for resolving a display title from a bare episode_id, e.g. the
+  // connections view. Not the full episode detail other pages might expect.
+  getEpisodeBrief: (id: string) => request<{ episode_id: string; season: number; episode: number; title: string; show_id: string; show_title: string }>('GET', `/episodes/${id}`),
   updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
   pushToSources:  (id: string, contentType: 'show' | 'movie') =>
                     request<WritebackResult>('POST', `/${contentType}s/${id}/writeback`),

@@ -60,6 +60,25 @@ export interface RokuDeviceState {
   }
 }
 
+// Admin-only "who's connected" view (GET /api/devices/all) — every live
+// Roku session regardless of owner, unlike RokuDeviceState's own-devices
+// scope. contentType/contentId are the bare identifiers the device itself
+// reported (PlayerScreen.brs); no title threaded through — resolve one on
+// demand (channel list already loaded client-side; movie/episode need a
+// lookup) rather than in the device's own frequent heartbeat.
+export interface DeviceConnection {
+  id:           string
+  user_id:      string
+  last_seen_ms: number
+  state: {
+    playing?:     boolean
+    positionMs?:  number
+    durationMs?:  number
+    contentType?: 'channel' | 'movie' | 'episode'
+    contentId?:   string
+  }
+}
+
 export interface Source {
   source_id:    string
   source_type:  'plex' | 'jellyfin' | 'emby' | 'local'

@@ -292,6 +292,12 @@ public:
     std::vector<EpisodeSearchRow> searchEpisodes(const std::string& show_id,
                                                   const std::string& q,
                                                   int season, int limit, int offset);
+    // Single episode by id, with its show's title — nullopt if it doesn't
+    // exist. EpisodeSearchRow (not EpisodeRow) specifically for the
+    // show_id/show_title fields; used by admin-facing "what's this device
+    // watching" views (connected-devices list) that only have a bare
+    // episode_id to resolve into something displayable.
+    std::optional<EpisodeSearchRow> getEpisode(const std::string& episode_id);
 
     std::optional<ItemSource> getShowThumb(const std::string& show_id);
     std::optional<ItemSource> getShowArt(const std::string& show_id);

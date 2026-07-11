@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { sourceStore, systemStore, statusStore, metricsStore } from '../stores'
 import type { LogEntry } from '../stores'
 import { NowPlayingPanel } from '../components/activity/NowPlayingPanel'
+import { DeviceConnectionsPanel } from '../components/activity/DeviceConnectionsPanel'
 import { Sparkline } from '../components/activity/Sparkline'
 
 function tagColor(line: string): string {
@@ -186,6 +187,7 @@ export default observer(function ActivityPage() {
       </div>
 
       <NowPlayingPanel />
+      <DeviceConnectionsPanel />
 
       {/* System Resources */}
       <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4" style={{ flexShrink: 0 }}>

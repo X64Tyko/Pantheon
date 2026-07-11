@@ -28,9 +28,35 @@ std::optional<std::string> authenticate(const Config& cfg, const Req& req) {
     } catch (...) { return std::nullopt; }
 }
 
+// Same /api/auth/me round trip as authenticate() above, plus a role check —
+// separate function (not a flag on authenticate) so every existing call site
+// keeps its current "any logged-in user" semantics unchanged.
+std::optional<std::string> authenticateAdmin(const Config& cfg, const Req& req) {
+    auto auth = req.get_header_value("Authorization");
+    if (auth.empty()) return std::nullopt;
+    httplib::Client cli(cfg.kairos_url);
+    cli.set_connection_timeout(5);
+    cli.set_read_timeout(5);
+    auto r = cli.Get("/api/auth/me", httplib::Headers{{"Authorization", auth}});
+    if (!r || r->status != 200) return std::nullopt;
+    try {
+        auto j = json::parse(r->body);
+        auto user_id = j.value("user_id", "");
+        if (user_id.empty() || j.value("role", "") != "admin") return std::nullopt;
+        return user_id;
+    } catch (...) { return std::nullopt; }
+}
+
 void unauthorized(Res& res) {
     res.status = 401;
     res.set_content(json{{"error", "Unauthorized"}}.dump(), "application/json");
+}
+
+// Matches Kairos's own convention of not distinguishing "not logged in" from
+// "logged in but not admin" on its admin-only routes.
+void forbidden(Res& res) {
+    res.status = 403;
+    res.set_content(json{{"error", "Forbidden"}}.dump(), "application/json");
 }
 
 void notConnected(Res& res) {
@@ -40,6 +66,19 @@ void notConnected(Res& res) {
 
 json sessionJson(const std::shared_ptr<DeviceSession>& s) {
     return {{"id", s->rokuDeviceId()}, {"state", s->state()}};
+}
+
+// Admin "who's connected" view — unlike sessionJson above (the cast-device-
+// picker's own-devices scope, where the caller already knows it's their own
+// account), this crosses user boundaries, so it surfaces user_id and
+// liveness explicitly rather than just the raw state blob.
+json adminSessionJson(const std::shared_ptr<DeviceSession>& s) {
+    return {
+        {"id",           s->rokuDeviceId()},
+        {"user_id",      s->userId()},
+        {"state",        s->state()},
+        {"last_seen_ms", s->lastSeenMs()},
+    };
 }
 
 } // namespace
@@ -107,6 +146,20 @@ void registerDeviceRoutes(httplib::Server& svr, DeviceSessionManager& devices, c
         if (!user_id) { unauthorized(res); return; }
         json arr = json::array();
         for (auto& session : devices.listForUser(*user_id)) arr.push_back(sessionJson(session));
+        res.set_content(arr.dump(), "application/json");
+    });
+
+    // Admin-only "who's connected" view — every live Roku session regardless
+    // of owner, for deciding whether it's safe to restart/reboot while
+    // people might be watching. Deliberately its own path rather than a
+    // query param on GET /api/devices above, so that route's existing
+    // "my own devices" contract (used unauthenticated-role-wise by every
+    // regular user for their own cast-device picker) never has to branch on it.
+    svr.Get("/api/devices/all", [&devices, &cfg](const Req& req, Res& res) {
+        auto user_id = authenticateAdmin(cfg, req);
+        if (!user_id) { forbidden(res); return; }
+        json arr = json::array();
+        for (auto& session : devices.listAll()) arr.push_back(adminSessionJson(session));
         res.set_content(arr.dump(), "application/json");
     });
 

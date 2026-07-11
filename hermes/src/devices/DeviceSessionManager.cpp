@@ -27,6 +27,14 @@ std::vector<std::shared_ptr<DeviceSession>> DeviceSessionManager::listForUser(co
     return out;
 }
 
+std::vector<std::shared_ptr<DeviceSession>> DeviceSessionManager::listAll() {
+    std::lock_guard lock(mtx_);
+    std::vector<std::shared_ptr<DeviceSession>> out;
+    out.reserve(map_.size());
+    for (auto& [id, session] : map_) out.push_back(session);
+    return out;
+}
+
 void DeviceSessionManager::reap(int64_t grace_ms) {
     std::lock_guard lock(mtx_);
     const int64_t cutoff = DeviceSession::nowMs() - grace_ms;

@@ -503,6 +503,26 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, result.dump());
 	});
 
+	// Minimal single-episode lookup — title/show_title/season/episode only,
+	// for admin-facing "what's this playing" views (the connected-devices
+	// list) that only have a bare episode_id to resolve into something
+	// displayable. Not a full episode detail endpoint (no overview/thumb/
+	// file_path) — add fields here only when another caller actually needs them.
+	svr.Get("/api/episodes/:id", [this](const Req& req, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		ContentRepository repo(db_);
+		auto e = repo.getEpisode(req.path_params.at("id"));
+		if (!e) { route::err(res, 404, "episode not found"); return; }
+		route::ok(res, json{
+			{"episode_id", e->episode_id},
+			{"season",     e->season},
+			{"episode",    e->episode},
+			{"title",      e->title},
+			{"show_id",    e->show_id},
+			{"show_title", e->show_title},
+		}.dump());
+	});
+
 	// Next playable episode after :id, honoring the show's episode_display_order
 	// (see ContentRepository::getNextEpisode) — used by the player's up-next/
 	// auto-advance and by resolvePlayTarget once the last-watched episode is
