@@ -1686,6 +1686,36 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE watch_progress ADD COLUMN completed INTEGER NOT NULL DEFAULT 0;
 )SQL" }
 
+// ── v74: folder-path + fuzzy-title sync-time dedup. show.folder_path lets
+//         cross-source dedup compare on-disk location the same way movies
+//         already do via file_path — no backfill for existing rows (would
+//         require reimplementing the season-folder-stripping heuristic in
+//         SQL); they simply stay '' until their next normal sync, and
+//         getShowDetail()'s existing episode-derived fallback covers the gap
+//         until then. duplicate_candidate holds "uncertain" cross-source
+//         matches for human review; ON CONFLICT DO NOTHING on the insert is
+//         the entire remembered-dismissal mechanism — a dismissed pair is
+//         never resurrected by a later sync re-detecting it.
+,{ 74, R"SQL(
+    ALTER TABLE show ADD COLUMN folder_path TEXT NOT NULL DEFAULT '';
+
+    CREATE TABLE IF NOT EXISTS duplicate_candidate (
+        candidate_id      TEXT PRIMARY KEY,
+        item_type         TEXT NOT NULL CHECK(item_type IN ('show','movie')),
+        kairos_id_a       TEXT NOT NULL,
+        kairos_id_b       TEXT NOT NULL,
+        trigger           TEXT NOT NULL CHECK(trigger IN ('fuzzy_title','folder_uncertain','both')),
+        reason            TEXT NOT NULL DEFAULT '',
+        title_similarity  REAL NOT NULL DEFAULT 0,
+        folder_a          TEXT NOT NULL DEFAULT '',
+        folder_b          TEXT NOT NULL DEFAULT '',
+        status            TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dismissed')),
+        created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        decided_at        TEXT
+    );
+    CREATE INDEX idx_dup_candidate_status ON duplicate_candidate(item_type, status);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

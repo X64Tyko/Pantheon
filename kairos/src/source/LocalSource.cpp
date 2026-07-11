@@ -326,6 +326,7 @@ std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
         Show show;
         show.show_id     = conf_.applyPathMap(entry.path().string()); // mapped path as external key
         show.title       = title;
+        show.folder_path = entry.path().string(); // raw, unmapped — mapping happens at dedup-compare time
         show.genres      = "[]";
         show.labels      = "[]";
         show.actors      = "[]";

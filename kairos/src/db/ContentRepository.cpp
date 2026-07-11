@@ -1,6 +1,7 @@
 #include "ContentRepository.h"
 #include "Database.h"
 #include "MetadataOverrideRepository.h"
+#include "util/PathMatch.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <cctype>
@@ -914,7 +915,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
                COUNT(e.episode_id) AS episode_count,
                s.labels, s.network, s.actors, s.countries, s.collections,
                s.match_status, s.match_score, s.match_confirmed, s.skip_scraping,
-               s.find_specials, s.episode_display_order
+               s.find_specials, s.episode_display_order, s.folder_path
         FROM show s
         LEFT JOIN episode e ON e.show_id = s.show_id
         WHERE s.show_id = ?
@@ -952,6 +953,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
     d.skip_scraping   = q.getColumn(25).getInt() != 0;
     d.find_specials   = q.getColumn(26).getInt() != 0;
     d.episode_display_order = q.getColumn(27).getString();
+    const std::string stored_folder_path = q.getColumn(28).getString();
 
     {
         SQLite::Statement sm(db_.get(), R"(
@@ -1002,14 +1004,17 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
         applyInt(ov, "year",                    d.year);
     }
 
-    d.folder_path = getShowFolderPath(show_id).value_or("");
+    // Prefer the sync-populated column (set for any show synced since the
+    // folder-path dedup migration); fall back to the old episode-derived
+    // heuristic for shows not yet resynced since then.
+    d.folder_path = !stored_folder_path.empty() ? stored_folder_path
+                                                 : getShowFolderPath(show_id).value_or("");
 
     return d;
 }
 
 std::string ContentRepository::parentDir(const std::string& file_path) {
-    auto slash = file_path.find_last_of('/');
-    return slash == std::string::npos ? std::string() : file_path.substr(0, slash);
+    return pathutil::parentDir(file_path);
 }
 
 std::optional<std::string> ContentRepository::getShowFolderPath(const std::string& show_id) {
@@ -1249,6 +1254,26 @@ void ContentRepository::mergeMovieInto(const std::string& target_id, const std::
     nullCursor.bind(1, dup_id);
     nullCursor.exec();
 
+    // These are keyed on plain TEXT kairos_id with no FK/cascade — left uncleaned, a stale
+    // row here could later make findExternalIdOwner() point auto-merge at a deleted item.
+    for (const char* table : {"item_match_candidate", "item_external_id", "item_alternate_title"}) {
+        SQLite::Statement delItem(db_.get(),
+            std::string("DELETE FROM ") + table + " WHERE item_type='movie' AND kairos_id=?");
+        delItem.bind(1, dup_id);
+        delItem.exec();
+    }
+    SQLite::Statement delOverride(db_.get(),
+        "DELETE FROM metadata_override WHERE entity_type='movie' AND entity_id=?");
+    delOverride.bind(1, dup_id);
+    delOverride.exec();
+
+    // Any pending "possible duplicate" review candidate documenting this
+    // exact pair is now resolved — either side of the pair could hold it.
+    SQLite::Statement delDupCand(db_.get(),
+        "DELETE FROM duplicate_candidate WHERE item_type='movie' AND (kairos_id_a=? OR kairos_id_b=?)");
+    delDupCand.bind(1, dup_id); delDupCand.bind(2, dup_id);
+    delDupCand.exec();
+
     SQLite::Statement del(db_.get(), "DELETE FROM movie WHERE movie_id = ?");
     del.bind(1, dup_id);
     del.exec();
@@ -1329,6 +1354,26 @@ void ContentRepository::mergeShowInto(const std::string& target_id, const std::s
     SQLite::Statement delSeason(db_.get(), "DELETE FROM show_season WHERE show_id = ?");
     delSeason.bind(1, dup_id);
     delSeason.exec();
+
+    // These are keyed on plain TEXT kairos_id with no FK/cascade — left uncleaned, a stale
+    // row here could later make findExternalIdOwner() point auto-merge at a deleted item.
+    for (const char* table : {"item_match_candidate", "item_external_id", "item_alternate_title"}) {
+        SQLite::Statement delItem(db_.get(),
+            std::string("DELETE FROM ") + table + " WHERE item_type='show' AND kairos_id=?");
+        delItem.bind(1, dup_id);
+        delItem.exec();
+    }
+    SQLite::Statement delOverride(db_.get(),
+        "DELETE FROM metadata_override WHERE entity_type='show' AND entity_id=?");
+    delOverride.bind(1, dup_id);
+    delOverride.exec();
+
+    // Any pending "possible duplicate" review candidate documenting this
+    // exact pair is now resolved — either side of the pair could hold it.
+    SQLite::Statement delDupCand(db_.get(),
+        "DELETE FROM duplicate_candidate WHERE item_type='show' AND (kairos_id_a=? OR kairos_id_b=?)");
+    delDupCand.bind(1, dup_id); delDupCand.bind(2, dup_id);
+    delDupCand.exec();
 
     SQLite::Statement delShow(db_.get(), "DELETE FROM show WHERE show_id = ?");
     delShow.bind(1, dup_id);

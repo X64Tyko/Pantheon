@@ -23,4 +23,8 @@ struct Show {
     std::string actors;       // JSON array of names
     std::string countries;    // JSON array: ["United States", ...]
     std::string collections;  // JSON array: ["Marvel", ...]
+    // On-disk root folder for this show, as reported by the source — raw,
+    // unmapped (ConfStore::applyPathMap() is applied at comparison/dedup
+    // time, not persisted). Empty if the source doesn't report one.
+    std::string folder_path;
 };

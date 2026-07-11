@@ -5,6 +5,7 @@
 #include "../../conf/ConfStore.h"
 #include "../../db/ContentRepository.h"
 #include "../../db/Database.h"
+#include "../../db/DuplicateRepository.h"
 #include "../../db/MetadataOverrideRepository.h"
 #include "../../db/RestrictionRepository.h"
 #include "../../db/SourceRepository.h"
@@ -14,6 +15,7 @@
 #include "../../source/IMediaSource.h"
 #include "../../source/MediaProbe.h"
 #include "../../source/SyncManager.h"
+#include "../../util/PathMatch.h"
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -796,8 +798,14 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			if (!d_target) { route::err(res, 404, "show not found"); return; }
 			if (!d_dup)    { route::err(res, 404, "duplicate show not found"); return; }
 
+			// Compare via the same path-map + cheap-normalize logic
+			// SyncManager's own dedup already uses — comparing raw, unmapped
+			// paths (as before) could flag two folders as "different" that
+			// sync-time dedup already treats as the same file, once
+			// different sources' mount points are accounted for.
 			if (!confirmed && !d_target->folder_path.empty() && !d_dup->folder_path.empty()
-			        && d_target->folder_path != d_dup->folder_path) {
+			        && pathutil::compareFolders(conf_.applyPathMap(d_target->folder_path),
+			                                     conf_.applyPathMap(d_dup->folder_path)) != pathutil::FolderMatch::kExactCheap) {
 				res.status = 409;
 				route::ok(res, json{
 					{"error", "folder_mismatch"},
@@ -984,8 +992,11 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			if (!d_target) { route::err(res, 404, "movie not found"); return; }
 			if (!d_dup)    { route::err(res, 404, "duplicate movie not found"); return; }
 
+			// See the analogous show route above for why this is path-mapped
+			// + cheap-normalized rather than a raw string compare.
 			if (!confirmed && !d_target->folder_path.empty() && !d_dup->folder_path.empty()
-			        && d_target->folder_path != d_dup->folder_path) {
+			        && pathutil::compareFolders(conf_.applyPathMap(d_target->folder_path),
+			                                     conf_.applyPathMap(d_dup->folder_path)) != pathutil::FolderMatch::kExactCheap) {
 				res.status = 409;
 				route::ok(res, json{
 					{"error", "folder_mismatch"},
@@ -1038,5 +1049,49 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			route::logErr("GET /api/movies/" + id + "/videoinfo", e);
 		}
 		route::ok(res, probeVideoInfoCached("movie:" + id, path, conf_).dump());
+	});
+
+	// GET /api/duplicates/queue — pending sync-time "possible duplicate" candidates
+	// (see SyncManager's tiered dedup + duplicate_candidate table).
+	svr.Get("/api/duplicates/queue", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		std::string item_type = req.has_param("item_type") ? req.get_param_value("item_type") : "";
+		int limit = 48, offset = 0;
+		if (req.has_param("limit"))  { try { limit  = std::stoi(req.get_param_value("limit"));  } catch (...) {} }
+		if (req.has_param("offset")) { try { offset = std::stoi(req.get_param_value("offset")); } catch (...) {} }
+
+		DuplicateRepository repo(db_);
+		auto rows = repo.listPending(item_type, limit, offset);
+		json items = json::array();
+		for (const auto& r : rows) {
+			items.push_back({
+				{"candidate_id",     r.candidate_id},
+				{"item_type",        r.item_type},
+				{"kairos_id_a",      r.kairos_id_a},
+				{"kairos_id_b",      r.kairos_id_b},
+				{"title_a",          r.title_a},
+				{"title_b",          r.title_b},
+				{"year_a",           r.year_a},
+				{"year_b",           r.year_b},
+				{"thumb_a",          r.thumb_a},
+				{"thumb_b",          r.thumb_b},
+				{"trigger",          r.trigger},
+				{"reason",           r.reason},
+				{"title_similarity", r.title_similarity},
+				{"folder_a",         r.folder_a},
+				{"folder_b",         r.folder_b},
+				{"created_at",       r.created_at},
+			});
+		}
+		route::ok(res, json{{"items", items}, {"total", repo.countPending(item_type)}}.dump());
+	});
+
+	// POST /api/duplicates/:id/dismiss — mark a candidate pair "not a duplicate"
+	// (remembered permanently — a later sync re-detecting the same pair is a no-op).
+	svr.Post("/api/duplicates/:id/dismiss", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		if (DuplicateRepository(db_).dismiss(id)) route::ok(res, json{{"ok", true}}.dump());
+		else route::err(res, 404, "candidate not found");
 	});
 }

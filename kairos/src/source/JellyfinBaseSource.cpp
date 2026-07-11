@@ -155,7 +155,7 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
         "&IncludeItemTypes=Series&Recursive=true"
         "&Fields=Overview,Genres,Studios,People,ProviderIds,Tags,ProductionYear,"
         "OfficialRating,CommunityRating,Status,ImageTags,BackdropImageTags,"
-        "ProductionLocations,PremiereDate"
+        "ProductionLocations,PremiereDate,Path"
         "&Limit=500";
 
     std::vector<Show> result;
@@ -182,6 +182,7 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
                 show.status         = item.value("Status", "");
                 show.thumb          = thumbPath(id, item);
                 show.art            = artPath(id, item);
+                show.folder_path    = item.value("Path", "");
 
                 // In Jellyfin, Studios holds the network name for TV shows.
                 if (item.contains("Studios") && !item["Studios"].empty()) {

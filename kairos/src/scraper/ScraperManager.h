@@ -72,6 +72,19 @@ struct LinkedSpecial {
     std::string linked_movie_title;
 };
 
+// Result of acceptCandidate()/manualMatch(). merged_into_kairos_id is
+// non-empty iff the accepted item turned out to duplicate an external id
+// already owned by a different item — in that case `kairos_id` was merged
+// into merged_into_kairos_id and deleted, and callers must not touch it
+// further (e.g. re-fetch its detail).
+struct AcceptResult {
+    bool        found = false;              // false = candidate/item not found
+    std::string item_type;                  // "show" | "movie"
+    std::string merged_into_kairos_id;
+    std::string merged_into_title;
+    bool        folder_mismatch = false;    // merge auto-forced past a folder_path mismatch
+};
+
 struct ScraperConfig {
     std::string source;
     std::string api_key;
@@ -84,6 +97,14 @@ struct ScraperConfig {
 struct ScraperSettings {
     std::vector<ScraperConfig> configs;
     double match_threshold = 0.8;
+    // Sync-time cross-source dedup thresholds (SyncManager) — not proven
+    // constants like match_threshold, proposed defaults expecting real-world
+    // tuning after rollout. A fuzzy (non-exact) title match at or above
+    // dedup_fuzzy_title_threshold, or an exact folder match paired with title
+    // similarity below dedup_folder_corroboration_threshold, is flagged as an
+    // uncertain duplicate candidate for human review rather than auto-merged.
+    double dedup_fuzzy_title_threshold          = 0.80;
+    double dedup_folder_corroboration_threshold = 0.30;
 };
 
 class ScraperManager {
@@ -125,12 +146,12 @@ public:
     int queueTotal(const std::string& status_filter) const;
 
     // Accept / reject a single candidate
-    bool acceptCandidate(const std::string& candidate_id);
+    AcceptResult acceptCandidate(const std::string& candidate_id);
     bool rejectCandidate(const std::string& candidate_id);
 
     // Manually pin a specific external result as the match for an item.
     // Stores a candidate at score 1.0 then accepts it.
-    bool manualMatch(const std::string& kairos_id,
+    AcceptResult manualMatch(const std::string& kairos_id,
                      const std::string& item_type,
                      const std::string& source,
                      const std::string& external_id,
@@ -222,6 +243,31 @@ private:
     void  upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
                                const std::string& title);
     double threshold() const;
+
+    // Returns the kairos_id of a DIFFERENT show/movie already linked to
+    // (source, external_id) in item_external_id, or "" if none. Excludes
+    // exclude_kairos_id. Inner-joins against the live show/movie table so a
+    // stale/orphaned item_external_id row can never be reported as an owner.
+    std::string findExternalIdOwner(const std::string& item_type,
+                                     const std::string& source,
+                                     const std::string& external_id,
+                                     const std::string& exclude_kairos_id) const;
+
+    struct DuplicateMergeResult {
+        std::string merged_into_kairos_id;
+        std::string merged_into_title;
+        bool        folder_mismatch = false;
+    };
+
+    // If (item_type, source, external_id) is already owned by a different
+    // kairos_id, merges `kairos_id` into that owner (deleting `kairos_id`)
+    // and returns the outcome. Otherwise returns a default-constructed
+    // (empty) result. Callers must stop all further processing of
+    // `kairos_id` when merged_into_kairos_id is non-empty.
+    DuplicateMergeResult mergeIfDuplicateExternalId(const std::string& item_type,
+                                                     const std::string& kairos_id,
+                                                     const std::string& source,
+                                                     const std::string& external_id);
 
     // Every (source, external_id) this show is confirmed to be identified by,
     // merging all three places that fact can live: item_external_id (richest —

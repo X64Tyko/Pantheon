@@ -70,6 +70,11 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
   }, [])
 
   const [justMatchedKey, setJustMatchedKey] = useState<string | null>(null)
+  // Set when this item turns out to duplicate an already-matched item — it's
+  // been merged away and deleted server-side, so there's no detail left here
+  // to reload. Shown instead of the results list; onMatched()/refetching the
+  // (now-gone) id is deliberately skipped in this case.
+  const [mergedNotice, setMergedNotice] = useState<{ title: string } | null>(null)
 
   const handleMatch = async (result: ScraperSearchResult) => {
     const key = `${result.source}:${result.external_id}`
@@ -82,7 +87,7 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
       // in ScraperManager.cpp. The panel stays open (onMatched no longer
       // closes it — see LibraryDetailActions), so reload the list below to
       // reflect the new order right away rather than only on next open.
-      await api.manualMatch(id, {
+      const r = await api.manualMatch(id, {
         item_type:   contentType,
         source:      result.source,
         external_id: result.external_id,
@@ -91,6 +96,11 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
         poster_url:  result.poster_url,
         overview:    result.overview,
       })
+      if (r.merged_into) {
+        setMatchingKey(null)
+        setMergedNotice({ title: r.merged_into.title })
+        return
+      }
       await loadMetadata()
       setJustMatchedKey(key)
       onMatched()
@@ -98,6 +108,32 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
       setError('Failed to apply match.')
     }
     setMatchingKey(null)
+  }
+
+  if (mergedNotice) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', gap: 12, padding: 12,
+        borderRadius: 8, background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',
+      }}>
+        <div style={{
+          padding: '10px 12px', borderRadius: 6, fontSize: 11, lineHeight: 1.5,
+          fontFamily: "'JetBrains Mono', monospace", color: 'var(--hds-violet)',
+          background: 'oklch(0.55 0.14 292 / 0.1)', border: '1px solid oklch(0.7 0.13 287 / 0.4)',
+        }}>
+          This was a duplicate of <strong>{mergedNotice.title}</strong> and has been merged into it —
+          reopen it from the library to continue editing.
+        </div>
+        <button
+          onClick={onCancel}
+          style={{
+            padding: '9px 0', borderRadius: 6, cursor: 'pointer',
+            border: '1px solid var(--hds-line)', background: 'transparent',
+            color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+          }}
+        >Close</button>
+      </div>
+    )
   }
 
   return (

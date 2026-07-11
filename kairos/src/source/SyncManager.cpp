@@ -10,6 +10,8 @@
 #include "detect/ChapterDetectionManager.h"
 #include "log/DebugLog.h"
 #include "scraper/ScraperManager.h"
+#include "util/PathMatch.h"
+#include "util/TitleMatch.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <atomic>
@@ -21,6 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -303,6 +306,24 @@ constexpr size_t kShowMetaBatchSize       = 100;
 constexpr size_t kMovieBatchSize          = 200;
 constexpr size_t kEpisodeBatchSize        = 50; // shows per write transaction
 
+// Deterministic composite key for duplicate_candidate — the pair is sorted
+// so the same physical pair always collides to the same row regardless of
+// which side was "new" vs "existing" in a given sync run. This is also the
+// entire remembered-dismissal mechanism: paired with an
+// "ON CONFLICT(candidate_id) DO NOTHING" insert, a dismissed (or already
+// pending) row is never touched again by a later sync re-detecting it.
+std::string dupCandidateKey(const std::string& item_type,
+                             const std::string& id_a, const std::string& id_b) {
+    return item_type + ":" + (id_a < id_b ? id_a + ":" + id_b : id_b + ":" + id_a);
+}
+
+std::string dupCandidateReason(const std::string& trigger, double title_similarity) {
+    const int pct = static_cast<int>(title_similarity * 100 + 0.5);
+    if (trigger == "folder_uncertain") return "Same folder, title similarity " + std::to_string(pct) + "%";
+    if (trigger == "both")             return "Same folder (fuzzy match), title similarity " + std::to_string(pct) + "%";
+    return "Title similarity " + std::to_string(pct) + "%, different folders";
+}
+
 int defaultSyncThreadCount() {
     if (const char* env = std::getenv("KAIROS_SYNC_THREADS")) {
         try {
@@ -364,6 +385,47 @@ void SyncManager::syncShows(IMediaSource& src,
         }
     }
 
+    // Folder-path + year-bucket snapshots for the tiered dedup below — same
+    // full-existing-table scope as show_title_to_id above, just indexed
+    // differently. folder_exact_to_show/folder_ci_to_show key on the mapped,
+    // normalized folder path; shows_by_year buckets by year (or "" for no
+    // year) for the fuzzy-title fallback.
+    struct ShowSnapshot { std::string kairos_id, title, folder_path; };
+    std::unordered_map<std::string, ShowSnapshot> folder_exact_to_show;
+    std::unordered_map<std::string, ShowSnapshot> folder_ci_to_show;
+    std::unordered_map<std::string, std::vector<ShowSnapshot>> shows_by_year;
+    {
+        SQLite::Statement q(sync_db_, "SELECT show_id, title, year, folder_path FROM show");
+        while (q.executeStep()) {
+            ShowSnapshot snap{ q.getColumn(0).getString(), q.getColumn(1).getString(),
+                                q.getColumn(3).getString() };
+            std::string year_key = q.getColumn(2).isNull() ? "" : std::to_string(q.getColumn(2).getInt());
+            shows_by_year[year_key].push_back(snap);
+
+            if (!snap.folder_path.empty()) {
+                std::string mapped = conf_.applyPathMap(snap.folder_path);
+                folder_exact_to_show[pathutil::normalizeCheap(mapped)] = snap;
+                folder_ci_to_show[pathutil::normalizeCaseInsensitive(mapped)] = snap;
+            }
+        }
+    }
+
+    // Sync-time dedup thresholds — see ScraperSettings::dedup_fuzzy_title_threshold
+    // doc comment; proposed defaults expecting real-world tuning post-rollout.
+    const ScraperSettings dedup_settings = scraper_ ? scraper_->getSettings() : ScraperSettings{};
+    const double kFuzzyTitleThreshold          = dedup_settings.dedup_fuzzy_title_threshold;
+    const double kFolderCorroborationThreshold = dedup_settings.dedup_folder_corroboration_threshold;
+
+    // Holds an "uncertain duplicate" note for shows/index i that got a fresh
+    // kairos_id minted below despite a fuzzy folder/title signal pointing at
+    // an existing row — written to duplicate_candidate in the batch-write
+    // loop further down, for human review rather than auto-merging.
+    struct PendingDup {
+        std::string other_kairos_id, other_title, other_folder;
+        std::string trigger; // "fuzzy_title" | "folder_uncertain" | "both"
+        double      title_similarity = 0;
+    };
+
     // source_mapping for episodes from this source: ext_ep_id → kairos_ep_id
     std::unordered_map<std::string, std::string> ep_ext_to_kairos;
     {
@@ -398,6 +460,7 @@ void SyncManager::syncShows(IMediaSource& src,
     // ── ID resolution in memory ──────────────────────────────────────────────
     std::vector<std::string> ext_show_ids(shows.size());
     std::vector<bool>        cross_ref_shows(shows.size(), false);
+    std::vector<std::optional<PendingDup>> pending_dup(shows.size());
 
     for (size_t i = 0; i < shows.size(); ++i) {
         auto& show = shows[i];
@@ -410,25 +473,108 @@ void SyncManager::syncShows(IMediaSource& src,
             kairos_id = it->second;
             if (!kairos_id.starts_with(show_prefix)) is_cross_ref = true;
         } else {
-            std::string lower = show.title;
-            std::transform(lower.begin(), lower.end(), lower.begin(),
-                           [](unsigned char c){ return std::tolower(c); });
-            std::string key = lower + "|" +
-                (show.year.has_value() ? std::to_string(show.year.value()) : "");
-            auto tit = show_title_to_id.find(key);
-            if (tit != show_title_to_id.end()) {
-                kairos_id = tit->second;
-                // Only a genuine cross-source dedup when the match belongs to
-                // someone else's prefix. A title/year match resolving back to
-                // this source's own deterministic id (e.g. after a hard sync
-                // clears source_mapping and this show's row is rediscovered
-                // by title) is this source re-finding itself, not a merge —
-                // treating it as cross-ref would wrongly skip the metadata
-                // upsert below.
-                if (!kairos_id.starts_with(show_prefix)) is_cross_ref = true;
-            } else {
-                kairos_id = show_prefix + ext_id;
+            // Tier 1a — exact folder match (path-mapped + cheaply normalized),
+            // corroborated by at least a loose title similarity. Tried before
+            // the exact title+year check below: folder identity is the more
+            // specific "same physical file" signal. An exact folder match
+            // that ISN'T corroborated (e.g. a coincidental shared/anthology
+            // folder) doesn't resolve here — it falls through as an
+            // "uncertain" note instead of auto-merging.
+            std::optional<PendingDup> dup_note;
+            if (!show.folder_path.empty()) {
+                std::string mapped = pathutil::normalizeCheap(conf_.applyPathMap(show.folder_path));
+                auto fit = folder_exact_to_show.find(mapped);
+                if (fit != folder_exact_to_show.end()) {
+                    double sim = titlematch::titleSimilarity(show.title, fit->second.title);
+                    if (sim >= kFolderCorroborationThreshold) {
+                        kairos_id = fit->second.kairos_id;
+                    } else {
+                        dup_note = PendingDup{ fit->second.kairos_id, fit->second.title,
+                                                fit->second.folder_path, "folder_uncertain", sim };
+                    }
+                }
             }
+
+            // Tier 1b — existing exact title+year match, unchanged behavior.
+            // A clean exact match wins outright over any pending folder note.
+            if (kairos_id.empty()) {
+                std::string lower = show.title;
+                std::transform(lower.begin(), lower.end(), lower.begin(),
+                               [](unsigned char c){ return std::tolower(c); });
+                std::string key = lower + "|" +
+                    (show.year.has_value() ? std::to_string(show.year.value()) : "");
+                auto tit = show_title_to_id.find(key);
+                if (tit != show_title_to_id.end()) {
+                    kairos_id = tit->second;
+                    dup_note.reset();
+                }
+            }
+
+            // Tier 2b — folder match only via the case-insensitive fallback
+            // (no exact hit at all in Tier 1a).
+            if (kairos_id.empty() && !dup_note && !show.folder_path.empty()) {
+                std::string ci = pathutil::normalizeCaseInsensitive(conf_.applyPathMap(show.folder_path));
+                auto fit = folder_ci_to_show.find(ci);
+                if (fit != folder_ci_to_show.end()) {
+                    double sim = titlematch::titleSimilarity(show.title, fit->second.title);
+                    dup_note = PendingDup{ fit->second.kairos_id, fit->second.title,
+                                            fit->second.folder_path, "folder_uncertain", sim };
+                }
+            }
+
+            // Tier 2a — fuzzy title (Levenshtein similarity + ±1 year
+            // tolerance), independent of any folder signal. Merges into an
+            // existing pending folder note if they point at the same
+            // candidate; otherwise takes priority as the more specific
+            // signal (a rare double-collision is simplified to one pair).
+            if (kairos_id.empty()) {
+                std::optional<PendingDup> title_note;
+                double best_sim = 0;
+                auto probeYear = [&](const std::string& year_key) {
+                    auto yit = shows_by_year.find(year_key);
+                    if (yit == shows_by_year.end()) return;
+                    for (const auto& cand : yit->second) {
+                        double sim = titlematch::titleSimilarity(show.title, cand.title);
+                        if (sim >= kFuzzyTitleThreshold && sim > best_sim) {
+                            best_sim = sim;
+                            title_note = PendingDup{ cand.kairos_id, cand.title, cand.folder_path,
+                                                      "fuzzy_title", sim };
+                        }
+                    }
+                };
+                if (show.year.has_value()) {
+                    probeYear(std::to_string(show.year.value() - 1));
+                    probeYear(std::to_string(show.year.value()));
+                    probeYear(std::to_string(show.year.value() + 1));
+                } else {
+                    probeYear("");
+                }
+
+                if (title_note) {
+                    if (dup_note && dup_note->other_kairos_id == title_note->other_kairos_id) {
+                        dup_note->trigger = "both";
+                        dup_note->title_similarity = std::max(dup_note->title_similarity, title_note->title_similarity);
+                    } else {
+                        dup_note = title_note;
+                    }
+                }
+            }
+
+            // Tier 3 — no match: mint a fresh id, same as always. Any pending
+            // uncertain-duplicate note gets recorded against it below.
+            if (kairos_id.empty()) {
+                kairos_id = show_prefix + ext_id;
+                pending_dup[i] = dup_note;
+            }
+
+            // Only a genuine cross-source dedup when the match belongs to
+            // someone else's prefix. Any resolution above landing back on
+            // this source's own deterministic id (e.g. after a hard sync
+            // clears source_mapping and this show's row is rediscovered by
+            // folder/title) is this source re-finding itself, not a merge —
+            // treating it as cross-ref would wrongly skip the metadata
+            // upsert below.
+            if (!kairos_id.starts_with(show_prefix)) is_cross_ref = true;
         }
 
         ext_show_ids[i]    = ext_id;
@@ -444,8 +590,8 @@ void SyncManager::syncShows(IMediaSource& src,
         INSERT INTO show (show_id, title, content_rating, overview, studio, status,
                           genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
                           originally_available_at, year, audience_rating,
-                          labels, network, actors, countries, collections)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          labels, network, actors, countries, collections, folder_path)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(show_id) DO UPDATE SET
             title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
             content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
@@ -465,7 +611,8 @@ void SyncManager::syncShows(IMediaSource& src,
             network                 = CASE WHEN locked THEN network                 ELSE excluded.network                 END,
             actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
             countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
-            collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END
+            collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END,
+            folder_path             = CASE WHEN locked THEN folder_path             ELSE excluded.folder_path             END
         WHERE NOT locked AND (
             title                   != excluded.title                   OR
             content_rating          != excluded.content_rating          OR
@@ -485,7 +632,8 @@ void SyncManager::syncShows(IMediaSource& src,
             network                 != excluded.network                 OR
             actors                  != excluded.actors                  OR
             countries               != excluded.countries               OR
-            collections             != excluded.collections
+            collections             != excluded.collections             OR
+            folder_path             != excluded.folder_path
         )
     )");
     SQLite::Statement s_show_mapping(sync_db_, R"(
@@ -494,6 +642,12 @@ void SyncManager::syncShows(IMediaSource& src,
         ON CONFLICT(item_type, kairos_id, source_id) DO UPDATE SET
             library_id  = excluded.library_id,
             external_id = excluded.external_id
+    )");
+    SQLite::Statement s_dup_candidate(sync_db_, R"(
+        INSERT INTO duplicate_candidate
+            (candidate_id, item_type, kairos_id_a, kairos_id_b, trigger, reason, title_similarity, folder_a, folder_b)
+        VALUES (?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(candidate_id) DO NOTHING
     )");
 
     for (size_t batch_start = 0; batch_start < shows.size(); batch_start += kShowMetaBatchSize) {
@@ -527,6 +681,7 @@ void SyncManager::syncShows(IMediaSource& src,
                     s_upsert_show.bind(18, show.actors);
                     s_upsert_show.bind(19, show.countries);
                     s_upsert_show.bind(20, show.collections);
+                    s_upsert_show.bind(21, show.folder_path);
                     s_upsert_show.exec();
                 }
                 s_show_mapping.reset();
@@ -535,6 +690,22 @@ void SyncManager::syncShows(IMediaSource& src,
                 s_show_mapping.bind(3, library_id);
                 s_show_mapping.bind(4, ext_show_ids[i]);
                 s_show_mapping.exec();
+
+                if (pending_dup[i]) {
+                    const auto& dup = *pending_dup[i];
+                    const bool this_is_a = show.show_id < dup.other_kairos_id;
+                    s_dup_candidate.reset();
+                    s_dup_candidate.bind(1, dupCandidateKey("show", show.show_id, dup.other_kairos_id));
+                    s_dup_candidate.bind(2, "show");
+                    s_dup_candidate.bind(3, this_is_a ? show.show_id : dup.other_kairos_id);
+                    s_dup_candidate.bind(4, this_is_a ? dup.other_kairos_id : show.show_id);
+                    s_dup_candidate.bind(5, dup.trigger);
+                    s_dup_candidate.bind(6, dupCandidateReason(dup.trigger, dup.title_similarity));
+                    s_dup_candidate.bind(7, dup.title_similarity);
+                    s_dup_candidate.bind(8, this_is_a ? show.folder_path : dup.other_folder);
+                    s_dup_candidate.bind(9, this_is_a ? dup.other_folder : show.folder_path);
+                    s_dup_candidate.exec();
+                }
             }
             txn.commit();
             std::cout << "[sync]   wrote show metadata: "
@@ -871,6 +1042,42 @@ void SyncManager::syncMovies(IMediaSource& src,
         }
     }
 
+    // Folder-path (parentDir of file_path) + year-bucket snapshots for the
+    // tiered dedup below — see syncShows()'s identical structure for the
+    // full reasoning. Tried in addition to, and after, the exact full-path
+    // match above: file_path equality is even stronger evidence than folder
+    // equality, so it keeps first claim; this catches the same-folder,
+    // renamed-file case that an exact file_path compare can't.
+    struct MovieSnapshot { std::string kairos_id, title, folder_path; };
+    std::unordered_map<std::string, MovieSnapshot> folder_exact_to_movie;
+    std::unordered_map<std::string, MovieSnapshot> folder_ci_to_movie;
+    std::unordered_map<std::string, std::vector<MovieSnapshot>> movies_by_year;
+    {
+        SQLite::Statement q(sync_db_, "SELECT movie_id, title, year, file_path FROM movie WHERE file_path != ''");
+        while (q.executeStep()) {
+            std::string folder = pathutil::parentDir(q.getColumn(3).getString());
+            MovieSnapshot snap{ q.getColumn(0).getString(), q.getColumn(1).getString(), folder };
+            std::string year_key = q.getColumn(2).isNull() ? "" : std::to_string(q.getColumn(2).getInt());
+            movies_by_year[year_key].push_back(snap);
+
+            if (!folder.empty()) {
+                std::string mapped = conf_.applyPathMap(folder);
+                folder_exact_to_movie[pathutil::normalizeCheap(mapped)] = snap;
+                folder_ci_to_movie[pathutil::normalizeCaseInsensitive(mapped)] = snap;
+            }
+        }
+    }
+
+    const ScraperSettings dedup_settings_m = scraper_ ? scraper_->getSettings() : ScraperSettings{};
+    const double kFuzzyTitleThresholdM          = dedup_settings_m.dedup_fuzzy_title_threshold;
+    const double kFolderCorroborationThresholdM = dedup_settings_m.dedup_folder_corroboration_threshold;
+
+    struct PendingDup {
+        std::string other_kairos_id, other_title, other_folder;
+        std::string trigger; // "fuzzy_title" | "folder_uncertain" | "both"
+        double      title_similarity = 0;
+    };
+
     // ── Fetch ────────────────────────────────────────────────────────────────
     std::cout << "[sync]   fetching movies: " << label << std::endl;
     const auto t_fetch = std::chrono::steady_clock::now();
@@ -879,6 +1086,7 @@ void SyncManager::syncMovies(IMediaSource& src,
               << " movie(s) (" << elapsedMs(t_fetch, std::chrono::steady_clock::now()) << "ms)"
               << std::endl;
     if (movies.empty()) return;
+    std::vector<std::optional<PendingDup>> pending_dup(movies.size());
 
     // ── Parallel duration probe ───────────────────────────────────────────────
     {
@@ -913,17 +1121,39 @@ void SyncManager::syncMovies(IMediaSource& src,
             kairos_id = it->second;
             if (!kairos_id.starts_with(movie_prefix)) is_cross_ref = true;
         } else {
+            std::optional<PendingDup> dup_note;
+
+            // Exact full file_path match — stronger evidence than a
+            // folder-only match (same file, not just same directory), so it
+            // keeps first claim.
             std::string mapped = conf_.applyPathMap(movie.file_path);
             auto pit = path_to_kairos.find(mapped);
             if (pit != path_to_kairos.end()) {
                 kairos_id = pit->second;
-                // Same reasoning as the ext_id branch above: only cross-ref
-                // when the path match belongs to another source's prefix.
-                // A self-match (this source rediscovering its own row by
-                // path, e.g. after a hard sync clears source_mapping) must
-                // still go through the metadata upsert below.
-                if (!kairos_id.starts_with(movie_prefix)) is_cross_ref = true;
-            } else {
+            }
+
+            // Tier 1a — exact folder match (path-mapped + cheaply
+            // normalized), corroborated by at least a loose title
+            // similarity. See syncShows() for the full reasoning; an exact
+            // folder match that ISN'T corroborated falls through as an
+            // "uncertain" note instead of auto-merging.
+            std::string folder = pathutil::parentDir(movie.file_path);
+            if (kairos_id.empty() && !folder.empty()) {
+                std::string fmapped = pathutil::normalizeCheap(conf_.applyPathMap(folder));
+                auto fit = folder_exact_to_movie.find(fmapped);
+                if (fit != folder_exact_to_movie.end()) {
+                    double sim = titlematch::titleSimilarity(movie.title, fit->second.title);
+                    if (sim >= kFolderCorroborationThresholdM) {
+                        kairos_id = fit->second.kairos_id;
+                    } else {
+                        dup_note = PendingDup{ fit->second.kairos_id, fit->second.title,
+                                                fit->second.folder_path, "folder_uncertain", sim };
+                    }
+                }
+            }
+
+            // Tier 1b — existing exact title+year match, unchanged behavior.
+            if (kairos_id.empty()) {
                 std::string lower = movie.title;
                 std::transform(lower.begin(), lower.end(), lower.begin(),
                                [](unsigned char c){ return std::tolower(c); });
@@ -932,11 +1162,67 @@ void SyncManager::syncMovies(IMediaSource& src,
                 auto tit = movie_title_to_id.find(key);
                 if (tit != movie_title_to_id.end()) {
                     kairos_id = tit->second;
-                    if (!kairos_id.starts_with(movie_prefix)) is_cross_ref = true;
-                } else {
-                    kairos_id = movie_prefix + ext_id;
+                    dup_note.reset();
                 }
             }
+
+            // Tier 2b — folder match only via the case-insensitive fallback.
+            if (kairos_id.empty() && !dup_note && !folder.empty()) {
+                std::string ci = pathutil::normalizeCaseInsensitive(conf_.applyPathMap(folder));
+                auto fit = folder_ci_to_movie.find(ci);
+                if (fit != folder_ci_to_movie.end()) {
+                    double sim = titlematch::titleSimilarity(movie.title, fit->second.title);
+                    dup_note = PendingDup{ fit->second.kairos_id, fit->second.title,
+                                            fit->second.folder_path, "folder_uncertain", sim };
+                }
+            }
+
+            // Tier 2a — fuzzy title (Levenshtein similarity + ±1 year
+            // tolerance), independent of any folder signal.
+            if (kairos_id.empty()) {
+                std::optional<PendingDup> title_note;
+                double best_sim = 0;
+                auto probeYear = [&](const std::string& year_key) {
+                    auto yit = movies_by_year.find(year_key);
+                    if (yit == movies_by_year.end()) return;
+                    for (const auto& cand : yit->second) {
+                        double sim = titlematch::titleSimilarity(movie.title, cand.title);
+                        if (sim >= kFuzzyTitleThresholdM && sim > best_sim) {
+                            best_sim = sim;
+                            title_note = PendingDup{ cand.kairos_id, cand.title, cand.folder_path,
+                                                      "fuzzy_title", sim };
+                        }
+                    }
+                };
+                if (movie.year.has_value()) {
+                    probeYear(std::to_string(movie.year.value() - 1));
+                    probeYear(std::to_string(movie.year.value()));
+                    probeYear(std::to_string(movie.year.value() + 1));
+                } else {
+                    probeYear("");
+                }
+
+                if (title_note) {
+                    if (dup_note && dup_note->other_kairos_id == title_note->other_kairos_id) {
+                        dup_note->trigger = "both";
+                        dup_note->title_similarity = std::max(dup_note->title_similarity, title_note->title_similarity);
+                    } else {
+                        dup_note = title_note;
+                    }
+                }
+            }
+
+            if (kairos_id.empty()) {
+                kairos_id = movie_prefix + ext_id;
+                pending_dup[i] = dup_note;
+            }
+
+            // Same reasoning as the ext_id branch above: only cross-ref when
+            // the match belongs to another source's prefix. A self-match
+            // (this source rediscovering its own row, e.g. after a hard
+            // sync clears source_mapping) must still go through the
+            // metadata upsert below.
+            if (!kairos_id.starts_with(movie_prefix)) is_cross_ref = true;
         }
 
         movie.movie_id = kairos_id;
@@ -1002,6 +1288,12 @@ void SyncManager::syncMovies(IMediaSource& src,
         ON CONFLICT(item_type, kairos_id, source_id) DO UPDATE SET
             library_id  = excluded.library_id,
             external_id = excluded.external_id
+    )");
+    SQLite::Statement s_dup_candidate_m(sync_db_, R"(
+        INSERT INTO duplicate_candidate
+            (candidate_id, item_type, kairos_id_a, kairos_id_b, trigger, reason, title_similarity, folder_a, folder_b)
+        VALUES (?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(candidate_id) DO NOTHING
     )");
 
     // Watch-state seeding — only when this source is opted in (media_source.
@@ -1074,6 +1366,23 @@ void SyncManager::syncMovies(IMediaSource& src,
                 s_movie_mapping.bind(3, library_id);
                 s_movie_mapping.bind(4, res.ext_id);
                 s_movie_mapping.exec();
+
+                if (pending_dup[i]) {
+                    const auto& dup = *pending_dup[i];
+                    const bool this_is_a = movie.movie_id < dup.other_kairos_id;
+                    const std::string this_folder = pathutil::parentDir(movie.file_path);
+                    s_dup_candidate_m.reset();
+                    s_dup_candidate_m.bind(1, dupCandidateKey("movie", movie.movie_id, dup.other_kairos_id));
+                    s_dup_candidate_m.bind(2, "movie");
+                    s_dup_candidate_m.bind(3, this_is_a ? movie.movie_id : dup.other_kairos_id);
+                    s_dup_candidate_m.bind(4, this_is_a ? dup.other_kairos_id : movie.movie_id);
+                    s_dup_candidate_m.bind(5, dup.trigger);
+                    s_dup_candidate_m.bind(6, dupCandidateReason(dup.trigger, dup.title_similarity));
+                    s_dup_candidate_m.bind(7, dup.title_similarity);
+                    s_dup_candidate_m.bind(8, this_is_a ? this_folder : dup.other_folder);
+                    s_dup_candidate_m.bind(9, this_is_a ? dup.other_folder : this_folder);
+                    s_dup_candidate_m.exec();
+                }
 
                 if (!synced_user_id.empty() &&
                         (movie.src_watched.has_value() || movie.src_position_ms.has_value())) {
@@ -1216,6 +1525,15 @@ void SyncManager::runOrphanCleanup(const SyncLiveIds& live) {
                         "UPDATE media_cursor SET " + cursor_col + " = NULL WHERE " + cursor_col + " = ?");
                     nc.bind(1, id);
                     nc.exec();
+                }
+                if (item_type == "show" || item_type == "movie") {
+                    // A pending "possible duplicate" candidate naming this
+                    // now-orphaned id would otherwise dangle — plain TEXT
+                    // kairos_id_a/b columns, no FK/cascade.
+                    SQLite::Statement dc(sync_db_,
+                        "DELETE FROM duplicate_candidate WHERE item_type=? AND (kairos_id_a=? OR kairos_id_b=?)");
+                    dc.bind(1, item_type); dc.bind(2, id); dc.bind(3, id);
+                    dc.exec();
                 }
                 SQLite::Statement d(sync_db_, "DELETE FROM " + table + " WHERE " + id_col + " = ?");
                 d.bind(1, id);

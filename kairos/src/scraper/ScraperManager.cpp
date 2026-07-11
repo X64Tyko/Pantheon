@@ -7,6 +7,7 @@
 #include "db/Database.h"
 #include "db/SourceRepository.h"
 #include "log/DebugLog.h"
+#include "util/TitleMatch.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <cctype>
@@ -25,43 +26,13 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 // ── Title normalisation + similarity ─────────────────────────────────────────
+// normalizeTitle/titleSimilarity live in util/TitleMatch.h now — shared with
+// SyncManager's cross-source sync-time dedup.
 
 namespace {
 
-std::string normalizeTitle(const std::string& s) {
-    std::string r;
-    r.reserve(s.size());
-    for (char c : s) r += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    for (const auto* art : { "the ", "a ", "an " }) {
-        if (r.starts_with(art)) { r = r.substr(std::strlen(art)); break; }
-    }
-    std::string out;
-    for (char c : r) {
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ') out += c;
-    }
-    return out;
-}
-
-// Levenshtein similarity [0,1]
-double titleSimilarity(const std::string& a, const std::string& b) {
-    std::string na = normalizeTitle(a), nb = normalizeTitle(b);
-    if (na == nb) return 1.0;
-    if (na.empty() || nb.empty()) return 0.0;
-
-    const size_t m = na.size(), n = nb.size();
-    std::vector<std::vector<int>> dp(m + 1, std::vector<int>(n + 1, 0));
-    for (size_t i = 0; i <= m; ++i) dp[i][0] = static_cast<int>(i);
-    for (size_t j = 0; j <= n; ++j) dp[0][j] = static_cast<int>(j);
-    for (size_t i = 1; i <= m; ++i) {
-        for (size_t j = 1; j <= n; ++j) {
-            int cost = (na[i - 1] == nb[j - 1]) ? 0 : 1;
-            dp[i][j] = std::min({ dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost });
-        }
-    }
-    int dist = dp[m][n];
-    int maxLen = static_cast<int>(std::max(m, n));
-    return 1.0 - static_cast<double>(dist) / maxLen;
-}
+using titlematch::normalizeTitle;
+using titlematch::titleSimilarity;
 
 double computeScore(const std::string& source_title, int source_year,
                     const std::string& cand_title,  int cand_year) {
@@ -239,6 +210,8 @@ ScraperSettings ScraperManager::getSettings() const {
 
     ScraperSettings s;
     s.match_threshold = std::stod(readKey("match_threshold", "0.8"));
+    s.dedup_fuzzy_title_threshold          = std::stod(readKey("dedup_fuzzy_title_threshold", "0.80"));
+    s.dedup_folder_corroboration_threshold = std::stod(readKey("dedup_folder_corroboration_threshold", "0.30"));
 
     for (const auto* src : { "tmdb", "tvdb", "anidb" }) {
         ScraperConfig c;
@@ -263,6 +236,8 @@ void ScraperManager::updateSettings(const ScraperSettings& s) {
     };
 
     writeKey("match_threshold", std::to_string(s.match_threshold));
+    writeKey("dedup_fuzzy_title_threshold",          std::to_string(s.dedup_fuzzy_title_threshold));
+    writeKey("dedup_folder_corroboration_threshold", std::to_string(s.dedup_folder_corroboration_threshold));
     for (const auto& c : s.configs) {
         writeKey(configKey(c.source, "api_key"),  c.api_key);
         writeKey(configKey(c.source, "language"), c.language);
@@ -403,6 +378,67 @@ void ScraperManager::linkExternalId(const std::string& item_type, const std::str
     setExternalIds(kairos_id, item_type, reordered);
 }
 
+std::string ScraperManager::findExternalIdOwner(const std::string& item_type,
+                                                 const std::string& source,
+                                                 const std::string& external_id,
+                                                 const std::string& exclude_kairos_id) const {
+    if (external_id.empty()) return "";
+    const std::string id_col = item_type + "_id"; // "show_id" | "movie_id"
+    SQLite::Statement q(db_.get(),
+        "SELECT ie.kairos_id FROM item_external_id ie "
+        "JOIN " + item_type + " t ON t." + id_col + " = ie.kairos_id "
+        "WHERE ie.item_type = ? AND ie.source = ? AND ie.external_id = ? AND ie.kairos_id != ? "
+        "LIMIT 1");
+    q.bind(1, item_type); q.bind(2, source); q.bind(3, external_id); q.bind(4, exclude_kairos_id);
+    if (q.executeStep()) return q.getColumn(0).getString();
+    return "";
+}
+
+ScraperManager::DuplicateMergeResult
+ScraperManager::mergeIfDuplicateExternalId(const std::string& item_type,
+                                            const std::string& kairos_id,
+                                            const std::string& source,
+                                            const std::string& external_id) {
+    DuplicateMergeResult result;
+    std::string owner = findExternalIdOwner(item_type, source, external_id, kairos_id);
+    if (owner.empty()) return result;
+
+    ContentRepository repo(db_);
+    std::string dup_title, dup_folder, owner_title, owner_folder;
+
+    if (item_type == "show") {
+        auto d_dup = repo.getShowDetail(kairos_id);
+        auto d_own = repo.getShowDetail(owner);
+        // Defensive: don't merge against a row that's already gone (e.g. an
+        // ordering artifact within the same runMatch pass).
+        if (!d_dup || !d_own) return result;
+        dup_title = d_dup->title; dup_folder = d_dup->folder_path;
+        owner_title = d_own->title; owner_folder = d_own->folder_path;
+        result.folder_mismatch = !dup_folder.empty() && !owner_folder.empty() && dup_folder != owner_folder;
+        repo.mergeShowInto(owner, kairos_id);
+    } else {
+        auto d_dup = repo.getMovieDetail(kairos_id);
+        auto d_own = repo.getMovieDetail(owner);
+        if (!d_dup || !d_own) return result;
+        dup_title = d_dup->title; dup_folder = d_dup->folder_path;
+        owner_title = d_own->title; owner_folder = d_own->folder_path;
+        result.folder_mismatch = !dup_folder.empty() && !owner_folder.empty() && dup_folder != owner_folder;
+        repo.mergeMovieInto(owner, kairos_id);
+    }
+
+    std::cout << "[scraper] auto-merge: " << item_type << " \"" << dup_title << "\" (" << kairos_id
+              << ") duplicates existing " << item_type << " \"" << owner_title << "\" (" << owner
+              << ") via " << source << ":" << external_id << "\n";
+    if (result.folder_mismatch) {
+        std::cerr << "[scraper] WARNING: auto-merge forced past folder_path mismatch: \""
+                   << dup_folder << "\" vs \"" << owner_folder << "\" (" << item_type << " "
+                   << kairos_id << " -> " << owner << ")\n";
+    }
+    result.merged_into_kairos_id = owner;
+    result.merged_into_title     = owner_title;
+    return result;
+}
+
 void ScraperManager::upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
                                            const std::string& title) {
     if (title.empty()) return;
@@ -530,19 +566,26 @@ void ScraperManager::runMatch(const std::string& target_id,
         )";
         if (!target_id.empty()) sql += " AND s.show_id = '" + target_id + "'";
 
-        SQLite::Statement q(db_.get(), sql);
-        while (q.executeStep()) {
+        // Drained into a vector rather than iterating the live cursor — matchShow()
+        // can now trigger an auto-merge that deletes a show row (possibly the one
+        // the cursor is currently on) via mergeIfDuplicateExternalId().
+        struct ShowRow { std::string kairos_id, title, tmdb_id, tvdb_id; int year; };
+        std::vector<ShowRow> rows;
+        {
+            SQLite::Statement q(db_.get(), sql);
+            while (q.executeStep()) {
+                rows.push_back({ q.getColumn(0).getString(), q.getColumn(1).getString(),
+                                  q.getColumn(3).getString(), q.getColumn(4).getString(),
+                                  q.getColumn(2).getInt() });
+            }
+        }
+        for (const auto& row : rows) {
             // One row per show now (no per-library join), so matchShow()
             // really is only called once per item per pass — settings from
             // every library the item is mapped to are merged below instead
             // of the query silently picking (and re-picking) just one.
-            std::string kairos_id = q.getColumn(0).getString();
-            auto settings = resolveMatchSettings("show", kairos_id);
-            matchShow(settings, kairos_id,
-                      q.getColumn(1).getString(),  // title
-                      q.getColumn(2).getInt(),     // year
-                      q.getColumn(3).getString(),  // tmdb_id
-                      q.getColumn(4).getString()); // tvdb_id
+            auto settings = resolveMatchSettings("show", row.kairos_id);
+            matchShow(settings, row.kairos_id, row.title, row.year, row.tmdb_id, row.tvdb_id);
         }
     }
 
@@ -561,15 +604,21 @@ void ScraperManager::runMatch(const std::string& target_id,
         )";
         if (!target_id.empty()) sql += " AND m.movie_id = '" + target_id + "'";
 
-        SQLite::Statement q(db_.get(), sql);
-        while (q.executeStep()) {
-            std::string kairos_id = q.getColumn(0).getString();
-            auto settings = resolveMatchSettings("movie", kairos_id);
-            matchMovie(settings, kairos_id,
-                       q.getColumn(1).getString(),  // title
-                       q.getColumn(2).getInt(),     // year
-                       q.getColumn(3).getString(),  // tmdb_id
-                       q.getColumn(4).getString()); // file_path
+        // See the show loop above: drained into a vector since matchMovie() can
+        // now delete a movie row (possibly the cursor's current row) via merge.
+        struct MovieRow { std::string kairos_id, title, tmdb_id, file_path; int year; };
+        std::vector<MovieRow> rows;
+        {
+            SQLite::Statement q(db_.get(), sql);
+            while (q.executeStep()) {
+                rows.push_back({ q.getColumn(0).getString(), q.getColumn(1).getString(),
+                                  q.getColumn(3).getString(), q.getColumn(4).getString(),
+                                  q.getColumn(2).getInt() });
+            }
+        }
+        for (const auto& row : rows) {
+            auto settings = resolveMatchSettings("movie", row.kairos_id);
+            matchMovie(settings, row.kairos_id, row.title, row.year, row.tmdb_id, row.file_path);
         }
     }
     std::cout << "[scraper] match complete ("
@@ -658,6 +707,8 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
             std::cout << "[scraper]   \"" << title << "\" → matched\n";
             const std::string src = !tmdb_id.empty() ? "tmdb" : "tvdb";
             const std::string eid = !tmdb_id.empty() ? tmdb_id : tvdb_id;
+            auto dup = mergeIfDuplicateExternalId("show", kairos_id, src, eid);
+            if (!dup.merged_into_kairos_id.empty()) return;
             linkExternalId("show", kairos_id, src, eid, /*promote_to_primary=*/true);
             setMatchStatus("show", kairos_id, "matched", 1.0);
             // Auto-match only flips status/score — local metadata (release_date,
@@ -813,6 +864,8 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
         SQLite::Statement upd(db_.get(),
             "UPDATE item_match_candidate SET accepted=1 WHERE candidate_id=?");
         upd.bind(1, cid); upd.exec();
+        auto dup = mergeIfDuplicateExternalId("show", kairos_id, best_c.source, best_c.ext_id);
+        if (!dup.merged_into_kairos_id.empty()) return;
         linkExternalId("show", kairos_id, best_c.source, best_c.ext_id, /*promote_to_primary=*/true);
         setMatchStatus("show", kairos_id, "matched", best);
         // See the trusted-ID branch above for why this is needed here too.
@@ -857,6 +910,8 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
     if (!tmdb_id.empty() && search_title == title) {
         // Folder matched (or no file path to check) — trust the provided ID.
         std::cout << "[scraper]   \"" << title << "\" → matched\n";
+        auto dup = mergeIfDuplicateExternalId("movie", kairos_id, "tmdb", tmdb_id);
+        if (!dup.merged_into_kairos_id.empty()) return;
         linkExternalId("movie", kairos_id, "tmdb", tmdb_id, /*promote_to_primary=*/true);
         setMatchStatus("movie", kairos_id, "matched", 1.0);
         // See matchShow()'s trusted-ID branch for why this fetch is needed —
@@ -996,6 +1051,8 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
         SQLite::Statement upd(db_.get(),
             "UPDATE item_match_candidate SET accepted=1 WHERE candidate_id=?");
         upd.bind(1, cid); upd.exec();
+        auto dup = mergeIfDuplicateExternalId("movie", kairos_id, best_c.source, best_c.ext_id);
+        if (!dup.merged_into_kairos_id.empty()) return;
         linkExternalId("movie", kairos_id, best_c.source, best_c.ext_id, /*promote_to_primary=*/true);
         setMatchStatus("movie", kairos_id, "matched", best);
         // See the trusted-ID branch above for why this is needed here too.
@@ -1048,19 +1105,28 @@ void ScraperManager::setMatchStatus(const std::string& item_type,
 
 // ── Accept / reject ───────────────────────────────────────────────────────────
 
-bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
+AcceptResult ScraperManager::acceptCandidate(const std::string& candidate_id) {
     // Read candidate
     SQLite::Statement rd(db_.get(),
         "SELECT item_type, kairos_id, source, external_id, score "
         "FROM item_match_candidate WHERE candidate_id=?");
     rd.bind(1, candidate_id);
-    if (!rd.executeStep()) return false;
+    if (!rd.executeStep()) return {};
 
     std::string item_type   = rd.getColumn(0).getString();
     std::string kairos_id   = rd.getColumn(1).getString();
     std::string source      = rd.getColumn(2).getString();
     std::string external_id = rd.getColumn(3).getString();
     double score            = rd.getColumn(4).getDouble();
+
+    // Must run before any transaction opens below — mergeShowInto/mergeMovieInto
+    // each open their own SQLite::Transaction, and nested transactions aren't
+    // supported. If this item is really a duplicate of an already-matched item,
+    // fold it in now and stop; nothing past this point should touch kairos_id.
+    auto dup = mergeIfDuplicateExternalId(item_type, kairos_id, source, external_id);
+    if (!dup.merged_into_kairos_id.empty()) {
+        return { true, item_type, dup.merged_into_kairos_id, dup.merged_into_title, dup.folder_mismatch };
+    }
 
     SQLite::Transaction txn(db_.get());
 
@@ -1284,7 +1350,7 @@ bool ScraperManager::acceptCandidate(const std::string& candidate_id) {
     } catch (const std::exception& e) {
         std::cerr << "[scraper] metadata fetch/apply failed for " << kairos_id << " (" << source << "): " << e.what() << "\n";
     }
-    return true;
+    return { true, item_type, "", "", false };
 }
 
 bool ScraperManager::rejectCandidate(const std::string& candidate_id) {
@@ -1434,7 +1500,7 @@ int ScraperManager::queueTotal(const std::string& status_filter) const {
 
 // ── Manual match ──────────────────────────────────────────────────────────────
 
-bool ScraperManager::manualMatch(const std::string& kairos_id,
+AcceptResult ScraperManager::manualMatch(const std::string& kairos_id,
                                   const std::string& item_type,
                                   const std::string& source,
                                   const std::string& external_id,

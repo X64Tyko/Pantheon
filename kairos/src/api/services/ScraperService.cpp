@@ -27,6 +27,8 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
         auto s = scraper_.getSettings();
         json out;
         out["match_threshold"] = s.match_threshold;
+        out["dedup_fuzzy_title_threshold"]          = s.dedup_fuzzy_title_threshold;
+        out["dedup_folder_corroboration_threshold"] = s.dedup_folder_corroboration_threshold;
         out["configs"] = json::array();
         for (const auto& c : s.configs) {
             json cj;
@@ -51,6 +53,10 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
 
             if (body.contains("match_threshold") && body["match_threshold"].is_number())
                 s.match_threshold = body["match_threshold"].get<double>();
+            if (body.contains("dedup_fuzzy_title_threshold") && body["dedup_fuzzy_title_threshold"].is_number())
+                s.dedup_fuzzy_title_threshold = body["dedup_fuzzy_title_threshold"].get<double>();
+            if (body.contains("dedup_folder_corroboration_threshold") && body["dedup_folder_corroboration_threshold"].is_number())
+                s.dedup_folder_corroboration_threshold = body["dedup_folder_corroboration_threshold"].get<double>();
 
             if (body.contains("configs") && body["configs"].is_array()) {
                 for (const auto& cj : body["configs"]) {
@@ -177,10 +183,18 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
                 err(res, 400, "item_type, source, and external_id are required");
                 return;
             }
-            if (scraper_.manualMatch(kairos_id, item_type, source, external_id, title, year, poster_url, overview))
-                ok(res, json{{"ok", true}});
-            else
-                err(res, 404, "item not found");
+            auto result = scraper_.manualMatch(kairos_id, item_type, source, external_id, title, year, poster_url, overview);
+            if (!result.found) { err(res, 404, "item not found"); return; }
+            json resp{{"ok", true}};
+            if (!result.merged_into_kairos_id.empty()) {
+                resp["merged_into"] = {
+                    {"kairos_id", result.merged_into_kairos_id},
+                    {"item_type", result.item_type},
+                    {"title",     result.merged_into_title},
+                };
+                resp["folder_mismatch"] = result.folder_mismatch;
+            }
+            ok(res, resp);
         } catch (const std::exception& e) {
             err(res, 400, e.what());
         }
@@ -191,10 +205,18 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
         if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string cid = req.matches[1];
         try {
-            if (scraper_.acceptCandidate(cid))
-                ok(res, json{{"ok", true}});
-            else
-                err(res, 404, "candidate not found");
+            auto result = scraper_.acceptCandidate(cid);
+            if (!result.found) { err(res, 404, "candidate not found"); return; }
+            json body{{"ok", true}};
+            if (!result.merged_into_kairos_id.empty()) {
+                body["merged_into"] = {
+                    {"kairos_id", result.merged_into_kairos_id},
+                    {"item_type", result.item_type},
+                    {"title",     result.merged_into_title},
+                };
+                body["folder_mismatch"] = result.folder_mismatch;
+            }
+            ok(res, body);
         } catch (const std::exception& e) {
             std::cerr << "[scraper] accept error: " << e.what() << "\n";
             err(res, 500, e.what());

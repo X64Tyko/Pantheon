@@ -99,6 +99,16 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
                 show.thumb          = item.value("thumb", "");
                 show.art            = item.value("art", "");
                 show.originally_available_at = item.value("originallyAvailableAt", "");
+
+                // Root folder(s): [{"path":"/data/TV Shows/Show Name"}, ...] —
+                // same array-of-object shape as Genre/Label below. Only the
+                // first entry is used (multi-location shows are rare and the
+                // dedup use of this field only needs "a" folder, not all of
+                // them). NOTE: this field's exact shape hasn't been verified
+                // against a live Plex server in this change — confirm before
+                // relying on it, and adjust the key name if it differs.
+                if (item.contains("Location") && !item["Location"].empty())
+                    show.folder_path = item["Location"][0].value("path", "");
                 if (item.contains("year") && !item["year"].is_null())
                     show.year = item["year"].get<int>();
                 if (item.contains("audienceRating") && !item["audienceRating"].is_null())

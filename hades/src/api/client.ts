@@ -10,7 +10,7 @@ import type {
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult,
-  ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats,
+  ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState,
@@ -471,10 +471,11 @@ export const api = {
   getScraperStats:     ()                                         => request<ScraperStats>('GET',    '/scrapers/stats'),
   getReviewQueue:      (p: { status?: string; limit?: number; offset?: number } = {}) =>
                          request<{items: ReviewQueueItem[]; total: number}>('GET', `/scrapers/queue?${qs(p)}`),
-  acceptCandidate:     (id: string)                               => request<{ok: boolean}>('POST', `/scrapers/queue/${id}/accept`, {}),
+  acceptCandidate:     (id: string)                               =>
+                         request<{ok: boolean; merged_into?: MergedInto; folder_mismatch?: boolean}>('POST', `/scrapers/queue/${id}/accept`, {}),
   rejectCandidate:     (id: string)                               => request<{ok: boolean}>('POST', `/scrapers/queue/${id}/reject`, {}),
   manualMatch:         (kairos_id: string, b: { item_type: 'show'|'movie'; source: string; external_id: string; title: string; year?: number; poster_url?: string; overview?: string }) =>
-                         request<{ok: boolean}>('POST', `/scrapers/queue/${kairos_id}/manual-match`, b),
+                         request<{ok: boolean; merged_into?: MergedInto; folder_mismatch?: boolean}>('POST', `/scrapers/queue/${kairos_id}/manual-match`, b),
   scraperSearch:       (q: string, type?: 'show' | 'movie')       =>
                          request<{items: ScraperSearchResult[]}>('GET', `/scrapers/search?${qs({ q, type })}`),
 
@@ -497,6 +498,11 @@ export const api = {
   // Throws ApiError(409, {target_folder, duplicate_folder}) if folders differ and !confirm.
   mergeShow:  (id: string, duplicate_id: string, confirm = false) => request<{ok: boolean}>('POST', `/shows/${id}/merge`, { duplicate_id, confirm }),
   mergeMovie: (id: string, duplicate_id: string, confirm = false) => request<{ok: boolean}>('POST', `/movies/${id}/merge`, { duplicate_id, confirm }),
+
+  // Sync-time "possible duplicate" review queue (see DuplicateCandidate).
+  getDuplicatesQueue: (p: { item_type?: string; limit?: number; offset?: number } = {}) =>
+                        request<{items: DuplicateCandidate[]; total: number}>('GET', `/duplicates/queue?${qs(p)}`),
+  dismissDuplicate:   (id: string) => request<{ok: boolean}>('POST', `/duplicates/${id}/dismiss`, {}),
 
   // Chapter structure detection (async — ffmpeg scene-cut/fingerprint analysis, not the fast marker re-probe above)
   detectShowChapters:    (id: string) => request<{status: 'started'|'already_running'}>('POST', `/shows/${id}/chapters/detect`, {}),

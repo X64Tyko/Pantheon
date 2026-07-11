@@ -9,7 +9,7 @@ import type {
   EpisodeGroup, GroupingCandidate, ShowGroupingResult,
   ArrLookupResult, ArrServiceOptions, ContentRequest, RequestStatus,
   ScraperSearchResult, ChapterReviewItem, Chapter, ChapterType,
-  ItemMetadata, ExternalId,
+  ItemMetadata, ExternalId, MergedInto, DuplicateCandidate,
 } from '../api/types'
 import { MatchBadge } from '../components/media/MatchBadge'
 import type { MatchStatus } from '../components/media/MatchBadge'
@@ -120,7 +120,7 @@ const groupsStore = new GroupsStore()
 
 // ── Tab type ──────────────────────────────────────────────────────────────────
 
-type Tab = 'queue' | 'groups' | 'requests' | 'chapters'
+type Tab = 'queue' | 'groups' | 'requests' | 'duplicates' | 'chapters'
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -135,6 +135,10 @@ export default observer(function ReviewPage() {
   const [queueFilter,   setQueueFilter]   = useState<'all'|'uncertain'|'unmatched'|'auto_unconfirmed'>('all')
   const [selectedQueue, setSelectedQueue] = useState<ReviewQueueItem | null>(null)
   const [matching,      setMatching]      = useState(false)
+  // Set when accepting/manually-matching a candidate turns out to duplicate an
+  // already-matched item — that row gets merged away rather than becoming its
+  // own match, so this is the only feedback the reviewer gets about it.
+  const [mergeNotice,   setMergeNotice]   = useState<{ fromTitle: string; into: MergedInto } | null>(null)
 
   const fetchQueue = useCallback(() => {
     setQueueLoading(true)
@@ -147,13 +151,15 @@ export default observer(function ReviewPage() {
   useEffect(() => { fetchQueue() }, [fetchQueue])
 
   const handleAccept = async (candidate_id: string) => {
-    const kairosId = selectedQueue?.kairos_id
-    await api.acceptCandidate(candidate_id)
+    const kairosId  = selectedQueue?.kairos_id
+    const fromTitle = selectedQueue?.title
+    const result = await api.acceptCandidate(candidate_id)
     const updated = await api.getReviewQueue({ status: queueFilter, limit: 48 })
     setQueueItems(updated.items)
     setQueueTotal(updated.total)
     const refreshed = kairosId ? updated.items.find(i => i.kairos_id === kairosId) : null
     setSelectedQueue(refreshed ?? null)
+    setMergeNotice(result.merged_into && fromTitle ? { fromTitle, into: result.merged_into } : null)
   }
 
   const handleReject = async (candidate_id: string) => {
@@ -196,6 +202,25 @@ export default observer(function ReviewPage() {
   const visibleRequests = requests.filter(r => reqFilter === 'all' || r.status === reqFilter)
   const pendingReqCount = requests.filter(r => r.status === 'pending').length
 
+  // ── Duplicates state ─────────────────────────────────────────────────────────
+  const [duplicateItems,     setDuplicateItems]     = useState<DuplicateCandidate[]>([])
+  const [duplicateTotal,     setDuplicateTotal]     = useState(0)
+  const [duplicateLoading,   setDuplicateLoading]   = useState(false)
+  const [duplicateFilter,    setDuplicateFilter]    = useState<'all'|'show'|'movie'>('all')
+  const [selectedDuplicate,  setSelectedDuplicate]  = useState<DuplicateCandidate | null>(null)
+
+  const fetchDuplicates = useCallback(() => {
+    setDuplicateLoading(true)
+    api.getDuplicatesQueue({ item_type: duplicateFilter === 'all' ? undefined : duplicateFilter, limit: 48 })
+      .then(r => { setDuplicateItems(r.items); setDuplicateTotal(r.total) })
+      .catch(() => {})
+      .finally(() => setDuplicateLoading(false))
+  }, [duplicateFilter])
+
+  useEffect(() => {
+    if (tab === 'duplicates') fetchDuplicates()
+  }, [tab, fetchDuplicates])
+
   // ── Chapters state ───────────────────────────────────────────────────────────
   const [chapterItems,     setChapterItems]     = useState<ChapterReviewItem[]>([])
   const [chapterTotal,     setChapterTotal]     = useState(0)
@@ -221,12 +246,29 @@ export default observer(function ReviewPage() {
     setTab(t)
     setSelectedQueue(null)
     setSelectedReq(null)
+    setSelectedDuplicate(null)
     setSelectedChapterItem(null)
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', background: 'var(--hds-bg)' }}>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', background: 'var(--hds-bg)', position: 'relative' }}>
+      {tab === 'queue' && mergeNotice && (
+        <div style={{
+          position: 'absolute', top: 12, right: 12, zIndex: 10, maxWidth: 360,
+          padding: '10px 14px', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 8,
+          border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.15)',
+          color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, lineHeight: 1.5,
+        }}>
+          <div style={{ flex: 1 }}>
+            <strong>{mergeNotice.fromTitle}</strong> was a duplicate of <strong>{mergeNotice.into.title}</strong> — merged into it.
+          </div>
+          <button
+            onClick={() => setMergeNotice(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 14, lineHeight: 1, flexShrink: 0 }}
+          >✕</button>
+        </div>
+      )}
       {/* ── Left panel ─────────────────────────────────────────────────────── */}
       <div style={{
         width: 320, flexShrink: 0, height: '100%', overflow: 'hidden',
@@ -242,6 +284,7 @@ export default observer(function ReviewPage() {
             { key: 'queue',    label: 'Queue',    badge: null,                                                            admin: false },
             { key: 'groups',   label: 'Groups',   badge: groupsStore.pendingCount > 0 ? groupsStore.pendingCount : null, admin: false },
             { key: 'requests', label: 'Requests', badge: pendingReqCount > 0 ? pendingReqCount : null,                   admin: true  },
+            { key: 'duplicates', label: 'Duplicates', badge: duplicateTotal > 0 ? duplicateTotal : null,                 admin: true  },
             { key: 'chapters', label: 'Chapters', badge: null,                                                            admin: false },
           ] as const).filter(t => !t.admin || user?.role === 'admin').map(({ key, label, badge }) => (
             <button
@@ -291,6 +334,12 @@ export default observer(function ReviewPage() {
           onFilterChange={setReqFilter}
           onSelect={r => setSelectedReq(prev => prev?.request_id === r.request_id ? null : r)}
         />}
+        {tab === 'duplicates' && <DuplicatesListPanel
+          items={duplicateItems} total={duplicateTotal} loading={duplicateLoading}
+          filter={duplicateFilter} selected={selectedDuplicate}
+          onFilterChange={setDuplicateFilter}
+          onSelect={d => setSelectedDuplicate(prev => prev?.candidate_id === d.candidate_id ? null : d)}
+        />}
         {tab === 'chapters' && <ChaptersListPanel
           items={chapterItems} total={chapterTotal} loading={chapterLoading}
           mediaType={chapterMediaType} chapterType={chapterType} query={chapterQueryRaw}
@@ -311,7 +360,12 @@ export default observer(function ReviewPage() {
               onAccept={handleAccept}
               onReject={handleReject}
               onClose={() => setSelectedQueue(null)}
-              onMatched={() => { setSelectedQueue(null); fetchQueue() }}
+              onMatched={(merged) => {
+                const fromTitle = selectedQueue?.title
+                setSelectedQueue(null)
+                fetchQueue()
+                setMergeNotice(merged && fromTitle ? { fromTitle, into: merged } : null)
+              }}
             />
           : <EmptyHint>Select an item to review candidates</EmptyHint>
       )}
@@ -327,6 +381,16 @@ export default observer(function ReviewPage() {
               }}
             />
           : <EmptyHint>Select a request to review</EmptyHint>
+      )}
+      {tab === 'duplicates' && (
+        selectedDuplicate
+          ? <DuplicateDetailPanel
+              key={selectedDuplicate.candidate_id}
+              item={selectedDuplicate}
+              onClose={() => setSelectedDuplicate(null)}
+              onResolved={() => { setSelectedDuplicate(null); fetchDuplicates() }}
+            />
+          : <EmptyHint>Select a pair to compare</EmptyHint>
       )}
       {tab === 'chapters' && (
         selectedChapterItem
@@ -519,7 +583,7 @@ function CandidatePanel({
   onAccept:  (id: string) => void
   onReject:  (id: string) => void
   onClose:   () => void
-  onMatched: () => void
+  onMatched: (merged?: MergedInto) => void
 }) {
   const { user } = useAuth()
   const isAdmin  = user?.role === 'admin'
@@ -567,7 +631,7 @@ function CandidatePanel({
     const key = result.source + ':' + result.external_id
     setMatchingId(key)
     try {
-      await api.manualMatch(item.kairos_id, {
+      const r = await api.manualMatch(item.kairos_id, {
         item_type:   item.item_type,
         source:      result.source,
         external_id: result.external_id,
@@ -576,7 +640,7 @@ function CandidatePanel({
         poster_url:  result.poster_url,
         overview:    result.overview,
       })
-      onMatched()
+      onMatched(r.merged_into)
     } catch {
       setMatchingId(null)
     }
@@ -1545,6 +1609,209 @@ const selectStyle: React.CSSProperties = {
   cursor: 'pointer', outline: 'none',
 }
 
+// ── Duplicates tab ────────────────────────────────────────────────────────────
+// Auto-detected "possible duplicate" pairs from SyncManager's sync-time dedup
+// (fuzzy title match, or a folder match that only succeeded via a
+// case-insensitive fallback — see DuplicateCandidate). A human confirms
+// (Merge) or dismisses (Not a duplicate, remembered permanently) each pair;
+// this is separate from CandidatePanel's "Link Existing" mode, which stays
+// as the manual last-resort fallback for duplicates neither signal here nor
+// the match-time external-id check can catch.
+
+function DuplicatesListPanel({
+  items, total, loading, filter, selected, onFilterChange, onSelect,
+}: {
+  items:          DuplicateCandidate[]
+  total:          number
+  loading:        boolean
+  filter:         'all'|'show'|'movie'
+  selected:       DuplicateCandidate | null
+  onFilterChange: (f: 'all'|'show'|'movie') => void
+  onSelect:       (d: DuplicateCandidate) => void
+}) {
+  return (
+    <>
+      <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--hds-txt)' }}>
+            Duplicates
+          </span>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>{total}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {(['all', 'show', 'movie'] as const).map(f => (
+            <button key={f} onClick={() => onFilterChange(f)} style={{
+              flex: 1, padding: '5px 0', borderRadius: 6, cursor: 'pointer', fontSize: 9,
+              fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em',
+              border: `1px solid ${filter === f ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+              background: filter === f ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
+              color: filter === f ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
+            }}>{f.toUpperCase()}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto' }} className="scrollbar-dark">
+        {loading ? (
+          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {[...Array(5)].map((_, i) => <div key={i} className="hds-skeleton" style={{ height: 64, borderRadius: 8 }} />)}
+          </div>
+        ) : items.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)' }}>
+            No pending duplicates
+          </div>
+        ) : (
+          <div style={{ padding: '8px 10px' }}>
+            {items.map(d => {
+              const isSelected = selected?.candidate_id === d.candidate_id
+              const simColor = d.title_similarity >= 0.8 ? 'var(--hds-match-amber)' : 'var(--hds-txt-3)'
+              return (
+                <div
+                  key={d.candidate_id}
+                  onClick={() => onSelect(d)}
+                  style={{
+                    display: 'flex', flexDirection: 'column', gap: 4, padding: '9px 10px',
+                    borderRadius: 8, cursor: 'pointer', marginBottom: 2,
+                    background: isSelected ? 'oklch(0.55 0.14 292 / 0.1)' : 'transparent',
+                    border: `1px solid ${isSelected ? 'var(--hds-violet)' : 'transparent'}`,
+                    borderLeft: `3px solid ${simColor}`,
+                  }}
+                >
+                  <div style={{
+                    fontFamily: "'Chakra Petch', sans-serif", fontSize: 11.5, fontWeight: 600, color: 'var(--hds-txt)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {d.title_a} <span style={{ color: 'var(--hds-txt-3)', fontWeight: 400 }}>vs</span> {d.title_b}
+                  </div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>{d.reason}</div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+function DuplicateDetailPanel({ item, onClose, onResolved }: {
+  item:       DuplicateCandidate
+  onClose:    () => void
+  onResolved: () => void
+}) {
+  const [merging,     setMerging]     = useState(false)
+  const [dismissing,  setDismissing]  = useState(false)
+  const [error,       setError]       = useState<string | null>(null)
+  const busy = merging || dismissing
+
+  // Arbitrary but consistent: id_a survives as the merge target, id_b is
+  // absorbed and deleted — neither side is more "correct" than the other,
+  // so there's nothing meaningful to pick between beyond a stable choice.
+  // confirm:true always, since the admin has already seen both folders/
+  // titles side by side here — the generic folder-mismatch 409 confirmation
+  // step (used by CandidatePanel's manual "Link Existing" search) is
+  // redundant on top of that.
+  const handleMerge = async () => {
+    setMerging(true)
+    setError(null)
+    try {
+      if (item.item_type === 'show') await api.mergeShow(item.kairos_id_a, item.kairos_id_b, true)
+      else                            await api.mergeMovie(item.kairos_id_a, item.kairos_id_b, true)
+      onResolved()
+    } catch (e) {
+      setError(e instanceof ApiError ? (e.body?.error || 'Unable to merge — please try again.') : 'Unable to merge — please try again.')
+      setMerging(false)
+    }
+  }
+
+  const handleDismiss = async () => {
+    setDismissing(true)
+    setError(null)
+    try {
+      await api.dismissDuplicate(item.candidate_id)
+      onResolved()
+    } catch {
+      setError('Unable to dismiss — please try again.')
+      setDismissing(false)
+    }
+  }
+
+  return (
+    <div style={{ flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{
+        padding: '16px 24px', borderBottom: '1px solid var(--hds-line)',
+        display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
+      }}>
+        <div style={{ flex: 1 }}>
+          <h2 style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--hds-txt)', margin: '0 0 4px' }}>
+            Possible duplicate
+          </h2>
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-3)' }}>{item.reason}</div>
+        </div>
+        <button onClick={onClose} style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--hds-txt-3)', fontSize: 20, lineHeight: 1,
+        }}>✕</button>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }} className="scrollbar-dark">
+        <div style={{ display: 'flex', gap: 16 }}>
+          {[
+            { title: item.title_a, year: item.year_a, thumb: item.thumb_a, folder: item.folder_a },
+            { title: item.title_b, year: item.year_b, thumb: item.thumb_b, folder: item.folder_b },
+          ].map((side, i) => (
+            <div key={i} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ width: '100%', aspectRatio: '2/3', borderRadius: 8, overflow: 'hidden', background: 'var(--hds-bg-3)' }}>
+                {side.thumb && (
+                  <img src={mediaUrl(side.thumb)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                )}
+              </div>
+              <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600, color: 'var(--hds-txt)' }}>
+                {side.title} {side.year ? <span style={{ color: 'var(--hds-txt-3)', fontWeight: 400 }}>({side.year})</span> : null}
+              </div>
+              {side.folder && (
+                <div title={side.folder} style={{
+                  fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, color: 'var(--hds-txt-3)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {folderBaseName(side.folder)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <div style={{
+            marginTop: 16, padding: '8px 12px', borderRadius: 7,
+            border: '1px solid var(--hds-match-red)', background: 'oklch(0.62 0.2 22 / 0.12)',
+            color: 'var(--hds-match-red)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5,
+          }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+          <button onClick={handleMerge} disabled={busy} style={{
+            flex: 1, padding: '10px 0', borderRadius: 7, cursor: busy ? 'not-allowed' : 'pointer',
+            border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.1)',
+            color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600,
+            opacity: busy ? 0.6 : 1,
+          }}>{merging ? '…' : 'Merge'}</button>
+          <button onClick={handleDismiss} disabled={busy} style={{
+            flex: 1, padding: '10px 0', borderRadius: 7, cursor: busy ? 'not-allowed' : 'pointer',
+            border: '1px solid var(--hds-line)', background: 'transparent',
+            color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+            opacity: busy ? 0.6 : 1,
+          }}>{dismissing ? '…' : 'Not a duplicate'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Chapters tab ──────────────────────────────────────────────────────────────
 // Visual inspection only — no accept/save action.
 
@@ -1781,9 +2048,7 @@ function ChapterInspectorPanel({ item, onClose }: { item: ChapterReviewItem; onC
             isLive={false}
             autoPlay={false}
             controls
-            // ms is relative to the current manifest, not absolute — see
-            // usePlaybackSession's basePositionMs comment.
-            onTimeUpdate={ms => setCurrentMs(session.basePositionMs + ms)}
+            onTimeUpdate={ms => setCurrentMs(ms)}
             onEnded={() => {}}
             onError={setPlayerError}
           />

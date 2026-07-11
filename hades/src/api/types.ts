@@ -952,6 +952,38 @@ export interface ItemMatchCandidate {
   overview:     string
 }
 
+// Present on an accept/manual-match response when the confirmed item turned
+// out to duplicate an external id already owned by a different library item
+// — the accepted item was merged into this one and deleted, rather than
+// becoming its own separate match.
+export interface MergedInto {
+  kairos_id: string
+  item_type: 'show' | 'movie'
+  title:     string
+}
+
+// A pair SyncManager's sync-time dedup flagged as an "uncertain" possible
+// duplicate (fuzzy title match, or a folder match that only succeeded via a
+// case-insensitive fallback) rather than auto-merging outright.
+export interface DuplicateCandidate {
+  candidate_id:     string
+  item_type:        'show' | 'movie'
+  kairos_id_a:      string
+  kairos_id_b:      string
+  title_a:          string
+  title_b:          string
+  year_a?:          number
+  year_b?:          number
+  thumb_a:          string
+  thumb_b:          string
+  trigger:          'fuzzy_title' | 'folder_uncertain' | 'both'
+  reason:           string
+  title_similarity: number
+  folder_a:         string
+  folder_b:         string
+  created_at:       string
+}
+
 export interface ReviewQueueItem {
   kairos_id:       string
   item_type:       'show' | 'movie'
