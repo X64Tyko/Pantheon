@@ -70,9 +70,19 @@ static void appendOutputArgs(std::vector<std::string>& a, const std::string& hls
     // output exists at all. Measured ~4-5s with hls_time=4, which was
     // routinely losing the race against the client's manifest-load patience
     // (see Router.cpp's waitForFile). hls_time=2 roughly halves that floor.
+    // omit_endlist: each scheduled item runs as its own ffmpeg process
+    // (transition() spawns a new one per item), and the muxer would
+    // otherwise write #EXT-X-ENDLIST when that process exits cleanly at the
+    // item's end -- even though another process is about to append more
+    // segments to this same playlist. hls.js treats ENDLIST as "stream over"
+    // and once the client's buffer drains to it, calls
+    // mediaSource.endOfStream(), which fires the <video> element's native
+    // 'ended' event -- kicking the player out of the channel instead of
+    // riding through the transition. The ChannelSession itself (not any one
+    // ffmpeg process) owns when the stream actually ends.
     std::string spec =
         "[f=mpegts:avoid_negative_ts=make_zero]pipe:1"
-        "|[f=hls:hls_time=" + std::to_string(kLiveHlsSegmentSecs) + ":hls_list_size=6:hls_flags=delete_segments+append_list"
+        "|[f=hls:hls_time=" + std::to_string(kLiveHlsSegmentSecs) + ":hls_list_size=6:hls_flags=delete_segments+append_list+omit_endlist"
         ":hls_segment_filename=" + hls_dir + "/seg-%05d.ts]" + hls_dir + "/playlist.m3u8";
     a.insert(a.end(), {"-f", "tee", spec});
 }
