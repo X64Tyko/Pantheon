@@ -120,12 +120,14 @@ private:
     void clearSourceMapping(const std::string& source_id);
 
     // For every source_user row on this source with a local user linked
-    // (source_user.imported_user_id — see SourceRepository::linkSourceUser),
+    // (source_user.imported_user_id — see SourceRepository::setImportedUserId),
     // pulls that account's own watch state via IMediaSource::fetchWatchState
     // and applies it to watch_progress for the linked local user. No-op for
-    // sources that don't override fetchWatchState (Plex today) or that have
-    // no linked accounts. Must run after this source's syncShows/syncMovies
-    // so source_mapping is fresh enough to resolve external_id -> kairos_id.
+    // sources with no linked accounts, or (for Plex specifically) a linked
+    // account whose token exchange fails — e.g. a Friends account, which has
+    // no Home-user token to switch to. Must run after this source's
+    // syncShows/syncMovies so source_mapping is fresh enough to resolve
+    // external_id -> kairos_id.
     void syncLinkedUserWatchState(IMediaSource& src, const std::string& source_id);
 
     void syncShows(IMediaSource& src,
