@@ -41,6 +41,14 @@ static constexpr double kMaxSpeed = 1.02;
 // looser than -hls_time silently overrides it).
 static constexpr int kLiveHlsSegmentSecs = 2;
 
+// How long transition()'s own default-slate fallback runs before rechecking
+// Kairos, when /now returns nothing at all (no scheduled item, no filler,
+// no offline config) — mirrors Kairos's own kOfflineRecheckMs
+// (SchedulerService.cpp) for a real offline item's wall_clock_end_ms; this
+// is the local equivalent for the case where Kairos gave us nothing to
+// compute one from.
+static constexpr int64_t kNoContentRetryMs = 20'000;
+
 // ── ffmpeg arg construction ───────────────────────────────────────────────────
 // pushVideoEncoderArgs()/pushAudioEncoderArgs()/fmtSpeed() live in
 // EncoderArgs.h/.cpp so VodSession can share them too.
@@ -165,6 +173,10 @@ static std::vector<std::string> buildArgs(
 // Loops a still image into an MPEG-TS stream, with either a looped audio
 // track or generated silence. Used for the offline slate and the connect-time
 // splash — neither has a real media file to seek/map into like buildArgs().
+// max_duration_ms > 0 bounds the encode so it naturally exits and lets
+// onExit()/transition() re-poll Kairos afterward, instead of looping the
+// slate forever with no way to notice real programming has resumed — see
+// spawnOffline's comment for when each mode applies.
 static std::vector<std::string> buildImageArgs(
     const std::string& ffmpeg_path,
     const std::string& image_path,
@@ -175,7 +187,8 @@ static std::vector<std::string> buildImageArgs(
     int video_bitrate_kbps,
     int audio_bitrate_kbps,
     bool verbose_transcode_logs,
-    const std::string& hls_dir = "")
+    const std::string& hls_dir = "",
+    int64_t max_duration_ms = 0)
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
@@ -216,6 +229,12 @@ static std::vector<std::string> buildImageArgs(
     pushBitrateCapArgs(a, video_bitrate_kbps);
 
     pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, audio_bitrate_kbps);
+
+    if (max_duration_ms > 0) {
+        std::ostringstream ss;
+        ss << std::fixed << std::setprecision(3) << (max_duration_ms / 1000.0);
+        a.push_back("-t"); a.push_back(ss.str());
+    }
 
     appendOutputArgs(a, hls_dir);
     return a;
@@ -520,8 +539,13 @@ void ChannelSession::transition() {
     int64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         steady_::now() - item_start).count();
 
-    kairos.markPlayed(channel_id, current_item.item_type, current_item.item_id,
-                      current_item.block_id, elapsed);
+    // Offline gap-fillers carry no item_id (nothing scheduled to mark played)
+    // — Kairos's /played rejects an empty one outright, so skip the call
+    // rather than firing a request guaranteed to log a spurious error on
+    // every bounded-offline recheck (see spawnOffline).
+    if (current_item.item_type != "offline")
+        kairos.markPlayed(channel_id, current_item.item_type, current_item.item_id,
+                          current_item.block_id, elapsed);
 
     // The item's *actual* real-time playback duration (elapsed) can drift
     // from its scheduled duration_ms — rounding, edit lists, VFR content, or
@@ -543,9 +567,24 @@ void ChannelSession::transition() {
         next = kairos.getNow(channel_id, nowMs());
     }
     if (!next) {
-        std::cerr << "[session:" << channel_id << "] cannot get next item, stopping\n";
-        active = false;
-        broadcastDone();
+        // Kairos has nothing at all for this channel right now — no
+        // scheduled item, no filler, no offline config (a channel-level
+        // /now failure, distinct from spawnFfmpeg's item_type=="offline"
+        // path below, which at least got a real response). This used to
+        // kill the whole session outright on any such gap, requiring a full
+        // restart to recover once Kairos had something to offer again.
+        // Fall back to Hephaestus's own bundled default slate instead (same
+        // last-resort default_logo_path spawnOffline already falls back to)
+        // and keep retrying on a bounded recheck.
+        std::cerr << "[session:" << channel_id << "] cannot get next item, showing default slate and retrying\n";
+        KairosNowResponse fallback;
+        fallback.item_type           = "offline";
+        fallback.wall_clock_start_ms = actualNowMs;
+        fallback.wall_clock_end_ms   = actualNowMs + kNoContentRetryMs;
+        current_item            = fallback;
+        item_start               = steady_::now();
+        current_item_offset_ms   = 0;
+        spawnFfmpeg(fallback, 0);
         return;
     }
 
@@ -656,6 +695,17 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
 // splash): the item's own offline_image_path, else this channel's logo, else
 // the bundled generic default. Only bails with no stream if all three are
 // unset, which shouldn't happen once default_logo_path is configured.
+//
+// item.wall_clock_end_ms distinguishes the two callers: the cold-start/
+// in_splash connect splash always passes a default-constructed
+// KairosNowResponse{} (wall_clock_end_ms == 0) and should loop forever —
+// the in-flight /now lookup that's actually resolving it runs independently
+// and swaps in real content the moment it's ready (see start()/onExit()).
+// A genuine scheduled gap reached through transition() carries a real
+// wall_clock_end_ms, and *must* be bounded: buildImageArgs' -loop/
+// -stream_loop otherwise runs the encode forever with nothing to ever
+// notice the gap has ended and real programming has resumed, permanently
+// stranding the session (the exact bug this bound exists to fix).
 void ChannelSession::spawnOffline(const KairosNowResponse& item) {
     std::string image = item.offline_image_path.value_or("");
     if (image.empty()) image = opts.logo_path;
@@ -668,12 +718,24 @@ void ChannelSession::spawnOffline(const KairosNowResponse& item) {
         return;
     }
 
-    std::cout << "[session:" << channel_id << "] spawning ffmpeg (offline slate): \"" << image << "\"\n";
+    int64_t boundMs = 0;
+    if (item.wall_clock_end_ms > 0) {
+        // Clamped to a sane minimum: wall_clock_end_ms can already be at or
+        // slightly behind "now" by the time this runs (request latency,
+        // clock drift) — a near-zero -t would spin the recheck loop far
+        // faster than intended.
+        static constexpr int64_t kMinRecheckMs = 3000;
+        boundMs = std::max(kMinRecheckMs, item.wall_clock_end_ms - nowMs());
+    }
+
+    std::cout << "[session:" << channel_id << "] spawning ffmpeg (offline slate): \"" << image << "\"";
+    if (boundMs > 0) std::cout << " recheck in " << boundMs << "ms";
+    std::cout << "\n";
 
     auto args = buildImageArgs(ffmpeg_path, image, item.offline_audio_path.value_or(""),
                                opts.hw_accel, opts.vaapi_device, opts.max_resolution,
                                opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
-                               opts.verbose_transcode_logs, hlsDir());
+                               opts.verbose_transcode_logs, hlsDir(), boundMs);
     launchFfmpeg(std::move(args), "ffmpeg (offline slate)");
 }
 

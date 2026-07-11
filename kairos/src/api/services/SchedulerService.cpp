@@ -35,6 +35,13 @@ struct LangCache {
 
 LangCache g_lang_cache;
 
+// How far out an "offline" gap-filler response's wall_clock_end_ms reaches —
+// Hephaestus's ChannelSession bounds the offline slate's encode to roughly
+// this long (see ChannelSession::spawnOffline) so it naturally exits and
+// re-polls /now afterward, instead of looping the slate forever with no way
+// to ever notice the gap has ended and real programming has resumed.
+constexpr int64_t kOfflineRecheckMs = 20'000;
+
 } // namespace
 
 void SchedulerService::registerRoutes(httplib::Server& svr) {
@@ -210,6 +217,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 					{"file_path",           conf_.applyPathMap(offline->vid_path)},
 					{"duration_ms",         0},
 					{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+					{"wall_clock_end_ms",   static_cast<int64_t>(t) * 1000 + kOfflineRecheckMs},
 				}.dump());
 				return;
 			}
@@ -222,6 +230,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 				{"item_type",           "offline"},
 				{"duration_ms",         0},
 				{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+				{"wall_clock_end_ms",   static_cast<int64_t>(t) * 1000 + kOfflineRecheckMs},
 			};
 			if (!image.empty()) {
 				j["offline_image_path"] = conf_.applyPathMap(image);
