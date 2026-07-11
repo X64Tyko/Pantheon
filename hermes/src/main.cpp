@@ -55,14 +55,23 @@ int main(int argc, char* argv[]) {
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(32); };
 
-	// Log any 4XX/5XX response so we don't have to rely on client-side errors                      
-	// to discover Hermes returning unexpected status codes.                                        
-	  svr.set_logger([](const httplib::Request& req, const httplib::Response& res) {                  
-	  if (res.status >= 400) {                                                                    
-	  std::cerr << "[hermes] " << req.method << " " << req.path                               
-	       << " → " << res.status << "\n";                                               
-		}                                                                                           
-	}); 
+	// Log any 4XX/5XX response so we don't have to rely on client-side errors
+	// to discover Hermes returning unexpected status codes.
+	  svr.set_logger([](const httplib::Request& req, const httplib::Response& res) {
+	  if (res.status >= 400) {
+	  // Every Roku polls its own commands/next long-poll continuously from
+	  // launch, whether or not anything is casting to it — a 404 there just
+	  // means "no caster session right now," the routine common case, not
+	  // an actual error. Logging it drowned out everything else at one
+	  // entry every couple of seconds per idle device (DeviceLongPollTask.brs).
+	  bool routineDeviceNotConnected = res.status == 404 &&
+	      req.path.find("/commands/next") != std::string::npos;
+	  if (!routineDeviceNotConnected) {
+	  std::cerr << "[hermes] " << req.method << " " << req.path
+	       << " → " << res.status << "\n";
+	  }
+		}
+	});
 	
     registerRoutes(svr, broadcasters, kairos, log_buffer, cfg, devices);
 
