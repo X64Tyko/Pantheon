@@ -134,10 +134,10 @@ export function TvHome() {
 
   useEffect(() => {
     Promise.all([
-      api.getShows({ limit: 16, sort: 'recently_added' }),
-      api.getMovies({ limit: 16, sort: 'recently_added' }),
-      api.getMovies({ limit: 16, sort: 'recently_released' }).catch(() => ({ items: [] as Movie[], total: 0 })),
-      api.getShows({ limit: 16, sort: 'recently_aired' }).catch(() => ({ items: [] as Show[], total: 0 })),
+      api.getShows({ limit: 16, sort: 'recently_added', home: true }),
+      api.getMovies({ limit: 16, sort: 'recently_added', home: true }),
+      api.getMovies({ limit: 16, sort: 'recently_released', home: true }).catch(() => ({ items: [] as Movie[], total: 0 })),
+      api.getShows({ limit: 16, sort: 'recently_aired', home: true }).catch(() => ({ items: [] as Show[], total: 0 })),
       api.getWatchProgress().catch(() => []),
     ]).then(([sr, mr, rr, ra, cw]) => {
       setRecentShows(sr.items)

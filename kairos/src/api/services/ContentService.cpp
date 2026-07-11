@@ -439,6 +439,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("collection"))     p.collection    = req.get_param_value("collection");
 		if (req.has_param("studio"))         p.studio        = req.get_param_value("studio");
 		if (req.has_param("sort"))           p.sort          = req.get_param_value("sort");
+		if (req.has_param("home"))           p.home_only     = req.get_param_value("home") == "1";
 		p.restriction = restrictionFor("show");
 
 		ContentRepository repo(db_);
@@ -637,6 +638,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("collection"))     p.collection    = req.get_param_value("collection");
 		if (req.has_param("studio"))         p.studio        = req.get_param_value("studio");
 		if (req.has_param("sort"))           p.sort          = req.get_param_value("sort");
+		if (req.has_param("home"))           p.home_only     = req.get_param_value("home") == "1";
 		p.restriction = restrictionFor("movie");
 
 		ContentRepository repo(db_);

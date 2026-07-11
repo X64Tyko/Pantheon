@@ -147,6 +147,12 @@ struct ShowSearchParams {
     std::string label, network, actor, country, collection, studio;
     std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_aired"
     RestrictionContext restriction;
+    // Set only by the actual Home-page/Roku-home shelf loaders. Without it,
+    // an unscoped (no library_id) search — the channel content picker,
+    // filler/bumper pickers, Library page's "All Libraries" view — sees
+    // every library including show_on_home=0 ones; home visibility is a
+    // Home-shelf-only concept, not a general content filter.
+    bool home_only = false;
 };
 
 struct MovieSearchParams {
@@ -155,6 +161,7 @@ struct MovieSearchParams {
     std::string label, actor, country, collection, studio;
     std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_released"
     RestrictionContext restriction;
+    bool home_only = false;   // see ShowSearchParams::home_only
 };
 
 struct StrField { std::string col, val; };

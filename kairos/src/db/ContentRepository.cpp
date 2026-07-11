@@ -759,10 +759,11 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         return r;
     };
 
-    // Only applied when browsing unscoped (no explicit library_id) — a
-    // filler/bumper library opted out of Home stays fully visible when
-    // browsed directly, e.g. via the Library page's own switcher.
-    const std::string home_exclude = R"(
+    // Only applied by actual Home-shelf callers (p.home_only) — a filler/
+    // bumper library opted out of Home stays fully visible to everyone else
+    // browsing unscoped, e.g. the channel content picker, filler/bumper
+    // pickers, or the Library page's own "All Libraries" view.
+    const std::string home_exclude = !p.home_only ? "" : R"(
         AND NOT EXISTS (
             SELECT 1 FROM source_mapping sm4
             JOIN media_library ml4 ON ml4.library_id = sm4.library_id
@@ -868,7 +869,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     };
 
     // See searchShows()'s identical home_exclude — same reasoning.
-    const std::string home_exclude = R"(
+    const std::string home_exclude = !p.home_only ? "" : R"(
         AND NOT EXISTS (
             SELECT 1 FROM source_mapping sm4
             JOIN media_library ml4 ON ml4.library_id = sm4.library_id
