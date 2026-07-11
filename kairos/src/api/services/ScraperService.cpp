@@ -165,7 +165,10 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
     });
 
     // POST /api/scrapers/queue/:kairos_id/manual-match
-    svr.Post(R"(/api/scrapers/queue/([^/]+)/manual-match)", [this](const Req& req, Res& res) {
+    // kairos_id uses (.+) rather than ([^/]+): local-source ids are full filesystem
+    // paths and contain '/', which httplib's decode_url() restores from %2F before
+    // routing runs, so a non-greedy segment match 404s on any local-only item.
+    svr.Post(R"(/api/scrapers/queue/(.+)/manual-match)", [this](const Req& req, Res& res) {
         if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string kairos_id = req.matches[1];
         try {
@@ -273,8 +276,8 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
         ok(res, json{{"items", arr}});
     });
 
-    // GET /api/scrapers/metadata/:item_type/:kairos_id
-    svr.Get(R"(/api/scrapers/metadata/(show|movie)/([^/]+))", [this](const Req& req, Res& res) {
+    // GET /api/scrapers/metadata/:item_type/:kairos_id (see manual-match above re: (.+))
+    svr.Get(R"(/api/scrapers/metadata/(show|movie)/(.+))", [this](const Req& req, Res& res) {
         if (!currentUser()) { err(res, 401, "Unauthorized"); return; }
         std::string type = req.matches[1];
         std::string kid  = req.matches[2];
@@ -290,8 +293,25 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
         ok(res, json{{"external_ids", j_ids}, {"alternate_titles", alts}});
     });
 
+    // POST /api/scrapers/metadata/:item_type/:kairos_id/refresh
+    // Registered before the plain metadata POST below: both use a (.+) id capture
+    // (local kairos_ids contain '/'), and since regex_match has no boundary between
+    // them, the plain route would otherwise greedily swallow ".../refresh" too —
+    // whichever pattern is checked first by httplib wins, so the more specific one
+    // (this one) has to come first.
+    svr.Post(R"(/api/scrapers/metadata/(show|movie)/(.+)/refresh)", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
+        std::string type = req.matches[1];
+        std::string kid  = req.matches[2];
+
+        if (scraper_.refreshMetadata(kid, type))
+            ok(res, json{{"ok", true}});
+        else
+            err(res, 404, "no metadata sources found for this item");
+    });
+
     // POST /api/scrapers/metadata/:item_type/:kairos_id
-    svr.Post(R"(/api/scrapers/metadata/(show|movie)/([^/]+))", [this](const Req& req, Res& res) {
+    svr.Post(R"(/api/scrapers/metadata/(show|movie)/(.+))", [this](const Req& req, Res& res) {
         if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
         std::string type = req.matches[1];
         std::string kid  = req.matches[2];
@@ -312,17 +332,5 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
         } catch (const std::exception& e) {
             err(res, 400, e.what());
         }
-    });
-
-    // POST /api/scrapers/metadata/:item_type/:kairos_id/refresh
-    svr.Post(R"(/api/scrapers/metadata/(show|movie)/([^/]+)/refresh)", [this](const Req& req, Res& res) {
-        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
-        std::string type = req.matches[1];
-        std::string kid  = req.matches[2];
-
-        if (scraper_.refreshMetadata(kid, type))
-            ok(res, json{{"ok", true}});
-        else
-            err(res, 404, "no metadata sources found for this item");
     });
 }
