@@ -1,52 +1,121 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useFocusable } from '../../nav/useFocusable'
+import { useDebounce } from '../../hooks/useDebounce'
 import { mediaUrl } from '../../api/client'
 import type { Episode } from '../../api/types'
+
+// Debounces both directions of the expand/collapse trigger — sweeping the
+// mouse across several collapsed season tiles on the way to somewhere else
+// no longer fires a burst of expand/collapse for each one it passes over.
+const HOVER_DEBOUNCE_MS = 150
 
 interface EpisodeShelfProps {
   seasonNumber: number
   seasonName?:  string
   episodes:     Episode[]
+  /** Fired when an episode tile is hovered/focused — lets the hero retarget to it. */
+  onEpisodeHover?:    (episode: Episode) => void
+  /** Fired when focus/hover leaves this season entirely (not just moving between its own tiles) — restores the hero. */
+  onEpisodeHoverEnd?: () => void
 }
 
-export function EpisodeShelf({ seasonNumber, seasonName, episodes }: EpisodeShelfProps) {
+export function EpisodeShelf({ seasonNumber, seasonName, episodes, onEpisodeHover, onEpisodeHoverEnd }: EpisodeShelfProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [showArrows, setShowArrows] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const scroll = (d: 'left' | 'right') =>
     scrollRef.current?.scrollBy({ left: d === 'right' ? 300 : -300, behavior: 'smooth' })
 
   const title = seasonName || (seasonNumber === 0 ? 'Specials' : `Season ${seasonNumber}`)
 
+  // Multiple aired-order "season 0" entries can share seasonNumber 0 (each a
+  // different special) — anchor on the first episode's id too so their
+  // focusKeys don't collide.
+  const { ref: containerRef, focusKey: containerFocusKey, hasFocusedChild } = useFocusable<object, HTMLDivElement>({
+    focusKey: `season-shelf-${seasonNumber}-${episodes[0]?.episode_id ?? ''}`,
+    trackChildren: true,
+    saveLastFocusedChild: true,
+  })
+  const rawExpanded = hovered || hasFocusedChild
+  const expanded = useDebounce(rawExpanded, HOVER_DEBOUNCE_MS)
+
   return (
     <div
+      ref={containerRef}
       style={{ position: 'relative', marginBottom: 20 }}
-      onMouseEnter={() => setShowArrows(true)}
-      onMouseLeave={() => setShowArrows(false)}
+      onMouseEnter={() => { setHovered(true); setShowArrows(true) }}
+      onMouseLeave={() => { setHovered(false); setShowArrows(false); onEpisodeHoverEnd?.() }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
-        <span style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-          color: 'var(--hds-txt)', letterSpacing: '0.02em',
-        }}>{title}</span>
-        <span style={{
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
-        }}>{episodes.length} episode{episodes.length === 1 ? '' : 's'}</span>
-      </div>
+      <FocusContext.Provider value={containerFocusKey}>
+        <SeasonHeaderTile
+          focusKey={`season-header-${seasonNumber}-${episodes[0]?.episode_id ?? ''}`}
+          title={title} count={episodes.length} expanded={expanded}
+        />
 
-      {showArrows && episodes.length > 3 && <EpArrow side="left" onClick={() => scroll('left')} />}
-      <div ref={scrollRef} style={{
-        display: 'flex', gap: 10, overflowX: 'auto', overflowY: 'hidden',
-        paddingBottom: 4, scrollbarWidth: 'none',
-      }}>
-        {episodes.map(ep => <EpisodeTile key={ep.episode_id} episode={ep} />)}
-      </div>
-      {showArrows && episodes.length > 3 && <EpArrow side="right" onClick={() => scroll('right')} />}
+        {/* Grid-rows 0fr/1fr trick animates height without ever measuring it —
+            the row stays mounted (so focus/D-pad nav can always reach it,
+            and there's something in the DOM to actually transition) and just
+            collapses to zero visual size instead of snapping in/out. */}
+        <div style={{
+          display: 'grid',
+          gridTemplateRows: expanded ? '1fr' : '0fr',
+          transition: 'grid-template-rows .22s cubic-bezier(0.22,1,0.36,1)',
+          marginTop: expanded ? 10 : 0,
+        }}>
+          <div style={{ overflow: 'hidden', minHeight: 0 }}>
+            {showArrows && episodes.length > 3 && <EpArrow side="left" onClick={() => scroll('left')} />}
+            <div ref={scrollRef} style={{
+              display: 'flex', gap: 10, overflowX: 'auto', overflowY: 'hidden',
+              paddingBottom: 4, scrollbarWidth: 'none',
+            }}>
+              {episodes.map(ep => (
+                <EpisodeTile key={ep.episode_id} episode={ep} onHover={() => onEpisodeHover?.(ep)} />
+              ))}
+            </div>
+            {showArrows && episodes.length > 3 && <EpArrow side="right" onClick={() => scroll('right')} />}
+          </div>
+        </div>
+      </FocusContext.Provider>
     </div>
   )
 }
 
-function EpisodeTile({ episode }: { episode: Episode }) {
+function SeasonHeaderTile({ focusKey, title, count, expanded }: { focusKey: string; title: string; count: number; expanded: boolean }) {
+  const [hovered, setHovered] = useState(false)
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({ focusKey })
+  const active = hovered || focused
+
+  return (
+    <div
+      ref={ref} data-tv-focused={focused}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+        padding: '10px 14px', borderRadius: 8,
+        border: `1px solid ${active ? 'var(--hds-line-s)' : 'var(--hds-line)'}`,
+        background: active ? 'var(--hds-bg-2)' : 'transparent',
+        transition: 'border-color .12s, background .12s',
+      }}
+    >
+      <span style={{
+        fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
+        color: 'var(--hds-txt)', letterSpacing: '0.02em',
+      }}>{title}</span>
+      <span style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
+      }}>{count} episode{count === 1 ? '' : 's'}</span>
+      <span style={{
+        marginLeft: 'auto', color: 'var(--hds-txt-3)', fontSize: 11,
+        transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s',
+      }}>›</span>
+    </div>
+  )
+}
+
+function EpisodeTile({ episode, onHover }: { episode: Episode; onHover?: () => void }) {
   const [hoveredState, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = episode.thumb && !imgErr
@@ -57,6 +126,7 @@ function EpisodeTile({ episode }: { episode: Episode }) {
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
     focusKey: `episode-tile-${episode.episode_id}`,
     onEnterPress: go,
+    onFocus: () => onHover?.(),
   })
   const hovered = hoveredState || focused
 
@@ -67,7 +137,7 @@ function EpisodeTile({ episode }: { episode: Episode }) {
     <div
       ref={ref} data-tv-focused={focused}
       title={tooltip}
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={() => { setHovered(true); onHover?.() }}
       onMouseLeave={() => setHovered(false)}
       style={{
         flexShrink: 0, width: 220, borderRadius: 8, overflow: 'hidden', cursor: 'pointer',

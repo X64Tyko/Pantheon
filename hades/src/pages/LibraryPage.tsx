@@ -109,7 +109,15 @@ export default observer(function LibraryPage() {
         <div
           ref={gridScrollRef}
           onScroll={e => saveScrollPos(SCROLL_KEY, e.currentTarget.scrollTop)}
-          style={{ flex: 1, overflowY: 'auto', opacity: transitioning ? 0 : 1, transition: 'opacity .2s ease' }}
+          style={{
+            flex: 1, minHeight: 0,
+            // MediaDetailHero owns its own internal fixed-hero/scrolling-body
+            // split (so its hero stays pinned behind it) — this container
+            // must stop being a second scroller while it's open, or the two
+            // fight each other.
+            overflowY: detailOpen ? 'hidden' : 'auto',
+            opacity: transitioning ? 0 : 1, transition: 'opacity .2s ease',
+          }}
         >
           {detailOpen ? (
             selectedDiscover ? (

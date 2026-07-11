@@ -58,7 +58,6 @@ export default function HomePage() {
   // Hero
   const heroCandidates    = useRef<(Show | Movie)[]>([])
   const heroIdx           = useRef(0)
-  const heroBeforeDetail  = useRef<{ item: Show | Movie; detail: ShowDetail | MovieDetail | null; idx: number } | null>(null)
   const hoverRestoreRef   = useRef<{ item: Show | Movie; detail: ShowDetail | MovieDetail | null; idx: number } | null>(null)
   const [heroItem,   setHeroItem]   = useState<Show | Movie | null>(null)
   const [heroDetail, setHeroDetail] = useState<ShowDetail | MovieDetail | null>(null)
@@ -148,19 +147,17 @@ export default function HomePage() {
 
   // ── Detail open / close ─────────────────────────────────────────────────────
 
+  // Home's own rotating hero (HeroPanel) is browse-mode only — the open
+  // detail view is MediaDetailHero's own pinned hero instead (same component
+  // Library uses, so the two never drift out of sync with each other again),
+  // so opening/closing a detail view no longer touches HeroPanel's state at
+  // all: it just stops being rendered, and resumes wherever it left off.
   const openDetail = (id: string, type: 'show' | 'movie') => {
     if (heroIntervalRef.current) clearInterval(heroIntervalRef.current)
     savedScrollY.current = scrollContainerRef.current?.scrollTop ?? 0
     // The shelf row unmounts on detail-open without ever firing its own
     // mouseleave, so a hover-swap in progress would otherwise be orphaned.
     hoverRestoreRef.current = null
-
-    // Transition hero to selected item's backdrop (if it has one)
-    const listItem = allItemsRef.current.get(id)
-    if (listItem?.art && heroItem) {
-      heroBeforeDetail.current = { item: heroItem, detail: heroDetail, idx: heroIdx.current }
-      transitionHeroTo(listItem, null)
-    }
 
     // Crossfade shelves → detail
     setTransitioning(true)
@@ -174,14 +171,6 @@ export default function HomePage() {
   }
 
   const closeDetail = () => {
-    // Restore hero
-    if (heroBeforeDetail.current) {
-      const { item, detail, idx } = heroBeforeDetail.current
-      heroIdx.current = idx
-      transitionHeroTo(item, detail)
-      heroBeforeDetail.current = null
-    }
-
     // Crossfade detail → shelves
     setTransitioning(true)
     setTimeout(() => {
@@ -252,69 +241,78 @@ export default function HomePage() {
     <div ref={homeRef} style={{ height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--hds-bg)' }}>
       {/* Hero — a fixed, non-scrolling region; only the content below it scrolls.
           Plain flexbox, not JS-driven, so mouse-wheel/trackpad scrolling gets
-          the same behavior as D-pad nav for free. */}
-      <div style={{ flexShrink: 0 }}>
-        {loading ? (
-          <div className="hds-skeleton" style={{ height: '62vh', minHeight: 360 }} />
-        ) : heroItem ? (
-          <HeroPanel
-            item={heroItem}
-            detail={heroDetail}
-            fading={heroFading}
-            detailMode={detailOpen}
-            totalCandidates={heroCandidates.current.length}
-            currentIdx={heroIdx.current}
-            reviewCount={needsReview}
-            onViewDetail={() => openDetail(
-              isShow(heroItem) ? heroItem.show_id : heroItem.movie_id,
-              isShow(heroItem) ? 'show' : 'movie',
-            )}
-            onPlay={async () => {
-              const path = await resolvePlayPath(
-                isShow(heroItem) ? 'show' : 'movie',
+          the same behavior as D-pad nav for free. Browse-mode only — the
+          open detail view brings its own (MediaDetailHero's), so this whole
+          region simply isn't rendered while one's open. */}
+      {!detailOpen && (
+        <div style={{ flexShrink: 0 }}>
+          {loading ? (
+            <div className="hds-skeleton" style={{ height: '62vh', minHeight: 360 }} />
+          ) : heroItem ? (
+            <HeroPanel
+              item={heroItem}
+              detail={heroDetail}
+              fading={heroFading}
+              totalCandidates={heroCandidates.current.length}
+              currentIdx={heroIdx.current}
+              reviewCount={needsReview}
+              onViewDetail={() => openDetail(
                 isShow(heroItem) ? heroItem.show_id : heroItem.movie_id,
-              )
-              if (path) navigate(path)
-            }}
-            onDotClick={i => { startRotation(); goToHero(i) }}
-            onReviewClick={() => navigate('/review')}
-            castAvailable={castSession.available}
-            onCast={async () => {
-              // Whichever item is currently the hero — rotation or a shelf
-              // hover both already retarget it, and Play already follows the
-              // same item, so Cast mirrors that "current state" for free
-              // rather than needing its own tracking.
-              if (!castSession.connected) {
-                try { await cast.framework.CastContext.getInstance().requestSession() }
-                catch (err) {
-                  // chrome.cast.ErrorCode.CANCEL is the normal "closed the
-                  // device picker" case — anything else (e.g. invalid/
-                  // unregistered App ID, no eligible receiver) is a real
-                  // failure that was previously silent here.
-                  if (err !== 'cancel') console.error('Cast requestSession() failed:', err)
-                  return
+                isShow(heroItem) ? 'show' : 'movie',
+              )}
+              onPlay={async () => {
+                const path = await resolvePlayPath(
+                  isShow(heroItem) ? 'show' : 'movie',
+                  isShow(heroItem) ? heroItem.show_id : heroItem.movie_id,
+                )
+                if (path) navigate(path)
+              }}
+              onDotClick={i => { startRotation(); goToHero(i) }}
+              onReviewClick={() => navigate('/review')}
+              castAvailable={castSession.available}
+              onCast={async () => {
+                // Whichever item is currently the hero — rotation or a shelf
+                // hover both already retarget it, and Play already follows the
+                // same item, so Cast mirrors that "current state" for free
+                // rather than needing its own tracking.
+                if (!castSession.connected) {
+                  try { await cast.framework.CastContext.getInstance().requestSession() }
+                  catch (err) {
+                    // chrome.cast.ErrorCode.CANCEL is the normal "closed the
+                    // device picker" case — anything else (e.g. invalid/
+                    // unregistered App ID, no eligible receiver) is a real
+                    // failure that was previously silent here.
+                    if (err !== 'cancel') console.error('Cast requestSession() failed:', err)
+                    return
+                  }
                 }
-              }
-              // PlayerPage's own useCastSession() picks up the now-connected
-              // session on mount and loads this content into it — same as if
-              // Cast were pressed mid-local-playback, just starting already
-              // connected. No cast-session/VOD-lifecycle duplication needed here.
-              const path = await resolvePlayPath(
-                isShow(heroItem) ? 'show' : 'movie',
-                isShow(heroItem) ? heroItem.show_id : heroItem.movie_id,
-              )
-              if (path) navigate(path)
-            }}
-          />
-        ) : (
-          <EmptyHero onGoToSources={() => navigate('/sources')} />
-        )}
-      </div>
+                // PlayerPage's own useCastSession() picks up the now-connected
+                // session on mount and loads this content into it — same as if
+                // Cast were pressed mid-local-playback, just starting already
+                // connected. No cast-session/VOD-lifecycle duplication needed here.
+                const path = await resolvePlayPath(
+                  isShow(heroItem) ? 'show' : 'movie',
+                  isShow(heroItem) ? heroItem.show_id : heroItem.movie_id,
+                )
+                if (path) navigate(path)
+              }}
+            />
+          ) : (
+            <EmptyHero onGoToSources={() => navigate('/sources')} />
+          )}
+        </div>
+      )}
 
       <div
         ref={scrollContainerRef}
         onScroll={e => saveScrollPos(SCROLL_KEY, e.currentTarget.scrollTop)}
-        style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
+        style={{
+          flex: 1, minHeight: 0,
+          // MediaDetailHero owns its own internal fixed-hero/scrolling-body
+          // split while open (same as LibraryPage) — this container must stop
+          // being a second scroller then, or the two fight each other.
+          overflowY: detailOpen ? 'hidden' : 'auto',
+        }}
         className="scrollbar-dark"
       >
         {/* Crossfading content area */}
@@ -322,7 +320,8 @@ export default function HomePage() {
           opacity:    transitioning ? 0 : 1,
           transition: 'opacity .2s ease',
           position: 'relative',
-          minHeight: '100%',
+          height: detailOpen ? '100%' : undefined,
+          minHeight: detailOpen ? undefined : '100%',
           background: 'var(--hds-bg)',
         }}>
           {detailOpen && detailId && detailType ? (
@@ -330,7 +329,6 @@ export default function HomePage() {
               id={detailId}
               content_type={detailType}
               onBack={closeDetail}
-              showBackdrop={false}
               actions={media => <LibraryDetailActions id={detailId} content_type={detailType} media={media} />}
             />
           ) : (
@@ -365,14 +363,13 @@ export default function HomePage() {
 // ── Hero panel ────────────────────────────────────────────────────────────────
 
 function HeroPanel({
-  item, detail, fading, detailMode, totalCandidates, currentIdx,
+  item, detail, fading, totalCandidates, currentIdx,
   reviewCount, onViewDetail, onPlay, onDotClick, onReviewClick,
   castAvailable, onCast,
 }: {
   item:            Show | Movie
   detail:          ShowDetail | MovieDetail | null
   fading:          boolean
-  detailMode:      boolean
   totalCandidates: number
   currentIdx:      number
   reviewCount:     number
@@ -385,6 +382,9 @@ function HeroPanel({
   castAvailable:   boolean
   onCast:          () => void
 }) {
+  // Browse-mode only (the open detail view is MediaDetailHero's own pinned
+  // hero instead) — heroCandidates is already pre-filtered to items that
+  // have art (see the useEffect that builds it), so item.art is reliably set here.
   const backdrop = proxyArt(item)
   const bg = backdrop
     ? `url(${backdrop}) center/cover no-repeat`
@@ -395,9 +395,9 @@ function HeroPanel({
   const overview = detail?.overview ?? ''
   const rating   = detail?.audience_rating ?? item.audience_rating
 
-  const play      = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-play',   onEnterPress: onPlay,       focusable: !detailMode })
-  const viewDetail = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-detail', onEnterPress: onViewDetail, focusable: !detailMode })
-  const castBtn    = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-cast',    onEnterPress: onCast,       focusable: !detailMode && castAvailable })
+  const play      = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-play',   onEnterPress: onPlay })
+  const viewDetail = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-detail', onEnterPress: onViewDetail })
+  const castBtn    = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-cast',    onEnterPress: onCast, focusable: castAvailable })
   const review     = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-review', onEnterPress: onReviewClick, focusable: reviewCount > 0 })
 
   return (
@@ -407,12 +407,10 @@ function HeroPanel({
       opacity: fading ? 0 : 1, transition: 'opacity .26s ease',
       overflow: 'hidden',
     }}>
-      {/* Side dim — lightens in detail mode */}
+      {/* Side dim — for text legibility over the backdrop. */}
       <div style={{
         position: 'absolute', inset: 0,
         background: 'linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%)',
-        opacity: detailMode ? 0.28 : 1,
-        transition: 'opacity .5s ease',
       }} />
       {/* Bottom fade-to-background — fully contained within this box (Hero is
           now its own fixed, non-scrolling flex region, not a normal-flow
@@ -424,14 +422,11 @@ function HeroPanel({
         pointerEvents: 'none',
       }} />
 
-      {/* Text content — fades out in detail mode. Padding/maxWidth shrink on
-          mobile via .hds-hero-text (index.css) — at 64px each side this
-          left ~247px for the whole title/genres/overview/button column on a
-          375px phone. */}
+      {/* Text content — padding/maxWidth shrink on mobile via .hds-hero-text
+          (index.css) — at 64px each side this leaves ~247px for the whole
+          title/genres/overview/button column on a 375px phone. */}
       <div className="hds-hero-text" style={{
         position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 64px 56px', maxWidth: 640,
-        opacity: detailMode ? 0 : 1, transition: 'opacity .35s ease',
-        pointerEvents: detailMode ? 'none' : 'auto',
       }}>
         {genres.length > 0 && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -487,7 +482,7 @@ function HeroPanel({
       {/* Cast — fixed top-right, not inline with Play/View Details; every
           window it's available in (here and the player) anchors it the same
           way rather than mixing it into the row of content actions. */}
-      {castAvailable && !detailMode && (
+      {castAvailable && (
         <button
           ref={castBtn.ref} data-tv-focused={castBtn.focused}
           onClick={onCast}
@@ -516,7 +511,7 @@ function HeroPanel({
           ref={review.ref} data-tv-focused={review.focused}
           onClick={onReviewClick}
           style={{
-            position: 'absolute', top: castAvailable && !detailMode ? 60 : 18, right: 24, zIndex: 3,
+            position: 'absolute', top: castAvailable ? 60 : 18, right: 24, zIndex: 3,
             display: 'flex', alignItems: 'center', gap: 7,
             padding: '5px 12px', borderRadius: 20,
             border: '1px solid var(--hds-match-amber)',
@@ -536,8 +531,8 @@ function HeroPanel({
         </button>
       )}
 
-      {/* Rotation dots — hidden in detail mode */}
-      {totalCandidates > 1 && !detailMode && (
+      {/* Rotation dots */}
+      {totalCandidates > 1 && (
         <div style={{ position: 'absolute', bottom: 20, right: 24, display: 'flex', gap: 6, zIndex: 2 }}>
           {Array.from({ length: Math.min(totalCandidates, 8) }, (_, i) => (
             <button key={i} onClick={() => onDotClick(i)} style={{

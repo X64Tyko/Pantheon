@@ -6,6 +6,7 @@ function showThumbUrl(id: string) { return mediaUrl(`/api/shows/${id}/thumb`) }
 function showArtUrl(id: string)   { return mediaUrl(`/api/shows/${id}/art`) }
 function movieThumbUrl(id: string) { return mediaUrl(`/api/movies/${id}/thumb`) }
 function movieArtUrl(id: string)   { return mediaUrl(`/api/movies/${id}/art`) }
+function episodeThumbUrl(id: string) { return mediaUrl(`/api/episodes/${id}/thumb`) }
 
 // Admin-facing "where does this actually live on disk" display — movies have
 // a single file (movie.file_path); shows are a collection of episode files,
@@ -49,12 +50,23 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   // changing to naturally re-trigger the effect below.
   const [refreshKey, setRefreshKey] = useState(0)
   const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
+  // Set while an episode tile is hovered/focused inside one of this show's
+  // EpisodeShelf season rows — overrides title/overview/backdropUrl below so
+  // the hero retargets to the episode being previewed. null restores the
+  // show/movie's own hero content.
+  const [focusedEpisode, setFocusedEpisode] = useState<Episode | null>(null)
 
   useEffect(() => {
     if (discoverResult) return
     if (!id || !content_type) return
     setLoading(true)
     setShow(null); setMovie(null); setEpisodes([]); setLanguages(null); setVideoInfo(null)
+    // A hover left over from the *previous* item would otherwise outlive it
+    // whenever this hook's caller reuses the same mounted instance across an
+    // id change (e.g. picking a different item from a "view in library"
+    // flow without the detail view itself closing) — stale episode overriding
+    // the new item's own title/overview/backdrop.
+    setFocusedEpisode(null)
 
     if (content_type === 'show') {
       api.getShow(id).then(setShow).finally(() => setLoading(false))
@@ -80,13 +92,18 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   const posterUrl = discoverResult?.poster_url
     ? mediaUrl(discoverResult.poster_url)
     : (id && detail?.thumb ? bust(contentType === 'show' ? showThumbUrl(id) : movieThumbUrl(id)) : undefined)
-  const backdropUrl = discoverResult?.poster_url
+  const showBackdropUrl = discoverResult?.poster_url
     ? mediaUrl(discoverResult.poster_url)
     : (id && detail?.art ? bust(contentType === 'show' ? showArtUrl(id) : movieArtUrl(id)) : undefined)
+  // Episode thumb is already 16:9 (same aspect ratio EpisodeShelf's own tiles
+  // use), so it doubles as a hero backdrop with no separate episode-art endpoint.
+  const backdropUrl = focusedEpisode ? episodeThumbUrl(focusedEpisode.episode_id) : showBackdropUrl
 
-  const title    = discoverResult?.title    ?? detail?.title    ?? ''
+  const showTitle    = discoverResult?.title    ?? detail?.title    ?? ''
+  const title        = focusedEpisode ? focusedEpisode.title : showTitle
   const year     = discoverResult?.year     ?? detail?.year
-  const overview = discoverResult?.overview ?? detail?.overview ?? ''
+  const showOverview = discoverResult?.overview ?? detail?.overview ?? ''
+  const overview      = focusedEpisode ? focusedEpisode.overview : showOverview
   const genres   = detail?.genres ?? []
   const rating   = detail?.audience_rating
 
@@ -139,6 +156,7 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
     detail, contentType, posterUrl, backdropUrl,
     title, year, overview, genres, rating, seasonsWithEpisodes,
     folderName, fileName, matchStatus, matchScore, refetch,
+    focusedEpisode, setFocusedEpisode,
   }
 }
 

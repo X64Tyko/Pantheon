@@ -10,8 +10,10 @@ export function TvLibraryDetail() {
   const { type, id } = useParams<{ type: 'show' | 'movie'; id: string }>()
   useNavBack(() => navigate('/tv/library'))
 
-  const { loading, detail, contentType, posterUrl, backdropUrl, title, year, overview, genres, rating, seasonsWithEpisodes } =
-    useMediaDetail({ id, content_type: type })
+  const {
+    loading, detail, contentType, posterUrl, backdropUrl, title, year, overview, genres, rating,
+    seasonsWithEpisodes, setFocusedEpisode,
+  } = useMediaDetail({ id, content_type: type })
 
   const goPlay = async () => {
     if (!id || !contentType) return
@@ -30,9 +32,12 @@ export function TvLibraryDetail() {
   }
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} className="scrollbar-dark">
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      {/* Fixed hero — stays pinned while the season shelves below scroll, so an
+          episode focused deep in a long season list still visibly retargets
+          the title/overview/backdrop above rather than scrolling out of view. */}
       <div style={{
-        position: 'relative', minHeight: '52vh',
+        position: 'relative', minHeight: '52vh', flexShrink: 0,
         background: backdropUrl
           ? `url(${backdropUrl}) center/cover no-repeat`
           : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)',
@@ -118,19 +123,25 @@ export function TvLibraryDetail() {
         </div>
       </div>
 
-      {seasonsWithEpisodes.length > 0 && (
-        <div style={{ padding: '8px 48px 64px' }}>
-          {seasonsWithEpisodes.map(s => (
-            <EpisodeShelf key={s.number} seasonNumber={s.number} seasonName={s.name} episodes={s.episodes} />
-          ))}
-        </div>
-      )}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} className="scrollbar-dark">
+        {seasonsWithEpisodes.length > 0 && (
+          <div style={{ padding: '8px 48px 64px' }}>
+            {seasonsWithEpisodes.map(s => (
+              <EpisodeShelf
+                key={`${s.number}-${s.episodes[0]?.episode_id ?? ''}`}
+                seasonNumber={s.number} seasonName={s.name} episodes={s.episodes}
+                onEpisodeHover={setFocusedEpisode} onEpisodeHoverEnd={() => setFocusedEpisode(null)}
+              />
+            ))}
+          </div>
+        )}
 
-      {!detail && (
-        <div style={{ padding: 48, textAlign: 'center', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
-          Not found.
-        </div>
-      )}
+        {!detail && (
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
+            Not found.
+          </div>
+        )}
+      </div>
     </div>
   )
 }
