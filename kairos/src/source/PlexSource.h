@@ -37,6 +37,8 @@ public:
     std::vector<SourceUserInfo> listServerUsers() override;
     std::string                 lastUserDiscoveryError() const override { return last_user_discovery_error_; }
 
+    std::vector<ExternalWatchState> fetchWatchState(const std::string& external_user_id) override;
+
     bool pushMetadata(const std::string& external_id,
                        const std::string& external_lib_id,
                        const std::string& item_type,

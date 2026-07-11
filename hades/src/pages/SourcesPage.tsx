@@ -278,8 +278,9 @@ const PerAccountWatchSyncCard = observer(function PerAccountWatchSyncCard({ sour
       </p>
       {isPlex && (
         <p className="text-xs text-amber-500/80">
-          ⚠ Not yet supported for Plex — linking won't pull watch data until per-account
-          Plex sync is built.
+          ⚠ Works for Plex Home members. "Friends" (separate, shared-in Plex accounts) can't
+          be linked — Kairos never has their password/token, only Home profiles can be
+          switched into using the admin account.
         </p>
       )}
       <div className="space-y-1.5">
@@ -289,7 +290,7 @@ const PerAccountWatchSyncCard = observer(function PerAccountWatchSyncCard({ sour
             <select
               className="input text-xs"
               style={{ minWidth: 150 }}
-              disabled={isPlex || pending === u.external_user_id}
+              disabled={pending === u.external_user_id}
               value={u.imported_user_id}
               onChange={e => handleChange(u.external_user_id, e.target.value)}
             >

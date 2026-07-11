@@ -103,11 +103,12 @@ public:
 
     // Watch/resume state for one *non-primary* account discovered via
     // listServerUsers() (see source_user.imported_user_id — an admin linked
-    // this external_user_id to a local Pantheon user). Default: unsupported.
-    // Plex has no per-user API call today (would need a plex.tv managed-user
-    // token exchange per account) so it stays unsupported/empty here until
-    // that's built — SyncManager's per-linked-user pass is a no-op for any
-    // source that doesn't override this, not a hard requirement.
+    // this external_user_id to a local Pantheon user). Default: unsupported
+    // — LocalSource has no concept of multiple accounts at all. Both Plex
+    // (via a plex.tv Home-user token exchange) and Jellyfin/Emby (via the
+    // same admin key, just pointed at a different user id) override this;
+    // SyncManager's per-linked-user pass is simply a no-op for anything that
+    // doesn't, not a hard requirement.
     virtual std::vector<ExternalWatchState> fetchWatchState(const std::string& /*external_user_id*/) {
         return {};
     }
