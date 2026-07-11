@@ -1,5 +1,5 @@
-import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
-import { useEffect, useState } from 'react'
+import { FocusContext, setFocus, doesFocusableExist } from '@noriginmedia/norigin-spatial-navigation'
+import { useEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { useNavigate } from 'react-router-dom'
 import { libraryStore } from '../stores/LibraryStore'
@@ -9,6 +9,9 @@ import { LoadMoreSentinel } from '../channel/BrowserTiles'
 import { useFocusable } from '../nav/useFocusable'
 import { useNavBack } from '../nav/back'
 import { TvMediaGrid } from './TvMediaGrid'
+import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
+
+const TV_LIBRARY_PATH = '/tv/library'
 
 // Filtering here is deliberately scoped down from LibraryPage's full sidebar
 // (source/rating/label/network/actor filters) to search + genre chips — a
@@ -22,6 +25,12 @@ export const TvLibrary = observer(function TvLibrary() {
   const [genres, setGenres] = useState<string[]>([])
   const [isFilterOpen, setIsFilterOpen] = useState(false)
 
+  // Set only when this mount is the remote's Back arriving from a grid
+  // item's Detail route (TvMediaCard's onClick below) — consumed once so a
+  // normal Home→Library entry still gets the usual fresh fetch + back-
+  // button-focused landing. See tvDetailNav.ts.
+  const [restoreFocusKey] = useState(() => consumeReturnFocusKey(TV_LIBRARY_PATH))
+
   useNavBack(() => {
     if (isFilterOpen) {
       setIsFilterOpen(false)
@@ -31,17 +40,36 @@ export const TvLibrary = observer(function TvLibrary() {
   })
 
   useEffect(() => {
-    store.loadLibraries().then(() => store.fetch())
+    store.loadLibraries()
+    // A remembered focus key means we're returning from Detail — the store
+    // already holds whatever was loaded (including any "load more" pages)
+    // before we navigated away; re-fetching would silently drop all of that
+    // back to page 0 and could even scroll the very item we're restoring
+    // focus to out of the loaded set.
+    if (!restoreFocusKey) store.fetch()
     api.getFilterValues('genre').then(setGenres).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { store.setQuery(debouncedQ) }, [debouncedQ]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Only ever applies once — without this guard, any later unrelated
+  // fetch (e.g. picking a genre filter) would flip store.loading false→
+  // true→false again and yank focus back onto this stale item. Falls back
+  // to the back button (the same target its own suppressed forceFocus
+  // would have landed on) if the remembered item isn't in the loaded set
+  // this time — e.g. it was removed server-side while Detail was open.
+  const appliedRestoreRef = useRef(false)
+  useEffect(() => {
+    if (!restoreFocusKey || appliedRestoreRef.current || store.loading) return
+    appliedRestoreRef.current = true
+    setFocus(doesFocusableExist(restoreFocusKey) ? restoreFocusKey : 'tv-library-back')
+  }, [restoreFocusKey, store.loading])
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: '24px 48px 16px', display: 'flex', flexDirection: 'column', gap: 14, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <TvBackButton onClick={() => navigate('/tv')} />
+          <TvBackButton onClick={() => navigate('/tv')} forceFocus={!restoreFocusKey} />
           <h1 style={{
             fontFamily: "'Chakra Petch', sans-serif", fontSize: 24, fontWeight: 700,
             color: 'var(--hds-txt)', margin: 0, letterSpacing: '-0.02em',
@@ -73,7 +101,10 @@ export const TvLibrary = observer(function TvLibrary() {
             <TvMediaGrid
               shows={store.shows}
               movies={store.movies}
-              onItemClick={(id, type) => navigate(`/tv/library/${type}/${id}`)}
+              onItemClick={(id, type) => {
+                rememberDetailReturn({ returnTo: TV_LIBRARY_PATH, focusKey: `tv-media-card-${type}-${id}` })
+                navigate(`/tv/library/${type}/${id}`)
+              }}
             />
             {store.shows.length + store.movies.length < store.total && (
               <LoadMoreSentinel loading={store.loadingMore} onVisible={() => store.loadMore()} />
@@ -86,9 +117,11 @@ export const TvLibrary = observer(function TvLibrary() {
   )
 })
 
-function TvBackButton({ onClick }: { onClick: () => void }) {
-  // forceFocus: same fallback as TvHome's LibraryButton — mounts outside <Layout>, no default focus otherwise.
-  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-library-back', onEnterPress: onClick, forceFocus: true })
+function TvBackButton({ onClick, forceFocus = true }: { onClick: () => void; forceFocus?: boolean }) {
+  // forceFocus: same fallback as TvHome's LibraryButton — mounts outside
+  // <Layout>, no default focus otherwise. Suppressed when TvLibrary is
+  // restoring focus to a specific grid item instead (returning from Detail).
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-library-back', onEnterPress: onClick, forceFocus })
   return (
     <button
       ref={ref} data-tv-focused={focused}

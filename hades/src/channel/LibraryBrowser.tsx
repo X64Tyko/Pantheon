@@ -97,7 +97,7 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
         </div>
       )}
 
-      {infoItem ? (
+      {infoItem && (
         <MediaInfoPanel
           item={infoItem}
           detail={infoDetail}
@@ -106,9 +106,13 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
           onAdd={handleAdd}
           onBack={() => setInfoItem(null)}
         />
-      ) : (
-        <TileGrid store={store} channelId={channelId} onSelect={setInfoItem} onAdd={handleAdd} />
       )}
+      {/* Kept mounted (just hidden) rather than a ternary — a fresh mount on
+          "back" would reset the grid's scroll to the top instead of leaving
+          it where the inspected tile still is. */}
+      <div style={{ display: infoItem ? 'none' : 'contents' }}>
+        <TileGrid store={store} channelId={channelId} onSelect={setInfoItem} onAdd={handleAdd} />
+      </div>
     </div>
   )
 })

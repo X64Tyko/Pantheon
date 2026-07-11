@@ -1,14 +1,26 @@
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMediaDetail } from '../components/media/useMediaDetail'
 import { EpisodeShelf } from '../components/media/EpisodeShelf'
 import { useFocusable } from '../nav/useFocusable'
 import { useNavBack } from '../nav/back'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
+import { peekDetailReturnTo, clearPendingDetailReturn } from './tvDetailNav'
 
 export function TvLibraryDetail() {
   const navigate = useNavigate()
   const { type, id } = useParams<{ type: 'show' | 'movie'; id: string }>()
-  useNavBack(() => navigate('/tv/library'))
+  // Wherever the card that opened this was clicked from (Home or Library) —
+  // set right before navigate() by that page, read once here and held for
+  // this whole visit. Falls back to Library for any other way of landing on
+  // this route (e.g. a future deep link) — see tvDetailNav.ts.
+  const [returnTo] = useState(() => peekDetailReturnTo())
+  useNavBack(() => navigate(returnTo))
+
+  // Safety net for leaving via something other than Back (e.g. Play) — the
+  // legitimate Back path already consumes the pending entry on the
+  // destination's own mount, before this cleanup runs; see tvDetailNav.ts.
+  useEffect(() => () => clearPendingDetailReturn(), [])
 
   const {
     loading, detail, contentType, posterUrl, backdropUrl, title, year, overview, genres, rating,
@@ -20,7 +32,7 @@ export function TvLibraryDetail() {
     const path = await resolvePlayPath(contentType, id)
     if (path) navigate(path)
   }
-  const goBack = () => navigate('/tv/library')
+  const goBack = () => navigate(returnTo)
 
   const play = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-detail-play', forceFocus: true, onEnterPress: goPlay })
   const back = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-detail-back', onEnterPress: goBack })

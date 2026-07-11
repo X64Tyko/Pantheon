@@ -14,13 +14,17 @@ export interface TvMediaCardProps {
 // Deliberately simpler than MediaCard (no density levels, no match badges —
 // those are library-management concerns that don't belong on a 10-foot
 // browse surface) and bigger, for legibility at TV viewing distance.
-export function TvMediaCard({ title, year, thumb_url, rating, content_type, onClick }: TvMediaCardProps) {
+export function TvMediaCard({ id, title, year, thumb_url, rating, content_type, onClick }: TvMediaCardProps) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = thumb_url && !imgErr
 
+  // Keyed on id, not title — two different items can share a title (a show
+  // and movie of the same name, or two same-titled movies), and TvLibrary
+  // needs to reproduce this exact key before the card exists, to remember
+  // it and restore focus on the way back from Detail (libraryFocusMemory.ts).
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
-    focusKey: `tv-media-card-${content_type}-${title}`,
+    focusKey: `tv-media-card-${content_type}-${id}`,
     onEnterPress: onClick,
   })
   const active = hovered || focused

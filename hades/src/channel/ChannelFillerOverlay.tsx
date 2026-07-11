@@ -77,7 +77,7 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
 
         {/* Left: tile browser */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {infoItem ? (
+          {infoItem && (
             <MediaInfoPanel
               item={infoItem}
               detail={infoDetail}
@@ -87,7 +87,11 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
               onAdd={addFiller}
               onBack={() => setInfoItem(null)}
             />
-          ) : (
+          )}
+          {/* Kept mounted (just hidden) rather than a ternary — a fresh
+              mount on "back" would reset the grid's scroll to the top
+              instead of leaving it where the inspected tile still is. */}
+          <div style={{ display: infoItem ? 'none' : 'contents' }}>
             <>
               <div style={{ flexShrink: 0, padding: '10px 14px 0', borderBottom: '1px solid var(--hds-line-s)' }}>
                 <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 7, padding: 3, width: 'fit-content', marginBottom: 8 }}>
@@ -197,7 +201,7 @@ const ChannelFillerOverlay = observer(function ChannelFillerOverlay({ channelId,
                 })()}
               </div>
             </>
-          )}
+          </div>
         </div>
 
         {/* Right: filler entries */}

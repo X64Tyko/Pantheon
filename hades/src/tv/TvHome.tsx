@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
+import { FocusContext, setFocus, doesFocusableExist } from '@noriginmedia/norigin-spatial-navigation'
 import { useCastSession } from '../cast/useCastSession'
 import { startVodPlayback, stopVodPlayback } from '../player/playbackApi'
 import { api, mediaUrl } from '../api/client'
@@ -11,8 +11,10 @@ import { useTravelingFocus } from '../nav/useTravelingFocus'
 import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
 import { TvGuideSection } from './TvGuideSection'
 import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
+import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
 
 const HOME_FOCUS_KEY = 'TV_HOME'
+const TV_HOME_PATH = '/tv'
 
 function isShow(item: Show | Movie): item is Show { return 'show_id' in item }
 function thumbUrl(item: Show | Movie) {
@@ -42,6 +44,12 @@ export function TvHome() {
   const [recentlyAired,    setRecentlyAired]    = useState<Show[]>([])
   const [continueWatching, setContinueWatching] = useState<WatchProgress[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Set only when this mount is the remote's Back arriving from a shelf
+  // card's (or the hero's View Details) Detail route — consumed once so a
+  // normal fresh landing on Home still gets the usual hero-Play autofocus.
+  // See tvDetailNav.ts.
+  const [restoreFocusKey] = useState(() => consumeReturnFocusKey(TV_HOME_PATH))
 
   // Hero — same rotate/hover-swap model as the desktop HomePage, minus the
   // inline detail overlay (View Details is a real /tv/library/* route here).
@@ -158,6 +166,18 @@ export function TvHome() {
     }).finally(() => setLoading(false))
   }, [])
 
+  // Only ever applies once — see the identical guard in TvLibrary.tsx. Falls
+  // back to the hero Play button (the same target its own suppressed
+  // forceFocus would have landed on) if the remembered item isn't actually
+  // on Home this time — e.g. it aged out of the top-16 "recently added"
+  // list between opening Detail and coming back.
+  const appliedHomeRestoreRef = useRef(false)
+  useEffect(() => {
+    if (!restoreFocusKey || appliedHomeRestoreRef.current || loading) return
+    appliedHomeRestoreRef.current = true
+    setFocus(doesFocusableExist(restoreFocusKey) ? restoreFocusKey : 'tv-hero-play')
+  }, [restoreFocusKey, loading])
+
   useEffect(() => {
     if (heroItem) startRotation()
     return () => { if (heroIntervalRef.current) clearInterval(heroIntervalRef.current) }
@@ -173,7 +193,13 @@ export function TvHome() {
     preferredChildFocusKey: 'tv-hero-play',
   })
 
-  const goToLibrary = (id: string, type: 'show' | 'movie') => navigate(`/tv/library/${type}/${id}`)
+  // focusKey defaults to the hero's own "View Details" button — its callers
+  // (onViewDetail below) don't sit inside a shelf card and have no other
+  // natural key to restore. Shelf cards pass their own tvShelfCardFocusKey.
+  const goToLibrary = (id: string, type: 'show' | 'movie', focusKey = 'tv-hero-detail') => {
+    rememberDetailReturn({ returnTo: TV_HOME_PATH, focusKey })
+    navigate(`/tv/library/${type}/${id}`)
+  }
 
   return (
     <FocusContext.Provider value={homeFocusKey}>
@@ -189,6 +215,7 @@ export function TvHome() {
             fading={heroFading}
             totalCandidates={heroCandidates.current.length}
             currentIdx={heroIdx.current}
+            autoFocusPlay={!restoreFocusKey}
             onViewDetail={() => goToLibrary(isShow(heroItem) ? heroItem.show_id : heroItem.movie_id, isShow(heroItem) ? 'show' : 'movie')}
             onPlay={async () => {
               const id = isShow(heroItem) ? heroItem.show_id : heroItem.movie_id
@@ -270,8 +297,10 @@ export function TvHome() {
               <TvShelf
                 title="Recently Added Shows"
                 items={recentShows.map(s => ({
-                  key: s.show_id, title: s.title, year: s.year, rating: s.audience_rating,
-                  thumb_url: thumbUrl(s), onClick: () => goToLibrary(s.show_id, 'show'), onFocus: () => handleShelfFocus(s.show_id),
+                  key: s.show_id, id: s.show_id, title: s.title, year: s.year, rating: s.audience_rating,
+                  thumb_url: thumbUrl(s),
+                  onClick: () => goToLibrary(s.show_id, 'show', tvShelfCardFocusKey('Recently Added Shows', s.show_id)),
+                  onFocus: () => handleShelfFocus(s.show_id),
                 }))}
                 onBlur={handleShelfBlur}
                 endTile={{ focusKey: 'tv-shelf-end-shows', onClick: () => navigate('/tv/library') }}
@@ -281,8 +310,10 @@ export function TvHome() {
               <TvShelf
                 title="Recently Added Movies"
                 items={recentMovies.map(m => ({
-                  key: m.movie_id, title: m.title, year: m.year, rating: m.audience_rating,
-                  thumb_url: thumbUrl(m), onClick: () => goToLibrary(m.movie_id, 'movie'), onFocus: () => handleShelfFocus(m.movie_id),
+                  key: m.movie_id, id: m.movie_id, title: m.title, year: m.year, rating: m.audience_rating,
+                  thumb_url: thumbUrl(m),
+                  onClick: () => goToLibrary(m.movie_id, 'movie', tvShelfCardFocusKey('Recently Added Movies', m.movie_id)),
+                  onFocus: () => handleShelfFocus(m.movie_id),
                 }))}
                 onBlur={handleShelfBlur}
                 endTile={{ focusKey: 'tv-shelf-end-movies', onClick: () => navigate('/tv/library') }}
@@ -292,8 +323,10 @@ export function TvHome() {
               <TvShelf
                 title="Recently Released"
                 items={recentlyReleased.map(m => ({
-                  key: m.movie_id, title: m.title, year: m.year, rating: m.audience_rating,
-                  thumb_url: thumbUrl(m), onClick: () => goToLibrary(m.movie_id, 'movie'), onFocus: () => handleShelfFocus(m.movie_id),
+                  key: m.movie_id, id: m.movie_id, title: m.title, year: m.year, rating: m.audience_rating,
+                  thumb_url: thumbUrl(m),
+                  onClick: () => goToLibrary(m.movie_id, 'movie', tvShelfCardFocusKey('Recently Released', m.movie_id)),
+                  onFocus: () => handleShelfFocus(m.movie_id),
                 }))}
                 onBlur={handleShelfBlur}
                 endTile={{ focusKey: 'tv-shelf-end-released', onClick: () => navigate('/tv/library') }}
@@ -303,7 +336,7 @@ export function TvHome() {
               <TvShelf
                 title="Recently Aired"
                 items={recentlyAired.filter(s => s.latest_episode).map(s => ({
-                  key: s.show_id, title: s.title, year: s.year, rating: s.audience_rating,
+                  key: s.show_id, id: s.show_id, title: s.title, year: s.year, rating: s.audience_rating,
                   thumb_url: thumbUrl(s), onClick: () => navigate(`/player/episode/${s.latest_episode!.episode_id}`),
                   onFocus: () => handleShelfFocus(s.show_id),
                 }))}
@@ -378,13 +411,17 @@ interface HeroEpisodeOverride {
   backdropUrl: string | null
 }
 
-function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentIdx, onViewDetail, onPlay, onCast, castAvailable, onDotClick }: {
+function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentIdx, autoFocusPlay, onViewDetail, onPlay, onCast, castAvailable, onDotClick }: {
   item: Show | Movie
   detail: ShowDetail | MovieDetail | null
   episode?: HeroEpisodeOverride | null
   fading: boolean
   totalCandidates: number
   currentIdx: number
+  // False while TvHome is restoring focus to a specific shelf/hero-detail
+  // card on the way back from Detail — otherwise this button's own
+  // forceFocus would win the race and steal it back every time.
+  autoFocusPlay: boolean
   onViewDetail: () => void
   onPlay: () => void
   onCast: () => void
@@ -401,7 +438,7 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
   const displayTitle = episode ? episode.title : item.title
   const rating   = detail?.audience_rating ?? item.audience_rating
 
-  const play       = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-play',   onEnterPress: onPlay,       forceFocus: true })
+  const play       = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-play',   onEnterPress: onPlay,       forceFocus: autoFocusPlay })
   const viewDetail = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-detail', onEnterPress: onViewDetail })
   const castBtn    = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-cast',   onEnterPress: onCast,       focusable: castAvailable })
 
@@ -526,8 +563,17 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
 // ── Shelves ──────────────────────────────────────────────────────────────────
 
 interface TvShelfEntry {
-  key: string; title: string; year?: number; rating?: number
+  key: string; id: string; title: string; year?: number; rating?: number
   thumb_url?: string; onClick: () => void; onFocus?: () => void
+}
+
+// Shared by TvShelfCard (to register) and TvHome's onClick handlers (to
+// remember, before navigating to Detail, which key to restore focus to on
+// the way back — see tvDetailNav.ts). Scoped by shelf title as well as id:
+// the same movie can legitimately appear in more than one shelf (e.g.
+// Recently Added and Recently Released), and focus keys must be unique.
+function tvShelfCardFocusKey(shelfTitle: string, id: string) {
+  return `tv-shelf-card-${shelfTitle}-${id}`
 }
 
 function TvShelf({ title, items, onBlur, endTile }: {
@@ -558,7 +604,7 @@ function TvShelf({ title, items, onBlur, endTile }: {
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(item => (
           <div key={item.key} style={{ flexShrink: 0, width: 108 }}>
-            <TvShelfCard {...item} onBlur={onBlur} onActivate={travel.activate} onDeactivate={travel.deactivate} />
+            <TvShelfCard {...item} shelfTitle={title} onBlur={onBlur} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}
         {endTile && (
@@ -573,14 +619,14 @@ function TvShelf({ title, items, onBlur, endTile }: {
   )
 }
 
-function TvShelfCard({ title, year, rating, thumb_url, onClick, onFocus, onBlur, onActivate, onDeactivate }: TvShelfEntry & {
-  onBlur?: () => void; onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
+function TvShelfCard({ id, title, year, rating, thumb_url, shelfTitle, onClick, onFocus, onBlur, onActivate, onDeactivate }: TvShelfEntry & {
+  shelfTitle: string; onBlur?: () => void; onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = thumb_url && !imgErr
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
-    focusKey: `tv-shelf-card-${title}-${year ?? ''}`, onEnterPress: onClick,
+    focusKey: tvShelfCardFocusKey(shelfTitle, id), onEnterPress: onClick,
     onFocus: () => { onFocus?.(); onActivate(ref.current) },
     onBlur: onDeactivate,
   })
