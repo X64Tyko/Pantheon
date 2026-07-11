@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdint>
+#include <optional>
 #include <string>
 
 struct MediaSourceConfig {
@@ -11,6 +13,10 @@ struct MediaSourceConfig {
     // this source's configured primary account during sync. Empty = unset —
     // see SourceRepository::setSyncedUserId / SyncManager::syncMovies.
     std::string synced_user_id;
+    // See IMediaSource::lastUserDiscoveryError(). Empty = last user-discovery
+    // sync succeeded (or none has run yet); otherwise the last failure,
+    // refreshed every sync.
+    std::string user_sync_error;
 };
 
 struct MediaLibraryConfig {
@@ -49,4 +55,17 @@ struct SourceUserInfo {
     std::string external_user_id;
     std::string display_name;
     std::string email; // empty if the source doesn't expose one for this account
+};
+
+// One item's watch/resume state for a specific *non-primary* source account
+// — returned by MediaSource::fetchWatchState(external_user_id). Distinct
+// from Movie/Episode's own src_watched/src_position_ms/src_watched_at (which
+// only ever reflect the source's single configured primary identity); this
+// is how any other discovered SourceUserInfo's progress gets pulled in.
+struct ExternalWatchState {
+    std::string external_id;   // source-native item id (matches source_mapping.external_id)
+    std::string item_type;     // "movie" | "episode"
+    std::optional<bool>    watched;
+    std::optional<int64_t> position_ms;
+    std::optional<int64_t> watched_at; // epoch seconds, if the source provides one
 };

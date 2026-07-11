@@ -35,6 +35,7 @@ public:
     std::vector<Chapter> fetchChapters(const std::string& external_id)     override;
 
     std::vector<SourceUserInfo> listServerUsers() override;
+    std::string                 lastUserDiscoveryError() const override { return last_user_discovery_error_; }
 
     bool pushMetadata(const std::string& external_id,
                        const std::string& external_lib_id,
@@ -48,4 +49,5 @@ private:
     std::string     base_url_;
     std::string     token_;
     httplib::Client client_;
+    std::string     last_user_discovery_error_;  // see lastUserDiscoveryError()
 };

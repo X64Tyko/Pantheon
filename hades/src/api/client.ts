@@ -14,7 +14,7 @@ import type {
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection,
-  UnmappedSourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
+  UnmappedSourceUser, SourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -180,7 +180,7 @@ export const api = {
   // Sources
   getSources:       ()                                  => request<Source[]>    ('GET',    '/sources'),
   getSourceTypes:   ()                                  => request<SourceType[]>('GET',    '/sources/types'),
-  createSource:     (b: Omit<Source, 'enabled' | 'synced_user_id'>) => request<{source_id: string}>('POST', '/sources', b),
+  createSource:     (b: Omit<Source, 'enabled' | 'synced_user_id' | 'user_sync_error'>) => request<{source_id: string}>('POST', '/sources', b),
   deleteSource:     (id: string)                        => request<void>        ('DELETE', `/sources/${id}`),
   // Which local user (if any) should have watch/resume state pulled from
   // this source's primary account during sync — empty string clears it.
@@ -190,6 +190,14 @@ export const api = {
   getUnmappedSourceUsers: () => request<UnmappedSourceUser[]>('GET', '/sources/unmapped-users'),
   importSourceUser: (sourceId: string, externalUserId: string, role: 'admin' | 'viewer' = 'viewer') =>
                        request<ImportUserResult>('POST', `/sources/${sourceId}/users/${externalUserId}/import`, { role }),
+
+  // Every discovered account for one source (mapped + unmapped), and linking
+  // one to an existing local user for per-account watch-data sync.
+  getSourceUsers:   (sourceId: string) => request<SourceUser[]>('GET', `/sources/${sourceId}/users`),
+  linkSourceUser:   (sourceId: string, externalUserId: string, userId: string) =>
+                       request<{ok: boolean}>('PUT', `/sources/${sourceId}/users/${externalUserId}/link`, { user_id: userId }),
+  unlinkSourceUser: (sourceId: string, externalUserId: string) =>
+                       request<{ok: boolean}>('DELETE', `/sources/${sourceId}/users/${externalUserId}/link`),
 
   // Libraries
   getAvailableLibs: (sourceId: string)                  => request<LibraryInfo[]>('GET',    `/sources/${sourceId}/libraries/available`),

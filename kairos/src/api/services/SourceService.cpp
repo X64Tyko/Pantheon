@@ -42,7 +42,8 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		for (const auto& s : SourceRepository(db_).listSources())
 			result.push_back({{"source_id", s.source_id}, {"source_type", s.source_type},
 			                  {"display_name", s.display_name}, {"base_url", s.base_url},
-			                  {"enabled", s.enabled}, {"synced_user_id", s.synced_user_id}});
+			                  {"enabled", s.enabled}, {"synced_user_id", s.synced_user_id},
+			                  {"user_sync_error", s.user_sync_error}});
 		route::ok(res, result.dump());
 	});
 
@@ -294,6 +295,62 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			route::logErr("POST /api/sources/:id/users/:external_id/import", e);
 			route::err(res, 500, e.what());
 		}
+	});
+
+	// Every discovered account for one source, mapped or not — powers the
+	// "Per-Account Watch Sync" panel (unlike GET /api/sources/unmapped-users,
+	// which only ever lists unlinked ones for the global nag popup).
+	svr.Get("/api/sources/:id/users", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto source_id = req.path_params.at("id");
+		json result = json::array();
+		for (const auto& u : SourceRepository(db_).listSourceUsers(source_id))
+			result.push_back({{"external_user_id", u.external_user_id},
+			                  {"display_name", u.display_name},
+			                  {"email", u.email},
+			                  {"imported_user_id", u.imported_user_id}});
+		route::ok(res, result.dump());
+	});
+
+	// Links a discovered source account to an *existing* local user, so its
+	// own watch history gets pulled during sync (see
+	// SyncManager::syncLinkedUserWatchState) — the "already have an account"
+	// counterpart to POST .../import above, which only ever creates a new one.
+	svr.Put("/api/sources/:id/users/:external_id/link", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto source_id        = req.path_params.at("id");
+		auto external_user_id = req.path_params.at("external_id");
+		try {
+			auto b = json::parse(req.body);
+			std::string user_id = b.value("user_id", "");
+			if (user_id.empty()) { route::err(res, 400, "user_id is required"); return; }
+
+			SourceRepository repo(db_);
+			auto su = repo.getSourceUser(source_id, external_user_id);
+			if (!su) { route::err(res, 404, "source user not found"); return; }
+			if (!su->imported_user_id.empty()) { route::err(res, 409, "already linked"); return; }
+
+			auto existing = auth_.listUsers();
+			bool user_exists = std::any_of(existing.begin(), existing.end(),
+				[&](const AuthUser& u) { return u.user_id == user_id; });
+			if (!user_exists) { route::err(res, 404, "user not found"); return; }
+
+			repo.setImportedUserId(source_id, external_user_id, user_id);
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const json::exception& e) {
+			route::err(res, 400, e.what());
+		} catch (const std::exception& e) {
+			route::logErr("PUT /api/sources/:id/users/:external_id/link", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	svr.Delete("/api/sources/:id/users/:external_id/link", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto source_id        = req.path_params.at("id");
+		auto external_user_id = req.path_params.at("external_id");
+		SourceRepository(db_).unlinkSourceUser(source_id, external_user_id);
+		route::ok(res, json{{"ok", true}}.dump());
 	});
 
 	svr.Get("/api/sources/:id/libraries/available", [this](const Req& req, Res& res) {

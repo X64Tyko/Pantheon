@@ -22,6 +22,9 @@ public:
     std::vector<BrowseContentItem> browseCollectionItems(const std::string& id)       override;
 
     std::vector<SourceUserInfo>    listServerUsers()                                 override;
+    std::string                    lastUserDiscoveryError() const                    override { return last_user_discovery_error_; }
+
+    std::vector<ExternalWatchState> fetchWatchState(const std::string& external_user_id) override;
 
     bool pushMetadata(const std::string& external_id,
                        const std::string& external_lib_id,
@@ -43,4 +46,5 @@ protected:
     std::string     user_id_;
     std::string     auth_header_;  // "X-MediaBrowser-Token" or "X-Emby-Token"
     httplib::Client client_;
+    std::string     last_user_discovery_error_;  // see lastUserDiscoveryError()
 };

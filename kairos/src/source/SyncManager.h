@@ -119,6 +119,15 @@ private:
     void syncPlexLinks(const std::string& source_id);
     void clearSourceMapping(const std::string& source_id);
 
+    // For every source_user row on this source with a local user linked
+    // (source_user.imported_user_id — see SourceRepository::linkSourceUser),
+    // pulls that account's own watch state via IMediaSource::fetchWatchState
+    // and applies it to watch_progress for the linked local user. No-op for
+    // sources that don't override fetchWatchState (Plex today) or that have
+    // no linked accounts. Must run after this source's syncShows/syncMovies
+    // so source_mapping is fresh enough to resolve external_id -> kairos_id.
+    void syncLinkedUserWatchState(IMediaSource& src, const std::string& source_id);
+
     void syncShows(IMediaSource& src,
                    const std::string& source_id,
                    const std::string& library_id,

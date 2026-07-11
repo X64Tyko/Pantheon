@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { ImportUserResult, Library, LibraryInfo, PathMap } from '../api/types'
+import type { ImportUserResult, Library, LibraryInfo, PathMap, SourceUser } from '../api/types'
 import { sourceStore, systemStore, userStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
@@ -233,6 +233,74 @@ const UnmappedUsersPill = observer(function UnmappedUsersPill({ sourceId }: { so
           )}
         </div>
       )}
+    </div>
+  )
+})
+
+// Lists every account this source has ever reported (mapped or not) and lets
+// an admin link one to an *existing* Pantheon user for per-account watch-data
+// sync — separate from UnmappedUsersPill above, which only ever creates
+// brand-new accounts. Renders nothing while loading or if the source hasn't
+// discovered any other accounts yet (nothing to manage).
+const PerAccountWatchSyncCard = observer(function PerAccountWatchSyncCard({ sourceId, sourceType }: { sourceId: string; sourceType: string }) {
+  const [users, setUsers]     = useState<SourceUser[]>([])
+  const [loading, setLoading] = useState(true)
+  const [pending, setPending] = useState<string | null>(null) // external_user_id in flight
+
+  const load = () => {
+    api.getSourceUsers(sourceId)
+      .then(u => { setUsers(u); setLoading(false) })
+      .catch(() => setLoading(false))
+  }
+  useEffect(() => { setLoading(true); load() }, [sourceId])
+
+  const isPlex = sourceType === 'plex'
+
+  const handleChange = async (externalUserId: string, userId: string) => {
+    setPending(externalUserId)
+    try {
+      if (userId) await api.linkSourceUser(sourceId, externalUserId, userId)
+      else        await api.unlinkSourceUser(sourceId, externalUserId)
+      load()
+    } finally {
+      setPending(null)
+    }
+  }
+
+  if (loading || users.length === 0) return null
+
+  return (
+    <div className="card p-3 space-y-2">
+      <span className="section-label">Per-Account Watch Sync</span>
+      <p className="text-xs text-zinc-600">
+        Link any of this source's other accounts to an existing Pantheon user so their
+        own watch history stays in sync too — independent of the single account above.
+      </p>
+      {isPlex && (
+        <p className="text-xs text-amber-500/80">
+          ⚠ Not yet supported for Plex — linking won't pull watch data until per-account
+          Plex sync is built.
+        </p>
+      )}
+      <div className="space-y-1.5">
+        {users.map(u => (
+          <div key={u.external_user_id} className="flex items-center justify-between gap-2">
+            <span className="text-xs text-zinc-300 truncate">{u.display_name || u.external_user_id}</span>
+            <select
+              className="input text-xs"
+              style={{ minWidth: 150 }}
+              disabled={isPlex || pending === u.external_user_id}
+              value={u.imported_user_id}
+              onChange={e => handleChange(u.external_user_id, e.target.value)}
+            >
+              <option value="">— unlinked —</option>
+              {userStore.users.map(usr => (
+                <option key={usr.user_id} value={usr.user_id}>{usr.username}</option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
     </div>
   )
 })
@@ -510,6 +578,11 @@ export default observer(function SourcesPage() {
                 </span>
               </div>
               <div className="text-xs text-zinc-600 truncate">{src.base_url}</div>
+              {src.source_type !== 'local' && src.user_sync_error && (
+                <div className="text-xs text-amber-500/80" title="listing this server's other accounts failed — content sync itself is unaffected">
+                  ⚠ Couldn't list server users: {src.user_sync_error}
+                </div>
+              )}
               <div className="flex gap-2 pt-0.5">
                 {confirmSync === src.source_id ? (
                   <span className="flex items-center gap-1.5 text-xs">
@@ -697,6 +770,11 @@ export default observer(function SourcesPage() {
                   ))}
                 </select>
               </div>
+            )}
+
+            {/* Per-account watch sync */}
+            {store.selected?.source_type !== 'local' && (
+              <PerAccountWatchSyncCard sourceId={store.selectedId!} sourceType={store.selected!.source_type} />
             )}
 
             {/* Path Maps */}

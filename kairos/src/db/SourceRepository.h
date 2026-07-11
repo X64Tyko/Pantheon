@@ -144,9 +144,26 @@ public:
     std::vector<UnmappedSourceUserRow> listUnmappedSourceUsers();
 
     // Marks a discovered source user as imported — it drops out of
-    // listUnmappedSourceUsers() from this point on.
+    // listUnmappedSourceUsers() from this point on. Also used directly by the
+    // "link to an existing user" route (SourceService's PUT .../link) — same
+    // effect on this table either way, whether the local user is brand new
+    // or already existed; see the v71 migration comment in Database.cpp.
     void setImportedUserId(const std::string& source_id, const std::string& external_user_id,
                            const std::string& user_id);
+
+    struct SourceUserListRow {
+        std::string external_user_id, display_name, email, imported_user_id; // imported_user_id empty = unlinked
+    };
+    // Every discovered account for one source, mapped or not — for the
+    // per-source "link to an existing user" management panel (unlike
+    // listUnmappedSourceUsers(), which only ever shows unlinked ones and
+    // powers the separate global nag popup).
+    std::vector<SourceUserListRow> listSourceUsers(const std::string& source_id);
+
+    // Clears a previously-linked account back to unmapped. Does not touch
+    // any watch_progress rows already written for the user it was linked to
+    // — same no-cleanup precedent as unsetting media_source.synced_user_id.
+    void unlinkSourceUser(const std::string& source_id, const std::string& external_user_id);
 
     // ── Watch-state sync target ──────────────────────────────────────────────
 

@@ -61,7 +61,7 @@ export class SourceStore {
     }
   }
 
-  async addSource(data: Omit<Source, 'enabled' | 'synced_user_id'>) {
+  async addSource(data: Omit<Source, 'enabled' | 'synced_user_id' | 'user_sync_error'>) {
     await api.createSource(data)
     await this.fetchAll()
   }

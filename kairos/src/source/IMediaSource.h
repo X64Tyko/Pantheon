@@ -92,6 +92,26 @@ public:
     // Identity metadata only; never returns or requests passwords/tokens.
     virtual std::vector<SourceUserInfo> listServerUsers() { return {}; }
 
+    // Diagnostic for the call above — empty means the last listServerUsers()
+    // either succeeded or hasn't run; non-empty is a human-readable summary
+    // of why it came back empty (e.g. "plex.tv /api/users: HTTP 401"), so an
+    // admin looking at zero discovered users can tell a real permission/auth
+    // failure apart from a server that genuinely has no other accounts.
+    // Populated by implementations that override listServerUsers(); always
+    // empty for the default (unsupported) case above.
+    virtual std::string lastUserDiscoveryError() const { return ""; }
+
+    // Watch/resume state for one *non-primary* account discovered via
+    // listServerUsers() (see source_user.imported_user_id — an admin linked
+    // this external_user_id to a local Pantheon user). Default: unsupported.
+    // Plex has no per-user API call today (would need a plex.tv managed-user
+    // token exchange per account) so it stays unsupported/empty here until
+    // that's built — SyncManager's per-linked-user pass is a no-op for any
+    // source that doesn't override this, not a hard requirement.
+    virtual std::vector<ExternalWatchState> fetchWatchState(const std::string& /*external_user_id*/) {
+        return {};
+    }
+
     // ── Metadata writeback ───────────────────────────────────────────────────
     // Pushes corrected metadata back into the source library for one item.
     // Default: unsupported. Callers must check the return value — false means

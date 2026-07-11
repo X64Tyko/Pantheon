@@ -1631,9 +1631,14 @@ constexpr Migration kMigrations[] = {
 //   source_user is populated by IMediaSource::listServerUsers() during sync —
 //   every account/profile that exists on a Plex/Jellyfin/Emby server, so
 //   Pantheon can flag ones with no corresponding local account. imported_user_id
-//   is set once an admin imports a discovered user into a local account (see
-//   the source import route); a row with it set is excluded from the
-//   "unregistered" list instead of being re-offered every sync.
+//   is the local user this discovered account maps to, however that mapping
+//   was made: an admin importing it as a brand-new local account (original
+//   meaning, source import route), or later linking it to an existing local
+//   user (SourceRepository::setImportedUserId / SourceService's
+//   PUT .../link) so that account's own watch history gets pulled too — see
+//   SyncManager::syncLinkedUserWatchState + IMediaSource::fetchWatchState.
+//   Either way, a row with it set is excluded from the "unregistered" list
+//   instead of being re-offered every sync.
 //   media_source.synced_user_id is a separate, narrower link: which local
 //   user (if any) should have watch/resume state pulled from this source's
 //   already-configured primary account during sync. Unset = feature off.
@@ -1714,6 +1719,21 @@ constexpr Migration kMigrations[] = {
         decided_at        TEXT
     );
     CREATE INDEX idx_dup_candidate_status ON duplicate_candidate(item_type, status);
+)SQL" }
+
+// ── v75: user-discovery diagnostics. IMediaSource::listServerUsers() has
+//         always swallowed failures to a stderr log line only — an admin
+//         staring at an empty "unmapped users" list has no way to tell "this
+//         server genuinely has no other accounts" from "the request got
+//         rejected" without shelling into the container and grepping logs.
+//         user_sync_error is empty on success (or a source that's never
+//         synced yet); non-empty holds the last failure's HTTP status/message,
+//         cleared back to '' the next time discovery succeeds. Set by
+//         SyncManager right after calling listServerUsers(), read by
+//         GET /api/sources so the admin sees it inline in Hades.
+,{ 75, R"SQL(
+    ALTER TABLE media_source ADD COLUMN user_sync_error TEXT NOT NULL DEFAULT '';
+    ALTER TABLE media_source ADD COLUMN user_sync_checked_at INTEGER;
 )SQL" }
 
 }; // kMigrations

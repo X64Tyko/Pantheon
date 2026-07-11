@@ -618,22 +618,40 @@ std::vector<SourceUserInfo> PlexSource::listServerUsers() {
             }
         }
     };
+    std::vector<std::string> errors;
 
     // Home/managed users — PIN-only kid profiles typically have no email.
     if (auto res = account_client.Get("/api/home/users"); res && res->status == 200)
         merge(parsePlexTvUsers(res->body));
-    else if (!res)
-        std::cerr << "[plex:" << source_id_ << "] /api/home/users — " << httplib::to_string(res.error()) << '\n';
-    else
-        std::cerr << "[plex:" << source_id_ << "] /api/home/users — HTTP " << res->status << '\n';
+    else if (!res) {
+        auto msg = "/api/home/users — " + httplib::to_string(res.error());
+        std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
+        errors.push_back(msg);
+    } else {
+        auto msg = "/api/home/users — HTTP " + std::to_string(res->status);
+        std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
+        errors.push_back(msg);
+    }
 
     // Shared ("Friends") access — separate Plex accounts, which do carry email.
     if (auto res = account_client.Get("/api/users"); res && res->status == 200)
         merge(parsePlexTvUsers(res->body));
-    else if (!res)
-        std::cerr << "[plex:" << source_id_ << "] /api/users — " << httplib::to_string(res.error()) << '\n';
-    else
-        std::cerr << "[plex:" << source_id_ << "] /api/users — HTTP " << res->status << '\n';
+    else if (!res) {
+        auto msg = "/api/users — " + httplib::to_string(res.error());
+        std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
+        errors.push_back(msg);
+    } else {
+        auto msg = "/api/users — HTTP " + std::to_string(res->status);
+        std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
+        errors.push_back(msg);
+    }
+
+    // Both endpoints are independent (Home users vs Friends/shared access) —
+    // only surface this as a diagnostic if it left us with nothing at all;
+    // one failing while the other succeeds is a normal, harmless partial result.
+    last_user_discovery_error_ = merged.empty() && !errors.empty()
+        ? errors.front() + (errors.size() > 1 ? "; " + errors[1] : "")
+        : "";
 
     return merged;
 }

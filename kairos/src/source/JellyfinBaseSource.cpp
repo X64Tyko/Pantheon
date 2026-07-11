@@ -537,7 +537,14 @@ std::vector<SourceUserInfo> JellyfinBaseSource::listServerUsers() {
     // Requires the configured token to have admin rights — same assumption
     // already made for library sync (/Users/{user_id_}/Views etc.).
     auto res = get("/Users");
-    if (!res || res->status != 200) return {};
+    if (!res) {
+        last_user_discovery_error_ = "/Users — " + httplib::to_string(res.error());
+        return {};
+    }
+    if (res->status != 200) {
+        last_user_discovery_error_ = "/Users — HTTP " + std::to_string(res->status);
+        return {};
+    }
 
     std::vector<SourceUserInfo> result;
     try {
@@ -550,10 +557,77 @@ std::vector<SourceUserInfo> JellyfinBaseSource::listServerUsers() {
             // Stock Jellyfin/Emby user objects don't carry an email address.
             result.push_back(std::move(info));
         }
+        last_user_discovery_error_.clear();
     } catch (const json::exception& e) {
         std::cerr << "[" << sourceType() << ":" << source_id_
                   << "] parse error (users): " << e.what() << '\n';
+        last_user_discovery_error_ = std::string("/Users — parse error: ") + e.what();
     }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Per-account watch state (for accounts other than the configured primary —
+// see source_user.imported_user_id / SyncManager::syncLinkedUserWatchState)
+// ---------------------------------------------------------------------------
+
+std::vector<ExternalWatchState> JellyfinBaseSource::fetchWatchState(const std::string& external_user_id) {
+    // One sweep of the whole server for this user — Recursive+IncludeItemTypes
+    // with no ParentId covers every library in one paginated query, same as
+    // fetchMovies()'s pagination shape but without any of its metadata fields:
+    // this only ever needs Id/Type/UserData.
+    const std::string base_path =
+        "/Users/" + external_user_id + "/Items"
+        "?IncludeItemTypes=Movie,Episode&Recursive=true&Fields=UserData&Limit=500";
+
+    std::vector<ExternalWatchState> result;
+    int start_index = 0;
+    while (true) {
+        auto res = get(base_path + "&StartIndex=" + std::to_string(start_index));
+        if (!res || res->status != 200) break;
+
+        int page_count = 0;
+        try {
+            auto j = json::parse(res->body);
+            const auto& items = j["Items"];
+            page_count = static_cast<int>(items.size());
+
+            for (const auto& item : items) {
+                if (!item.contains("UserData")) continue;
+                const auto& ud = item["UserData"];
+
+                ExternalWatchState st;
+                st.external_id = item.value("Id", "");
+                if (st.external_id.empty()) continue;
+                st.item_type = (item.value("Type", "") == "Movie") ? "movie" : "episode";
+
+                if (ud.contains("Played") && !ud["Played"].is_null())
+                    st.watched = ud["Played"].get<bool>();
+                if (ud.contains("PlaybackPositionTicks") && !ud["PlaybackPositionTicks"].is_null())
+                    st.position_ms = ud["PlaybackPositionTicks"].get<int64_t>() / 10000;
+                if (ud.contains("LastPlayedDate") && !ud["LastPlayedDate"].is_null()) {
+                    int64_t epoch = parseIsoToEpoch(ud["LastPlayedDate"].get<std::string>());
+                    if (epoch > 0) st.watched_at = epoch;
+                }
+
+                // Skip items with no actual progress — an untouched item still
+                // carries a (mostly-empty) UserData block, and reporting all of
+                // them would make every sync pass scan the user's whole library
+                // for nothing.
+                if (!st.watched.value_or(false) && !st.position_ms.value_or(0)) continue;
+
+                result.push_back(std::move(st));
+            }
+        } catch (const json::exception& e) {
+            std::cerr << "[" << sourceType() << ":" << source_id_
+                      << "] parse error (watch state for user " << external_user_id << "): " << e.what() << '\n';
+            break;
+        }
+
+        if (page_count < 500) break;
+        start_index += page_count;
+    }
+
     return result;
 }
 

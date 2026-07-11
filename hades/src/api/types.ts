@@ -88,6 +88,10 @@ export interface Source {
   // Local user (if any) whose watch/resume state is seeded from this
   // source's primary account during sync. Empty = off.
   synced_user_id: string
+  // Empty = the last user-discovery sync succeeded (or none has run yet);
+  // otherwise a human-readable reason it came back with nothing (bad token
+  // permissions, HTTP error, etc.) — see IMediaSource::lastUserDiscoveryError.
+  user_sync_error: string
 }
 
 // A source-reported account with no local Pantheon account imported for it
@@ -98,6 +102,15 @@ export interface UnmappedSourceUser {
   external_user_id:    string
   display_name:        string
   email:                string
+}
+
+// Every discovered account for one source, mapped or not — see
+// SourceRepository::listSourceUsers(). imported_user_id is '' when unlinked.
+export interface SourceUser {
+  external_user_id: string
+  display_name:     string
+  email:            string
+  imported_user_id: string
 }
 
 export interface ImportUserResult {
