@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pantheon — Privacy Policy</title>
+<style>
+  :root {
+    --bg: oklch(0.152 0.016 286);
+    --bg2: oklch(0.19 0.018 286);
+    --bg3: oklch(0.21 0.026 290 / 0.6);
+    --line: oklch(0.45 0.05 290 / 0.32);
+    --txt: oklch(0.94 0.008 90);
+    --txt2: oklch(0.68 0.02 288);
+    --txt3: oklch(0.54 0.025 290);
+    --gold: oklch(0.83 0.13 84);
+    --violet: oklch(0.72 0.15 290);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 60px 24px 100px;
+  }
+  main { width: 100%; max-width: 760px; }
+  a { color: var(--violet); }
+  .back { display: inline-block; font-size: 13px; color: var(--txt3); text-decoration: none; margin-bottom: 24px; }
+  .back:hover { color: var(--txt2); }
+  h1 { font-weight: 800; font-size: 34px; letter-spacing: 0.01em; margin: 0 0 6px; }
+  .sub { color: var(--txt2); font-size: 15px; line-height: 1.5; margin: 0 0 6px; max-width: 620px; }
+  .effective { color: var(--txt3); font-size: 12px; font-family: 'JetBrains Mono', ui-monospace, monospace; margin: 0 0 16px; }
+  .note {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 14px 16px; border-radius: 10px; margin: 0 0 40px;
+    border: 1px solid oklch(0.72 0.15 290 / 0.35);
+    background: oklch(0.72 0.15 290 / 0.08);
+    font-size: 13px; line-height: 1.55; color: var(--txt2);
+  }
+  .note b { color: var(--txt); }
+  section { margin-bottom: 44px; }
+  h2 {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 19px; font-weight: 700; color: var(--txt); margin: 0 0 14px;
+  }
+  h2 .n {
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 26px; height: 26px; border-radius: 8px;
+    background: linear-gradient(180deg, var(--gold), oklch(0.7 0.15 60));
+    color: oklch(0.2 0.04 70); font-size: 13px; font-weight: 800;
+    font-family: ui-monospace, monospace;
+  }
+  p { color: var(--txt2); font-size: 14px; line-height: 1.65; margin: 0 0 12px; }
+  ul.plain { margin: 0 0 12px; padding-left: 20px; }
+  ul.plain li { color: var(--txt2); font-size: 14px; line-height: 1.65; margin-bottom: 6px; }
+  code {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    background: oklch(0.1 0.016 285 / 0.6); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 6px; color: oklch(0.9 0.05 90);
+  }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 12px; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--txt3); font-weight: 600; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+  td { color: var(--txt2); }
+  footer { margin-top: 40px; font-size: 11px; color: var(--txt3); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  footer a { color: var(--txt3); }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="index.html">← Docs</a>
+  <h1>Privacy Policy</h1>
+  <p class="sub">Covers the Pantheon Roku channel, and applies the same way to every other Pantheon client (web, mobile, other TV platforms).</p>
+  <p class="effective">Effective: 2026-07-11</p>
+
+  <div class="note">
+    🔒 <span><b>Pantheon is self-hosted software, not a service.</b> There is no central Pantheon server anywhere. Every account, watch history, and setting described below lives only on the media server that you — or whoever set up your household's Pantheon — installed and configured. The app's developer has no server to send your data to, and never sees it.</span>
+  </div>
+
+  <section>
+    <h2><span class="n">1</span>What this app is</h2>
+    <p>The Pantheon Roku channel is a client for a self-hosted media server (Kairos/Hermes) that you connect it to directly by entering that server's address. It plays your own media library and live channels, the same way a browser pointed at your own server would. Nobody else's Pantheon install can see your data, and this channel never talks to any server other than the one you configure.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>What data this channel handles</h2>
+    <table>
+      <tr><th>Data</th><th>Where it's stored</th><th>What it's for</th></tr>
+      <tr>
+        <td>Server address you enter</td>
+        <td>On this Roku device only (channel registry)</td>
+        <td>So the channel knows which server to connect to</td>
+      </tr>
+      <tr>
+        <td>Account username &amp; password</td>
+        <td>Sent directly to your server over the connection you configured; the channel itself doesn't keep the password afterward</td>
+        <td>Signing in</td>
+      </tr>
+      <tr>
+        <td>Session token (issued after sign-in)</td>
+        <td>On this Roku device and on your server</td>
+        <td>Keeps you signed in without re-entering your password</td>
+      </tr>
+      <tr>
+        <td>Device pairing ID &amp; pairing token</td>
+        <td>On this Roku device and on your server</td>
+        <td>Lets a companion app (Hades on web or mobile) send playback commands to this specific Roku</td>
+      </tr>
+      <tr>
+        <td>Watch history &amp; playback position</td>
+        <td>Your server only</td>
+        <td>Continue Watching / resume-where-you-left-off</td>
+      </tr>
+      <tr>
+        <td>Parental-control / content-rating settings</td>
+        <td>Your server only</td>
+        <td>Applied per-account by whoever administers your server</td>
+      </tr>
+    </table>
+    <p>Uninstalling the channel removes everything in the first four rows from this Roku device. Anything stored on your server is controlled entirely by your server's admin, the same as any other file or database on that machine.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>What this app does not do</h2>
+    <ul class="plain">
+      <li>No advertising, and no ad SDKs of any kind.</li>
+      <li>No analytics, telemetry, or crash-reporting sent to any third party.</li>
+      <li>No data is sold, rented, or shared with anyone — there's no one to share it with; it never leaves your own server.</li>
+      <li>No communication with any address other than the one you explicitly entered when connecting.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="n">4</span>Children's privacy</h2>
+    <p>Pantheon isn't a public service directed at children — it's private software an adult installs and administers for their own household. That admin can configure restricted, content-rating-limited profiles for other members of the household (see the parental-control settings above), but the developer has no relationship with, or visibility into, any individual end user.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">5</span>Changes to this policy</h2>
+    <p>If what this channel stores or sends changes, this page will be updated and the effective date above will move. Since there's no account system tying you to the developer, there's no mechanism (or need) to notify individual users directly — check back here if you want the current version.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">6</span>Contact</h2>
+    <p>Questions about this policy or the software itself: <a href="https://github.com/X64Tyko/Pantheon/issues">open an issue on GitHub</a>, or email <a href="mailto:cmpederson89@gmail.com">cmpederson89@gmail.com</a>.</p>
+  </section>
+
+  <footer>Part of the <a href="https://github.com/X64Tyko/Pantheon">Pantheon</a> docs — see also <a href="https://github.com/X64Tyko/pantheon-roku">pantheon-roku</a>.</footer>
+</main>
+</body>
+</html>
