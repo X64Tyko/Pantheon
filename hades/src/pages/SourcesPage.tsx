@@ -991,6 +991,14 @@ export default observer(function SourcesPage() {
                     <div className="flex items-center gap-1.5 shrink-0">
                       {editingLib !== lib.library_id && confirmLib !== lib.library_id && (
                         <button
+                          onClick={() => store.triggerLibrarySync(store.selectedId!, lib.library_id)}
+                          disabled={store.syncing}
+                          title="New/changed content in just this library — quicker than a full source sync, but removals need a full Sync to be noticed"
+                          className="px-2 py-0.5 rounded text-xs bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 transition-colors"
+                        >{store.syncing ? 'Syncing…' : 'Sync'}</button>
+                      )}
+                      {editingLib !== lib.library_id && confirmLib !== lib.library_id && (
+                        <button
                           onClick={() => openEditLib(lib)}
                           className="px-2 py-0.5 rounded text-xs bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
                         >Edit</button>

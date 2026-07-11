@@ -463,6 +463,19 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, json{{"status","started"}, {"source_id", id}}.dump());
 	});
 
+	// Content-ingestion only — no orphan cleanup, no source-wide chapter/
+	// specials rescans (see SyncManager::syncLibrary's doc comment). Picks up
+	// new/changed content in this one library quickly; removals still need a
+	// full source sync above to be noticed.
+	svr.Post("/api/sources/:id/libraries/:lid/sync", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id  = req.path_params.at("id");
+		auto lid = req.path_params.at("lid");
+		sync_.triggerSync(id, lid);
+		res.status = 202;
+		route::ok(res, json{{"status","started"}, {"source_id", id}, {"library_id", lid}}.dump());
+	});
+
 	// Wipes this source's source_mapping first, so every item is re-resolved
 	// as if this were its very first sync (fresh dedup, not trusting stale ids).
 	svr.Post("/api/sources/:id/hard-sync", [this](const Req& req, Res& res) {
@@ -543,6 +556,9 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/sync/status", [this](const Req&, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		route::ok(res, json{{"running", sync_.isSyncing()}}.dump());
+		json j{{"running", sync_.isSyncing()}};
+		auto current = sync_.currentSyncSourceId();
+		if (!current.empty()) j["current_source_id"] = current;
+		route::ok(res, j.dump());
 	});
 }

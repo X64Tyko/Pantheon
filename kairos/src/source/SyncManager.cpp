@@ -85,21 +85,24 @@ void SyncManager::loadSources() {
 // Public sync interface
 // ---------------------------------------------------------------------------
 
-void SyncManager::triggerSync(const std::string& source_id) {
+void SyncManager::triggerSync(const std::string& source_id, const std::string& library_id) {
     bool expected = false;
     if (!sync_running_.compare_exchange_strong(expected, true)) {
         std::cout << "[sync] already running — ignoring trigger" << std::endl;
         return;
     }
-    std::thread([this, source_id]() {
+    std::thread([this, source_id, library_id]() {
         try {
-            if (source_id.empty())
+            if (!library_id.empty())
+                syncLibrary(source_id, library_id);
+            else if (source_id.empty())
                 syncAll();
             else
                 syncSource(source_id);
         } catch (const std::exception& e) {
             std::cerr << "[sync] error: " << e.what() << std::endl;
         }
+        { std::lock_guard<std::mutex> lock(current_source_mtx_); current_source_id_.clear(); }
         sync_running_.store(false);
     }).detach();
 }
@@ -120,6 +123,7 @@ void SyncManager::triggerHardSync(const std::string& source_id) {
         } catch (const std::exception& e) {
             std::cerr << "[sync] hard sync error: " << e.what() << std::endl;
         }
+        { std::lock_guard<std::mutex> lock(current_source_mtx_); current_source_id_.clear(); }
         sync_running_.store(false);
     }).detach();
 }
@@ -162,6 +166,7 @@ void SyncManager::syncAll() {
         }
         syncContent(src->sourceId(), live);
     }
+    { std::lock_guard<std::mutex> lock(current_source_mtx_); current_source_id_.clear(); }
 
     // Phase 1b: orphan cleanup — runs after ALL sources are known so a show
     // present in source B is never deleted because source A dropped it.
@@ -187,9 +192,15 @@ void SyncManager::syncAll() {
               << elapsedMs(t_total, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }
 
-void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live) {
+void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live,
+                              const std::string& library_id) {
     IMediaSource* src = findSource(source_id);
     if (!src || !src->isSupported()) return;
+
+    {
+        std::lock_guard<std::mutex> lock(current_source_mtx_);
+        current_source_id_ = source_id;
+    }
 
     // Touch all three per-source sets unconditionally, even if this source
     // ends up with zero show/movie libraries this round (e.g. its only
@@ -203,7 +214,8 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live) {
     live.by_source_episodes[source_id];
     live.by_source_movies[source_id];
 
-    std::cout << "[sync] content: " << source_id << std::endl;
+    std::cout << "[sync] content: " << source_id
+              << (library_id.empty() ? "" : " / library " + library_id) << std::endl;
 
     // Drain the cursor before calling syncShows/syncMovies so no read cursor
     // on sync_db_ is live when BEGIN IMMEDIATE transactions start.
@@ -218,10 +230,13 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live) {
     struct LibRow { std::string library_id, external_lib_id, library_type, display_name; };
     std::vector<LibRow> libs;
     {
-        SQLite::Statement q(sync_db_,
-            "SELECT library_id, external_lib_id, library_type, display_name "
-            "FROM media_library WHERE source_id = ? AND enabled = 1");
+        SQLite::Statement q(sync_db_, library_id.empty()
+            ? "SELECT library_id, external_lib_id, library_type, display_name "
+              "FROM media_library WHERE source_id = ? AND enabled = 1"
+            : "SELECT library_id, external_lib_id, library_type, display_name "
+              "FROM media_library WHERE source_id = ? AND enabled = 1 AND library_id = ?");
         q.bind(1, source_id);
+        if (!library_id.empty()) q.bind(2, library_id);
         while (q.executeStep()) {
             libs.push_back({
                 q.getColumn(0).getString(),
@@ -294,6 +309,15 @@ void SyncManager::syncSource(const std::string& source_id) {
     scanSpecialsForEligibleShows();
     syncChaptersFromFiles(source_id);
     std::cout << "[sync] done: " << source_id << std::endl;
+}
+
+void SyncManager::syncLibrary(const std::string& source_id, const std::string& library_id) {
+    sync_db_ = db_.openConnection(60000);
+    MediaLockGuard media_lock(media_locked_);
+    SyncLiveIds live; // scoped to this one library — not a valid input to runOrphanCleanup, see header comment
+    syncContent(source_id, live, library_id);
+    if (scraper_) scraper_->runMatchSync();
+    std::cout << "[sync] done: " << source_id << " / library " << library_id << std::endl;
 }
 
 // ---------------------------------------------------------------------------

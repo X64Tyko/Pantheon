@@ -3,6 +3,7 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -37,9 +38,36 @@ public:
     void syncAll();
     void syncSource(const std::string& source_id);
 
-    // Kicks off a background sync on a detached thread; no-ops if already running
-    void triggerSync(const std::string& source_id = "");
+    // Syncs just one library within a source: content ingestion (new/changed
+    // shows/movies/episodes) plus scraper matching for anything newly
+    // unmatched. Deliberately skips orphan cleanup and the source-wide
+    // chapter/specials rescans:
+    //  - runOrphanCleanup treats "not reported this run" as "removed," which
+    //    is only sound when a run covered every library a source has (see
+    //    its own doc comment) — running it here would delete content from
+    //    this source's *other* libraries that this run never touched.
+    //  - syncChaptersFromFiles/scanSpecialsForEligibleShows both scan across
+    //    the whole source (or DB), not just one library — running them here
+    //    would defeat the point of a fast, targeted single-library sync.
+    // A removal made in this library won't be picked up until a full
+    // syncSource/syncAll — this is a lighter-weight "pick up new/changed
+    // content quickly" tool, not a substitute for a full sync.
+    void syncLibrary(const std::string& source_id, const std::string& library_id);
+
+    // Kicks off a background sync on a detached thread; no-ops if already
+    // running. library_id restricts the run to syncLibrary() above instead
+    // of the full syncSource() — source_id must be non-empty when it's set.
+    void triggerSync(const std::string& source_id = "", const std::string& library_id = "");
     bool isSyncing() const { return sync_running_.load(); }
+
+    // Which source's content-ingestion phase is running right now — empty
+    // when idle, or during the phases that aren't per-source (orphan
+    // cleanup, scraper matching, chapter sync). Drives the Activity page's
+    // per-source "currently active" indicator.
+    std::string currentSyncSourceId() const {
+        std::lock_guard<std::mutex> lock(current_source_mtx_);
+        return current_source_id_;
+    }
 
     // Like triggerSync(), but first wipes source_mapping for source_id (or,
     // same as triggerSync(""), every source when left empty) so every item
@@ -84,7 +112,10 @@ public:
                           const std::string& file_path);
 
 private:
-    void syncContent(const std::string& source_id, SyncLiveIds& live);
+    // library_id empty = every enabled library on this source (the normal
+    // full-source path); non-empty = just that one (see syncLibrary above).
+    void syncContent(const std::string& source_id, SyncLiveIds& live,
+                     const std::string& library_id = "");
     void syncPlexLinks(const std::string& source_id);
     void clearSourceMapping(const std::string& source_id);
 
@@ -128,6 +159,8 @@ private:
     std::vector<std::unique_ptr<IMediaSource>> sources_;
     std::atomic<bool>                          sync_running_{false};
     std::atomic<bool>                          plex_sync_running_{false};
+    mutable std::mutex                         current_source_mtx_;
+    std::string                                current_source_id_;
     std::atomic<bool>                          media_locked_{false};
     std::atomic<int>                           override_thread_count_{0};
     std::atomic<bool>                          yield_requested_{false};
