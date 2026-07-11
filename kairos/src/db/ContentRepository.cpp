@@ -1538,7 +1538,7 @@ std::vector<EpisodeSearchRow> ContentRepository::searchEpisodes(const std::strin
 std::optional<EpisodeSearchRow> ContentRepository::getEpisode(const std::string& episode_id) {
     SQLite::Statement q(db_.get(), R"(
         SELECT e.episode_id, e.season, e.episode, e.title, e.duration_ms,
-               s.show_id, s.title AS show_title
+               s.show_id, s.title AS show_title, e.overview
         FROM episode e JOIN show s ON s.show_id = e.show_id
         WHERE e.episode_id = ?
     )");
@@ -1553,6 +1553,7 @@ std::optional<EpisodeSearchRow> ContentRepository::getEpisode(const std::string&
     r.duration_ms = q.getColumn(4).getInt64();
     r.show_id     = q.getColumn(5).getString();
     r.show_title  = q.getColumn(6).getString();
+    r.overview    = q.getColumn(7).getString();
     return r;
 }
 

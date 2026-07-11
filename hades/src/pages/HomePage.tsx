@@ -63,6 +63,12 @@ export default function HomePage() {
   const [heroDetail, setHeroDetail] = useState<ShowDetail | MovieDetail | null>(null)
   const [heroFading, setHeroFading] = useState(false)
   const heroIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Continue Watching's episode entries — see HeroEpisodeOverride's comment.
+  // Layered on top of heroItem/heroDetail rather than routed through them:
+  // an episode hover never touches the rotating hero's own state, so ending
+  // it is just clearing this back to null, no restore bookkeeping needed
+  // (unlike a movie hover, which does go through heroItem/hoverRestoreRef).
+  const [heroEpisode, setHeroEpisode] = useState<HeroEpisodeOverride | null>(null)
 
   // Detail view
   const [detailOpen, setDetailOpen] = useState(false)
@@ -210,6 +216,39 @@ export default function HomePage() {
     if (!detailOpen) startRotation()
   }
 
+  // Continue Watching hover — movie entries reuse the exact same heroItem/
+  // hoverRestoreRef swap as a regular shelf hover (fetching detail fresh
+  // since a WatchProgress entry isn't in allItemsRef); episodes go through
+  // heroEpisode instead (see its declaration's comment) rather than trying
+  // to shoehorn an episode into the Show|Movie-shaped heroItem.
+  const handleContinueWatchingHover = (cw: WatchProgress) => {
+    if (detailOpen) return
+    if (heroIntervalRef.current) clearInterval(heroIntervalRef.current)
+
+    if (cw.content_type === 'movie') {
+      setHeroEpisode(null)
+      if (!hoverRestoreRef.current && heroItem) {
+        hoverRestoreRef.current = { item: heroItem, detail: heroDetail, idx: heroIdx.current }
+      }
+      api.getMovie(cw.content_id).then(d => transitionHeroTo(d, d)).catch(() => {})
+      return
+    }
+
+    api.getEpisodeBrief(cw.content_id).then(ep => {
+      setHeroEpisode({
+        title:       ep.title,
+        metaLine:    `${ep.show_title}  ·  S${String(ep.season).padStart(2, '0')}E${String(ep.episode).padStart(2, '0')}`,
+        overview:    ep.overview,
+        backdropUrl: mediaUrl(`/api/episodes/${ep.episode_id}/thumb`),
+      })
+    }).catch(() => {})
+  }
+
+  const handleContinueWatchingHoverEnd = () => {
+    setHeroEpisode(null)
+    handleShelfHoverEnd()
+  }
+
   // Per-card "Hide from Home" shortcut — flips the whole library's
   // show_on_home flag (see Settings → Sources for the same toggle), then
   // optimistically drops every currently-loaded item from that library out
@@ -252,6 +291,7 @@ export default function HomePage() {
             <HeroPanel
               item={heroItem}
               detail={heroDetail}
+              episode={heroEpisode}
               fading={heroFading}
               totalCandidates={heroCandidates.current.length}
               currentIdx={heroIdx.current}
@@ -345,6 +385,8 @@ export default function HomePage() {
                 onNavigate={navigate}
                 onItemHover={handleShelfHover}
                 onRowLeave={handleShelfHoverEnd}
+                onContinueWatchingHover={handleContinueWatchingHover}
+                onContinueWatchingHoverEnd={handleContinueWatchingHoverEnd}
                 libraryNames={libraryNames}
                 onHideLibrary={hideLibrary}
               />
@@ -362,13 +404,27 @@ export default function HomePage() {
 
 // ── Hero panel ────────────────────────────────────────────────────────────────
 
+// Continue Watching's episode entries mirror MediaDetailHero's own
+// hover-an-episode swap (title/overview/backdrop swap to the episode's own;
+// everything else about the "page" stays put) — the one difference is Home
+// isn't already inside that show's own page the way the season shelves are,
+// so there's no implicit "which show is this" context; metaLine fills that
+// gap in the exact slot the year/rating/type row would otherwise occupy.
+interface HeroEpisodeOverride {
+  title:       string
+  metaLine:    string
+  overview:    string
+  backdropUrl: string | null
+}
+
 function HeroPanel({
-  item, detail, fading, totalCandidates, currentIdx,
+  item, detail, episode, fading, totalCandidates, currentIdx,
   reviewCount, onViewDetail, onPlay, onDotClick, onReviewClick,
   castAvailable, onCast,
 }: {
   item:            Show | Movie
   detail:          ShowDetail | MovieDetail | null
+  episode?:        HeroEpisodeOverride | null
   fading:          boolean
   totalCandidates: number
   currentIdx:      number
@@ -385,14 +441,15 @@ function HeroPanel({
   // Browse-mode only (the open detail view is MediaDetailHero's own pinned
   // hero instead) — heroCandidates is already pre-filtered to items that
   // have art (see the useEffect that builds it), so item.art is reliably set here.
-  const backdrop = proxyArt(item)
+  const backdrop = episode ? episode.backdropUrl : proxyArt(item)
   const bg = backdrop
     ? `url(${backdrop}) center/cover no-repeat`
     : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)'
 
-  const genres: string[] = detail && 'genres' in detail && Array.isArray(detail.genres)
+  const genres: string[] = !episode && detail && 'genres' in detail && Array.isArray(detail.genres)
     ? (detail.genres as string[]).slice(0, 4) : []
-  const overview = detail?.overview ?? ''
+  const overview     = episode ? episode.overview : (detail?.overview ?? '')
+  const displayTitle = episode ? episode.title : item.title
   const rating   = detail?.audience_rating ?? item.audience_rating
 
   const play      = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-hero-play',   onEnterPress: onPlay })
@@ -445,16 +502,22 @@ function HeroPanel({
           fontFamily: "'Chakra Petch', sans-serif", fontSize: 34, fontWeight: 700,
           color: 'oklch(1 0 0)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em',
           textShadow: heroTextShadow,
-        }}>{item.title}</h1>
+        }}>{displayTitle}</h1>
 
         <div style={{
           display: 'flex', alignItems: 'center', gap: 16, marginTop: 10, marginBottom: 14,
           fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-2)',
           textShadow: heroTextShadow,
         }}>
-          {item.year && <span>{item.year}</span>}
-          {rating != null && <span style={{ color: 'var(--hds-gold)' }}>★ {rating.toFixed(1)}</span>}
-          <span style={{ opacity: 0.5 }}>{'show_id' in item ? 'series' : 'film'}</span>
+          {episode ? (
+            <span>{episode.metaLine}</span>
+          ) : (
+            <>
+              {item.year && <span>{item.year}</span>}
+              {rating != null && <span style={{ color: 'var(--hds-gold)' }}>★ {rating.toFixed(1)}</span>}
+              <span style={{ opacity: 0.5 }}>{'show_id' in item ? 'series' : 'film'}</span>
+            </>
+          )}
         </div>
 
         {overview && (
@@ -597,7 +660,9 @@ function QuickActionsRow({ onGuideClick }: { onGuideClick: () => void }) {
 
 function Shelves({
   loading, recentShows, recentMovies, recentlyReleased, recentlyAired, continueWatching,
-  onItemClick, onNavigate, onItemHover, onRowLeave, libraryNames, onHideLibrary,
+  onItemClick, onNavigate, onItemHover, onRowLeave,
+  onContinueWatchingHover, onContinueWatchingHoverEnd,
+  libraryNames, onHideLibrary,
 }: {
   loading:          boolean
   recentShows:      Show[]
@@ -609,6 +674,8 @@ function Shelves({
   onNavigate:       (path: string) => void
   onItemHover:      (id: string) => void
   onRowLeave:       () => void
+  onContinueWatchingHover:    (item: WatchProgress) => void
+  onContinueWatchingHoverEnd: () => void
   libraryNames:     Map<string, string>
   onHideLibrary:    (libraryId: string) => void
 }) {
@@ -631,7 +698,10 @@ function Shelves({
       ) : (
         <>
           {continueWatching.length > 0 && (
-            <ContinueWatchingShelf items={continueWatching} onNavigate={onNavigate} />
+            <ContinueWatchingShelf
+              items={continueWatching} onNavigate={onNavigate}
+              onItemHover={onContinueWatchingHover} onRowLeave={onContinueWatchingHoverEnd}
+            />
           )}
           {recentShows.length > 0 && (
             <Shelf
@@ -957,7 +1027,10 @@ function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate, libraryNa
   )
 }
 
-function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; onNavigate: (path: string) => void }) {
+function ContinueWatchingShelf({ items, onNavigate, onItemHover, onRowLeave }: {
+  items: WatchProgress[]; onNavigate: (path: string) => void
+  onItemHover?: (item: WatchProgress) => void; onRowLeave?: () => void
+}) {
   const [showArrows, setShowArrows] = useState(false)
   const travel = useTravelingFocus()
   const { ref: rowRef, focusKey: rowFocusKey } = useFocusable<object, HTMLDivElement>({
@@ -973,7 +1046,7 @@ function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; 
     <div
       style={{ padding: '0 0 8px', marginBottom: 24, position: 'relative' }}
       onMouseEnter={() => setShowArrows(true)}
-      onMouseLeave={() => setShowArrows(false)}
+      onMouseLeave={() => { setShowArrows(false); onRowLeave?.() }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', padding: '0 24px', marginBottom: 14 }}>
         <span style={{
@@ -993,6 +1066,7 @@ function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; 
           <ContinueWatchingCard
             key={`${p.content_type}:${p.content_id}`} item={p} onNavigate={onNavigate}
             onActivate={travel.activate} onDeactivate={travel.deactivate}
+            onHover={onItemHover}
           />
         ))}
         {/* No natural single filter for Continue Watching (mixed shows/movies/
@@ -1009,9 +1083,10 @@ function ContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; 
   )
 }
 
-function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: {
+function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate, onHover }: {
   item: WatchProgress; onNavigate: (path: string) => void
   onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
+  onHover?: (item: WatchProgress) => void
 }) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
@@ -1028,14 +1103,14 @@ function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: {
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
     focusKey: `home-cw-card-${item.content_type}-${item.content_id}`,
     onEnterPress: go,
-    onFocus: () => onActivate(ref.current), onBlur: onDeactivate,
+    onFocus: () => { onActivate(ref.current); onHover?.(item) }, onBlur: onDeactivate,
   })
 
   return (
     <div
       ref={ref} data-tv-focused={focused}
       onClick={go}
-      onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
+      onMouseEnter={() => { setHovered(true); onActivate(ref.current); onHover?.(item) }}
       onMouseLeave={() => { setHovered(false); onDeactivate() }}
       style={{
         flexShrink: 0, width: 130, borderRadius: 10, overflow: 'hidden', cursor: 'pointer',

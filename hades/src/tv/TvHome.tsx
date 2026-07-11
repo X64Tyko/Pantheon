@@ -51,6 +51,9 @@ export function TvHome() {
   const heroIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [heroItem,   setHeroItem]   = useState<Show | Movie | null>(null)
   const [heroDetail, setHeroDetail] = useState<ShowDetail | MovieDetail | null>(null)
+  // Continue Watching's episode entries — mirrors HomePage.tsx's heroEpisode
+  // exactly, see its comment there.
+  const [heroEpisode, setHeroEpisode] = useState<HeroEpisodeOverride | null>(null)
   const [heroFading, setHeroFading] = useState(false)
 
   const loadHeroDetail = (item: Show | Movie) => {
@@ -98,6 +101,35 @@ export function TvHome() {
       hoverRestoreRef.current = null
     }
     startRotation()
+  }
+
+  // Mirrors HomePage.tsx's handleContinueWatchingHover/HoverEnd — see there
+  // for why episodes go through heroEpisode instead of heroItem.
+  const handleContinueWatchingFocus = (cw: WatchProgress) => {
+    if (heroIntervalRef.current) clearInterval(heroIntervalRef.current)
+
+    if (cw.content_type === 'movie') {
+      setHeroEpisode(null)
+      if (!hoverRestoreRef.current && heroItem) {
+        hoverRestoreRef.current = { item: heroItem, detail: heroDetail, idx: heroIdx.current }
+      }
+      api.getMovie(cw.content_id).then(d => transitionHeroTo(d, d)).catch(() => {})
+      return
+    }
+
+    api.getEpisodeBrief(cw.content_id).then(ep => {
+      setHeroEpisode({
+        title:       ep.title,
+        metaLine:    `${ep.show_title}  ·  S${String(ep.season).padStart(2, '0')}E${String(ep.episode).padStart(2, '0')}`,
+        overview:    ep.overview,
+        backdropUrl: mediaUrl(`/api/episodes/${ep.episode_id}/thumb`),
+      })
+    }).catch(() => {})
+  }
+
+  const handleContinueWatchingBlur = () => {
+    setHeroEpisode(null)
+    handleShelfBlur()
   }
 
   useEffect(() => {
@@ -153,6 +185,7 @@ export function TvHome() {
           <TvHeroPanel
             item={heroItem}
             detail={heroDetail}
+            episode={heroEpisode}
             fading={heroFading}
             totalCandidates={heroCandidates.current.length}
             currentIdx={heroIdx.current}
@@ -228,7 +261,10 @@ export function TvHome() {
         ) : (
           <>
             {continueWatching.length > 0 && (
-              <TvContinueWatchingShelf items={continueWatching} onNavigate={navigate} />
+              <TvContinueWatchingShelf
+                items={continueWatching} onNavigate={navigate}
+                onItemFocus={handleContinueWatchingFocus} onRowBlur={handleContinueWatchingBlur}
+              />
             )}
             {recentShows.length > 0 && (
               <TvShelf
@@ -331,9 +367,21 @@ function GuideButton({ onClick }: { onClick: () => void }) {
 
 // ── Hero ─────────────────────────────────────────────────────────────────────
 
-function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onViewDetail, onPlay, onCast, castAvailable, onDotClick }: {
+// Mirrors HomePage.tsx's HeroEpisodeOverride exactly — see that file's
+// comment for why this exists (Continue Watching's episode entries mirror
+// MediaDetailHero's own hover-an-episode swap, plus a metaLine since Home
+// isn't already inside that show's own page).
+interface HeroEpisodeOverride {
+  title:       string
+  metaLine:    string
+  overview:    string
+  backdropUrl: string | null
+}
+
+function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentIdx, onViewDetail, onPlay, onCast, castAvailable, onDotClick }: {
   item: Show | Movie
   detail: ShowDetail | MovieDetail | null
+  episode?: HeroEpisodeOverride | null
   fading: boolean
   totalCandidates: number
   currentIdx: number
@@ -343,13 +391,14 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
   castAvailable: boolean
   onDotClick: (i: number) => void
 }) {
-  const backdrop = artUrl(item)
+  const backdrop = episode ? episode.backdropUrl : artUrl(item)
   const bg = backdrop
     ? `url(${backdrop}) center/cover no-repeat`
     : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)'
 
-  const genres: string[] = detail && 'genres' in detail && Array.isArray(detail.genres) ? (detail.genres as string[]).slice(0, 4) : []
-  const overview = detail?.overview ?? ''
+  const genres: string[] = !episode && detail && 'genres' in detail && Array.isArray(detail.genres) ? (detail.genres as string[]).slice(0, 4) : []
+  const overview     = episode ? episode.overview : (detail?.overview ?? '')
+  const displayTitle = episode ? episode.title : item.title
   const rating   = detail?.audience_rating ?? item.audience_rating
 
   const play       = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-play',   onEnterPress: onPlay,       forceFocus: true })
@@ -391,16 +440,22 @@ function TvHeroPanel({ item, detail, fading, totalCandidates, currentIdx, onView
           fontFamily: "'Chakra Petch', sans-serif", fontSize: 24, fontWeight: 700,
           color: 'oklch(1 0 0)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em',
           textShadow: heroTextShadow,
-        }}>{item.title}</h1>
+        }}>{displayTitle}</h1>
 
         <div style={{
           display: 'flex', alignItems: 'center', gap: 16, marginTop: 6, marginBottom: 8,
           fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-2)',
           textShadow: heroTextShadow,
         }}>
-          {item.year && <span>{item.year}</span>}
-          {rating != null && <span style={{ color: 'var(--hds-gold)' }}>★ {rating.toFixed(1)}</span>}
-          <span style={{ opacity: 0.5 }}>{'show_id' in item ? 'series' : 'film'}</span>
+          {episode ? (
+            <span>{episode.metaLine}</span>
+          ) : (
+            <>
+              {item.year && <span>{item.year}</span>}
+              {rating != null && <span style={{ color: 'var(--hds-gold)' }}>★ {rating.toFixed(1)}</span>}
+              <span style={{ opacity: 0.5 }}>{'show_id' in item ? 'series' : 'film'}</span>
+            </>
+          )}
         </div>
 
         {overview && (
@@ -622,7 +677,10 @@ function TvShelfEndTile({ focusKey, onClick, onBlur, onActivate, onDeactivate }:
 
 // ── Continue Watching ────────────────────────────────────────────────────────
 
-function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]; onNavigate: (path: string) => void }) {
+function TvContinueWatchingShelf({ items, onNavigate, onItemFocus, onRowBlur }: {
+  items: WatchProgress[]; onNavigate: (path: string) => void
+  onItemFocus?: (item: WatchProgress) => void; onRowBlur?: () => void
+}) {
   const travel = useTravelingFocus()
   const { ref: rowRef, focusKey: rowFocusKey } = useFocusable<object, HTMLDivElement>({
     focusKey: 'tv-shelf-row-continue-watching',
@@ -631,7 +689,7 @@ function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]
     focusBoundaryDirections: ['left', 'right'],
   })
   return (
-    <div style={{ marginBottom: 10 }}>
+    <div style={{ marginBottom: 10 }} onMouseLeave={onRowBlur}>
       <div style={{
         fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
         color: 'var(--hds-txt)', padding: '0 48px 6px',
@@ -644,7 +702,10 @@ function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
           <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 108 }}>
-            <TvContinueWatchingCard item={p} onNavigate={onNavigate} onActivate={travel.activate} onDeactivate={travel.deactivate} />
+            <TvContinueWatchingCard
+              item={p} onNavigate={onNavigate} onActivate={travel.activate} onDeactivate={travel.deactivate}
+              onFocus={onItemFocus} onBlur={onRowBlur}
+            />
           </div>
         ))}
         <TvShelfEndTile
@@ -657,9 +718,10 @@ function TvContinueWatchingShelf({ items, onNavigate }: { items: WatchProgress[]
   )
 }
 
-function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: {
+function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate, onFocus, onBlur }: {
   item: WatchProgress; onNavigate: (path: string) => void
   onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
+  onFocus?: (item: WatchProgress) => void; onBlur?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
@@ -675,7 +737,7 @@ function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: 
   const go = () => onNavigate(`/player/${item.content_type}/${item.content_id}?t=${item.position_ms}`)
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
     focusKey: `tv-cw-card-${item.content_type}-${item.content_id}`, onEnterPress: go,
-    onFocus: () => onActivate(ref.current), onBlur: onDeactivate,
+    onFocus: () => { onActivate(ref.current); onFocus?.(item) }, onBlur: onDeactivate,
   })
   const active = hovered || focused
 
@@ -683,8 +745,8 @@ function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate }: 
     <div
       ref={ref} data-tv-focused={focused}
       onClick={go}
-      onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
-      onMouseLeave={() => { setHovered(false); onDeactivate() }}
+      onMouseEnter={() => { setHovered(true); onActivate(ref.current); onFocus?.(item) }}
+      onMouseLeave={() => { setHovered(false); onDeactivate(); onBlur?.() }}
       style={{
         borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
         transform: active ? 'translateY(-4px)' : 'none',

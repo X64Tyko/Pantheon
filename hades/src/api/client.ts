@@ -418,10 +418,11 @@ export const api = {
   getShow:        (id: string)                          => request<ShowDetail>('GET',   `/shows/${id}`),
   updateShow:     (id: string, b: Partial<ShowDetail>)  => request<void>      ('PATCH', `/shows/${id}`, b),
   getMovie:       (id: string)                          => request<MovieDetail>('GET',  `/movies/${id}`),
-  // Minimal single-episode lookup (title/show_title/season/episode only) —
-  // for resolving a display title from a bare episode_id, e.g. the
-  // connections view. Not the full episode detail other pages might expect.
-  getEpisodeBrief: (id: string) => request<{ episode_id: string; season: number; episode: number; title: string; show_id: string; show_title: string }>('GET', `/episodes/${id}`),
+  // Minimal single-episode lookup (title/overview/show_title/season/episode
+  // only) — for resolving a display title (+ hero overview) from a bare
+  // episode_id, e.g. the connections view and Home/TV's Continue Watching
+  // hero. Not the full episode detail other pages might expect.
+  getEpisodeBrief: (id: string) => request<{ episode_id: string; season: number; episode: number; title: string; overview: string; show_id: string; show_title: string }>('GET', `/episodes/${id}`),
   updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
   pushToSources:  (id: string, contentType: 'show' | 'movie') =>
                     request<WritebackResult>('POST', `/${contentType}s/${id}/writeback`),

@@ -503,10 +503,11 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, result.dump());
 	});
 
-	// Minimal single-episode lookup — title/show_title/season/episode only,
-	// for admin-facing "what's this playing" views (the connected-devices
-	// list) that only have a bare episode_id to resolve into something
-	// displayable. Not a full episode detail endpoint (no overview/thumb/
+	// Minimal single-episode lookup — title/overview/show_title/season/episode
+	// only, for admin-facing "what's this playing" views (the connected-
+	// devices list) and Continue Watching's hero (Home/TV: HeroEpisodeOverride;
+	// Roku: setHeroEpisode) that only have a bare episode_id to resolve into
+	// something displayable. Not a full episode detail endpoint (no thumb/
 	// file_path) — add fields here only when another caller actually needs them.
 	svr.Get("/api/episodes/:id", [this](const Req& req, Res& res) {
 		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
@@ -518,6 +519,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			{"season",     e->season},
 			{"episode",    e->episode},
 			{"title",      e->title},
+			{"overview",   e->overview},
 			{"show_id",    e->show_id},
 			{"show_title", e->show_title},
 		}.dump());
