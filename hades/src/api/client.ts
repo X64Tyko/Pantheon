@@ -281,11 +281,11 @@ export const api = {
   getAllLibraries: ()                                    => request<LibraryWithSource[]>('GET', '/libraries'),
   getFilterValues: (field: string, params: { type?: 'movie' | 'show'; library_id?: string } = {}) =>
     request<{ values: string[] }>('GET', `/metadata/values?${qs({ field, ...params })}`).then(r => r.values),
-  getShows:       (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; network?: string; actor?: string; sort?: string; home?: boolean } = {}) =>
-                    request<PagedResult<Show>>('GET', `/shows?${qs({ ...p, home: p.home ? 1 : undefined })}`),
+  getShows:       (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; network?: string; actor?: string; sort?: string; home?: boolean; hideEmpty?: boolean } = {}) =>
+                    request<PagedResult<Show>>('GET', `/shows?${qs({ ...p, home: p.home ? 1 : undefined, hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
   getEpisodes:    (showId: string, season?: number)     => request<Episode[]>('GET', `/shows/${showId}/episodes${season != null ? '?season=' + season : ''}`),
-  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; actor?: string; sort?: string; home?: boolean } = {}) =>
-                    request<PagedResult<Movie>>('GET', `/movies?${qs({ ...p, home: p.home ? 1 : undefined })}`),
+  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; actor?: string; sort?: string; home?: boolean; hideEmpty?: boolean } = {}) =>
+                    request<PagedResult<Movie>>('GET', `/movies?${qs({ ...p, home: p.home ? 1 : undefined, hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
 
   // Watch progress
   getWatchProgress:   (limit?: number)                                     => request<WatchProgress[]>('GET', `/watch-progress${limit != null ? '?limit=' + limit : ''}`),

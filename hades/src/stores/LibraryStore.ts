@@ -5,6 +5,7 @@ import type { LibraryDensity } from '../api/types'
 
 const DENSITY_KEY = 'hds-library-density'
 const SIDEBAR_KEY = 'hds-library-sidebar'
+const HIDE_EMPTY_KEY = 'hds-library-hide-empty'
 const PAGE_SIZE = 48
 
 export class LibraryStore {
@@ -24,6 +25,10 @@ export class LibraryStore {
   filterGenre:  string = ''
   density:      LibraryDensity = (localStorage.getItem(DENSITY_KEY) as LibraryDensity | null) ?? 'standard'
   sidebarOpen:  boolean = localStorage.getItem(SIDEBAR_KEY) !== 'false'
+  // Hides shows/movies with no actual media behind them (unsynced or
+  // orphan-pruned-down-to-nothing metadata stubs). Defaults on; flip it to
+  // see everything for admin/debugging purposes.
+  hideEmpty:    boolean = localStorage.getItem(HIDE_EMPTY_KEY) !== 'false'
   selectedId:   string | null = null
   selectedType: 'show' | 'movie' | null = null
 
@@ -47,6 +52,7 @@ export class LibraryStore {
       library_id: this.activeLibId ?? undefined,
       genre: this.filterGenre || undefined,
       sort: this.sort || undefined,
+      hideEmpty: this.hideEmpty || undefined,
     }
   }
 
@@ -105,6 +111,13 @@ export class LibraryStore {
   setSort(s: string)                { this.sort        = s; this.page = 0; this.fetch() }
   setPage(p: number)               { this.page        = p; this.fetch() }
   setFilterGenre(g: string)        { this.filterGenre = g; this.page = 0; this.fetch() }
+
+  setHideEmpty(v: boolean) {
+    this.hideEmpty = v
+    localStorage.setItem(HIDE_EMPTY_KEY, String(v))
+    this.page = 0
+    this.fetch()
+  }
 
   setDensity(d: LibraryDensity) {
     this.density = d

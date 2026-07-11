@@ -769,16 +769,22 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
             JOIN media_library ml4 ON ml4.library_id = sm4.library_id
             WHERE sm4.kairos_id = s.show_id AND sm4.item_type = 'show' AND ml4.show_on_home = 0
         ))";
+    // See ShowSearchParams::hide_empty. A separate EXISTS subquery (rather
+    // than a HAVING on the already-computed episode_count) so the same
+    // clause string applies to both the paginated select and its sibling
+    // COUNT(*) query, which has no episode join to HAVING against.
+    const std::string hide_empty_clause = !p.hide_empty ? "" : R"(
+        AND EXISTS (SELECT 1 FROM episode e6 WHERE e6.show_id = s.show_id))";
 
     ShowListResult result;
     if (p.library_id.empty()) {
-        SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM show s WHERE 1=1" + extras + home_exclude);
+        SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM show s WHERE 1=1" + extras + home_exclude + hide_empty_clause);
         int idx = 1; bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
         SQLite::Statement q(db_.get(), show_select +
             R"( FROM show s LEFT JOIN episode e ON e.show_id = s.show_id
-            WHERE 1=1)" + extras + home_exclude + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
+            WHERE 1=1)" + extras + home_exclude + hide_empty_clause + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
         idx = 1; bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseShowRow(q));
@@ -787,7 +793,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
             SELECT COUNT(DISTINCT s.show_id) FROM show s
             JOIN source_mapping sm ON sm.kairos_id = s.show_id
                 AND sm.item_type = 'show' AND sm.library_id = ?
-            WHERE 1=1)" + extras);
+            WHERE 1=1)" + extras + hide_empty_clause);
         int idx = 1; cnt.bind(idx++, p.library_id); bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
@@ -796,7 +802,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
             JOIN source_mapping sm ON sm.kairos_id = s.show_id
                 AND sm.item_type = 'show' AND sm.library_id = ?
             LEFT JOIN episode e ON e.show_id = s.show_id
-            WHERE 1=1)" + extras + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
+            WHERE 1=1)" + extras + hide_empty_clause + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
         idx = 1; q.bind(idx++, p.library_id); bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseShowRow(q));
@@ -875,15 +881,19 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
             JOIN media_library ml4 ON ml4.library_id = sm4.library_id
             WHERE sm4.kairos_id = m.movie_id AND sm4.item_type = 'movie' AND ml4.show_on_home = 0
         ))";
+    // See ShowSearchParams::hide_empty. Movies are 1:1 with their file, so
+    // "no media" just means a blank file_path (defensive — sync only ever
+    // creates a movie row alongside a real file, so this should be rare).
+    const std::string hide_empty_clause = !p.hide_empty ? "" : " AND m.file_path != ''";
 
     MovieListResult result;
     if (p.library_id.empty()) {
-        SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM movie m WHERE 1=1" + extras + home_exclude);
+        SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM movie m WHERE 1=1" + extras + home_exclude + hide_empty_clause);
         int idx = 1; bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
         SQLite::Statement q(db_.get(),
-            movie_select + " FROM movie m WHERE 1=1" + extras + home_exclude + morder + " LIMIT ? OFFSET ?");
+            movie_select + " FROM movie m WHERE 1=1" + extras + home_exclude + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
         idx = 1; bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));
@@ -892,7 +902,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
             SELECT COUNT(DISTINCT m.movie_id) FROM movie m
             JOIN source_mapping sm ON sm.kairos_id = m.movie_id
                 AND sm.item_type = 'movie' AND sm.library_id = ?
-            WHERE 1=1)" + extras);
+            WHERE 1=1)" + extras + hide_empty_clause);
         int idx = 1; cnt.bind(idx++, p.library_id); bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
@@ -900,7 +910,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
             movie_select + R"( FROM movie m
             JOIN source_mapping sm ON sm.kairos_id = m.movie_id
                 AND sm.item_type = 'movie' AND sm.library_id = ?
-            WHERE 1=1)" + extras + morder + " LIMIT ? OFFSET ?");
+            WHERE 1=1)" + extras + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
         idx = 1; q.bind(idx++, p.library_id); bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));

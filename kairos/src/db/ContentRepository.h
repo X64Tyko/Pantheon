@@ -153,6 +153,15 @@ struct ShowSearchParams {
     // every library including show_on_home=0 ones; home visibility is a
     // Home-shelf-only concept, not a general content filter.
     bool home_only = false;
+    // Excludes shows with zero episodes — a matched-but-not-yet-synced (or
+    // orphan-pruned-down-to-nothing) show that's really just a metadata
+    // stub with no actual media. Always on for Home-shelf loaders (a shelf
+    // tile with nothing playable behind it is just broken) and togglable on
+    // the Library page (default on, flippable for admin/debugging visibility
+    // into stub shows). Never set by the channel content picker or
+    // filler/bumper pickers — a channel can still reference a still-empty
+    // show so it automatically starts airing once episodes are synced in.
+    bool hide_empty = false;
 };
 
 struct MovieSearchParams {
@@ -162,6 +171,7 @@ struct MovieSearchParams {
     std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_released"
     RestrictionContext restriction;
     bool home_only = false;   // see ShowSearchParams::home_only
+    bool hide_empty = false;  // see ShowSearchParams::hide_empty (movies: excludes a blank file_path)
 };
 
 struct StrField { std::string col, val; };

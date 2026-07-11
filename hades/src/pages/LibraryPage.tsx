@@ -85,6 +85,7 @@ export default observer(function LibraryPage() {
                   ))}
                 </div>
                 <FilterToggleButton open={store.sidebarOpen} onClick={() => store.toggleSidebar()} />
+                <HideEmptyToggleButton hideEmpty={store.hideEmpty} onClick={() => store.setHideEmpty(!store.hideEmpty)} />
               </>
             )}
           </div>
@@ -219,6 +220,25 @@ function FilterToggleButton({ open, onClick }: { open: boolean; onClick: () => v
         borderRadius: 6, cursor: 'pointer', fontSize: 12,
       }}
     >⊧</button>
+  )
+}
+
+function HideEmptyToggleButton({ hideEmpty, onClick }: { hideEmpty: boolean; onClick: () => void }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'library-hide-empty-toggle', onEnterPress: onClick })
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick}
+      title={hideEmpty ? 'Hiding items with no media — click to show everything' : 'Showing items with no media — click to hide empty items'}
+      style={{
+        height: 30, padding: '0 10px', borderRadius: 6, cursor: 'pointer',
+        border: `1px solid ${hideEmpty ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
+        background: hideEmpty ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
+        color: hideEmpty ? 'var(--hds-violet)' : 'var(--hds-txt-2)',
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+        letterSpacing: '0.04em', whiteSpace: 'nowrap',
+      }}
+    >{hideEmpty ? '◎ Has Media' : '◎ All Items'}</button>
   )
 }
 
