@@ -73,6 +73,12 @@ export interface ActivitySession {
   decode_hw_accel: string
   started_at_ms:   number
   direct_play?:    boolean
+  // channel sessions only — a VOD session is always exactly one viewer.
+  // client_count is exact (native MPEG-TS/DVR clients); hls_viewer_active is
+  // a presence signal only (HLS has no persistent connection to count
+  // distinct viewers against), not an addition to client_count.
+  client_count?:      number
+  hls_viewer_active?: boolean
 }
 
 export async function getActivitySessions(): Promise<ActivitySession[]> {

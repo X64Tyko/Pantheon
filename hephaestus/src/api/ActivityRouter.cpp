@@ -68,6 +68,14 @@ json channelSessionJson(const std::shared_ptr<ChannelSession>& s) {
         {"hw_accel",        hwAccelName(s->hwAccel())},
         {"decode_hw_accel", hwAccelName(s->decodeHwAccel())},
         {"started_at_ms",   s->sessionStartMs()},
+        // client_count is exact (native MPEG-TS/DVR clients); hls_viewer_active
+        // is a presence signal only, not a count — see ChannelSession's own
+        // doc comments. A channel can be watched by several people at once,
+        // unlike a VOD session (always exactly one viewer), so this is what
+        // lets the activity view's viewer count actually reflect that instead
+        // of undercounting every channel as "1".
+        {"client_count",     s->clientCount()},
+        {"hls_viewer_active", s->hlsViewerActive()},
     };
 }
 

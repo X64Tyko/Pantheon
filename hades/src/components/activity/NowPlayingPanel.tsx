@@ -21,6 +21,27 @@ function hwLabel(session: ActivitySession): string {
   return `enc:${enc ?? 'sw'} dec:${dec ?? 'sw'}`
 }
 
+// A VOD session is always exactly one viewer. A channel session can be
+// watched by several people at once — client_count (native MPEG-TS/DVR
+// clients) is exact, but HLS viewers (Hades web, Roku) have no persistent
+// connection to count distinct people against, only whether *someone* has
+// touched the playlist/segments recently (hls_viewer_active). Treating that
+// as "+1" is a floor, not a real count — the total below is a "≥", not
+// exact, whenever any channel has HLS viewers.
+function viewerCount(s: ActivitySession): number {
+  if (s.kind === 'vod') return 1
+  return (s.client_count ?? 0) + (s.hls_viewer_active ? 1 : 0)
+}
+
+function viewerLabel(s: ActivitySession): string {
+  if (s.kind === 'vod') return '1 viewer'
+  const dvr = s.client_count ?? 0
+  const parts: string[] = []
+  if (dvr > 0) parts.push(`${dvr} DVR client${dvr === 1 ? '' : 's'}`)
+  if (s.hls_viewer_active) parts.push('HLS viewer(s)')
+  return parts.length > 0 ? parts.join(' + ') : 'no viewers detected'
+}
+
 export function NowPlayingPanel() {
   const [sessions, setSessions] = useState<ActivitySession[]>([])
   const [selected,  setSelected]  = useState<ActivitySession | null>(null)
@@ -64,9 +85,24 @@ export function NowPlayingPanel() {
     if (el) el.scrollTop = el.scrollHeight
   }, [logs])
 
+  const totalViewers  = sessions.reduce((n, s) => n + viewerCount(s), 0)
+  // "≥" whenever any channel session's count includes an HLS floor rather
+  // than an exact client_count — see viewerCount's comment.
+  const isEstimate = sessions.some(s => s.kind === 'channel' && s.hls_viewer_active)
+
   return (
     <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4" style={{ flexShrink: 0 }}>
-      <h2 className="section-label mb-3">Now Playing</h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="section-label">Now Playing</h2>
+        {sessions.length > 0 && (
+          <span className="text-xs text-zinc-400">
+            <span className="text-zinc-100 font-semibold text-sm">
+              {isEstimate ? `≥${totalViewers}` : totalViewers}
+            </span>{' '}
+            active viewer{totalViewers === 1 && !isEstimate ? '' : 's'}
+          </span>
+        )}
+      </div>
 
       {sessions.length === 0 ? (
         <p className="text-xs text-zinc-600">Nothing is currently streaming.</p>
@@ -87,6 +123,7 @@ export function NowPlayingPanel() {
               </span>
               <span className="text-zinc-600 uppercase shrink-0">{s.kind}</span>
               <span className="text-zinc-500 shrink-0">{hwLabel(s)}</span>
+              <span className="text-violet-300 shrink-0">{viewerLabel(s)}</span>
               <span className="text-zinc-600 ml-auto shrink-0">{elapsed(s.started_at_ms)}</span>
             </button>
           ))}
@@ -104,6 +141,7 @@ export function NowPlayingPanel() {
             {selected.direct_play !== undefined && (
               <Stat label="Direct play" value={selected.direct_play ? 'yes' : 'no'} />
             )}
+            {selected.kind === 'channel' && <Stat label="Viewers" value={viewerLabel(selected)} />}
             <Stat label="File" value={selected.file_path} wide />
           </div>
 

@@ -176,4 +176,16 @@ public:
     HwAccel hwAccel() const       { return opts.hw_accel; }
     HwAccel decodeHwAccel() const { return opts.decode_hw_accel; }
     int64_t sessionStartMs() const { return session_start_ms; }
+
+    // Connected native MPEG-TS/DVR clients — an exact count (see addClient/
+    // removeClient). Does NOT include HLS viewers: HLS has no persistent
+    // connection to count the way a ClientSink does, see hlsViewerActive.
+    int clientCount() const { return client_count.load(); }
+
+    // Best-effort "someone is actively watching over HLS right now" signal —
+    // just whether the playlist/segments have been requested within the
+    // linger window (touchHls), not a count. True doesn't distinguish one
+    // HLS viewer from several; there's currently no per-viewer identity in
+    // an HLS request to count against (see touchHls's own comment).
+    bool hlsViewerActive() const { return !hlsIdle(); }
 };
