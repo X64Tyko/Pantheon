@@ -245,18 +245,18 @@ bool folderExists(const std::string& mapped_path) {
     catch (...) { return true; } // can't stat — assume ok, don't penalise
 }
 
-// Strips trailing " (YYYY)" from folder names like "Fargo (2014)".
-std::string stripFolderYear(const std::string& name) {
-    if (name.size() >= 7 && name.back() == ')') {
-        auto pos = name.rfind(" (");
-        if (pos != std::string::npos && name.size() - pos == 7) {
-            std::string yr = name.substr(pos + 2, 4);
-            if (std::all_of(yr.begin(), yr.end(),
-                            [](char c){ return std::isdigit(static_cast<unsigned char>(c)); }))
-                return name.substr(0, pos);
-        }
-    }
-    return name;
+// Cleans a raw on-disk folder name down to a bare title, for comparison
+// against (and, on mismatch, searching with) a source-supplied title.
+// Delegates to the same scene-release-aware parser LocalSource uses to
+// build titles in the first place (strips "(YYYY)", quality/codec tags,
+// and "Complete"/"Season N"/"TV Series"-style collection descriptors) —
+// using anything weaker here (e.g. a plain trailing-"(YYYY)" strip) means a
+// messy real-world folder name never looks similar enough to the
+// already-cleaned title below, and the mismatch check "recovers" by
+// searching TMDB/TVDB with the raw junk-laden folder name instead of a
+// clean one. See TitleMatch.h for why this lives there.
+std::string cleanFolderTitle(const std::string& name) {
+    return titlematch::parseReleaseTitle(name).first;
 }
 
 // Returns the show-level folder name from an episode path.
@@ -858,7 +858,7 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
             if (!folderExists(mapped)) continue;
             path_ok = true;
             std::string folder  = extractShowFolder(fs::path(mapped));
-            std::string stripped = stripFolderYear(folder);
+            std::string stripped = cleanFolderTitle(folder);
             double sim = titleSimilarity(title, stripped);
             if (sim < kFolderTitleThreshold && !stripped.empty()) {
                 search_title = stripped;
@@ -1071,7 +1071,7 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
                 return;
             }
         } else {
-            std::string folder = stripFolderYear(fs::path(mapped).parent_path().filename().string());
+            std::string folder = cleanFolderTitle(fs::path(mapped).parent_path().filename().string());
             if (!folder.empty()) {
                 double sim = titleSimilarity(title, folder);
                 if (sim < kFolderTitleThreshold) {
