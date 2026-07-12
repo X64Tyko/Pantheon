@@ -308,6 +308,82 @@ TEST_F(LocalSourceTest, FetchEpisodes_AlternateNotation_1X01_Uppercase) {
     EXPECT_EQ(eps[0].episode, 3);
 }
 
+TEST_F(LocalSourceTest, FetchEpisodes_MultiEpisode_ConcatenatedForm) {
+    // "S01E01E02" — two E-groups back to back, no separator.
+    touch(root_ / "Season 01" / "S01E01E02 - Double.mkv");
+    const auto eps = src_->fetchEpisodes(root_.string());
+    ASSERT_EQ(eps.size(), 2u);
+    EXPECT_EQ(eps[0].season, 1); EXPECT_EQ(eps[0].episode, 1);
+    EXPECT_EQ(eps[1].season, 1); EXPECT_EQ(eps[1].episode, 2);
+    // Both rows point at the same physical file.
+    EXPECT_EQ(eps[0].file_path, eps[1].file_path);
+    // But get distinct primary keys so they don't collide in the DB.
+    EXPECT_NE(eps[0].episode_id, eps[1].episode_id);
+}
+
+TEST_F(LocalSourceTest, FetchEpisodes_MultiEpisode_DashEForm) {
+    // "S01E01-E02" — dash then a second E-group.
+    touch(root_ / "S01E01-E02 - Double.mkv");
+    const auto eps = src_->fetchEpisodes(root_.string());
+    ASSERT_EQ(eps.size(), 2u);
+    EXPECT_EQ(eps[0].episode, 1);
+    EXPECT_EQ(eps[1].episode, 2);
+}
+
+TEST_F(LocalSourceTest, FetchEpisodes_MultiEpisode_DashBareNumberForm) {
+    // "S01E01-02" — dash then a bare number, no repeated "E".
+    touch(root_ / "S01E01-02 - Double.mkv");
+    const auto eps = src_->fetchEpisodes(root_.string());
+    ASSERT_EQ(eps.size(), 2u);
+    EXPECT_EQ(eps[0].episode, 1);
+    EXPECT_EQ(eps[1].episode, 2);
+}
+
+TEST_F(LocalSourceTest, FetchEpisodes_MultiEpisode_ThreePartArc) {
+    touch(root_ / "S01E01-E03 - Arc.mkv");
+    const auto eps = src_->fetchEpisodes(root_.string());
+    ASSERT_EQ(eps.size(), 3u);
+    EXPECT_EQ(eps[0].episode, 1);
+    EXPECT_EQ(eps[1].episode, 2);
+    EXPECT_EQ(eps[2].episode, 3);
+}
+
+TEST_F(LocalSourceTest, FetchEpisodes_MultiEpisode_AltNotationRange) {
+    touch(root_ / "Season 01" / "1x05-06 - Double.mkv");
+    const auto eps = src_->fetchEpisodes(root_.string());
+    ASSERT_EQ(eps.size(), 2u);
+    EXPECT_EQ(eps[0].episode, 5);
+    EXPECT_EQ(eps[1].episode, 6);
+}
+
+TEST_F(LocalSourceTest, FetchEpisodes_DashFollowedByQualityTagIsNotMisreadAsRange) {
+    // "S01E01-1080p..." must not be parsed as a range ending at episode 108 —
+    // the digits belong to an adjacent quality tag, not a second episode number.
+    touch(root_ / "Show.Name.S01E01-1080p.WEB-DL.mkv");
+    const auto eps = src_->fetchEpisodes(root_.string());
+    ASSERT_EQ(eps.size(), 1u);
+    EXPECT_EQ(eps[0].season, 1);
+    EXPECT_EQ(eps[0].episode, 1);
+}
+
+TEST_F(LocalSourceTest, FetchEpisodes_ImplausiblyWideRangeFallsBackToSingleEpisode) {
+    // A "range" spanning far more than a real multi-part episode file would
+    // is treated as a bad match, not exploded into dozens of episode rows.
+    touch(root_ / "Show.Name.S01E01E99.mkv");
+    const auto eps = src_->fetchEpisodes(root_.string());
+    ASSERT_EQ(eps.size(), 1u);
+    EXPECT_EQ(eps[0].episode, 1);
+}
+
+TEST_F(LocalSourceTest, FetchEpisodes_SingleEpisodeIdUnaffectedByMultiEpisodeSupport) {
+    // Regression guard for FetchEpisodes_EpisodeIdIsFullPath: single-episode
+    // files must keep episode_id == file path exactly, no suffix added.
+    touch(root_ / "S01E01 - Pilot.mkv");
+    const auto eps = src_->fetchEpisodes(root_.string());
+    ASSERT_EQ(eps.size(), 1u);
+    EXPECT_EQ(eps[0].episode_id, (root_ / "S01E01 - Pilot.mkv").string());
+}
+
 TEST_F(LocalSourceTest, FetchEpisodes_UnparseableFilenameGetsStemAsTitle) {
     touch(root_ / "RandomFile.mkv");
     const auto eps = src_->fetchEpisodes(root_.string());

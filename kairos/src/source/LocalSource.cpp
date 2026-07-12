@@ -26,11 +26,22 @@ const std::unordered_set<std::string> kVideoExts = {
     ".flv", ".ts", ".mpg", ".mpeg", ".m2ts", ".webm",
 };
 
-// S01E01, S1E1 — or 1x01, 1x1 (common alt notation)
+// S01E01, S1E1 — or 1x01, 1x1 (common alt notation). Also captures an
+// optional multi-episode range end: S01E01E02, S01E01-E02, S01E01-02, or
+// 1x01-02 — common for double-length episodes and multi-part anime arcs.
+// The trailing \b on the range-end group stops it from swallowing digits out
+// of an adjacent tag with no real separator (e.g. "S01E01-1080p" must NOT
+// read as a range ending at episode 108).
 const std::regex kEpisodeRe(
-    R"(S(\d{1,2})E(\d{1,3})|(\d{1,2})[xX](\d{1,3}))",
+    R"(S(\d{1,2})E(\d{1,3})(?:-?E?(\d{1,3})\b)?|(\d{1,2})[xX](\d{1,3})(?:-(\d{1,3})\b)?)",
     std::regex::icase
 );
+
+// Multi-episode ranges wider than this are almost certainly a bad match
+// (e.g. an absolute episode number misread as a range end), not a real
+// double/triple episode file — treat as a single episode instead of
+// exploding into dozens of bogus episode rows and scraper lookups.
+constexpr int kMaxEpisodeRangeSpan = 12;
 
 // Season directory name: "Season 1", "Season 01", "S01", "Series 2", etc.
 const std::regex kSeasonDirRe(
@@ -68,15 +79,31 @@ int parseSeasonDir(const std::string& name) {
     return -1;
 }
 
-struct EpisodeLoc { int season = 0; int episode = 0; std::string title; };
+// episode_end is 0 for a single episode, otherwise the inclusive end of a
+// multi-episode range (e.g. S01E01-E03 -> episode=1, episode_end=3).
+struct EpisodeLoc { int season = 0; int episode = 0; int episode_end = 0; std::string title; };
 
 std::optional<EpisodeLoc> parseEpisodeFilename(const std::string& stem) {
     std::smatch m;
     if (!std::regex_search(stem, m, kEpisodeRe)) return std::nullopt;
 
     EpisodeLoc loc;
-    if (m[1].matched) { loc.season = std::stoi(m[1].str()); loc.episode = std::stoi(m[2].str()); }
-    else              { loc.season = std::stoi(m[3].str()); loc.episode = std::stoi(m[4].str()); }
+    if (m[1].matched) {
+        loc.season  = std::stoi(m[1].str());
+        loc.episode = std::stoi(m[2].str());
+        if (m[3].matched) loc.episode_end = std::stoi(m[3].str());
+    } else {
+        loc.season  = std::stoi(m[4].str());
+        loc.episode = std::stoi(m[5].str());
+        if (m[6].matched) loc.episode_end = std::stoi(m[6].str());
+    }
+    // A range end that isn't strictly after the start, or spans an
+    // implausible number of episodes, is more likely a misread tag than a
+    // genuine multi-episode file — fall back to treating it as a single
+    // episode rather than exploding into bogus episode rows.
+    if (loc.episode_end <= loc.episode ||
+        loc.episode_end - loc.episode > kMaxEpisodeRangeSpan)
+        loc.episode_end = 0;
 
     // Title: text after the match, stripping a leading " - " or "."
     std::string after = stem.substr(static_cast<size_t>(m.position()) + m.length());
@@ -351,23 +378,34 @@ std::vector<Episode> LocalSource::fetchEpisodes(const std::string& external_show
     }
     std::sort(seasonDirs.begin(), seasonDirs.end());
 
-    auto addEpisode = [&](const fs::path& file, int season_hint) {
-        auto loc = parseEpisodeFilename(file.stem().string());
+    // id_suffix distinguishes rows that share the same physical file (a
+    // multi-episode file expands into one Episode per number below) — kept
+    // empty for the common single-episode case so episode_id stays exactly
+    // the mapped file path, unchanged from before this file could expand.
+    auto makeEpisode = [&](const std::string& mapped_file, int season, int episode,
+                            const std::string& title, const std::string& id_suffix) {
         Episode ep;
-        std::string mapped_file = conf_.applyPathMap(file.string());
-        ep.episode_id = mapped_file;
+        ep.episode_id = mapped_file + id_suffix;
         ep.show_id    = external_show_id;
         ep.file_path  = mapped_file;
-        if (loc) {
-            ep.season  = loc->season;
-            ep.episode = loc->episode;
-            ep.title   = loc->title;
-        } else {
-            ep.season  = (season_hint > 0) ? season_hint : 1;
-            ep.episode = 0;
-            ep.title   = file.stem().string();
-        }
+        ep.season     = season;
+        ep.episode    = episode;
+        ep.title      = title;
         result.push_back(std::move(ep));
+    };
+
+    auto addEpisode = [&](const fs::path& file, int season_hint) {
+        auto loc = parseEpisodeFilename(file.stem().string());
+        std::string mapped_file = conf_.applyPathMap(file.string());
+        if (loc && loc->episode_end > loc->episode) {
+            for (int e = loc->episode; e <= loc->episode_end; ++e)
+                makeEpisode(mapped_file, loc->season, e, loc->title, "#" + std::to_string(e));
+        } else if (loc) {
+            makeEpisode(mapped_file, loc->season, loc->episode, loc->title, "");
+        } else {
+            makeEpisode(mapped_file, (season_hint > 0) ? season_hint : 1, 0,
+                        file.stem().string(), "");
+        }
     };
 
     if (!seasonDirs.empty()) {
