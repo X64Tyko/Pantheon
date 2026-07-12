@@ -6,6 +6,25 @@ A media platform built around three pillars:
 - **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, and live EPG. Connect any IPTV client or route through XTeve into Plex DVR.
 - **Media player** — direct playback within Hades and native client applications.
 
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><a href="docs/screens/HomePage.jpg"><img src="docs/screens/HomePage.jpg" width="100%"/></a><br/><sub><b>Home</b> — hero carousel, Continue Watching, and library shelves.</sub></td>
+<td width="50%"><a href="docs/screens/BlockBuilder.jpg"><img src="docs/screens/BlockBuilder.jpg" width="100%"/></a><br/><sub><b>Channel builder</b> — paint a weekly schedule, live EPG preview included.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/screens/Channels01.png"><img src="docs/screens/Channels01.png" width="100%"/></a><br/><sub><b>Channels</b> — every channel's day at a glance.</sub></td>
+<td width="50%"><a href="docs/screens/Sources01.png"><img src="docs/screens/Sources01.png" width="100%"/></a><br/><sub><b>Media sources</b> — Plex, Jellyfin, Emby, and local, side by side.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/screens/Review01.png"><img src="docs/screens/Review01.png" width="100%"/></a><br/><sub><b>Metadata review</b> — accept or reject uncertain scraper matches.</sub></td>
+<td width="50%"><a href="docs/screens/Activity.png"><img src="docs/screens/Activity.png" width="100%"/></a><br/><sub><b>Live activity</b> — sync status, now playing, system resources.</sub></td>
+</tr>
+</table>
+
+More in the full gallery — chapter review, per-account sync, multi-user & parental controls: **[x64tyko.github.io/Pantheon/Screenshots.html](https://x64tyko.github.io/Pantheon/Screenshots.html)**
+
 ## Alpha Release Notice
 
 Pantheon is currently in **Alpha**. This is a source-available engineering artifact. We do not accept unsolicited pull requests. If you encounter an issue, please read our [Contributing Guidelines](CONTRIBUTING.md), check the [Roadmap](docs/ROADMAP.md), and use the [Issue Template](.github/ISSUE_TEMPLATE/bug_report.yml).

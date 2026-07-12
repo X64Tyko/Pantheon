@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pantheon — Screenshots</title>
+<style>
+  :root {
+    --bg: oklch(0.152 0.016 286);
+    --bg2: oklch(0.19 0.018 286);
+    --bg3: oklch(0.21 0.026 290 / 0.6);
+    --line: oklch(0.45 0.05 290 / 0.32);
+    --txt: oklch(0.94 0.008 90);
+    --txt2: oklch(0.68 0.02 288);
+    --txt3: oklch(0.54 0.025 290);
+    --gold: oklch(0.83 0.13 84);
+    --violet: oklch(0.72 0.15 290);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 60px 24px 100px;
+  }
+  main { width: 100%; max-width: 1080px; }
+  a { color: var(--violet); }
+  .back { display: inline-block; font-size: 13px; color: var(--txt3); text-decoration: none; margin-bottom: 24px; }
+  .back:hover { color: var(--txt2); }
+  h1 { font-weight: 800; font-size: 34px; letter-spacing: 0.01em; margin: 0 0 6px; }
+  .sub { color: var(--txt2); font-size: 15px; line-height: 1.55; margin: 0 0 44px; max-width: 700px; }
+
+  .gallery { display: flex; flex-direction: column; gap: 56px; }
+  figure { margin: 0; }
+  .frame {
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg2);
+    box-shadow: 0 20px 60px -20px oklch(0.05 0.02 285 / 0.6);
+  }
+  .frame img { display: block; width: 100%; height: auto; }
+  figcaption { margin-top: 16px; }
+  figcaption .title {
+    display: flex; align-items: baseline; gap: 10px;
+    font-size: 16px; font-weight: 700; color: var(--txt);
+  }
+  figcaption .title .n {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px; font-weight: 600; color: var(--gold);
+    border: 1px solid oklch(0.83 0.13 84 / 0.35); border-radius: 999px;
+    padding: 2px 8px;
+  }
+  figcaption .desc { color: var(--txt2); font-size: 13.5px; line-height: 1.6; margin: 6px 0 0; max-width: 640px; }
+
+  footer { margin-top: 60px; font-size: 11px; color: var(--txt3); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  footer a { color: var(--txt3); }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="index.html">← Docs</a>
+  <h1>Screenshots</h1>
+  <p class="sub">A tour of Hades, the management UI Kairos is built around — home &amp; playback, channel scheduling, library review, sources, and admin. Click any image to open it full size.</p>
+
+  <div class="gallery">
+
+    <figure>
+      <a class="frame" href="screens/HomePage.jpg" target="_blank" rel="noopener">
+        <img src="screens/HomePage.jpg" alt="Hades home screen with hero carousel and Continue Watching shelf" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">01</span> Home</div>
+        <p class="desc">Hero carousel, Continue Watching, and library shelves — the same home screen that anchors both live channels and on-demand playback.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/Guide.jpg" target="_blank" rel="noopener">
+        <img src="screens/Guide.jpg" alt="Homepage guide grid showing a live schedule strip across channels with the current pick playing" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">02</span> Live guide</div>
+        <p class="desc">Pop the guide open from Home for a live schedule grid across every channel — pick something and jump straight in without leaving the page.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/Sources01.png" target="_blank" rel="noopener">
+        <img src="screens/Sources01.png" alt="Media sources page listing Plex, Emby, Jellyfin, and a local source with their libraries" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">03</span> Media sources</div>
+        <p class="desc">Plex, Jellyfin, Emby, and local folders side by side, each with its own libraries, watch-history sync, and path maps for deduplicating the same media across sources.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/Sources02.png" target="_blank" rel="noopener">
+        <img src="screens/Sources02.png" alt="Per-account watch sync linking a source's other accounts to Pantheon users" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">04</span> Per-account sync</div>
+        <p class="desc">Link a source's other accounts to existing Pantheon users so the whole household's watch history stays in sync, independent of the main linked account.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/Channels01.png" target="_blank" rel="noopener">
+        <img src="screens/Channels01.png" alt="Channel list showing today's schedule strip for each channel" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">05</span> Channels</div>
+        <p class="desc">Every channel's schedule for today at a glance, with one click through to Watch, Edit Schedule, or an XMLTV/M3U export.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/ChannelEditor.png" target="_blank" rel="noopener">
+        <img src="screens/ChannelEditor.png" alt="Channel editor showing a full weekly schedule grid alongside timezone, EPG seed, and content rating settings" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">06</span> Channel settings</div>
+        <p class="desc">Zoom out to the whole week for a channel, with timezone, EPG seed, advance mode, and a content-rating ceiling that restricted accounts can't watch above.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/BlockBuilder.jpg" target="_blank" rel="noopener">
+        <img src="screens/BlockBuilder.jpg" alt="Channel block builder with weekly schedule grid and EPG preview" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">07</span> Channel builder</div>
+        <p class="desc">Paint a block across days, drop in a movie list or shuffle pool, and tune timing, stop conditions, and priority — the EPG preview at the bottom rebuilds live as you edit.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/Review01.png" target="_blank" rel="noopener">
+        <img src="screens/Review01.png" alt="Review queue showing an uncertain metadata match with candidate details" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">08</span> Metadata review</div>
+        <p class="desc">Uncertain scraper matches queue up here, sorted by confidence — compare candidate art, year, and synopsis, then accept or reject in one click.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/Review02.png" target="_blank" rel="noopener">
+        <img src="screens/Review02.png" alt="Chapter review tab showing detected chapter markers against the video" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">09</span> Chapter review</div>
+        <p class="desc">Visual QA for auto-detected chapters — intros, credits, recaps — checked against the actual video, frame-accurate to the second.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/Users.png" target="_blank" rel="noopener">
+        <img src="screens/Users.png" alt="Users page with account creation and content-rating restrictions" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">10</span> Multi-user &amp; parental controls</div>
+        <p class="desc">Create viewer accounts with independent max content ratings for TV, movies, and channels — restrictions that always win, even over an admin's channel settings.</p>
+      </figcaption>
+    </figure>
+
+    <figure>
+      <a class="frame" href="screens/Activity.png" target="_blank" rel="noopener">
+        <img src="screens/Activity.png" alt="Activity dashboard with sync status, now playing, and system resource graphs" loading="lazy">
+      </a>
+      <figcaption>
+        <div class="title"><span class="n">11</span> Live activity</div>
+        <p class="desc">Real-time sync status per source, now-playing sessions, connected Roku devices, and CPU/RAM graphs for every engine — backed by a live-tailing log.</p>
+      </figcaption>
+    </figure>
+
+  </div>
+
+  <footer>Pantheon is Alpha — UI details here will keep moving. See <a href="index.html">the docs index</a> for everything else.</footer>
+</main>
+</body>
+</html>

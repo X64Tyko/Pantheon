@@ -1836,16 +1836,33 @@ ScraperManager::search(const std::string& query, const std::string& content_type
         return out;
     }
 
-    // Text search
+    // Text search. Each scraper is capped to its top matches (already
+    // relevance-sorted by the scraper itself) — AniDB posters in particular
+    // require a rate-limited per-title detail fetch, so an uncapped list of
+    // loose matches can serialize tens of seconds of blocked poster requests.
+    constexpr size_t kMaxResultsPerScraper = 10;
+    auto capped = [](auto items) {
+        if (items.size() > kMaxResultsPerScraper) items.resize(kMaxResultsPerScraper);
+        return items;
+    };
+
     if (content_type == "show" || content_type.empty()) {
-        if (tmdb_)  for (auto& s : tmdb_->searchShows(query))  addShow("tmdb",  s);
-        if (tvdb_)  for (auto& s : tvdb_->searchShows(query))  addShow("tvdb",  s);
-        if (anidb_) for (auto& s : anidb_->searchShows(query)) addShow("anidb", s);
+        if (tmdb_) for (auto& s : capped(tmdb_->searchShows(query))) addShow("tmdb", s);
+        if (tvdb_) for (auto& s : capped(tvdb_->searchShows(query))) addShow("tvdb", s);
+        // AniDB's title dump has no show/movie distinction (real type only
+        // comes from the full per-title detail fetch), so an "all" search
+        // queries it here only, not again in the movie branch below —
+        // querying twice doubled its already rate-limited poster fetches and
+        // produced a duplicate tile for every match. Ambiguous matches
+        // default to "show".
+        if (anidb_ && content_type != "movie")
+            for (auto& s : capped(anidb_->searchShows(query))) addShow("anidb", s);
     }
     if (content_type == "movie" || content_type.empty()) {
-        if (tmdb_)  for (auto& m : tmdb_->searchMovies(query))  addMovie("tmdb",  m);
-        if (tvdb_)  for (auto& m : tvdb_->searchMovies(query))  addMovie("tvdb",  m);
-        if (anidb_) for (auto& m : anidb_->searchMovies(query)) addMovie("anidb", m);
+        if (tmdb_) for (auto& m : capped(tmdb_->searchMovies(query))) addMovie("tmdb", m);
+        if (tvdb_) for (auto& m : capped(tvdb_->searchMovies(query))) addMovie("tvdb", m);
+        if (anidb_ && content_type == "movie")
+            for (auto& m : capped(anidb_->searchMovies(query))) addMovie("anidb", m);
     }
     return out;
 }
