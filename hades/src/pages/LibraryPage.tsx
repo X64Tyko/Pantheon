@@ -84,6 +84,7 @@ export default observer(function LibraryPage() {
                     <DensityButton key={d} density={d} active={store.density === d} onClick={() => store.setDensity(d)} />
                   ))}
                 </div>
+                <ResultCount loading={store.loading} total={store.total} />
                 <FilterToggleButton open={store.sidebarOpen} onClick={() => store.toggleSidebar()} />
                 <HideEmptyToggleButton hideEmpty={store.hideEmpty} onClick={() => store.setHideEmpty(!store.hideEmpty)} />
               </>
@@ -186,6 +187,21 @@ function DiscoverToggleButton({ discoverMode, onClick }: { discoverMode: boolean
         transition: 'border-color .12s, background .12s, color .12s',
       }}
     >◎ Discover</button>
+  )
+}
+
+// How many items match the current filter — not just what's loaded so far
+// via infinite scroll (store.shows.length + store.movies.length), the real
+// server-computed total (PagedResult.total, already summed across both
+// content types in LibraryStore.fetch/loadMore).
+function ResultCount({ loading, total }: { loading: boolean; total: number }) {
+  return (
+    <span style={{
+      fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+      color: 'var(--hds-txt-3)', whiteSpace: 'nowrap', letterSpacing: '0.03em',
+    }}>
+      {loading ? '…' : `${total.toLocaleString()} item${total === 1 ? '' : 's'}`}
+    </span>
   )
 }
 

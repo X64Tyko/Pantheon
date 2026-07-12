@@ -14,6 +14,12 @@ static constexpr int64_t SESSION_TTL = 30LL * 24 * 3600;
 // bcrypt cost factor.
 static constexpr int BCRYPT_COST = 12;
 
+// Profile-switch PIN lockout: after this many consecutive wrong guesses,
+// the profile is locked for PIN_LOCKOUT_SECONDS before another attempt is
+// allowed — friction against brute-forcing a 4-6 digit PIN over the network.
+static constexpr int     PIN_MAX_ATTEMPTS    = 5;
+static constexpr int64_t PIN_LOCKOUT_SECONDS = 60;
+
 // ---------------------------------------------------------------------------
 
 AuthStore::AuthStore(Database& db) : db_(db) {}
@@ -200,7 +206,7 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	SQLite::Statement q(db_.get(), R"(
 		SELECT u.user_id, u.username, u.role,
 		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating,
-		       s.purpose, u.must_change_password
+		       s.purpose, u.must_change_password, u.pin_hash
 		FROM session s
 		JOIN user u ON u.user_id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
@@ -218,6 +224,7 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	user.max_movie_rating    = q.getColumn(5).getString();
 	user.max_channel_rating  = q.getColumn(6).getString();
 	user.must_change_password = q.getColumn(8).getInt() != 0;
+	user.has_pin             = !q.getColumn(9).isNull();
 
 	// A 'cast'-purpose session (minted for handing off to a Cast receiver,
 	// see mintCastToken) is always viewer-capped — this is the actual
@@ -244,7 +251,8 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 std::vector<AuthUser> AuthStore::listUsers() const {
 	SQLite::Statement q(db_.get(),
 		"SELECT user_id, username, role, "
-		"       restricted, max_tv_rating, max_movie_rating, max_channel_rating, must_change_password "
+		"       restricted, max_tv_rating, max_movie_rating, max_channel_rating, must_change_password, "
+		"       pin_hash "
 		"FROM user ORDER BY username");
 	std::vector<AuthUser> result;
 	while (q.executeStep()) {
@@ -257,6 +265,7 @@ std::vector<AuthUser> AuthStore::listUsers() const {
 			q.getColumn(5).getString(),
 			q.getColumn(6).getString(),
 			q.getColumn(7).getInt() != 0,
+			!q.getColumn(8).isNull(),
 		});
 	}
 	return result;
@@ -376,6 +385,94 @@ bool AuthStore::revokeSession(const std::string& user_id, const std::string& ses
 	d.bind(2, session_id);
 	d.exec();
 	return db_.get().getChanges() > 0;
+}
+
+namespace {
+bool isValidPinFormat(const std::string& pin) {
+	if (pin.size() < 4 || pin.size() > 6) return false;
+	for (char c : pin) if (c < '0' || c > '9') return false;
+	return true;
+}
+}
+
+bool AuthStore::setPin(const std::string& user_id, const std::string& pin) {
+	if (!isValidPinFormat(pin)) return false;
+	SQLite::Statement u(db_.get(), R"(
+		UPDATE user SET pin_hash = ?, pin_fail_count = 0, pin_locked_until = 0
+		WHERE user_id = ?
+	)");
+	u.bind(1, hashPassword(pin));
+	u.bind(2, user_id);
+	u.exec();
+	return db_.get().getChanges() > 0;
+}
+
+void AuthStore::clearPin(const std::string& user_id) {
+	SQLite::Statement u(db_.get(), R"(
+		UPDATE user SET pin_hash = NULL, pin_fail_count = 0, pin_locked_until = 0
+		WHERE user_id = ?
+	)");
+	u.bind(1, user_id);
+	u.exec();
+}
+
+std::pair<std::string, std::string> AuthStore::switchProfile(const std::string& target_user_id,
+                                                              const std::string& pin) {
+	const int64_t now = static_cast<int64_t>(std::time(nullptr));
+
+	SQLite::Statement q(db_.get(), R"(
+		SELECT role, pin_hash, pin_fail_count, pin_locked_until FROM user WHERE user_id = ?
+	)");
+	q.bind(1, target_user_id);
+	if (!q.executeStep()) return {"", "Profile not found"};
+
+	const std::string role             = q.getColumn(0).getString();
+	const bool         has_pin         = !q.getColumn(1).isNull();
+	const std::string  pin_hash        = has_pin ? q.getColumn(1).getString() : "";
+	const int          fail_count      = q.getColumn(2).getInt();
+	const int64_t      pin_locked_until = q.getColumn(3).getInt64();
+
+	// Admin profiles are never switchable without a PIN — there's no
+	// unlocked-admin path the way an unlocked viewer profile has one. This
+	// is enforced here (not just nudged in the Users page UI) so it can't be
+	// bypassed by calling this endpoint directly.
+	if (role == "admin" && !has_pin) return {"", "Admin profiles require a PIN — set one in Users first"};
+
+	if (has_pin) {
+		if (now < pin_locked_until) {
+			return {"", "Too many attempts — try again in " + std::to_string(pin_locked_until - now) + "s"};
+		}
+		if (pin.empty()) return {"", "PIN required"};
+		if (!checkPassword(pin, pin_hash)) {
+			const int new_fail_count = fail_count + 1;
+			SQLite::Statement upd(db_.get(), R"(
+				UPDATE user SET pin_fail_count = ?, pin_locked_until = ? WHERE user_id = ?
+			)");
+			upd.bind(1, new_fail_count);
+			upd.bind(2, new_fail_count >= PIN_MAX_ATTEMPTS ? now + PIN_LOCKOUT_SECONDS : 0);
+			upd.bind(3, target_user_id);
+			upd.exec();
+			return {"", "Incorrect PIN"};
+		}
+		// Correct PIN — reset the fail counter.
+		SQLite::Statement upd(db_.get(),
+			"UPDATE user SET pin_fail_count = 0, pin_locked_until = 0 WHERE user_id = ?");
+		upd.bind(1, target_user_id);
+		upd.exec();
+	}
+
+	const std::string token = generateToken();
+	SQLite::Statement ins(db_.get(), R"(
+		INSERT INTO session (token, user_id, created_at, expires_at, last_seen) VALUES (?,?,?,?,?)
+	)");
+	ins.bind(1, token);
+	ins.bind(2, target_user_id);
+	ins.bind(3, now);
+	ins.bind(4, now + SESSION_TTL);
+	ins.bind(5, now);
+	ins.exec();
+
+	return {token, ""};
 }
 
 // ---------------------------------------------------------------------------

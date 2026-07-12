@@ -22,6 +22,10 @@ struct AuthUser {
 	// placeholder password with one of their own choosing (updateUser and
 	// claimInvite both clear it on a successful password change).
 	bool        must_change_password = false;
+	// True if a PIN is configured for the profile-switch flow (see
+	// switchProfile) — never the PIN itself, just whether the picker should
+	// prompt for one.
+	bool        has_pin = false;
 };
 
 // One active session, as surfaced to the owning user for review/revocation.
@@ -118,6 +122,25 @@ public:
 	// Scoped to the owning user — returns false if no such session_id exists
 	// for this user_id (never lets one account revoke another's session).
 	bool revokeSession(const std::string& user_id, const std::string& session_id);
+
+	// Profile-switch PIN (Netflix/Plex "Home" style) — a device that already
+	// holds a valid session from a real username/password login can hop
+	// between profiles via switchProfile() below without re-entering
+	// credentials. Rejects pins that aren't 4-6 digits. Setting a new pin
+	// clears any existing lockout/fail-count.
+	bool setPin(const std::string& user_id, const std::string& pin);
+	void clearPin(const std::string& user_id);
+
+	// Mints a new login session for target_user_id, authorized by the
+	// caller's own already-valid session rather than target_user_id's
+	// password. admin-role targets always require their pin (set one first
+	// via setPin — there's no way to switch into an unlocked admin profile).
+	// viewer-role targets with no pin configured switch immediately, exactly
+	// like an unlocked Netflix profile. Wrong pins count against a per-user
+	// lockout (5 failures -> 60s cooldown, see AuthStore.cpp). Returns
+	// {"", reason} on failure, {token, ""} on success.
+	std::pair<std::string, std::string> switchProfile(const std::string& target_user_id,
+	                                                   const std::string& pin);
 
 private:
 	Database& db_;

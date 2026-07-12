@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include "auth/AuthStore.h"
 #include "db/Database.h"
+#include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
+#include <ctime>
 #include <string>
 
 class AuthStoreTest : public ::testing::Test {
@@ -13,6 +15,12 @@ protected:
         for (const auto& u : auth.listUsers())
             if (u.user_id == user_id) return u;
         return std::nullopt;
+    }
+
+    std::string userIdFor(const std::string& username) {
+        for (const auto& u : auth.listUsers())
+            if (u.username == username) return u.user_id;
+        return "";
     }
 };
 
@@ -191,4 +199,124 @@ TEST_F(AuthStoreTest, PlainCreateUser_NeverSetsMustChangePassword) {
         [](const AuthUser& u) { return u.username == "oscar"; });
     ASSERT_NE(it, users.end());
     EXPECT_FALSE(it->must_change_password);
+}
+
+// ---------------------------------------------------------------------------
+// setPin / clearPin / switchProfile — Netflix/Plex-style profile switch
+// ---------------------------------------------------------------------------
+
+TEST_F(AuthStoreTest, SetPin_RejectsNonNumericAndWrongLength) {
+    ASSERT_TRUE(auth.createUser("pat", "password", "viewer"));
+    const std::string user_id = userIdFor("pat");
+
+    EXPECT_FALSE(auth.setPin(user_id, "12a4"));    // non-digit
+    EXPECT_FALSE(auth.setPin(user_id, "123"));     // too short
+    EXPECT_FALSE(auth.setPin(user_id, "1234567")); // too long
+    EXPECT_FALSE(findUser(user_id)->has_pin);
+}
+
+TEST_F(AuthStoreTest, SetPin_ValidPinMarksHasPin) {
+    ASSERT_TRUE(auth.createUser("quinn", "password", "viewer"));
+    const std::string user_id = userIdFor("quinn");
+
+    EXPECT_TRUE(auth.setPin(user_id, "4321"));
+    EXPECT_TRUE(findUser(user_id)->has_pin);
+}
+
+TEST_F(AuthStoreTest, SwitchProfile_ViewerWithNoPinSwitchesImmediately) {
+    ASSERT_TRUE(auth.createUser("river", "password", "viewer"));
+    const std::string user_id = userIdFor("river");
+
+    auto [token, error] = auth.switchProfile(user_id, "");
+    EXPECT_FALSE(token.empty());
+    EXPECT_TRUE(error.empty());
+
+    auto validated = auth.validate(token);
+    ASSERT_TRUE(validated.has_value());
+    EXPECT_EQ(validated->user_id, user_id);
+}
+
+TEST_F(AuthStoreTest, SwitchProfile_AdminWithoutPinIsDenied) {
+    ASSERT_TRUE(auth.createUser("sage", "password", "admin"));
+    const std::string user_id = userIdFor("sage");
+
+    auto [token, error] = auth.switchProfile(user_id, "");
+    EXPECT_TRUE(token.empty());
+    EXPECT_FALSE(error.empty());
+}
+
+TEST_F(AuthStoreTest, SwitchProfile_AdminWithPinSucceeds) {
+    ASSERT_TRUE(auth.createUser("tara", "password", "admin"));
+    const std::string user_id = userIdFor("tara");
+    ASSERT_TRUE(auth.setPin(user_id, "9999"));
+
+    auto [token, error] = auth.switchProfile(user_id, "9999");
+    EXPECT_FALSE(token.empty());
+    EXPECT_TRUE(error.empty());
+}
+
+TEST_F(AuthStoreTest, SwitchProfile_WrongPinFailsWithoutMintingSession) {
+    ASSERT_TRUE(auth.createUser("uma", "password", "viewer"));
+    const std::string user_id = userIdFor("uma");
+    ASSERT_TRUE(auth.setPin(user_id, "1111"));
+
+    auto [token, error] = auth.switchProfile(user_id, "0000");
+    EXPECT_TRUE(token.empty());
+    EXPECT_FALSE(error.empty());
+
+    // The right pin still works — one wrong guess isn't itself a lockout.
+    auto [token2, error2] = auth.switchProfile(user_id, "1111");
+    EXPECT_FALSE(token2.empty());
+}
+
+TEST_F(AuthStoreTest, SwitchProfile_LocksOutAfterFiveWrongAttempts) {
+    ASSERT_TRUE(auth.createUser("vince", "password", "viewer"));
+    const std::string user_id = userIdFor("vince");
+    ASSERT_TRUE(auth.setPin(user_id, "2222"));
+
+    for (int i = 0; i < 5; ++i) {
+        auto [token, error] = auth.switchProfile(user_id, "0000");
+        EXPECT_TRUE(token.empty());
+    }
+
+    // Even the correct pin is refused while locked out.
+    auto [token, error] = auth.switchProfile(user_id, "2222");
+    EXPECT_TRUE(token.empty());
+    EXPECT_FALSE(error.empty());
+}
+
+TEST_F(AuthStoreTest, SwitchProfile_RecoversOncePinLockoutWindowExpires) {
+    ASSERT_TRUE(auth.createUser("wendy", "password", "viewer"));
+    const std::string user_id = userIdFor("wendy");
+    ASSERT_TRUE(auth.setPin(user_id, "3333"));
+
+    for (int i = 0; i < 5; ++i) auth.switchProfile(user_id, "0000");
+    ASSERT_TRUE(auth.switchProfile(user_id, "3333").first.empty()); // still locked
+
+    // Simulate the lockout window having already elapsed, without a real sleep.
+    SQLite::Statement upd(db.get(), "UPDATE user SET pin_locked_until = ? WHERE user_id = ?");
+    upd.bind(1, static_cast<int64_t>(std::time(nullptr)) - 1);
+    upd.bind(2, user_id);
+    upd.exec();
+
+    auto [token, error] = auth.switchProfile(user_id, "3333");
+    EXPECT_FALSE(token.empty());
+}
+
+TEST_F(AuthStoreTest, ClearPin_RemovesGateAndAllowsImmediateSwitch) {
+    ASSERT_TRUE(auth.createUser("xena", "password", "viewer"));
+    const std::string user_id = userIdFor("xena");
+    ASSERT_TRUE(auth.setPin(user_id, "4444"));
+
+    auth.clearPin(user_id);
+    EXPECT_FALSE(findUser(user_id)->has_pin);
+
+    auto [token, error] = auth.switchProfile(user_id, "");
+    EXPECT_FALSE(token.empty());
+}
+
+TEST_F(AuthStoreTest, SwitchProfile_UnknownUserFails) {
+    auto [token, error] = auth.switchProfile("no-such-user", "");
+    EXPECT_TRUE(token.empty());
+    EXPECT_FALSE(error.empty());
 }

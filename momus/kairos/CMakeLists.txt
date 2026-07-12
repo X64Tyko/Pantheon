@@ -14,6 +14,9 @@ enable_testing()
 
 add_executable(momus_kairos
     api/test_content_service_security.cpp
+    api/test_auth_service_routes.cpp
+    api/test_restriction_access_check.cpp
+    api/test_playback_and_channel_routes.cpp
     auth/test_auth_store.cpp
     conf/test_conf_store.cpp
     db/test_migrations.cpp

@@ -67,7 +67,7 @@ export default function InvitePage() {
     setLoading(true)
     try {
       const { token: sessionToken, user } = await api.claimInvite(token, password)
-      applySession(sessionToken, user)
+      await applySession(sessionToken, user)
       navigate('/', { replace: true })
     } catch (err: any) {
       setError(err.message ?? 'Failed to claim invite')

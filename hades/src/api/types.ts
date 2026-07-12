@@ -9,6 +9,9 @@ export interface User {
   // Set on invite-created accounts until the owner replaces the temp/
   // placeholder password with one of their own — gates the app shell.
   must_change_password: boolean
+  // True if a PIN is configured for the profile-switch picker (see
+  // ProfileSelectPage) — never the PIN itself, just whether to prompt for one.
+  has_pin: boolean
 }
 
 export interface ContentOverride {

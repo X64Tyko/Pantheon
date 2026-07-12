@@ -1,12 +1,11 @@
 import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { AccordionSection } from '../../channel/sections'
-import { filterInputStyle } from '../../channel/styles'
+import { FilterSection } from '../PickerFilters'
 import { libraryStore } from '../../stores/LibraryStore'
 
 export const LibraryFilters = observer(function LibraryFilters() {
-  const [typeOpen,  setTypeOpen]  = useState(true)
-  const [genreOpen, setGenreOpen] = useState(true)
+  const [typeOpen, setTypeOpen] = useState(true)
 
   return (
     <>
@@ -47,20 +46,22 @@ export const LibraryFilters = observer(function LibraryFilters() {
         </div>
       </AccordionSection>
 
-      <AccordionSection
-        title="GENRE"
-        open={genreOpen}
-        onToggle={() => setGenreOpen(o => !o)}
-      >
-        <div style={{ paddingTop: 6 }}>
-          <input
-            style={{ ...filterInputStyle, width: '100%', boxSizing: 'border-box' }}
-            placeholder="Filter genre..."
-            value={libraryStore.filterGenre}
-            onChange={e => libraryStore.setFilterGenre(e.target.value)}
-          />
-        </div>
-      </AccordionSection>
+      {/* Same rule-builder used by Playlists/Filler Lists/channel content
+          pickers (PickerFilters.tsx) — genre/year/rating/label/network/actor
+          all wired to real query params here (see LibraryStore.searchParams);
+          the rest of its fields are UI-only, matching every other page that
+          uses this component. */}
+      <FilterSection
+        rulesOpen={libraryStore.filterRulesOpen}
+        filterMatch={libraryStore.filterMatch}
+        filterRules={libraryStore.filterRules}
+        filteredLibs={libraryStore.libraries}
+        onToggleOpen={() => libraryStore.toggleFilterRulesOpen()}
+        onSetMatch={m => libraryStore.setFilterMatch(m)}
+        onAddRule={() => libraryStore.addFilterRule()}
+        onUpdateRule={(id, patch) => libraryStore.updateFilterRule(id, patch)}
+        onRemoveRule={id => libraryStore.removeFilterRule(id)}
+      />
       </aside>
     </>
   )

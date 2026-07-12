@@ -61,6 +61,12 @@ export class UserStore {
     await this.fetchAll()
   }
 
+  // Profile-switch PIN — empty string clears it.
+  async setPin(userId: string, pin: string) {
+    await api.setUserPin(userId, pin)
+    await this.fetchAll()
+  }
+
   async fetchOverrides(userId: string) {
     const list = await api.getUserOverrides(userId)
     runInAction(() => { this.overrides[userId] = list })

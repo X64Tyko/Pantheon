@@ -2,12 +2,15 @@ import { useState } from 'react'
 import type { MatchStatus } from './MatchBadge'
 import type { LibraryDensity } from '../../api/types'
 import { useFocusable } from '../../nav/useFocusable'
-import { mediaUrl } from '../../api/client'
 
 export interface MediaCardProps {
   id:                string
   title:             string
   year?:             number
+  // Already fully resolved by the caller (mediaUrl() applied, token and
+  // all) — never re-run through mediaUrl() here. It used to be, which
+  // silently doubled the ?token= query param into an unparseable
+  // "?token=X?token=X" and 401'd every card's image on the Library page.
   poster_url?:       string
   thumb_url?:        string
   content_type:      'show' | 'movie'
@@ -98,7 +101,7 @@ export function MediaCard(props: MediaCardProps) {
     <div style={posterStyle}>
       {showImg ? (
         <img
-          src={mediaUrl(imgUrl!)}
+          src={imgUrl}
           alt={title}
           onError={() => setImgError(true)}
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}

@@ -1736,6 +1736,17 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE media_source ADD COLUMN user_sync_checked_at INTEGER;
 )SQL" }
 
+// ── v76: profile-switch PIN — optional per-user PIN so a device that's
+//         already passed the real username/password login can hop between
+//         profiles (Netflix/Plex "Home" style) without re-entering
+//         credentials. NULL pin_hash means no PIN set. fail_count/locked_until
+//         throttle brute-forcing the short numeric PIN (see AuthStore::switchProfile).
+,{ 76, R"SQL(
+    ALTER TABLE user ADD COLUMN pin_hash         TEXT;
+    ALTER TABLE user ADD COLUMN pin_fail_count   INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE user ADD COLUMN pin_locked_until INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

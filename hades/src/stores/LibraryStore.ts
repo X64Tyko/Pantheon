@@ -2,11 +2,15 @@ import { makeAutoObservable, runInAction } from 'mobx'
 import { api } from '../api/client'
 import type { LibraryWithSource, Show, Movie, ScraperSearchResult } from '../api/types'
 import type { LibraryDensity } from '../api/types'
+import { FIELD_DEFS, type FilterField, type FilterRule } from '../components/PickerFilters'
 
 const DENSITY_KEY = 'hds-library-density'
 const SIDEBAR_KEY = 'hds-library-sidebar'
 const HIDE_EMPTY_KEY = 'hds-library-hide-empty'
 const PAGE_SIZE = 48
+
+let _ruleId = 0
+let _filterDebounce: ReturnType<typeof setTimeout>
 
 export class LibraryStore {
   libraries:    LibraryWithSource[] = []
@@ -22,7 +26,22 @@ export class LibraryStore {
   // Home's shelf "Continue in Library" tiles for now (see HomePage.tsx).
   sort:         string = 'recently_added'
   activeLibId:  string | null = null
+  // Simple single-value genre selection — still used as-is by TvLibrary's
+  // GenreChip row (10-foot surface, no room for the rule builder below).
+  // searchParams() prefers a "genre" advanced-filter rule when one is set,
+  // falling back to this so the two surfaces share one store without
+  // stepping on each other.
   filterGenre:  string = ''
+  // Advanced filter panel (web only) — same rule-builder (field/operator/
+  // value, Match All/Any) already used by Playlists/Filler Lists/channel
+  // content pickers (see components/PickerFilters.tsx), reused here for
+  // consistency. Only rules with op 'is' actually affect the query (see
+  // searchParams below) — matches every other page that uses this same
+  // component; the rest of FIELD_DEFS's fields/operators are UI-only there
+  // too, not something introduced here.
+  filterRulesOpen: boolean = false
+  filterMatch:     'all' | 'any' = 'all'
+  filterRules:     FilterRule[] = []
   density:      LibraryDensity = (localStorage.getItem(DENSITY_KEY) as LibraryDensity | null) ?? 'standard'
   sidebarOpen:  boolean = localStorage.getItem(SIDEBAR_KEY) !== 'false'
   // Hides shows/movies with no actual media behind them (unsynced or
@@ -45,12 +64,31 @@ export class LibraryStore {
   }
 
   private searchParams(page: number) {
+    // Only 'is' rules affect the query — same convention as every other
+    // page using this rule builder (see FilterSection's callers). 'library'
+    // is deliberately never translated here even though it's a selectable
+    // field in the UI: SourceSwitcher already owns library_id on this page,
+    // and letting both drive the same param would just fight each other.
+    const isRules = this.filterRules.filter(r => r.op === 'is' && r.value.trim())
+    const ruleGenre = isRules.find(r => r.field === 'genre')?.value
+    const yearStr   = isRules.find(r => r.field === 'year')?.value
+    const year      = yearStr ? parseInt(yearStr, 10) : undefined
+    const rating    = isRules.find(r => r.field === 'content_rating')?.value || undefined
+    const label     = isRules.find(r => r.field === 'label')?.value          || undefined
+    const network   = isRules.find(r => r.field === 'network')?.value        || undefined
+    const actor     = isRules.find(r => r.field === 'actor')?.value          || undefined
+
     return {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
       q: this.query || undefined,
       library_id: this.activeLibId ?? undefined,
-      genre: this.filterGenre || undefined,
+      genre: ruleGenre || this.filterGenre || undefined,
+      year,
+      content_rating: rating,
+      label,
+      network,
+      actor,
       sort: this.sort || undefined,
       hideEmpty: this.hideEmpty || undefined,
     }
@@ -111,6 +149,61 @@ export class LibraryStore {
   setSort(s: string)                { this.sort        = s; this.page = 0; this.fetch() }
   setPage(p: number)               { this.page        = p; this.fetch() }
   setFilterGenre(g: string)        { this.filterGenre = g; this.page = 0; this.fetch() }
+
+  private debouncedFetch() {
+    clearTimeout(_filterDebounce)
+    _filterDebounce = setTimeout(() => this.fetch(), 250)
+  }
+
+  addFilterRule() {
+    this.filterRules.push({ id: String(++_ruleId), field: 'genre', op: 'is', value: '' })
+    this.page = 0
+    this.debouncedFetch()
+  }
+
+  removeFilterRule(id: string) {
+    this.filterRules = this.filterRules.filter(r => r.id !== id)
+    this.page = 0
+    this.debouncedFetch()
+  }
+
+  updateFilterRule(id: string, patch: Partial<Omit<FilterRule, 'id'>>) {
+    const rule = this.filterRules.find(r => r.id === id)
+    if (!rule) return
+    if (patch.field !== undefined) {
+      rule.field = patch.field
+      rule.op    = FIELD_DEFS[patch.field].ops[0].id
+      rule.value = ''
+    }
+    if (patch.op    !== undefined) rule.op    = patch.op
+    if (patch.value !== undefined) rule.value = patch.value
+    this.page = 0
+    this.debouncedFetch()
+  }
+
+  setFilterMatch(m: 'all' | 'any') {
+    this.filterMatch = m
+    this.page = 0
+    this.debouncedFetch()
+  }
+
+  toggleFilterRulesOpen() { this.filterRulesOpen = !this.filterRulesOpen }
+
+  // For Home shelf tiles that land on Library with a specific tag/value
+  // already filtering the view (e.g. a future genre-based holiday shelf's
+  // own "Continue in Library" tile) — unlike setContentType/setSort, this
+  // makes the preset a real, visible, editable rule in the advanced panel
+  // instead of silent store state, and opens the panel so it's immediately
+  // seen. Mutate-then-navigate, same convention as HomePage's
+  // continueInLibrary: LibraryPage's mount effect calls fetch() fresh on
+  // arrival, so this deliberately doesn't fetch itself.
+  presetFilter(field: FilterField, value: string) {
+    this.filterRules = [{ id: String(++_ruleId), field, op: 'is', value }]
+    this.filterRulesOpen = true
+    this.sidebarOpen = true
+    localStorage.setItem(SIDEBAR_KEY, 'true')
+    this.page = 0
+  }
 
   setHideEmpty(v: boolean) {
     this.hideEmpty = v

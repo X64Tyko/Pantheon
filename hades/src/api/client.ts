@@ -138,6 +138,12 @@ export const api = {
   login:       (username: string, password: string)          => request<AuthResponse>('POST', '/auth/login', { username, password }),
   logout:      ()                                            => request<void>('POST', '/auth/logout'),
   getMe:       ()                                            => request<User>('GET',  '/auth/me'),
+  // "Who's watching?" profile picker — every profile on the server, visible
+  // to any already-authenticated session (this device already passed the
+  // real username/password login; see ProfileSelectPage). Switching into a
+  // profile that has a PIN requires it; admin-role profiles always do.
+  getProfiles:    ()                            => request<User[]>('GET', '/auth/profiles'),
+  switchProfile:  (id: string, pin?: string)     => request<AuthResponse>('POST', `/auth/switch/${id}`, { pin }),
   // Invite-claim flow — unauthenticated, reached before the person has any
   // session at all; only actionable with the unguessable token in the path.
   getInvite:   (token: string)                     => request<{ username: string }>('GET', `/auth/invite/${token}`),
@@ -172,6 +178,8 @@ export const api = {
   deleteUser:  (id: string)                                 => request<void>('DELETE', `/users/${id}`),
   updateUserRestriction: (id: string, patch: { restricted: boolean; max_tv_rating: string; max_movie_rating: string; max_channel_rating: string }) =>
                                                              request<void>('PATCH', `/users/${id}/restriction`, patch),
+  // Profile-switch PIN (admin-managed) — empty string clears it.
+  setUserPin:  (id: string, pin: string)                    => request<void>('PATCH', `/users/${id}/pin`, { pin }),
   getUserOverrides:   (id: string)                          => request<ContentOverride[]>('GET', `/users/${id}/overrides`),
   addUserOverride:    (id: string, b: ContentOverride)      => request<void>('POST', `/users/${id}/overrides`, b),
   removeUserOverride: (id: string, entityType: string, entityId: string) =>

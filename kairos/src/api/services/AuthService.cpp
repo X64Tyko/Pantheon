@@ -25,6 +25,7 @@ json userJson(const AuthUser& u) {
 		{"max_movie_rating",     u.max_movie_rating},
 		{"max_channel_rating",   u.max_channel_rating},
 		{"must_change_password", u.must_change_password},
+		{"has_pin",              u.has_pin},
 	};
 }
 }
@@ -71,6 +72,41 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/auth/me", [](const Req&, Res& res) {
 		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
 		route::ok(res, userJson(*currentUser()).dump());
+	});
+
+	// "Who's watching?" profile grid (Netflix/Plex Home style) — reachable by
+	// any already-authenticated session (any role), since the point is that
+	// a device which already passed the real username/password login
+	// (whichever profile did that) can see and hop between every profile on
+	// this server without re-entering credentials. See switchProfile below
+	// for the actual gate (PIN, if the target profile has one).
+	svr.Get("/api/auth/profiles", [this](const Req&, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		json arr = json::array();
+		for (const auto& u : auth_.listUsers())
+			arr.push_back(userJson(u));
+		route::ok(res, arr.dump());
+	});
+
+	// Switches the device's active session to a different profile without
+	// its password — authorized by the caller's own already-valid session
+	// (proof this device already passed the real login), not by target_id's
+	// credentials. See AuthStore::switchProfile for the PIN/lockout rules.
+	svr.Post("/api/auth/switch/:id", [this](const Req& req, Res& res) {
+		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+		json body;
+		try { body = req.body.empty() ? json::object() : json::parse(req.body); }
+		catch (...) { route::err(res, 400, "Invalid JSON"); return; }
+		const std::string pin = body.value("pin", "");
+		auto [token, error] = auth_.switchProfile(req.path_params.at("id"), pin);
+		// 403, not 401: the caller's OWN session (already validated above) stays
+		// perfectly valid here — they're just denied this particular switch by
+		// PIN policy. Hades' request() helper treats any 401 as "session dead,
+		// log out everywhere," which would otherwise turn a wrong/missing PIN
+		// guess into a full sign-out instead of an inline error on the picker.
+		if (token.empty()) { route::err(res, 403, error); return; }
+		auto user = auth_.validate(token);
+		route::ok(res, json{{"token", token}, {"user", userJson(*user)}}.dump());
 	});
 
 	// Invite-claim flow — unauthenticated (see Router::isPublicPath), reached
@@ -188,6 +224,27 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 			body.value("max_tv_rating", "TV-Y"),
 			body.value("max_movie_rating", "G"),
 			body.value("max_channel_rating", "TV-Y"));
+		route::ok(res, json{{"ok", true}}.dump());
+	});
+
+	// Profile-switch PIN — separate from /restriction for the same reason
+	// that route is separate from the credentials/role PATCH: a distinct
+	// concern the Users page can save on its own. Empty/omitted pin clears
+	// it (removing the switch-in gate for viewer profiles; admin profiles
+	// simply become un-switchable again until a new one is set).
+	svr.Patch("/api/users/:id/pin", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		json body;
+		try { body = json::parse(req.body); } catch (...) { route::err(res, 400, "Invalid JSON"); return; }
+		const std::string pin = body.value("pin", "");
+		if (pin.empty()) {
+			auth_.clearPin(req.path_params.at("id"));
+			route::ok(res, json{{"ok", true}}.dump());
+			return;
+		}
+		if (!auth_.setPin(req.path_params.at("id"), pin)) {
+			route::err(res, 400, "PIN must be 4-6 digits"); return;
+		}
 		route::ok(res, json{{"ok", true}}.dump());
 	});
 

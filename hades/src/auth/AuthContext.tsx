@@ -14,7 +14,43 @@ interface AuthContextValue {
   setPassword:   (password: string) => Promise<void>
   // Establishes a session from a token Kairos already minted (invite claim,
   // which auto-logs in on success) rather than going through /auth/login.
-  applySession:  (token: string, user: User) => void
+  // Callers must await this before navigating — like login/completeSetup, it
+  // loads profiles as part of establishing the session, and navigating
+  // before that resolves lets ProtectedRoute momentarily see an empty
+  // profiles list and skip the picker it shouldn't.
+  applySession:  (token: string, user: User) => Promise<void>
+  // Every profile on this server, for the "Who's watching?" picker —
+  // populated once a real login session exists. Empty until then.
+  profiles:      User[]
+  // Deliberately in-memory only (never persisted) — a fresh page load always
+  // starts this false, which is what makes ProfileSelectPage reappear on
+  // every app launch even though the device itself stays logged in. Treated
+  // as already-satisfied once profiles.length<=1 (nothing to pick).
+  profileChosen: boolean
+  // Switches the active session to a different profile without its
+  // password — see AuthStore::switchProfile for the actual gate (PIN, if
+  // the target profile has one; always required for admin profiles).
+  switchProfile: (userId: string, pin?: string) => Promise<void>
+  // Re-arms the picker on demand (Layout's "Switch Profile" link) without a
+  // full logout — the caller still has to navigate to /profiles itself,
+  // this just stops ProtectedRoute treating the current profile as chosen.
+  // Also refetches profiles, since the cached list (last loaded at login)
+  // would otherwise still show a stale has_pin for anyone whose PIN an
+  // admin set/cleared via the Users page in the meantime — ProfileSelectPage
+  // would then skip the PIN prompt it should show (or show one it
+  // shouldn't), relying on the server's 403 as an ugly fallback instead of
+  // just asking correctly the first time. Callers should await this before
+  // navigating, same reasoning as applySession above.
+  reopenProfilePicker: () => Promise<void>
+  // Picking the tile for whichever profile is already the active session
+  // (e.g. the admin who just typed their password) needs no PIN and no
+  // switchProfile call — it's already this profile. Without this, an
+  // admin profile with no PIN set yet would be unable to get past its own
+  // picker tile (switchProfile always requires one for role=admin),
+  // a chicken-and-egg lockout since the PIN can only be set from inside
+  // the app. ProfileSelectPage uses this instead of switchProfile when
+  // user.user_id matches the tile clicked.
+  confirmCurrentProfile: () => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -23,6 +59,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user,          setUser]          = useState<User | null>(null)
   const [isLoading,     setIsLoading]     = useState(true)
   const [setupRequired, setSetupRequired] = useState(false)
+  const [profiles,        setProfiles]        = useState<User[]>([])
+  const [profileChosenRaw, setProfileChosenRaw] = useState(false)
+
+  // Nothing to pick when there's only one profile on the server — treated as
+  // already-chosen so a single-admin household never sees an empty-feeling
+  // one-tile picker.
+  const profileChosen = profileChosenRaw || profiles.length <= 1
+
+  const loadProfiles = async () => {
+    try { setProfiles(await api.getProfiles()) } catch { /* picker just stays empty; ProtectedRoute still gates on user */ }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -40,7 +87,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (token) {
           try {
             const me = await api.getMe()
-            if (!cancelled) setUser(me)
+            if (cancelled) return
+            setUser(me)
+            await loadProfiles()
           } catch {
             localStorage.removeItem(TOKEN_KEY)
           }
@@ -70,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { token, user } = await api.login(username, password)
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
+    await loadProfiles()
   }
 
   const completeSetup = async (username: string, password: string) => {
@@ -77,12 +127,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(TOKEN_KEY, token)
     setSetupRequired(false)
     setUser(user)
+    await loadProfiles()
   }
 
   const logout = async () => {
     try { await api.logout() } catch { /* ignore network errors on logout */ }
     localStorage.removeItem(TOKEN_KEY)
     setUser(null)
+    setProfiles([])
+    setProfileChosenRaw(false)
   }
 
   const setPassword = async (password: string) => {
@@ -91,13 +144,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser({ ...user, must_change_password: false })
   }
 
-  const applySession = (token: string, user: User) => {
+  const applySession = async (token: string, user: User) => {
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
+    await loadProfiles()
   }
 
+  const switchProfile = async (userId: string, pin?: string) => {
+    const { token, user } = await api.switchProfile(userId, pin)
+    localStorage.setItem(TOKEN_KEY, token)
+    setUser(user)
+    setProfileChosenRaw(true)
+  }
+
+  const reopenProfilePicker = async () => {
+    setProfileChosenRaw(false)
+    await loadProfiles()
+  }
+
+  const confirmCurrentProfile = () => setProfileChosenRaw(true)
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, setupRequired, login, logout, completeSetup, setPassword, applySession }}>
+    <AuthContext.Provider value={{
+      user, isLoading, setupRequired, login, logout, completeSetup, setPassword, applySession,
+      profiles, profileChosen, switchProfile, reopenProfilePicker, confirmCurrentProfile,
+    }}>
       {children}
     </AuthContext.Provider>
   )

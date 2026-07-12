@@ -5,6 +5,7 @@ import { userStore } from '../stores'
 import { TV_RATINGS, MOVIE_RATINGS } from '../api/ratingScales'
 import type { InviteUserResult, User } from '../api/types'
 import UserOverridesOverlay from './UserOverridesOverlay'
+import PinPad from '../auth/PinPad'
 
 const inputStyle: React.CSSProperties = {
   padding: '7px 10px', background: 'var(--hds-bg-3)',
@@ -61,6 +62,10 @@ export default observer(function UsersPage() {
 
   const [deleting,   setDeleting]   = useState<string | null>(null)
   const [overridesFor, setOverridesFor] = useState<User | null>(null)
+
+  const [showPinPad, setShowPinPad] = useState(false)
+  const [pinBusy,    setPinBusy]    = useState(false)
+  const [pinError,   setPinError]   = useState('')
 
   useEffect(() => { store.fetchAll() }, [])
 
@@ -122,6 +127,25 @@ export default observer(function UsersPage() {
     } catch (err: any) {
       // error surfaced via store.error
     } finally { setDeleting(null) }
+  }
+
+  const setPin = async (userId: string, pin: string) => {
+    setPinError(''); setPinBusy(true)
+    try {
+      await store.setPin(userId, pin)
+      setShowPinPad(false)
+    } catch (err: any) {
+      setPinError(err.message ?? 'Failed to set PIN')
+    } finally { setPinBusy(false) }
+  }
+
+  const clearPin = async (userId: string) => {
+    setPinError(''); setPinBusy(true)
+    try {
+      await store.setPin(userId, '')
+    } catch (err: any) {
+      setPinError(err.message ?? 'Failed to clear PIN')
+    } finally { setPinBusy(false) }
   }
 
   return (
@@ -258,6 +282,9 @@ export default observer(function UsersPage() {
                       RESTRICTED
                     </span>
                   )}
+                  {u.has_pin && (
+                    <span title="PIN set" style={{ fontSize: 12, opacity: 0.75 }}>🔒</span>
+                  )}
                   <div style={{ display: 'flex', gap: 6 }}>
                     {u.restricted && (
                       <button style={btnStyle('ghost')} onClick={() => setOverridesFor(u)}>
@@ -265,7 +292,7 @@ export default observer(function UsersPage() {
                       </button>
                     )}
                     <button style={btnStyle('ghost')}
-                      onClick={() => { setEditing(editStateFor(u)); setEditError('') }}>
+                      onClick={() => { setEditing(editStateFor(u)); setEditError(''); setShowPinPad(false); setPinError('') }}>
                       Edit
                     </button>
                     {u.user_id !== self?.user_id && (
@@ -338,6 +365,34 @@ export default observer(function UsersPage() {
                             {TV_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
                           </select>
                         </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ borderTop: '1px solid var(--hds-line-s)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <div style={{ fontSize: 11, color: 'var(--hds-txt-2)' }}>
+                        Profile-switch PIN <span style={{ opacity: 0.6 }}>({u.has_pin ? 'set' : 'not set'}) — used by the "Who\'s watching?" picker</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        {u.has_pin && (
+                          <button type="button" disabled={pinBusy} style={btnStyle('ghost')} onClick={() => clearPin(u.user_id)}>
+                            Clear PIN
+                          </button>
+                        )}
+                        <button type="button" style={btnStyle('ghost')} onClick={() => { setShowPinPad(v => !v); setPinError('') }}>
+                          {showPinPad ? 'Cancel' : u.has_pin ? 'Change PIN' : 'Set PIN'}
+                        </button>
+                      </div>
+                    </div>
+                    {editing.role === 'admin' && !u.has_pin && (
+                      <div style={{ fontSize: 10.5, color: 'oklch(0.75 0.18 68)', opacity: 0.9 }}>
+                        Admin profiles need a PIN before they can be used from the profile picker.
+                      </div>
+                    )}
+                    {showPinPad && (
+                      <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
+                        <PinPad busy={pinBusy} error={pinError} confirmLabel="SAVE" onComplete={pin => setPin(u.user_id, pin)} />
                       </div>
                     )}
                   </div>

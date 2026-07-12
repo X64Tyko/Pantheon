@@ -8,6 +8,7 @@ import AdminRoute             from './auth/AdminRoute'
 import SetupPage              from './auth/SetupPage'
 import SetPasswordPage        from './auth/SetPasswordPage'
 import InvitePage             from './auth/InvitePage'
+import ProfileSelectPage      from './auth/ProfileSelectPage'
 import Layout                 from './components/Layout'
 import { FocusRoot }          from './nav/FocusRoot'
 import { CastProvider }       from './cast/CastProvider'
@@ -62,6 +63,11 @@ export default function App() {
               a normal nav target. Deliberately outside <Layout>: the rest of
               the app is blocked until this is done. */}
           <Route path="set-password" element={<SetPasswordPage />} />
+
+          {/* "Who's watching?" profile picker — reached via ProtectedRoute's
+              !profileChosen redirect, not a normal nav target. Same
+              deliberately-outside-<Layout> treatment as set-password above. */}
+          <Route path="profiles" element={<ProfileSelectPage />} />
 
           {/* Full-screen takeover — no sidebar chrome during playback. */}
           <Route path="player/movie/:id" element={

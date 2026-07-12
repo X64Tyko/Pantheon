@@ -28,7 +28,7 @@ const navItems: { to: string; label: string; icon: React.ReactNode; adminOnly?: 
 export default observer(function Layout() {
   const location     = useLocation()
   const navigate     = useNavigate()
-  const { user, logout } = useAuth()
+  const { user, reopenProfilePicker } = useAuth()
   const isChannelDetail = /^\/channels\/.+/.test(location.pathname)
   const isFullBleed     = isChannelDetail || location.pathname === '/' || location.pathname.startsWith('/library') || location.pathname.startsWith('/review') || location.pathname === '/activity'
   const onActivity      = location.pathname === '/activity'
@@ -271,8 +271,8 @@ export default observer(function Layout() {
                     {user.role === 'admin' && <span style={{ marginLeft: 5, color: 'var(--hds-gold)', opacity: 0.7, fontSize: 9 }}>ADMIN</span>}
                   </span>
                   <button
-                    onClick={() => { logout().then(() => navigate('/login')) }}
-                    title="Sign out"
+                    onClick={async () => { await reopenProfilePicker(); navigate('/profiles') }}
+                    title="Exit to profile picker"
                     style={{
                       background: 'none', border: 'none', cursor: 'pointer',
                       color: 'var(--hds-txt-3)', fontSize: 10, padding: '2px 4px',
@@ -349,14 +349,16 @@ export default observer(function Layout() {
                   {user.username}
                   {user.role === 'admin' && <span style={{ marginLeft: 5, color: 'var(--hds-gold)', opacity: 0.7, fontSize: 10 }}>ADMIN</span>}
                 </span>
-                <button
-                  onClick={() => { logout().then(() => navigate('/login')) }}
-                  style={{
-                    background: 'none', border: '1px solid var(--hds-line)', borderRadius: 6,
-                    cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 11, padding: '4px 10px',
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}
-                >Sign out</button>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={async () => { await reopenProfilePicker(); navigate('/profiles') }}
+                    style={{
+                      background: 'none', border: '1px solid var(--hds-line)', borderRadius: 6,
+                      cursor: 'pointer', color: 'var(--hds-txt-3)', fontSize: 11, padding: '4px 10px',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >Exit</button>
+                </div>
               </div>
             )}
           </div>
