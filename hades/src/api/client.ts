@@ -489,6 +489,8 @@ export const api = {
   triggerMatch:        (b?: { target_id?: string; item_type?: string }) =>
                          request<{status: string}>('POST', '/scrapers/match', b ?? {}),
   getMatchStatus:      ()                                         => request<{running: boolean}>('GET', '/scrapers/match/status'),
+  triggerRefreshAll:   ()                                         => request<{status: string}>('POST', '/scrapers/refresh-all', {}),
+  getRefreshAllStatus: ()                                         => request<{running: boolean}>('GET', '/scrapers/refresh-all/status'),
   getScraperStats:     ()                                         => request<ScraperStats>('GET',    '/scrapers/stats'),
   getReviewQueue:      (p: { status?: string; limit?: number; offset?: number } = {}) =>
                          request<{items: ReviewQueueItem[]; total: number}>('GET', `/scrapers/queue?${qs(p)}`),

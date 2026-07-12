@@ -124,6 +124,14 @@ public:
 
     bool isMatching() const { return matching_.load(); }
 
+    // Re-pulls full metadata (title, overview, posters, ratings, ...) from
+    // each already-linked source for every matched show/movie — same
+    // per-item logic as refreshMetadata(), just swept across the whole
+    // library in the background. For catching drift after a manual match
+    // fix, or after applyShowMetadata/applyMovieMetadata gain new fields.
+    void triggerRefreshAll();
+    bool isRefreshingAll() const { return refreshing_all_.load(); }
+
     // Settings
     ScraperSettings getSettings() const;
     void            updateSettings(const ScraperSettings& s);
@@ -205,6 +213,7 @@ public:
 private:
     void buildScrapers();
     void runMatch(const std::string& target_id, const std::string& item_type);
+    void runRefreshAll();
 
     // An item can be mapped to more than one media_library (cross-source
     // dedup — e.g. the same show synced from both a Plex library and a Local
@@ -288,4 +297,5 @@ private:
     std::unique_ptr<TmdbScraper> tmdb_;
     std::unique_ptr<TvdbScraper> tvdb_;
     std::atomic<bool>            matching_{false};
+    std::atomic<bool>            refreshing_all_{false};
 };

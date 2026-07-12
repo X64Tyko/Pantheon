@@ -30,12 +30,16 @@ export default function ScrapersPage() {
   const [dirty,    setDirty]    = useState(false)
   const [saving,   setSaving]   = useState(false)
   const [running,  setRunning]  = useState(false)
+  const [refreshingAll, setRefreshingAll] = useState(false)
   const [saved,    setSaved]    = useState(false)
 
   useEffect(() => {
     api.getScraperSettings().then(setSettings)
     api.getScraperStats().then(setStats)
-    const poll = setInterval(() => api.getMatchStatus().then(s => setRunning(s.running)), 3000)
+    const poll = setInterval(() => {
+      api.getMatchStatus().then(s => setRunning(s.running))
+      api.getRefreshAllStatus().then(s => setRefreshingAll(s.running))
+    }, 3000)
     return () => clearInterval(poll)
   }, [])
 
@@ -75,6 +79,14 @@ export default function ScrapersPage() {
       setRunning(false)
       api.getScraperStats().then(setStats)
     }, 4000)
+  }
+
+  const refreshAll = async () => {
+    setRefreshingAll(true)
+    await api.triggerRefreshAll()
+    // Actual completion is picked up by the status poll above — this is
+    // just an immediate "yes, it's going" flip so the button doesn't sit
+    // looking clickable for the ~3s until the next poll tick.
   }
 
   const tmdb = settings?.configs.find(c => c.source === 'tmdb')
@@ -268,6 +280,21 @@ export default function ScrapersPage() {
           }}
         >
           {running ? '● Running match…' : 'Run Match Pass'}
+        </button>
+        <button
+          onClick={refreshAll}
+          disabled={refreshingAll}
+          title="Re-pulls title, overview, posters, ratings, etc. from each already-linked source for every matched show/movie"
+          style={{
+            padding: '8px 18px', borderRadius: 8, cursor: refreshingAll ? 'not-allowed' : 'pointer',
+            border: '1px solid var(--hds-line)',
+            background: 'transparent',
+            color: refreshingAll ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+            opacity: refreshingAll ? 0.6 : 1,
+          }}
+        >
+          {refreshingAll ? '● Refreshing metadata…' : 'Refresh All Metadata'}
         </button>
       </div>
     </div>

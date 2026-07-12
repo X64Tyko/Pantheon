@@ -88,6 +88,96 @@ double computeScore(const std::string& source_title, int source_year,
     return ts * 0.75 + yb * 0.25;
 }
 
+// ── Metadata writeback ───────────────────────────────────────────────────────
+// Applies a freshly-fetched Show/Movie onto the matching row. Single source of
+// truth for which columns a match/refresh actually writes — acceptCandidate()
+// and refreshMetadata() used to each carry their own hand-rolled UPDATE per
+// source (tmdb/tvdb/anidb), and the three copies had silently drifted apart:
+// none of them ever wrote `title`, only the tvdb-show one wrote `year`, and
+// only the anidb ones wrote `content_rating`/`audience_rating` — so a match
+// could "succeed" (poster, overview, etc. all update) while the title stayed
+// whatever a bad auto-match had set it to. Every field the Show/Movie struct
+// can actually carry is written here, once, so every source/caller gets the
+// same coverage. `locked` (a manual per-item protection flag, not related to
+// which field is empty) still gates all of it, same as before.
+void applyShowMetadata(SQLite::Database& db, const std::string& kairos_id, const Show& s) {
+    SQLite::Statement app(db, R"(
+        UPDATE show SET
+            title                   = CASE WHEN locked THEN title                   ELSE COALESCE(NULLIF(?, ''), title)                   END,
+            tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE COALESCE(NULLIF(?, ''), tmdb_id)                 END,
+            tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE COALESCE(NULLIF(?, ''), tvdb_id)                 END,
+            imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE COALESCE(NULLIF(?, ''), imdb_id)                 END,
+            overview                = CASE WHEN locked THEN overview                ELSE COALESCE(NULLIF(?, ''), overview)                END,
+            status                  = CASE WHEN locked THEN status                  ELSE COALESCE(NULLIF(?, ''), status)                  END,
+            genres                  = CASE WHEN locked THEN genres                  ELSE COALESCE(NULLIF(?, '[]'), genres)                END,
+            network                 = CASE WHEN locked THEN network                 ELSE COALESCE(NULLIF(?, ''), network)                 END,
+            studio                  = CASE WHEN locked THEN studio                  ELSE COALESCE(NULLIF(?, ''), studio)                  END,
+            content_rating          = CASE WHEN locked THEN content_rating          ELSE COALESCE(NULLIF(?, ''), content_rating)          END,
+            originally_available_at = CASE WHEN locked THEN originally_available_at ELSE COALESCE(NULLIF(?, ''), originally_available_at) END,
+            year                    = CASE WHEN locked THEN year                    ELSE COALESCE(?, year)                                END,
+            audience_rating         = CASE WHEN locked THEN audience_rating         ELSE COALESCE(?, audience_rating)                      END,
+            thumb                   = CASE WHEN locked THEN thumb                   ELSE COALESCE(NULLIF(?, ''), thumb)                    END,
+            art                     = CASE WHEN locked THEN art                     ELSE COALESCE(NULLIF(?, ''), art)                      END
+        WHERE show_id = ?
+    )");
+    int i = 1;
+    app.bind(i++, s.title);
+    app.bind(i++, s.tmdb_id);
+    app.bind(i++, s.tvdb_id);
+    app.bind(i++, s.imdb_id);
+    app.bind(i++, s.overview);
+    app.bind(i++, s.status);
+    app.bind(i++, s.genres);
+    app.bind(i++, s.network);
+    app.bind(i++, s.studio);
+    app.bind(i++, s.content_rating);
+    app.bind(i++, s.originally_available_at);
+    if (s.year.has_value())            app.bind(i++, s.year.value());            else app.bind(i++);
+    if (s.audience_rating.has_value()) app.bind(i++, s.audience_rating.value()); else app.bind(i++);
+    app.bind(i++, s.thumb);
+    app.bind(i++, s.art);
+    app.bind(i++, kairos_id);
+    app.exec();
+}
+
+void applyMovieMetadata(SQLite::Database& db, const std::string& kairos_id, const Movie& m) {
+    SQLite::Statement app(db, R"(
+        UPDATE movie SET
+            title           = CASE WHEN locked THEN title           ELSE COALESCE(NULLIF(?, ''), title)           END,
+            tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE COALESCE(NULLIF(?, ''), tmdb_id)         END,
+            imdb_id         = CASE WHEN locked THEN imdb_id         ELSE COALESCE(NULLIF(?, ''), imdb_id)         END,
+            overview        = CASE WHEN locked THEN overview        ELSE COALESCE(NULLIF(?, ''), overview)        END,
+            tagline         = CASE WHEN locked THEN tagline         ELSE COALESCE(NULLIF(?, ''), tagline)         END,
+            genres          = CASE WHEN locked THEN genres          ELSE COALESCE(NULLIF(?, '[]'), genres)        END,
+            studio          = CASE WHEN locked THEN studio          ELSE COALESCE(NULLIF(?, ''), studio)          END,
+            director        = CASE WHEN locked THEN director        ELSE COALESCE(NULLIF(?, ''), director)        END,
+            content_rating  = CASE WHEN locked THEN content_rating  ELSE COALESCE(NULLIF(?, ''), content_rating)  END,
+            release_date    = CASE WHEN locked THEN release_date    ELSE COALESCE(NULLIF(?, ''), release_date)    END,
+            year            = CASE WHEN locked THEN year            ELSE COALESCE(?, year)                       END,
+            audience_rating = CASE WHEN locked THEN audience_rating ELSE COALESCE(?, audience_rating)             END,
+            thumb           = CASE WHEN locked THEN thumb           ELSE COALESCE(NULLIF(?, ''), thumb)           END,
+            art             = CASE WHEN locked THEN art             ELSE COALESCE(NULLIF(?, ''), art)             END
+        WHERE movie_id = ?
+    )");
+    int i = 1;
+    app.bind(i++, m.title);
+    app.bind(i++, m.tmdb_id);
+    app.bind(i++, m.imdb_id);
+    app.bind(i++, m.overview);
+    app.bind(i++, m.tagline);
+    app.bind(i++, m.genres);
+    app.bind(i++, m.studio);
+    app.bind(i++, m.director);
+    app.bind(i++, m.content_rating);
+    app.bind(i++, m.release_date);
+    if (m.year.has_value())            app.bind(i++, m.year.value());            else app.bind(i++);
+    if (m.audience_rating.has_value()) app.bind(i++, m.audience_rating.value()); else app.bind(i++);
+    app.bind(i++, m.thumb);
+    app.bind(i++, m.art);
+    app.bind(i++, kairos_id);
+    app.exec();
+}
+
 std::string candidateKey(const std::string& item_type, const std::string& kairos_id,
                           const std::string& source,    const std::string& external_id) {
     return item_type + ":" + kairos_id + ":" + source + ":" + external_id;
@@ -544,6 +634,53 @@ void ScraperManager::runMatchSync(const std::string& target_id,
         std::cerr << "[scraper] match error: " << e.what() << "\n";
     }
     matching_.store(false);
+}
+
+// ── Trigger / background metadata refresh ───────────────────────────────────
+
+void ScraperManager::triggerRefreshAll() {
+    bool expected = false;
+    if (!refreshing_all_.compare_exchange_strong(expected, true)) {
+        std::cout << "[scraper] metadata refresh already running — ignoring trigger\n";
+        return;
+    }
+    std::thread([this]() {
+        try { runRefreshAll(); }
+        catch (const std::exception& e) {
+            std::cerr << "[scraper] refresh-all error: " << e.what() << "\n";
+        }
+        refreshing_all_.store(false);
+    }).detach();
+}
+
+void ScraperManager::runRefreshAll() {
+    std::vector<std::string> show_ids, movie_ids;
+    {
+        SQLite::Statement q(db_.get(), "SELECT show_id FROM show WHERE match_status='matched'");
+        while (q.executeStep()) show_ids.push_back(q.getColumn(0).getString());
+    }
+    {
+        SQLite::Statement q(db_.get(), "SELECT movie_id FROM movie WHERE match_status='matched'");
+        while (q.executeStep()) movie_ids.push_back(q.getColumn(0).getString());
+    }
+    std::cout << "[scraper] refresh-all: " << show_ids.size() << " show(s), "
+              << movie_ids.size() << " movie(s)\n";
+
+    int refreshed = 0;
+    for (const auto& id : show_ids) {
+        try { if (refreshMetadata(id, "show")) ++refreshed; }
+        catch (const std::exception& e) {
+            std::cerr << "[scraper] refresh-all: show " << id << " failed: " << e.what() << "\n";
+        }
+    }
+    for (const auto& id : movie_ids) {
+        try { if (refreshMetadata(id, "movie")) ++refreshed; }
+        catch (const std::exception& e) {
+            std::cerr << "[scraper] refresh-all: movie " << id << " failed: " << e.what() << "\n";
+        }
+    }
+    std::cout << "[scraper] refresh-all done: " << refreshed << "/"
+              << (show_ids.size() + movie_ids.size()) << " item(s) refreshed\n";
 }
 
 void ScraperManager::runMatch(const std::string& target_id,
@@ -1230,162 +1367,40 @@ AcceptResult ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 auto show = anidb_->fetchShow(external_id, language);
                 if (show) {
                     linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
-                    SQLite::Statement app(db_.get(), R"(
-                        UPDATE show SET
-                            tvdb_id       = CASE WHEN locked THEN tvdb_id       ELSE ? END,
-                            overview      = CASE WHEN locked THEN overview      ELSE ? END,
-                            status        = CASE WHEN locked THEN status        ELSE ? END,
-                            thumb         = CASE WHEN locked THEN thumb         ELSE ? END,
-                            art           = CASE WHEN locked THEN art           ELSE ? END,
-                            content_rating= CASE WHEN locked THEN content_rating ELSE ? END
-                        WHERE show_id = ?
-                    )");
-                    app.bind(1, show->tvdb_id); app.bind(2, show->overview);
-                    app.bind(3, show->status);  app.bind(4, show->thumb);
-                    app.bind(5, show->art);
-                    app.bind(6, show->content_rating);
-                    app.bind(7, kairos_id);
-                    app.exec();
+                    applyShowMetadata(db_.get(), kairos_id, *show);
                 }
             } else if (item_type == "movie") {
                 auto movie = anidb_->fetchMovie(external_id, language);
+                if (movie) applyMovieMetadata(db_.get(), kairos_id, *movie);
+            }
+        }
+        if (source == "tmdb" && tmdb_) {
+            if (item_type == "show") {
+                auto show = tmdb_->fetchShow(external_id, language);
+                if (show) {
+                    linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
+                    linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
+                    applyShowMetadata(db_.get(), kairos_id, *show);
+                }
+            } else if (item_type == "movie") {
+                auto movie = tmdb_->fetchMovie(external_id, language);
                 if (movie) {
-                    SQLite::Statement app(db_.get(), R"(
-                        UPDATE movie SET
-                            overview      = CASE WHEN locked THEN overview      ELSE ? END,
-                            thumb         = CASE WHEN locked THEN thumb         ELSE ? END,
-                            art           = CASE WHEN locked THEN art           ELSE ? END,
-                            content_rating= CASE WHEN locked THEN content_rating ELSE ? END
-                        WHERE movie_id = ?
-                    )");
-                    app.bind(1, movie->overview); app.bind(2, movie->thumb);
-                    app.bind(3, movie->art);
-                    app.bind(4, movie->content_rating);
-                    app.bind(5, kairos_id);
-                    app.exec();
+                    linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
+                    applyMovieMetadata(db_.get(), kairos_id, *movie);
                 }
             }
         }
-    if (source == "tmdb" && tmdb_) {
-        if (item_type == "show") {
-            auto show = tmdb_->fetchShow(external_id, language);
-            if (show) {
-                linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
-                linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
-                SQLite::Statement app(db_.get(), R"(
-                    UPDATE show SET
-                        tmdb_id   = CASE WHEN locked THEN tmdb_id   ELSE ? END,
-                        tvdb_id   = CASE WHEN locked THEN tvdb_id   ELSE ? END,
-                        imdb_id   = CASE WHEN locked THEN imdb_id   ELSE ? END,
-                        overview  = CASE WHEN locked THEN overview  ELSE ? END,
-                        status    = CASE WHEN locked THEN status    ELSE ? END,
-                        genres    = CASE WHEN locked THEN genres    ELSE ? END,
-                        network   = CASE WHEN locked THEN network   ELSE ? END,
-                        studio    = CASE WHEN locked THEN studio    ELSE ? END,
-                        thumb     = CASE WHEN locked THEN thumb     ELSE ? END,
-                        art       = CASE WHEN locked THEN art       ELSE ? END
-                    WHERE show_id = ?
-                )");
-                app.bind(1, show->tmdb_id); app.bind(2, show->tvdb_id);
-                app.bind(3, show->imdb_id); app.bind(4, show->overview);
-                app.bind(5, show->status);  app.bind(6, show->genres);
-                app.bind(7, show->network); app.bind(8, show->studio);
-                app.bind(9, show->thumb);   app.bind(10, show->art);
-                app.bind(11, kairos_id);
-                app.exec();
-            }
-        } else if (item_type == "movie") {
-            auto movie = tmdb_->fetchMovie(external_id, language);
-            if (movie) {
-                linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
-                SQLite::Statement app(db_.get(), R"(
-                    UPDATE movie SET
-                        tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE ? END,
-                        imdb_id      = CASE WHEN locked THEN imdb_id      ELSE ? END,
-                        overview     = CASE WHEN locked THEN overview     ELSE ? END,
-                        genres       = CASE WHEN locked THEN genres       ELSE ? END,
-                        studio       = CASE WHEN locked THEN studio       ELSE ? END,
-                        director     = CASE WHEN locked THEN director     ELSE ? END,
-                        release_date = CASE WHEN locked THEN release_date ELSE ? END,
-                        thumb        = CASE WHEN locked THEN thumb        ELSE ? END,
-                        art          = CASE WHEN locked THEN art          ELSE ? END
-                    WHERE movie_id = ?
-                )");
-                app.bind(1, movie->tmdb_id); app.bind(2, movie->imdb_id);
-                app.bind(3, movie->overview); app.bind(4, movie->genres);
-                app.bind(5, movie->studio);  app.bind(6, movie->director);
-                app.bind(7, movie->release_date);
-                app.bind(8, movie->thumb);   app.bind(9, movie->art);
-                app.bind(10, kairos_id);
-                app.exec();
-            }
-        }
-    }
         if (source == "tvdb" && tvdb_) {
             if (item_type == "show") {
                 auto show = tvdb_->fetchShow(external_id, language);
                 if (show) {
                     linkExternalId(item_type, kairos_id, "tmdb", show->tmdb_id, /*promote_to_primary=*/false);
                     linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
-                    SQLite::Statement app(db_.get(), R"(
-                        UPDATE show SET
-                            tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE ? END,
-                            tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE COALESCE(NULLIF(?,  ''), tmdb_id)  END,
-                            imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE COALESCE(NULLIF(?,  ''), imdb_id)  END,
-                            overview                = CASE WHEN locked THEN overview                ELSE ? END,
-                            status                  = CASE WHEN locked THEN status                  ELSE ? END,
-                            genres                  = CASE WHEN locked THEN genres                  ELSE ? END,
-                            network                 = CASE WHEN locked THEN network                 ELSE ? END,
-                            originally_available_at = CASE WHEN locked THEN originally_available_at ELSE ? END,
-                            year                    = CASE WHEN locked THEN year                    ELSE ? END,
-                            thumb                   = CASE WHEN locked THEN thumb                   ELSE ? END,
-                            art                     = CASE WHEN locked THEN art                     ELSE ? END
-                        WHERE show_id = ?
-                    )");
-                    app.bind(1,  show->tvdb_id);
-                    app.bind(2,  show->tmdb_id);
-                    app.bind(3,  show->imdb_id);
-                    app.bind(4,  show->overview);
-                    app.bind(5,  show->status);
-                    app.bind(6,  show->genres);
-                    app.bind(7,  show->network);
-                    app.bind(8,  show->originally_available_at);
-                    if (show->year.has_value()) app.bind(9, show->year.value());
-                    else                        app.bind(9);
-                    app.bind(10, show->thumb);
-                    app.bind(11, show->art);
-                    app.bind(12, kairos_id);
-                    app.exec();
+                    applyShowMetadata(db_.get(), kairos_id, *show);
                 }
             } else if (item_type == "movie") {
                 auto movie = tvdb_->fetchMovie(external_id, language);
-                if (movie) {
-                    SQLite::Statement app(db_.get(), R"(
-                        UPDATE movie SET
-                            tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE COALESCE(NULLIF(?,  ''), tmdb_id)  END,
-                            imdb_id      = CASE WHEN locked THEN imdb_id      ELSE COALESCE(NULLIF(?,  ''), imdb_id)  END,
-                            overview     = CASE WHEN locked THEN overview     ELSE ? END,
-                            genres       = CASE WHEN locked THEN genres       ELSE ? END,
-                            studio       = CASE WHEN locked THEN studio       ELSE ? END,
-                            year         = CASE WHEN locked THEN year         ELSE ? END,
-                            thumb        = CASE WHEN locked THEN thumb        ELSE ? END,
-                            art          = CASE WHEN locked THEN art          ELSE ? END,
-                            release_date = CASE WHEN locked THEN release_date ELSE ? END
-                        WHERE movie_id = ?
-                    )");
-                    app.bind(1, movie->tmdb_id);
-                    app.bind(2, movie->imdb_id);
-                    app.bind(3, movie->overview);
-                    app.bind(4, movie->genres);
-                    app.bind(5, movie->studio);
-                    if (movie->year.has_value()) app.bind(6, movie->year.value());
-                    else                         app.bind(6);
-                    app.bind(7, movie->thumb);
-                    app.bind(8, movie->art);
-                    app.bind(9, movie->release_date);
-                    app.bind(10, kairos_id);
-                    app.exec();
-                }
+                if (movie) applyMovieMetadata(db_.get(), kairos_id, *movie);
             }
         }
     } catch (const std::exception& e) {
@@ -1600,53 +1615,14 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                     if (show) {
                         linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
                         linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
-                        SQLite::Statement app(db_.get(), R"(
-                            UPDATE show SET
-                                tmdb_id   = CASE WHEN locked THEN tmdb_id   ELSE COALESCE(NULLIF(?, ''), tmdb_id) END,
-                                tvdb_id   = CASE WHEN locked THEN tvdb_id   ELSE COALESCE(NULLIF(?, ''), tvdb_id) END,
-                                imdb_id   = CASE WHEN locked THEN imdb_id   ELSE COALESCE(NULLIF(?, ''), imdb_id) END,
-                                overview  = CASE WHEN locked THEN overview  ELSE COALESCE(NULLIF(?, ''), overview) END,
-                                status    = CASE WHEN locked THEN status    ELSE COALESCE(NULLIF(?, ''), status)   END,
-                                genres    = CASE WHEN locked THEN genres    ELSE COALESCE(NULLIF(?, '[]'), genres) END,
-                                network   = CASE WHEN locked THEN network   ELSE COALESCE(NULLIF(?, ''), network)  END,
-                                studio    = CASE WHEN locked THEN studio    ELSE COALESCE(NULLIF(?, ''), studio)   END,
-                                thumb     = CASE WHEN locked THEN thumb     ELSE COALESCE(NULLIF(?, ''), thumb)    END,
-                                art       = CASE WHEN locked THEN art       ELSE COALESCE(NULLIF(?, ''), art)      END
-                            WHERE show_id = ?
-                        )");
-                        app.bind(1, show->tmdb_id); app.bind(2, show->tvdb_id);
-                        app.bind(3, show->imdb_id); app.bind(4, show->overview);
-                        app.bind(5, show->status);  app.bind(6, show->genres);
-                        app.bind(7, show->network); app.bind(8, show->studio);
-                        app.bind(9, show->thumb);   app.bind(10, show->art);
-                        app.bind(11, kairos_id);
-                        app.exec();
+                        applyShowMetadata(db_.get(), kairos_id, *show);
                         any_success = true;
                     }
                 } else if (item_type == "movie") {
                     auto movie = tmdb_->fetchMovie(id.external_id, language);
                     if (movie) {
                         linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
-                        SQLite::Statement app(db_.get(), R"(
-                            UPDATE movie SET
-                                tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE COALESCE(NULLIF(?, ''), tmdb_id)      END,
-                                imdb_id      = CASE WHEN locked THEN imdb_id      ELSE COALESCE(NULLIF(?, ''), imdb_id)      END,
-                                overview     = CASE WHEN locked THEN overview     ELSE COALESCE(NULLIF(?, ''), overview)     END,
-                                genres       = CASE WHEN locked THEN genres       ELSE COALESCE(NULLIF(?, '[]'), genres)     END,
-                                studio       = CASE WHEN locked THEN studio       ELSE COALESCE(NULLIF(?, ''), studio)       END,
-                                director     = CASE WHEN locked THEN director     ELSE COALESCE(NULLIF(?, ''), director)     END,
-                                release_date = CASE WHEN locked THEN release_date ELSE COALESCE(NULLIF(?, ''), release_date) END,
-                                thumb        = CASE WHEN locked THEN thumb        ELSE COALESCE(NULLIF(?, ''), thumb)        END,
-                                art          = CASE WHEN locked THEN art          ELSE COALESCE(NULLIF(?, ''), art)          END
-                            WHERE movie_id = ?
-                        )");
-                        app.bind(1, movie->tmdb_id); app.bind(2, movie->imdb_id);
-                        app.bind(3, movie->overview); app.bind(4, movie->genres);
-                        app.bind(5, movie->studio);  app.bind(6, movie->director);
-                        app.bind(7, movie->release_date);
-                        app.bind(8, movie->thumb);   app.bind(9, movie->art);
-                        app.bind(10, kairos_id);
-                        app.exec();
+                        applyMovieMetadata(db_.get(), kairos_id, *movie);
                         any_success = true;
                     }
                 }
@@ -1656,24 +1632,7 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                     if (show) {
                         linkExternalId(item_type, kairos_id, "tmdb", show->tmdb_id, /*promote_to_primary=*/false);
                         linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
-                        SQLite::Statement app(db_.get(), R"(
-                            UPDATE show SET
-                                tvdb_id  = CASE WHEN locked THEN tvdb_id  ELSE COALESCE(NULLIF(?, ''), tvdb_id) END,
-                                tmdb_id  = CASE WHEN locked THEN tmdb_id  ELSE COALESCE(NULLIF(?, ''), tmdb_id) END,
-                                imdb_id  = CASE WHEN locked THEN imdb_id  ELSE COALESCE(NULLIF(?, ''), imdb_id) END,
-                                overview = CASE WHEN locked THEN overview  ELSE COALESCE(NULLIF(?, ''), overview) END,
-                                status   = CASE WHEN locked THEN status   ELSE COALESCE(NULLIF(?, ''), status)   END,
-                                network  = CASE WHEN locked THEN network  ELSE COALESCE(NULLIF(?, ''), network)  END,
-                                thumb    = CASE WHEN locked THEN thumb    ELSE COALESCE(NULLIF(?, ''), thumb)    END,
-                                genres   = CASE WHEN locked THEN genres   ELSE COALESCE(NULLIF(?, '[]'), genres) END
-                            WHERE show_id = ?
-                        )");
-                        app.bind(1, show->tvdb_id); app.bind(2, show->tmdb_id);
-                        app.bind(3, show->imdb_id); app.bind(4, show->overview);
-                        app.bind(5, show->status);  app.bind(6, show->network);
-                        app.bind(7, show->thumb);   app.bind(8, show->genres);
-                        app.bind(9, kairos_id);
-                        app.exec();
+                        applyShowMetadata(db_.get(), kairos_id, *show);
                         any_success = true;
                     }
                 } else if (item_type == "movie") {
@@ -1681,22 +1640,7 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                     if (movie) {
                         linkExternalId(item_type, kairos_id, "tmdb", movie->tmdb_id, /*promote_to_primary=*/false);
                         linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
-                        SQLite::Statement app(db_.get(), R"(
-                            UPDATE movie SET
-                                tmdb_id      = CASE WHEN locked THEN tmdb_id      ELSE COALESCE(NULLIF(?, ''), tmdb_id)      END,
-                                imdb_id      = CASE WHEN locked THEN imdb_id      ELSE COALESCE(NULLIF(?, ''), imdb_id)      END,
-                                overview     = CASE WHEN locked THEN overview     ELSE COALESCE(NULLIF(?, ''), overview)     END,
-                                release_date = CASE WHEN locked THEN release_date ELSE COALESCE(NULLIF(?, ''), release_date) END,
-                                thumb        = CASE WHEN locked THEN thumb        ELSE COALESCE(NULLIF(?, ''), thumb)        END,
-                                genres       = CASE WHEN locked THEN genres       ELSE COALESCE(NULLIF(?, '[]'), genres)     END,
-                                studio       = CASE WHEN locked THEN studio       ELSE COALESCE(NULLIF(?, ''), studio)       END
-                            WHERE movie_id = ?
-                        )");
-                        app.bind(1, movie->tmdb_id); app.bind(2, movie->imdb_id);
-                        app.bind(3, movie->overview); app.bind(4, movie->release_date);
-                        app.bind(5, movie->thumb);   app.bind(6, movie->genres);
-                        app.bind(7, movie->studio);  app.bind(8, kairos_id);
-                        app.exec();
+                        applyMovieMetadata(db_.get(), kairos_id, *movie);
                         any_success = true;
                     }
                 }
@@ -1705,38 +1649,13 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                     auto show = anidb_->fetchShow(id.external_id, language);
                     if (show) {
                         linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
-                        SQLite::Statement app(db_.get(), R"(
-                            UPDATE show SET
-                                tvdb_id        = CASE WHEN locked THEN tvdb_id        ELSE COALESCE(NULLIF(?, ''), tvdb_id)        END,
-                                overview       = CASE WHEN locked THEN overview       ELSE COALESCE(NULLIF(?, ''), overview)       END,
-                                status         = CASE WHEN locked THEN status         ELSE COALESCE(NULLIF(?, ''), status)         END,
-                                thumb          = CASE WHEN locked THEN thumb          ELSE COALESCE(NULLIF(?, ''), thumb)          END,
-                                art            = CASE WHEN locked THEN art            ELSE COALESCE(NULLIF(?, ''), art)            END,
-                                content_rating = CASE WHEN locked THEN content_rating ELSE COALESCE(NULLIF(?, ''), content_rating) END
-                            WHERE show_id = ?
-                        )");
-                        app.bind(1, show->tvdb_id); app.bind(2, show->overview);
-                        app.bind(3, show->status);  app.bind(4, show->thumb);
-                        app.bind(5, show->art);     app.bind(6, show->content_rating);
-                        app.bind(7, kairos_id);
-                        app.exec();
+                        applyShowMetadata(db_.get(), kairos_id, *show);
                         any_success = true;
                     }
                 } else if (item_type == "movie") {
                     auto movie = anidb_->fetchMovie(id.external_id, language);
                     if (movie) {
-                        SQLite::Statement app(db_.get(), R"(
-                            UPDATE movie SET
-                                overview       = CASE WHEN locked THEN overview       ELSE COALESCE(NULLIF(?, ''), overview)       END,
-                                thumb          = CASE WHEN locked THEN thumb          ELSE COALESCE(NULLIF(?, ''), thumb)          END,
-                                art            = CASE WHEN locked THEN art            ELSE COALESCE(NULLIF(?, ''), art)            END,
-                                content_rating = CASE WHEN locked THEN content_rating ELSE COALESCE(NULLIF(?, ''), content_rating) END
-                            WHERE movie_id = ?
-                        )");
-                        app.bind(1, movie->overview); app.bind(2, movie->thumb);
-                        app.bind(3, movie->art);     app.bind(4, movie->content_rating);
-                        app.bind(5, kairos_id);
-                        app.exec();
+                        applyMovieMetadata(db_.get(), kairos_id, *movie);
                         any_success = true;
                     }
                 }

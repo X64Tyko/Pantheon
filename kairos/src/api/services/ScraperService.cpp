@@ -106,6 +106,28 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
         ok(res, json{{"running", scraper_.isMatching()}});
     });
 
+    // POST /api/scrapers/refresh-all — re-pull full metadata for every
+    // already-matched show/movie from its linked source(s), in the
+    // background. Distinct from /match, which only looks for NEW matches on
+    // unscraped/uncertain/unmatched items.
+    svr.Post("/api/scrapers/refresh-all", [this](const Req&, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
+        if (scraper_.isRefreshingAll()) {
+            res.status = 202;
+            ok(res, json{{"status", "already_running"}});
+            return;
+        }
+        scraper_.triggerRefreshAll();
+        res.status = 202;
+        ok(res, json{{"status", "started"}});
+    });
+
+    // GET /api/scrapers/refresh-all/status
+    svr.Get("/api/scrapers/refresh-all/status", [this](const Req&, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
+        ok(res, json{{"running", scraper_.isRefreshingAll()}});
+    });
+
     // GET /api/scrapers/stats
     svr.Get("/api/scrapers/stats", [this](const Req&, Res& res) {
         if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
