@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pantheon — Terms of Service</title>
+<style>
+  :root {
+    --bg: oklch(0.152 0.016 286);
+    --bg2: oklch(0.19 0.018 286);
+    --bg3: oklch(0.21 0.026 290 / 0.6);
+    --line: oklch(0.45 0.05 290 / 0.32);
+    --txt: oklch(0.94 0.008 90);
+    --txt2: oklch(0.68 0.02 288);
+    --txt3: oklch(0.54 0.025 290);
+    --gold: oklch(0.83 0.13 84);
+    --violet: oklch(0.72 0.15 290);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 60px 24px 100px;
+  }
+  main { width: 100%; max-width: 760px; }
+  a { color: var(--violet); }
+  .back { display: inline-block; font-size: 13px; color: var(--txt3); text-decoration: none; margin-bottom: 24px; }
+  .back:hover { color: var(--txt2); }
+  h1 { font-weight: 800; font-size: 34px; letter-spacing: 0.01em; margin: 0 0 6px; }
+  .sub { color: var(--txt2); font-size: 15px; line-height: 1.5; margin: 0 0 6px; max-width: 620px; }
+  .effective { color: var(--txt3); font-size: 12px; font-family: 'JetBrains Mono', ui-monospace, monospace; margin: 0 0 16px; }
+  .note {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 14px 16px; border-radius: 10px; margin: 0 0 40px;
+    border: 1px solid oklch(0.72 0.15 290 / 0.35);
+    background: oklch(0.72 0.15 290 / 0.08);
+    font-size: 13px; line-height: 1.55; color: var(--txt2);
+  }
+  .note b { color: var(--txt); }
+  section { margin-bottom: 44px; }
+  h2 {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 19px; font-weight: 700; color: var(--txt); margin: 0 0 14px;
+  }
+  h2 .n {
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 26px; height: 26px; border-radius: 8px;
+    background: linear-gradient(180deg, var(--gold), oklch(0.7 0.15 60));
+    color: oklch(0.2 0.04 70); font-size: 13px; font-weight: 800;
+    font-family: ui-monospace, monospace;
+  }
+  p { color: var(--txt2); font-size: 14px; line-height: 1.65; margin: 0 0 12px; }
+  ul.plain { margin: 0 0 12px; padding-left: 20px; }
+  ul.plain li { color: var(--txt2); font-size: 14px; line-height: 1.65; margin-bottom: 6px; }
+  code {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    background: oklch(0.1 0.016 285 / 0.6); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 6px; color: oklch(0.9 0.05 90);
+  }
+  footer { margin-top: 40px; font-size: 11px; color: var(--txt3); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  footer a { color: var(--txt3); }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="index.html">← Docs</a>
+  <h1>Terms of Service</h1>
+  <p class="sub">Covers the Pantheon Roku channel, and applies the same way to every other Pantheon client (web, mobile, other TV platforms).</p>
+  <p class="effective">Effective: 2026-07-11</p>
+
+  <div class="note">
+    📜 <span><b>Pantheon is free, self-hosted software, not a hosted service.</b> Installing a client means you're connecting it to a media server that you (or someone you trust) run and administer. There's no account with the developer, no subscription, and nothing being sold — these terms just set expectations for using software that's offered as-is.</span>
+  </div>
+
+  <section>
+    <h2><span class="n">1</span>Acceptance</h2>
+    <p>By installing or using a Pantheon client (including this Roku channel), you agree to these terms. If you don't agree, don't install or use it — uninstalling stops any further use immediately, and there's nothing else to undo, since no account with the developer was ever created.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>What you're actually using</h2>
+    <p>This channel is a display client. It connects to whichever Kairos/Hermes server address you enter and shows you the media library, live channels, and settings that server exposes. All of the actual functionality — your accounts, your media, your channel schedules — is provided by that server, which you or your household controls, not by the developer of this channel.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>Your content, your responsibility</h2>
+    <p>Pantheon does not host, provide, index, or distribute any media. It's a personal library manager and scheduler for media you already have the legal right to (via your own Plex/Jellyfin/Emby library, or files you own). You're solely responsible for:</p>
+    <ul class="plain">
+      <li>Making sure you have the legal right to store, organize, and stream anything you point Pantheon at.</li>
+      <li>Complying with the terms of service of any third-party server or metadata provider you connect Pantheon to (Plex, Jellyfin, Emby, TMDB, TheTVDB, AniDB, or anything else) — those are separate agreements between you and them, unrelated to these terms.</li>
+      <li>Anything you configure or expose on your own network (e.g. remote access to your server) — that's your infrastructure, your security decisions.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="n">4</span>No warranty</h2>
+    <p>This software is provided "as is," without warranty of any kind, express or implied — including, without limitation, any warranty that it will be uninterrupted, error-free, secure, or fit for a particular purpose. You're running self-hosted, actively-developed software; things occasionally break, and there's no guaranteed support or uptime commitment behind it.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">5</span>Limitation of liability</h2>
+    <p>To the fullest extent permitted by law, the developer isn't liable for any damages or losses — including data loss, service interruption, or anything else — arising from your use of, or inability to use, this software. You use it at your own risk, on your own hardware.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">6</span>Source code &amp; license</h2>
+    <p>The main Pantheon platform (Kairos, Hades, Hermes, Hephaestus) is open source under the <a href="https://github.com/X64Tyko/Pantheon/blob/master/LICENSE">GNU AGPLv3</a>. This Roku channel's source lives in its own repository, <a href="https://github.com/X64Tyko/pantheon-roku">pantheon-roku</a> — see that repository directly for the license terms governing its code. Nothing here overrides whatever that repository's own license file says.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">7</span>Children</h2>
+    <p>Pantheon isn't a public service directed at children — it's private software an adult installs and administers for their own household, the same as any other self-hosted app. A server admin can set up restricted, content-rating-limited profiles for other members of the household, but these terms are between the developer and whoever installs the software, not any individual end user.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">8</span>Changes to these terms</h2>
+    <p>If these terms change, this page will be updated and the effective date above will move. There's no account system tying you to the developer, so there's no direct notification mechanism — check back here if you want the current version.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">9</span>Contact</h2>
+    <p>Questions about these terms or the software itself: <a href="https://github.com/X64Tyko/Pantheon/issues">open an issue on GitHub</a>, or email <a href="mailto:cmpederson89@gmail.com">cmpederson89@gmail.com</a>.</p>
+  </section>
+
+  <footer>Part of the <a href="https://github.com/X64Tyko/Pantheon">Pantheon</a> docs — see also the <a href="Privacy%20Policy.html">Privacy Policy</a> and <a href="https://github.com/X64Tyko/pantheon-roku">pantheon-roku</a>.</footer>
+</main>
+</body>
+</html>
