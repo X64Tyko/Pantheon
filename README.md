@@ -39,12 +39,14 @@ Pantheon is currently in **Alpha**. This is a source-available engineering artif
 
 | Component | Status | Test Suite | Tests | Coverage (Target) |
 |---|---|---|---|---|
-| **Kairos** | Alpha | `momus_kairos` | 352 | ~85% (Core / Scheduler) |
+| **Kairos** | Alpha | `momus_kairos` | 360 | ~85% (Core / Scheduler) |
 | **Hades** | Alpha | `vitest` | 135 | ~40% (API / Stores) |
 | **Hermes** | Alpha | `momus_hermes` | 19 | ~25% (Gateway) |
 | **Hephaestus** | Alpha | `momus_hephaestus` | 26 | ~25% (Transcoder) |
 
-*Pantheon currently runs **532 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+*Pantheon currently runs **540 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+
+Kairos's suite includes endpoint-level security regression tests (`momus/kairos/api/test_content_service_security.cpp`) that spin up a real `Router` against a throwaway database and fire actual attack payloads at the running server — e.g. confirming an admin can't forge the locally-cached-poster path sentinel into an arbitrary local file read via `PATCH /api/shows/:id` or the public `/api/images/proxy` endpoint, and that no secret content ever appears in a response when the attack is (correctly) rejected.
 
 ---
 

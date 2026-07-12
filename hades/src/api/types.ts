@@ -968,8 +968,9 @@ export interface ScraperConfig {
 }
 
 export interface ScraperSettings {
-  configs:         ScraperConfig[]
-  match_threshold: number   // 0–1; default 1.0
+  configs:               ScraperConfig[]
+  match_threshold:       number   // 0–1; default 1.0
+  anidb_download_posters: boolean // off by default — see SettingsPage's AniDB section for the rate-limit tradeoff
 }
 
 export interface ItemMatchCandidate {

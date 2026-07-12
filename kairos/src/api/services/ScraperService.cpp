@@ -29,6 +29,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
         out["match_threshold"] = s.match_threshold;
         out["dedup_fuzzy_title_threshold"]          = s.dedup_fuzzy_title_threshold;
         out["dedup_folder_corroboration_threshold"] = s.dedup_folder_corroboration_threshold;
+        out["anidb_download_posters"]               = s.anidb_download_posters;
         out["configs"] = json::array();
         for (const auto& c : s.configs) {
             json cj;
@@ -57,6 +58,8 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
                 s.dedup_fuzzy_title_threshold = body["dedup_fuzzy_title_threshold"].get<double>();
             if (body.contains("dedup_folder_corroboration_threshold") && body["dedup_folder_corroboration_threshold"].is_number())
                 s.dedup_folder_corroboration_threshold = body["dedup_folder_corroboration_threshold"].get<double>();
+            if (body.contains("anidb_download_posters") && body["anidb_download_posters"].is_boolean())
+                s.anidb_download_posters = body["anidb_download_posters"].get<bool>();
 
             if (body.contains("configs") && body["configs"].is_array()) {
                 for (const auto& cj : body["configs"]) {

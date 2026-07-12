@@ -13,6 +13,7 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 add_executable(momus_kairos
+    api/test_content_service_security.cpp
     auth/test_auth_store.cpp
     conf/test_conf_store.cpp
     db/test_migrations.cpp

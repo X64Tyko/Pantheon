@@ -19,6 +19,7 @@
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -72,6 +73,27 @@ ContentService::ContentService(const ServiceContext& ctx, ScraperManager& scrape
 	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync), scraper_(scraper) {}
 
 namespace {
+
+// Case-insensitive prefix check — used only for the "local:" sentinel guard
+// below, so a bypass attempt like "LOCAL:/etc/passwd" can't slip past a
+// literal-case check on one side while still matching case-insensitively
+// (or not) on the other.
+bool startsWithCI(const std::string& v, const std::string& prefix) {
+    if (v.size() < prefix.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(v[i])) != std::tolower(static_cast<unsigned char>(prefix[i])))
+            return false;
+    return true;
+}
+
+// "local:" is proxyImage()'s internal sentinel for serving a file straight
+// off disk (see ScraperManager::persistAnidbThumbLocally) — the only code
+// path allowed to produce it. thumb/art are otherwise free-text admin-edit
+// fields (PATCH /api/shows/:id, PATCH /api/movies/:id); without this guard
+// an admin could type "local:/etc/passwd" into one and turn the resulting
+// GET .../thumb route — which only requires a valid session, not admin —
+// into an arbitrary local file read for any logged-in user.
+bool isLocalSentinel(const std::string& v) { return startsWithCI(v, "local:"); }
 
 // Per-item language probe results are cached in-memory since ffprobe is
 // relatively expensive and a given file's language tracks never change.
@@ -150,6 +172,31 @@ void ContentService::proxyImage(const Req& req,
                                  const std::string& imgPath,
                                  const std::string& sourceId,
                                  Res& res) {
+	// Permanently downloaded art (currently just AniDB posters, opt-in via
+	// anidb_download_posters — see ScraperManager::persistAnidbThumbLocally)
+	// lives on disk next to the media instead of behind a remote CDN, so it's
+	// served directly with no network fetch, no rate limit, and no TTL-driven
+	// re-fetch — the file itself is the cache.
+	if (isLocalSentinel(imgPath)) {
+		fs::path local_path = imgPath.substr(6);
+		std::error_code ec;
+		if (!fs::exists(local_path, ec)) { res.status = 404; return; }
+		std::string local_etag = "\"" + imgCacheKey("local", imgPath) + "\"";
+		if (req.has_header("If-None-Match") && req.get_header_value("If-None-Match") == local_etag) {
+			res.status = 304;
+			res.set_header("Cache-Control", "public, max-age=86400");
+			res.set_header("ETag", local_etag);
+			return;
+		}
+		std::ifstream f(local_path, std::ios::binary);
+		if (!f) { res.status = 404; return; }
+		std::string body((std::istreambuf_iterator<char>(f)), {});
+		res.set_header("Cache-Control", "public, max-age=86400");
+		res.set_header("ETag", local_etag);
+		res.set_content(body, "image/jpeg");
+		return;
+	}
+
 	// For absolute CDN URLs (AniDB, TMDB, TVDB, etc.) split into base + path
 	// so we can proxy and cache server-side rather than redirecting. Hotlink
 	// protection on cdn.anidb.net blocks direct browser fetches.
@@ -285,7 +332,15 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	// Fetches and caches any external image URL. Exempt from auth in isPublicPath.
 	svr.Get("/api/images/proxy", [this](const Req& req, Res& res) {
 		if (!req.has_param("url")) { res.status = 400; return; }
-		proxyImage(req, req.get_param_value("url"), "", res);
+		std::string url = req.get_param_value("url");
+		// "local:" is proxyImage()'s signal to read an arbitrary server-side
+		// path (see persistAnidbThumbLocally) — safe from the DB-driven
+		// /thumb and /art routes below, whose image_path is never user
+		// input, but this endpoint takes `url` straight from the querystring
+		// with no auth, so allowing it through here would be an arbitrary
+		// local file read.
+		if (isLocalSentinel(url)) { res.status = 400; return; }
+		proxyImage(req, url, "", res);
 	});
 
 	// Re-fetch and re-apply this item's full metadata (overview, genres,
@@ -750,8 +805,16 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("imdb_id"))                 sf.push_back({"imdb_id",                 b["imdb_id"].get<std::string>()});
 			if (b.contains("tvdb_id"))                 sf.push_back({"tvdb_id",                 b["tvdb_id"].get<std::string>()});
 			if (b.contains("tmdb_id"))                 sf.push_back({"tmdb_id",                 b["tmdb_id"].get<std::string>()});
-			if (b.contains("thumb"))                   sf.push_back({"thumb",                   b["thumb"].get<std::string>()});
-			if (b.contains("art"))                     sf.push_back({"art",                     b["art"].get<std::string>()});
+			if (b.contains("thumb")) {
+				std::string v = b["thumb"].get<std::string>();
+				if (isLocalSentinel(v)) { route::err(res, 400, "invalid thumb value"); return; }
+				sf.push_back({"thumb", v});
+			}
+			if (b.contains("art")) {
+				std::string v = b["art"].get<std::string>();
+				if (isLocalSentinel(v)) { route::err(res, 400, "invalid art value"); return; }
+				sf.push_back({"art", v});
+			}
 			if (b.contains("genres"))                  sf.push_back({"genres",                  jsonStr(b["genres"])});
 			if (b.contains("labels"))                  sf.push_back({"labels",                  jsonStr(b["labels"])});
 			if (b.contains("network"))                 sf.push_back({"network",                 b["network"].get<std::string>()});
@@ -944,8 +1007,16 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("content_rating")) sf.push_back({"content_rating", b["content_rating"].get<std::string>()});
 			if (b.contains("imdb_id"))        sf.push_back({"imdb_id",        b["imdb_id"].get<std::string>()});
 			if (b.contains("tmdb_id"))        sf.push_back({"tmdb_id",        b["tmdb_id"].get<std::string>()});
-			if (b.contains("thumb"))          sf.push_back({"thumb",          b["thumb"].get<std::string>()});
-			if (b.contains("art"))            sf.push_back({"art",            b["art"].get<std::string>()});
+			if (b.contains("thumb")) {
+				std::string v = b["thumb"].get<std::string>();
+				if (isLocalSentinel(v)) { route::err(res, 400, "invalid thumb value"); return; }
+				sf.push_back({"thumb", v});
+			}
+			if (b.contains("art")) {
+				std::string v = b["art"].get<std::string>();
+				if (isLocalSentinel(v)) { route::err(res, 400, "invalid art value"); return; }
+				sf.push_back({"art", v});
+			}
 			if (b.contains("genres"))         sf.push_back({"genres",         jsonStr(b["genres"])});
 			if (b.contains("labels"))         sf.push_back({"labels",         jsonStr(b["labels"])});
 			if (b.contains("actors"))         sf.push_back({"actors",         jsonStr(b["actors"])});

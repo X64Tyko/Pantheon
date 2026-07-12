@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -343,6 +344,7 @@ ScraperSettings ScraperManager::getSettings() const {
     s.match_threshold = std::stod(readKey("match_threshold", "0.8"));
     s.dedup_fuzzy_title_threshold          = std::stod(readKey("dedup_fuzzy_title_threshold", "0.80"));
     s.dedup_folder_corroboration_threshold = std::stod(readKey("dedup_folder_corroboration_threshold", "0.30"));
+    s.anidb_download_posters               = readKey("anidb_download_posters", "0") == "1";
 
     for (const auto* src : { "tmdb", "tvdb", "anidb" }) {
         ScraperConfig c;
@@ -369,6 +371,7 @@ void ScraperManager::updateSettings(const ScraperSettings& s) {
     writeKey("match_threshold", std::to_string(s.match_threshold));
     writeKey("dedup_fuzzy_title_threshold",          std::to_string(s.dedup_fuzzy_title_threshold));
     writeKey("dedup_folder_corroboration_threshold", std::to_string(s.dedup_folder_corroboration_threshold));
+    writeKey("anidb_download_posters", s.anidb_download_posters ? "1" : "0");
     for (const auto& c : s.configs) {
         writeKey(configKey(c.source, "api_key"),  c.api_key);
         writeKey(configKey(c.source, "language"), c.language);
@@ -1281,6 +1284,58 @@ void ScraperManager::setMatchStatus(const std::string& item_type,
     q.exec();
 }
 
+// ── Local AniDB poster persistence ──────────────────────────────────────────
+
+void ScraperManager::persistAnidbThumbLocally(const std::string& item_type, const std::string& kairos_id) {
+    if (!anidb_ || !getSettings().anidb_download_posters) return;
+
+    const std::string table = (item_type == "show") ? "show" : "movie";
+    const std::string idcol = table + "_id";
+
+    std::string thumb;
+    bool locked = false;
+    try {
+        SQLite::Statement q(db_.get(), "SELECT thumb, locked FROM " + table + " WHERE " + idcol + " = ?");
+        q.bind(1, kairos_id);
+        if (!q.executeStep()) return;
+        thumb  = q.getColumn(0).getString();
+        locked = q.getColumn(1).getInt() != 0;
+    } catch (...) { return; }
+
+    // Only ever downloads a genuine AniDB CDN URL — never a "local:" path
+    // already persisted by a previous call, and never a poster another
+    // source (tmdb/tvdb) supplied for the same item.
+    if (locked || thumb.empty() || thumb.find("anidb.net") == std::string::npos) return;
+
+    std::string folder;
+    if (item_type == "show") {
+        folder = ContentRepository(db_).getShowFolderPath(kairos_id).value_or("");
+    } else {
+        if (auto d = ContentRepository(db_).getMovieDetail(kairos_id))
+            folder = ContentRepository::parentDir(d->file_path);
+    }
+    if (folder.empty()) return;
+
+    std::string bytes = anidb_->fetchImageBytes(thumb);
+    if (bytes.empty()) return;
+
+    std::error_code ec;
+    fs::path dest = fs::path(folder) / "aniThumb.jpg";
+    try {
+        std::ofstream f(dest, std::ios::binary);
+        if (!f) return;
+        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!f) return;
+    } catch (...) { return; }
+
+    try {
+        SQLite::Statement upd(db_.get(), "UPDATE " + table + " SET thumb = ? WHERE " + idcol + " = ?");
+        upd.bind(1, "local:" + dest.string());
+        upd.bind(2, kairos_id);
+        upd.exec();
+    } catch (...) {}
+}
+
 // ── Accept / reject ───────────────────────────────────────────────────────────
 
 AcceptResult ScraperManager::acceptCandidate(const std::string& candidate_id) {
@@ -1368,10 +1423,14 @@ AcceptResult ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 if (show) {
                     linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
                     applyShowMetadata(db_.get(), kairos_id, *show);
+                    persistAnidbThumbLocally(item_type, kairos_id);
                 }
             } else if (item_type == "movie") {
                 auto movie = anidb_->fetchMovie(external_id, language);
-                if (movie) applyMovieMetadata(db_.get(), kairos_id, *movie);
+                if (movie) {
+                    applyMovieMetadata(db_.get(), kairos_id, *movie);
+                    persistAnidbThumbLocally(item_type, kairos_id);
+                }
             }
         }
         if (source == "tmdb" && tmdb_) {
@@ -1650,12 +1709,14 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                     if (show) {
                         linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
                         applyShowMetadata(db_.get(), kairos_id, *show);
+                        persistAnidbThumbLocally(item_type, kairos_id);
                         any_success = true;
                     }
                 } else if (item_type == "movie") {
                     auto movie = anidb_->fetchMovie(id.external_id, language);
                     if (movie) {
                         applyMovieMetadata(db_.get(), kairos_id, *movie);
+                        persistAnidbThumbLocally(item_type, kairos_id);
                         any_success = true;
                     }
                 }

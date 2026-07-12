@@ -105,6 +105,13 @@ struct ScraperSettings {
     // uncertain duplicate candidate for human review rather than auto-merged.
     double dedup_fuzzy_title_threshold          = 0.80;
     double dedup_folder_corroboration_threshold = 0.30;
+    // Off by default: AniDB's title-dump search has no poster field, so any
+    // poster for an AniDB-matched item is fetched live through the
+    // rate-limited, hotlink-guarded CDN proxy on every cache expiry. Turning
+    // this on persists a confirmed match's poster to disk once (see
+    // ScraperManager::persistAnidbThumbLocally), trading a one-time 2.1s
+    // download for no further network dependency on that item's art.
+    bool anidb_download_posters = false;
 };
 
 class ScraperManager {
@@ -214,6 +221,18 @@ private:
     void buildScrapers();
     void runMatch(const std::string& target_id, const std::string& item_type);
     void runRefreshAll();
+
+    // Downloads a just-applied AniDB thumb to the item's own media folder
+    // (as aniThumb.jpg) and rewrites the DB thumb column to a "local:" path
+    // so ContentService::proxyImage serves it straight off disk from then
+    // on. No-op unless anidb_download_posters is enabled (see
+    // ScraperSettings) — called right after applyShowMetadata/
+    // applyMovieMetadata in the two places a confirmed AniDB match's
+    // metadata gets (re)applied: acceptCandidate() and refreshMetadata().
+    // Silently does nothing on any failure (locked item, no on-disk folder
+    // yet, download error) — a live-fetched poster is still a working
+    // fallback, so this is best-effort, not required for a match to "succeed".
+    void persistAnidbThumbLocally(const std::string& item_type, const std::string& kairos_id);
 
     // An item can be mapped to more than one media_library (cross-source
     // dedup — e.g. the same show synced from both a Plex library and a Local

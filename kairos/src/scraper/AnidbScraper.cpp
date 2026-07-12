@@ -184,6 +184,28 @@ void AnidbScraper::rateLimitImageWait() {
     last_image_call_ = std::chrono::steady_clock::now();
 }
 
+std::string AnidbScraper::fetchImageBytes(const std::string& url) {
+    if (url.rfind("http", 0) != 0) return {};
+    auto scheme_end = url.find("://");
+    auto path_start = (scheme_end != std::string::npos) ? url.find('/', scheme_end + 3) : std::string::npos;
+    if (path_start == std::string::npos) return {};
+    const std::string base = url.substr(0, path_start);
+    const std::string path = url.substr(path_start);
+
+    rateLimitImageWait();
+    httplib::Client client(base);
+    httplib::Headers headers{
+        {"User-Agent", "kairos/1.0 (https://github.com/X64Tyko/Pantheon)"},
+        {"Referer", "https://anidb.net/"}
+    };
+    client.set_default_headers(headers);
+    client.set_connection_timeout(5);
+    client.set_read_timeout(8);
+    auto res = client.Get(path);
+    if (!res || res->status != 200) return {};
+    return res->body;
+}
+
 // ---------------------------------------------------------------------------
 // Title dump — download + cache 24 h
 // ---------------------------------------------------------------------------

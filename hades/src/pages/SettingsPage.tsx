@@ -328,6 +328,12 @@ const applyBuffer = () => {
     setScraperDirty(true)
   }
 
+  const updateAnidbDownloadPosters = (v: boolean) => {
+    if (!scraperSettings) return
+    setScraperSettings(prev => prev ? { ...prev, anidb_download_posters: v } : prev)
+    setScraperDirty(true)
+  }
+
   const saveScraperSettings = async () => {
     if (!scraperSettings) return
     setScraperSaving(true)
@@ -896,6 +902,17 @@ const applyBuffer = () => {
             style={{ ...inputStyle, width: 80 }}
             value={anidb?.language_weight ?? 0.1}
             onChange={e => updateScraperConfig('anidb', 'language_weight', parseFloat(e.target.value))}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Download & Cache Posters Locally"
+          hint="Saves a confirmed match's poster to disk (next to the media, as aniThumb.jpg) the first time it's matched, so it loads instantly afterward with no AniDB CDN dependency. Tradeoff: AniDB rate-limits image fetches to ~1 every 2.1s, so turning this on adds a one-time ~2s delay per newly-matched or refreshed item, and matching/refreshing many anime at once will serialize slowly. Off by default — posters still work without this, just fetched live (and cached briefly) on each request instead of saved permanently."
+        >
+          <Toggle
+            id="anidb_download_posters"
+            checked={scraperSettings?.anidb_download_posters ?? false}
+            disabled={!scraperSettings}
+            onChange={v => updateAnidbDownloadPosters(v)}
           />
         </SettingRow>
       </Section>
