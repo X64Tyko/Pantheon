@@ -34,9 +34,50 @@ namespace {
 using titlematch::normalizeTitle;
 using titlematch::titleSimilarity;
 
+std::vector<std::string> splitWords(const std::string& s) {
+    std::vector<std::string> out;
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t j = s.find(' ', i);
+        if (j == std::string::npos) j = s.size();
+        if (j > i) out.push_back(s.substr(i, j - i));
+        i = j + 1;
+    }
+    return out;
+}
+
+// A local folder/file name is very often the canonical title plus a handful
+// of extra descriptive words a scraper's own title doesn't carry — "Batman"
+// vs the on-disk "Batman TV Series 1966", "Show Name" vs a "Show Name
+// Complete Season 1" that slipped past parseTitle's junk-tag cut. Plain
+// character-edit-distance-over-length (titleSimilarity) punishes this out of
+// proportion to how confident a match it actually is, especially for short
+// titles where a couple of extra words dominate the length. When one title's
+// words are a whole-word prefix of the other's, score it near the top instead
+// — tapering by extra-word count, and giving up (falling back to
+// titleSimilarity) past 5 extra words, where an unrelated tail is the more
+// likely explanation than an over-descriptive folder name.
+//
+// Deliberately NOT folded into titlematch::titleSimilarity() itself: that
+// function is shared with SyncManager's cross-source dedup, which has no
+// human review step to catch a false "these are the same show" merge, so it
+// can't afford this leniency the way an uncertain-queue candidate can.
+double titlePrefixSimilarity(const std::string& a, const std::string& b) {
+    auto wa = splitWords(normalizeTitle(a));
+    auto wb = splitWords(normalizeTitle(b));
+    const auto& shorter = wa.size() <= wb.size() ? wa : wb;
+    const auto& longer  = wa.size() <= wb.size() ? wb : wa;
+    if (shorter.empty() || shorter.size() == longer.size()) return 0.0;
+    size_t extra = longer.size() - shorter.size();
+    if (extra > 5) return 0.0;
+    if (!std::equal(shorter.begin(), shorter.end(), longer.begin())) return 0.0;
+    return 1.0 - static_cast<double>(extra) * 0.08;
+}
+
 double computeScore(const std::string& source_title, int source_year,
                     const std::string& cand_title,  int cand_year) {
-    double ts = titleSimilarity(source_title, cand_title);
+    double ts = std::max(titleSimilarity(source_title, cand_title),
+                         titlePrefixSimilarity(source_title, cand_title));
     double yb = 0.0;
     if (source_year > 0 && cand_year > 0) {
         if (source_year == cand_year) yb = 1.0;

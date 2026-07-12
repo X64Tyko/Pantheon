@@ -151,6 +151,33 @@ TEST_F(LocalSourceTest, FetchShows_TitleWithoutYear) {
     EXPECT_FALSE(shows[0].year.has_value());
 }
 
+TEST_F(LocalSourceTest, FetchShows_StripsCompleteSeasonSuffix) {
+    fs::create_directories(root_ / "tv" / "Show Name Complete Season 1" / "Season 01");
+    const auto shows = src_->fetchShows((root_ / "tv").string());
+    ASSERT_EQ(shows.size(), 1u);
+    EXPECT_EQ(shows[0].title, "Show Name");
+}
+
+TEST_F(LocalSourceTest, FetchShows_StripsDottedCompleteSeasonsRangeSuffix) {
+    fs::create_directories(root_ / "tv" / "Show.Name.Complete.Seasons.1-3" / "Season 01");
+    const auto shows = src_->fetchShows((root_ / "tv").string());
+    ASSERT_EQ(shows.size(), 1u);
+    EXPECT_EQ(shows[0].title, "Show Name");
+}
+
+// A collection/season descriptor that sits *before* the year in the folder
+// name still has to win the title cut, even though the year is found too —
+// regression test for the case where the year unconditionally won the cut
+// regardless of what preceded it.
+TEST_F(LocalSourceTest, FetchShows_StripsTvSeriesSuffixBeforeYear) {
+    fs::create_directories(root_ / "tv" / "Batman TV Series 1966" / "Season 01");
+    const auto shows = src_->fetchShows((root_ / "tv").string());
+    ASSERT_EQ(shows.size(), 1u);
+    EXPECT_EQ(shows[0].title, "Batman");
+    ASSERT_TRUE(shows[0].year.has_value());
+    EXPECT_EQ(*shows[0].year, 1966);
+}
+
 TEST_F(LocalSourceTest, FetchShows_SkipsHiddenDirs) {
     fs::create_directories(root_ / "tv" / ".hidden_show" / "Season 01");
     fs::create_directories(root_ / "tv" / "Normal Show" / "Season 01");

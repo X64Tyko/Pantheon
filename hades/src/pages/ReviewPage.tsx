@@ -150,15 +150,23 @@ export default observer(function ReviewPage() {
 
   useEffect(() => { fetchQueue() }, [fetchQueue])
 
-  const handleAccept = async (candidate_id: string) => {
-    const kairosId  = selectedQueue?.kairos_id
-    const fromTitle = selectedQueue?.title
-    const result = await api.acceptCandidate(candidate_id)
+  // Resolved items drop out of the queue, so re-finding the old kairos_id
+  // after a refetch never works — instead select whatever now sits at the
+  // resolved item's old position, which is the next item in the list.
+  const advanceQueueSelection = async (prevKairosId: string | undefined) => {
+    const prevIndex = prevKairosId ? queueItems.findIndex(i => i.kairos_id === prevKairosId) : -1
     const updated = await api.getReviewQueue({ status: queueFilter, limit: 48 })
     setQueueItems(updated.items)
     setQueueTotal(updated.total)
-    const refreshed = kairosId ? updated.items.find(i => i.kairos_id === kairosId) : null
-    setSelectedQueue(refreshed ?? null)
+    const next = prevIndex >= 0 ? updated.items[Math.min(prevIndex, updated.items.length - 1)] : null
+    setSelectedQueue(next ?? null)
+    return updated
+  }
+
+  const handleAccept = async (candidate_id: string) => {
+    const fromTitle = selectedQueue?.title
+    const result = await api.acceptCandidate(candidate_id)
+    await advanceQueueSelection(selectedQueue?.kairos_id)
     setMergeNotice(result.merged_into && fromTitle ? { fromTitle, into: result.merged_into } : null)
   }
 
@@ -360,10 +368,9 @@ export default observer(function ReviewPage() {
               onAccept={handleAccept}
               onReject={handleReject}
               onClose={() => setSelectedQueue(null)}
-              onMatched={(merged) => {
+              onMatched={async (merged) => {
                 const fromTitle = selectedQueue?.title
-                setSelectedQueue(null)
-                fetchQueue()
+                await advanceQueueSelection(selectedQueue?.kairos_id)
                 setMergeNotice(merged && fromTitle ? { fromTitle, into: merged } : null)
               }}
             />
@@ -587,7 +594,9 @@ function CandidatePanel({
 }) {
   const { user } = useAuth()
   const isAdmin  = user?.role === 'admin'
-  const [mode,          setMode]          = useState<'candidates'|'search'|'link'>('candidates')
+  const [mode,          setMode]          = useState<'candidates'|'search'|'link'>(
+    item.candidates.length === 0 ? 'search' : 'candidates'
+  )
   const [searchQuery,   setSearchQuery]   = useState(item.title)
   const [searchResults, setSearchResults] = useState<ScraperSearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
@@ -609,6 +618,13 @@ function CandidatePanel({
   }
 
   useEffect(() => { if (mode === 'candidates') loadMeta() }, [item.kairos_id, mode])
+
+  // Only for the case above where no candidates default us straight into
+  // Search — switchMode() below covers every other way of getting there.
+  useEffect(() => {
+    if (item.candidates.length === 0) runSearch(item.title)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Guards against an earlier, slower search response (AniDB in particular
   // is rate-limited to ~1 req/2s server-side, so an in-flight search can
@@ -686,7 +702,7 @@ function CandidatePanel({
 
   const switchMode = (m: 'candidates'|'search'|'link') => {
     setMode(m)
-    if (m === 'search') { setSearchResults([]); setSearchQuery(item.title) }
+    if (m === 'search') { setSearchResults([]); setSearchQuery(item.title); runSearch(item.title) }
     if (m === 'link')   { setLinkResults([]);   setLinkQuery(item.title); setFolderWarning(null); setLinkError(null) }
   }
 

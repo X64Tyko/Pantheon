@@ -57,6 +57,20 @@ const std::regex kSeasonDirRe(
     std::regex::icase
 );
 
+// Collection/season descriptors manual renamers or scene uploaders tack onto
+// a show's folder name that aren't part of the actual title a scraper search
+// needs — "Show Name Complete Season 1", "Show.Name.Complete.Seasons.1-3",
+// "Batman TV Series 1966". Same role as kJunkTagRe (earliest match becomes a
+// title cut point) but kept separate since it's a different category of
+// token, not a release/quality tag.
+const std::regex kCollectionTagRe(
+    R"(\b((?:the\s+)?complete(?:\s+series|\s+collection)?|)"
+    R"(tv\s+series|)"
+    R"((?:seasons?|series)\s*0*\d+(?:\s*-\s*0*\d+)?|)"
+    R"(collection)\b)",
+    std::regex::icase
+);
+
 bool isVideo(const fs::path& p) {
     if (!fs::is_regular_file(p)) return false;
     std::string ext = p.extension().string();
@@ -103,23 +117,35 @@ std::pair<std::string, std::optional<int>> parseTitle(const std::string& raw) {
     // Look for a year token, skipping one that sits at the very start of the
     // name — that's almost always the title itself ("1917", "2001 A Space
     // Odyssey"), not a release-year marker, so keep scanning for a later one.
+    // This only decides the `year` value — where the title actually gets cut
+    // is decided below, independently, since a collection/junk tag can sit
+    // *before* the year ("Batman TV Series 1966") and still needs to win.
     std::optional<int> year;
-    size_t cut = std::string::npos;
+    size_t year_pos = std::string::npos;
     for (auto it = std::sregex_iterator(name.begin(), name.end(), kYearTokenRe);
          it != std::sregex_iterator(); ++it) {
         size_t pos = static_cast<size_t>(it->position());
         if (trimmed(name.substr(0, pos)).empty()) continue;
         year = std::stoi((*it)[1].str());
-        cut = pos;
+        year_pos = pos;
         break;
     }
 
-    // No year marker found: fall back to the first quality/source/edition tag.
-    if (cut == std::string::npos) {
-        std::smatch jm;
-        if (std::regex_search(name, jm, kJunkTagRe) && jm.position() > 0)
-            cut = static_cast<size_t>(jm.position());
-    }
+    size_t junk_pos = std::string::npos;
+    std::smatch jm;
+    if (std::regex_search(name, jm, kJunkTagRe) && jm.position() > 0)
+        junk_pos = static_cast<size_t>(jm.position());
+
+    size_t coll_pos = std::string::npos;
+    std::smatch cm;
+    if (std::regex_search(name, cm, kCollectionTagRe) && cm.position() > 0)
+        coll_pos = static_cast<size_t>(cm.position());
+
+    // Whichever marker — release year, quality/edition tag, or collection/
+    // season descriptor — appears earliest in the name is what the title
+    // actually ends at; the year value found above still applies regardless
+    // of whether it was the one that won the cut.
+    size_t cut = std::min({ year_pos, junk_pos, coll_pos });
 
     std::string title = trimmed(cut == std::string::npos ? name : name.substr(0, cut));
     return {title, year};
