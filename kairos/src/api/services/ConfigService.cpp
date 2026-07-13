@@ -266,6 +266,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 				{"display_name", r.display_name},
 				{"has_token",    conf_.hasToken(r.source_id)},
 				{"has_user_id",  conf_.hasUserId(r.source_id)},
+				{"sync_priority", r.syncPriority},
 			});
 		}
 		route::ok(res, result.dump());

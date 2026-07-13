@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <iostream>
 
+#include "log/DebugLog.h"
+
 using json = nlohmann::json;
 
 // ---------------------------------------------------------------------------
@@ -87,82 +89,104 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
             if (!j["MediaContainer"].contains("Metadata")) break;
             const auto& items = j["MediaContainer"]["Metadata"];
             page_count = static_cast<int>(items.size());
+        	std::cout << "[plex:" << source_id_ << "] Queried  " << items[0]["title"] << " to " << items[page_count - 1]["title"] << '\n';
             result.reserve(result.size() + page_count);
-            for (const auto& item : items) {
-                Show show;
-                show.show_id        = item["ratingKey"].get<std::string>();
-                show.title          = item["title"].get<std::string>();
-                show.content_rating = item.value("contentRating", "");
-                show.overview       = item.value("summary", "");
-                show.studio         = item.value("studio", "");
-                show.status         = item.value("status", "");
-                show.thumb          = item.value("thumb", "");
-                show.art            = item.value("art", "");
-                show.originally_available_at = item.value("originallyAvailableAt", "");
+            for (const auto& minItem : items) {
+            	std::string detail_path = "/library/metadata/" + minItem["ratingKey"].get<std::string>();
+            	auto details = get(detail_path);
+            	if (!details || details->status != 200) break;
+            	if (!details->body.empty())
+            	{
+             		auto d = json::parse(details->body);
+       //      		std::cout << "[plex:" << source_id_ << "] Recieved Data: "
+					  // << to_string(d) << '\n';
+            		
+            		auto item = d["MediaContainer"]["Metadata"][0];
+            		Show show;
+            		show.show_id        = item["ratingKey"].get<std::string>();
+            		show.title          = item["title"].get<std::string>();
+            		show.content_rating = item.value("contentRating", "");
+            		show.overview       = item.value("summary", "");
+            		show.tagline        = item.value("tagline", "");
+            		show.studio         = item.value("studio", "");
+            		show.status         = item.value("status", "");
+            		show.thumb          = item.value("thumb", "");
+            		show.art            = item.value("art", "");
+            		show.originally_available_at = item.value("originallyAvailableAt", "");
 
-                // Root folder(s): [{"path":"/data/TV Shows/Show Name"}, ...] —
-                // same array-of-object shape as Genre/Label below. Only the
-                // first entry is used (multi-location shows are rare and the
-                // dedup use of this field only needs "a" folder, not all of
-                // them). NOTE: this field's exact shape hasn't been verified
-                // against a live Plex server in this change — confirm before
-                // relying on it, and adjust the key name if it differs.
-                if (item.contains("Location") && !item["Location"].empty())
-                    show.folder_path = item["Location"][0].value("path", "");
-                if (item.contains("year") && !item["year"].is_null())
-                    show.year = item["year"].get<int>();
-                if (item.contains("audienceRating") && !item["audienceRating"].is_null())
-                    show.audience_rating = item["audienceRating"].get<float>();
+            		// Root folder(s): [{"path":"/data/TV Shows/Show Name"}, ...] —
+            		// same array-of-object shape as Genre/Label below. Only the
+            		// first entry is used (multi-location shows are rare and the
+            		// dedup use of this field only needs "a" folder, not all of
+            		// them). NOTE: this field's exact shape hasn't been verified
+            		// against a live Plex server in this change — confirm before
+            		// relying on it, and adjust the key name if it differs.
+            		if (item.contains("Location") && !item["Location"].empty())
+            			show.folder_path = item["Location"][0].value("path", "");
+            		if (item.contains("year") && !item["year"].is_null())
+            			show.year = item["year"].get<int>();
+            		if (item.contains("audienceRating") && !item["audienceRating"].is_null())
+            			show.audience_rating = item["audienceRating"].get<float>();
 
-                // Genres: [{"tag":"Drama"}, ...]
-                json genres = json::array();
-                if (item.contains("Genre"))
-                    for (const auto& g : item["Genre"])
-                        genres.push_back(g.value("tag", ""));
-                show.genres = genres.dump();
+            		if (item.contains("Rating") && !item["Rating"].empty())
+            		{
+            			for (const auto& r : item["Rating"])
+            				show.ratings.push_back(Rating{r["image"], r["type"], r["value"]});
+            		}
+            		
+            		// Genres: [{"tag":"Drama"}, ...]
+            		json genres = json::array();
+            		if (item.contains("Genre"))
+            			for (const auto& g : item["Genre"])
+            				genres.push_back(g.value("tag", ""));
+            		show.genres = genres.dump();
 
-                // Labels
-                json labels = json::array();
-                if (item.contains("Label"))
-                    for (const auto& l : item["Label"])
-                        labels.push_back(l.value("tag", ""));
-                show.labels = labels.dump();
+            		// Labels
+            		json labels = json::array();
+            		if (item.contains("Label"))
+            			for (const auto& l : item["Label"])
+            				labels.push_back(l.value("tag", ""));
+            		show.labels = labels.dump();
 
-                // Network (Plex exposes it as an array)
-                if (item.contains("Network") && !item["Network"].empty())
-                    show.network = item["Network"][0].value("tag", "");
+            		// Network (Plex exposes it as an array)
+            		if (item.contains("Network") && !item["Network"].empty())
+            			show.network = item["Network"][0].value("tag", "");
 
-                // Actors (Role array)
-                json actors = json::array();
-                if (item.contains("Role"))
-                    for (const auto& r : item["Role"])
-                        actors.push_back(r.value("tag", ""));
-                show.actors = actors.dump();
+            		// Actors (Role array)
+            		json actors = json::array();
+            		if (item.contains("Role"))
+            			for (const auto& r : item["Role"])
+            				actors.push_back(r.value("tag", ""));
+            		show.actors = actors.dump();
 
-                // Countries
-                json countries = json::array();
-                if (item.contains("Country"))
-                    for (const auto& c : item["Country"])
-                        countries.push_back(c.value("tag", ""));
-                show.countries = countries.dump();
+            		// Countries
+            		json countries = json::array();
+            		if (item.contains("Country"))
+            			for (const auto& c : item["Country"])
+            				countries.push_back(c.value("tag", ""));
+            		show.countries = countries.dump();
 
-                // Collections
-                json collections = json::array();
-                if (item.contains("Collection"))
-                    for (const auto& c : item["Collection"])
-                        collections.push_back(c.value("tag", ""));
-                show.collections = collections.dump();
+            		// Collections
+            		json collections = json::array();
+            		if (item.contains("Collection"))
+            			for (const auto& c : item["Collection"])
+            				collections.push_back(c.value("tag", ""));
+            		show.collections = collections.dump();
 
-                // External IDs: [{"id":"imdb://tt..."}, {"id":"tvdb://..."}, ...]
-                if (item.contains("Guid")) {
-                    for (const auto& g : item["Guid"]) {
-                        std::string id = g.value("id", "");
-                        if (id.rfind("imdb://", 0) == 0)  show.imdb_id = id.substr(7);
-                        if (id.rfind("tvdb://", 0) == 0)  show.tvdb_id = id.substr(7);
-                        if (id.rfind("tmdb://", 0) == 0)  show.tmdb_id = id.substr(7);
-                    }
-                }
-                result.push_back(std::move(show));
+            		// External IDs: [{"id":"imdb://tt..."}, {"id":"tvdb://..."}, ...]
+            		if (item.contains("Guid")) {
+            			for (const auto& g : item["Guid"]) {
+            				std::string id = g.value("id", "");
+            				int titleEnd = id.find(':');
+            				if (titleEnd != std::string::npos)
+            					show.scraper_info.push_back(ScraperInfo{id.substr(0, titleEnd), id.substr(titleEnd + 3)});
+            				if (id.rfind("imdb://", 0) == 0)  show.imdb_id = id.substr(7);
+            				if (id.rfind("tvdb://", 0) == 0)  show.tvdb_id = id.substr(7);
+            				if (id.rfind("tmdb://", 0) == 0)  show.tmdb_id = id.substr(7);
+            			}
+            		}
+            		result.push_back(std::move(show));
+            	}
             }
         } catch (const json::exception& e) {
             std::cerr << "[plex:" << source_id_ << "] parse error (shows): " << e.what() << '\n';
@@ -198,6 +222,9 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
             if (!j["MediaContainer"].contains("Metadata")) break;
             const auto& items = j["MediaContainer"]["Metadata"];
             page_count = static_cast<int>(items.size());
+        	
+        	std::cout << "[plex:" << source_id_ << "] Queried  " << items[0]["title"] << " to " << items[page_count - 1]["title"] << '\n';
+        	
             result.reserve(result.size() + page_count);
             for (const auto& item : items) {
                 std::string file_path;
@@ -347,7 +374,11 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
                     if (media.contains("Part") && !media["Part"].empty())
                         file_path = media["Part"][0].value("file", "");
                 }
-                if (file_path.empty()) continue;
+                if (file_path.empty())
+                {
+                	DLOG << item["grandparentTitle"].get<std::string>() << " - " << item["title"].get<std::string>() << " has no file_path" << "\n";
+	                continue;
+                }
 
                 const int season = item.value("parentIndex", 0);
                 const std::string season_name = item.value("parentTitle", "");

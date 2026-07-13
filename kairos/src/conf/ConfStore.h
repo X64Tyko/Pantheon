@@ -31,7 +31,8 @@ public:
     std::string userId(const std::string& source_id) const;
     bool hasToken(const std::string& source_id)  const;
     bool hasUserId(const std::string& source_id) const;
-    std::vector<std::string> allSources() const;
+	bool getSyncPriority(const std::string& source_id) const;
+	std::vector<std::string> allSources() const;
 
     std::string getDownloadPath() const;
     void        setDownloadPath(const std::string& path);

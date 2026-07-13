@@ -9,6 +9,8 @@
 #include <nlohmann/json.hpp>
 #include <unordered_map>
 
+#include "log/DebugLog.h"
+
 using json = nlohmann::json;
 
 // ---------------------------------------------------------------------------
@@ -171,6 +173,8 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
             auto j = json::parse(res->body);
             const auto& items = j["Items"];
             page_count = static_cast<int>(items.size());
+        	
+        	std::cout << "[jellyfin:" << source_id_ << "] Queried  " << items[0].value("Name", "") << " to " << items[page_count - 1].value("Name", "") << '\n';
 
             for (const auto& item : items) {
                 const std::string id = item["Id"].get<std::string>();
@@ -207,6 +211,10 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
                     show.actors   = personNames(item["People"], "Actor");
 
                 const auto& pids = item.value("ProviderIds", json::object());
+            	for (const auto& p : pids.items())
+            	{
+            		show.scraper_info.push_back(ScraperInfo{p.key(), p.value().get<std::string>()});
+            	}
                 show.imdb_id = pids.value("Imdb", "");
                 show.tvdb_id = pids.value("Tvdb", "");
                 show.tmdb_id = pids.value("Tmdb", "");
@@ -253,6 +261,8 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
             auto j = json::parse(res->body);
             const auto& items = j["Items"];
             page_count = static_cast<int>(items.size());
+        	
+        	std::cout << "[jellyfin:" << source_id_ << "] Queried  " << items[0].value("Name", "") << " to " << items[page_count - 1].value("Name", "") << '\n';
 
             for (const auto& item : items) {
                 std::string file_path;
@@ -399,7 +409,11 @@ std::vector<Episode> JellyfinBaseSource::fetchEpisodes(const std::string& extern
                 std::string file_path;
                 if (item.contains("MediaSources") && !item["MediaSources"].empty())
                     file_path = item["MediaSources"][0].value("Path", "");
-                if (file_path.empty()) continue;
+            	if (file_path.empty())
+            	{
+            		DLOG << item.value("SeriesId", external_show_id) << " - " << item.value("Name", "") << " has no file_path" << "\n";
+            		continue;
+            	}
 
                 const std::string id = item["Id"].get<std::string>();
                 const int season     = item.value("ParentIndexNumber", 0);

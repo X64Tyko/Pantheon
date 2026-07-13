@@ -231,10 +231,16 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live,
     std::vector<LibRow> libs;
     {
         SQLite::Statement q(sync_db_, library_id.empty()
-            ? "SELECT library_id, external_lib_id, library_type, display_name "
-              "FROM media_library WHERE source_id = ? AND enabled = 1"
-            : "SELECT library_id, external_lib_id, library_type, display_name "
-              "FROM media_library WHERE source_id = ? AND enabled = 1 AND library_id = ?");
+            ? "SELECT ml.library_id, ml.external_lib_id, ml.library_type, ml.display_name, ms.sync_priority "
+              "FROM media_library ml "
+              "JOIN media_source ms ON ms.source_id = ml.source_id "
+              "WHERE ml.source_id = ? AND ml.enabled = 1 "
+              "ORDER BY ms.sync_priority"
+            : "SELECT ml.library_id, ml.external_lib_id, ml.library_type, ml.display_name, ms.sync_priority "
+			  "FROM media_library ml "
+			  "JOIN media_source ms ON ms.source_id = ml.source_id "
+			  "WHERE ml.source_id = ? AND ml.enabled = 1 AND ml.library_id = ? "
+			  "ORDER BY ms.sync_priority");
         q.bind(1, source_id);
         if (!library_id.empty()) q.bind(2, library_id);
         while (q.executeStep()) {
@@ -461,38 +467,28 @@ void SyncManager::syncShows(IMediaSource& src,
     // real shows (UK/US "The Office"/"Shameless", reboots sharing a name,
     // etc.), so this only merges when both sides agree on year or neither
     // has one. See the matching movie-dedup key below for the same reasoning.
-    std::unordered_map<std::string, std::string> show_title_to_id;
+	std::unordered_map<std::string, std::string> show_title_to_id;
+	struct ShowSnapshot { std::string kairos_id, title, folder_path; };
+	std::unordered_map<std::string, ShowSnapshot> folder_exact_to_show;
+	std::unordered_map<std::string, ShowSnapshot> folder_ci_to_show;
+	std::unordered_map<std::string, std::vector<ShowSnapshot>> shows_by_year;
     {
-        SQLite::Statement q(sync_db_, "SELECT LOWER(title), year, show_id FROM show");
+        SQLite::Statement q(sync_db_, "SELECT LOWER(title), year, show_id, folder_path FROM show");
         while (q.executeStep()) {
             std::string key = q.getColumn(0).getString() + "|" +
                 (q.getColumn(1).isNull() ? "" : std::to_string(q.getColumn(1).getInt()));
             show_title_to_id[key] = q.getColumn(2).getString();
-        }
-    }
+        	
+        	ShowSnapshot snap{ q.getColumn(2).getString(), q.getColumn(0).getString(),
+								q.getColumn(3).getString() };
+        	std::string year_key = q.getColumn(1).isNull() ? "" : std::to_string(q.getColumn(1).getInt());
+        	shows_by_year[year_key].push_back(snap);
 
-    // Folder-path + year-bucket snapshots for the tiered dedup below — same
-    // full-existing-table scope as show_title_to_id above, just indexed
-    // differently. folder_exact_to_show/folder_ci_to_show key on the mapped,
-    // normalized folder path; shows_by_year buckets by year (or "" for no
-    // year) for the fuzzy-title fallback.
-    struct ShowSnapshot { std::string kairos_id, title, folder_path; };
-    std::unordered_map<std::string, ShowSnapshot> folder_exact_to_show;
-    std::unordered_map<std::string, ShowSnapshot> folder_ci_to_show;
-    std::unordered_map<std::string, std::vector<ShowSnapshot>> shows_by_year;
-    {
-        SQLite::Statement q(sync_db_, "SELECT show_id, title, year, folder_path FROM show");
-        while (q.executeStep()) {
-            ShowSnapshot snap{ q.getColumn(0).getString(), q.getColumn(1).getString(),
-                                q.getColumn(3).getString() };
-            std::string year_key = q.getColumn(2).isNull() ? "" : std::to_string(q.getColumn(2).getInt());
-            shows_by_year[year_key].push_back(snap);
-
-            if (!snap.folder_path.empty()) {
-                std::string mapped = conf_.applyPathMap(snap.folder_path);
-                folder_exact_to_show[pathutil::normalizeCheap(mapped)] = snap;
-                folder_ci_to_show[pathutil::normalizeCaseInsensitive(mapped)] = snap;
-            }
+        	if (!snap.folder_path.empty()) {
+        		std::string mapped = conf_.applyPathMap(snap.folder_path);
+        		folder_exact_to_show[pathutil::normalizeCheap(mapped)] = snap;
+        		folder_ci_to_show[pathutil::normalizeCaseInsensitive(mapped)] = snap;
+        	}
         }
     }
 
@@ -571,7 +567,11 @@ void SyncManager::syncShows(IMediaSource& src,
                 std::string mapped = pathutil::normalizeCheap(conf_.applyPathMap(show.folder_path));
                 auto fit = folder_exact_to_show.find(mapped);
                 if (fit != folder_exact_to_show.end()) {
+                	// Same filepath with wildly differing titles likely means either libraries are using differing scrapers or
+                	// a bad match from one of the sources.
+                	DLOG << "[folder match: " << fit->first << "]" <<'\n';
                     double sim = titlematch::titleSimilarity(show.title, fit->second.title);
+                	DLOG << "[title similarity: " << show.title << " & " << fit->second.title << " : " << sim << "]" <<'\n';
                     if (sim >= kFolderCorroborationThreshold) {
                         kairos_id = fit->second.kairos_id;
                     } else {
@@ -660,7 +660,18 @@ void SyncManager::syncShows(IMediaSource& src,
             // folder/title) is this source re-finding itself, not a merge —
             // treating it as cross-ref would wrongly skip the metadata
             // upsert below.
-            if (!kairos_id.starts_with(show_prefix)) is_cross_ref = true;
+            if (!kairos_id.starts_with(show_prefix))
+            {
+            	DLOG << "[Show " << show.folder_path << + " - " << show.title 
+            	<< " matched to: " << (dup_note ? dup_note->other_folder : " ") + " - "
+            	<< (dup_note ? dup_note->other_title : " ") << "]" << '\n';
+	            is_cross_ref = true;
+            }
+        	else
+        	{
+        		DLOG << "[new show registered: " << conf_.applyPathMap(show.folder_path) << "] "
+        		<< (dup_note ? "Dupe Possible: " + dup_note->other_folder + " - " + dup_note->other_title + " triggered by: " + dup_note->trigger +  " with similarity: " + std::to_string(dup_note->title_similarity) : "") << '\n';
+        	}
         }
 
         ext_show_ids[i]    = ext_id;

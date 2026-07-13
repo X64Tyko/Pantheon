@@ -72,7 +72,7 @@ public:
     struct SourceMappingRow { std::string source_id, external_id; };
     std::optional<SourceMappingRow> getSourceMapping(const std::string& kairos_id);
 
-    struct SourceBasicRow { std::string source_id, source_type, display_name; };
+    struct SourceBasicRow { std::string source_id, source_type, display_name; int syncPriority;};
     std::vector<SourceBasicRow> listSourcesBasic();
 
     // Returns external_lib_id for a library, or empty string if not found.

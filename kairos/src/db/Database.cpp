@@ -1747,6 +1747,11 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE user ADD COLUMN pin_locked_until INTEGER NOT NULL DEFAULT 0;
 )SQL" }
 
+// ── v77: sync priority for sources ──────────────────────────────────────
+,{ 77, R"SQL(
+    ALTER TABLE media_source ADD COLUMN sync_priority INTEGER NOT NULL DEFAULT 0;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

@@ -95,6 +95,7 @@ export interface Source {
   // otherwise a human-readable reason it came back with nothing (bad token
   // permissions, HTTP error, etc.) — see IMediaSource::lastUserDiscoveryError.
   user_sync_error: string
+  sync_priority:   number
 }
 
 // A source-reported account with no local Pantheon account imported for it

@@ -29,7 +29,7 @@ const std::regex kJunkTagRe(
     std::regex::icase
 );
 
-// Collection/season descriptors manual renamers or scene uploaders tack onto
+// Collection/season/episode descriptors manual renamers or scene uploaders tack onto
 // a title that aren't part of the actual title a scraper search needs —
 // "Show Name Complete Season 1", "Show.Name.Complete.Seasons.1-3", "Batman
 // TV Series 1966". Same role as kJunkTagRe (earliest match becomes a title
@@ -38,8 +38,9 @@ const std::regex kJunkTagRe(
 const std::regex kCollectionTagRe(
     R"(\b((?:the\s+)?complete(?:\s+series|\s+collection)?|)"
     R"(tv\s+series|)"
-    R"((?:seasons?|series)\s*0*\d+(?:\s*-\s*0*\d+)?|)"
-    R"(collection)\b)",
+    R"((?:seasons?|series?|episodes)\s*0*\d+(?:\s*-\s*0*\d+)?|)"
+    R"(collection)\b|)"
+    R"(\d+[_\s]*-[_\s]*\d+)",
     std::regex::icase
 );
 

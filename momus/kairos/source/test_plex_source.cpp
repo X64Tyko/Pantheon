@@ -86,6 +86,38 @@ static void registerRoutes(httplib::Server& s) {
             }
         })", "application/json");
     });
+	
+	s.Get("/library/metadata/show1", [](const httplib::Request&, httplib::Response& res)
+	{
+		res.set_content(R"({
+            "MediaContainer": {
+                "Metadata": [{
+                    "ratingKey": "show1",
+                    "title": "Breaking Bad",
+                    "contentRating": "TV-MA",
+                    "summary": "A chemistry teacher turns meth cook.",
+                    "studio": "AMC",
+                    "status": "Ended",
+                    "thumb": "/library/metadata/show1/thumb",
+                    "art":   "/library/metadata/show1/art",
+                    "originallyAvailableAt": "2008-01-20",
+                    "year": 2008,
+                    "audienceRating": 9.5,
+                    "Genre":      [{"tag":"Drama"},{"tag":"Crime"}],
+                    "Label":      [{"tag":"favorite"}],
+                    "Network":    [{"tag":"AMC"}],
+                    "Role":       [{"tag":"Bryan Cranston"},{"tag":"Aaron Paul"}],
+                    "Country":    [{"tag":"US"}],
+                    "Collection": [{"tag":"Crime Dramas"}],
+                    "Guid": [
+                        {"id":"imdb://tt0903747"},
+                        {"id":"tvdb://81189"},
+                        {"id":"tmdb://1396"}
+                    ]
+                }]
+            }
+        })", "application/json");
+	});
 
     // ── Movies ────────────────────────────────────────────────────────────
     s.Get("/library/sections/2/all", [](const httplib::Request&, httplib::Response& res) {

@@ -311,7 +311,7 @@ export default observer(function SourcesPage() {
 
   // ── Add-source form ────────────────────────────────────────────────────────
   const [showAdd, setShowAdd]   = useState(false)
-  const [form, setForm]         = useState({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '' })
+  const [form, setForm]         = useState({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '', sync_priority: 0 })
   const [testState, setTest]    = useState<TestState>('idle')
   const [testError, setTestErr] = useState('')
 
@@ -333,10 +333,10 @@ export default observer(function SourcesPage() {
   }
 
   const addSource = async () => {
-    await store.addSource({ source_id: form.source_id, source_type: form.source_type as any, display_name: form.display_name, base_url: form.base_url })
+    await store.addSource({ source_id: form.source_id, source_type: form.source_type as any, display_name: form.display_name, base_url: form.base_url, sync_priority: form.sync_priority })
     if (form.token) await store.setCredentials(form.source_id, form.token, form.user_id)
     setShowAdd(false)
-    setForm({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '' })
+    setForm({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '', sync_priority: 0 })
     setTest('idle'); setTestErr('')
   }
 

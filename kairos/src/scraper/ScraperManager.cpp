@@ -242,6 +242,9 @@ const Cand& pickBest(const std::vector<Cand>& candidates, double best,
 // Returns true (don't block) when the path is empty — nothing to check.
 bool folderExists(const std::string& mapped_path) {
     if (mapped_path.empty()) return true;
+#ifdef KAIROS_DEV
+	return true;
+#endif
     try { return fs::exists(fs::path(mapped_path).parent_path()); }
     catch (...) { return true; } // can't stat — assume ok, don't penalise
 }
@@ -256,8 +259,24 @@ bool folderExists(const std::string& mapped_path) {
 // already-cleaned title below, and the mismatch check "recovers" by
 // searching TMDB/TVDB with the raw junk-laden folder name instead of a
 // clean one. See TitleMatch.h for why this lives there.
-std::string cleanFolderTitle(const std::string& name) {
-    return titlematch::parseReleaseTitle(name).first;
+std::string cleanFolderTitle(const std::string& name, std::optional<int>* outYear = nullptr) {
+    auto [title, year] = titlematch::parseReleaseTitle(name);
+    if (outYear) *outYear = year;
+    return title;
+}
+	
+bool isSeason(const std::string& folder)
+{
+	std::string lower;
+	lower.reserve(folder.size());
+	for (char c : folder)
+		lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	bool is_season = lower.starts_with("season") || lower.starts_with("specials")
+					 || lower.find("extras") != std::string::npos || lower.find("bonus") != std::string::npos
+					 || (lower.size() >= 2 && lower[0] == 's'
+						 && std::isdigit(static_cast<unsigned char>(lower[1])));
+	
+	return is_season;
 }
 
 // Returns the show-level folder name from an episode path.
@@ -265,17 +284,18 @@ std::string cleanFolderTitle(const std::string& name) {
 // For .../Show Name/ep.mkv           → "Show Name"
 std::string extractShowFolder(const fs::path& p) {
     fs::path parent = p.parent_path();
-    std::string pname = parent.filename().string();
-    // Detect season-style folders so we step up one more level.
-    std::string lower;
-    lower.reserve(pname.size());
-    for (char c : pname)
-        lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    bool is_season = lower.starts_with("season") || lower.starts_with("specials")
-                     || lower.starts_with("extras") || lower.starts_with("bonus")
-                     || (lower.size() >= 2 && lower[0] == 's'
-                         && std::isdigit(static_cast<unsigned char>(lower[1])));
-    return is_season ? parent.parent_path().filename().string() : pname;
+	if (fs::exists(parent) && fs::is_directory(parent))
+	{
+		for (const auto& sibling : fs::directory_iterator(parent))
+		{
+			if (fs::is_directory(sibling) && isSeason(sibling.path().filename().string()))
+				return parent.filename().string();
+		}
+	}
+	else if (fs::exists(parent))
+		return extractShowFolder(parent);
+
+	return "";
 }
 
 // Minimum folder/title similarity to trust a source-supplied external ID.
@@ -850,6 +870,7 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
     // Resolve the effective search title. When the on-disk folder name disagrees
     // with the source-provided title, the folder is more trustworthy.
     std::string search_title = title;
+	std::string file_path;
     bool has_paths = false, path_ok = false;
     {
         SQLite::Statement ep(db_.get(),
@@ -858,17 +879,25 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
         while (ep.executeStep() && !path_ok) {
             has_paths = true;
             std::string mapped = conf_.applyPathMap(ep.getColumn(0).getString());
-            if (!folderExists(mapped)) continue;
+            if (!folderExists(mapped))
+            {
+            	DLOG << "No file_path for " << title << " mapped to: " << mapped << "\n";
+	            continue;
+            }
             path_ok = true;
+        	file_path = mapped;
             std::string folder  = extractShowFolder(fs::path(mapped));
-            std::string stripped = cleanFolderTitle(folder);
+        	std::optional<int> outYear;
+            std::string stripped = cleanFolderTitle(folder, &outYear);
+        	
             double sim = titleSimilarity(title, stripped);
             if (sim < kFolderTitleThreshold && !stripped.empty()) {
                 search_title = stripped;
+            	if (outYear) year = *outYear;
                 std::cout << "[scraper]   \"" << title << "\" folder mismatch"
                           << " (folder: \"" << folder << "\", sim="
                           << std::fixed << std::setprecision(2) << sim
-                          << ") — searching as \"" << search_title << "\"\n";
+                          << ") — searching as \"" << search_title << " - " << year << "\"\n";
             }
         }
     }
@@ -880,12 +909,12 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
             std::cout << "[scraper]   \"" << title << "\" → uncertain (path missing)\n";
             std::string src = !tmdb_id.empty() ? "tmdb" : "tvdb";
             std::string eid = !tmdb_id.empty() ? tmdb_id : tvdb_id;
-            storeCandidate("show", kairos_id, src, eid, title, year, 1.0, "", "");
+            storeCandidate("show", kairos_id, src, eid, search_title, year, 1.0, "", "");
             setMatchStatus("show", kairos_id, "uncertain", 1.0);
             return;
         }
         if (search_title == title) {
-            std::cout << "[scraper]   \"" << title << "\" → matched\n";
+            std::cout << "[scraper]   \"" << title << " at: " << file_path << "\" → matched\n";
             const std::string src = !tmdb_id.empty() ? "tmdb" : "tvdb";
             const std::string eid = !tmdb_id.empty() ? tmdb_id : tvdb_id;
             auto dup = mergeIfDuplicateExternalId("show", kairos_id, src, eid);
@@ -1038,7 +1067,7 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
         setMatchStatus("show", kairos_id, "uncertain", best);
     } else if (best >= threshold()) {
         const auto& best_c = pickBest(candidates, best, priority);
-        std::cout << "[scraper]   \"" << search_title << "\" → matched"
+        std::cout << "[scraper]   \"" << search_title << "at: " << file_path << "\" → matched"
                   << " (" << best_c.source << ", "
                   << std::fixed << std::setprecision(2) << best << ")\n";
         std::string cid = candidateKey("show", kairos_id, best_c.source, best_c.ext_id);
@@ -1069,16 +1098,18 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
         if (!folderExists(mapped)) {
             if (!tmdb_id.empty()) {
                 std::cout << "[scraper]   \"" << title << "\" → uncertain (path missing)\n";
-                storeCandidate("movie", kairos_id, "tmdb", tmdb_id, title, year, 1.0, "", "");
+                storeCandidate("movie", kairos_id, "tmdb", tmdb_id, search_title, year, 1.0, "", "");
                 setMatchStatus("movie", kairos_id, "uncertain", 1.0);
                 return;
             }
         } else {
-            std::string folder = cleanFolderTitle(fs::path(mapped).parent_path().filename().string());
+        	std::optional<int> outYear;
+            std::string folder = cleanFolderTitle(fs::path(mapped).parent_path().filename().string(), &outYear);
             if (!folder.empty()) {
                 double sim = titleSimilarity(title, folder);
                 if (sim < kFolderTitleThreshold) {
                     search_title = folder;
+                	if (outYear) year = *outYear;
                     std::cout << "[scraper]   \"" << title << "\" folder mismatch"
                               << " (folder: \"" << folder << "\", sim="
                               << std::fixed << std::setprecision(2) << sim
@@ -1090,7 +1121,7 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
 
     if (!tmdb_id.empty() && search_title == title) {
         // Folder matched (or no file path to check) — trust the provided ID.
-        std::cout << "[scraper]   \"" << title << "\" → matched\n";
+        std::cout << "[scraper]   \"" << title << " at: " << file_path << "\" → matched\n";
         auto dup = mergeIfDuplicateExternalId("movie", kairos_id, "tmdb", tmdb_id);
         if (!dup.merged_into_kairos_id.empty()) return;
         linkExternalId("movie", kairos_id, "tmdb", tmdb_id, /*promote_to_primary=*/true);
@@ -1225,7 +1256,7 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
         setMatchStatus("movie", kairos_id, "uncertain", best);
     } else if (best >= threshold()) {
         const auto& best_c = pickBest(candidates, best, priority);
-        std::cout << "[scraper]   \"" << search_title << "\" → matched"
+        std::cout << "[scraper]   \"" << search_title << "at: " << file_path << "\" → matched"
                   << " (" << best_c.source << ", "
                   << std::fixed << std::setprecision(2) << best << ")\n";
         std::string cid = candidateKey("movie", kairos_id, best_c.source, best_c.ext_id);
