@@ -165,6 +165,7 @@ export default observer(function ReviewPage() {
 
   const handleAccept = async (candidate_id: string) => {
     const fromTitle = selectedQueue?.title
+    console.log('Accepting candidate', candidate_id, 'from', fromTitle)
     const result = await api.acceptCandidate(candidate_id)
     await advanceQueueSelection(selectedQueue?.kairos_id)
     setMergeNotice(result.merged_into && fromTitle ? { fromTitle, into: result.merged_into } : null)
