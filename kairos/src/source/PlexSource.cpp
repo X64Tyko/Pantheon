@@ -603,27 +603,32 @@ std::vector<Chapter> PlexSource::fetchChapters(const std::string& external_id) {
     return result;
 }
 
-namespace {
 // Shared parser for both plex.tv user-listing endpoints — they return the
 // same MediaContainer.User[] shape with id/title/username/email fields.
 std::vector<SourceUserInfo> parsePlexTvUsers(const std::string& body) {
     std::vector<SourceUserInfo> result;
     try {
         auto j = json::parse(body);
-        if (!j.contains("MediaContainer") || !j["MediaContainer"].contains("User")) return result;
-        for (const auto& u : j["MediaContainer"]["User"]) {
+        if (!j.contains("users")) return result;
+        for (const auto& u : j["users"]) {
+        	
             SourceUserInfo info;
-            info.external_user_id = u.value("id", "");
-            if (info.external_user_id.empty()) continue;
-            info.display_name = u.value("title", u.value("username", ""));
-            info.email         = u.value("email", "");
-            result.push_back(std::move(info));
+            info.external_user_id = std::to_string(u.value("id", 0));
+            if (info.external_user_id.empty())
+            {
+            	DLOG << "[Plex skipping user: " << u.value("title", u.value("username", "")) << " No Valid ID]" << "\n";
+	            continue;
+            }
+            info.display_name = u.value("title", "");
+        	if (u.contains("email") && !u["email"].is_null())
+            	info.email         = u["email"].get<std::string>();
+
+        	result.push_back(std::move(info));
         }
-    } catch (const json::exception&) {
-        // Best-effort: user discovery failing shouldn't break sync.
+    } catch (const json::exception& e) {
+    	std::cerr << "[plex:] failed to query users: " << e.what() << '\n';
     }
     return result;
-}
 }
 
 std::vector<SourceUserInfo> PlexSource::listServerUsers() {
@@ -650,9 +655,33 @@ std::vector<SourceUserInfo> PlexSource::listServerUsers() {
         }
     };
     std::vector<std::string> errors;
+	
+	// Get Device ID so we can grab users
+	if (auto res = account_client.Get("/devices/"); res && res->status == 200)
+	{
+		auto device_list = json::parse(res->body);
+		auto device = device_list[0];
+		const int device_id = device["id"].get<int>();
+		account_client.set_default_headers({
+			{"X-Plex-Token", token_},
+			{"X-Plex-Client-Identifier", std::to_string(device_id)},
+			{"Accept",       "application/json"}
+		});
+	}
+	else if (!res) {
+		auto msg = "/devices/ — " + httplib::to_string(res.error());
+		std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
+		errors.push_back(msg);
+	} else {
+		auto msg = "/devices — HTTP " + std::to_string(res->status);
+		std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
+		errors.push_back(msg);
+	}
+	
+	std::cerr << "[plex:" << source_id_ << " requesting users]" << '\n';
 
     // Home/managed users — PIN-only kid profiles typically have no email.
-    if (auto res = account_client.Get("/api/home/users"); res && res->status == 200)
+    if (auto res = account_client.Get("/api/v2/home/users"); res && res->status == 200)
         merge(parsePlexTvUsers(res->body));
     else if (!res) {
         auto msg = "/api/home/users — " + httplib::to_string(res.error());
@@ -664,18 +693,21 @@ std::vector<SourceUserInfo> PlexSource::listServerUsers() {
         errors.push_back(msg);
     }
 
-    // Shared ("Friends") access — separate Plex accounts, which do carry email.
-    if (auto res = account_client.Get("/api/users"); res && res->status == 200)
-        merge(parsePlexTvUsers(res->body));
-    else if (!res) {
-        auto msg = "/api/users — " + httplib::to_string(res.error());
-        std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
-        errors.push_back(msg);
-    } else {
-        auto msg = "/api/users — HTTP " + std::to_string(res->status);
-        std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
-        errors.push_back(msg);
-    }
+	// Friends account syncing doesnt work. hitting /api/users returns 200 but not with valid XML data.
+	if (false) {
+		// Shared ("Friends") access — separate Plex accounts, which do carry email.
+    	if (auto res = account_client.Get("/api/users"); res && res->status == 200)
+    		merge(parsePlexTvUsers(res->body));
+    	else if (!res) {
+    		auto msg = "/api/users — " + httplib::to_string(res.error());
+    		std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
+    		errors.push_back(msg);
+    	} else {
+    		auto msg = "/api/users — HTTP " + std::to_string(res->status);
+    		std::cerr << "[plex:" << source_id_ << "] " << msg << '\n';
+    		errors.push_back(msg);
+    	}
+	}
 
     // Both endpoints are independent (Home users vs Friends/shared access) —
     // only surface this as a diagnostic if it left us with nothing at all;

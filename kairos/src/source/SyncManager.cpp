@@ -292,6 +292,8 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live,
                 s.reset();
             }
         }
+    	
+    	DLOG << "[sync] user discovery: " << source_id << " / " << users.size() << " users" << std::endl;
 
         // See IMediaSource::lastUserDiscoveryError() — surfaces a real
         // permission/auth failure (vs. "this server genuinely has no other
