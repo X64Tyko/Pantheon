@@ -183,6 +183,13 @@ function EpisodeTile({ episode, onHover }: { episode: Episode; onHover?: () => v
           fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'oklch(0.9 0.01 285)',
           letterSpacing: '0.04em',
         }}>{code}</span>
+        {episode.watched && (
+          <span style={{
+            position: 'absolute', top: 6, right: 6,
+            background: 'oklch(0 0 0 / 0.6)', borderRadius: 4, padding: '2px 6px',
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-violet)',
+          }}>✓{episode.view_count && episode.view_count > 1 ? ` ${episode.view_count}` : ''}</span>
+        )}
         {episode.duration_ms > 0 && (
           <span style={{
             position: 'absolute', bottom: 6, right: 6,

@@ -852,9 +852,14 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         (p.sort == "recently_released") ? " ORDER BY m.release_date DESC" :
         (p.sort == "random")            ? " ORDER BY RANDOM()" :
                                           " ORDER BY m.title";
+    // watch_progress.completed is the rewatch count directly (see its column
+    // comment) — view_count IS that count, watched is just view_count > 0.
+    const std::string watch_join =
+        " LEFT JOIN watch_progress wp ON wp.user_id = ? AND wp.content_type = 'movie' AND wp.content_id = m.movie_id";
     const std::string movie_select =
         "SELECT m.movie_id, m.title, m.content_rating, m.duration_ms, m.year, m.release_date,"
-        " m.thumb, m.art, m.audience_rating, m.match_status, m.match_score," + msrc_subq;
+        " m.thumb, m.art, m.audience_rating, m.match_status, m.match_score," + msrc_subq +
+        ", COALESCE(wp.completed,0) AS view_count";
 
     auto parseMovieRow = [](SQLite::Statement& q) {
         MovieRow r;
@@ -871,6 +876,8 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         if (!q.getColumn(10).isNull()) r.match_score     = q.getColumn(10).getDouble();
         r.source_base_url = q.getColumn(11).getString();
         r.library_id      = q.getColumn(12).getString();
+        r.view_count       = q.getColumn(13).getInt64();
+        r.watched          = r.view_count > 0;
         return r;
     };
 
@@ -893,8 +900,8 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
         SQLite::Statement q(db_.get(),
-            movie_select + " FROM movie m WHERE 1=1" + extras + home_exclude + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
-        idx = 1; bindExtras(q, idx);
+            movie_select + " FROM movie m" + watch_join + " WHERE 1=1" + extras + home_exclude + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
+        idx = 1; q.bind(idx++, p.user_id); bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));
     } else {
@@ -909,9 +916,9 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         SQLite::Statement q(db_.get(),
             movie_select + R"( FROM movie m
             JOIN source_mapping sm ON sm.kairos_id = m.movie_id
-                AND sm.item_type = 'movie' AND sm.library_id = ?
+                AND sm.item_type = 'movie' AND sm.library_id = ?)" + watch_join + R"(
             WHERE 1=1)" + extras + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
-        idx = 1; q.bind(idx++, p.library_id); bindExtras(q, idx);
+        idx = 1; q.bind(idx++, p.library_id); q.bind(idx++, p.user_id); bindExtras(q, idx);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));
     }
@@ -1045,7 +1052,7 @@ std::optional<std::string> ContentRepository::getShowFolderPath(const std::strin
     return dir.empty() ? std::nullopt : std::make_optional(dir);
 }
 
-std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& movie_id) {
+std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& movie_id, const std::string& user_id) {
     SQLite::Statement q(db_.get(), R"(
         SELECT movie_id, title, content_rating, duration_ms, year,
                overview, tagline, studio, director, genres, thumb, art,
@@ -1098,6 +1105,16 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
         d.external_id     = sm.getColumn(0).getString();
         d.source_id       = sm.getColumn(1).getString();
         d.source_base_url = sm.getColumn(2).getString();
+    }
+
+    if (!user_id.empty()) {
+        SQLite::Statement wp(db_.get(), R"SQL(
+            SELECT completed FROM watch_progress WHERE user_id=? AND content_type='movie' AND content_id=?
+        )SQL");
+        wp.bind(1, user_id);
+        wp.bind(2, movie_id);
+        if (wp.executeStep()) d.view_count = wp.getColumn(0).getInt64();
+        d.watched = d.view_count > 0;
     }
 
     {
@@ -1394,14 +1411,19 @@ void ContentRepository::mergeShowInto(const std::string& target_id, const std::s
 }
 
 std::vector<EpisodeRow> ContentRepository::listEpisodesForShow(const std::string& show_id,
-                                                                 const std::string& season_filter) {
+                                                                 const std::string& season_filter,
+                                                                 const std::string& user_id) {
     bool has_season = !season_filter.empty();
     SQLite::Statement q(db_.get(),
-        std::string("SELECT episode_id, season, episode, title, duration_ms, overview, air_date, thumb, file_path "
-                    "FROM episode WHERE show_id = ?") +
-        (has_season ? " AND season = ?" : "") + " ORDER BY season, episode");
-    q.bind(1, show_id);
-    if (has_season) q.bind(2, std::stoi(season_filter));
+        std::string("SELECT e.episode_id, e.season, e.episode, e.title, e.duration_ms, e.overview, e.air_date, e.thumb, e.file_path, "
+                    "COALESCE(wp.completed,0) "
+                    "FROM episode e "
+                    "LEFT JOIN watch_progress wp ON wp.user_id = ? AND wp.content_type = 'episode' AND wp.content_id = e.episode_id "
+                    "WHERE e.show_id = ?") +
+        (has_season ? " AND e.season = ?" : "") + " ORDER BY e.season, e.episode");
+    q.bind(1, user_id);
+    q.bind(2, show_id);
+    if (has_season) q.bind(3, std::stoi(season_filter));
     std::vector<EpisodeRow> rows;
     while (q.executeStep()) {
         EpisodeRow r;
@@ -1414,6 +1436,8 @@ std::vector<EpisodeRow> ContentRepository::listEpisodesForShow(const std::string
         r.air_date    = q.getColumn(6).getString();
         r.thumb       = q.getColumn(7).getString();
         r.file_path   = q.getColumn(8).getString();
+        r.view_count  = q.getColumn(9).getInt64();
+        r.watched     = r.view_count > 0;
         rows.push_back(std::move(r));
     }
     return rows;

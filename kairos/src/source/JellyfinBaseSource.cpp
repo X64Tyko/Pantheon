@@ -315,11 +315,13 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
                 movie.imdb_id = pids.value("Imdb", "");
                 movie.tmdb_id = pids.value("Tmdb", "");
 
-                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at.
+                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at/src_view_count.
                 if (item.contains("UserData")) {
                     const auto& ud = item["UserData"];
                     if (ud.contains("Played") && !ud["Played"].is_null())
                         movie.src_watched = ud["Played"].get<bool>();
+                    if (ud.contains("PlayCount") && !ud["PlayCount"].is_null())
+                        movie.src_view_count = ud["PlayCount"].get<int64_t>();
                     if (ud.contains("PlaybackPositionTicks") && !ud["PlaybackPositionTicks"].is_null())
                         movie.src_position_ms = ud["PlaybackPositionTicks"].get<int64_t>() / 10000;
                     if (ud.contains("LastPlayedDate") && !ud["LastPlayedDate"].is_null()) {
@@ -447,11 +449,13 @@ std::vector<Episode> JellyfinBaseSource::fetchEpisodes(const std::string& extern
                 if (sn_it != season_names.end())
                     ep.season_name = sn_it->second;
 
-                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at.
+                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at/src_view_count.
                 if (item.contains("UserData")) {
                     const auto& ud = item["UserData"];
                     if (ud.contains("Played") && !ud["Played"].is_null())
                         ep.src_watched = ud["Played"].get<bool>();
+                    if (ud.contains("PlayCount") && !ud["PlayCount"].is_null())
+                        ep.src_view_count = ud["PlayCount"].get<int64_t>();
                     if (ud.contains("PlaybackPositionTicks") && !ud["PlaybackPositionTicks"].is_null())
                         ep.src_position_ms = ud["PlaybackPositionTicks"].get<int64_t>() / 10000;
                     if (ud.contains("LastPlayedDate") && !ud["LastPlayedDate"].is_null()) {
@@ -617,6 +621,8 @@ std::vector<ExternalWatchState> JellyfinBaseSource::fetchWatchState(const std::s
 
                 if (ud.contains("Played") && !ud["Played"].is_null())
                     st.watched = ud["Played"].get<bool>();
+                if (ud.contains("PlayCount") && !ud["PlayCount"].is_null())
+                    st.view_count = ud["PlayCount"].get<int64_t>();
                 if (ud.contains("PlaybackPositionTicks") && !ud["PlaybackPositionTicks"].is_null())
                     st.position_ms = ud["PlaybackPositionTicks"].get<int64_t>() / 10000;
                 if (ud.contains("LastPlayedDate") && !ud["LastPlayedDate"].is_null()) {

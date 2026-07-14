@@ -21,8 +21,12 @@ class WatchProgressRepository {
 public:
     explicit WatchProgressRepository(Database& db);
 
-    // Upserts position/completed state. Callers deciding whether an incoming
-    // write should win over an existing row (e.g. SyncManager's
+    // Upserts position/duration/updated_at. `completed` is this specific
+    // write's "did this ping just cross the finish line" signal — the stored
+    // watch_progress.completed column is the rewatch count itself (not a 0/1
+    // flag), incremented by exactly 1 when `completed=true` and the row
+    // wasn't already sitting at a finished position. Callers deciding whether
+    // an incoming write should win over an existing row (e.g. SyncManager's
     // freshness-gated seed from a source) must check that themselves — this
     // always writes.
     void upsert(const std::string& user_id,

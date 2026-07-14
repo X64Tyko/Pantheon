@@ -373,54 +373,6 @@ std::string dupCandidateReason(const std::string& trigger, double title_similari
     return "Title similarity " + std::to_string(pct) + "%, different folders";
 }
 
-// Shared watch_progress freshness-merge policy — used for the primary
-// synced_user_id path (syncShows()/syncMovies() below) and for every other
-// linked account (syncLinkedUserWatchState()). A source write only wins when
-// it's provably fresher (src_watched_at newer than the local row's
-// updated_at) or there's no local row yet at all — seeds Continue Watching
-// from the source once, but never clobbers progress the user just made in
-// Hades itself. A source-reported "fully watched" with no local row is
-// skipped entirely (not inserted at 100%), matching watch_progress's
-// existing convention that a missing row means "not in progress"
-// (PlaybackService deletes on >=95% watched).
-void applyWatchState(SQLite::Statement& s_get, SQLite::Statement& s_upsert, SQLite::Statement& s_delete,
-                      const std::string& user_id, const std::string& item_type, const std::string& content_id,
-                      std::optional<bool> src_watched, std::optional<int64_t> src_position_ms,
-                      std::optional<int64_t> src_watched_at, int64_t duration_ms) {
-    if (user_id.empty() || (!src_watched.has_value() && !src_position_ms.has_value())) return;
-
-    s_get.reset();
-    s_get.bind(1, user_id);
-    s_get.bind(2, item_type);
-    s_get.bind(3, content_id);
-    const bool has_local = s_get.executeStep();
-    const int64_t local_updated_at = has_local ? s_get.getColumn(0).getInt64() : 0;
-
-    const bool source_fresher = src_watched_at.has_value()
-        ? (src_watched_at.value() > local_updated_at)
-        : !has_local; // no timestamp from source: seed once, never overwrite
-    if (!source_fresher) return;
-
-    if (src_watched.value_or(false)) {
-        if (has_local) {
-            s_delete.reset();
-            s_delete.bind(1, user_id);
-            s_delete.bind(2, item_type);
-            s_delete.bind(3, content_id);
-            s_delete.exec();
-        }
-    } else if (src_position_ms.has_value()) {
-        s_upsert.reset();
-        s_upsert.bind(1, user_id);
-        s_upsert.bind(2, item_type);
-        s_upsert.bind(3, content_id);
-        s_upsert.bind(4, src_position_ms.value());
-        s_upsert.bind(5, duration_ms);
-        s_upsert.bind(6, src_watched_at.value_or(static_cast<int64_t>(std::time(nullptr))));
-        s_upsert.exec();
-    }
-}
-
 int defaultSyncThreadCount() {
     if (const char* env = std::getenv("KAIROS_SYNC_THREADS")) {
         try {
@@ -441,6 +393,54 @@ int SyncManager::getThreadCount() const {
 
 void SyncManager::setThreadCount(int n) {
     override_thread_count_.store(n > 0 ? n : 0, std::memory_order_relaxed);
+}
+
+void SyncManager::applyWatchState(SQLite::Statement& s_get, SQLite::Statement& s_upsert_progress,
+                                   SQLite::Statement& s_upsert_watched,
+                                   const std::string& user_id, const std::string& item_type, const std::string& content_id,
+                                   std::optional<bool> src_watched, std::optional<int64_t> src_view_count,
+                                   std::optional<int64_t> src_position_ms, std::optional<int64_t> src_watched_at,
+                                   int64_t duration_ms) {
+    if (user_id.empty() || (!src_watched.has_value() && !src_position_ms.has_value())) return;
+
+    s_get.reset();
+    s_get.bind(1, user_id);
+    s_get.bind(2, item_type);
+    s_get.bind(3, content_id);
+    const bool has_local = s_get.executeStep();
+    const int64_t local_updated_at = has_local ? s_get.getColumn(0).getInt64() : 0;
+    const int64_t local_count      = has_local ? s_get.getColumn(1).getInt64() : 0;
+
+    const bool source_fresher = src_watched_at.has_value()
+        ? (src_watched_at.value() > local_updated_at)
+        : !has_local; // no timestamp from source: seed once, never overwrite
+    if (!source_fresher) return;
+
+    if (src_watched.value_or(false)) {
+        // completed is the rewatch count itself (not a 0/1 flag) — take the
+        // source's own count when it has one, but never regress below what's
+        // already recorded locally.
+        const int64_t incoming = std::max<int64_t>(src_view_count.value_or(1), 1);
+        const int64_t merged   = std::max(local_count, incoming);
+        s_upsert_watched.reset();
+        s_upsert_watched.bind(1, user_id);
+        s_upsert_watched.bind(2, item_type);
+        s_upsert_watched.bind(3, content_id);
+        s_upsert_watched.bind(4, duration_ms); // position clamped to full duration
+        s_upsert_watched.bind(5, duration_ms);
+        s_upsert_watched.bind(6, src_watched_at.value_or(static_cast<int64_t>(std::time(nullptr))));
+        s_upsert_watched.bind(7, merged);
+        s_upsert_watched.exec();
+    } else if (src_position_ms.has_value()) {
+        s_upsert_progress.reset();
+        s_upsert_progress.bind(1, user_id);
+        s_upsert_progress.bind(2, item_type);
+        s_upsert_progress.bind(3, content_id);
+        s_upsert_progress.bind(4, src_position_ms.value());
+        s_upsert_progress.bind(5, duration_ms);
+        s_upsert_progress.bind(6, src_watched_at.value_or(static_cast<int64_t>(std::time(nullptr))));
+        s_upsert_progress.exec();
+    }
 }
 
 void SyncManager::syncShows(IMediaSource& src,
@@ -938,18 +938,9 @@ void SyncManager::syncShows(IMediaSource& src,
         if (q.executeStep() && !q.getColumn(0).isNull()) return q.getColumn(0).getString();
         return std::string();
     }();
-    SQLite::Statement s_watch_get(sync_db_,
-        "SELECT updated_at FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
-    SQLite::Statement s_watch_upsert(sync_db_, R"(
-        INSERT INTO watch_progress (user_id, content_type, content_id, position_ms, duration_ms, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, content_type, content_id) DO UPDATE SET
-            position_ms = excluded.position_ms,
-            duration_ms = excluded.duration_ms,
-            updated_at  = excluded.updated_at
-    )");
-    SQLite::Statement s_watch_delete(sync_db_,
-        "DELETE FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
+    SQLite::Statement s_watch_get(sync_db_, SyncManager::kWatchGetSql);
+    SQLite::Statement s_watch_upsert_progress(sync_db_, SyncManager::kWatchUpsertProgressSql);
+    SQLite::Statement s_watch_upsert_watched(sync_db_, SyncManager::kWatchUpsertWatchedSql);
 
     for (size_t i = 0; i < shows.size(); ++i) {
         auto& show     = shows[i];
@@ -1022,9 +1013,9 @@ void SyncManager::syncShows(IMediaSource& src,
                     s_ep_mapping.bind(4, ext_ep_id);
                     s_ep_mapping.exec();
 
-                    applyWatchState(s_watch_get, s_watch_upsert, s_watch_delete,
+                    SyncManager::applyWatchState(s_watch_get, s_watch_upsert_progress, s_watch_upsert_watched,
                                      synced_user_id, "episode", ep.episode_id,
-                                     ep.src_watched, ep.src_position_ms, ep.src_watched_at, ep.duration_ms);
+                                     ep.src_watched, ep.src_view_count, ep.src_position_ms, ep.src_watched_at, ep.duration_ms);
                 } catch (const std::exception& e) {
                     std::cerr << "[sync] skipping episode " << ep.file_path
                               << ": " << e.what() << '\n';
@@ -1381,18 +1372,9 @@ void SyncManager::syncMovies(IMediaSource& src,
         if (q.executeStep() && !q.getColumn(0).isNull()) return q.getColumn(0).getString();
         return std::string();
     }();
-    SQLite::Statement s_watch_get(sync_db_,
-        "SELECT updated_at FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
-    SQLite::Statement s_watch_upsert(sync_db_, R"(
-        INSERT INTO watch_progress (user_id, content_type, content_id, position_ms, duration_ms, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, content_type, content_id) DO UPDATE SET
-            position_ms = excluded.position_ms,
-            duration_ms = excluded.duration_ms,
-            updated_at  = excluded.updated_at
-    )");
-    SQLite::Statement s_watch_delete(sync_db_,
-        "DELETE FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
+    SQLite::Statement s_watch_get(sync_db_, SyncManager::kWatchGetSql);
+    SQLite::Statement s_watch_upsert_progress(sync_db_, SyncManager::kWatchUpsertProgressSql);
+    SQLite::Statement s_watch_upsert_watched(sync_db_, SyncManager::kWatchUpsertWatchedSql);
 
     for (size_t batch_start = 0; batch_start < movies.size(); batch_start += kMovieBatchSize) {
         yieldIfRequested();
@@ -1454,9 +1436,9 @@ void SyncManager::syncMovies(IMediaSource& src,
                     s_dup_candidate_m.exec();
                 }
 
-                applyWatchState(s_watch_get, s_watch_upsert, s_watch_delete,
+                SyncManager::applyWatchState(s_watch_get, s_watch_upsert_progress, s_watch_upsert_watched,
                                  synced_user_id, "movie", movie.movie_id,
-                                 movie.src_watched, movie.src_position_ms, movie.src_watched_at, movie.duration_ms);
+                                 movie.src_watched, movie.src_view_count, movie.src_position_ms, movie.src_watched_at, movie.duration_ms);
             }
             txn.commit();
             std::cout << "[sync]   wrote movies: "
@@ -1677,18 +1659,9 @@ void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string&
         "SELECT kairos_id FROM source_mapping WHERE source_id = ? AND item_type = ? AND external_id = ?");
     SQLite::Statement s_duration_ep(sync_db_, "SELECT duration_ms FROM episode WHERE episode_id = ?");
     SQLite::Statement s_duration_mv(sync_db_, "SELECT duration_ms FROM movie WHERE movie_id = ?");
-    SQLite::Statement s_watch_get(sync_db_,
-        "SELECT updated_at FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
-    SQLite::Statement s_watch_upsert(sync_db_, R"(
-        INSERT INTO watch_progress (user_id, content_type, content_id, position_ms, duration_ms, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, content_type, content_id) DO UPDATE SET
-            position_ms = excluded.position_ms,
-            duration_ms = excluded.duration_ms,
-            updated_at  = excluded.updated_at
-    )");
-    SQLite::Statement s_watch_delete(sync_db_,
-        "DELETE FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?");
+    SQLite::Statement s_watch_get(sync_db_, SyncManager::kWatchGetSql);
+    SQLite::Statement s_watch_upsert_progress(sync_db_, SyncManager::kWatchUpsertProgressSql);
+    SQLite::Statement s_watch_upsert_watched(sync_db_, SyncManager::kWatchUpsertWatchedSql);
 
     for (const auto& lu : linked) {
         // Empty for any source that doesn't override fetchWatchState (Plex
@@ -1717,9 +1690,9 @@ void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string&
                 if (s_duration.executeStep()) duration_ms = s_duration.getColumn(0).getInt64();
 
             	DLOG << "[sync] syncing linked user watch state for " << e.title << " " << kairos_id << '\n';
-                applyWatchState(s_watch_get, s_watch_upsert, s_watch_delete,
+                SyncManager::applyWatchState(s_watch_get, s_watch_upsert_progress, s_watch_upsert_watched,
                                  lu.local_user_id, e.item_type, kairos_id,
-                                 e.watched, e.position_ms, e.watched_at, duration_ms);
+                                 e.watched, e.view_count, e.position_ms, e.watched_at, duration_ms);
             }
             txn.commit();
         } catch (const std::exception& ex) {

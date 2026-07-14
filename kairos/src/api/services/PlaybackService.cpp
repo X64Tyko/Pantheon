@@ -87,9 +87,15 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 		try {
 			json out = json::array();
 
+			// completed is the rewatch count (see WatchProgressRepository.h), not a
+			// 0/1 flag that resets when a rewatch starts — "still in progress" is
+			// instead read straight off position vs duration, which is correct
+			// whether this is a first watch or a currently-mid rewatch of
+			// something finished before.
 			SQLite::Statement movies(db_.get(), R"SQL(
 				SELECT content_id, position_ms, duration_ms, updated_at
-				FROM watch_progress WHERE user_id = ? AND content_type = 'movie' AND completed = 0
+				FROM watch_progress WHERE user_id = ? AND content_type = 'movie'
+					AND duration_ms > 0 AND position_ms < duration_ms
 			)SQL");
 			movies.bind(1, user->user_id);
 			while (movies.executeStep()) {

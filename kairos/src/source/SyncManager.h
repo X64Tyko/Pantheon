@@ -111,6 +111,45 @@ public:
                           const std::string& external_id,
                           const std::string& file_path);
 
+    // Shared watch_progress freshness-merge policy, used by syncShows()/
+    // syncMovies()'s primary synced_user_id path and by
+    // syncLinkedUserWatchState() for every other linked account. A source
+    // write only wins when it's provably fresher (src_watched_at newer than
+    // the local row's updated_at) or there's no local row yet at all — seeds
+    // Continue Watching from the source once, but never clobbers progress the
+    // user just made in Hades itself. `watch_progress.completed` is the
+    // rewatch count directly (not a 0/1 flag) — a source-reported watch
+    // upserts completed = max(local count, source's own count), position
+    // clamped to full duration; never deletes the row. Public + static
+    // (stateless) so momus tests can exercise it directly against a bare
+    // in-memory Database using the SQL below.
+    static constexpr const char* kWatchGetSql =
+        "SELECT updated_at, completed FROM watch_progress WHERE user_id=? AND content_type=? AND content_id=?";
+    static constexpr const char* kWatchUpsertProgressSql = R"(
+        INSERT INTO watch_progress (user_id, content_type, content_id, position_ms, duration_ms, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, content_type, content_id) DO UPDATE SET
+            position_ms = excluded.position_ms,
+            duration_ms = excluded.duration_ms,
+            updated_at  = excluded.updated_at
+    )"; // never touches completed — an in-progress ping can't regress the count
+    static constexpr const char* kWatchUpsertWatchedSql = R"(
+        INSERT INTO watch_progress (user_id, content_type, content_id, position_ms, duration_ms, updated_at, completed)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, content_type, content_id) DO UPDATE SET
+            position_ms = excluded.position_ms,
+            duration_ms = excluded.duration_ms,
+            updated_at  = excluded.updated_at,
+            completed   = excluded.completed
+    )";
+
+    static void applyWatchState(SQLite::Statement& s_get, SQLite::Statement& s_upsert_progress,
+                                 SQLite::Statement& s_upsert_watched,
+                                 const std::string& user_id, const std::string& item_type, const std::string& content_id,
+                                 std::optional<bool> src_watched, std::optional<int64_t> src_view_count,
+                                 std::optional<int64_t> src_position_ms, std::optional<int64_t> src_watched_at,
+                                 int64_t duration_ms);
+
 private:
     // library_id empty = every enabled library on this source (the normal
     // full-source path); non-empty = just that one (see syncLibrary above).

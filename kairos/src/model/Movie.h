@@ -34,4 +34,5 @@ struct Movie {
     std::optional<bool>    src_watched;
     std::optional<int64_t> src_position_ms;
     std::optional<int64_t> src_watched_at; // epoch seconds, when the source provides one
+    std::optional<int64_t> src_view_count; // real rewatch count when the source reports one (Plex viewCount / Jellyfin PlayCount)
 };

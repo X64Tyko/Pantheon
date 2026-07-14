@@ -23,6 +23,8 @@ export interface MediaCardProps {
   hdr_type?:         string
   network?:          string
   network_logo_url?: string
+  watched?:          boolean
+  view_count?:       number
   density:           LibraryDensity
   selected?:         boolean
   onClick?:          () => void
@@ -43,7 +45,7 @@ export function MediaCard(props: MediaCardProps) {
   const {
     id, title, year, poster_url, thumb_url, content_type,
     genres, rating, locked, match_status, match_score,
-    is_4k, hdr_type, network, network_logo_url,
+    is_4k, hdr_type, network, network_logo_url, watched, view_count,
     density, selected, onClick,
   } = props
 
@@ -173,21 +175,32 @@ export function MediaCard(props: MediaCardProps) {
             }}>{Math.round(match_score * 100)}%</div>
           )}
 
-          {/* Network logo top-right */}
-          {(network_logo_url || network) && (
+          {/* Network logo / watched badge, top-right */}
+          {(network_logo_url || network || watched) && (
             <div style={{
               position: 'absolute', top: 8, right: 8,
-              background: 'oklch(0 0 0 / 0.6)', borderRadius: 6, padding: 4,
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4,
             }}>
-              {network_logo_url ? (
-                <img src={network_logo_url} alt={network}
-                  style={{ width: 24, height: 24, objectFit: 'contain' }} />
-              ) : (
-                <span style={{
-                  fontSize: 8, fontFamily: "'JetBrains Mono', monospace",
-                  color: 'oklch(0.8 0.01 285)', letterSpacing: '0.06em',
-                  display: 'block', maxWidth: 40, textAlign: 'center', lineHeight: 1.2,
-                }}>{network}</span>
+              {(network_logo_url || network) && (
+                <div style={{ background: 'oklch(0 0 0 / 0.6)', borderRadius: 6, padding: 4 }}>
+                  {network_logo_url ? (
+                    <img src={network_logo_url} alt={network}
+                      style={{ width: 24, height: 24, objectFit: 'contain' }} />
+                  ) : (
+                    <span style={{
+                      fontSize: 8, fontFamily: "'JetBrains Mono', monospace",
+                      color: 'oklch(0.8 0.01 285)', letterSpacing: '0.06em',
+                      display: 'block', maxWidth: 40, textAlign: 'center', lineHeight: 1.2,
+                    }}>{network}</span>
+                  )}
+                </div>
+              )}
+              {watched && (
+                <div style={{
+                  background: 'oklch(0 0 0 / 0.6)', borderRadius: 4, padding: '2px 6px',
+                  fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+                  color: 'var(--hds-violet)', letterSpacing: '0.04em',
+                }}>✓{view_count && view_count > 1 ? ` ${view_count}` : ''}</div>
               )}
             </div>
           )}

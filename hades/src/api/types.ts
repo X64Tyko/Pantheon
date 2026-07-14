@@ -299,6 +299,8 @@ export interface Movie {
   audience_rating?: number
   match_status?:   MatchStatus
   match_score?:    number | null
+  watched?:        boolean
+  view_count?:     number
 }
 
 // ── Detail types (full metadata) ─────────────────────────────────────────────
@@ -371,6 +373,8 @@ export interface MovieDetail {
   match_score?:     number
   match_confirmed?: boolean
   sources:          MediaSourceRef[]
+  watched?:         boolean
+  view_count?:      number
 }
 
 export interface WritebackResult {
@@ -387,6 +391,8 @@ export interface Episode {
   air_date:    string
   thumb:       string
   file_path?:  string
+  watched?:    boolean
+  view_count?: number
 }
 
 export interface ExternalId {

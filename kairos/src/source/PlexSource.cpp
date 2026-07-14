@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <nlohmann/json.hpp>
 #include <iostream>
+#include <unordered_map>
 
 #include "log/DebugLog.h"
 
@@ -306,9 +307,11 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
                     }
                 }
 
-                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at.
-                if (item.contains("viewCount") && !item["viewCount"].is_null())
-                    movie.src_watched = item["viewCount"].get<int64_t>() > 0;
+                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at/src_view_count.
+                if (item.contains("viewCount") && !item["viewCount"].is_null()) {
+                    movie.src_view_count = item["viewCount"].get<int64_t>();
+                    movie.src_watched    = *movie.src_view_count > 0;
+                }
                 if (item.contains("viewOffset") && !item["viewOffset"].is_null())
                     movie.src_position_ms = item["viewOffset"].get<int64_t>();
                 if (item.contains("lastViewedAt") && !item["lastViewedAt"].is_null())
@@ -405,9 +408,11 @@ std::vector<Episode> PlexSource::fetchEpisodes(const std::string& external_show_
                 if (item.contains("absoluteIndex") && !item["absoluteIndex"].is_null())
                     ep.absolute_index = item["absoluteIndex"].get<int>();
 
-                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at.
-                if (item.contains("viewCount") && !item["viewCount"].is_null())
-                    ep.src_watched = item["viewCount"].get<int64_t>() > 0;
+                // Watch state — see Movie.h's src_watched/src_position_ms/src_watched_at/src_view_count.
+                if (item.contains("viewCount") && !item["viewCount"].is_null()) {
+                    ep.src_view_count = item["viewCount"].get<int64_t>();
+                    ep.src_watched    = *ep.src_view_count > 0;
+                }
                 if (item.contains("viewOffset") && !item["viewOffset"].is_null())
                     ep.src_position_ms = item["viewOffset"].get<int64_t>();
                 if (item.contains("lastViewedAt") && !item["lastViewedAt"].is_null())
@@ -755,31 +760,42 @@ std::vector<ExternalWatchState> PlexSource::fetchWatchState(const std::string& e
         return {};
     }
 
-	std::vector<ExternalWatchState> result;
+	// /status/sessions/history/all is a per-playback-session log — one row per
+	// watch, not a per-item total — so entries for a repeat-watched item must
+	// be aggregated by ratingKey here rather than passed through 1:1, or
+	// applyWatchState's view-count merge would see view_count=1 on every
+	// duplicate and never accumulate past 1.
+	std::unordered_map<std::string, ExternalWatchState> by_id;
     try {
         auto j = json::parse(switch_res->body);
         for (const auto& item : j["MediaContainer"].value("Metadata", json::array())) {
-            ExternalWatchState st;
-            st.external_id = item.value("ratingKey", "");
-            if (st.external_id.empty()) continue;
-            st.item_type = (item.value("type", "") == "movie") ? "movie" : "episode";
-        	st.title = item.value("title", "");
+            std::string external_id = item.value("ratingKey", "");
+            if (external_id.empty()) continue;
+
+            auto& st = by_id[external_id];
+            st.external_id = external_id;
+            st.item_type   = (item.value("type", "") == "movie") ? "movie" : "episode";
+        	st.title       = item.value("title", "");
 
         	// We're specifically querying watch history and plex doesn't give us current progress
         	// If we've made it here it's been watched.
-            st.watched = true;
+            st.watched    = true;
+            st.view_count = st.view_count.value_or(0) + 1;
             if (item.contains("viewOffset") && !item["viewOffset"].is_null())
                 st.position_ms = item["viewOffset"].get<int64_t>();
-            if (item.contains("viewedAt") && !item["viewedAt"].is_null())
-                st.watched_at = item["viewedAt"].get<int64_t>();
-
-            if (!st.watched.value_or(false) && !st.position_ms.value_or(0)) continue;
-            result.push_back(std::move(st));
+            if (item.contains("viewedAt") && !item["viewedAt"].is_null()) {
+                int64_t v = item["viewedAt"].get<int64_t>();
+                if (v > st.watched_at.value_or(0)) st.watched_at = v;
+            }
         }
     } catch (const json::exception& e) {
         std::cerr << "[plex:" << source_id_ << "] parse error (watch state, user: "
                   << external_user_id << "): " << e.what() << '\n';
     }
+
+    std::vector<ExternalWatchState> result;
+    result.reserve(by_id.size());
+    for (auto& [id, st] : by_id) result.push_back(std::move(st));
     return result;
 }
 

@@ -69,4 +69,5 @@ struct ExternalWatchState {
     std::optional<bool>    watched;
     std::optional<int64_t> position_ms{0};
     std::optional<int64_t> watched_at{0}; // epoch seconds, if the source provides one
+    std::optional<int64_t> view_count{0}; // real rewatch count when the source reports one
 };

@@ -35,7 +35,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
   const isLibraryItem = !discoverResult && !!id && !!content_type
   const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
 
-  const { detail, title: detailTitle, refetch: refetchDetail } = media
+  const { detail, movie, title: detailTitle, refetch: refetchDetail } = media
   const [fixMatchOpen, setFixMatchOpen] = useState(false)
 
   const [playLoading, setPlayLoading] = useState(false)
@@ -270,7 +270,10 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
           background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
-          <MatchBadge status={matchStatus} score={detail?.match_score} size="md" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <MatchBadge status={matchStatus} score={detail?.match_score} size="md" />
+            {movie?.watched && <WatchedPill viewCount={movie.view_count ?? 1} />}
+          </div>
           {isAdmin && (
             <FixMatchButton active={fixMatchOpen} onClick={() => setFixMatchOpen(o => !o)} />
           )}
@@ -506,6 +509,17 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
   }
 
   return null
+}
+
+function WatchedPill({ viewCount }: { viewCount: number }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      padding: '4px 10px', borderRadius: 6,
+      border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.15)',
+      color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, fontWeight: 600,
+    }}>✓ {viewCount > 1 ? `Watched · ${viewCount}×` : 'Watched'}</span>
+  )
 }
 
 function FixMatchButton({ active, onClick }: { active: boolean; onClick: () => void }) {

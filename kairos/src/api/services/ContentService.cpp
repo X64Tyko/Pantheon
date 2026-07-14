@@ -539,9 +539,10 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		auto id = req.path_params.at("id");
 		std::string season_filter;
 		if (req.has_param("season")) season_filter = req.get_param_value("season");
+		auto user = currentUser();
 
 		ContentRepository repo(db_);
-		auto rows = repo.listEpisodesForShow(id, season_filter);
+		auto rows = repo.listEpisodesForShow(id, season_filter, user ? user->user_id : "");
 		json result = json::array();
 		for (const auto& r : rows) {
 			json entry{
@@ -553,6 +554,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 				{"overview",    r.overview},
 				{"air_date",    r.air_date},
 				{"thumb",       r.thumb},
+				{"watched",     r.watched},
+				{"view_count",  r.view_count},
 			};
 			if (!r.file_path.empty()) entry["file_path"] = r.file_path;
 			result.push_back(std::move(entry));
@@ -697,6 +700,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("home"))           p.home_only     = req.get_param_value("home") == "1";
 		if (req.has_param("hide_empty"))     p.hide_empty    = req.get_param_value("hide_empty") == "1";
 		p.restriction = restrictionFor("movie");
+		auto user = currentUser();
+		p.user_id = user ? user->user_id : "";
 
 		ContentRepository repo(db_);
 		auto result = repo.searchMovies(p);
@@ -710,6 +715,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			              {"art",             r.art},
 			              {"source_base_url", r.source_base_url},
 			              {"library_id",      r.library_id},
+			              {"watched",         r.watched},
+			              {"view_count",      r.view_count},
 			              {"match_status",    r.match_status.empty() ? "unscraped" : r.match_status}};
 			if (r.year)            entry["year"]            = *r.year;
 			if (!r.release_date.empty()) entry["release_date"] = r.release_date;
@@ -934,13 +941,14 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 
 	svr.Get("/api/movies/:id", [this](const Req& req, Res& res) {
 		auto id = req.path_params.at("id");
+		auto user = currentUser();
 		ContentRepository repo(db_);
-		auto d = repo.getMovieDetail(id);
+		auto d = repo.getMovieDetail(id, user ? user->user_id : "");
 		if (!d) { route::err(res, 404, "movie not found"); return; }
 		// Same 404 as a genuinely missing movie — don't reveal existence of
 		// blocked content via a distinct "forbidden" response.
-		if (currentUser() && currentUser()->restricted
-		    && !RestrictionRepository(db_).isAllowed(*currentUser(), "movie", id, d->content_rating)) {
+		if (user && user->restricted
+		    && !RestrictionRepository(db_).isAllowed(*user, "movie", id, d->content_rating)) {
 			route::err(res, 404, "movie not found"); return;
 		}
 
@@ -979,6 +987,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		movie["match_status"]    = d->match_status;
 		if (d->match_score) movie["match_score"] = *d->match_score;
 		movie["match_confirmed"] = d->match_confirmed;
+		movie["watched"]         = d->watched;
+		movie["view_count"]      = d->view_count;
 
 		// Full set of sources this movie is mapped to.
 		json sources = json::array();

@@ -80,6 +80,10 @@ struct EpisodeRow {
     int64_t duration_ms = 0;
     std::string overview, air_date, thumb;
     std::string file_path; // admin-facing "source file" display — not used for playback (see model/Episode.h for that)
+    // Rewatch count for the caller's user (0 = never finished). watched is
+    // just view_count > 0 — see ContentRepository::listEpisodesForShow.
+    bool    watched    = false;
+    int64_t view_count = 0;
 };
 
 struct EpisodeSearchRow {
@@ -100,6 +104,10 @@ struct MovieRow {
     std::optional<double> audience_rating;
     std::string           match_status;
     std::optional<double> match_score;
+    // Rewatch count for the caller's user (0 = never finished). watched is
+    // just view_count > 0 — see ContentRepository::searchMovies.
+    bool    watched    = false;
+    int64_t view_count = 0;
 };
 
 struct MovieListResult {
@@ -125,6 +133,10 @@ struct MovieDetail {
     // Parent directory of file_path (see ContentRepository::parentDir) —
     // admin-facing "which folder is this in" display, alongside the raw file.
     std::string folder_path;
+    // Rewatch count for the caller's user (0 = never finished). watched is
+    // just view_count > 0 — see ContentRepository::getMovieDetail.
+    bool    watched    = false;
+    int64_t view_count = 0;
 };
 
 struct ItemSource {
@@ -172,6 +184,11 @@ struct MovieSearchParams {
     RestrictionContext restriction;
     bool home_only = false;   // see ShowSearchParams::home_only
     bool hide_empty = false;  // see ShowSearchParams::hide_empty (movies: excludes a blank file_path)
+    // watch_progress join key for MovieRow::watched/view_count — deliberately
+    // NOT restriction.user_id, which ContentService::restrictionFor() only
+    // populates for restricted users and leaves empty otherwise; reusing it
+    // would silently break watched badges for every non-restricted account.
+    std::string user_id;
 };
 
 struct StrField { std::string col, val; };
@@ -250,7 +267,9 @@ public:
     MovieListResult searchMovies(const MovieSearchParams& p);
 
     std::optional<ShowDetail>  getShowDetail(const std::string& show_id);
-    std::optional<MovieDetail> getMovieDetail(const std::string& movie_id);
+    // user_id populates MovieDetail::watched/view_count when non-empty (left
+    // at their defaults otherwise) — see MovieSearchParams::user_id.
+    std::optional<MovieDetail> getMovieDetail(const std::string& movie_id, const std::string& user_id = "");
 
     // Strips the last path segment (filename) off a file path, e.g.
     // "/media/Movies/Foo (2020)/Foo.mkv" -> "/media/Movies/Foo (2020)".
@@ -294,8 +313,11 @@ public:
     void mergeMovieInto(const std::string& target_id, const std::string& dup_id);
     void mergeShowInto(const std::string& target_id, const std::string& dup_id);
 
+    // user_id populates EpisodeRow::watched/view_count when non-empty (left
+    // at their defaults otherwise) — see MovieSearchParams::user_id.
     std::vector<EpisodeRow>       listEpisodesForShow(const std::string& show_id,
-                                                       const std::string& season_filter = "");
+                                                       const std::string& season_filter = "",
+                                                       const std::string& user_id = "");
     // The next playable episode after episode_id, honoring the show's
     // episode_display_order ('season': season/episode order; 'aired': air_date
     // order, falling back to season/episode if the current episode has no
