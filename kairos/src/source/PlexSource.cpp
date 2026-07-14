@@ -78,6 +78,7 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
     int start = 0;
     while (true) {
         const std::string path = "/library/sections/" + external_lib_id + "/all?type=2"
+    		"&sort=addedAt:asc"
             "&X-Plex-Container-Start=" + std::to_string(start) +
             "&X-Plex-Container-Size=" + std::to_string(kPageSize);
         auto res = get(path);
@@ -113,6 +114,7 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
             		show.thumb          = item.value("thumb", "");
             		show.art            = item.value("art", "");
             		show.originally_available_at = item.value("originallyAvailableAt", "");
+            		show.added_at       = item.value("addedAt", 0);
 
             		// Root folder(s): [{"path":"/data/TV Shows/Show Name"}, ...] —
             		// same array-of-object shape as Genre/Label below. Only the
@@ -733,7 +735,7 @@ std::vector<ExternalWatchState> PlexSource::fetchWatchState(const std::string& e
     // "unsupported" without needing to track which kind of account this is.
     // A PIN-protected Home profile fails the same way, for the same reason
     // (Kairos doesn't collect/store PINs either).
-    httplib::Client account_client("https://plex.tv");
+    httplib::Client account_client(base_url_);
     account_client.set_default_headers({
         {"X-Plex-Token", token_},
         {"Accept",       "application/json"}
@@ -741,86 +743,42 @@ std::vector<ExternalWatchState> PlexSource::fetchWatchState(const std::string& e
     account_client.set_connection_timeout(10);
     account_client.set_read_timeout(15);
 
-    auto switch_res = account_client.Post("/api/home/users/" + external_user_id + "/switch");
+	DLOG << "[Plex requesting watch state for user: " << external_user_id << "]" << "\n";
+    auto switch_res = account_client.Get("/status/sessions/history/all?accountID=" + external_user_id);
     if (!switch_res) {
-        std::cerr << "[plex:" << source_id_ << "] switch user " << external_user_id
-                  << " — " << httplib::to_string(switch_res.error()) << '\n';
+        std::cerr << "[plex:" << source_id_ << "] User History error: " << httplib::to_string(switch_res.error()) << '\n';
         return {};
     }
     if (switch_res->status != 200) {
-        std::cerr << "[plex:" << source_id_ << "] switch user " << external_user_id
-                  << " — HTTP " << switch_res->status
+        std::cerr << "[plex:" << source_id_ << "] User History error: " << switch_res->status
                   << " (not a Home user, or needs a PIN Kairos doesn't have)\n";
         return {};
     }
 
-    std::string user_token;
+	std::vector<ExternalWatchState> result;
     try {
         auto j = json::parse(switch_res->body);
-        user_token = j.value("authToken", "");
-        if (user_token.empty() && j.contains("user")) user_token = j["user"].value("authToken", "");
+        for (const auto& item : j["MediaContainer"].value("Metadata", json::array())) {
+            ExternalWatchState st;
+            st.external_id = item.value("ratingKey", "");
+            if (st.external_id.empty()) continue;
+            st.item_type = (item.value("type", "") == "movie") ? "movie" : "episode";
+        	st.title = item.value("title", "");
+
+        	// We're specifically querying watch history and plex doesn't give us current progress
+        	// If we've made it here it's been watched.
+            st.watched = true;
+            if (item.contains("viewOffset") && !item["viewOffset"].is_null())
+                st.position_ms = item["viewOffset"].get<int64_t>();
+            if (item.contains("viewedAt") && !item["viewedAt"].is_null())
+                st.watched_at = item["viewedAt"].get<int64_t>();
+
+            if (!st.watched.value_or(false) && !st.position_ms.value_or(0)) continue;
+            result.push_back(std::move(st));
+        }
     } catch (const json::exception& e) {
-        std::cerr << "[plex:" << source_id_ << "] switch user " << external_user_id
-                  << " — parse error: " << e.what() << '\n';
-    }
-    if (user_token.empty()) return {};
-
-    // Step 2: pull this user's own view state from the local server with
-    // their token, one request per configured library section — Plex has no
-    // single server-wide "everything" call like Jellyfin's Recursive=true,
-    // so this reuses listAvailableLibraries() rather than needing Kairos to
-    // pass library ids in.
-    httplib::Client server_client(base_url_);
-    server_client.set_default_headers({
-        {"X-Plex-Token", user_token},
-        {"Accept",       "application/json"}
-    });
-    server_client.set_connection_timeout(10);
-    server_client.set_read_timeout(30);
-
-    std::vector<ExternalWatchState> result;
-    for (const auto& lib : listAvailableLibraries()) {
-        const std::string type_param = (lib.type == "movie") ? "1" : (lib.type == "show") ? "4" : "";
-        if (type_param.empty()) continue; // music/photo/mixed — not applicable
-
-        auto res = server_client.Get("/library/sections/" + lib.external_lib_id + "/all?type=" + type_param);
-        if (!res) {
-            std::cerr << "[plex:" << source_id_ << "] watch state section " << lib.external_lib_id
-                      << " — " << httplib::to_string(res.error()) << '\n';
-            continue;
-        }
-        if (res->status != 200) {
-            std::cerr << "[plex:" << source_id_ << "] watch state section " << lib.external_lib_id
-                      << " — HTTP " << res->status << '\n';
-            continue;
-        }
-
-        try {
-            auto j = json::parse(res->body);
-            for (const auto& item : j["MediaContainer"].value("Metadata", json::array())) {
-                ExternalWatchState st;
-                st.external_id = item.value("ratingKey", "");
-                if (st.external_id.empty()) continue;
-                st.item_type = (type_param == "1") ? "movie" : "episode";
-
-                // Same viewCount/viewOffset/lastViewedAt reading as the primary-
-                // account path (fetchMovies/fetchEpisodes above) — kept
-                // consistent rather than "improved", so the same account
-                // behaves identically whether it's the primary or a linked one.
-                if (item.contains("viewCount") && !item["viewCount"].is_null())
-                    st.watched = item["viewCount"].get<int64_t>() > 0;
-                if (item.contains("viewOffset") && !item["viewOffset"].is_null())
-                    st.position_ms = item["viewOffset"].get<int64_t>();
-                if (item.contains("lastViewedAt") && !item["lastViewedAt"].is_null())
-                    st.watched_at = item["lastViewedAt"].get<int64_t>();
-
-                if (!st.watched.value_or(false) && !st.position_ms.value_or(0)) continue;
-                result.push_back(std::move(st));
-            }
-        } catch (const json::exception& e) {
-            std::cerr << "[plex:" << source_id_ << "] parse error (watch state, section "
-                      << lib.external_lib_id << "): " << e.what() << '\n';
-        }
+        std::cerr << "[plex:" << source_id_ << "] parse error (watch state, user: "
+                  << external_user_id << "): " << e.what() << '\n';
     }
     return result;
 }

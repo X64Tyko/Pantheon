@@ -65,7 +65,8 @@ struct SourceUserInfo {
 struct ExternalWatchState {
     std::string external_id;   // source-native item id (matches source_mapping.external_id)
     std::string item_type;     // "movie" | "episode"
+	std::string title;
     std::optional<bool>    watched;
-    std::optional<int64_t> position_ms;
-    std::optional<int64_t> watched_at; // epoch seconds, if the source provides one
+    std::optional<int64_t> position_ms{0};
+    std::optional<int64_t> watched_at{0}; // epoch seconds, if the source provides one
 };

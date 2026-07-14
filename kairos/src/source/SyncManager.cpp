@@ -306,14 +306,17 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live,
         us.exec();
     }
 
-    for (const auto& lib : libs) {
-        const std::string label = source_display + " / " + lib.display_name;
-        if (lib.library_type == "show" || lib.library_type == "mixed")
-            syncShows(*src, source_id, lib.library_id, lib.external_lib_id, lib.library_type, label, live);
-        if (lib.library_type == "movie" || lib.library_type == "mixed")
-            syncMovies(*src, source_id, lib.library_id, lib.external_lib_id, lib.library_type, label, live);
-    }
-
+	if (true)
+	{
+		for (const auto& lib : libs) {
+			const std::string label = source_display + " / " + lib.display_name;
+			if (lib.library_type == "show" || lib.library_type == "mixed")
+				syncShows(*src, source_id, lib.library_id, lib.external_lib_id, lib.library_type, label, live);
+			if (lib.library_type == "movie" || lib.library_type == "mixed")
+				syncMovies(*src, source_id, lib.library_id, lib.external_lib_id, lib.library_type, label, live);
+		}
+	}
+	
     // Needs this source's source_mapping freshly populated above to resolve
     // external ids, so it runs after the library loop, not interleaved with it.
     syncLinkedUserWatchState(*src, source_id);
@@ -1700,7 +1703,11 @@ void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string&
                 s_resolve.bind(1, source_id);
                 s_resolve.bind(2, e.item_type);
                 s_resolve.bind(3, e.external_id);
-                if (!s_resolve.executeStep()) continue; // not in an enabled library
+                if (!s_resolve.executeStep())
+                {
+                	DLOG << "[sync] linked user " << lu.external_user_id << " has no mapping for " << e.item_type << " " << e.external_id << '\n';
+	                continue; // not in an enabled library
+                }
                 const std::string kairos_id = s_resolve.getColumn(0).getString();
 
                 int64_t duration_ms = 0;
@@ -1709,6 +1716,7 @@ void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string&
                 s_duration.bind(1, kairos_id);
                 if (s_duration.executeStep()) duration_ms = s_duration.getColumn(0).getInt64();
 
+            	DLOG << "[sync] syncing linked user watch state for " << e.title << " " << kairos_id << '\n';
                 applyWatchState(s_watch_get, s_watch_upsert, s_watch_delete,
                                  lu.local_user_id, e.item_type, kairos_id,
                                  e.watched, e.position_ms, e.watched_at, duration_ms);

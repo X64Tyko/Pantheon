@@ -31,6 +31,7 @@ struct Show {
     std::string tmdb_id;
 	std::vector<ScraperInfo> scraper_info; // prep to move beyond a hardcoded 3 scrapers
     std::string originally_available_at;
+	std::optional<int64_t> added_at;
     std::optional<int>   year;
     std::optional<float> audience_rating;
 	std::vector<Rating> ratings;
