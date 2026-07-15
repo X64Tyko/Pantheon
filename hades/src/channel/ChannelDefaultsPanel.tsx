@@ -104,20 +104,6 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
           </div>
         </div>
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>ADVANCE MODE</div>
-          <select
-            value={store.channelDraft.advance_mode}
-            onChange={e => store.setChannelDraft({ advance_mode: e.target.value as AdvanceMode })}
-            style={inputStyle}
-          >
-            <option value="scheduled">Scheduled — advance on EPG clock</option>
-            <option value="on_play">On Play — advance only when confirmed played</option>
-          </select>
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
-            On Play pauses the channel when nobody is streaming. Episodes only advance after Tunarr confirms playback.
-          </div>
-        </div>
-        <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>CONTENT TAG</div>
           <select
             value={store.channelDraft.content_tag}

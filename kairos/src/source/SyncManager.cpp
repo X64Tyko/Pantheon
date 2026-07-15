@@ -1664,8 +1664,6 @@ void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string&
     SQLite::Statement s_watch_upsert_watched(sync_db_, SyncManager::kWatchUpsertWatchedSql);
 
     for (const auto& lu : linked) {
-        // Empty for any source that doesn't override fetchWatchState (Plex
-        // today) — nothing else in this loop runs for those.
         auto entries = src.fetchWatchState(lu.external_user_id);
         if (entries.empty()) continue;
 
