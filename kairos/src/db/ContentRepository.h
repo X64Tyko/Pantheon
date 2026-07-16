@@ -1,11 +1,9 @@
 #pragma once
 #include <cstdint>
 #include <SQLiteCpp/SQLiteCpp.h>
-#include <ctime>
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 #include "../model/Episode.h"
@@ -213,15 +211,6 @@ public:
                                      bool include_specials = false,
                                      const std::string& episode_order = "season");
 
-    // Episodes with play history (before_time) in the given channel scope.
-    std::vector<Episode> getPlayedEpisodes(const std::string& show_id,
-                                           const std::string& channel_id,
-                                           std::optional<int> season,
-                                           std::time_t before_time,
-                                           bool global_scope = false,
-                                           bool include_specials = false,
-                                           const std::string& episode_order = "season");
-
     // ── Movies ────────────────────────────────────────────────────────────────
 
     std::optional<Movie> getMovie(const std::string& movie_id);
@@ -350,22 +339,10 @@ public:
     // If episode_id is a mid-group part (part_num > 1), returns the Part 1 episode_id.
     std::optional<std::string> findGroupPart1(const std::string& episode_id);
 
-    // ── Play-history hot-ID queries ───────────────────────────────────────────
-
-    // Most recently played movie IDs (hot set for SmartShuffle cooldown).
-    std::unordered_set<std::string> getHotMovieIds(const std::string& channel_id,
-                                                    std::time_t before_time,
-                                                    int limit);
-
-    // Most recently played episode IDs for a given show (hot set for SmartShuffle).
-    std::unordered_set<std::string> getHotEpisodeIds(const std::string& channel_id,
-                                                      std::time_t before_time,
-                                                      const std::string& show_id,
-                                                      int limit);
-
-    // Recency map: item_id → last aired_at (for "sized" filler selection).
-    std::unordered_map<std::string, int64_t> getLastPlayedMap(const std::string& channel_id,
-                                                               std::time_t before_time);
+    // Content and filler SmartShuffle/LRU cooldown both moved to
+    // CursorState::recentPlays — see RuleEngine::selectWeightedSmartCooldown/
+    // smartShufflePool/pickFillerSim — so they're carried in the anchor instead
+    // of re-derived from play_history/filler_play_history here.
 
 private:
     Database& db_;

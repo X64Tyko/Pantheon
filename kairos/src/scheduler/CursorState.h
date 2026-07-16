@@ -1,25 +1,42 @@
 #pragma once
 #include <ctime>
+#include <deque>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 class Database;
 
-// Cursor for one timeslot slot: which queue item and episode-within-item we're on.
+// Cursor for one timeslot slot: which queue item, and — for a "show" queue
+// entry — which episode within it (watermark + out-of-order exceptions; see
+// CursorEntry below for the same model applied to general show cursors).
 struct SlotCursor {
-    int queue_pos   = 0;
-    int episode_pos = 0;
+    int         queue_pos = 0;
+    std::string episode_watermark_id;
+    std::vector<std::string> episode_ahead;
 };
 
 // A single media cursor entry.
+//
+// For content_type "show" / "show_rerun", position tracking is a watermark,
+// not a raw index: episode_id is the last episode known to have aired in
+// contiguous natural order, and ahead holds any episode ids that aired out
+// of order beyond it (e.g. a later episode played because an earlier one
+// hadn't been scanned into the library yet). This makes the cursor immune
+// to the episode list being resorted/regrown between calls — see
+// RuleEngine::advanceNatural(). Everything else (playlist/filler_list flat
+// cursors) still uses plain integer `position`.
 struct CursorEntry {
     std::string content_type;
     std::string content_id;
     std::string cursor_scope; // "global" | "channel" | "block"
     std::string scope_id;     // "" for global, channel_id, or block_id
+    std::string episode_order; // "" for non-show types; disambiguates two blocks
+                                // playing the same show in different orders
     int         position   = 0;
-    std::string episode_id;
+    std::string episode_id;   // "show": watermark id ("" = nothing aired yet)
+    std::vector<std::string> ahead; // "show": ids aired out of order, ahead of the watermark
 };
 
 struct BlockPosition {
@@ -47,18 +64,29 @@ struct PlayRecord {
 class CursorState {
 public:
     // ── Media cursors ─────────────────────────────────────────────────────────
+    // episode_order only matters for content_type "show"/"show_rerun" — pass ""
+    // (the default) for movie/playlist/filler_list cursors, which don't use it.
     int  getCursorPos(const std::string& content_type, const std::string& content_id,
-                      const std::string& scope, const std::string& scope_id) const;
-    // Returns the episode_id stored alongside the cursor position, or "" if not set.
-    // Used to reconcile the integer position after the episode list changes (sync).
+                      const std::string& scope, const std::string& scope_id,
+                      const std::string& episode_order = "") const;
+    // Returns the episode_id stored alongside the cursor position — for "show"
+    // types this is the watermark (last contiguous aired episode), "" if none.
     std::string getCursorEpisodeId(const std::string& content_type, const std::string& content_id,
-                                    const std::string& scope, const std::string& scope_id) const;
+                                    const std::string& scope, const std::string& scope_id,
+                                    const std::string& episode_order = "") const;
+    // Episode ids aired out of order, ahead of the watermark ("show" types only).
+    std::vector<std::string> getCursorAhead(const std::string& content_type, const std::string& content_id,
+                                             const std::string& scope, const std::string& scope_id,
+                                             const std::string& episode_order = "") const;
     void setCursorPos(const std::string& content_type, const std::string& content_id,
                       const std::string& scope, const std::string& scope_id,
-                      int pos, const std::string& episode_id = "");
+                      int pos, const std::string& episode_id = "",
+                      const std::string& episode_order = "",
+                      const std::vector<std::string>& ahead = {});
 
     bool hasCursor(const std::string& content_type, const std::string& content_id,
-                   const std::string& scope, const std::string& scope_id) const;
+                   const std::string& scope, const std::string& scope_id,
+                   const std::string& episode_order = "") const;
 
     // ── Block state ───────────────────────────────────────────────────────────
     int  getContentPosition(const std::string& block_id) const;
@@ -74,7 +102,9 @@ public:
 
     // ── Timeslot slot cursors ─────────────────────────────────────────────────
     SlotCursor  getSlotCursor(const std::string& slot_id) const;
-    void        setSlotCursor(const std::string& slot_id, int queue_pos, int episode_pos);
+    void        setSlotCursor(const std::string& slot_id, int queue_pos,
+                              const std::string& episode_watermark_id,
+                              const std::vector<std::string>& episode_ahead);
     bool        hasSlotCursor(const std::string& slot_id) const;
     const std::unordered_map<std::string, SlotCursor>& slotCursors() const { return slot_cursors_; }
 
@@ -85,6 +115,14 @@ public:
     int& fillerPos(const std::string& key);
     int  getFillerPos(const std::string& key) const;
     bool hasFillerPos(const std::string& key) const;
+
+    // ── Smart-advancement cooldown recency ────────────────────────────────────
+    // Replaces the old live ContentRepository::getHotMovieIds/getHotEpisodeIds
+    // DB queries: a bounded, most-recent-first list of item ids per cooldown
+    // domain, carried in the anchor instead of re-derived from play_history.
+    // domain_key convention: "movie:<channel_id>" | "episode:<show_id>:<channel_id>".
+    void recordRecentPlay(const std::string& domain_key, const std::string& item_id, std::time_t at);
+    std::vector<std::pair<std::string, std::time_t>> recentPlays(const std::string& domain_key) const;
 
     // ── In-pass play records ──────────────────────────────────────────────────
     // Accumulates items scheduled during this projection pass.
@@ -110,19 +148,22 @@ public:
     static void clearFromDB(Database& db, const std::string& channel_id);
 
     // ── Anchor serialization ──────────────────────────────────────────────────
-    // Produces the {"cursors": [...], "block_states": [...]} object embedded in
-    // anchor_hashes. Field names match the existing DB schema / JSON format exactly
-    // so stored anchors remain compatible.
+    // Produces the {"cursors": [...], "block_states": [...], "slot_cursors": [...],
+    // "filler_positions": [...], "recent_plays": [...]} object embedded in
+    // anchor_hashes — everything that must survive a week boundary so project()
+    // never needs to fall back to a live DB read for it.
     std::string serializeCursors() const;
     static CursorState deserializeCursors(const std::string& json_str);
 
 private:
     static std::string cursorKey(const std::string& content_type, const std::string& content_id,
-                                  const std::string& scope, const std::string& scope_id);
+                                  const std::string& scope, const std::string& scope_id,
+                                  const std::string& episode_order);
 
     std::unordered_map<std::string, CursorEntry>   cursors_;
     std::unordered_map<std::string, BlockPosition> block_positions_;
     std::unordered_map<std::string, int>           filler_positions_;
     std::unordered_map<std::string, SlotCursor>    slot_cursors_;
+    std::unordered_map<std::string, std::deque<std::pair<std::string, std::time_t>>> recent_plays_;
     std::vector<PlayRecord>                         play_records_;
 };

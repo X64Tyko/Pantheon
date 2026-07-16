@@ -42,6 +42,16 @@ public:
     // Active block for channel at wall-clock time t (UTC).
     std::optional<Block> resolveBlock(const std::string& channel_id, std::time_t t);
 
+    // Monday 00:00, in channel_id's own timezone, for the week containing t.
+    // EPGMaterializer's anchor keys (generate()'s week_monday,
+    // checkAnchorDivergence()'s week_monday/prev_monday) MUST use this exact
+    // function, not naive UTC-calendar-week arithmetic — project() below builds
+    // its week-walk (and week-boundary anchor captures) from the identical
+    // timezone-aware definition, and for any channel not on UTC a naive week
+    // boundary can land days away from where this one falls, silently keying
+    // an anchor somewhere a later lookup can never find it again.
+    std::time_t weekMondayForChannel(const std::string& channel_id, std::time_t t);
+
     // Next item from a block (peek only — does not advance cursor).
     // before_time: only episodes with aired_at < before_time are valid rerun candidates.
     std::optional<ScheduledItem> nextItem(const std::string& channel_id,
@@ -71,7 +81,7 @@ public:
     // filler, and gap filler) are buffered separately from play_records_out so
     // EPGMaterializer::commit() can persist them to filler_play_history — kept
     // apart from play_history so filler plays never influence content-side
-    // rerun/smart cooldown (getHotMovieIds/getHotEpisodeIds).
+    // rerun/smart cooldown (CursorState::recentPlays).
     std::vector<ScheduledItem> project(const std::string& channel_id,
                                         std::time_t start, int horizon_hours,
                                         CursorState& state,
@@ -97,20 +107,49 @@ private:
     std::vector<Episode> getEpisodes(const std::string& show_id, std::optional<int> season,
                                       bool include_specials = false,
                                       const std::string& episode_order = "season");
-    // Only episodes with aired_at < before_time are returned (ensures true reruns).
-    std::vector<Episode> getPlayedEpisodes(const std::string& show_id,
-                                            const std::string& channel_id,
-                                            std::optional<int> season,
-                                            std::time_t before_time,
-                                            bool global_scope = false,
-                                            bool include_specials = false,
-                                            const std::string& episode_order = "season");
     std::optional<Movie>         getMovie(const std::string& movie_id);
     std::optional<ScheduledItem> episodeById(const std::string& episode_id);
     // Returns (item_type, item_id) pairs from a playlist or filler_list in order.
     std::vector<std::pair<std::string, std::string>>
         loadListItems(const std::string& content_type, const std::string& content_id);
     std::string          showTitle(const std::string& show_id);
+
+    // ── In-memory content cache ────────────────────────────────────────────────
+    // A projection pass calls getEpisodes/getMovie/episodeById/loadListItems/
+    // showTitle many times for the same show/movie/list (once per occurrence
+    // across the whole horizon) — these memoize each on first touch per
+    // project() call, same pattern as filler_items_cache below. This is what
+    // makes project() do at most one DB read per distinct piece of content per
+    // call, instead of one per pick.
+    struct ContentCache {
+        std::unordered_map<std::string, std::vector<Episode>>              episodes;      // key: showCacheKey(...)
+        std::unordered_map<std::string, std::optional<Movie>>              movies;        // key: movie_id
+        std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> list_items; // key: content_type+":"+content_id
+        std::unordered_map<std::string, std::optional<ScheduledItem>>      episode_by_id; // key: episode_id
+        std::unordered_map<std::string, std::string>                      show_titles;   // key: show_id
+        std::unordered_map<std::string, std::vector<std::string>>          playlist_shows;     // key: playlist_id
+        std::unordered_map<std::string, std::vector<Episode>>              playlist_show_eps;  // key: playlist_id+":"+show_id
+        std::unordered_map<std::string, int>                               playlist_item_counts; // key: playlist_id
+    };
+    static std::string showCacheKey(const std::string& show_id, std::optional<int> season,
+                                     bool include_specials, const std::string& episode_order);
+    const std::vector<Episode>& getEpisodesCached(ContentCache& cache, const std::string& show_id,
+                                                   std::optional<int> season,
+                                                   bool include_specials,
+                                                   const std::string& episode_order);
+    const std::optional<Movie>& getMovieCached(ContentCache& cache, const std::string& movie_id);
+    const std::vector<std::pair<std::string, std::string>>&
+        getListItemsCached(ContentCache& cache, const std::string& content_type,
+                           const std::string& content_id);
+    const std::optional<ScheduledItem>& episodeByIdCached(ContentCache& cache,
+                                                            const std::string& episode_id);
+    std::string showTitleCached(ContentCache& cache, const std::string& show_id);
+    const std::vector<std::string>& getPlaylistShowsCached(ContentCache& cache,
+                                                             const std::string& playlist_id);
+    const std::vector<Episode>& getPlaylistShowEpisodesCached(ContentCache& cache,
+                                                                const std::string& playlist_id,
+                                                                const std::string& show_id);
+    int getPlaylistItemCountCached(ContentCache& cache, const std::string& playlist_id);
 
     // Playlist show_collection helpers.
     std::string              getPlaylistMode(const std::string& playlist_id);
@@ -124,22 +163,22 @@ private:
     static int selectWeightedExcluding(const Block& block, int exclude_idx, Xoshiro256& rng);
 
     // Weighted content-entry selection with movie-level recency cooldown. Excludes the
-    // n*smart_pct/100 most-recently-played movie entries from the weighted draw.
+    // n*smart_pct/100 most-recently-played movie entries from the weighted draw, using
+    // CursorState's in-anchor recency list (domain "movie:<channel_id>") — no DB read.
     // Only applies when every block content entry is a movie; mixed blocks fall back to
     // selectWeighted. (Show content uses smart_pct at the episode-pool level via
     // smartShufflePool; the block-selection level always sees the full show list.)
     int selectWeightedSmartCooldown(const Block& block, const std::string& channel_id,
-                                    int smart_pct, std::time_t before_time,
-                                    const std::vector<PlayRecord>& play_records,
-                                    Xoshiro256& rng);
+                                    int smart_pct, CursorState& state, Xoshiro256& rng);
 
     // For SmartShuffle show blocks: filters `all` to exclude the most recently played
-    // smart_pct% of episodes. Falls back to `all` if every episode is hot.
+    // smart_pct% of episodes, using CursorState's in-anchor recency list (domain
+    // "episode:<show_id>:<channel_id>") — no DB read. Falls back to `all` if every
+    // episode is hot.
     std::vector<Episode> smartShufflePool(const std::vector<Episode>& all,
                                           const std::string& show_id,
                                           const std::string& channel_id,
-                                          int smart_pct, std::time_t before_time,
-                                          const std::vector<PlayRecord>& play_records);
+                                          int smart_pct, CursorState& state);
 
     // Given an episode_id, snap back to Part 1 of its multipart group (if any).
     int snapToGroupStart(const std::string& episode_id, const std::vector<Episode>& eps);
@@ -149,27 +188,56 @@ private:
     // regardless of live RNG state, enabling reproducible shuffles across projections.
     static std::vector<int> shufflePermutation(const std::string& seed_str, int n);
 
-    // True if `entry`'s show has ever actually aired (real play history — DB or this
-    // pass's own pass_records), independent of any local block cursor. The only thing
-    // no_history_behavior governs (see NoHistoryBehavior): Exclude uses this to filter
-    // a show out of selection entirely; once true, a show plays the same way regardless
-    // of no_history_behavior.
+    // True if `entry`'s show has a cursor at all yet — i.e. it has been picked at
+    // least once before (purely from `state`; a pick earlier in this same pass
+    // already updated state, so no separate pass_records check is needed). The
+    // only thing no_history_behavior governs (see NoHistoryBehavior): Exclude uses
+    // this to filter a show out of selection entirely; once true, a show plays the
+    // same way regardless of no_history_behavior.
     bool hasRealHistory(const std::string& channel_id, const Block& block,
-                        const BlockContent& entry, std::time_t before_time,
-                        const std::vector<PlayRecord>& pass_records);
+                        const BlockContent& entry, CursorState& state);
+
+    // Natural-order (narrative-sequence) advancement result: which episode to play
+    // now, and the watermark/ahead state to persist afterward. See advanceNatural().
+    struct NaturalAdvance {
+        int index = -1; // index into ordered_eps to play now; -1 if ordered_eps is empty
+        std::string new_watermark_id;
+        std::vector<std::string> new_ahead;
+    };
+
+    // Pure natural-order advancement, immune to ordered_eps being resorted/regrown
+    // between calls (episodes backfilled into the library later, in any order).
+    //
+    // watermark_id: the last episode known to have aired in contiguous natural
+    //   order ("" = nothing aired yet). ahead: episode ids that aired out of
+    //   order, ahead of the watermark (e.g. episode 3 played because episode 2
+    //   hadn't been scanned into the library yet).
+    //
+    // Picks the slot right after the watermark. If that episode id is already in
+    // `ahead` (it already aired), absorbs it — advances the watermark through it
+    // and moves on to the next slot — repeating until landing on something not
+    // already aired; this is what lets a backfilled gap self-heal once the
+    // missing episode shows up, instead of needing a full wraparound cycle to
+    // reach it. If the natural next episode (by season/episode numbering) isn't
+    // in the catalog yet, plays the next *available* one instead and records it
+    // in `ahead` without moving the watermark, so the true next episode still
+    // gets its turn once it backfills. Wrapping from the last episode back to the
+    // first (starting a rerun cycle) is never treated as an out-of-order pick.
+    static NaturalAdvance advanceNatural(const std::string& watermark_id,
+                                         const std::vector<std::string>& ahead,
+                                         const std::vector<Episode>& ordered_eps);
 
     // Seeds or advances one show's cursor and returns its next item — the single place
-    // that owns show playback: sequential resume-from-history (or a simulated pass from
-    // episode 0 for Normal with zero history), then free-random once a full pass
-    // completes (Fallback skips the sequential phase and starts free-random immediately).
-    // Free-random picks respect Advancement::Smart cooldown filtering; nothing is
-    // persisted for them since every pick is independent. Returns nullopt only if the
-    // show has no episodes at all.
+    // that owns rerun-mode show playback: natural-order resume via advanceNatural()
+    // (or a simulated pass from episode 0 for Normal with zero history), then
+    // free-random once a full pass completes (Fallback skips the natural-order phase
+    // and starts free-random immediately). Free-random picks respect Advancement::Smart
+    // cooldown filtering; nothing is persisted for them since every pick is independent.
+    // Returns nullopt only if the show has no episodes at all.
     std::optional<ScheduledItem> advanceShowCursor(const std::string& channel_id, const Block& block,
-                                                    const BlockContent& entry, std::time_t before_time,
-                                                    CursorState& state,
-                                                    const std::vector<PlayRecord>& pass_records,
-                                                    Xoshiro256& rng);
+                                                    const BlockContent& entry,
+                                                    CursorState& state, Xoshiro256& rng,
+                                                    ContentCache& cache);
 
     // Selects the content index to play for this call and updates block position state.
     // For Exclude-mode rerun blocks, ineligible shows (hasRealHistory == false) are
@@ -177,8 +245,7 @@ private:
     // Does not touch episode-level cursors; that's advanceAndGet/advanceShowCursor's job
     // once the index is decided. Returns -1 only when Exclude mode finds nothing eligible.
     int pickNextContent(const std::string& channel_id, const Block& block,
-                        std::time_t before_time, CursorState& state,
-                        const std::vector<PlayRecord>& pass_records, Xoshiro256& rng);
+                        CursorState& state, Xoshiro256& rng);
 
     // Episode/item advancement for a pre-selected content entry. content_idx is the
     // index into block.content returned by pickNextContent. Returns nullopt when no
@@ -186,10 +253,9 @@ private:
     std::optional<ScheduledItem> advanceAndGet(const std::string& channel_id,
                                                const Block& block,
                                                int content_idx,
-                                               std::time_t before_time,
                                                CursorState& state,
-                                               const std::vector<PlayRecord>& pass_records,
-                                               Xoshiro256& rng);
+                                               Xoshiro256& rng,
+                                               ContentCache& cache);
 
     static std::string scopeStr(const Block& b);
     static std::string scopeId(const Block& b, const std::string& channel_id);
@@ -224,7 +290,6 @@ private:
     // Mutable state that survives across day boundaries within a projection pass.
     struct ProjectPassState {
         std::time_t                          t                  = 0;
-        std::time_t                          anchor_next_monday = 0;
         std::string                          prev_block_id;
         std::string                          last_show_id;
         std::unordered_map<std::string, int> transition_counts;
@@ -232,25 +297,16 @@ private:
         std::vector<PlayRecord>              play_records;
         std::vector<PlayRecord>              filler_records;
 
-        // Persisted (DB) filler_play_history is fixed for the whole pass — only
-        // its content_.getLastPlayedMap() *query* is expensive (a full-table
-        // GROUP BY that can be tens of thousands of rows for a long-lived
-        // channel). Caching it here turns pickFillerSim's "sized" cooldown
-        // lookup, previously re-querying on every single filler pick, into one
-        // DB round trip for the whole generate() call — computed once (the
-        // std::optional just marks "already computed"), never invalidated
-        // mid-pass, since before_time only ever moves further past "now" (and
-        // thus further past every already-persisted row) as pass.t advances —
-        // see pickFillerSim.
-        std::optional<std::time_t> filler_history_cached_before;
-        std::unordered_map<std::string, int64_t> filler_history_cache;
-
-        // Same rationale as filler_history_cache: a filler source's own item list
-        // (e.g. a show's episodes) can't change mid-pass, but pickFillerSim was
-        // reloading it from DB on every single pick — round-robin between just a
+        // A filler source's own item list (e.g. a show's episodes) can't change
+        // mid-pass, but pickFillerSim was reloading it from DB on every single
+        // pick — round-robin between just a
         // couple of sources means the same source gets re-fetched hundreds of
         // times per day of projection. Keyed by "content_type:content_id:season".
         std::unordered_map<std::string, std::vector<FillerItem>> filler_items_cache;
+
+        // Episodes/movies/list items for every show/movie/playlist touched during
+        // this pass, memoized on first read — see ContentCache.
+        ContentCache content_cache;
     };
 
     // Projection core.
@@ -322,7 +378,8 @@ private:
                                                    const TimeslotSlot& slot,
                                                    SlotCursor& sc,
                                                    std::time_t at,
-                                                   const std::string& tz);
+                                                   const std::string& tz,
+                                                   ContentCache& cache);
 
     // Fill pass.t → target with sized filler; advance pass.t to target if no filler fits.
     void fillToTime(const ProjectContext& ctx,
@@ -344,17 +401,20 @@ private:
     std::optional<ScheduledItem> pickFromSource(const std::string& channel_id,
                                                 const std::string& content_type,
                                                 const std::string& content_id,
-                                                int position);
+                                                int position,
+                                                ContentCache& cache);
 
     std::optional<ScheduledItem> pickBumperItem(const std::string& channel_id,
                                                 const std::string& content_type,
                                                 const std::string& content_id,
                                                 const std::string& scope_id,
-                                                CursorState& state);
+                                                CursorState& state,
+                                                ContentCache& cache);
     void advanceBumperCursor(const std::string& content_type,
                              const std::string& content_id,
                              const std::string& scope_id,
-                             CursorState& state);
+                             CursorState& state,
+                             ContentCache& cache);
 
     bool scheduleBumperItem(const std::string& channel_id,
                             const std::string& block_id,
@@ -363,22 +423,22 @@ private:
                             const std::string& scope_id,
                             std::vector<ScheduledItem>& result,
                             std::time_t& t,
-                            CursorState& state);
+                            CursorState& state,
+                            ContentCache& cache);
 
     // Pick one filler clip from the effective pool, advancing filler positions in state.
-    // max_ms > 0: "sized" advancement rejects clips longer than this.
-    // history_cache/history_cached_before: caller's ProjectPassState fields (see there for why).
+    // max_ms > 0: "sized" advancement rejects clips longer than this. Recency
+    // (LRU for "sized", cooldown for shuffle/sequential) comes from
+    // state.recentPlays("filler:"+channel_id) — no DB read.
+    // items_cache: caller's ProjectPassState::filler_items_cache (see there for why).
     std::optional<ScheduledItem> pickFillerSim(const std::string& channel_id,
                                                const Block& block,
                                                const std::vector<BlockFillerEntry>& pool,
                                                int64_t max_ms,
                                                CursorState& state,
                                                Xoshiro256& rng,
-                                               const std::vector<PlayRecord>& pass_records,
-                                               std::time_t before_time,
-                                               std::optional<std::time_t>& history_cached_before,
-                                               std::unordered_map<std::string, int64_t>& history_cache,
-                                               std::unordered_map<std::string, std::vector<FillerItem>>& items_cache);
+                                               std::unordered_map<std::string, std::vector<FillerItem>>& items_cache,
+                                               ContentCache& cache);
 
     Database&         db_;
     BlockRepository   blocks_;

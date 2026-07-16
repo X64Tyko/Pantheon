@@ -1752,6 +1752,52 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE media_source ADD COLUMN sync_priority INTEGER NOT NULL DEFAULT 0;
 )SQL" }
 
+// ── v78: cursor state becomes fully anchor-self-sufficient — no more live
+//         play_history/scheduled_program derivation during project().
+//         - media_cursor: episode_order joins the key (two blocks playing the
+//           same show in different orders now track independent progress),
+//           plus an `ahead` column (JSON array of episode ids aired out of
+//           order, ahead of the `episode_id` watermark — see CursorState).
+//         - timeslot_slot: episode_pos (a raw, unreconciled index) is
+//           replaced by the same watermark+ahead pair; left in place unused
+//           rather than dropped, since nothing else reads it.
+//         - anchor_hashes format changes shape (episode_order/ahead in
+//           cursors, plus now includes slot_cursors/filler_positions/recency
+//           that were previously silently dropped) — old snapshots are
+//           incompatible, so clear them and let channels regenerate fresh,
+//           same as v31.
+,{ 78, R"SQL(
+    CREATE TABLE media_cursor_v78 (
+        content_type  TEXT    NOT NULL
+                      CHECK(content_type IN ('show','show_rerun','movie','playlist','filler_list')),
+        content_id    TEXT    NOT NULL,
+        cursor_scope  TEXT    NOT NULL CHECK(cursor_scope IN ('global','channel','block')),
+        scope_id      TEXT    NOT NULL DEFAULT '',
+        episode_order TEXT    NOT NULL DEFAULT '',
+        episode_id    TEXT    REFERENCES episode(episode_id),
+        movie_id      TEXT    REFERENCES movie(movie_id),
+        position      INTEGER NOT NULL DEFAULT 0,
+        ahead         TEXT    NOT NULL DEFAULT '[]',
+        updated_at    INTEGER NOT NULL,
+        PRIMARY KEY (content_type, content_id, cursor_scope, scope_id, episode_order)
+    );
+
+    INSERT INTO media_cursor_v78
+        (content_type, content_id, cursor_scope, scope_id, episode_order,
+         episode_id, movie_id, position, ahead, updated_at)
+        SELECT content_type, content_id, cursor_scope, scope_id, '',
+               episode_id, movie_id, position, '[]', updated_at
+        FROM media_cursor;
+
+    DROP TABLE media_cursor;
+    ALTER TABLE media_cursor_v78 RENAME TO media_cursor;
+
+    ALTER TABLE timeslot_slot ADD COLUMN episode_watermark_id TEXT;
+    ALTER TABLE timeslot_slot ADD COLUMN episode_ahead        TEXT NOT NULL DEFAULT '[]';
+
+    UPDATE channel SET anchor_hashes = NULL WHERE anchor_hashes IS NOT NULL;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

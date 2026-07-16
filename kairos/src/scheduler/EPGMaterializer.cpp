@@ -54,9 +54,11 @@ GenerateResult EPGMaterializer::generate(
     using json = nlohmann::json;
 
     const std::time_t horizon     = from + static_cast<std::time_t>(horizon_hours) * 3600;
-    const std::time_t from_days   = from / 86400;
-    const std::time_t from_dow    = (from_days + 3) % 7;
-    const std::time_t week_monday = (from_days - from_dow) * 86400;
+    // Timezone-aware — must agree exactly with project()'s own week-walking and
+    // week-boundary anchor captures (RuleEngine::weekMondayForChannel). A naive
+    // UTC-calendar-week boundary can land days away from this for a channel not
+    // on UTC, silently missing (or colliding with) anchors project() wrote.
+    const std::time_t week_monday = engine_.weekMondayForChannel(channel_id, from);
 
     int init_seed = seed;
     if (init_seed < 0) {
@@ -169,10 +171,9 @@ std::optional<bool> EPGMaterializer::checkAnchorDivergence(const std::string& ch
                                                             std::time_t reference_time) {
     using json = nlohmann::json;
 
-    std::time_t days         = reference_time / 86400;
-    std::time_t dow          = (days + 3) % 7;
-    std::time_t week_monday  = (days - dow) * 86400;
-    std::time_t prev_monday  = week_monday - 7 * 86400;
+    // Timezone-aware — see the comment in generate() on week_monday.
+    std::time_t week_monday  = engine_.weekMondayForChannel(channel_id, reference_time);
+    std::time_t prev_monday  = engine_.weekMondayForChannel(channel_id, week_monday - 86400);
 
     json anchors = json::object();
     {

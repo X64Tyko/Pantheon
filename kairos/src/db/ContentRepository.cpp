@@ -135,54 +135,6 @@ std::vector<Episode> ContentRepository::getEpisodes(const std::string& show_id,
     return eps;
 }
 
-std::vector<Episode> ContentRepository::getPlayedEpisodes(const std::string& show_id,
-                                                           const std::string& channel_id,
-                                                           std::optional<int> season,
-                                                           std::time_t before_time,
-                                                           bool global_scope,
-                                                           bool include_specials,
-                                                           const std::string& episode_order) {
-    std::string sql =
-        "SELECT e.episode_id, e.show_id, e.season, e.episode, e.title, e.file_path,"
-        " e.duration_ms, e.overview, e.air_date, e.thumb, e.tvdb_id, e.tmdb_id, e.imdb_id"
-        " FROM episode e WHERE e.show_id = ?";
-    if (season)                       sql += " AND e.season = ?";
-    if (!season && !include_specials) sql += " AND e.season != 0";
-    // aired_at < before_time already excludes scheduled-but-not-yet-aired rows —
-    // no separate is_scheduled filter needed. Most channels run in 'scheduled' mode,
-    // where is_scheduled=1 rows (written by EPGMaterializer::commit()) are the only
-    // play_history ever gets; requiring is_scheduled=0 here would make the rerun pool
-    // never see them.
-    // INDEXED BY forces the per-episode item_id lookup (idx_history_item):
-    // without it, SQLite's planner picks idx_history_channel instead for this
-    // correlated subquery and rescans the channel's *entire* play_history for
-    // every candidate episode — measured ~130x slower on a channel with tens
-    // of thousands of accumulated history rows (the common case for a
-    // long-lived channel), which is what made schedule generation for
-    // rerun/shuffle blocks pathologically slow.
-    sql += " AND EXISTS (SELECT 1 FROM play_history ph INDEXED BY idx_history_item"
-           " WHERE ph.item_type='episode' AND ph.item_id=e.episode_id";
-    if (!global_scope) sql += " AND ph.channel_id=?";
-    sql += " AND ph.aired_at < ?)";
-    if (episode_order == "absolute")
-        sql += " ORDER BY COALESCE(e.absolute_index, e.season * 10000 + e.episode)";
-    else if (episode_order == "airdate")
-        sql += " ORDER BY e.air_date, e.episode";
-    else
-        sql += " ORDER BY e.season, e.episode";
-
-    SQLite::Statement q(db_.get(), sql);
-    int idx = 1;
-    q.bind(idx++, show_id);
-    if (season)       q.bind(idx++, *season);
-    if (!global_scope) q.bind(idx++, channel_id);
-    q.bind(idx++, static_cast<int64_t>(before_time));
-
-    std::vector<Episode> eps;
-    while (q.executeStep()) eps.push_back(rowToEpisodeFull(q));
-    return eps;
-}
-
 // ---------------------------------------------------------------------------
 // Movies
 // ---------------------------------------------------------------------------
@@ -383,70 +335,6 @@ ContentRepository::findGroupPart1(const std::string& episode_id) {
     q.bind(1, episode_id);
     if (!q.executeStep()) return std::nullopt;
     return q.getColumn(0).getString();
-}
-
-// ---------------------------------------------------------------------------
-// Hot-ID queries (play-history recency for SmartShuffle cooldown)
-// ---------------------------------------------------------------------------
-
-std::unordered_set<std::string>
-ContentRepository::getHotMovieIds(const std::string& channel_id,
-                                   std::time_t before_time,
-                                   int limit) {
-    SQLite::Statement q(db_.get(), R"(
-        SELECT item_id FROM (
-            SELECT item_id, MAX(aired_at) AS last_aired
-            FROM play_history
-            WHERE item_type='movie' AND channel_id=? AND aired_at<?
-            GROUP BY item_id
-        ) ORDER BY last_aired DESC LIMIT ?
-    )");
-    q.bind(1, channel_id);
-    q.bind(2, static_cast<int64_t>(before_time));
-    q.bind(3, limit);
-    std::unordered_set<std::string> ids;
-    while (q.executeStep()) ids.insert(q.getColumn(0).getString());
-    return ids;
-}
-
-std::unordered_set<std::string>
-ContentRepository::getHotEpisodeIds(const std::string& channel_id,
-                                     std::time_t before_time,
-                                     const std::string& show_id,
-                                     int limit) {
-    SQLite::Statement q(db_.get(), R"(
-        SELECT item_id FROM (
-            SELECT ph.item_id, MAX(ph.aired_at) AS last_aired
-            FROM play_history ph
-            JOIN episode e ON e.episode_id = ph.item_id
-            WHERE ph.item_type='episode' AND ph.channel_id=? AND ph.aired_at<? AND e.show_id=?
-            GROUP BY ph.item_id
-        ) ORDER BY last_aired DESC LIMIT ?
-    )");
-    q.bind(1, channel_id);
-    q.bind(2, static_cast<int64_t>(before_time));
-    q.bind(3, show_id);
-    q.bind(4, limit);
-    std::unordered_set<std::string> ids;
-    while (q.executeStep()) ids.insert(q.getColumn(0).getString());
-    return ids;
-}
-
-std::unordered_map<std::string, int64_t>
-ContentRepository::getLastPlayedMap(const std::string& channel_id,
-                                     std::time_t before_time) {
-    // filler_play_history, not play_history: filler picks are tracked separately so
-    // they never pollute getHotMovieIds/getHotEpisodeIds (content-side cooldown).
-    const char* sql = (before_time > 0)
-        ? "SELECT item_id, MAX(aired_at) FROM filler_play_history WHERE channel_id=? AND aired_at<=? GROUP BY item_id"
-        : "SELECT item_id, MAX(aired_at) FROM filler_play_history WHERE channel_id=? GROUP BY item_id";
-    SQLite::Statement q(db_.get(), sql);
-    q.bind(1, channel_id);
-    if (before_time > 0) q.bind(2, static_cast<int64_t>(before_time));
-    std::unordered_map<std::string, int64_t> result;
-    while (q.executeStep())
-        result[q.getColumn(0).getString()] = q.getColumn(1).getInt64();
-    return result;
 }
 
 // ---------------------------------------------------------------------------
