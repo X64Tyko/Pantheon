@@ -5,6 +5,7 @@
 struct ServiceContext;
 class ConfStore;
 class Database;
+class EPGDivergenceChecker;
 class EPGMaterializer;
 class RuleEngine;
 class ScheduleCache;
@@ -15,9 +16,10 @@ public:
 	void registerRoutes(httplib::Server& svr) override;
 
 private:
-	Database&        db_;
-	ConfStore&       conf_;
-	RuleEngine&      engine_;
-	EPGMaterializer& materializer_;
-	ScheduleCache&   schedule_cache_;
+	Database&             db_;
+	ConfStore&            conf_;
+	RuleEngine&           engine_;
+	EPGMaterializer&      materializer_;
+	ScheduleCache&        schedule_cache_;
+	EPGDivergenceChecker& divergence_checker_;
 };

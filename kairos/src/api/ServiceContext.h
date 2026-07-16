@@ -5,6 +5,7 @@ class ConfStore;
 class Database;
 class DownloadManager;
 class EmailService;
+class EPGDivergenceChecker;
 class EPGMaterializer;
 class LogBuffer;
 class RuleEngine;
@@ -14,14 +15,15 @@ class SyncManager;
 // Bundles all shared Kairos dependencies so each IKairosService
 // can declare exactly what it needs in its constructor.
 struct ServiceContext {
-	Database&        db;
-	ConfStore&       conf;
-	SyncManager&     sync;
-	ScheduleCache&   schedule_cache;
-	EPGMaterializer& materializer;
-	RuleEngine&      engine;
-	AuthStore&       auth;
-	LogBuffer&       logs;
-	DownloadManager& dl;
-	EmailService&    email;
+	Database&              db;
+	ConfStore&             conf;
+	SyncManager&           sync;
+	ScheduleCache&         schedule_cache;
+	EPGMaterializer&       materializer;
+	EPGDivergenceChecker&  divergence_checker;
+	RuleEngine&            engine;
+	AuthStore&             auth;
+	LogBuffer&             logs;
+	DownloadManager&       dl;
+	EmailService&          email;
 };

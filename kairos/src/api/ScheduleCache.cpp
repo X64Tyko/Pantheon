@@ -1,4 +1,5 @@
 #include "ScheduleCache.h"
+#include "../db/CursorRepository.h"
 #include "../db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <ctime>
@@ -20,6 +21,17 @@ void ScheduleCache::clear(const std::string& channel_id) {
 	d2.exec();
 
 	evictPreview(channel_id);
+}
+
+void ScheduleCache::hardReset(const std::string& channel_id) {
+	clear(channel_id);
+
+	CursorRepository(db_).clear(channel_id);
+
+	SQLite::Statement upd(db_.get(),
+		"UPDATE channel SET anchor_hashes = NULL WHERE channel_id = ?");
+	upd.bind(1, channel_id);
+	upd.exec();
 }
 
 bool ScheduleCache::getPreview(const std::string& channel_id, int seed,

@@ -79,8 +79,9 @@ public:
                                         std::map<std::time_t, std::string>* anchors_out = nullptr,
                                         std::vector<PlayRecord>* play_records_out = nullptr,
                                         std::vector<PlayRecord>* filler_records_out = nullptr);
+	void scheduleBlockWindows(std::vector<Block>& blocks);
 
-    // Convenience overload for callers that don't manage CursorState externally
+	// Convenience overload for callers that don't manage CursorState externally
     // (tests, one-shot previews). Starts with a fresh empty state and discards it.
     std::vector<ScheduledItem> project(const std::string& channel_id,
                                         std::time_t start, int horizon_hours,
@@ -104,14 +105,6 @@ private:
                                             bool global_scope = false,
                                             bool include_specials = false,
                                             const std::string& episode_order = "season");
-    // Like getPlayedEpisodes but excludes the most-recently-played smart_pct% of the pool.
-    std::vector<Episode> getPlayedEpisodesWithCooldown(const std::string& show_id,
-                                                        const std::string& channel_id,
-                                                        std::optional<int> season,
-                                                        int smart_pct,
-                                                        std::time_t before_time,
-                                                        bool global_scope = false,
-                                                        bool include_specials = false);
     std::optional<Movie>         getMovie(const std::string& movie_id);
     std::optional<ScheduledItem> episodeById(const std::string& episode_id);
     // Returns (item_type, item_id) pairs from a playlist or filler_list in order.
@@ -156,62 +149,33 @@ private:
     // regardless of live RNG state, enabling reproducible shuffles across projections.
     static std::vector<int> shufflePermutation(const std::string& seed_str, int n);
 
-    // Like shufflePermutation but keeps multipart episodes consecutive as atomic units.
-    std::vector<int> groupedShufflePermutation(const std::string& seed_str,
-                                               const std::vector<Episode>& eps);
+    // True if `entry`'s show has ever actually aired (real play history — DB or this
+    // pass's own pass_records), independent of any local block cursor. The only thing
+    // no_history_behavior governs (see NoHistoryBehavior): Exclude uses this to filter
+    // a show out of selection entirely; once true, a show plays the same way regardless
+    // of no_history_behavior.
+    bool hasRealHistory(const std::string& channel_id, const Block& block,
+                        const BlockContent& entry, std::time_t before_time,
+                        const std::vector<PlayRecord>& pass_records);
 
-    // Get the aired episodes for a show, prioritizing memory cursors.
-    std::vector<Episode> getAvailableEpisodesForShow(const std::string& channel_id, const Block& block,
-                                                     const BlockContent& entry, std::time_t before_time,
-                                                     const CursorState& state, const std::vector<PlayRecord>& pass_records);
+    // Seeds or advances one show's cursor and returns its next item — the single place
+    // that owns show playback: sequential resume-from-history (or a simulated pass from
+    // episode 0 for Normal with zero history), then free-random once a full pass
+    // completes (Fallback skips the sequential phase and starts free-random immediately).
+    // Free-random picks respect Advancement::Smart cooldown filtering; nothing is
+    // persisted for them since every pick is independent. Returns nullopt only if the
+    // show has no episodes at all.
+    std::optional<ScheduledItem> advanceShowCursor(const std::string& channel_id, const Block& block,
+                                                    const BlockContent& entry, std::time_t before_time,
+                                                    CursorState& state,
+                                                    const std::vector<PlayRecord>& pass_records,
+                                                    Xoshiro256& rng);
 
-    // ── Rerun-block seed cursors (once-per-block-per-day init in projectDay) ──────
-    //
-    // Decides what starting cursor, if any, to seed for one show content entry that
-    // has no persisted block position yet. `played` is that show's real play history
-    // (episode_order applied, already scoped/cooled by the caller); `all` is its full
-    // episode catalog. Returns nullopt to mean "leave this show genuinely unseeded" —
-    // callers must never fabricate a cursor to paper over that.
-    //
-    // Split one function per no_history_behavior (rather than a single branchy block)
-    // so a new behavior is one new function + one switch case, without touching the
-    // others or the shared real-history math.
-    struct SeedCursor { std::string content_type; int position = 0; std::string episode_id; };
-
-    // Shared by every behavior: if `played` is non-empty, resume first-run right after
-    // it (or flip to full rerun mode once `played` covers the whole catalog). Returns
-    // nullopt when there is no real history to seed from.
-    std::optional<SeedCursor> seedFromRealHistory(const std::vector<Episode>& played,
-                                                  const std::vector<Episode>& all,
-                                                  bool snap_to_group_start, Xoshiro256& rng);
-
-    // Normal: optimistic either way — real history resumes first-run; no history at
-    // all still gets a random first-run starting point (channel seed diversity).
-    std::optional<SeedCursor> getContentNormalHistory(const std::vector<Episode>& played,
-                                                       const std::vector<Episode>& all,
-                                                       bool snap_to_group_start, Xoshiro256& rng);
-    // FallbackAll: no real history means the whole catalog is already a legitimate
-    // rerun pool, so seed straight into rerun mode instead of a first-run position.
-    std::optional<SeedCursor> getContentFallbackHistory(const std::vector<Episode>& played,
-                                                         const std::vector<Episode>& all,
-                                                         bool snap_to_group_start, Xoshiro256& rng);
-    // Skip: no real history means this slot should be skipped entirely — never
-    // fabricate a cursor; leave the show unseeded so the empty-pool path takes over.
-    std::optional<SeedCursor> getContentSkipHistory(const std::vector<Episode>& played,
-                                                     const std::vector<Episode>& all,
-                                                     bool snap_to_group_start, Xoshiro256& rng);
-    // Exclude: same contract as Skip — no real history must stay unseeded so
-    // pickNextContent's weighted-selection pool can leave this show out.
-    std::optional<SeedCursor> getContentExcludeHistory(const std::vector<Episode>& played,
-                                                        const std::vector<Episode>& all,
-                                                        bool snap_to_group_start, Xoshiro256& rng);
-
-    // Select the next episode from a pool based on advancement and history behavior.
-    std::optional<ScheduledItem> selectNextEpisode(const std::string& channel_id, const Block& block,
-                                                   const BlockContent& entry, const std::vector<Episode>& all_eps,
-                                                   const std::vector<Episode>& rerun_pool, CursorState& state);
-    // Selects the content index to play for this call, updates block position state.
-    // Returns -1 only when Exclude mode finds no eligible content.
+    // Selects the content index to play for this call and updates block position state.
+    // For Exclude-mode rerun blocks, ineligible shows (hasRealHistory == false) are
+    // filtered out of the candidate pool before the weighted draw — not retried after.
+    // Does not touch episode-level cursors; that's advanceAndGet/advanceShowCursor's job
+    // once the index is decided. Returns -1 only when Exclude mode finds nothing eligible.
     int pickNextContent(const std::string& channel_id, const Block& block,
                         std::time_t before_time, CursorState& state,
                         const std::vector<PlayRecord>& pass_records, Xoshiro256& rng);
@@ -289,32 +253,62 @@ private:
         std::unordered_map<std::string, std::vector<FillerItem>> filler_items_cache;
     };
 
-    // Three-layer projection core.
+    // Projection core.
     //
-    // scheduleBlock: item loop for one block occurrence within [pass.t, window_end).
-    //   Returns true if block hit its program_count (exhausted) before window_end.
-    //   Items that would span window_end are rolled back. Day boundary (day_start)
-    //   is used for block end_time arithmetic; items ARE allowed to complete past it.
+    // Windows (block.schedule_windows, built once per project() call by
+    // scheduleBlockWindows) already encode priority, preemption, and
+    // late_start_mins grace as plain time ranges — including deliberate overlap
+    // where a lower-priority block's window resumes exactly at a preemptor's
+    // (grace-extended) cut point. So the dispatch loop needs no preemption
+    // bookkeeping of its own: it just repeatedly asks "which block owns pass.t
+    // right now", has it schedule one program bounded by its own window_end, and
+    // asks again. The overlap is what lets an in-flight lower-priority item finish
+    // naturally before the next resolve picks up the higher-priority block.
     //
-    // projectDay: dispatch for one calendar day. Owns a local exhausted set (reset
-    //   per day). Resolves the active block at pass.t, computes its preemption window,
-    //   calls scheduleBlock. On exhaustion the block is removed from the active set
-    //   and the loop continues — no recursion needed. Exits when pass.t >= day_end
-    //   OR pass.t >= t_end (whichever comes first for dispatch purposes).
-    bool scheduleBlock(const ProjectContext& ctx,
-                       const Block& block,
-                       std::time_t window_end,
-                       int window_late_start_mins,
-                       bool first_entry,
-                       std::time_t day_start,
-                       ProjectPassState& pass);
+    // week_blocks is a fresh copy of ctx.blocks (with schedule_windows already
+    // computed) made once per week in project() — BlockWindow::prog_count/
+    // intro_played/exhausted are mutated directly on it as the week is scheduled,
+    // and the copy is simply discarded at week's end, so nothing needs manual
+    // resetting. Pieces sharing one occurrence_start (see BlockWindow) are kept in
+    // sync by scheduleBlockStep as it mutates them, since they describe one
+    // occurrence, not independent pieces.
+    //
+    // resolveActiveWindow: highest-priority block whose schedule_windows covers
+    //   `t` (as a week-relative offset from week_start) and isn't exhausted.
+    //   nullopt when nothing covers `t` (a genuine gap).
+    //
+    // scheduleBlockStep: schedules exactly one program (plus surrounding
+    //   intro/interstitial/outro/alignment filler) for `block` starting at
+    //   pass.t, advancing pass.t by however long that took. Knows its own
+    //   window (`w.window_end`, converted to absolute via `window_end`) — if the
+    //   next-selected item wouldn't fit before it, the selection is rolled back
+    //   and sized filler plays instead (this is also what inter-program filler
+    //   will need: how much room is left in the window). If nothing fits at all,
+    //   marks `w` exhausted immediately rather than leaving a timed gap. Returns
+    //   true if this call exhausted the occurrence (program_count hit, or nothing
+    //   left to schedule).
+    //
+    // projectWeek: dispatch for one week. Loops resolveActiveWindow + scheduleBlockStep
+    //   directly on week_blocks; on a gap, fills forward to the next window start
+    //   with channel filler. Exits when pass.t >= week_end.
+    struct ActiveWindow { Block* block; BlockWindow* window; };
 
-    // Timeslot-specific scheduling helpers.
+    std::optional<ActiveWindow> resolveActiveWindow(std::vector<Block>& week_blocks,
+                                                     std::time_t week_start,
+                                                     std::time_t t);
+
+    bool scheduleBlockStep(const ProjectContext& ctx,
+                           Block& block,
+                           BlockWindow& w,
+                           std::time_t window_end,
+                           ProjectPassState& pass);
+
+    // Timeslot occurrences fill their whole window in one call (a fixed slot grid,
+    // not exhaustible content) rather than one program at a time — window_end is
+    // already grace-adjusted by scheduleBlockWindows.
     bool scheduleTimeslotBlock(const ProjectContext& ctx,
                                const Block& block,
                                std::time_t window_end,
-                               int window_late_start_mins,
-                               std::time_t day_start,
                                ProjectPassState& pass);
 
     // Resolves the next item for one timeslot slot from its own queue (NOT
@@ -336,12 +330,11 @@ private:
                     std::time_t target,
                     ProjectPassState& pass);
 
-    void projectDay(const ProjectContext& ctx,
-                    std::time_t day_start,
-                    std::time_t day_end,
-                    int day_mask_bit,
-                    ProjectPassState& pass,
-                    std::time_t t_end);
+    void projectWeek(const ProjectContext& ctx,
+                     std::vector<Block>& week_blocks,
+                     std::time_t week_start,
+                     std::time_t week_end,
+                     ProjectPassState& pass);
 
     std::optional<Block> resolveFromList(const std::vector<Block>& blocks, std::time_t t,
                                          const std::string& tz = "UTC");

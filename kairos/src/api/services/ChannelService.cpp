@@ -157,7 +157,15 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 					: b["anchor_hashes"].dump();
 				upd("anchor_hashes", ah);
 			}
-			if (b.contains("timezone") || b.contains("seed") || b.contains("advance_mode"))
+			// timezone shifts which calendar day/week-boundary every block's
+			// day_mask/start_time resolves against, and seed changes the RNG
+			// determinism the whole projection is built on — old anchor/cursor
+			// state doesn't just look different afterward, it's for a different
+			// channel in all but name. default_filler_selection/advance_mode only
+			// shape future picks, so a soft clear is enough for those.
+			if (b.contains("timezone") || b.contains("seed"))
+				schedule_cache_.hardReset(id);
+			else if (b.contains("default_filler_selection") || b.contains("advance_mode"))
 				schedule_cache_.clear(id);
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
@@ -256,6 +264,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 				season_filter = b["season_filter"].get<int>();
 			auto fr = ChannelRepository(db_).addFillerEntry(
 				channel_id, content_type, content_id, advancement, weight, season_filter);
+			schedule_cache_.clear(channel_id);
 			json resp = {
 				{"id",           fr.id},
 				{"content_type", content_type},
@@ -279,6 +288,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 
 	svr.Patch("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto channel_id = req.path_params.at("id");
 		auto eid = std::stoi(req.path_params.at("eid"));
 		try {
 			auto b = json::parse(req.body);
@@ -287,6 +297,7 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 				repo.updateFillerEntryField(eid, "advancement", b["advancement"].get<std::string>());
 			if (b.contains("weight"))
 				repo.updateFillerEntryField(eid, "weight", b["weight"].get<int>());
+			schedule_cache_.clear(channel_id);
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("PATCH /api/channels/:id/filler/:eid", e);
@@ -296,9 +307,11 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 
 	svr.Delete("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto channel_id = req.path_params.at("id");
 		auto eid = std::stoi(req.path_params.at("eid"));
 		try {
 			ChannelRepository(db_).removeFillerEntry(eid);
+			schedule_cache_.clear(channel_id);
 			route::ok(res, json{{"deleted", eid}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("DELETE /api/channels/:id/filler/" + std::to_string(eid), e);

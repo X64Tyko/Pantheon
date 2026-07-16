@@ -86,7 +86,7 @@ Router::Router(httplib::Server& svr, Database& db, SyncManager& sync,
                DownloadManager& dl, AuthStore& auth, EmailService& email)
 	: svr_(svr), db_(db), sync_(sync), conf_(conf), logs_(logs),
 	  engine_(engine), materializer_(materializer), dl_(dl), auth_(auth), email_(email),
-	  schedule_cache_(db)
+	  schedule_cache_(db), divergence_checker_(materializer)
 {}
 
 Router::~Router() = default;
@@ -154,7 +154,7 @@ void Router::registerRoutes() {
 	sync_.setChapterDetectionManager(chapter_detect_mgr_.get());
 
 	ServiceContext ctx{db_, conf_, sync_, schedule_cache_,
-	                   materializer_, engine_, auth_, logs_, dl_, email_};
+	                   materializer_, divergence_checker_, engine_, auth_, logs_, dl_, email_};
 
 	services_.push_back(std::make_unique<AuthService>(ctx));
 	services_.push_back(std::make_unique<SourceService>(ctx));

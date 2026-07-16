@@ -45,7 +45,10 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 			auto b = json::parse(req.body);
 			BlockRepository repo(db_);
 			std::string block_id = repo.createBlock(channel_id, b);
-			schedule_cache_.clear(channel_id);
+			// A new block can shift the priority-cut windowing of every other
+			// block on the channel, not just add content — old cursor/anchor
+			// state can no longer be trusted.
+			schedule_cache_.hardReset(channel_id);
 			res.status = 201;
 			route::ok(res, json{{"block_id", block_id}}.dump());
 		} catch (const std::exception& e) {
@@ -99,7 +102,24 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 				else
 					repo.updateBlockField(bid, "end_time", b["end_time"].get<std::string>());
 			}
-			schedule_cache_.clear(channel_id);
+
+			// These change window shape (day_mask/start_time/end_time/priority),
+			// cursor-key identity (cursor_scope), or content-selection semantics
+			// (play_style/advancement/no_history_behavior) enough that old
+			// accumulated cursor/RNG state can be actively wrong afterward — a
+			// soft clear alone would still resume projection from it. Everything
+			// else here (timing knobs, bumper content, program_count, ...) only
+			// shapes future scheduling, so it doesn't need a hard reset.
+			static const std::unordered_set<std::string> kStructuralFields{
+				"day_mask", "start_time", "end_time", "priority",
+				"play_style", "advancement", "cursor_scope", "no_history_behavior",
+			};
+			bool structural = false;
+			for (const auto& field : kStructuralFields)
+				if (b.contains(field)) { structural = true; break; }
+
+			if (structural) schedule_cache_.hardReset(channel_id);
+			else             schedule_cache_.clear(channel_id);
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("PATCH /api/channels/:id/blocks/" + bid, e);
@@ -114,7 +134,9 @@ void BlockService::registerRoutes(httplib::Server& svr) {
 		try {
 			BlockRepository repo(db_);
 			repo.removeBlock(bid);
-			schedule_cache_.clear(channel_id);
+			// Removing a block reshuffles every other block's priority-cut
+			// windowing, same as creating one — see the create handler above.
+			schedule_cache_.hardReset(channel_id);
 			route::ok(res, json{{"deleted", bid}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("DELETE /api/channels/:id/blocks/" + bid, e);

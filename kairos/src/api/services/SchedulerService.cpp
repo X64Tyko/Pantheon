@@ -6,6 +6,7 @@
 #include "../../db/ChannelRepository.h"
 #include "../../db/ScheduleRepository.h"
 #include "../../db/SourceRepository.h"
+#include "../../scheduler/EPGDivergenceChecker.h"
 #include "../../scheduler/EPGMaterializer.h"
 #include "../../scheduler/RuleEngine.h"
 #include "../../source/MediaProbe.h"
@@ -22,7 +23,8 @@ using Res  = httplib::Response;
 
 SchedulerService::SchedulerService(const ServiceContext& ctx)
 	: db_(ctx.db), conf_(ctx.conf), engine_(ctx.engine),
-	  materializer_(ctx.materializer), schedule_cache_(ctx.schedule_cache)
+	  materializer_(ctx.materializer), schedule_cache_(ctx.schedule_cache),
+	  divergence_checker_(ctx.divergence_checker)
 {}
 
 namespace {
@@ -424,12 +426,54 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	// ── Clear EPG cache ───────────────────────────────────────────────────────
+	// ?hard=true also wipes CursorState + the RNG/cursor anchor snapshot, not just
+	// scheduled_program — use when a structural change (or anything else) makes
+	// the accumulated cursor state itself suspect, not just the materialized rows.
 	svr.Post(R"(/api/channels/([^/]+)/epg/clear)", [this](const Req& req, Res& res) {
 	  try {
-		schedule_cache_.clear(req.matches[1]);
-		route::ok(res, json{{"ok", true}}.dump());
+		bool hard = req.has_param("hard") && req.get_param_value("hard") == "true";
+		if (hard) schedule_cache_.hardReset(req.matches[1]);
+		else      schedule_cache_.clear(req.matches[1]);
+		route::ok(res, json{{"ok", true}, {"hard", hard}}.dump());
 	  } catch (const std::exception& e) {
 		route::logErr("POST /api/channels/epg/clear", e); route::err(res, 500, e.what());
+	  }
+	});
+
+	// ── EPG divergence check ─────────────────────────────────────────────────
+	// Starts a background check (cheap anchor comparison, falling through to a
+	// full projection + item diff only when needed) and returns immediately with
+	// a job id; poll it via the jobs list below.
+	svr.Post(R"(/api/channels/([^/]+)/epg/divergence-check)", [this](const Req& req, Res& res) {
+	  try {
+		auto job_id = divergence_checker_.startCheck(req.matches[1]);
+		route::ok(res, json{{"job_id", job_id}}.dump());
+	  } catch (const std::exception& e) {
+		route::logErr("POST /api/channels/epg/divergence-check", e); route::err(res, 500, e.what());
+	  }
+	});
+
+	svr.Get("/api/channels/epg/divergence-check/jobs", [this](const Req&, Res& res) {
+	  try {
+		json arr = json::array();
+		for (const auto& j : divergence_checker_.getJobs()) {
+			arr.push_back({
+				{"id",               j.id},
+				{"channel_id",       j.channel_id},
+				{"status",           j.status},
+				{"stage",            j.stage},
+				{"anchor_checked",   j.anchor_checked},
+				{"anchor_diverged",  j.anchor_diverged},
+				{"deep_ran",         j.deep_ran},
+				{"divergence_count", j.divergence_count},
+				{"started_at",       j.started_at},
+				{"finished_at",      j.finished_at},
+				{"error",            j.error},
+			});
+		}
+		route::ok(res, arr.dump());
+	  } catch (const std::exception& e) {
+		route::logErr("GET /api/channels/epg/divergence-check/jobs", e); route::err(res, 500, e.what());
 	  }
 	});
 

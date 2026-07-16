@@ -1,6 +1,7 @@
 #pragma once
 #include <ctime>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 #include "CursorState.h"
@@ -40,6 +41,19 @@ public:
     GenerateResult generate(const std::string& channel_id,
                             std::time_t from, int horizon_hours,
                             int seed = -1);
+
+    // Cheap divergence signal: re-derives the anchor for the week containing
+    // `reference_time` by projecting forward from the *previous* week's stored
+    // anchor, and compares it against what's currently stored for that week. A
+    // mismatch means something changed (blocks, filler, the scheduling algorithm
+    // itself) since that anchor was captured — before paying for a full
+    // projection + item-by-item diff, this catches "has anything changed at all"
+    // from just two small JSON snapshots. Read-only; no DB writes.
+    // Returns nullopt when there's no previous-week anchor to verify against yet
+    // (nothing generated for this channel that far back) — not itself a signal
+    // of divergence, just "can't tell, go generate."
+    std::optional<bool> checkAnchorDivergence(const std::string& channel_id,
+                                              std::time_t reference_time);
 
     // Commit a GenerateResult to scheduled_program. Replaces (deletes then
     // inserts), not appends, any not-yet-aired row from max(from, now) through horizon.

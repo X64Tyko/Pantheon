@@ -11,7 +11,6 @@
 #include <iostream>
 #include <map>
 #include <sstream>
-#include <unordered_map>
 
 #include "RuntimeFlags.h"
 
@@ -105,37 +104,55 @@ GenerateResult EPGMaterializer::generate(
     result.cursor_state = std::move(cs);
 
     // Detect divergences: new items that differ from what is currently committed.
+    // Compares by time overlap rather than exact wall_clock_start equality — a
+    // timing shift (block priority/window changes, different content picked
+    // upstream, etc.) must still surface as a divergence rather than silently
+    // missing because nothing lines up at the exact same instant. Both lists are
+    // chronological (existing via ORDER BY, new items by construction from
+    // project()), so a single forward-advancing pointer over `existing` is enough.
     {
-        std::unordered_map<std::time_t, std::pair<std::string, std::string>> existing;
+        struct ExistingRow { std::time_t start, end; std::string type, id; };
+        std::vector<ExistingRow> existing;
         SQLite::Statement eq(db_.get(), R"(
-            SELECT wall_clock_start, item_type, item_id
+            SELECT wall_clock_start, wall_clock_end, item_type, item_id
             FROM scheduled_program
             WHERE channel_id = ?
               AND wall_clock_end   > ?
               AND wall_clock_start < ?
+            ORDER BY wall_clock_start ASC
         )");
         eq.bind(1, channel_id);
         eq.bind(2, static_cast<int64_t>(from));
         eq.bind(3, static_cast<int64_t>(horizon));
         while (eq.executeStep())
-            existing[static_cast<std::time_t>(eq.getColumn(0).getInt64())] = {
-                eq.getColumn(1).getString(), eq.getColumn(2).getString()
-            };
+            existing.push_back({
+                static_cast<std::time_t>(eq.getColumn(0).getInt64()),
+                static_cast<std::time_t>(eq.getColumn(1).getInt64()),
+                eq.getColumn(2).getString(), eq.getColumn(3).getString()
+            });
 
+        size_t ei = 0;
         for (const auto& item : result.items) {
             std::time_t ws = item.wall_clock_start_ms / 1000;
+            std::time_t we = item.wall_clock_end_ms   / 1000;
             if (ws < from) continue;
-            auto it = existing.find(ws);
-            if (it != existing.end() &&
-                (it->second.first != item.item_type || it->second.second != item.item_id))
-            {
-                result.divergences.push_back({
-                    ws,
-                    item.wall_clock_end_ms / 1000,
-                    item.block_id,
-                    it->second.first, it->second.second,
-                    item.item_type,   item.item_id
-                });
+            if (ws >= horizon) break;
+
+            // Drop existing rows that ended before this item starts — both lists
+            // are chronological, so they're never relevant to any later item either.
+            while (ei < existing.size() && existing[ei].end <= ws) ++ei;
+
+            const bool overlaps = ei < existing.size() &&
+                existing[ei].start < we && existing[ei].end > ws;
+            if (!overlaps) {
+                // Nothing existing covers this stretch at all — a shifted timeline
+                // or genuinely new content; still worth surfacing, not silence.
+                result.divergences.push_back({ws, we, item.block_id,
+                                              "", "", item.item_type, item.item_id});
+            } else if (existing[ei].type != item.item_type || existing[ei].id != item.item_id) {
+                result.divergences.push_back({ws, we, item.block_id,
+                                              existing[ei].type, existing[ei].id,
+                                              item.item_type,    item.item_id});
             }
         }
     }
@@ -146,6 +163,43 @@ GenerateResult EPGMaterializer::generate(
                   << " divergences=" << result.divergences.size() << '\n';
 
     return result;
+}
+
+std::optional<bool> EPGMaterializer::checkAnchorDivergence(const std::string& channel_id,
+                                                            std::time_t reference_time) {
+    using json = nlohmann::json;
+
+    std::time_t days         = reference_time / 86400;
+    std::time_t dow          = (days + 3) % 7;
+    std::time_t week_monday  = (days - dow) * 86400;
+    std::time_t prev_monday  = week_monday - 7 * 86400;
+
+    json anchors = json::object();
+    {
+        SQLite::Statement qa(db_.get(), "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+        qa.bind(1, channel_id);
+        if (qa.executeStep() && !qa.getColumn(0).isNull()) {
+            try { anchors = json::parse(qa.getColumn(0).getString()); } catch (...) { return std::nullopt; }
+        }
+    }
+
+    auto cur_key  = std::to_string(week_monday);
+    auto prev_key = std::to_string(prev_monday);
+    if (!anchors.contains(cur_key) || !anchors.contains(prev_key))
+        return std::nullopt;
+
+    // Re-derive week_monday's anchor by projecting forward from prev_monday's
+    // stored state — generate() is pure/read-only, so this is safe to call as a
+    // probe with no side effects.
+    auto probe = generate(channel_id, prev_monday, 7 * 24 + 2);
+    auto it = probe.anchors.find(week_monday);
+    if (it == probe.anchors.end()) return std::nullopt;
+
+    try {
+        return json::parse(it->second) == anchors[cur_key];
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 void EPGMaterializer::commit(

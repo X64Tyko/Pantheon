@@ -4,6 +4,7 @@
 #include <vector>
 #include "IKairosService.h"
 #include "ScheduleCache.h"
+#include "../scheduler/EPGDivergenceChecker.h"
 
 class AuthStore;
 class ChapterDetectionManager;
@@ -39,6 +40,7 @@ private:
 	EmailService&     email_;
 
 	ScheduleCache                                schedule_cache_;
+	EPGDivergenceChecker                         divergence_checker_;
 	std::unique_ptr<ScraperManager>              scraper_mgr_;
 	std::unique_ptr<ChapterDetectionManager>     chapter_detect_mgr_;
 	std::vector<std::unique_ptr<IKairosService>> services_;

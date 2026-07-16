@@ -20,7 +20,7 @@ std::vector<Block> BlockRepository::loadBlocks(const std::string& channel_id) {
                interstitial_content_type, interstitial_content_id, interstitial_every_n,
                snap_to_group_start, name
         FROM block WHERE channel_id = ?
-        ORDER BY priority DESC
+        ORDER BY priority DESC, start_time DESC
     )");
     q.bind(1, channel_id);
 
