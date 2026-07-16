@@ -4,7 +4,7 @@ import { api, mediaUrl } from '../api/client'
 import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress } from '../api/types'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
 import { MediaDetailHero } from '../components/media/MediaDetailHero'
-import { LibraryDetailActions } from '../components/media/LibraryDetailActions'
+import { LibraryDetailActions, PlayAction } from '../components/media/LibraryDetailActions'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
@@ -369,6 +369,7 @@ export default function HomePage() {
               id={detailId}
               content_type={detailType}
               onBack={closeDetail}
+              playButton={<PlayAction id={detailId} content_type={detailType} />}
               actions={media => <LibraryDetailActions id={detailId} content_type={detailType} media={media} />}
             />
           ) : (

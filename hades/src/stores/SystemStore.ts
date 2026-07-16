@@ -2,6 +2,19 @@ import { makeAutoObservable, runInAction } from 'mobx'
 import { api, TOKEN_KEY } from '../api/client'
 import type { UnmappedSourceUser } from '../api/types'
 
+const DISMISSED_UNMAPPED_KEY = 'pantheon_dismissed_unmapped_users'
+
+function unmappedUserKey(u: UnmappedSourceUser): string {
+  return `${u.source_id}:${u.external_user_id}`
+}
+
+function loadDismissedUnmappedUsers(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_UNMAPPED_KEY)
+    return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+  } catch { return new Set() }
+}
+
 export interface LogEntry {
   id:      number
   ts:      string
@@ -26,7 +39,11 @@ export class SystemStore {
   // Source-reported accounts with no local Pantheon account imported yet —
   // drives the persistent corner notification + SourcesPage's pill.
   unmappedSourceUsers: UnmappedSourceUser[] = []
-  unmappedUsersDismissed = false
+  // localStorage-backed-preference pattern, same as TourStore/HelpTipsStore —
+  // persists per-browser across reloads/logins so dismissing the notice
+  // actually sticks, instead of reappearing every visit (see
+  // unmappedUsersDismissed below for why it's keyed per-user, not a flag).
+  dismissedUnmappedUsers: Set<string> = loadDismissedUnmappedUsers()
 
   private _es:            EventSource | null = null
   private _toastTimer:    ReturnType<typeof setTimeout> | null = null
@@ -121,22 +138,26 @@ export class SystemStore {
     } catch {}
   }
 
-  // Session-only dismiss (not persisted) — reappears next reload until the
-  // list is actually resolved (imported), since there's no other "seen"
-  // state to track against yet.
+  // True once every currently-detected unmapped user has already been
+  // dismissed — persisted in localStorage (dismissedUnmappedUsers), so a
+  // fresh login/reload doesn't re-show the notice for accounts the admin
+  // already saw and chose to ignore. Comparing by identity (not just count)
+  // means a newly-detected profile reopens the notice even if it happens to
+  // land on the same total count as before (e.g. one dismissed account got
+  // imported the same poll cycle a different new one appeared).
+  get unmappedUsersDismissed(): boolean {
+    return this.unmappedSourceUsers.every(u => this.dismissedUnmappedUsers.has(unmappedUserKey(u)))
+  }
+
   dismissUnmappedUsersNotice() {
-    this.unmappedUsersDismissed = true
+    for (const u of this.unmappedSourceUsers) this.dismissedUnmappedUsers.add(unmappedUserKey(u))
+    localStorage.setItem(DISMISSED_UNMAPPED_KEY, JSON.stringify([...this.dismissedUnmappedUsers]))
   }
 
   private async _pollUnmappedUsers() {
     try {
       const users = await api.getUnmappedSourceUsers()
-      runInAction(() => {
-        // A newly-discovered user re-opens a notice the admin already
-        // dismissed this session — the count changed, so it's new information.
-        if (users.length > this.unmappedSourceUsers.length) this.unmappedUsersDismissed = false
-        this.unmappedSourceUsers = users
-      })
+      runInAction(() => { this.unmappedSourceUsers = users })
     } catch {}
     this._unmappedTimer = setTimeout(() => this._pollUnmappedUsers(), 5 * 60 * 1000)
   }

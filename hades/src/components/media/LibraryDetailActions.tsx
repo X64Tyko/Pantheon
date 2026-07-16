@@ -30,26 +30,12 @@ const REQUEST_STATUS_LABEL: Record<string, string> = {
 
 export function LibraryDetailActions({ id, content_type, discoverResult, onViewInLibrary, media }: LibraryDetailActionsProps) {
   const { user } = useAuth()
-  const navigate = useNavigate()
   const isAdmin  = user?.role === 'admin'
   const isLibraryItem = !discoverResult && !!id && !!content_type
   const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
 
   const { detail, movie, title: detailTitle, refetch: refetchDetail } = media
   const [fixMatchOpen, setFixMatchOpen] = useState(false)
-
-  const [playLoading, setPlayLoading] = useState(false)
-
-  const handlePlay = async () => {
-    if (!id) return
-    setPlayLoading(true)
-    try {
-      const path = await resolvePlayPath(contentType, id)
-      if (path) navigate(path)
-    } finally {
-      setPlayLoading(false)
-    }
-  }
 
   // Push to Sources (admin) — writeback is gated server-side on match_confirmed
   // too; the button is just the first line of defense.
@@ -263,8 +249,6 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
     const matchStatus = (detail?.match_status ?? 'unscraped') as MatchStatus
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 900 }}>
-        <PlayButton onClick={handlePlay} loading={playLoading} />
-
         <div style={{
           padding: '12px 14px', borderRadius: 8,
           background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',
@@ -537,6 +521,33 @@ function FixMatchButton({ active, onClick }: { active: boolean; onClick: () => v
       }}
     >{active ? 'Cancel' : 'Fix Match'}</button>
   )
+}
+
+// Rendered separately from LibraryDetailActions itself — MediaDetailHero
+// puts this in its sticky header (locked alongside poster/title) while the
+// rest of LibraryDetailActions (match status, Fix Match, Push to Sources,
+// etc.) stays in the plain-scrolling content below. Self-contained (its own
+// play-resolution state) rather than threaded through LibraryDetailActions'
+// props, since that component's `media` prop carries a lot of unrelated
+// admin/match-fixing state this button has no business touching.
+export function PlayAction({ id, content_type, discoverResult }: {
+  id?: string; content_type?: 'show' | 'movie'; discoverResult?: ScraperSearchResult
+}) {
+  const navigate = useNavigate()
+  const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
+  const [playLoading, setPlayLoading] = useState(false)
+  if (discoverResult || !id || !content_type) return null
+
+  const handlePlay = async () => {
+    setPlayLoading(true)
+    try {
+      const path = await resolvePlayPath(contentType, id)
+      if (path) navigate(path)
+    } finally {
+      setPlayLoading(false)
+    }
+  }
+  return <PlayButton onClick={handlePlay} loading={playLoading} />
 }
 
 function PlayButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
