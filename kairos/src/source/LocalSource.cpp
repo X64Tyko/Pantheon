@@ -5,6 +5,7 @@
 #include "model/Show.h"
 #include "util/TitleMatch.h"
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -25,6 +26,20 @@ const std::unordered_set<std::string> kVideoExts = {
     ".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv",
     ".flv", ".ts", ".mpg", ".mpeg", ".m2ts", ".webm",
 };
+
+// Last-resort "date added" signal for local files — there's no real "added
+// to library" metadata on a bare filesystem the way Plex/Jellyfin track it,
+// so last_write_time is the closest portable proxy (creation time isn't
+// exposed by std::filesystem pre-C++23, and isn't reliable across all
+// filesystems/copy tools even where the OS exposes it). Returns 0 on any
+// error rather than throwing — this is best-effort, not authoritative.
+int64_t fsAddedAtEpoch(const fs::path& p) {
+    std::error_code ec;
+    auto ftime = fs::last_write_time(p, ec);
+    if (ec) return 0;
+    auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+    return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+}
 
 // S01E01, S1E1 — or 1x01, 1x1 (common alt notation). Also captures an
 // optional multi-episode range end: S01E01E02, S01E01-E02, S01E01-02, or
@@ -295,6 +310,10 @@ std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
         show.countries   = "[]";
         show.collections = "[]";
         if (year) show.year = year;
+        if (int64_t added = fsAddedAtEpoch(entry.path()); added > 0) {
+            show.added_at = added;
+            show.added_at_source = "local";
+        }
         result.push_back(std::move(show));
     }
     std::sort(result.begin(), result.end(), [](const Show& a, const Show& b) {
@@ -331,6 +350,10 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
             movie.countries   = "[]";
             movie.collections = "[]";
             if (year) movie.year = year;
+            if (int64_t added = fsAddedAtEpoch(p); added > 0) {
+                movie.added_at = added;
+                movie.added_at_source = "local";
+            }
             result.push_back(std::move(movie));
         } else if (isVideo(p)) {
             auto [title, year] = parseTitle(p.stem().string());
@@ -344,6 +367,10 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
             movie.countries   = "[]";
             movie.collections = "[]";
             if (year) movie.year = year;
+            if (int64_t added = fsAddedAtEpoch(p); added > 0) {
+                movie.added_at = added;
+                movie.added_at_source = "local";
+            }
             result.push_back(std::move(movie));
         }
     }

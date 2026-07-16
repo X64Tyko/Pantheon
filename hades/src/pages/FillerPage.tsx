@@ -1,18 +1,18 @@
 import { observer } from 'mobx-react-lite'
-import { makeAutoObservable, runInAction } from 'mobx'
+import { makeAutoObservable, reaction, runInAction } from 'mobx'
 import { useEffect } from 'react'
 import { api } from '../api/client'
 import type {
   EpisodeSearchResult, FillerAdvancement, FillerList, FillerListDetail, FillerListItem,
   LibraryWithSource, Movie, PlexBrowseItem, PlexBrowseList, Show, Source,
 } from '../api/types'
-import { FilterSection, FIELD_DEFS } from '../components/PickerFilters'
-import type { FilterField, FilterOp, FilterRule } from '../components/PickerFilters'
+import { FilterSection } from '../components/PickerFilters'
+import { FilterTreeStore } from '../components/media/filterTree'
+import { toFilterString } from '../components/media/filterQuery'
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 let searchDebounce: ReturnType<typeof setTimeout>
-let _ruleId = 0
 
 type PickerTab = 'episodes' | 'movies' | 'shows' | 'plex_playlists' | 'plex_collections'
 
@@ -34,9 +34,7 @@ class FillerPageStore {
   pickerLoading: boolean   = false
 
   // Filter rules
-  filterRulesOpen: boolean = false
-  filterMatch: 'all' | 'any' = 'all'
-  filterRules: FilterRule[] = []
+  filterTree: FilterTreeStore = new FilterTreeStore()
   allLibraries: LibraryWithSource[] = []
 
   // Shows tab
@@ -56,7 +54,16 @@ class FillerPageStore {
   plexBrowseLibraryId: string           = ''
   plexImportingId:     string           = ''
 
-  constructor() { makeAutoObservable(this) }
+  constructor() {
+    makeAutoObservable(this)
+    // See LibraryStore's identical reaction — any change to the picker's
+    // rule-builder tree re-searches, replacing the old per-mutator
+    // debounce-and-searchPicker() calls.
+    reaction(() => toFilterString(this.filterTree), () => {
+      clearTimeout(searchDebounce)
+      searchDebounce = setTimeout(() => this.searchPicker(), 250)
+    })
+  }
 
   async load() {
     this.loading = true
@@ -124,7 +131,7 @@ class FillerPageStore {
   openPicker() {
     clearTimeout(searchDebounce)
     this.pickerOpen = true; this.pickerTab = 'episodes'; this.pickerQuery = ''
-    this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.pickerMovies = []; this.pickerEpisodes = []; this.pickerShows = []
     this.expandedShowId = null; this.plexLists = []
     if (this.allLibraries.length === 0)
@@ -135,14 +142,14 @@ class FillerPageStore {
   closePicker() {
     clearTimeout(searchDebounce)
     this.pickerOpen = false; this.pickerQuery = ''
-    this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.pickerMovies = []; this.pickerEpisodes = []; this.pickerShows = []
     this.expandedShowId = null; this.plexLists = []
   }
 
   setPickerTab(t: PickerTab) {
     this.pickerTab = t; this.pickerQuery = ''; this.expandedShowId = null
-    this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.plexLists = []; this.plexBrowseLibraryId = ''
     this.searchPicker()
   }
@@ -153,52 +160,16 @@ class FillerPageStore {
     searchDebounce = setTimeout(() => this.searchPicker(), 250)
   }
 
-  addFilterRule() {
-    this.filterRules.push({ id: String(++_ruleId), field: 'genre', op: 'is', value: '' })
-    clearTimeout(searchDebounce)
-    searchDebounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  removeFilterRule(id: string) {
-    this.filterRules = this.filterRules.filter(r => r.id !== id)
-    clearTimeout(searchDebounce)
-    searchDebounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  updateFilterRule(id: string, patch: Partial<Omit<FilterRule, 'id'>>) {
-    const rule = this.filterRules.find(r => r.id === id)
-    if (!rule) return
-    if (patch.field !== undefined) {
-      rule.field = patch.field
-      rule.op    = FIELD_DEFS[patch.field].ops[0].id
-      rule.value = ''
-    }
-    if (patch.op    !== undefined) rule.op    = patch.op
-    if (patch.value !== undefined) rule.value = patch.value
-    clearTimeout(searchDebounce)
-    searchDebounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  setFilterMatch(m: 'all' | 'any') {
-    this.filterMatch = m
-    clearTimeout(searchDebounce)
-    searchDebounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
   async searchPicker() {
     const q = this.pickerQuery || undefined
 
-    const isRules = this.filterRules.filter(r => r.op === 'is' && r.value.trim())
-    const lib    = isRules.find(r => r.field === 'library')?.value        || undefined
-    const genre  = isRules.find(r => r.field === 'genre')?.value          || undefined
-    const yearStr = isRules.find(r => r.field === 'year')?.value
-    const year   = yearStr ? parseInt(yearStr) : undefined
-    const rating = isRules.find(r => r.field === 'content_rating')?.value || undefined
+    const lib    = this.filterTree.allRules.find(r => r.field === 'library' && r.op === 'is' && r.value.trim())?.value || undefined
+    const filter = toFilterString(this.filterTree) || undefined
 
     if (this.pickerTab === 'movies') {
       this.pickerLoading = true
       try {
-        const r = await api.getMovies({ limit: 80, q, library_id: lib, genre, year, content_rating: rating })
+        const r = await api.getMovies({ limit: 80, q, library_id: lib, filter })
         runInAction(() => { this.pickerMovies = r.items; this.pickerLoading = false })
       } catch { runInAction(() => { this.pickerLoading = false }) }
     } else if (this.pickerTab === 'episodes') {
@@ -210,7 +181,7 @@ class FillerPageStore {
     } else if (this.pickerTab === 'shows') {
       this.pickerShowsLoading = true
       try {
-        const r = await api.getShows({ limit: 100, q, library_id: lib, genre, year, content_rating: rating })
+        const r = await api.getShows({ limit: 100, q, library_id: lib, filter })
         runInAction(() => { this.pickerShows = r.items; this.pickerShowsLoading = false })
       } catch { runInAction(() => { this.pickerShowsLoading = false }) }
     } else if (this.pickerTab === 'plex_playlists') {
@@ -571,17 +542,7 @@ const FillerItemPicker = observer(function FillerItemPicker({ listId }: { listId
 
       {/* Expandable filter section */}
       {showFilters && (
-        <FilterSection
-          rulesOpen={store.filterRulesOpen}
-          filterMatch={store.filterMatch}
-          filterRules={store.filterRules}
-          filteredLibs={filteredLibs}
-          onToggleOpen={() => runInAction(() => { store.filterRulesOpen = !store.filterRulesOpen })}
-          onSetMatch={m => store.setFilterMatch(m)}
-          onAddRule={() => store.addFilterRule()}
-          onUpdateRule={(id, patch) => store.updateFilterRule(id, patch)}
-          onRemoveRule={id => store.removeFilterRule(id)}
-        />
+        <FilterSection tree={store.filterTree} filteredLibs={filteredLibs} />
       )}
 
       {/* Plex header row */}

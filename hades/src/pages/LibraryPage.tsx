@@ -5,12 +5,14 @@ import { useDebounce } from '../hooks/useDebounce'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { SourceSwitcher } from '../components/media/SourceSwitcher'
 import { LibraryFilters } from '../components/media/LibraryFilters'
+import { FilterSection } from '../components/PickerFilters'
 import { MediaGrid } from '../components/media/MediaGrid'
 import { MediaDetail } from '../components/media/MediaDetail'
 import { LoadMoreSentinel } from '../channel/BrowserTiles'
 import { filterInputStyle } from '../channel/styles'
 import type { LibraryDensity, ScraperSearchResult } from '../api/types'
 import { useFocusable } from '../nav/useFocusable'
+import { parseFilterSyntax, countClauses } from '../components/media/filterSyntax'
 
 const DENSITY_ICONS: Record<LibraryDensity, string> = { minimal: '⊞', standard: '⊟', rich: '≡' }
 const SCROLL_KEY = 'library-grid'
@@ -68,12 +70,15 @@ export default observer(function LibraryPage() {
           display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <input
-              style={{ ...filterInputStyle, flex: 1 }}
-              placeholder={store.discoverMode ? 'Search scrapers…' : 'Search library…'}
-              value={rawQ}
-              onChange={e => setRawQ(e.target.value)}
-            />
+            <div style={{ flex: 1, position: 'relative' }}>
+              <input
+                style={{ ...filterInputStyle, width: '100%', boxSizing: 'border-box' }}
+                placeholder={store.discoverMode ? 'Search scrapers…' : 'Search, or try genre:horror year:>2015 …'}
+                value={rawQ}
+                onChange={e => setRawQ(e.target.value)}
+              />
+              {!store.discoverMode && <SearchSyntaxHint text={rawQ} />}
+            </div>
 
             <DiscoverToggleButton discoverMode={store.discoverMode} onClick={handleToggleDiscover} />
 
@@ -91,7 +96,25 @@ export default observer(function LibraryPage() {
             )}
           </div>
 
+          {/* Rule builder sits here, above the library pills, as a horizontal
+              bar that wraps rules/groups left-to-right instead of stacking
+              them in the narrow sidebar (LibraryFilters.tsx) — that sidebar
+              used to hold this too, but it grows unbounded as rules/groups
+              are added and forced an awkward internal scroll. */}
+          {!store.discoverMode && <FilterSection tree={store.filterTree} filteredLibs={store.libraries} layout="horizontal" />}
+
           {!store.discoverMode && <SourceSwitcher libraries={store.libraries} />}
+
+          {store.error && (
+            <div style={{
+              padding: '8px 12px', borderRadius: 8,
+              border: '1px solid oklch(0.5 0.16 25 / 0.5)', background: 'oklch(0.22 0.06 25 / 0.35)',
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+              color: 'oklch(0.8 0.14 25)',
+            }}>
+              {store.error}
+            </div>
+          )}
 
           {store.discoverMode && (
             <div style={{
@@ -169,6 +192,26 @@ export default observer(function LibraryPage() {
 })
 
 // ── Top-bar buttons ──────────────────────────────────────────────────────────
+
+// Small inline hint showing when typed search-bar text parsed into real
+// field:value clauses (the canon filter syntax — see components/media/
+// filterSyntax.ts) rather than just fuzzy free text. Purely informational —
+// the query itself already works the same way whether or not this renders,
+// since the raw text is sent straight through as `q`/`filter` either way.
+function SearchSyntaxHint({ text }: { text: string }) {
+  if (!text.trim()) return null
+  const n = countClauses(parseFilterSyntax(text))
+  if (n === 0) return null
+  return (
+    <div style={{
+      position: 'absolute', top: '100%', left: 0, marginTop: 4,
+      fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+      color: 'var(--hds-violet)', letterSpacing: '0.02em',
+    }}>
+      {n} filter{n !== 1 ? 's' : ''} parsed from your search
+    </div>
+  )
+}
 
 function DiscoverToggleButton({ discoverMode, onClick }: { discoverMode: boolean; onClick: () => void }) {
   const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'library-discover-toggle', onEnterPress: onClick })

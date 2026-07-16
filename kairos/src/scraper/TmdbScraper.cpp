@@ -164,14 +164,18 @@ Movie TmdbScraper::movieFromJson(const json& j, bool is_detail) {
         if (j.contains("external_ids"))
             m.imdb_id = safeStr(j["external_ids"], "imdb_id");
 
-        // director from credits
+        // director/writer from credits — writer prefers a "Writer" credit,
+        // falling back to "Screenplay" (common for films where the
+        // screenplay author differs from the original story credit).
         if (j.contains("credits") && j["credits"].contains("crew")) {
+            std::string screenplay;
             for (const auto& c : j["credits"]["crew"]) {
-                if (safeStr(c, "job") == "Director") {
-                    m.director = safeStr(c, "name");
-                    break;
-                }
+                const std::string job = safeStr(c, "job");
+                if (m.director.empty() && job == "Director") m.director = safeStr(c, "name");
+                if (m.writer.empty()   && job == "Writer")   m.writer   = safeStr(c, "name");
+                if (screenplay.empty() && job == "Screenplay") screenplay = safeStr(c, "name");
             }
+            if (m.writer.empty()) m.writer = screenplay;
         }
     }
 

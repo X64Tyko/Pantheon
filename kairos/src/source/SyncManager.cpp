@@ -524,6 +524,18 @@ void SyncManager::syncShows(IMediaSource& src,
             ep_ext_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
     }
 
+    // Already-probed resolution, keyed by (mapped) file path rather than
+    // episode id — a file's resolution never changes, so this avoids
+    // re-running ffprobe every sync (unlike duration, probeVideoInfo() isn't
+    // gated on a "does this look wrong" check, so it must be cache-gated
+    // here instead or every sync would ffprobe every file unconditionally).
+    std::unordered_map<std::string, std::string> path_to_resolution;
+    {
+        SQLite::Statement q(sync_db_, "SELECT file_path, resolution_label FROM episode WHERE resolution_label != ''");
+        while (q.executeStep())
+            path_to_resolution[q.getColumn(0).getString()] = q.getColumn(1).getString();
+    }
+
     // Cross-source episode dedup: mapped(file_path) → kairos_ep_id
     std::unordered_map<std::string, std::string> ep_path_to_id;
     {
@@ -688,12 +700,15 @@ void SyncManager::syncShows(IMediaSource& src,
     }
 
     // ── Write show metadata (Pass 2) ─────────────────────────────────────────
+    // added_at/added_at_source: see the identical, more-detailed comment on
+    // s_upsert_movie below — same highest-priority-source-wins rule.
     SQLite::Statement s_upsert_show(sync_db_, R"(
         INSERT INTO show (show_id, title, content_rating, overview, studio, status,
                           genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
                           originally_available_at, year, audience_rating,
-                          labels, network, actors, countries, collections, folder_path)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          labels, network, actors, countries, collections, folder_path,
+                          added_at, added_at_source)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(show_id) DO UPDATE SET
             title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
             content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
@@ -714,7 +729,19 @@ void SyncManager::syncShows(IMediaSource& src,
             actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
             countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
             collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END,
-            folder_path             = CASE WHEN locked THEN folder_path             ELSE excluded.folder_path             END
+            folder_path             = CASE WHEN locked THEN folder_path             ELSE excluded.folder_path             END,
+            added_at                = CASE
+                WHEN locked OR excluded.added_at IS NULL THEN added_at
+                WHEN added_at IS NULL THEN excluded.added_at
+                WHEN COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'show' AND source = excluded.added_at_source), 999999)
+                   < COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'show' AND source = added_at_source), 999999)
+                THEN excluded.added_at ELSE added_at END,
+            added_at_source         = CASE
+                WHEN locked OR excluded.added_at IS NULL THEN added_at_source
+                WHEN added_at IS NULL THEN excluded.added_at_source
+                WHEN COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'show' AND source = excluded.added_at_source), 999999)
+                   < COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'show' AND source = added_at_source), 999999)
+                THEN excluded.added_at_source ELSE added_at_source END
         WHERE NOT locked AND (
             title                   != excluded.title                   OR
             content_rating          != excluded.content_rating          OR
@@ -735,7 +762,8 @@ void SyncManager::syncShows(IMediaSource& src,
             actors                  != excluded.actors                  OR
             countries               != excluded.countries               OR
             collections             != excluded.collections             OR
-            folder_path             != excluded.folder_path
+            folder_path             != excluded.folder_path             OR
+            excluded.added_at IS NOT NULL
         )
     )");
     SQLite::Statement s_show_mapping(sync_db_, R"(
@@ -784,6 +812,13 @@ void SyncManager::syncShows(IMediaSource& src,
                     s_upsert_show.bind(19, show.countries);
                     s_upsert_show.bind(20, show.collections);
                     s_upsert_show.bind(21, show.folder_path);
+                    if (show.added_at.has_value()) s_upsert_show.bind(22, show.added_at.value());
+                    else                            s_upsert_show.bind(22);
+                    s_upsert_show.bind(23, show.added_at_source);
+                    s_upsert_show.bind(24, library_id);
+                    s_upsert_show.bind(25, library_id);
+                    s_upsert_show.bind(26, library_id);
+                    s_upsert_show.bind(27, library_id);
                     s_upsert_show.exec();
                 }
                 s_show_mapping.reset();
@@ -852,6 +887,11 @@ void SyncManager::syncShows(IMediaSource& src,
                                  << before << " → " << ep.duration_ms << "ms  "
                                  << ep.file_path << '\n';
                         }
+                        if (auto it = path_to_resolution.find(mapped); it != path_to_resolution.end()) {
+                            ep.resolution_label = it->second;
+                        } else if (!mapped.empty()) {
+                            ep.resolution_label = bucketResolutionLabel(probeVideoInfo(mapped).height);
+                        }
                     }
                     const long long validate_ms = elapsedMs(t_validate, std::chrono::steady_clock::now());
 
@@ -890,8 +930,8 @@ void SyncManager::syncShows(IMediaSource& src,
     SQLite::Statement s_upsert_ep(sync_db_, R"(
         INSERT INTO episode (episode_id, show_id, season, episode, title,
                              file_path, duration_ms, overview, air_date,
-                             thumb, absolute_index)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                             thumb, absolute_index, resolution_label)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(episode_id) DO UPDATE SET
             show_id        = excluded.show_id,
             season         = excluded.season,
@@ -902,7 +942,8 @@ void SyncManager::syncShows(IMediaSource& src,
             overview       = CASE WHEN locked THEN overview ELSE excluded.overview END,
             air_date       = excluded.air_date,
             thumb          = CASE WHEN locked THEN thumb    ELSE excluded.thumb    END,
-            absolute_index = excluded.absolute_index
+            absolute_index = excluded.absolute_index,
+            resolution_label = COALESCE(NULLIF(excluded.resolution_label, ''), resolution_label)
         WHERE (
             show_id        != excluded.show_id        OR
             season         != excluded.season         OR
@@ -911,6 +952,7 @@ void SyncManager::syncShows(IMediaSource& src,
             duration_ms    != excluded.duration_ms    OR
             air_date       != excluded.air_date       OR
             COALESCE(absolute_index, -1) != COALESCE(excluded.absolute_index, -1) OR
+            (excluded.resolution_label != '' AND resolution_label != excluded.resolution_label) OR
             (NOT locked AND (
                 title    != excluded.title    OR
                 overview != excluded.overview OR
@@ -1004,6 +1046,7 @@ void SyncManager::syncShows(IMediaSource& src,
                         s_upsert_ep.bind(10, ep.thumb);
                         if (ep.absolute_index.has_value()) s_upsert_ep.bind(11, ep.absolute_index.value());
                         else                               s_upsert_ep.bind(11);
+                        s_upsert_ep.bind(12, ep.resolution_label);
                         s_upsert_ep.exec();
                     }
                     s_ep_mapping.reset();
@@ -1087,6 +1130,15 @@ void SyncManager::syncMovies(IMediaSource& src,
         }
     }
 
+    // See syncShows()'s identical path_to_resolution — cache-gates the
+    // resolution probe by file path so it only ever runs once per file.
+    std::unordered_map<std::string, std::string> path_to_resolution;
+    {
+        SQLite::Statement q(sync_db_, "SELECT file_path, resolution_label FROM movie WHERE resolution_label != ''");
+        while (q.executeStep())
+            path_to_resolution[q.getColumn(0).getString()] = q.getColumn(1).getString();
+    }
+
     // Cross-source movie dedup: lowercase title + year. Title alone isn't
     // safe to merge on — remakes share a title across different years (e.g.
     // "Dune" 1984 vs 2021) — so this only fires when both sides agree on
@@ -1161,6 +1213,11 @@ void SyncManager::syncMovies(IMediaSource& src,
                 for (size_t i = next.fetch_add(1); i < movies.size(); i = next.fetch_add(1)) {
                     const std::string mapped = conf_.applyPathMap(movies[i].file_path);
                     movies[i].duration_ms = validateDurationMs(movies[i].duration_ms, mapped);
+                    if (auto it = path_to_resolution.find(mapped); it != path_to_resolution.end()) {
+                        movies[i].resolution_label = it->second;
+                    } else if (!mapped.empty()) {
+                        movies[i].resolution_label = bucketResolutionLabel(probeVideoInfo(mapped).height);
+                    }
                 }
             });
         }
@@ -1295,12 +1352,21 @@ void SyncManager::syncMovies(IMediaSource& src,
     // ── Batch write (no DB reads) ─────────────────────────────────────────────
     const auto t_write = std::chrono::steady_clock::now();
 
+    // added_at/added_at_source: unlike every other field here (which always
+    // takes whichever source synced most recently), "date added" should
+    // reflect the highest-*priority* source per library_source_priority —
+    // otherwise the value would just bounce to whatever source happened to
+    // sync last. An empty/unranked source (added_at_source = '' or no
+    // matching priority row) sorts as lowest priority (COALESCE .. 999999),
+    // so a genuinely-ranked source can always claim an unset/unranked value,
+    // but two unranked sources just keep whichever wrote first.
     SQLite::Statement s_upsert_movie(sync_db_, R"(
         INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
-                           overview, tagline, studio, director, genres, thumb, art,
+                           overview, tagline, studio, director, writer, genres, thumb, art,
                            imdb_id, tmdb_id, audience_rating,
-                           labels, actors, countries, collections)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           labels, actors, countries, collections,
+                           added_at, added_at_source, resolution_label)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(movie_id) DO UPDATE SET
             title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
             content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
@@ -1311,6 +1377,7 @@ void SyncManager::syncMovies(IMediaSource& src,
             tagline         = CASE WHEN locked THEN tagline         ELSE excluded.tagline         END,
             studio          = CASE WHEN locked THEN studio          ELSE excluded.studio          END,
             director        = CASE WHEN locked THEN director        ELSE excluded.director        END,
+            writer          = CASE WHEN locked THEN writer          ELSE COALESCE(NULLIF(excluded.writer, ''), writer) END,
             genres          = CASE WHEN locked THEN genres          ELSE excluded.genres          END,
             thumb           = CASE WHEN locked THEN thumb           ELSE excluded.thumb           END,
             art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
@@ -1320,7 +1387,20 @@ void SyncManager::syncMovies(IMediaSource& src,
             labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
             actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
             countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
-            collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END
+            collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END,
+            added_at        = CASE
+                WHEN locked OR excluded.added_at IS NULL THEN added_at
+                WHEN added_at IS NULL THEN excluded.added_at
+                WHEN COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'movie' AND source = excluded.added_at_source), 999999)
+                   < COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'movie' AND source = added_at_source), 999999)
+                THEN excluded.added_at ELSE added_at END,
+            added_at_source = CASE
+                WHEN locked OR excluded.added_at IS NULL THEN added_at_source
+                WHEN added_at IS NULL THEN excluded.added_at_source
+                WHEN COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'movie' AND source = excluded.added_at_source), 999999)
+                   < COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'movie' AND source = added_at_source), 999999)
+                THEN excluded.added_at_source ELSE added_at_source END,
+            resolution_label = COALESCE(NULLIF(excluded.resolution_label, ''), resolution_label)
         WHERE NOT locked AND (
             title           != excluded.title           OR
             content_rating  != excluded.content_rating  OR
@@ -1330,6 +1410,7 @@ void SyncManager::syncMovies(IMediaSource& src,
             tagline         != excluded.tagline         OR
             studio          != excluded.studio          OR
             director        != excluded.director        OR
+            (excluded.writer != '' AND writer != excluded.writer) OR
             genres          != excluded.genres          OR
             thumb           != excluded.thumb           OR
             art             != excluded.art             OR
@@ -1340,7 +1421,9 @@ void SyncManager::syncMovies(IMediaSource& src,
             labels          != excluded.labels          OR
             actors          != excluded.actors          OR
             countries       != excluded.countries       OR
-            collections     != excluded.collections
+            collections     != excluded.collections     OR
+            excluded.added_at IS NOT NULL              OR
+            (excluded.resolution_label != '' AND resolution_label != excluded.resolution_label)
         )
     )");
     SQLite::Statement s_movie_mapping(sync_db_, R"(
@@ -1398,17 +1481,26 @@ void SyncManager::syncMovies(IMediaSource& src,
                     s_upsert_movie.bind(8,  movie.tagline);
                     s_upsert_movie.bind(9,  movie.studio);
                     s_upsert_movie.bind(10, movie.director);
-                    s_upsert_movie.bind(11, movie.genres);
-                    s_upsert_movie.bind(12, movie.thumb);
-                    s_upsert_movie.bind(13, movie.art);
-                    s_upsert_movie.bind(14, movie.imdb_id);
-                    s_upsert_movie.bind(15, movie.tmdb_id);
-                    if (movie.audience_rating.has_value()) s_upsert_movie.bind(16, movie.audience_rating.value());
-                    else                                   s_upsert_movie.bind(16);
-                    s_upsert_movie.bind(17, movie.labels);
-                    s_upsert_movie.bind(18, movie.actors);
-                    s_upsert_movie.bind(19, movie.countries);
-                    s_upsert_movie.bind(20, movie.collections);
+                    s_upsert_movie.bind(11, movie.writer);
+                    s_upsert_movie.bind(12, movie.genres);
+                    s_upsert_movie.bind(13, movie.thumb);
+                    s_upsert_movie.bind(14, movie.art);
+                    s_upsert_movie.bind(15, movie.imdb_id);
+                    s_upsert_movie.bind(16, movie.tmdb_id);
+                    if (movie.audience_rating.has_value()) s_upsert_movie.bind(17, movie.audience_rating.value());
+                    else                                   s_upsert_movie.bind(17);
+                    s_upsert_movie.bind(18, movie.labels);
+                    s_upsert_movie.bind(19, movie.actors);
+                    s_upsert_movie.bind(20, movie.countries);
+                    s_upsert_movie.bind(21, movie.collections);
+                    if (movie.added_at.has_value()) s_upsert_movie.bind(22, movie.added_at.value());
+                    else                             s_upsert_movie.bind(22);
+                    s_upsert_movie.bind(23, movie.added_at_source);
+                    s_upsert_movie.bind(24, movie.resolution_label);
+                    s_upsert_movie.bind(25, library_id);
+                    s_upsert_movie.bind(26, library_id);
+                    s_upsert_movie.bind(27, library_id);
+                    s_upsert_movie.bind(28, library_id);
                     s_upsert_movie.exec();
                 }
 

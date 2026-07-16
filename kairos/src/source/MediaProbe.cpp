@@ -253,6 +253,14 @@ VideoInfo probeVideoInfo(const std::string& file_path) {
     return result;
 }
 
+std::string bucketResolutionLabel(int height) {
+    if (height >= 2000) return "4K";
+    if (height >= 900)  return "1080p";
+    if (height >= 600)  return "720p";
+    if (height > 0)     return "SD";
+    return "";
+}
+
 int64_t validateDurationMs(int64_t dur, const std::string& file_path) {
     if (dur >= kMinMs && dur <= kMaxMs)
         return dur;

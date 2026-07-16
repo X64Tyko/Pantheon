@@ -153,9 +153,28 @@ struct RestrictionContext {
 
 struct ShowSearchParams {
     int limit = 50, offset = 0;
-    std::string library_id, q, genre, year, content_rating;
-    std::string label, network, actor, country, collection, studio;
+    // Empty library_ids = unscoped/all libraries (fast path, no library JOIN).
+    // A non-empty list scopes to exactly those libraries (multi-select
+    // library switcher — see SourceSwitcher.tsx).
+    std::vector<std::string> library_ids;
+    // Canon filter syntax (see hades/src/components/media/filterSyntax.ts /
+    // kairos/src/db/FilterExpr.h for the shared grammar) — replaces the old
+    // flat per-field members (genre/year/content_rating/label/network/actor/
+    // country/collection/studio) and the separate ad hoc `q` substring
+    // search; free words in `filter` fold into fuzzy free-text matching.
+    std::string filter;
     std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_aired"
+    // "" (default) = each sort mode's own natural direction (title: A-Z,
+    // recently_added/recently_aired/recently_released: newest-first) —
+    // "asc"/"desc" explicitly overrides it. Ignored by "random".
+    std::string sort_dir;
+    // Only used when sort == "random". Unset = plain ORDER BY RANDOM() (a
+    // fresh shuffle every call, fine for e.g. a Home shelf). Set = a
+    // deterministic pseudo-random order derived from (rowid, seed) — same
+    // seed always produces the same order, so paginating (loadMore) through
+    // a "Random" sorted browse doesn't reshuffle out from under the user;
+    // the Library page's die/reroll button just picks a new seed.
+    std::optional<int64_t> random_seed;
     RestrictionContext restriction;
     // Set only by the actual Home-page/Roku-home shelf loaders. Without it,
     // an unscoped (no library_id) search — the channel content picker,
@@ -176,9 +195,14 @@ struct ShowSearchParams {
 
 struct MovieSearchParams {
     int limit = 50, offset = 0;
-    std::string library_id, q, genre, year, content_rating;
-    std::string label, actor, country, collection, studio;
+    std::vector<std::string> library_ids; // see ShowSearchParams::library_ids
+    std::string filter;                   // see ShowSearchParams::filter
     std::string sort;   // "title" (default) | "recently_added" | "random" | "recently_released"
+    // "" (default) = each sort mode's own natural direction (title: A-Z,
+    // recently_added/recently_aired/recently_released: newest-first) —
+    // "asc"/"desc" explicitly overrides it. Ignored by "random".
+    std::string sort_dir;
+    std::optional<int64_t> random_seed; // see ShowSearchParams::random_seed
     RestrictionContext restriction;
     bool home_only = false;   // see ShowSearchParams::home_only
     bool hide_empty = false;  // see ShowSearchParams::hide_empty (movies: excludes a blank file_path)

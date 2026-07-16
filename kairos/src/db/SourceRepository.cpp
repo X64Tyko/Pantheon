@@ -171,6 +171,42 @@ void SourceRepository::setScraperPriority(const std::string& library_id, const s
     txn.commit();
 }
 
+std::vector<std::string> SourceRepository::getSourcePriority(const std::string& library_id,
+                                                               const std::string& item_type) {
+    std::vector<std::string> out;
+    SQLite::Statement q(db_.get(),
+        "SELECT source FROM library_source_priority WHERE library_id = ? AND item_type = ? ORDER BY priority ASC");
+    q.bind(1, library_id);
+    q.bind(2, item_type);
+    while (q.executeStep()) out.push_back(q.getColumn(0).getString());
+    return out;
+}
+
+void SourceRepository::setSourcePriority(const std::string& library_id, const std::string& item_type,
+                                          const std::vector<std::string>& order) {
+    SQLite::Transaction txn(db_.get());
+    {
+        SQLite::Statement d(db_.get(),
+            "DELETE FROM library_source_priority WHERE library_id = ? AND item_type = ?");
+        d.bind(1, library_id);
+        d.bind(2, item_type);
+        d.exec();
+    }
+    SQLite::Statement ins(db_.get(),
+        "INSERT INTO library_source_priority (library_id, item_type, source, priority) VALUES (?, ?, ?, ?)");
+    int priority = 1;
+    for (const auto& source : order) {
+        if (source.empty()) continue;
+        ins.bind(1, library_id);
+        ins.bind(2, item_type);
+        ins.bind(3, source);
+        ins.bind(4, priority++);
+        ins.exec();
+        ins.reset();
+    }
+    txn.commit();
+}
+
 void SourceRepository::removeLibrary(const std::string& library_id) {
     // No transaction: avoids "cannot start a transaction within a transaction" when sync is mid-write on the same connection.
     { SQLite::Statement s(db_.get(), "DELETE FROM source_mapping WHERE library_id = ?");

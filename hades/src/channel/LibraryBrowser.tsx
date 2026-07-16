@@ -82,17 +82,7 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
             )}
           </div>
           {showFilters && (
-            <FilterSection
-              rulesOpen={store.filterRulesOpen}
-              filterMatch={store.filterMatch}
-              filterRules={store.filterRules}
-              filteredLibs={filteredLibs}
-              onToggleOpen={() => runInAction(() => { store.filterRulesOpen = !store.filterRulesOpen })}
-              onSetMatch={m => store.setFilterMatch(m)}
-              onAddRule={() => store.addFilterRule()}
-              onUpdateRule={(id, patch) => store.updateFilterRule(id, patch)}
-              onRemoveRule={id => store.removeFilterRule(id)}
-            />
+            <FilterSection tree={store.filterTree} filteredLibs={filteredLibs} />
           )}
         </div>
       )}

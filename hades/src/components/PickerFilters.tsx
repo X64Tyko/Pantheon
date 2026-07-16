@@ -2,68 +2,37 @@ import { useState, useEffect, useRef } from 'react'
 import { observer } from 'mobx-react-lite'
 import { api } from '../api/client'
 import type { LibraryWithSource } from '../api/types'
+import type { FilterTreeStore, FilterRuleItem } from './media/filterTree'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Field/operator registry lives in a dependency-free leaf module (media/
+// filterFields.ts) so filterSyntax.ts/filterTree.ts can import it without a
+// circular dependency on this file — re-exported here so existing call
+// sites importing from 'PickerFilters' don't all need new import paths.
+export {
+  FIELD_DEFS, RESOLUTIONS, DECADES,
+  type FilterField, type FilterOp, type ValueType, type FieldDef,
+} from './media/filterFields'
+import { FIELD_DEFS, RESOLUTIONS, DECADES, type FilterField } from './media/filterFields'
 
-export type FilterField =
-  | 'library' | 'title' | 'genre' | 'year' | 'content_rating' | 'studio'
-  | 'director' | 'actor' | 'writer' | 'country'
-  | 'collection' | 'network' | 'label' | 'resolution' | 'decade'
-  | 'critic_rating' | 'audience_rating' | 'duration' | 'added'
+// Same disambiguation as SourceSwitcher.tsx's identical helper — two
+// libraries from different sources can share a display name (e.g. both a
+// Plex and a Jellyfin "Movies" library), so the source name is appended
+// whenever that's the case.
+function libLabel(lib: LibraryWithSource, all: LibraryWithSource[]): string {
+  const dups = all.filter(l => l.display_name === lib.display_name)
+  return dups.length > 1 ? `${lib.display_name} (${lib.source_name})` : lib.display_name
+}
 
-export type FilterOp =
-  | 'is' | 'is_not'
-  | 'contains' | 'does_not_contain' | 'begins_with' | 'ends_with'
-  | 'gt' | 'gte' | 'lt' | 'lte'
-  | 'before' | 'after' | 'in_last'
+function distinctSources(libs: LibraryWithSource[]): { source_id: string; source_name: string }[] {
+  const seen = new Map<string, string>()
+  for (const l of libs) if (!seen.has(l.source_id)) seen.set(l.source_id, l.source_name)
+  return Array.from(seen, ([source_id, source_name]) => ({ source_id, source_name }))
+}
 
-export type ValueType = 'text' | 'number' | 'days' | 'resolution' | 'decade' | 'library'
-
-export interface FilterRule { id: string; field: FilterField; op: FilterOp; value: string }
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-export const RESOLUTIONS = ['4K', '1080p', '720p', 'SD']
-export const DECADES     = ['2020s', '2010s', '2000s', '1990s', '1980s', '1970s', '1960s', '1950s', '1940s', '1930s']
-
-export type FieldDef = { label: string; valueType: ValueType; ops: { id: FilterOp; label: string }[] }
-
-const TEXT_OPS: { id: FilterOp; label: string }[] = [
-  { id: 'is',              label: 'is' },
-  { id: 'is_not',          label: 'is not' },
-  { id: 'contains',        label: 'contains' },
-  { id: 'does_not_contain',label: 'does not contain' },
-]
-
-const FULL_TEXT_OPS: { id: FilterOp; label: string }[] = [
-  { id: 'contains',        label: 'contains' },
-  { id: 'does_not_contain',label: 'does not contain' },
-  { id: 'begins_with',     label: 'begins with' },
-  { id: 'ends_with',       label: 'ends with' },
-  { id: 'is',              label: 'is' },
-  { id: 'is_not',          label: 'is not' },
-]
-
-export const FIELD_DEFS: Record<FilterField, FieldDef> = {
-  library:         { label: 'Library',         valueType: 'library',    ops: [{ id: 'is',      label: 'is' }] },
-  title:           { label: 'Title',           valueType: 'text',       ops: FULL_TEXT_OPS },
-  genre:           { label: 'Genre',           valueType: 'text',       ops: TEXT_OPS },
-  year:            { label: 'Year',            valueType: 'number',     ops: [{ id: 'is', label: 'is' }, { id: 'lt', label: 'is before' }, { id: 'gt', label: 'is after' }] },
-  content_rating:  { label: 'Content Rating',  valueType: 'text',       ops: TEXT_OPS },
-  studio:          { label: 'Studio',          valueType: 'text',       ops: FULL_TEXT_OPS },
-  director:        { label: 'Director',        valueType: 'text',       ops: TEXT_OPS },
-  actor:           { label: 'Actor',           valueType: 'text',       ops: TEXT_OPS },
-  writer:          { label: 'Writer',          valueType: 'text',       ops: TEXT_OPS },
-  country:         { label: 'Country',         valueType: 'text',       ops: TEXT_OPS },
-  collection:      { label: 'Collection',      valueType: 'text',       ops: TEXT_OPS },
-  network:         { label: 'Network',         valueType: 'text',       ops: TEXT_OPS },
-  label:           { label: 'Label',           valueType: 'text',       ops: TEXT_OPS },
-  resolution:      { label: 'Resolution',      valueType: 'resolution', ops: [{ id: 'is', label: 'is' }, { id: 'is_not', label: 'is not' }] },
-  decade:          { label: 'Decade',          valueType: 'decade',     ops: [{ id: 'is', label: 'is' }] },
-  critic_rating:   { label: 'Critic Rating',   valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  audience_rating: { label: 'Audience Rating', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  duration:        { label: 'Duration (mins)', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  added:           { label: 'Date Added',      valueType: 'days',       ops: [{ id: 'in_last', label: 'in the last' }, { id: 'before', label: 'before' }, { id: 'after', label: 'after' }] },
+const inputStyle: React.CSSProperties = {
+  padding: '5px 8px', borderRadius: 6,
+  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
+  color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
 }
 
 // ─── FilterTagInput ───────────────────────────────────────────────────────────
@@ -93,13 +62,11 @@ function FilterTagInput({ field, value, onChange }: {
   const inputRef = useRef<HTMLInputElement>(null)
   const wrapRef  = useRef<HTMLDivElement>(null)
 
-  // Fetch / hydrate from cache on field change
   useEffect(() => {
     setOptions([])
     fetchFilterValues(field).then(setOptions)
   }, [field])
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
@@ -108,13 +75,11 @@ function FilterTagInput({ field, value, onChange }: {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Derive active token from raw value string
   const tokens        = value.split(';')
   const activeRaw     = tokens[tokens.length - 1]
   const confirmed     = tokens.slice(0, -1)
   const activeToken   = activeRaw.trimStart()
 
-  // Suggestions: match active token, exclude already-confirmed tokens
   const confirmedSet  = new Set(confirmed.map(t => t.trim().toLowerCase()))
   const filtered      = activeToken === ''
     ? options.filter(o => !confirmedSet.has(o.toLowerCase()))
@@ -137,27 +102,37 @@ function FilterTagInput({ field, value, onChange }: {
   }
 
   return (
-    <div ref={wrapRef} className="relative flex-1">
+    <div ref={wrapRef} style={{ position: 'relative', flex: 1 }}>
       <input
         ref={inputRef}
         value={value}
         onChange={e => { onChange(e.target.value); setOpen(true); setHiIdx(0) }}
         onFocus={() => setOpen(true)}
         onKeyDown={handleKeyDown}
-        className="input text-xs py-0.5 w-full"
+        style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
         placeholder={options.length > 0 ? 'type or pick… ; for multiple' : 'value…'}
         autoComplete="off"
         spellCheck={false}
       />
       {open && filtered.length > 0 && (
-        <ul className="absolute z-50 top-full left-0 right-0 mt-0.5 max-h-48 overflow-y-auto
-                        bg-zinc-900 border border-zinc-700 rounded shadow-lg text-xs">
+        <ul style={{
+          position: 'absolute', zIndex: 50, top: '100%', left: 0, right: 0, marginTop: 2,
+          maxHeight: 190, overflowY: 'auto', listStyle: 'none', padding: 0, margin: 0,
+          background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line)', borderRadius: 8,
+          boxShadow: '0 8px 24px -6px rgba(0,0,0,0.6)',
+        }}>
           {filtered.map((opt, i) => (
             <li
               key={opt}
               onMouseDown={e => { e.preventDefault(); pick(opt) }}
               onMouseEnter={() => setHiIdx(i)}
-              className={`px-2 py-1 cursor-pointer ${i === hiIdx ? 'bg-violet-700 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}>
+              style={{
+                padding: '6px 10px', cursor: 'pointer', fontSize: 11,
+                fontFamily: "'JetBrains Mono', monospace",
+                background: i === hiIdx ? 'var(--hds-violet)' : 'transparent',
+                color: i === hiIdx ? 'oklch(0.1 0.02 287)' : 'var(--hds-txt-2)',
+              }}
+            >
               {opt}
             </li>
           ))}
@@ -169,115 +144,225 @@ function FilterTagInput({ field, value, onChange }: {
 
 // ─── FilterRuleRow ────────────────────────────────────────────────────────────
 
-export const FilterRuleRow = observer(function FilterRuleRow({ rule, filteredLibs, onUpdate, onRemove }: {
-  rule:         FilterRule
+const removeBtnStyle: React.CSSProperties = {
+  background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
+  color: 'var(--hds-txt-3)', fontSize: 13, padding: '0 4px', lineHeight: 1,
+}
+
+const FilterRuleRow = observer(function FilterRuleRow({ rule, filteredLibs, onUpdate, onRemove }: {
+  rule:         FilterRuleItem
   filteredLibs: LibraryWithSource[]
-  onUpdate:     (id: string, patch: Partial<Omit<FilterRule, 'id'>>) => void
+  onUpdate:     (id: string, patch: Partial<Pick<FilterRuleItem, 'field' | 'op' | 'value'>>) => void
   onRemove:     (id: string) => void
 }) {
   const def = FIELD_DEFS[rule.field]
-  const set = (patch: Partial<Omit<FilterRule, 'id'>>) => onUpdate(rule.id, patch)
+  const set = (patch: Partial<Pick<FilterRuleItem, 'field' | 'op' | 'value'>>) => onUpdate(rule.id, patch)
   return (
-    <div className="flex items-center gap-1.5">
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <select value={rule.field} onChange={e => set({ field: e.target.value as FilterField })}
-        className="input text-xs py-0.5 w-32">
+        style={{ ...inputStyle, width: 118, flexShrink: 0 }}>
         {(Object.keys(FIELD_DEFS) as FilterField[]).map(f => (
           <option key={f} value={f}>{FIELD_DEFS[f].label}</option>
         ))}
       </select>
-      <select value={rule.op} onChange={e => set({ op: e.target.value as FilterOp })}
-        className="input text-xs py-0.5 w-32">
+      <select value={rule.op} onChange={e => set({ op: e.target.value as typeof rule.op })}
+        style={{ ...inputStyle, width: 118, flexShrink: 0 }}>
         {def.ops.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
       </select>
 
       {def.valueType === 'library' && (
         <select value={rule.value} onChange={e => set({ value: e.target.value })}
-          className="input text-xs py-0.5 flex-1">
+          style={{ ...inputStyle, flex: 1 }}>
           <option value="">Any</option>
-          {filteredLibs.map(l => <option key={l.library_id} value={l.library_id}>{l.display_name}</option>)}
+          {filteredLibs.map(l => <option key={l.library_id} value={l.library_id}>{libLabel(l, filteredLibs)}</option>)}
+        </select>
+      )}
+      {def.valueType === 'source' && (
+        <select value={rule.value} onChange={e => set({ value: e.target.value })}
+          style={{ ...inputStyle, flex: 1 }}>
+          <option value="">Any</option>
+          {distinctSources(filteredLibs).map(s => <option key={s.source_id} value={s.source_id}>{s.source_name}</option>)}
         </select>
       )}
       {def.valueType === 'resolution' && (
         <select value={rule.value} onChange={e => set({ value: e.target.value })}
-          className="input text-xs py-0.5 flex-1">
+          style={{ ...inputStyle, flex: 1 }}>
           <option value="">Any</option>
           {RESOLUTIONS.map(r => <option key={r} value={r}>{r}</option>)}
         </select>
       )}
       {def.valueType === 'decade' && (
         <select value={rule.value} onChange={e => set({ value: e.target.value })}
-          className="input text-xs py-0.5 flex-1">
+          style={{ ...inputStyle, flex: 1 }}>
           <option value="">Any</option>
           {DECADES.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
       )}
       {def.valueType === 'number' && (
         <input value={rule.value} onChange={e => set({ value: e.target.value })}
-          className="input text-xs py-0.5 flex-1" type="number"
+          style={{ ...inputStyle, flex: 1 }} type="number"
           placeholder={rule.field === 'year' ? 'e.g. 2010' : rule.field === 'duration' ? 'mins' : '0–10'} />
       )}
       {def.valueType === 'days' && (
-        <div className="flex items-center gap-1 flex-1">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
           <input value={rule.value} onChange={e => set({ value: e.target.value })}
-            className="input text-xs py-0.5 flex-1" type="number" placeholder="30" />
-          {rule.op === 'in_last' && <span className="text-xs text-zinc-500 shrink-0">days</span>}
+            style={{ ...inputStyle, flex: 1 }} type="number" placeholder="30" />
+          {rule.op === 'in_last' && <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', flexShrink: 0 }}>days</span>}
         </div>
       )}
       {def.valueType === 'text' && (
         <FilterTagInput field={rule.field} value={rule.value} onChange={v => set({ value: v })} />
       )}
 
-      <button onClick={() => onRemove(rule.id)}
-        className="text-zinc-600 hover:text-red-400 transition-colors text-xs px-1 shrink-0">✕</button>
+      <button onClick={() => onRemove(rule.id)} style={removeBtnStyle}
+        onMouseEnter={e => (e.currentTarget.style.color = 'oklch(0.7 0.18 25)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--hds-txt-3)')}
+      >✕</button>
     </div>
   )
 })
 
+// ─── Match All/Any selector ─────────────────────────────────────────────────
+
+function MatchSelect({ value, onChange }: { value: 'all' | 'any'; onChange: (m: 'all' | 'any') => void }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value as 'all' | 'any')}
+      style={{ ...inputStyle, width: 64, padding: '5px 6px', flexShrink: 0 }}
+    >
+      <option value="all">All</option>
+      <option value="any">Any</option>
+    </select>
+  )
+}
+
 // ─── FilterSection ────────────────────────────────────────────────────────────
 
-export const FilterSection = observer(function FilterSection({ rulesOpen, filterMatch, filterRules, filteredLibs, onToggleOpen, onSetMatch, onAddRule, onUpdateRule, onRemoveRule }: {
-  rulesOpen:     boolean
-  filterMatch:   'all' | 'any'
-  filterRules:   FilterRule[]
-  filteredLibs:  LibraryWithSource[]
-  onToggleOpen:  () => void
-  onSetMatch:    (m: 'all' | 'any') => void
-  onAddRule:     () => void
-  onUpdateRule:  (id: string, patch: Partial<Omit<FilterRule, 'id'>>) => void
-  onRemoveRule:  (id: string) => void
+// Rule-builder panel — one level of grouping ("(genre is Horror AND year is
+// after 2015) OR studio is A24"), matching Plex's smart-filter UX. Deeper
+// nesting is supported by the underlying canon syntax (filterSyntax.ts) for
+// power users typing directly into the search bar; the visual builder is
+// deliberately bounded to one level to stay usable.
+//
+// layout='vertical' (default) stacks each rule/group full-width, one per
+// line — right for a narrow host (Playlists/Filler Lists/channel picker's
+// side panels). layout='horizontal' wraps rules/groups left-to-right in a
+// bounded-width flow instead — for the Library page, where the rule builder
+// sits in a full-width bar above the library pills rather than a narrow
+// sidebar (a sidebar the rule list would otherwise grow to fill and force
+// into its own awkward internal scroll as rules/groups are added).
+export const FilterSection = observer(function FilterSection({ tree, filteredLibs, layout = 'vertical' }: {
+  tree:         FilterTreeStore
+  filteredLibs: LibraryWithSource[]
+  layout?:      'vertical' | 'horizontal'
 }) {
+  const ruleCount = tree.items.reduce((n, it) => n + (it.kind === 'rule' ? 1 : it.rules.length), 0)
+  const horizontal = layout === 'horizontal'
+  const itemBoxStyle: React.CSSProperties = horizontal ? { width: 380, flexShrink: 0 } : {}
+
   return (
-    <div className="border-t border-zinc-800/40">
+    <div style={{ borderTop: horizontal ? undefined : '1px solid var(--hds-line-s)' }}>
       <button
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-400 transition-colors text-left"
-        onClick={onToggleOpen}>
-        <span className="text-[10px]">{rulesOpen ? '▼' : '▶'}</span>
+        onClick={() => tree.toggleOpen()}
+        style={{
+          width: horizontal ? undefined : '100%', display: 'flex', alignItems: 'center', gap: 8,
+          padding: horizontal ? '4px 0' : '8px 12px', background: 'none', border: 'none', cursor: 'pointer',
+          fontSize: 11, color: 'var(--hds-txt-3)', textAlign: 'left',
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        <span style={{ fontSize: 9 }}>{tree.open ? '▼' : '▶'}</span>
         <span>Filters</span>
-        {filterRules.length > 0 && (
-          <span className="text-violet-400 ml-1">
-            ({filterRules.length} rule{filterRules.length !== 1 ? 's' : ''})
-          </span>
+        {ruleCount > 0 && (
+          <span style={{ color: 'var(--hds-violet)' }}>({ruleCount} rule{ruleCount !== 1 ? 's' : ''})</span>
         )}
       </button>
-      {rulesOpen && (
-        <div className="px-3 pb-2.5 space-y-1.5 bg-zinc-900/40 border-t border-zinc-800/30">
-          <div className="flex items-center gap-2 pt-2">
-            <span className="text-xs text-zinc-500">Match</span>
-            <select className="input text-xs py-0.5 w-16" value={filterMatch}
-              onChange={e => onSetMatch(e.target.value as 'all' | 'any')}>
-              <option value="all">All</option>
-              <option value="any">Any</option>
-            </select>
-            <span className="text-xs text-zinc-500">of the following rules:</span>
+      {tree.open && (
+        <div style={{
+          padding: horizontal ? '6px 0 4px' : '4px 12px 12px',
+          display: 'flex', flexDirection: 'column', gap: 8,
+          background: horizontal ? undefined : 'oklch(0.14 0.012 286 / 0.4)',
+          borderTop: horizontal ? undefined : '1px solid var(--hds-line-s)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: horizontal ? 0 : 6 }}>
+            <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>Match</span>
+            <MatchSelect value={tree.match} onChange={m => tree.setMatch(m)} />
+            <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>of the following:</span>
           </div>
-          {filterRules.map(rule => (
-            <FilterRuleRow key={rule.id} rule={rule} filteredLibs={filteredLibs}
-              onUpdate={onUpdateRule} onRemove={onRemoveRule} />
-          ))}
-          <button onClick={onAddRule}
-            className="text-xs text-violet-400 hover:text-violet-200 transition-colors pt-0.5 block">
-            + Add Rule
-          </button>
+
+          <div style={{
+            display: 'flex', gap: 8,
+            flexDirection: horizontal ? 'row' : 'column',
+            flexWrap: horizontal ? 'wrap' : 'nowrap',
+            alignItems: horizontal ? 'flex-start' : 'stretch',
+          }}>
+            {tree.items.map(item => item.kind === 'rule' ? (
+              <div key={item.id} style={itemBoxStyle}>
+                <FilterRuleRow
+                  rule={item} filteredLibs={filteredLibs}
+                  onUpdate={(id, patch) => tree.updateRule(id, patch)}
+                  onRemove={id => tree.removeItem(id)}
+                />
+              </div>
+            ) : (
+              <div key={item.id} style={{
+                ...itemBoxStyle,
+                display: 'flex', flexDirection: 'column', gap: 6,
+                padding: '8px 10px', borderRadius: 8,
+                border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.08)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>Match</span>
+                  <MatchSelect value={item.match} onChange={m => tree.setGroupMatch(item.id, m)} />
+                  <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>within this group</span>
+                  <button onClick={() => tree.removeItem(item.id)} style={{ ...removeBtnStyle, marginLeft: 'auto' }}>
+                    ✕ remove group
+                  </button>
+                </div>
+                {item.rules.map(rule => (
+                  <FilterRuleRow
+                    key={rule.id} rule={rule} filteredLibs={filteredLibs}
+                    onUpdate={(id, patch) => tree.updateRule(id, patch)}
+                    onRemove={id => tree.removeRuleFromGroup(item.id, id)}
+                  />
+                ))}
+                <button
+                  onClick={() => tree.addRuleToGroup(item.id)}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer', alignSelf: 'flex-start',
+                    color: 'var(--hds-violet)', fontSize: 11, padding: '2px 0',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  + Add rule to group
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: 14, paddingTop: 2 }}>
+            <button
+              onClick={() => tree.addRule()}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--hds-violet)', fontSize: 11, padding: 0,
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              + Add Rule
+            </button>
+            <button
+              onClick={() => tree.addGroup()}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--hds-violet)', fontSize: 11, padding: 0,
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              + Add Group
+            </button>
+          </div>
         </div>
       )}
     </div>

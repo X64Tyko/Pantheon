@@ -22,6 +22,12 @@ struct Episode {
     std::string      tmdb_id;
     std::string      imdb_id;
 
+    // Bucketed ffprobe resolution ("4K"/"1080p"/"720p"/"SD"), probed once at
+    // sync time alongside duration validation — see MediaProbe::probeVideoInfo.
+    // Per-episode (not per-show) since a show's episodes can genuinely span
+    // multiple resolutions (early-season DVD rips vs. later 1080p).
+    std::string      resolution_label;
+
     // Watch state as reported by the source for its configured primary
     // account — transient, sync-time-only fields; never written to the
     // `episode` table. See Movie.h's identical fields for the full rationale.

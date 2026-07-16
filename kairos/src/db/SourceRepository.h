@@ -59,6 +59,16 @@ public:
     void setScraperPriority(const std::string& library_id, const std::string& item_type,
                             const std::vector<std::string>& order);
 
+    // Same shape/semantics as getScraperPriority/setScraperPriority, but for
+    // media *sources* (plex/jellyfin/local) rather than metadata scrapers —
+    // resolves which source's "date added" wins when an item is matched
+    // across multiple sources (see SyncManager's added_at upsert logic).
+    // Empty = no preference (first source to sync a value keeps it).
+    std::vector<std::string> getSourcePriority(const std::string& library_id,
+                                                const std::string& item_type);
+    void setSourcePriority(const std::string& library_id, const std::string& item_type,
+                            const std::vector<std::string>& order);
+
     // ── Source mapping ────────────────────────────────────────────────────────
 
     // Resolve a source-native external_id to a Kairos internal ID.

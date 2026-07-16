@@ -134,6 +134,78 @@ function ScraperPriorityEditor({ sourceId, libraryId, itemType, availableScraper
   )
 }
 
+// Same shape as ScraperPriorityEditor above, but ranks media sources
+// (plex/jellyfin/emby/local) instead of metadata scrapers — resolves which
+// source's "date added" wins when an item is matched across multiple
+// sources (see SyncManager's added_at upsert and the Library page's Date
+// Added filter/sort). Empty = first source to sync a value keeps it.
+const AVAILABLE_MEDIA_SOURCES = ['plex', 'jellyfin', 'emby', 'local']
+
+function SourcePriorityEditor({ sourceId, libraryId, itemType }: {
+  sourceId: string
+  libraryId: string
+  itemType: 'show' | 'movie'
+}) {
+  const [order,  setOrder]  = useState<string[] | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api.getSourcePriority(sourceId, libraryId, itemType).then(r => setOrder(r.order)).catch(() => setOrder([]))
+  }, [sourceId, libraryId, itemType])
+
+  const persist = async (next: string[]) => {
+    setOrder(next)
+    setSaving(true)
+    try { await api.setSourcePriority(sourceId, libraryId, itemType, next) } catch {}
+    setSaving(false)
+  }
+
+  const move = (i: number, delta: number) => {
+    if (!order) return
+    const j = i + delta
+    if (j < 0 || j >= order.length) return
+    const next = [...order]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    persist(next)
+  }
+
+  const remove = (i: number) => { if (order) persist(order.filter((_, idx) => idx !== i)) }
+  const add    = (source: string) => { if (order && source) persist([...order, source]) }
+
+  if (order === null) return <div className="text-xs text-zinc-600">Loading…</div>
+
+  const addable = AVAILABLE_MEDIA_SOURCES.filter(s => !order.includes(s))
+
+  return (
+    <div className="space-y-1">
+      <div className="text-[10px] uppercase tracking-wide text-zinc-600">{itemType === 'show' ? 'Shows' : 'Movies'} — Date Added source</div>
+      {order.length === 0 && (
+        <div className="text-xs text-zinc-600">No preference — whichever source syncs a date first keeps it.</div>
+      )}
+      {order.map((source, i) => (
+        <div key={source} className="flex items-center gap-2 px-2 py-1 rounded bg-zinc-950/60 border border-zinc-800/60 text-xs">
+          <span className="text-amber-500 w-4 text-center font-medium">{i + 1}</span>
+          <span className="flex-1 uppercase text-zinc-300">{source}</span>
+          <button disabled={saving || i === 0} onClick={() => move(i, -1)} className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30">↑</button>
+          <button disabled={saving || i === order.length - 1} onClick={() => move(i, 1)} className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30">↓</button>
+          <button disabled={saving} onClick={() => remove(i)} className="text-red-400 hover:text-red-300">×</button>
+        </div>
+      ))}
+      {addable.length > 0 && (
+        <select
+          value=""
+          disabled={saving}
+          onChange={e => add(e.target.value)}
+          className="input w-full text-xs"
+        >
+          <option value="">+ add source to priority…</option>
+          {addable.map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+        </select>
+      )}
+    </div>
+  )
+}
+
 // Per-source-card pill listing accounts the source reports that have no
 // local Pantheon account imported yet (see SystemStore.unmappedSourceUsers,
 // populated globally by Layout's poll — this just filters the shared list
@@ -1137,6 +1209,12 @@ export default observer(function SourcesPage() {
                           sourceId={store.selectedId!} libraryId={lib.library_id}
                           itemType="movie" availableScrapers={enabledScrapers}
                         />
+                      )}
+                      {(lib.library_type === 'show' || lib.library_type === 'mixed') && (
+                        <SourcePriorityEditor sourceId={store.selectedId!} libraryId={lib.library_id} itemType="show" />
+                      )}
+                      {(lib.library_type === 'movie' || lib.library_type === 'mixed') && (
+                        <SourcePriorityEditor sourceId={store.selectedId!} libraryId={lib.library_id} itemType="movie" />
                       )}
                       <label className="flex items-center gap-2 text-sm text-zinc-400">
                         <input

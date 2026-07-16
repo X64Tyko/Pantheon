@@ -14,28 +14,38 @@ const pillBase: React.CSSProperties = {
   border: '1px solid',
 }
 
+// Multi-select: each library pill toggles independently (all selected by
+// default — see LibraryStore.loadLibraries), so e.g. a bumpers-only library
+// can be excluded from "browse everything" without switching to a
+// single-library view to do it. The "All" pill is a quick select-all/
+// select-none toggle, not a third selection state of its own.
 export const SourceSwitcher = observer(function SourceSwitcher({ libraries }: { libraries: LibraryWithSource[] }) {
-  const active = libraryStore.activeLibId
+  const selected = libraryStore.selectedLibIds
+  const allSelected = libraries.length > 0 && selected.size >= libraries.length
 
-  function pillStyle(selected: boolean): React.CSSProperties {
+  function pillStyle(active: boolean): React.CSSProperties {
     return {
       ...pillBase,
-      background: selected ? 'var(--hds-violet)' : 'transparent',
-      borderColor: selected ? 'var(--hds-violet)' : 'var(--hds-line)',
-      color: selected ? 'oklch(0.1 0.02 287)' : 'var(--hds-txt-2)',
+      background: active ? 'var(--hds-violet)' : 'transparent',
+      borderColor: active ? 'var(--hds-violet)' : 'var(--hds-line)',
+      color: active ? 'oklch(0.1 0.02 287)' : 'var(--hds-txt-2)',
     }
   }
 
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-      <button style={pillStyle(active == null)} onClick={() => libraryStore.setLibrary(null)}>
-        All Libraries
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <button
+        style={pillStyle(allSelected)}
+        onClick={() => allSelected ? libraryStore.selectNoLibraries() : libraryStore.selectAllLibraries()}
+        title={allSelected ? 'Deselect all libraries' : 'Select all libraries'}
+      >
+        {allSelected ? 'All Libraries' : selected.size === 0 ? 'None Selected' : `${selected.size} Selected`}
       </button>
       {libraries.map(lib => (
         <button
           key={lib.library_id}
-          style={pillStyle(lib.library_id === active)}
-          onClick={() => libraryStore.setLibrary(lib.library_id)}
+          style={pillStyle(selected.has(lib.library_id))}
+          onClick={() => libraryStore.toggleLibrary(lib.library_id)}
         >{libLabel(lib, libraries)}</button>
       ))}
     </div>

@@ -1,0 +1,84 @@
+import { makeAutoObservable } from 'mobx'
+import { FIELD_DEFS, type FilterField, type FilterOp } from './filterFields'
+
+let _id = 0
+const nextId = () => String(++_id)
+
+export interface FilterRuleItem { kind: 'rule'; id: string; field: FilterField; op: FilterOp; value: string }
+// One level of grouping — enough to express Plex-style "(X AND Y) OR Z"
+// without a fully general recursive tree UI. filterSyntax.ts's compiler
+// already supports arbitrary nesting for text typed directly into the
+// search bar; this just bounds how deep the *visual* builder goes.
+export interface FilterGroupItem { kind: 'group'; id: string; match: 'all' | 'any'; rules: FilterRuleItem[] }
+export type FilterItem = FilterRuleItem | FilterGroupItem
+
+function blankRule(): FilterRuleItem {
+  return { kind: 'rule', id: nextId(), field: 'genre', op: 'is', value: '' }
+}
+
+// Shared filter rule-builder state — one instance per page that embeds
+// PickerFilters (Library, Playlists, Filler Lists, channel content picker).
+// Replaces each page's own copy-pasted filterRules/filterMatch state + add/
+// update/remove methods, which is what let the "only 'is' rules, only 6
+// fields" bug (see components/media/filterQuery.ts) drift out of sync
+// across all 4 surfaces in the first place.
+export class FilterTreeStore {
+  open: boolean = false
+  match: 'all' | 'any' = 'all'
+  items: FilterItem[] = []
+
+  constructor() { makeAutoObservable(this) }
+
+  get isEmpty() { return this.items.length === 0 }
+
+  // Flattened view for callers that only care about "every rule regardless
+  // of grouping" (e.g. finding a single preset 'library'/'genre' value).
+  get allRules(): FilterRuleItem[] {
+    return this.items.flatMap(it => it.kind === 'rule' ? [it] : it.rules)
+  }
+
+  toggleOpen() { this.open = !this.open }
+  setMatch(m: 'all' | 'any') { this.match = m }
+
+  addRule() { this.items.push(blankRule()) }
+  addGroup() { this.items.push({ kind: 'group', id: nextId(), match: 'all', rules: [blankRule()] }) }
+
+  removeItem(id: string) { this.items = this.items.filter(it => it.id !== id) }
+
+  updateRule(id: string, patch: Partial<Pick<FilterRuleItem, 'field' | 'op' | 'value'>>) {
+    const rule = this.items.find((it): it is FilterRuleItem => it.kind === 'rule' && it.id === id)
+      ?? this.items.flatMap(it => it.kind === 'group' ? it.rules : []).find(r => r.id === id)
+    if (!rule) return
+    if (patch.field !== undefined && patch.field !== rule.field) {
+      rule.field = patch.field
+      rule.op    = FIELD_DEFS[patch.field].ops[0].id
+      rule.value = ''
+      return
+    }
+    if (patch.op    !== undefined) rule.op    = patch.op
+    if (patch.value !== undefined) rule.value = patch.value
+  }
+
+  setGroupMatch(groupId: string, match: 'all' | 'any') {
+    const g = this.items.find(it => it.id === groupId)
+    if (g?.kind === 'group') g.match = match
+  }
+  addRuleToGroup(groupId: string) {
+    const g = this.items.find(it => it.id === groupId)
+    if (g?.kind === 'group') g.rules.push(blankRule())
+  }
+  removeRuleFromGroup(groupId: string, ruleId: string) {
+    const g = this.items.find(it => it.id === groupId)
+    if (g?.kind === 'group') g.rules = g.rules.filter(r => r.id !== ruleId)
+  }
+
+  reset() { this.items = []; this.open = false; this.match = 'all' }
+
+  // For Home shelf tiles that land on Library with a specific tag/value
+  // already filtering the view — replaces every existing item with one
+  // rule, opens the panel so it's immediately visible/editable.
+  setSingleRule(field: FilterField, value: string) {
+    this.items = [{ kind: 'rule', id: nextId(), field, op: 'is', value }]
+    this.open  = true
+  }
+}

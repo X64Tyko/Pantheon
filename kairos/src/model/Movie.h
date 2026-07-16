@@ -16,6 +16,7 @@ struct Movie {
     std::string    tagline;
     std::string    studio;
     std::string    director;
+    std::string    writer;          // first TMDB crew credit with job "Writer" (fallback "Screenplay")
     std::string    genres;          // JSON array string
     std::string    thumb;
     std::string    art;
@@ -26,6 +27,15 @@ struct Movie {
     std::string    actors;       // JSON array of names
     std::string    countries;    // JSON array: ["United States", ...]
     std::string    collections;  // JSON array: ["Marvel", ...]
+    // Bucketed ffprobe resolution ("4K"/"1080p"/"720p"/"SD"), probed once at
+    // sync time alongside duration validation — see MediaProbe::probeVideoInfo.
+    std::string    resolution_label;
+    // When this item was first added to the library, from the source's own
+    // signal (Plex addedAt / Jellyfin DateCreated / Local file mtime as a
+    // last resort) — see the library_source_priority merge for what wins
+    // when the same item is matched across multiple sources.
+    std::optional<int64_t> added_at;
+    std::string            added_at_source; // "plex" | "jellyfin" | "local" — see Show.h's identical field
 
     // Watch state as reported by the source for its configured primary
     // account — transient, sync-time-only fields; never written to the

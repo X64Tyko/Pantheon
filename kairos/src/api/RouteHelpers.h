@@ -34,6 +34,20 @@ inline std::vector<std::string> splitSemicolon(const std::string& s) {
 	return parts;
 }
 
+// Split on ',', trim whitespace, skip empty tokens — used for CSV-style
+// multi-value params like the Library page's multi-select library_ids.
+inline std::vector<std::string> splitComma(const std::string& s) {
+	std::vector<std::string> parts;
+	std::stringstream ss(s);
+	std::string token;
+	while (std::getline(ss, token, ',')) {
+		auto b = token.find_first_not_of(" \t");
+		auto e = token.find_last_not_of(" \t");
+		if (b != std::string::npos) parts.push_back(token.substr(b, e - b + 1));
+	}
+	return parts;
+}
+
 // Append "AND col = ?" or "AND col IN (?,?,...)" to extras; returns true if non-empty.
 inline bool appendInClause(const std::string& col, const std::string& raw,
                             std::string& extras, std::vector<std::string>& vals) {

@@ -1798,6 +1798,31 @@ constexpr Migration kMigrations[] = {
     UPDATE channel SET anchor_hashes = NULL WHERE anchor_hashes IS NOT NULL;
 )SQL" }
 
+// ── v79: Library filtering completeness pass — real per-item "date added"
+//         (from each source's own signal, not a sync-time proxy), a
+//         per-library priority order to resolve it when an item is matched
+//         across multiple sources (mirrors library_scraper_priority/v68),
+//         plus persisted writer (movies) and resolution (movies+episodes,
+//         probed once at sync time instead of only-on-demand/memory-cached).
+,{ 79, R"SQL(
+    ALTER TABLE show  ADD COLUMN added_at        INTEGER;
+    ALTER TABLE show  ADD COLUMN added_at_source TEXT NOT NULL DEFAULT '';
+    ALTER TABLE movie ADD COLUMN added_at        INTEGER;
+    ALTER TABLE movie ADD COLUMN added_at_source TEXT NOT NULL DEFAULT '';
+    ALTER TABLE movie ADD COLUMN writer           TEXT NOT NULL DEFAULT '';
+    ALTER TABLE movie ADD COLUMN resolution_label TEXT NOT NULL DEFAULT '';
+    ALTER TABLE episode ADD COLUMN resolution_label TEXT NOT NULL DEFAULT '';
+
+    CREATE TABLE IF NOT EXISTS library_source_priority (
+        library_id TEXT    NOT NULL,
+        item_type  TEXT    NOT NULL CHECK(item_type IN ('show','movie')),
+        source     TEXT    NOT NULL,
+        priority   INTEGER NOT NULL,
+        PRIMARY KEY (library_id, item_type, source)
+    );
+    CREATE INDEX idx_lib_source_priority ON library_source_priority(library_id, item_type);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

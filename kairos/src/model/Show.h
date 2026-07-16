@@ -32,6 +32,10 @@ struct Show {
 	std::vector<ScraperInfo> scraper_info; // prep to move beyond a hardcoded 3 scrapers
     std::string originally_available_at;
 	std::optional<int64_t> added_at;
+	// Which source populated `added_at` on this sync pass ("plex"/"jellyfin"/
+	// "local") — lets the upsert compare against library_source_priority
+	// instead of blindly taking whichever source happened to sync last.
+	std::string added_at_source;
     std::optional<int>   year;
     std::optional<float> audience_rating;
 	std::vector<Rating> ratings;

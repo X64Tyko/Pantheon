@@ -116,6 +116,7 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
             		show.art            = item.value("art", "");
             		show.originally_available_at = item.value("originallyAvailableAt", "");
             		show.added_at       = item.value("addedAt", 0);
+            		show.added_at_source = "plex";
 
             		// Root folder(s): [{"path":"/data/TV Shows/Show Name"}, ...] —
             		// same array-of-object shape as Genre/Label below. Only the
@@ -258,6 +259,8 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
                 movie.art       = item.value("art", "");
                 if (item.contains("audienceRating") && !item["audienceRating"].is_null())
                     movie.audience_rating = item["audienceRating"].get<float>();
+                movie.added_at        = item.value("addedAt", int64_t{0});
+                movie.added_at_source = "plex";
 
                 // Director
                 if (item.contains("Director") && !item["Director"].empty())

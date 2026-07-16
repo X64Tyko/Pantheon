@@ -1,5 +1,6 @@
 #include "ContentRepository.h"
 #include "Database.h"
+#include "FilterExpr.h"
 #include "MetadataOverrideRepository.h"
 #include "util/PathMatch.h"
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -8,7 +9,6 @@
 #include <cstdint>
 #include <memory>
 #include <set>
-#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -343,48 +343,6 @@ ContentRepository::findGroupPart1(const std::string& episode_id) {
 
 namespace {
 
-std::vector<std::string> splitSemi(const std::string& s) {
-    std::vector<std::string> parts;
-    std::stringstream ss(s);
-    std::string tok;
-    while (std::getline(ss, tok, ';')) {
-        auto b = tok.find_first_not_of(" \t");
-        auto e = tok.find_last_not_of(" \t");
-        if (b != std::string::npos) parts.push_back(tok.substr(b, e - b + 1));
-    }
-    return parts;
-}
-
-void appendIn(const std::string& col, const std::string& raw,
-              std::string& extras, std::vector<std::string>& vals) {
-    auto parts = splitSemi(raw);
-    if (parts.empty()) return;
-    if (parts.size() == 1) {
-        extras += " AND " + col + " = ?";
-    } else {
-        std::string ph;
-        for (size_t i = 0; i < parts.size(); ++i) ph += (i ? ",?" : "?");
-        extras += " AND " + col + " IN (" + ph + ")";
-    }
-    for (auto& p : parts) vals.push_back(p);
-}
-
-void appendJsonIn(const std::string& tbl, const std::string& col, const std::string& raw,
-                  std::string& extras, std::vector<std::string>& vals) {
-    auto parts = splitSemi(raw);
-    if (parts.empty()) return;
-    if (parts.size() == 1) {
-        extras += " AND EXISTS (SELECT 1 FROM json_each(NULLIF(" + tbl + "." + col + ",''))"
-                  " WHERE json_each.value = ?)";
-    } else {
-        std::string ph;
-        for (size_t i = 0; i < parts.size(); ++i) ph += (i ? ",?" : "?");
-        extras += " AND EXISTS (SELECT 1 FROM json_each(NULLIF(" + tbl + "." + col + ",''))"
-                  " WHERE json_each.value IN (" + ph + "))";
-    }
-    for (auto& p : parts) vals.push_back(p);
-}
-
 // Appends a restriction WHERE clause (override-wins-over-ceiling, mirrors
 // RestrictionRepository::isAllowed) to the same extras/extra_vals idiom used
 // above by the other dynamic filters. entity_type is "show" or "movie";
@@ -418,6 +376,15 @@ void appendRestriction(const RestrictionContext& ctx, const std::string& entity_
     vals.push_back(ctx.user_id); vals.push_back(entity_type);
     vals.push_back(ctx.user_id); vals.push_back(entity_type);
     vals.push_back(std::to_string(ctx.rating_ceiling));
+}
+
+// "?,?,?" for an IN (...) list of the given size — used by the multi-select
+// library-scoping JOIN (ShowSearchParams::library_ids / MovieSearchParams::
+// library_ids), which replaced the old single library_id equality filter.
+std::string inPlaceholders(size_t n) {
+    std::string ph;
+    for (size_t i = 0; i < n; ++i) ph += (i ? ",?" : "?");
+    return ph;
 }
 
 } // namespace
@@ -510,22 +477,11 @@ std::vector<std::string> ContentRepository::getMetadataValues(const std::string&
 ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
     std::string extras;
     std::vector<std::string> extra_vals;
-    if (!p.q.empty()) {
-        extras += " AND (s.title LIKE '%'||?||'%' OR s.network LIKE '%'||?||'%' OR s.studio LIKE '%'||?||'%'"
-                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(s.labels,'')) je WHERE je.value LIKE '%'||?||'%')"
-                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(s.genres,'')) je WHERE je.value LIKE '%'||?||'%')"
-                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(s.actors,'')) je WHERE je.value LIKE '%'||?||'%'))";
-        for (int i = 0; i < 6; ++i) extra_vals.push_back(p.q);
+    if (!p.filter.empty()) {
+        auto compiled = compileFilterExpr(p.filter, FilterEntity::Show, "s");
+        extras += " AND (" + compiled.sql + ")";
+        for (auto& v : compiled.binds) extra_vals.push_back(v);
     }
-    if (!p.genre.empty())        appendJsonIn("s", "genres",      p.genre,      extras, extra_vals);
-    if (!p.year.empty())         { extras += " AND s.year = CAST(? AS INTEGER)"; extra_vals.push_back(p.year); }
-    if (!p.content_rating.empty()) appendIn("s.content_rating",   p.content_rating, extras, extra_vals);
-    if (!p.label.empty())        appendJsonIn("s", "labels",      p.label,      extras, extra_vals);
-    if (!p.network.empty())      { extras += " AND s.network LIKE '%' || ? || '%'"; extra_vals.push_back(p.network); }
-    if (!p.actor.empty())        appendJsonIn("s", "actors",      p.actor,      extras, extra_vals);
-    if (!p.country.empty())      appendJsonIn("s", "countries",   p.country,    extras, extra_vals);
-    if (!p.collection.empty())   appendJsonIn("s", "collections", p.collection, extras, extra_vals);
-    if (!p.studio.empty())       { extras += " AND s.studio LIKE '%' || ? || '%'"; extra_vals.push_back(p.studio); }
     appendRestriction(p.restriction, "show", "s.show_id", "s.content_rating", extras, extra_vals);
 
     auto bindExtras = [&](SQLite::Statement& q, int& idx) {
@@ -541,15 +497,26 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
                   WHERE sm3.kairos_id = s.show_id AND sm3.item_type = 'show'
                         AND sm3.library_id IS NOT NULL
                   LIMIT 1), '') AS library_id)";
+    // Each sort mode's own natural direction when p.sort_dir isn't set
+    // explicitly — "recently added/aired" defaults to newest-first, "title"
+    // to A-Z, matching this endpoint's behavior before sort_dir existed.
+    auto dirFor = [&](const char* natural) { return p.sort_dir.empty() ? natural : (p.sort_dir == "desc" ? "DESC" : "ASC"); };
     const std::string order_clause =
-        (p.sort == "recently_added") ? " ORDER BY s.rowid DESC" :
-        (p.sort == "recently_aired") ? R"( ORDER BY (
+        (p.sort == "recently_added")    ? std::string(" ORDER BY s.added_at ") + dirFor("DESC") + ", s.rowid " + dirFor("DESC") :
+        (p.sort == "recently_aired")    ? std::string(R"( ORDER BY (
                                              SELECT MAX(e2.air_date) FROM episode e2
                                              WHERE e2.show_id = s.show_id
                                                AND e2.air_date != '' AND e2.air_date <= date('now')
-                                           ) DESC)" :
-        (p.sort == "random")         ? " ORDER BY RANDOM()" :
-                                       " ORDER BY s.title";
+                                           ) )") + dirFor("DESC") :
+        (p.sort == "year")               ? std::string(" ORDER BY s.year ") + dirFor("DESC") :
+        (p.sort == "audience_rating")    ? std::string(" ORDER BY s.audience_rating ") + dirFor("DESC") :
+        (p.sort == "duration")           ? std::string(R"( ORDER BY (
+                                             SELECT AVG(e3.duration_ms) FROM episode e3 WHERE e3.show_id = s.show_id
+                                           ) )") + dirFor("DESC") :
+        (p.sort == "random")              ? (p.random_seed.has_value()
+                                                ? " ORDER BY ((s.rowid + ?) * 2654435761) % 2147483647"
+                                                : " ORDER BY RANDOM()") :
+                                            std::string(" ORDER BY s.title ") + dirFor("ASC");
     const std::string show_select = R"(
             SELECT s.show_id, s.title, s.content_rating,
                    COUNT(DISTINCT e.episode_id) AS episode_count, s.year,
@@ -590,7 +557,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         AND EXISTS (SELECT 1 FROM episode e6 WHERE e6.show_id = s.show_id))";
 
     ShowListResult result;
-    if (p.library_id.empty()) {
+    if (p.library_ids.empty()) {
         SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM show s WHERE 1=1" + extras + home_exclude + hide_empty_clause);
         int idx = 1; bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
@@ -599,24 +566,31 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
             R"( FROM show s LEFT JOIN episode e ON e.show_id = s.show_id
             WHERE 1=1)" + extras + home_exclude + hide_empty_clause + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
         idx = 1; bindExtras(q, idx);
+        if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseShowRow(q));
     } else {
+        const std::string ph = inPlaceholders(p.library_ids.size());
         SQLite::Statement cnt(db_.get(), R"(
             SELECT COUNT(DISTINCT s.show_id) FROM show s
             JOIN source_mapping sm ON sm.kairos_id = s.show_id
-                AND sm.item_type = 'show' AND sm.library_id = ?
+                AND sm.item_type = 'show' AND sm.library_id IN ()" + ph + R"()
             WHERE 1=1)" + extras + hide_empty_clause);
-        int idx = 1; cnt.bind(idx++, p.library_id); bindExtras(cnt, idx);
+        int idx = 1;
+        for (const auto& lid : p.library_ids) cnt.bind(idx++, lid);
+        bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
         SQLite::Statement q(db_.get(), show_select +
             R"( FROM show s
             JOIN source_mapping sm ON sm.kairos_id = s.show_id
-                AND sm.item_type = 'show' AND sm.library_id = ?
+                AND sm.item_type = 'show' AND sm.library_id IN ()" + ph + R"()
             LEFT JOIN episode e ON e.show_id = s.show_id
             WHERE 1=1)" + extras + hide_empty_clause + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
-        idx = 1; q.bind(idx++, p.library_id); bindExtras(q, idx);
+        idx = 1;
+        for (const auto& lid : p.library_ids) q.bind(idx++, lid);
+        bindExtras(q, idx);
+        if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseShowRow(q));
     }
@@ -626,21 +600,11 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
 MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     std::string extras;
     std::vector<std::string> extra_vals;
-    if (!p.q.empty()) {
-        extras += " AND (m.title LIKE '%'||?||'%' OR m.studio LIKE '%'||?||'%'"
-                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(m.labels,'')) je WHERE je.value LIKE '%'||?||'%')"
-                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(m.genres,'')) je WHERE je.value LIKE '%'||?||'%')"
-                  " OR EXISTS (SELECT 1 FROM json_each(NULLIF(m.actors,'')) je WHERE je.value LIKE '%'||?||'%'))";
-        for (int i = 0; i < 5; ++i) extra_vals.push_back(p.q);
+    if (!p.filter.empty()) {
+        auto compiled = compileFilterExpr(p.filter, FilterEntity::Movie, "m");
+        extras += " AND (" + compiled.sql + ")";
+        for (auto& v : compiled.binds) extra_vals.push_back(v);
     }
-    if (!p.genre.empty())          appendJsonIn("m", "genres",      p.genre,         extras, extra_vals);
-    if (!p.year.empty())           { extras += " AND m.year = CAST(? AS INTEGER)"; extra_vals.push_back(p.year); }
-    if (!p.content_rating.empty()) appendIn("m.content_rating",     p.content_rating, extras, extra_vals);
-    if (!p.label.empty())          appendJsonIn("m", "labels",      p.label,         extras, extra_vals);
-    if (!p.actor.empty())          appendJsonIn("m", "actors",      p.actor,         extras, extra_vals);
-    if (!p.country.empty())        appendJsonIn("m", "countries",   p.country,       extras, extra_vals);
-    if (!p.collection.empty())     appendJsonIn("m", "collections", p.collection,    extras, extra_vals);
-    if (!p.studio.empty())         { extras += " AND m.studio LIKE '%' || ? || '%'"; extra_vals.push_back(p.studio); }
     // recently_released is meaningless for movies the source never gave a
     // release_date (most commonly AniDB, which doesn't fetch one at all) —
     // exclude them rather than let them sort to one end of the list.
@@ -660,11 +624,17 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
                   WHERE sm3.kairos_id = m.movie_id AND sm3.item_type = 'movie'
                         AND sm3.library_id IS NOT NULL
                   LIMIT 1), '') AS library_id)";
+    auto mdirFor = [&](const char* natural) { return p.sort_dir.empty() ? natural : (p.sort_dir == "desc" ? "DESC" : "ASC"); };
     const std::string morder =
-        (p.sort == "recently_added")    ? " ORDER BY m.rowid DESC" :
-        (p.sort == "recently_released") ? " ORDER BY m.release_date DESC" :
-        (p.sort == "random")            ? " ORDER BY RANDOM()" :
-                                          " ORDER BY m.title";
+        (p.sort == "recently_added")    ? std::string(" ORDER BY m.added_at ") + mdirFor("DESC") + ", m.rowid " + mdirFor("DESC") :
+        (p.sort == "recently_released") ? std::string(" ORDER BY m.release_date ") + mdirFor("DESC") :
+        (p.sort == "year")              ? std::string(" ORDER BY m.year ") + mdirFor("DESC") :
+        (p.sort == "audience_rating")   ? std::string(" ORDER BY m.audience_rating ") + mdirFor("DESC") :
+        (p.sort == "duration")          ? std::string(" ORDER BY m.duration_ms ") + mdirFor("DESC") :
+        (p.sort == "random")             ? (p.random_seed.has_value()
+                                                ? " ORDER BY ((m.rowid + ?) * 2654435761) % 2147483647"
+                                                : " ORDER BY RANDOM()") :
+                                          std::string(" ORDER BY m.title ") + mdirFor("ASC");
     // watch_progress.completed is the rewatch count directly (see its column
     // comment) — view_count IS that count, watched is just view_count > 0.
     const std::string watch_join =
@@ -707,7 +677,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     const std::string hide_empty_clause = !p.hide_empty ? "" : " AND m.file_path != ''";
 
     MovieListResult result;
-    if (p.library_id.empty()) {
+    if (p.library_ids.empty()) {
         SQLite::Statement cnt(db_.get(), "SELECT COUNT(*) FROM movie m WHERE 1=1" + extras + home_exclude + hide_empty_clause);
         int idx = 1; bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
@@ -715,23 +685,30 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         SQLite::Statement q(db_.get(),
             movie_select + " FROM movie m" + watch_join + " WHERE 1=1" + extras + home_exclude + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
         idx = 1; q.bind(idx++, p.user_id); bindExtras(q, idx);
+        if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));
     } else {
+        const std::string ph = inPlaceholders(p.library_ids.size());
         SQLite::Statement cnt(db_.get(), R"(
             SELECT COUNT(DISTINCT m.movie_id) FROM movie m
             JOIN source_mapping sm ON sm.kairos_id = m.movie_id
-                AND sm.item_type = 'movie' AND sm.library_id = ?
+                AND sm.item_type = 'movie' AND sm.library_id IN ()" + ph + R"()
             WHERE 1=1)" + extras + hide_empty_clause);
-        int idx = 1; cnt.bind(idx++, p.library_id); bindExtras(cnt, idx);
+        int idx = 1;
+        for (const auto& lid : p.library_ids) cnt.bind(idx++, lid);
+        bindExtras(cnt, idx);
         if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
 
         SQLite::Statement q(db_.get(),
             movie_select + R"( FROM movie m
             JOIN source_mapping sm ON sm.kairos_id = m.movie_id
-                AND sm.item_type = 'movie' AND sm.library_id = ?)" + watch_join + R"(
+                AND sm.item_type = 'movie' AND sm.library_id IN ()" + ph + R"())" + watch_join + R"(
             WHERE 1=1)" + extras + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
-        idx = 1; q.bind(idx++, p.library_id); q.bind(idx++, p.user_id); bindExtras(q, idx);
+        idx = 1;
+        for (const auto& lid : p.library_ids) q.bind(idx++, lid);
+        q.bind(idx++, p.user_id); bindExtras(q, idx);
+        if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));
     }

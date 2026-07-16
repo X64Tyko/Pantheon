@@ -157,7 +157,7 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
         "&IncludeItemTypes=Series&Recursive=true"
         "&Fields=Overview,Genres,Studios,People,ProviderIds,Tags,ProductionYear,"
         "OfficialRating,CommunityRating,Status,ImageTags,BackdropImageTags,"
-        "ProductionLocations,PremiereDate,Path"
+        "ProductionLocations,PremiereDate,Path,DateCreated"
         "&Limit=500";
 
     std::vector<Show> result;
@@ -200,6 +200,10 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
                     show.audience_rating = item["CommunityRating"].get<float>();
                 if (item.contains("PremiereDate") && !item["PremiereDate"].is_null())
                     show.originally_available_at = isoDate(item["PremiereDate"].get<std::string>());
+                if (item.contains("DateCreated") && !item["DateCreated"].is_null()) {
+                    int64_t created = parseIsoToEpoch(item["DateCreated"].get<std::string>());
+                    if (created > 0) { show.added_at = created; show.added_at_source = sourceType(); }
+                }
 
                 if (item.contains("Genres"))
                     show.genres   = jsonStringArray(item["Genres"]);
@@ -245,7 +249,7 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
         "&IncludeItemTypes=Movie&Recursive=true"
         "&Fields=Overview,Genres,Studios,People,ProviderIds,Tags,ProductionYear,"
         "OfficialRating,CommunityRating,Tagline,MediaSources,ImageTags,"
-        "BackdropImageTags,ProductionLocations,PremiereDate,UserData"
+        "BackdropImageTags,ProductionLocations,PremiereDate,UserData,DateCreated"
         "&Limit=500";
 
     std::vector<Movie> result;
@@ -301,6 +305,7 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
 
                 if (item.contains("People")) {
                     movie.director = firstPerson(item["People"], "Director");
+                    movie.writer   = firstPerson(item["People"], "Writer");
                     movie.actors   = personNames(item["People"], "Actor");
                 }
 
@@ -310,6 +315,10 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
                     movie.labels   = jsonStringArray(item["Tags"]);
                 if (item.contains("ProductionLocations"))
                     movie.countries = jsonStringArray(item["ProductionLocations"]);
+                if (item.contains("DateCreated") && !item["DateCreated"].is_null()) {
+                    int64_t created = parseIsoToEpoch(item["DateCreated"].get<std::string>());
+                    if (created > 0) { movie.added_at = created; movie.added_at_source = sourceType(); }
+                }
 
                 const auto& pids = item.value("ProviderIds", json::object());
                 movie.imdb_id = pids.value("Imdb", "");

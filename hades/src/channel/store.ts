@@ -1,10 +1,10 @@
-import { makeAutoObservable, runInAction } from 'mobx'
+import { makeAutoObservable, reaction, runInAction } from 'mobx'
 import { api } from '../api/client'
 import { channelStore } from '../stores'
 import { BLANK_DRAFT, DAY_BITS } from './constants'
 import { defaultPickerTab, normalizeBlock, blockToDraft, m2t, t2m, todayEpgDay } from './utils'
-import { FIELD_DEFS } from '../components/PickerFilters'
-import type { FilterRule } from '../components/PickerFilters'
+import { FilterTreeStore } from '../components/media/filterTree'
+import { toFilterString } from '../components/media/filterQuery'
 import type { BlockDraft, LimitMode, PickerTab } from './types'
 import type {
   AdvanceMode, Advancement, AnchorSnapshot, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
@@ -15,7 +15,6 @@ import type {
 
 let _debounce:  ReturnType<typeof setTimeout>
 let _epgTimer:  ReturnType<typeof setTimeout> | null = null
-let _ruleId = 0
 let _searchCtrl: AbortController | null = null
 
 // Slot offsets are purely derived — always the cumulative sum of preceding durations.
@@ -74,9 +73,7 @@ export class ChannelDetailStore {
 
   allLibraries:      LibraryWithSource[]   = []
 
-  filterRulesOpen:  boolean              = false
-  filterMatch:      'all' | 'any'        = 'all'
-  filterRules:      FilterRule[]         = []
+  filterTree:       FilterTreeStore      = new FilterTreeStore()
 
   expandedShowId:         string | null = null
   expandedSeasons:        {number: number; name: string}[] = []
@@ -150,7 +147,16 @@ export class ChannelDetailStore {
   channelSaveErr:       string | null = null
   epgClearing:          boolean = false
 
-  constructor() { makeAutoObservable(this) }
+  constructor() {
+    makeAutoObservable(this)
+    // See LibraryStore's identical reaction — any change to the content
+    // picker's rule-builder tree re-searches, replacing the old per-mutator
+    // debounce-and-searchPicker() calls.
+    reaction(() => toFilterString(this.filterTree), () => {
+      clearTimeout(_debounce)
+      _debounce = setTimeout(() => this.searchPicker(), 250)
+    })
+  }
 
   get isDirty(): boolean { return this.channelDirty || this.blocksDirty }
 
@@ -1123,34 +1129,6 @@ export class ChannelDetailStore {
     }
   }
 
-  addFilterRule() {
-    this.filterRules.push({ id: String(++_ruleId), field: 'genre', op: 'is', value: '' })
-    clearTimeout(_debounce)
-    _debounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  removeFilterRule(id: string) {
-    this.filterRules = this.filterRules.filter(r => r.id !== id)
-    clearTimeout(_debounce)
-    _debounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  updateFilterRule(id: string, patch: Partial<Omit<FilterRule, 'id'>>) {
-    const rule = this.filterRules.find(r => r.id === id)
-    if (!rule) return
-    if (patch.field !== undefined) { rule.field = patch.field; rule.op = FIELD_DEFS[patch.field].ops[0].id; rule.value = '' }
-    if (patch.op    !== undefined) rule.op    = patch.op
-    if (patch.value !== undefined) rule.value = patch.value
-    clearTimeout(_debounce)
-    _debounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  setFilterMatch(m: 'all' | 'any') {
-    this.filterMatch = m
-    clearTimeout(_debounce)
-    _debounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
   toggleSection(s: string) {
     this.openSections = { ...this.openSections, [s]: !this.openSections[s] }
   }
@@ -1160,7 +1138,7 @@ export class ChannelDetailStore {
   openPicker() {
     clearTimeout(_debounce)
     this.pickerQuery = ''; this.pickerSeasonFilter = ''
-    this.filterRules     = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.expandedShowId  = null; this.expandedSeasons = []
     this.pickerShows     = []; this.pickerMovies = []; this.pickerEpisodes = []
     this.pickerPlaylists = []
@@ -1173,7 +1151,7 @@ export class ChannelDetailStore {
   closePicker() {
     clearTimeout(_debounce)
     this.pickerQuery = ''; this.pickerSeasonFilter = ''
-    this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.expandedShowId = null
     this.pickerShows = []; this.pickerMovies = []; this.pickerEpisodes = []
     this.pickerPlaylists = []
@@ -1182,7 +1160,7 @@ export class ChannelDetailStore {
   setPickerTab(t: PickerTab) {
     clearTimeout(_debounce)
     this.pickerTab   = t; this.expandedShowId = null; this.pickerSeasonFilter = ''; this.pickerDurationMax = ''
-    this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.searchPicker()
   }
 
@@ -1209,21 +1187,14 @@ export class ChannelDetailStore {
 
     this.pickerLoading = true
     const q       = this.pickerQuery || undefined
-    const isRules = this.filterRules.filter(r => r.op === 'is' && r.value.trim())
-    const lib     = isRules.find(r => r.field === 'library')?.value        || undefined
-    const genre   = isRules.find(r => r.field === 'genre')?.value          || undefined
-    const yearStr = isRules.find(r => r.field === 'year')?.value
-    const year    = yearStr ? parseInt(yearStr) : undefined
-    const rating  = isRules.find(r => r.field === 'content_rating')?.value || undefined
-    const label   = isRules.find(r => r.field === 'label')?.value          || undefined
-    const network = isRules.find(r => r.field === 'network')?.value        || undefined
-    const actor   = isRules.find(r => r.field === 'actor')?.value          || undefined
+    const lib     = this.filterTree.allRules.find(r => r.field === 'library' && r.op === 'is' && r.value.trim())?.value || undefined
+    const filter  = toFilterString(this.filterTree) || undefined
     const seasonParsed = this.pickerSeasonFilter.trim() !== '' ? parseInt(this.pickerSeasonFilter, 10) : undefined
     const season  = Number.isFinite(seasonParsed) ? seasonParsed : undefined
     try {
       switch (this.pickerTab) {
-        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, genre, year, content_rating: rating, label, network, actor }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
-        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, genre, year, content_rating: rating, label, actor }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
+        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, filter }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
+        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, filter }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
         case 'episodes':     { const r = await raceAbort(api.searchEpisodes({ q, season, limit: 50 }), signal); runInAction(() => { this.pickerEpisodes = r.items; this.pickerTotal = 0; this.pickerEpsHasMore = r.items.length >= 50; this.pickerLoading = false }); break }
         case 'playlists':    { const r = await raceAbort(api.getPlaylists(), signal); runInAction(() => { this.pickerPlaylists = r; this.pickerTotal = 0; this.pickerLoading = false }); break }
       }
@@ -1236,22 +1207,15 @@ export class ChannelDetailStore {
   async loadMorePicker() {
     if (this.pickerLoadingMore) return
     const q       = this.pickerQuery || undefined
-    const isRules = this.filterRules.filter(r => r.op === 'is' && r.value.trim())
-    const lib     = isRules.find(r => r.field === 'library')?.value        || undefined
-    const genre   = isRules.find(r => r.field === 'genre')?.value          || undefined
-    const yearStr = isRules.find(r => r.field === 'year')?.value
-    const year    = yearStr ? parseInt(yearStr) : undefined
-    const rating  = isRules.find(r => r.field === 'content_rating')?.value || undefined
-    const label   = isRules.find(r => r.field === 'label')?.value          || undefined
-    const network = isRules.find(r => r.field === 'network')?.value        || undefined
-    const actor   = isRules.find(r => r.field === 'actor')?.value          || undefined
+    const lib     = this.filterTree.allRules.find(r => r.field === 'library' && r.op === 'is' && r.value.trim())?.value || undefined
+    const filter  = toFilterString(this.filterTree) || undefined
     this.pickerLoadingMore = true
     try {
       if (this.pickerTab === 'shows') {
-        const r = await api.getShows({ limit: 50, offset: this.pickerShows.length, q, library_id: lib, genre, year, content_rating: rating, label, network, actor })
+        const r = await api.getShows({ limit: 50, offset: this.pickerShows.length, q, library_id: lib, filter })
         runInAction(() => { this.pickerShows = [...this.pickerShows, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
       } else if (this.pickerTab === 'movies') {
-        const r = await api.getMovies({ limit: 50, offset: this.pickerMovies.length, q, library_id: lib, genre, year, content_rating: rating, label, actor })
+        const r = await api.getMovies({ limit: 50, offset: this.pickerMovies.length, q, library_id: lib, filter })
         runInAction(() => { this.pickerMovies = [...this.pickerMovies, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
       } else if (this.pickerTab === 'episodes') {
         const seasonParsed = this.pickerSeasonFilter.trim() !== '' ? parseInt(this.pickerSeasonFilter, 10) : undefined

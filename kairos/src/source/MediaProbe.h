@@ -37,3 +37,12 @@ StreamLanguages probeStreamLanguages(const std::string& file_path);
 // stream.
 struct VideoInfo { std::string codec; int width = 0, height = 0, bit_depth = 8; };
 VideoInfo probeVideoInfo(const std::string& file_path);
+
+// Buckets a probed video height into the same "4K"/"1080p"/"720p"/"SD"
+// labels the Library filter/sort UI already offers (see RESOLUTIONS in
+// hades/src/components/PickerFilters.tsx) — persisted on sync so it's
+// filterable without re-probing on every request. Thresholds are set below
+// each label's nominal height to tolerate slightly-off encodes (e.g. a
+// 1088-line "1080p" mezzanine). Returns "" for height <= 0 (probe failed or
+// no video stream), so the column stays empty rather than mislabeled SD.
+std::string bucketResolutionLabel(int height);

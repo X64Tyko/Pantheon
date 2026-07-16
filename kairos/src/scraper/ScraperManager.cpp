@@ -152,6 +152,7 @@ void applyMovieMetadata(SQLite::Database& db, const std::string& kairos_id, cons
             genres          = CASE WHEN locked THEN genres          ELSE COALESCE(NULLIF(?, '[]'), genres)        END,
             studio          = CASE WHEN locked THEN studio          ELSE COALESCE(NULLIF(?, ''), studio)          END,
             director        = CASE WHEN locked THEN director        ELSE COALESCE(NULLIF(?, ''), director)        END,
+            writer          = CASE WHEN locked THEN writer          ELSE COALESCE(NULLIF(?, ''), writer)          END,
             content_rating  = CASE WHEN locked THEN content_rating  ELSE COALESCE(NULLIF(?, ''), content_rating)  END,
             release_date    = CASE WHEN locked THEN release_date    ELSE COALESCE(NULLIF(?, ''), release_date)    END,
             year            = CASE WHEN locked THEN year            ELSE COALESCE(?, year)                       END,
@@ -169,6 +170,7 @@ void applyMovieMetadata(SQLite::Database& db, const std::string& kairos_id, cons
     app.bind(i++, m.genres);
     app.bind(i++, m.studio);
     app.bind(i++, m.director);
+    app.bind(i++, m.writer);
     app.bind(i++, m.content_rating);
     app.bind(i++, m.release_date);
     if (m.year.has_value())            app.bind(i++, m.year.value());            else app.bind(i++);

@@ -131,6 +131,16 @@ function qs(params: Record<string, string | number | undefined>): string {
     .join('&')
 }
 
+// getShows/getMovies accept both a plain `q` (fuzzy free text) and a `filter`
+// (canon filter syntax) — the backend only understands one `filter` param,
+// so fold `q` into it here (bare words in the syntax already mean "fuzzy
+// free-text match", exactly what `q` always meant on its own).
+function withCombinedFilter<P extends { q?: string; filter?: string; home?: boolean }>(p: P) {
+  const combined = [p.filter, p.q].filter(Boolean).join(' ')
+  const { q: _q, filter: _filter, home, ...rest } = p
+  return { ...rest, filter: combined || undefined, home: home ? 1 : undefined }
+}
+
 export const api = {
   // Auth
   checkSetup:  ()                                            => request<{ setup_required: boolean }>('GET',    '/auth/setup'),
@@ -225,6 +235,13 @@ export const api = {
                                                         request<{order: string[]}>('GET', `/sources/${sourceId}/libraries/${lid}/scraper-priority?item_type=${itemType}`),
   setScraperPriority: (sourceId: string, lid: string, itemType: 'show'|'movie', order: string[]) =>
                                                         request<{ok: boolean}>('PUT', `/sources/${sourceId}/libraries/${lid}/scraper-priority`, { item_type: itemType, order }),
+  // Same shape, but ranks media sources (plex/jellyfin/emby/local) against
+  // each other for "date added" when an item is matched across multiple of
+  // them — see the Library "Date Added" filter/sort.
+  getSourcePriority: (sourceId: string, lid: string, itemType: 'show'|'movie') =>
+                                                        request<{order: string[]}>('GET', `/sources/${sourceId}/libraries/${lid}/source-priority?item_type=${itemType}`),
+  setSourcePriority: (sourceId: string, lid: string, itemType: 'show'|'movie', order: string[]) =>
+                                                        request<{ok: boolean}>('PUT', `/sources/${sourceId}/libraries/${lid}/source-priority`, { item_type: itemType, order }),
   // Focused sibling of patchLibrary for call sites that only have a
   // library_id (e.g. a Home shelf card) — patchLibrary needs source_id too.
   setLibraryShowOnHome: (libraryId: string, showOnHome: boolean) =>
@@ -297,11 +314,17 @@ export const api = {
   getAllLibraries: ()                                    => request<LibraryWithSource[]>('GET', '/libraries'),
   getFilterValues: (field: string, params: { type?: 'movie' | 'show'; library_id?: string } = {}) =>
     request<{ values: string[] }>('GET', `/metadata/values?${qs({ field, ...params })}`).then(r => r.values),
-  getShows:       (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; network?: string; actor?: string; sort?: string; home?: boolean; hideEmpty?: boolean } = {}) =>
-                    request<PagedResult<Show>>('GET', `/shows?${qs({ ...p, home: p.home ? 1 : undefined, hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
+  // `q` (plain fuzzy free text) and `filter` (canon filter syntax — see
+  // components/media/filterSyntax.ts) both fold into the same backend
+  // `filter` param — simple callers can keep passing just `q`; the rule
+  // builder (via components/media/filterQuery.ts) passes `filter`; either
+  // or both together concatenate (bare words in the syntax mean "fuzzy
+  // free-text match", same as `q` always did).
+  getShows:       (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean } = {}) =>
+                    request<PagedResult<Show>>('GET', `/shows?${qs({ ...withCombinedFilter(p), hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
   getEpisodes:    (showId: string, season?: number)     => request<Episode[]>('GET', `/shows/${showId}/episodes${season != null ? '?season=' + season : ''}`),
-  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; q?: string; genre?: string; year?: number; content_rating?: string; label?: string; actor?: string; sort?: string; home?: boolean; hideEmpty?: boolean } = {}) =>
-                    request<PagedResult<Movie>>('GET', `/movies?${qs({ ...p, home: p.home ? 1 : undefined, hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
+  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean } = {}) =>
+                    request<PagedResult<Movie>>('GET', `/movies?${qs({ ...withCombinedFilter(p), hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
 
   // Watch progress
   getWatchProgress:   (limit?: number)                                     => request<WatchProgress[]>('GET', `/watch-progress${limit != null ? '?limit=' + limit : ''}`),
