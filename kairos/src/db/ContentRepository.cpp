@@ -704,7 +704,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
             movie_select + R"( FROM movie m
             JOIN source_mapping sm ON sm.kairos_id = m.movie_id
                 AND sm.item_type = 'movie' AND sm.library_id IN ()" + ph + R"())" + watch_join + R"(
-            WHERE 1=1)" + extras + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
+            WHERE 1=1)" + extras + hide_empty_clause + R"( GROUP BY m.movie_id)" + morder + " LIMIT ? OFFSET ?");
         idx = 1;
         for (const auto& lid : p.library_ids) q.bind(idx++, lid);
         q.bind(idx++, p.user_id); bindExtras(q, idx);

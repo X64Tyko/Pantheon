@@ -25,6 +25,7 @@ interface Settings {
   stream_buffer_size:     number
   image_cache_ttl_hours:  number
   verbose_transcode_logs: boolean
+  verbose_gateway_logs:   boolean
   cast_app_id:            string
 }
 
@@ -1064,6 +1065,17 @@ const applyBuffer = () => {
                 checked={settings?.verbose_transcode_logs ?? false}
                 disabled={!settings || saving}
                 onChange={v => patch({ verbose_transcode_logs: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Verbose Gateway Logging"
+              hint="Shows Hermes's access-error log ([hermes] 4XX/5XX responses) and device-unreachable warnings ([roku-ecp]) in the Activity page — noisy on a busy or public-facing instance, enable only when diagnosing gateway/device issues. Always written to hermes.log either way. Applies within ~15s, no restart needed."
+            >
+              <Toggle
+                id="verbose_gateway_logs"
+                checked={settings?.verbose_gateway_logs ?? false}
+                disabled={!settings || saving}
+                onChange={v => patch({ verbose_gateway_logs: v })}
               />
             </SettingRow>
             <SettingRow

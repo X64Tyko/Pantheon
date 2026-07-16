@@ -1,4 +1,5 @@
 #include "SessionManager.h"
+#include "../log/RuntimeFlags.h"
 #include <iostream>
 #include <chrono>
 
@@ -50,7 +51,13 @@ void SessionManager::refreshCache() {
     // channel was deleted — keep the last-known-good list rather than blanking it.
     if (!channels.empty()) cached_channels = std::move(channels);
     if (bs) cached_buffer_size = *bs * 1024; // KB -> bytes
-    if (verbose) cached_verbose_transcode_logs = verbose;
+    if (verbose) {
+        cached_verbose_transcode_logs = verbose;
+        // Also feeds LogBuffer::push()'s [ffmpeg]/[sessions] gating — see
+        // log/RuntimeFlags.h. SessionManager is the only one of the three
+        // *SessionManager classes always constructed, so it owns this refresh.
+        g_verbose_transcode_logs.store(*verbose, std::memory_order_relaxed);
+    }
 }
 
 std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& channelId) {

@@ -4,6 +4,7 @@
 #include "devices/DeviceSessionManager.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
+#include "log/RuntimeFlags.h"
 #include <httplib.h>
 #include <iostream>
 #include <thread>
@@ -42,9 +43,20 @@ static void relayUpstreamLogs(const std::string& upstream_url, LogBuffer& dest) 
 
 int main(int argc, char* argv[]) {
     // Intercept cout/cerr before anything else so startup messages are captured.
-    LogBuffer log_buffer;
-    LogTee    tee_cout(std::cout, log_buffer);
-    LogTee    tee_cerr(std::cerr, log_buffer);
+    //
+    // Two buffers, not one: combined_log is what /api/logs/stream actually
+    // serves to Hades — it receives Hermes's own (already category-filtered)
+    // lines via local_log's forward hook below, plus Kairos's and
+    // Hephaestus's relayed streams (relayUpstreamLogs). local_log is
+    // Hermes's own file-backed log — kept separate so relaying someone
+    // else's already-logged lines through Hermes doesn't also duplicate them
+    // into hermes.log.
+    LogBuffer combined_log;
+    LogBuffer local_log;
+    local_log.setFile("./data/hermes.log");
+    local_log.setForward(&combined_log);
+    LogTee    tee_cout(std::cout, local_log);
+    LogTee    tee_cerr(std::cerr, local_log);
 
     Config cfg = parseConfig(argc, argv);
 
@@ -73,15 +85,28 @@ int main(int argc, char* argv[]) {
 		}
 	});
 	
-    registerRoutes(svr, broadcasters, kairos, log_buffer, cfg, devices);
+    registerRoutes(svr, broadcasters, kairos, combined_log, cfg, devices);
 
     // Relay upstream log streams so the Hades UI sees all service logs via
     // a single /api/logs/stream endpoint on Hermes.
-    std::thread([&log_buffer, url = cfg.kairos_url] {
-        relayUpstreamLogs(url, log_buffer);
+    std::thread([&combined_log, url = cfg.kairos_url] {
+        relayUpstreamLogs(url, combined_log);
     }).detach();
-    std::thread([&log_buffer, url = cfg.hephaestus_url] {
-        relayUpstreamLogs(url, log_buffer);
+    std::thread([&combined_log, url = cfg.hephaestus_url] {
+        relayUpstreamLogs(url, combined_log);
+    }).detach();
+
+    // Keep g_verbose_gateway_logs fresh from Kairos's persisted setting —
+    // same polling idea as Hephaestus's SessionManager::refreshCache() for
+    // its own verbose flag, just not worth a whole cache class here for one
+    // bool. Gates local_log's [hermes]/[roku-ecp] push-to-Hades filtering;
+    // hermes.log itself always gets everything regardless.
+    std::thread([&kairos, &svr] {
+        while (svr.is_running()) {
+            if (auto v = kairos.getVerboseGatewayLogs())
+                g_verbose_gateway_logs.store(*v, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::seconds(15));
+        }
     }).detach();
 
     // Periodic reap of dead broadcasters (every 60s).

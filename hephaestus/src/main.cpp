@@ -14,6 +14,7 @@
 int main(int argc, char* argv[]) {
     // Intercept cout/cerr before anything else so startup messages are captured.
     LogBuffer log_buffer;
+    log_buffer.setFile("./data/hephaestus.log");
     LogTee    tee_cout(std::cout, log_buffer);
     LogTee    tee_cerr(std::cerr, log_buffer);
 
