@@ -1131,7 +1131,27 @@ function CandidateCard({
               }}>Reject</button>
             </div>
           )}
-          {accepted === true  && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-green)', letterSpacing: '0.08em' }}>✓ Accepted</div>}
+          {accepted === true && (
+            // A candidate only shows accepted=true within a queue row that's
+            // still listed at all when match_status='matched' — which only
+            // happens under the auto_unconfirmed filter (match_confirmed=0).
+            // So this is always a never-reviewed auto-match: re-running
+            // onAccept (acceptCandidate) on the same candidate_id is
+            // idempotent — it just sets match_confirmed=1 and re-pulls fresh
+            // metadata, same as picking it fresh would.
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-green)',
+                letterSpacing: '0.08em', flex: 1,
+              }}>✓ Auto-matched</span>
+              <button onClick={onAccept} style={{
+                padding: '6px 14px', borderRadius: 6, cursor: 'pointer',
+                border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.12)',
+                color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 10, letterSpacing: '0.08em', fontWeight: 600,
+              }}>Confirm Match</button>
+            </div>
+          )}
           {accepted === false && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.08em' }}>Rejected</div>}
         </div>
       </div>

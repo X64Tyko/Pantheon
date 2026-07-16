@@ -530,6 +530,16 @@ export const api = {
   rejectCandidate:     (id: string)                               => request<{ok: boolean}>('POST', `/scrapers/queue/${id}/reject`, {}),
   manualMatch:         (kairos_id: string, b: { item_type: 'show'|'movie'; source: string; external_id: string; title: string; year?: number; poster_url?: string; overview?: string }) =>
                          request<{ok: boolean; merged_into?: MergedInto; folder_mismatch?: boolean}>('POST', `/scrapers/queue/${kairos_id}/manual-match`, b),
+  // Confirms the item's already-matched state (auto-matched or previously
+  // manually picked) as human-reviewed, without a re-search + re-pick round
+  // trip — see ScraperManager::confirmMatch().
+  confirmMatch:        (kairos_id: string, item_type: 'show'|'movie')  =>
+                         request<{ok: boolean}>('POST', `/scrapers/queue/${kairos_id}/confirm`, { item_type }),
+  // Bulk-confirms every currently-matched-but-unconfirmed show/movie in one
+  // shot — see ScraperManager::confirmAllMatches(). Synchronous (no
+  // background job/polling — it's a plain DB flip, not a network operation).
+  confirmAllMatches:   ()                                          =>
+                         request<{ok: boolean; confirmed: number}>('POST', '/scrapers/confirm-all', {}),
   scraperSearch:       (q: string, type?: 'show' | 'movie')       =>
                          request<{items: ScraperSearchResult[]}>('GET', `/scrapers/search?${qs({ q, type })}`),
 

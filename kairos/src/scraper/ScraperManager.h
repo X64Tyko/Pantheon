@@ -175,6 +175,19 @@ public:
                      const std::string& poster_url,
                      const std::string& overview);
 
+    // Confirms an item's *current* match (already auto-accepted by matchShow/
+    // matchMovie, or picked earlier via manualMatch) as human-reviewed,
+    // without forcing a re-search + re-pick round trip through Fix Match.
+    // Sets match_confirmed and re-pulls fresh metadata from the already-
+    // linked source(s) (same as refreshMetadata()). False if item_type is
+    // invalid or the item isn't currently match_status='matched'.
+    bool confirmMatch(const std::string& item_type, const std::string& kairos_id);
+
+    // Bulk-confirms every currently-matched-but-unconfirmed show and movie in
+    // one shot. Pure DB flip, no metadata re-fetch (see .cpp). Returns the
+    // number of items confirmed.
+    int confirmAllMatches();
+
     // Re-fetches and re-applies full metadata (overview, genres, images, etc.)
     // from whichever scraper is already matched to this item — same
     // fetch-and-apply path as accepting a candidate, just re-run against the

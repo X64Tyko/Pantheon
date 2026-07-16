@@ -173,6 +173,10 @@ export default observer(function SettingsPage() {
   const [refreshingAll, setRefreshingAll] = useState(false)
   const refreshAllPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const [confirmAllPending, setConfirmAllPending] = useState(false)
+  const [confirmingAll,     setConfirmingAll]     = useState(false)
+  const [confirmAllMsg,     setConfirmAllMsg]     = useState<string | null>(null)
+
   const loadCastSessions = () => api.getCastSessions().then(setCastSessions).catch(() => setCastSessions([]))
 
   // Self-terminating poll chain, not a standing interval — only ever ticks
@@ -213,6 +217,24 @@ export default observer(function SettingsPage() {
     await api.triggerRefreshAll()
     if (refreshAllPollRef.current) clearTimeout(refreshAllPollRef.current)
     pollRefreshAllStatus()
+  }
+
+  // Synchronous (a plain DB flip, no network fetch per item — see
+  // ScraperManager::confirmAllMatches()), so unlike refreshAll/runMatch this
+  // needs no background-job polling: the await just resolves once it's done.
+  const confirmAllMatches = async () => {
+    setConfirmingAll(true)
+    setConfirmAllMsg(null)
+    try {
+      const { confirmed } = await api.confirmAllMatches()
+      setConfirmAllMsg(`Confirmed ${confirmed} match${confirmed !== 1 ? 'es' : ''}.`)
+      setConfirmAllPending(false)
+      api.getScraperStats().then(setScraperStats).catch(() => {})
+    } catch (e: any) {
+      setConfirmAllMsg(`Error: ${e.message ?? 'Unknown error'}`)
+    } finally {
+      setConfirmingAll(false)
+    }
   }
 
   const revokeCastSession = async (sessionId: string) => {
@@ -733,6 +755,66 @@ const applyBuffer = () => {
                 {refreshingAll ? '● Refreshing metadata…' : 'Refresh All Metadata'}
               </NavButton>
             </div>
+
+            <SettingRow
+              label="Confirm All Matches"
+              hint="Marks every currently auto-matched, unconfirmed item as human-confirmed — the same effect as clicking Confirm Match on each one individually. Unlocks Push to Sources / Refresh Metadata for all of them at once. Does not re-fetch metadata (already pulled at match time — use Refresh All Metadata for that)."
+            >
+              {!confirmAllPending ? (
+                <NavButton
+                  id="confirm-all-matches"
+                  onClick={() => { setConfirmAllPending(true); setConfirmAllMsg(null) }}
+                  style={{
+                    padding: '6px 16px', borderRadius: 6, cursor: 'pointer',
+                    border: '1px solid oklch(0.3 0.01 286)',
+                    background: 'transparent', color: 'var(--hds-txt-2)',
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+                  }}
+                >
+                  Confirm All Matches
+                </NavButton>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: 'oklch(0.78 0.15 84)' }}>
+                    This will confirm all active unconfirmed matches in the library. Sure?
+                  </span>
+                  <NavButton
+                    id="confirm-all-matches-confirm"
+                    onClick={confirmAllMatches}
+                    disabled={confirmingAll}
+                    style={{
+                      padding: '5px 14px', borderRadius: 6,
+                      border: '1px solid oklch(0.6 0.18 150 / 0.6)',
+                      background: 'oklch(0.3 0.1 150 / 0.3)', color: 'var(--hds-match-green)',
+                      fontSize: 12, cursor: confirmingAll ? 'not-allowed' : 'pointer',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontWeight: 600, opacity: confirmingAll ? 0.6 : 1,
+                    }}
+                  >
+                    {confirmingAll ? 'Confirming…' : 'Yes, confirm all'}
+                  </NavButton>
+                  <NavButton
+                    id="confirm-all-matches-cancel"
+                    onClick={() => setConfirmAllPending(false)}
+                    disabled={confirmingAll}
+                    style={{
+                      padding: '5px 10px', borderRadius: 6,
+                      border: '1px solid oklch(0.3 0.01 286)',
+                      background: 'transparent', color: 'var(--hds-txt-3)',
+                      fontSize: 12, cursor: 'pointer',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    Cancel
+                  </NavButton>
+                </div>
+              )}
+            </SettingRow>
+            {confirmAllMsg && (
+              <div style={{ padding: '10px 0 14px', fontSize: 11, color: confirmAllMsg.startsWith('Error') ? 'oklch(0.72 0.18 22)' : 'var(--hds-txt-3)' }}>
+                {confirmAllMsg}
+              </div>
+            )}
           </Section>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

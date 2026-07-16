@@ -3,6 +3,7 @@ import { api, mediaUrl } from '../../api/client'
 import type { ItemMetadata, ScraperSearchResult } from '../../api/types'
 import { folderBaseName } from './useMediaDetail'
 import { ExternalIdEditor } from './LibraryAdminPanel'
+import type { MatchStatus } from './MatchBadge'
 
 interface FixMatchPanelProps {
   id:           string
@@ -18,6 +19,12 @@ interface FixMatchPanelProps {
   // a match is actually wrong, since a mismatched folder name usually gives
   // it away immediately. Undefined if not yet known (no episodes/file yet).
   folderPath?:  string
+  // When the item is already 'matched' but not match_confirmed, it was
+  // auto-matched and never reviewed by a human — surfaces a one-click
+  // "Confirm Match" instead of forcing a re-search + re-pick of the same
+  // result just to clear match_confirmed.
+  matchStatus:     MatchStatus
+  matchConfirmed:  boolean
   onMatched:    () => void
   onCancel:     () => void
 }
@@ -28,7 +35,7 @@ interface FixMatchPanelProps {
 // page. Runs an initial search against the item's own title immediately on
 // open, since the point of opening this is "the current match is wrong,"
 // not "start from a blank search."
-export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPath, onMatched, onCancel }: FixMatchPanelProps) {
+export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPath, matchStatus, matchConfirmed, onMatched, onCancel }: FixMatchPanelProps) {
   const [query,      setQuery]      = useState(defaultQuery)
   const [results,    setResults]    = useState<ScraperSearchResult[]>([])
   const [loading,    setLoading]    = useState(true)
@@ -110,6 +117,22 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
     setMatchingKey(null)
   }
 
+  const [confirming,   setConfirming]   = useState(false)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
+
+  const handleConfirm = async () => {
+    setConfirming(true)
+    setConfirmError(null)
+    try {
+      await api.confirmMatch(id, contentType)
+      await loadMetadata()
+      onMatched()
+    } catch {
+      setConfirmError('Failed to confirm match.')
+    }
+    setConfirming(false)
+  }
+
   if (mergedNotice) {
     return (
       <div style={{
@@ -163,6 +186,35 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
         }}>
           This item is locked — matching updates the link, but locked fields
           won't be overwritten. Unlock it in Library to update everything.
+        </div>
+      )}
+
+      {matchStatus === 'matched' && !matchConfirmed && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px',
+          borderRadius: 6, background: 'oklch(0.7 0.16 150 / 0.06)',
+          border: '1px solid oklch(0.7 0.16 150 / 0.35)',
+        }}>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, lineHeight: 1.5,
+            color: 'var(--hds-txt-2)',
+          }}>
+            This was matched automatically and hasn't been reviewed yet — confirm
+            it to enable Push to Sources, and pull the latest metadata now.
+          </div>
+          <button
+            onClick={handleConfirm}
+            disabled={confirming}
+            style={{
+              padding: '9px 0', borderRadius: 6, cursor: confirming ? 'not-allowed' : 'pointer',
+              border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.14)',
+              color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10.5, fontWeight: 600, opacity: confirming ? 0.6 : 1,
+            }}
+          >{confirming ? 'Confirming…' : '✓ Confirm Match'}</button>
+          {confirmError && (
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-red)' }}>{confirmError}</div>
+          )}
         </div>
       )}
 

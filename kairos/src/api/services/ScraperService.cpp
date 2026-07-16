@@ -261,6 +261,38 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             err(res, 404, "candidate not found");
     });
 
+    // POST /api/scrapers/queue/:kairos_id/confirm
+    // Confirms the item's *current* match (already auto-accepted, or picked
+    // earlier via manual-match) as human-reviewed, without a re-search +
+    // re-pick round trip — see ScraperManager::confirmMatch(). Uses (.+) for
+    // the same reason as manual-match above: local kairos_ids contain '/'.
+    svr.Post(R"(/api/scrapers/queue/(.+)/confirm)", [this](const Req& req, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
+        std::string kairos_id = req.matches[1];
+        try {
+            auto body = json::parse(req.body.empty() ? "{}" : req.body);
+            std::string item_type = body.value("item_type", "");
+            if (item_type.empty()) { err(res, 400, "item_type is required"); return; }
+            if (scraper_.confirmMatch(item_type, kairos_id))
+                ok(res, json{{"ok", true}});
+            else
+                err(res, 404, "item not currently matched");
+        } catch (const std::exception& e) {
+            err(res, 400, e.what());
+        }
+    });
+
+    // POST /api/scrapers/confirm-all
+    // Bulk-confirms every currently-matched-but-unconfirmed show/movie — see
+    // ScraperManager::confirmAllMatches(). Pure DB flip (no network calls),
+    // so unlike /refresh-all this runs synchronously — no background-job/
+    // status-polling pattern needed.
+    svr.Post("/api/scrapers/confirm-all", [this](const Req&, Res& res) {
+        if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
+        int n = scraper_.confirmAllMatches();
+        ok(res, json{{"ok", true}, {"confirmed", n}});
+    });
+
     // GET /api/scrapers/anidb/poster/:aid — public, no auth (loaded by <img> tags)
     svr.Get(R"(/api/scrapers/anidb/poster/([^/]+))", [this](const Req& req, Res& res) {
         std::string aid = req.matches[1];

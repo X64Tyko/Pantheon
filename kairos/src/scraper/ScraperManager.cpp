@@ -440,6 +440,14 @@ void ScraperManager::setExternalIds(const std::string& kairos_id, const std::str
         ins.reset();
     }
     txn.commit();
+
+    // Editing the linked-id list (Fix Match's "Priority & Identifiers" panel)
+    // can promote a different already-linked source to primary, or add one
+    // that's never been fetched before. Without this, the visible title/
+    // overview/poster/etc. only caught up on the next explicit "Refresh
+    // Metadata" click — silently stale until then. Best-effort, same as every
+    // other refreshMetadata() call site.
+    refreshMetadata(kairos_id, item_type);
 }
 
 std::vector<std::string> ScraperManager::getAlternateTitles(const std::string& kairos_id, const std::string& item_type) const {
@@ -1659,6 +1667,46 @@ AcceptResult ScraperManager::manualMatch(const std::string& kairos_id,
     storeCandidate(item_type, kairos_id, source, external_id, title, year, 1.0, poster_url, overview);
     std::string cid = candidateKey(item_type, kairos_id, source, external_id);
     return acceptCandidate(cid);
+}
+
+bool ScraperManager::confirmMatch(const std::string& item_type, const std::string& kairos_id) {
+    if (item_type != "show" && item_type != "movie") return false;
+
+    SQLite::Statement q(db_.get(),
+        "SELECT match_status FROM " + item_type + " WHERE " + item_type + "_id = ?");
+    q.bind(1, kairos_id);
+    if (!q.executeStep() || q.getColumn(0).getString() != "matched") return false;
+
+    SQLite::Statement upd(db_.get(),
+        "UPDATE " + item_type + " SET match_confirmed = 1 WHERE " + item_type + "_id = ?");
+    upd.bind(1, kairos_id);
+    upd.exec();
+    std::cout << "[scraper] match confirmed for " << item_type << " " << kairos_id << " (confirm, no re-pick)\n";
+
+    refreshMetadata(kairos_id, item_type);
+    return true;
+}
+
+// Bulk equivalent of confirmMatch() for a whole backlog of auto-matches at
+// once (Settings → Matching → "Confirm All Matches"). Deliberately a plain
+// DB flip with no per-item refreshMetadata() call — unlike confirmMatch(),
+// which re-fetches on the assumption a human is looking at one item right
+// now, this can cover thousands of items and metadata was already pulled
+// fresh at match time (see matchShow/matchMovie); re-fetching all of it here
+// too would just be a slow, redundant, rate-limit-heavy version of the
+// already-separate "Refresh All Metadata" action. No threading needed either
+// — it's a couple of indexed UPDATEs, not network I/O.
+int ScraperManager::confirmAllMatches() {
+    int count = 0;
+    for (const char* item_type : { "show", "movie" }) {
+        SQLite::Statement upd(db_.get(),
+            "UPDATE " + std::string(item_type) + " SET match_confirmed = 1 "
+            "WHERE match_status = 'matched' AND match_confirmed = 0");
+        upd.exec();
+        count += db_.get().getChanges();
+    }
+    std::cout << "[scraper] confirmed all matches — " << count << " item(s)\n";
+    return count;
 }
 
 bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::string& item_type) {
