@@ -78,8 +78,8 @@ inline CursorScope parseCursorScope(const std::string& s) {
     return CursorScope::Block;
 }
 inline NoHistoryBehavior parseNoHistoryBehavior(const std::string& s) {
-    if (s == "fallback_all") return NoHistoryBehavior::FallbackAll;
-    if (s == "exclude")      return NoHistoryBehavior::Exclude;
+    if (s == "fallback_all")            return NoHistoryBehavior::FallbackAll;
+    if (s == "exclude" || s == "skip")  return NoHistoryBehavior::Exclude; // "skip" is a DB-level synonym
     return NoHistoryBehavior::Normal;
 }
 

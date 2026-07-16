@@ -52,6 +52,42 @@ public:
     // an anchor somewhere a later lookup can never find it again.
     std::time_t weekMondayForChannel(const std::string& channel_id, std::time_t t);
 
+    // Natural-order (narrative-sequence) advancement result: which episode to play
+    // now, and the watermark/ahead state to persist afterward. See advanceNatural().
+    struct NaturalAdvance {
+        int index = -1; // index into ordered_eps to play now; -1 if ordered_eps is empty
+        std::string new_watermark_id;
+        std::vector<std::string> new_ahead;
+    };
+
+    // Pure natural-order advancement, immune to ordered_eps being resorted/regrown
+    // between calls (episodes backfilled into the library later, in any order).
+    // Public (and static/pure — no DB, no side effects) so it's directly unit
+    // testable without a Database fixture; also usable outside RuleEngine.
+    //
+    // watermark_id: the last episode known to have aired in contiguous natural
+    //   order ("" = nothing aired yet). ahead: episode ids that aired out of
+    //   order, ahead of the watermark (e.g. episode 3 played because episode 2
+    //   hadn't been scanned into the library yet) — there can be more than one
+    //   of these open at once (e.g. episodes 2 and 4 both missing while 3 and 5
+    //   already aired).
+    //
+    // Walks forward from the watermark to find what plays this call: a slot
+    // that's a still-open gap (not contiguous) but already in `ahead` already
+    // had its turn and is skipped over (not replayed, not mistaken for the
+    // next candidate); the walk stops at the first slot that's either the
+    // natural in-order next episode, or the first not-yet-aired episode past
+    // an open gap (a new out-of-order pick). If the pick lands in natural
+    // order, any further already-aired episodes sitting right behind it are
+    // absorbed into the watermark immediately, in the same call — this is
+    // what lets a backfilled gap self-heal the moment its predecessor finally
+    // airs, rather than needing a separate follow-up call to notice. Wrapping
+    // from the last episode back to the first (starting a rerun cycle) is
+    // never treated as an out-of-order pick.
+    static NaturalAdvance advanceNatural(const std::string& watermark_id,
+                                         const std::vector<std::string>& ahead,
+                                         const std::vector<Episode>& ordered_eps);
+
     // Next item from a block (peek only — does not advance cursor).
     // before_time: only episodes with aired_at < before_time are valid rerun candidates.
     std::optional<ScheduledItem> nextItem(const std::string& channel_id,
@@ -196,36 +232,6 @@ private:
     // same way regardless of no_history_behavior.
     bool hasRealHistory(const std::string& channel_id, const Block& block,
                         const BlockContent& entry, CursorState& state);
-
-    // Natural-order (narrative-sequence) advancement result: which episode to play
-    // now, and the watermark/ahead state to persist afterward. See advanceNatural().
-    struct NaturalAdvance {
-        int index = -1; // index into ordered_eps to play now; -1 if ordered_eps is empty
-        std::string new_watermark_id;
-        std::vector<std::string> new_ahead;
-    };
-
-    // Pure natural-order advancement, immune to ordered_eps being resorted/regrown
-    // between calls (episodes backfilled into the library later, in any order).
-    //
-    // watermark_id: the last episode known to have aired in contiguous natural
-    //   order ("" = nothing aired yet). ahead: episode ids that aired out of
-    //   order, ahead of the watermark (e.g. episode 3 played because episode 2
-    //   hadn't been scanned into the library yet).
-    //
-    // Picks the slot right after the watermark. If that episode id is already in
-    // `ahead` (it already aired), absorbs it — advances the watermark through it
-    // and moves on to the next slot — repeating until landing on something not
-    // already aired; this is what lets a backfilled gap self-heal once the
-    // missing episode shows up, instead of needing a full wraparound cycle to
-    // reach it. If the natural next episode (by season/episode numbering) isn't
-    // in the catalog yet, plays the next *available* one instead and records it
-    // in `ahead` without moving the watermark, so the true next episode still
-    // gets its turn once it backfills. Wrapping from the last episode back to the
-    // first (starting a rerun cycle) is never treated as an out-of-order pick.
-    static NaturalAdvance advanceNatural(const std::string& watermark_id,
-                                         const std::vector<std::string>& ahead,
-                                         const std::vector<Episode>& ordered_eps);
 
     // Seeds or advances one show's cursor and returns its next item — the single place
     // that owns rerun-mode show playback: natural-order resume via advanceNatural()

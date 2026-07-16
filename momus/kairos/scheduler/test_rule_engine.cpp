@@ -433,19 +433,26 @@ TEST_F(RuleEngineTest, Project_DeterministicWithSameSeed) {
 }
 
 TEST_F(RuleEngineTest, Project_DifferentSeedsStartAtDifferentEpisodes) {
-    // Seeds 0/1/4 hash to positions 1/0/2 for block "b1" — all distinct.
-    // (Seeds 1 and 2 both hash to position 0, hence seed=4 is used instead of 2.)
+    // Sequential/Shuffle/Smart episode selection is deterministic by design —
+    // no RNG draw decides the *starting* episode, only later cycling (Shuffle's
+    // permutation is seeded from content_id+block_id, not the passed-in rng).
+    // Only a Rerun block's free-random phase (FallbackAll skips straight to it)
+    // actually draws from the passed-in rng for its very first pick. This test
+    // guards against a regression where the rng is threaded through but never
+    // actually consumed, so every seed silently produces the same schedule.
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    Xoshiro256 rng0(0), rng1(1), rng4(4);
-    auto s0 = engine.project("c1", kMonNoon, 1, rng0);
-    auto s1 = engine.project("c1", kMonNoon, 1, rng1);
-    auto s2 = engine.project("c1", kMonNoon, 1, rng4);
-    ASSERT_FALSE(s0.empty());
-    ASSERT_FALSE(s1.empty());
-    ASSERT_FALSE(s2.empty());
-    EXPECT_NE(s0[0].item_id, s1[0].item_id) << "seed 0 and seed 1 should start at different episodes";
-    EXPECT_NE(s1[0].item_id, s2[0].item_id) << "seed 1 and seed 4 should start at different episodes";
+    db.get().exec("UPDATE block SET play_style='rerun', no_history_behavior='fallback_all' WHERE block_id='b1'");
+
+    std::set<std::string> distinct_first_picks;
+    for (uint64_t seed = 0; seed < 10; ++seed) {
+        Xoshiro256 rng(seed);
+        auto items = engine.project("c1", kMonNoon, 1, rng);
+        ASSERT_FALSE(items.empty());
+        distinct_first_picks.insert(items[0].item_id);
+    }
+    EXPECT_GT(distinct_first_picks.size(), 1u)
+        << "different seeds must be able to produce different starting episodes";
 }
 
 TEST_F(RuleEngineTest, Project_CursorJsonEnablesContinuousExtension) {
@@ -537,50 +544,60 @@ TEST_F(RuleEngineTest, Shuffle_WeightedShowSelection_SchedulesWithoutError) {
 // ---------------------------------------------------------------------------
 
 TEST_F(RuleEngineTest, GlobalScope_RerunBlockSchedulesEpisodesPlayedOnOtherChannel) {
-    // e1 played on c2 only. A rerun block on c1 with cursor_scope=global should
-    // include it in the pool and schedule it; channel-scoped c1 would get no items.
+    // Exclude-mode rerun eligibility comes purely from CursorState now (no live
+    // DB history query) — a show with no cursor at the block's configured scope
+    // isn't eligible; it becomes eligible once a cursor exists at that scope.
+    // This mirrors the old test's "played on another channel" scenario using
+    // cursor_scope=global (scope_id="", shared across every channel) instead of
+    // a real cross-channel play_history row.
+    //
+    // pickNextContent only re-checks eligibility once it's about to *advance*
+    // past the current selection (should_advance) — a block's structurally
+    // first-ever pick always keeps content_pos as-is regardless of eligibility
+    // (there's nothing to advance away from yet). Pre-seed block/runs state so
+    // should_advance is already true on the call under test, instead of that
+    // bypass.
     auto& raw = db.get();
-    raw.exec("INSERT INTO channel (channel_id, name, number) VALUES ('c2','Ch 2',2)");
-    raw.exec("INSERT INTO play_history (channel_id,item_type,item_id,aired_at,is_scheduled)"
-             " VALUES ('c2','episode','e1'," + std::to_string(kMonNoon - 3600) + ",1)");
-
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
-    // no_history_behavior=skip: empty pool → no output (avoids Normal fallback to all-eps).
+    // no_history_behavior=skip (alias for exclude): empty pool → no output
+    // (avoids Normal mode's fallback to a fresh sequential pass).
     raw.exec("UPDATE block SET play_style='rerun', advancement='shuffle', cursor_scope='channel',"
              " no_history_behavior='skip' WHERE block_id='b1'");
 
-    // Channel-scoped: c1 has no play history → rerun pool empty → skip → no items.
+    // Channel-scoped, no cursor seeded at all → rerun pool empty → skip → no items.
+    CursorState ch_state;
+    ch_state.setBlockPosition("b1", 0, 0, 0);
     Xoshiro256 rng0(0);
-    auto ch_items = engine.project("c1", kMonNoon, 1, rng0);
-    EXPECT_TRUE(ch_items.empty()) << "channel-scoped rerun should find no c1 play history";
+    auto ch_items = engine.project("c1", kMonNoon, 1, ch_state, rng0);
+    EXPECT_TRUE(ch_items.empty()) << "channel-scoped rerun with no cursor should schedule nothing";
 
-    // Switch to global scope: pool includes c2's play of e1 → items scheduled.
+    // Switch to global scope and pre-seed a global-scoped cursor for s1 (as if it
+    // had already aired somewhere under this scope) — the pool should include it.
     raw.exec("UPDATE block SET cursor_scope='global' WHERE block_id='b1'");
+    CursorState gl_state;
+    gl_state.setBlockPosition("b1", 0, 0, 0);
+    gl_state.setCursorPos("show", "s1", "global", "", 0, "e1", "season");
     Xoshiro256 rng1(0);
-    auto gl_items = engine.project("c1", kMonNoon, 1, rng1);
-    EXPECT_FALSE(gl_items.empty()) << "global-scoped rerun should see c2's play of e1";
-    if (!gl_items.empty())
-        EXPECT_EQ(gl_items[0].item_id, "e1");
+    auto gl_items = engine.project("c1", kMonNoon, 1, gl_state, rng1);
+    EXPECT_FALSE(gl_items.empty()) << "global-scoped rerun should see the pre-seeded global cursor";
 }
 
 TEST_F(RuleEngineTest, ChannelScope_RerunCursorUsesChannelScopedKey) {
     // With cursor_scope=channel the rerun cursor key should be ("show_rerun", s1, "channel", c1).
     // project() stores cursor state in CursorState; applyToDB() persists it so we can verify.
-    // All 3 episodes must have real history for the seed step to consider the show's
-    // first run complete and seed a show_rerun cursor rather than a first-run "show" one.
+    // Pre-seed the watermark at the second-to-last episode (e2) so the very
+    // first pick (advancing to e3, the last one, with nothing pending in ahead)
+    // completes the first pass and seeds a show_rerun cursor — see
+    // advanceShowCursor's completion check.
     auto& raw = db.get();
-    for (const char* ep : {"e1", "e2", "e3"})
-        raw.exec("INSERT INTO play_history (channel_id,item_type,item_id,aired_at,is_scheduled)"
-                 " VALUES ('c1','episode','" + std::string(ep) + "',"
-                 + std::to_string(kMonNoon - 3600) + ",1)");
-
     insertBlock("b1", "episode", "00:00");
     addContent("b1", "show", "s1");
     raw.exec("UPDATE block SET play_style='rerun', advancement='shuffle', cursor_scope='channel' WHERE block_id='b1'");
 
     Xoshiro256 rng(0);
     CursorState state;
+    state.setCursorPos("show", "s1", "channel", "c1", 0, "e2", "season");
     engine.project("c1", kMonNoon, 1, state, rng);
     state.applyToDB(db, "c1");
 

@@ -29,6 +29,8 @@ add_executable(momus_kairos
     scheduler/test_rule_engine.cpp
     scheduler/test_epg_output.cpp
     scheduler/test_timeslot_block.cpp
+    scheduler/test_natural_advance.cpp
+    scheduler/test_determinism_regression.cpp
     scraper/test_scraper_manager.cpp
     scraper/test_tmdb_scraper.cpp
     source/test_jellyfin_source.cpp

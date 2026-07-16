@@ -460,8 +460,13 @@ std::optional<Block> RuleEngine::resolveFromList(const std::vector<Block>& block
 			eff_start_sec = aligned < 86400 ? aligned : 86400; // clamp — don't wrap past midnight
 		}
 		// early_start_secs expands the match window backward from the effective start.
+		// late_start_mins is grace for starting a *new* occurrence late (see
+		// scheduleBlockWindows/projectWeek) — it has no bearing on how long an
+		// already-started, currently-active block stays active. That's end_time's
+		// job (or "runs until day/priority changes" when there isn't one) — a
+		// late_start_mins-based upper bound here would make an open-ended block
+		// stop resolving as active mere minutes after its own start_time.
 		if (cur_sec < eff_start_sec - b.early_start_secs) continue;
-		if (cur_sec > eff_start_sec + b.late_start_mins * 60 && b.start_scope == "block") continue;
 		if (b.end_time.has_value())
 		{
 			if (cur_sec >= parseTimeMins(*b.end_time) * 60) continue;
@@ -567,13 +572,26 @@ bool RuleEngine::hasRealHistory(const std::string& channel_id, const Block& bloc
 
 // ── Natural-order (narrative-sequence) advancement ────────────────────────────
 
-// Canonical narrative numbering used only to detect a gap right after the
-// watermark — independent of whatever order ordered_eps is actually sorted/
-// played in (season/absolute/airdate), since "did we skip something earlier"
-// is a season/episode question regardless of playback order.
-static int64_t naturalOrdinal(const Episode& e)
+// True if `to` is the immediate narrative successor of `from`, used only to
+// detect a gap right after the watermark — independent of whatever order
+// ordered_eps is actually sorted/played in (season/absolute/airdate), since
+// "did we skip something earlier" is a season/episode question regardless of
+// playback order.
+//
+// Prefers absolute_index (a true cross-season ordinal, e.g. from TVDB) when
+// both episodes have one. Otherwise a season boundary is always treated as
+// contiguous: season*K+episode is NOT a valid linear ordinal across seasons
+// (there's no way to know how many episodes a season "should" have from the
+// numbers alone), so without absolute_index the only genuinely detectable
+// gap is a skipped episode number *within* the same season — treating every
+// season transition as a gap instead would make a multi-season show's
+// watermark get permanently stuck at the last episode of season 1.
+static bool isNaturalSuccessor(const Episode& from, const Episode& to)
 {
-	return static_cast<int64_t>(e.season) * 100000 + e.episode;
+	if (from.absolute_index && to.absolute_index)
+		return *to.absolute_index == *from.absolute_index + 1;
+	if (to.season != from.season) return true;
+	return to.episode == from.episode + 1;
 }
 
 RuleEngine::NaturalAdvance RuleEngine::advanceNatural(
@@ -591,41 +609,67 @@ RuleEngine::NaturalAdvance RuleEngine::advanceNatural(
 		return -1; // "" (never set) or removed since — restart from the top
 	};
 
+	// wm_idx < 0 (no watermark yet) or wm_idx == last (starting a new rerun
+	// cycle) are always "contiguous" — there's nothing for them to be a gap
+	// relative to.
+	auto contiguous = [&](int from_idx, int to_idx) -> bool
+	{
+		return from_idx < 0 || from_idx == n - 1 ||
+			isNaturalSuccessor(ordered_eps[from_idx], ordered_eps[to_idx]);
+	};
+
 	int wm_idx = indexOf(watermark_id);
 	std::vector<std::string> cur_ahead = ahead;
-	int target = (wm_idx + 1) % n;
 
-	// Absorb consecutive already-aired-out-of-order picks immediately following
-	// the watermark — self-heals a backfilled gap instead of needing a full
-	// wraparound cycle to reach whatever was stranded behind it.
-	int guard = 0;
+	// Phase 1: find what plays this call, walking forward one slot at a time
+	// from the watermark. A slot that's a still-open gap (not contiguous) but
+	// already aired already had its turn — skip past it, it's not a candidate
+	// again. Stop at the first slot that's either the natural in-order next
+	// episode, or the first not-yet-aired episode past an open gap (an
+	// out-of-order pick) — two *different* gaps (e.g. episodes 2 and 4 both
+	// missing while 3 and 5 exist) must each get their own `ahead` entry
+	// rather than the second one silently overwriting/skipping the first.
+	int cursor = (wm_idx + 1) % n;
+	int guard  = 0;
 	while (guard++ < n)
 	{
-		auto it = std::find(cur_ahead.begin(), cur_ahead.end(), ordered_eps[target].episode_id);
-		if (it == cur_ahead.end()) break;
-		cur_ahead.erase(it);
-		wm_idx = target;
-		target = (wm_idx + 1) % n;
+		bool already_aired = std::find(cur_ahead.begin(), cur_ahead.end(),
+										ordered_eps[cursor].episode_id) != cur_ahead.end();
+		if (!(!contiguous(wm_idx, cursor) && already_aired)) break; // stop unless "skip past" case
+		cursor = (cursor + 1) % n;
+	}
+	const int result_idx = cursor;
+
+	// Phase 2: if this pick is in natural order, immediately absorb any
+	// further already-aired episodes sitting right behind it — lets a
+	// backfilled gap self-heal in the same call its predecessor finally
+	// airs, instead of needing a separate follow-up call to notice.
+	int confirmed_idx = wm_idx;
+	if (contiguous(wm_idx, result_idx))
+	{
+		confirmed_idx  = result_idx;
+		int next       = (confirmed_idx + 1) % n;
+		int absorb_i   = 0;
+		while (absorb_i++ < n)
+		{
+			auto it = std::find(cur_ahead.begin(), cur_ahead.end(), ordered_eps[next].episode_id);
+			if (!contiguous(confirmed_idx, next) || it == cur_ahead.end()) break;
+			cur_ahead.erase(it);
+			confirmed_idx = next;
+			next          = (confirmed_idx + 1) % n;
+		}
 	}
 
-	// A genuine numeric gap right after the watermark (the true next-numbered
-	// episode isn't in the catalog yet) means this pick is out of order — remember
-	// it in `ahead` instead of moving the watermark past it, so a later backfill
-	// still gets picked up. Wrapping from the last episode back to the first
-	// (starting a rerun cycle) is never treated as a gap.
-	const bool wrap         = (wm_idx == n - 1);
-	const bool out_of_order = wm_idx >= 0 && !wrap &&
-		naturalOrdinal(ordered_eps[target]) != naturalOrdinal(ordered_eps[wm_idx]) + 1;
-
-	out.index = target;
-	if (out_of_order)
+	out.index = result_idx;
+	if (!contiguous(wm_idx, result_idx))
 	{
-		out.new_watermark_id = ordered_eps[wm_idx].episode_id;
-		cur_ahead.push_back(ordered_eps[target].episode_id);
+		// Out-of-order pick: watermark doesn't move, this episode is remembered.
+		out.new_watermark_id = wm_idx >= 0 ? ordered_eps[wm_idx].episode_id : "";
+		cur_ahead.push_back(ordered_eps[result_idx].episode_id);
 	}
 	else
 	{
-		out.new_watermark_id = ordered_eps[target].episode_id;
+		out.new_watermark_id = ordered_eps[confirmed_idx].episode_id;
 	}
 	out.new_ahead = std::move(cur_ahead);
 	return out;
@@ -683,7 +727,11 @@ std::optional<ScheduledItem> RuleEngine::advanceShowCursor(
 	std::vector<std::string> ahead = state.getCursorAhead("show", entry.content_id, scope, scope_id, entry.episode_order);
 
 	NaturalAdvance adv = advanceNatural(watermark, ahead, all);
-	state.setCursorPos("show", entry.content_id, scope, scope_id, 0,
+	// `position` is no longer the source of truth (episode_id/ahead are) but is
+	// kept populated — mirroring the old "points at the next pick" convention —
+	// purely so anything reading the raw media_cursor column still sees progress.
+	state.setCursorPos("show", entry.content_id, scope, scope_id,
+					   (adv.index + 1) % static_cast<int>(all.size()),
 					   adv.new_watermark_id, entry.episode_order, adv.new_ahead);
 
 	// Completed a full pass: landed on the catalog's last (list-order) episode
@@ -850,7 +898,10 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
 				std::vector<std::string> ahead = state.getCursorAhead("show", entry.content_id, scope, scope_id, entry.episode_order);
 				NaturalAdvance adv = advanceNatural(watermark, ahead, all_eps);
 				item = itemFromShow(channel_id, block.block_id, all_eps, adv.index, showTitleCached(cache, entry.content_id));
-				state.setCursorPos("show", entry.content_id, scope, scope_id, 0,
+				// See advanceShowCursor's identical comment on why `position` is
+				// still populated even though it's no longer the source of truth.
+				state.setCursorPos("show", entry.content_id, scope, scope_id,
+								   (adv.index + 1) % static_cast<int>(all_eps.size()),
 								   adv.new_watermark_id, entry.episode_order, adv.new_ahead);
 				return item; // Block position managed by pickNextContent
 			}
@@ -950,7 +1001,10 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
 						std::vector<std::string> ahead = state.getCursorAhead("show", show_id, scope, scope_id);
 						NaturalAdvance adv = advanceNatural(watermark, ahead, pl_eps);
 						item = itemFromShow(channel_id, block.block_id, pl_eps, adv.index, showTitleCached(cache, show_id));
-						state.setCursorPos("show", show_id, scope, scope_id, 0,
+						// See advanceShowCursor's identical comment on why `position` is
+						// still populated even though it's no longer the source of truth.
+						state.setCursorPos("show", show_id, scope, scope_id,
+										   (adv.index + 1) % static_cast<int>(pl_eps.size()),
 										   adv.new_watermark_id, "", adv.new_ahead);
 					}
 					else

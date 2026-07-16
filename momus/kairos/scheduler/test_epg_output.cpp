@@ -435,8 +435,9 @@ TEST_F(EPGOutputTest, Generate_ScheduledMode_CursorAdvancedInDB) {
 }
 
 TEST_F(EPGOutputTest, Generate_AnchorRestoration_LoadsCursorStateFromJson) {
-    // Inject an anchor_hashes snapshot that places the show cursor at position 3
-    // (i.e., episode index 3 = s2e01 in the 6-episode test fixture).
+    // Inject an anchor_hashes snapshot whose show cursor watermark is s1e03 (the
+    // 3rd episode, index 2) — the natural-order successor is index 3 = s2e01 in
+    // the 6-episode test fixture (see advanceNatural/RuleEngine::NaturalAdvance).
     // generate() must restore from it and produce s2e01 as the first item.
     using json = nlohmann::json;
 
@@ -446,12 +447,14 @@ TEST_F(EPGOutputTest, Generate_AnchorRestoration_LoadsCursorStateFromJson) {
     json snap = {
         {"rng", "1 2 3 4"},   // arbitrary valid rng state
         {"cursors", json::array({{
-            {"content_type", "show"},
-            {"content_id",   "s1"},
-            {"cursor_scope", "block"},
-            {"scope_id",     "b1"},
-            {"position",     3},
-            {"episode_id",   ""}
+            {"content_type",  "show"},
+            {"content_id",    "s1"},
+            {"cursor_scope",  "block"},
+            {"scope_id",      "b1"},
+            {"episode_order", "season"}, // matches block_content's default (see Database.cpp)
+            {"position",      3},
+            {"episode_id",    "s1e03"},
+            {"ahead",         json::array()}
         }})},
         {"block_states", json::array({{
             {"block_id",          "b1"},
