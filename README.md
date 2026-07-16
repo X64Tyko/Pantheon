@@ -39,18 +39,20 @@ Pantheon is currently in **Alpha**. This is a source-available engineering artif
 
 | Component | Status | Test Suite | Tests | Coverage (Target) |
 |---|---|---|---|---|
-| **Kairos** | Alpha | `momus_kairos` | 406 | ~85% (Core / Scheduler) |
+| **Kairos** | Alpha | `momus_kairos` | 429 | ~85% (Core / Scheduler) |
 | **Hades** | Alpha | `vitest` | 135 | ~40% (API / Stores) |
 | **Hermes** | Alpha | `momus_hermes` | 19 | ~45% (Gateway — security surface covered via Kairos) |
 | **Hephaestus** | Alpha | `momus_hephaestus` | 26 | ~35% (Transcoder — Kairos-facing routes covered via Kairos) |
 
-*Pantheon currently runs **586 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+*Pantheon currently runs **609 automated tests** across the stack using the **Momus** framework and **Vitest**.*
 
 Kairos's suite includes endpoint-level security regression tests (`momus/kairos/api/test_content_service_security.cpp`) that spin up a real `Router` against a throwaway database and fire actual attack payloads at the running server — e.g. confirming an admin can't forge the locally-cached-poster path sentinel into an arbitrary local file read via `PATCH /api/shows/:id` or the public `/api/images/proxy` endpoint, and that no secret content ever appears in a response when the attack is (correctly) rejected.
 
 The profile-switch PIN system (Netflix/Plex-style "Who's watching?" picker layered on top of the existing username/password login) is covered at two levels: `auth/test_auth_store.cpp` exercises `AuthStore::switchProfile` directly (PIN set/clear, correct/incorrect/absent PIN, the admin-profiles-always-require-a-PIN rule, and the 5-attempt lockout with its recovery window), while `api/test_auth_service_routes.cpp` spins up a real `Router` the same way the security regression tests do and drives the actual HTTP endpoints (`GET /api/auth/profiles`, `POST /api/auth/switch/:id`, `PATCH /api/users/:id/pin`) to confirm the routing/auth-gating layer wires that logic up correctly — e.g. that the profile picker is visible to any authenticated viewer (not admin-gated like `/api/users`), while setting a PIN is admin-only, and that switching profiles is denied without the right PIN.
 
 Kairos's endpoint tests also cover most of Hermes's and Hephaestus's own security surface: neither proxies to Kairos with any logic of its own, so Kairos's route-level suites (including the two above, plus `api/test_restriction_access_check.cpp` and `api/test_playback_and_channel_routes.cpp` for the `access-check`, `/api/auth/me`, `/api/channels`, and `/api/playback/:content_type/:id` endpoints those services depend on) validate what a client sees through either of them too.
+
+Scheduler determinism — the property the [Memory-First EPG Projection](docs/ARCHITECTURE.md) model depends on — is covered by `scheduler/test_natural_advance.cpp` (episode-order advancement against a library that changes shape mid-run: out-of-order backfills, multiple simultaneous gaps, season boundaries) and `scheduler/test_determinism_regression.cpp`, which runs the exact scenario that would otherwise let live schedule activity leak into a projection: generate a preview, commit an unrelated short-horizon schedule update in between (simulating ordinary background polling), then generate the same preview again and assert every item is still identical — across both UTC and non-UTC channel timezones.
 
 ---
 

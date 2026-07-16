@@ -302,7 +302,7 @@ function DiscoverGrid({ results, loading, query, selectedKey, onSelect }: {
         No results for "{query}"<br />
         <span style={{ fontSize: 10, color: 'oklch(0.45 0.02 285)' }}>
           Make sure TMDB or TVDB API keys are configured and enabled in{' '}
-          <a href="/scrapers" style={{ color: 'var(--hds-violet)', textDecoration: 'none' }}>Scrapers</a>.
+          <a href="/settings?tab=scrapers" style={{ color: 'var(--hds-violet)', textDecoration: 'none' }}>Scrapers</a>.
         </span>
       </div>
     )

@@ -24,7 +24,6 @@ import PlaylistPage           from './pages/PlaylistPage'
 import ReviewPage             from './pages/ReviewPage'
 import SettingsPage           from './pages/SettingsPage'
 import SourcesPage            from './pages/SourcesPage'
-import ScrapersPage            from './pages/ScrapersPage'
 import UsersPage              from './pages/UsersPage'
 
 // Lazy: hls.js is a ~500KB dependency that only the player route needs — every
@@ -112,7 +111,6 @@ export default function App() {
               <Route path="downloads"    element={<DownloadPage />} />
               <Route path="activity"     element={<ActivityPage />} />
               <Route path="review"       element={<ReviewPage />} />
-              <Route path="scrapers"       element={<ScrapersPage />} />
               <Route path="settings"     element={<SettingsPage />} />
               <Route path="users"        element={<UsersPage />} />
             </Route>
