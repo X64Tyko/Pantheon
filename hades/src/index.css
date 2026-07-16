@@ -441,4 +441,10 @@ body {
   .hds-media-detail-hero-row > :first-child {
     margin: 0 auto;
   }
+  /* Collapsed sticky header on mobile: no room next to the title/Play
+     button for even a shrunk poster thumbnail, so it's dropped entirely
+     rather than fighting the already-tight horizontal space. */
+  .hds-media-detail-hero-collapsed .hds-media-detail-poster {
+    display: none;
+  }
 }

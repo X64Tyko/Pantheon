@@ -6,6 +6,15 @@ import { useFocusable } from '../../nav/useFocusable'
 import { useNavBack } from '../../nav/back'
 import { folderBaseName, useMediaDetail, type MediaDetailResult } from './useMediaDetail'
 import { heroTextShadow } from '../../channel/styles'
+import { useScrollCollapse } from './useScrollCollapse'
+
+// Backdrop height and how far the expanded header overlaps into its lower
+// edge (same composition the fixed-height hero used to have). The collapse
+// threshold is set to match HERO_HEIGHT - HERO_OVERLAP exactly, so the
+// header finishes shrinking right as it reaches the top of the viewport and
+// locks there, instead of snapping before or lagging after.
+const HERO_HEIGHT  = 380
+const HERO_OVERLAP = 40
 
 function formatVideoInfo(v: VideoInfo): string | null {
   if (!v.codec && !v.height) return null
@@ -43,12 +52,16 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
     setFocusedEpisode,
   } = media
 
+  const { scrollRef, collapsed } = useScrollCollapse(HERO_HEIGHT - HERO_OVERLAP)
+
   const srcColor = discoverResult?.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
 
   const posterBox = (
-    <div style={{
-      width: 170, height: 255, borderRadius: 10, overflow: 'hidden', flexShrink: 0,
+    <div className="hds-media-detail-poster" style={{
+      width: collapsed ? 52 : 170, height: collapsed ? 78 : 255, borderRadius: collapsed ? 6 : 10,
+      overflow: 'hidden', flexShrink: 0,
       background: 'var(--hds-bg-3)', boxShadow: '0 8px 32px oklch(0 0 0 / 0.5)',
+      transition: 'width .25s ease, height .25s ease, border-radius .25s ease',
     }}>
       {posterUrl && (
         <img
@@ -62,11 +75,15 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
 
   const primaryInfo = (
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: collapsed ? 0 : 10 }}>
         <h2 style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 27, fontWeight: 700,
+          fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700,
+          fontSize: collapsed ? 16 : 27,
           color: 'var(--hds-txt)', margin: 0, flex: 1, lineHeight: 1.15,
-          textShadow: heroTextShadow,
+          textShadow: heroTextShadow, transition: 'font-size .25s ease',
+          whiteSpace: collapsed ? 'nowrap' : undefined,
+          overflow: collapsed ? 'hidden' : undefined,
+          textOverflow: collapsed ? 'ellipsis' : undefined,
         }}>{title}</h2>
         {detail?.locked && (
           <span style={{
@@ -86,63 +103,69 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
         )}
       </div>
 
-      {/* Meta chips */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-        {year && <span style={metaChip}>{year}</span>}
-        {detail?.content_rating && <span style={metaChip}>{detail.content_rating}</span>}
-        {rating != null && (
-          <span style={{ ...metaChip, color: 'var(--hds-gold)', borderColor: 'oklch(0.83 0.13 84 / 0.4)' }}>
-            ★ {rating.toFixed(1)}
-          </span>
+      {/* Meta chips / genres / overview — collapsed via max-height+opacity
+          rather than unmounted outright, so the header reads as shrinking
+          rather than popping. */}
+      <div style={{
+        maxHeight: collapsed ? 0 : 420, opacity: collapsed ? 0 : 1, overflow: 'hidden',
+        transition: 'max-height .25s ease, opacity .18s ease',
+      }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          {year && <span style={metaChip}>{year}</span>}
+          {detail?.content_rating && <span style={metaChip}>{detail.content_rating}</span>}
+          {rating != null && (
+            <span style={{ ...metaChip, color: 'var(--hds-gold)', borderColor: 'oklch(0.83 0.13 84 / 0.4)' }}>
+              ★ {rating.toFixed(1)}
+            </span>
+          )}
+          <span style={metaChip}>{contentType === 'show' ? 'series' : 'film'}</span>
+          {videoInfo && formatVideoInfo(videoInfo) && (
+            <span style={metaChip}>{formatVideoInfo(videoInfo)}</span>
+          )}
+          {discoverResult && (
+            <span style={{
+              ...metaChip, color: srcColor,
+              borderColor: discoverResult.source === 'tmdb' ? 'oklch(0.65 0.18 220 / 0.4)' : 'oklch(0.65 0.12 280 / 0.4)',
+            }}>{discoverResult.source.toUpperCase()}</span>
+          )}
+          {discoverResult?.in_library && (
+            <span style={{ ...metaChip, color: 'oklch(0.7 0.16 150)', borderColor: 'oklch(0.7 0.16 150 / 0.4)' }}>
+              IN LIBRARY
+            </span>
+          )}
+          {!discoverResult?.in_library && discoverResult?.request_status && (
+            <span style={{
+              ...metaChip,
+              color:       discoverResult.request_status === 'approved' ? 'oklch(0.7 0.16 150)' : 'oklch(0.78 0.15 84)',
+              borderColor: discoverResult.request_status === 'approved' ? 'oklch(0.7 0.16 150 / 0.4)' : 'oklch(0.78 0.15 84 / 0.4)',
+            }}>
+              {discoverResult.request_status === 'approved' ? 'APPROVED' : discoverResult.request_status === 'rejected' ? 'REJECTED' : 'REQUESTED'}
+            </span>
+          )}
+        </div>
+
+        {genres.length > 0 && (
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 16 }}>
+            {genres.map(g => (
+              <span key={g} style={{
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                padding: '3px 10px', borderRadius: 12,
+                background: 'var(--hds-glass)', border: '1px solid var(--hds-glass-border)',
+                color: 'var(--hds-txt-2)', letterSpacing: '0.05em',
+              }}>{g}</span>
+            ))}
+          </div>
         )}
-        <span style={metaChip}>{contentType === 'show' ? 'series' : 'film'}</span>
-        {videoInfo && formatVideoInfo(videoInfo) && (
-          <span style={metaChip}>{formatVideoInfo(videoInfo)}</span>
-        )}
-        {discoverResult && (
-          <span style={{
-            ...metaChip, color: srcColor,
-            borderColor: discoverResult.source === 'tmdb' ? 'oklch(0.65 0.18 220 / 0.4)' : 'oklch(0.65 0.12 280 / 0.4)',
-          }}>{discoverResult.source.toUpperCase()}</span>
-        )}
-        {discoverResult?.in_library && (
-          <span style={{ ...metaChip, color: 'oklch(0.7 0.16 150)', borderColor: 'oklch(0.7 0.16 150 / 0.4)' }}>
-            IN LIBRARY
-          </span>
-        )}
-        {!discoverResult?.in_library && discoverResult?.request_status && (
-          <span style={{
-            ...metaChip,
-            color:       discoverResult.request_status === 'approved' ? 'oklch(0.7 0.16 150)' : 'oklch(0.78 0.15 84)',
-            borderColor: discoverResult.request_status === 'approved' ? 'oklch(0.7 0.16 150 / 0.4)' : 'oklch(0.78 0.15 84 / 0.4)',
-          }}>
-            {discoverResult.request_status === 'approved' ? 'APPROVED' : discoverResult.request_status === 'rejected' ? 'REJECTED' : 'REQUESTED'}
-          </span>
+
+        {/* Overview — swaps to the focused episode's when one is hovered/focused */}
+        {overview && (
+          <p style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, lineHeight: 1.75,
+            color: 'var(--hds-txt-2)', margin: '0 0 16px', maxWidth: 760,
+            textShadow: heroTextShadow,
+          }}>{overview}</p>
         )}
       </div>
-
-      {/* Genres */}
-      {genres.length > 0 && (
-        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 16 }}>
-          {genres.map(g => (
-            <span key={g} style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-              padding: '3px 10px', borderRadius: 12,
-              background: 'var(--hds-glass)', border: '1px solid var(--hds-glass-border)',
-              color: 'var(--hds-txt-2)', letterSpacing: '0.05em',
-            }}>{g}</span>
-          ))}
-        </div>
-      )}
-
-      {/* Overview — swaps to the focused episode's when one is hovered/focused */}
-      {overview && (
-        <p style={{
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, lineHeight: 1.75,
-          color: 'var(--hds-txt-2)', margin: '0 0 16px', maxWidth: 760,
-          textShadow: heroTextShadow,
-        }}>{overview}</p>
-      )}
     </div>
   )
 
@@ -206,26 +229,33 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
     </div>
   )
 
-  // One implementation for every caller (LibraryPage, Home's detail view,
-  // TvLibraryDetail has its own TV-shaped layout but the same idea) — own
-  // pinned hero: backdrop + poster + title/chips/genres/overview stay fixed
-  // (and, critically, visible regardless of how far down the season shelves
-  // are scrolled, so the episode-hover retarget above is actually
-  // perceptible) while secondary metadata/actions and the season shelves
-  // scroll beneath it.
+  // One implementation for every caller (LibraryPage, Home's detail view;
+  // TvLibraryDetail has its own TV-shaped layout but the same idea, sized
+  // for 10-foot viewing). The poster/title/genres/overview block starts in
+  // its usual spot overlapping the backdrop's lower edge, then scrolls up
+  // with the page and locks at the top once it gets there, shrinking into a
+  // slim header (`collapsed`, from useScrollCollapse) — everything else
+  // (secondary metadata, season shelves, fix-match panel) scrolls
+  // underneath it with the full remaining viewport instead of competing
+  // with a permanently fixed hero.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ flexShrink: 0 }}>
-        {/* Sticky + height:0 so Back stays pinned to the viewport instead of scrolling away with the banner. */}
-        <div style={{ position: 'sticky', top: 18, zIndex: 20, height: 0 }}>
-          <BackButton onClick={onBack} overlay />
-        </div>
+    <div style={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
+      {/* Pinned above the scroll regardless of how far the content below has moved. */}
+      <div style={{ position: 'absolute', top: 18, left: 24, zIndex: 20 }}>
+        <BackButton onClick={onBack} overlay />
+      </div>
+
+      <div ref={scrollRef} style={{ position: 'relative', height: '100%', overflowY: 'auto' }} className="scrollbar-dark">
+        {/* Backdrop — sized for the expanded header, scrolls with the rest
+            of the content (it's a normal descendant of this scroll
+            container, not fixed/pinned). By the time the sticky header
+            below locks at the top it has already scrolled out of view, so
+            it needs no collapse handling of its own. */}
         <div style={{
-          position: 'relative', height: '42vh', minHeight: 300, flexShrink: 0,
+          position: 'absolute', top: 0, left: 0, right: 0, height: HERO_HEIGHT, zIndex: 0,
           background: backdropUrl
             ? `url(${backdropUrl}) center/cover no-repeat`
             : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)',
-          marginBottom: -60, paddingBottom: 60,
           opacity: loading && !discoverResult ? 0.6 : 1, transition: 'opacity .3s ease',
         }}>
           <div style={{
@@ -235,23 +265,43 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
           <div style={{
             position: 'absolute', inset: 0,
             background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 46%)',
-            paddingBottom: 60, marginBottom: -60,
           }} />
         </div>
 
-        <div className="hds-media-detail-hero-container" style={{ position: 'relative', zIndex: 2, padding: '0 48px 24px' }}>
+        {/* Spacer — pushes the sticky header down to its expanded starting
+            position (overlapping the backdrop's lower edge, same starting
+            composition the old fixed-height layout had). Past this point
+            the header has nowhere left to go and locks at the top. */}
+        <div style={{ height: HERO_HEIGHT - HERO_OVERLAP }} />
+
+        <div
+          className={`hds-media-detail-hero-container${collapsed ? ' hds-media-detail-hero-collapsed' : ''}`}
+          style={{
+            position: 'sticky', top: 0, zIndex: 2,
+            padding: collapsed ? '14px 48px' : '0 48px 24px',
+            background: collapsed ? 'var(--hds-bg)' : 'transparent',
+            borderBottom: `1px solid ${collapsed ? 'var(--hds-line-s)' : 'transparent'}`,
+            boxShadow: collapsed ? '0 4px 20px oklch(0 0 0 / 0.35)' : 'none',
+            transition: 'padding .25s ease, background .25s ease, border-color .25s ease, box-shadow .25s ease',
+          }}
+        >
           {loading && !discoverResult ? (
             <DetailSkeleton />
           ) : (
-            <div className="hds-media-detail-hero-row" style={{ display: 'flex', gap: 36, alignItems: 'flex-start', maxWidth: 1200, paddingTop: 20 }}>
+            <div
+              className="hds-media-detail-hero-row"
+              style={{
+                display: 'flex', gap: collapsed ? 18 : 36,
+                alignItems: collapsed ? 'center' : 'flex-start', maxWidth: 1200,
+                transition: 'gap .25s ease',
+              }}
+            >
               {posterBox}
               {primaryInfo}
             </div>
           )}
         </div>
-      </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', maxHeight: '100%' }} className="scrollbar-dark">
         <div style={{ padding: '0 48px 48px' }}>
           {!loading && (
             <div style={{ maxWidth: 1200, paddingLeft: 206 /* align under the info column above, not the poster */ }}>
@@ -278,7 +328,7 @@ function BackButton({ onClick, overlay }: { onClick: () => void; overlay?: boole
         transition: 'color .12s, background .12s',
         ...(overlay
           ? {
-              marginLeft: 24, // positioning handled by the sticky wrapper in MediaDetailHero
+              marginLeft: 24, // positioning handled by the pinned wrapper in MediaDetailHero
               padding: '7px 14px 7px 10px', borderRadius: 20,
               border: '1px solid var(--hds-glass-border)', background: 'var(--hds-glass)',
               backdropFilter: 'blur(8px)', color: 'oklch(0.92 0.01 285)',

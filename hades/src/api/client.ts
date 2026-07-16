@@ -487,12 +487,12 @@ export const api = {
   deleteBumper:  (channelId: string, bumperId: number)               => request<void>          ('DELETE', `/channels/${channelId}/bumpers/${bumperId}`),
 
   // Runtime settings
-  getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('GET',   '/config/settings'),
-  // Public read-only subset for internal services (Hephaestus) and the Hades
-  // frontend (CastProvider, which needs cast_app_id regardless of role).
-  getPublicSettings: ()                                                  => request<{ stream_buffer_size: number; verbose_transcode_logs: boolean; cast_app_id: string }>('GET', '/config/public-settings'),
+  getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; cast_app_id: string }>('GET',   '/config/settings'),
+  // Public read-only subset for internal services (Hephaestus, Hermes) and
+  // the Hades frontend (CastProvider, which needs cast_app_id regardless of role).
+  getPublicSettings: ()                                                  => request<{ stream_buffer_size: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; cast_app_id: string }>('GET', '/config/public-settings'),
   sendClientLog: (level: 'info' | 'warn' | 'error', message: string) => request<{ ok: boolean }>('POST', '/logs/client', { level, message }),
-  updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; cast_app_id: string }>('PATCH', '/config/settings', b),
+  updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; cast_app_id: string }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; cast_app_id: string }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),
 

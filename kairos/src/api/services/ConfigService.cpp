@@ -53,6 +53,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			{"stream_buffer_size",           g_buffer_size.load()},
 			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
 			{"verbose_transcode_logs", g_verbose_transcode_logs.load()},
+			{"verbose_gateway_logs",   g_verbose_gateway_logs.load()},
 			{"cast_app_id",            castAppId()},
 		};
 	};
@@ -62,13 +63,15 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, settingsJson().dump());
 	});
 
-	// A public read-only subset for internal services (Hephaestus) and the Hades
-	// frontend. This is marked public in Router.cpp, so it's accessible without
-	// a token (for Hephaestus) or with any valid token (for viewer users).
+	// A public read-only subset for internal services (Hephaestus, Hermes) and
+	// the Hades frontend. This is marked public in Router.cpp, so it's
+	// accessible without a token (for Hephaestus/Hermes) or with any valid
+	// token (for viewer users).
 	svr.Get("/api/config/public-settings", [this, castAppId](const Req&, Res& res) {
 		route::ok(res, json{
 			{"stream_buffer_size",      g_buffer_size.load()},
 			{"verbose_transcode_logs",  g_verbose_transcode_logs.load()},
+			{"verbose_gateway_logs",    g_verbose_gateway_logs.load()},
 			{"cast_app_id",             castAppId()},
 		}.dump());
 	});
@@ -113,6 +116,11 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 				bool v = b["verbose_transcode_logs"].get<bool>();
 				g_verbose_transcode_logs.store(v);
 				persistFlag("verbose_transcode_logs", v);
+			}
+			if (b.contains("verbose_gateway_logs") && b["verbose_gateway_logs"].is_boolean()) {
+				bool v = b["verbose_gateway_logs"].get<bool>();
+				g_verbose_gateway_logs.store(v);
+				persistFlag("verbose_gateway_logs", v);
 			}
 			if (b.contains("cast_app_id") && b["cast_app_id"].is_string()) {
 				ConfigRepository(db_).setValue("cast_app_id", b["cast_app_id"].get<std::string>());

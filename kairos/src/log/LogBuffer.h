@@ -2,6 +2,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -95,6 +96,13 @@ private:
 
     void openFile() {
         if (path_.empty()) return;
+        // The parent directory not existing yet (e.g. a fresh appdata mount,
+        // or ./data/ never created outside Docker) used to make this fail
+        // silently — every line just quietly stopped reaching the file with
+        // no further retry, since nothing calls openFile() again afterward.
+        std::error_code ec;
+        auto parent = std::filesystem::path(path_).parent_path();
+        if (!parent.empty()) std::filesystem::create_directories(parent, ec);
         file_.open(path_, std::ios::app);
         if (file_) {
             file_.seekp(0, std::ios::end);

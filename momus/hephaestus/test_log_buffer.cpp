@@ -1,9 +1,29 @@
 #include <gtest/gtest.h>
 #include "log/LogBuffer.h"
+#include "log/RuntimeFlags.h"
 #include <vector>
 #include <string>
 #include <chrono>
 #include <thread>
+#include <fstream>
+#include <filesystem>
+
+namespace {
+// RAII: g_verbose_transcode_logs is process-global — restore it after each
+// test that touches it so later tests aren't affected by test order.
+struct VerboseFlagGuard {
+    bool prev = g_verbose_transcode_logs.load();
+    ~VerboseFlagGuard() { g_verbose_transcode_logs.store(prev); }
+};
+
+std::vector<std::string> readLines(const std::string& path) {
+    std::ifstream f(path);
+    std::vector<std::string> out;
+    std::string line;
+    while (std::getline(f, line)) out.push_back(line);
+    return out;
+}
+}
 
 TEST(LogBufferTest, PushAndRecent) {
     LogBuffer buf;
@@ -57,4 +77,69 @@ TEST(LogBufferTest, Overflow) {
     EXPECT_EQ(lines.front(), "line 100");
     EXPECT_EQ(lines.back(), "line 2099");
     EXPECT_EQ(seq, 2100); // seq_ starts at 1, so 2100 pushes end at seq 2100
+}
+
+// Regression: Hephaestus's LogBuffer used to have no file-writing at all,
+// unlike Kairos's — so nothing it printed was ever durably captured, only
+// held in the in-memory ring buffer. These mirror Kairos's equivalent
+// FilterExpr-adjacent LogBuffer coverage.
+
+TEST(LogBufferTest, SetFileWritesEveryLineRegardlessOfCategoryFilter) {
+    VerboseFlagGuard guard;
+    g_verbose_transcode_logs.store(false);
+
+    auto path = (std::filesystem::temp_directory_path() / "heph_logbuf_all.log").string();
+    std::filesystem::remove(path);
+
+    LogBuffer buf;
+    buf.setFile(path);
+    buf.push("[hephaestus] startup");
+    buf.push("[ffmpeg] spawning: ...");   // gated category, flag off
+    buf.push("[sessions] channel started"); // gated category, flag off
+
+    auto lines = readLines(path);
+    ASSERT_EQ(lines.size(), 3u);
+    EXPECT_EQ(lines[0], "[hephaestus] startup");
+    EXPECT_EQ(lines[1], "[ffmpeg] spawning: ...");
+    EXPECT_EQ(lines[2], "[sessions] channel started");
+}
+
+TEST(LogBufferTest, VerboseCategoriesHiddenFromRecentWhenFlagOff) {
+    VerboseFlagGuard guard;
+    g_verbose_transcode_logs.store(false);
+
+    LogBuffer buf;
+    buf.push("[hephaestus] startup");
+    buf.push("[ffmpeg] spawning: ...");
+    buf.push("[sessions] channel started");
+
+    auto [lines, seq] = buf.recent(10);
+    ASSERT_EQ(lines.size(), 1u);
+    EXPECT_EQ(lines[0], "[hephaestus] startup");
+}
+
+TEST(LogBufferTest, VerboseCategoriesVisibleInRecentWhenFlagOn) {
+    VerboseFlagGuard guard;
+    g_verbose_transcode_logs.store(true);
+
+    LogBuffer buf;
+    buf.push("[hephaestus] startup");
+    buf.push("[ffmpeg] spawning: ...");
+    buf.push("[sessions] channel started");
+
+    auto [lines, seq] = buf.recent(10);
+    ASSERT_EQ(lines.size(), 3u);
+}
+
+TEST(LogBufferTest, NonVerboseCategoriesAlwaysVisibleRegardlessOfFlag) {
+    VerboseFlagGuard guard;
+    g_verbose_transcode_logs.store(false);
+
+    LogBuffer buf;
+    buf.push("[hwprobe] decode ok");
+    buf.push("[kairos] GET /api/channels -> 200");
+    buf.push("[probe] checking vaapi");
+
+    auto [lines, seq] = buf.recent(10);
+    EXPECT_EQ(lines.size(), 3u);
 }

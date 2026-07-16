@@ -166,6 +166,26 @@ protected:
         s.exec();
     }
 
+    void insertLibrary(const std::string& library_id, const std::string& source_id, const std::string& library_type) {
+        SQLite::Statement s(db.get(), R"(
+            INSERT INTO media_library (library_id, source_id, external_lib_id, display_name, library_type) VALUES (?,?,?,?,?)
+        )");
+        s.bind(1, library_id); s.bind(2, source_id); s.bind(3, library_id); s.bind(4, library_id); s.bind(5, library_type);
+        s.exec();
+    }
+
+    // Like mapToSource, but also stamps the source_mapping row's library_id —
+    // needed for library_ids-scoped searchShows()/searchMovies() queries,
+    // which JOIN against source_mapping.library_id directly.
+    void mapToSourceLib(const std::string& item_type, const std::string& kairos_id,
+                         const std::string& source_id, const std::string& library_id) {
+        SQLite::Statement s(db.get(), R"(
+            INSERT INTO source_mapping (item_type, kairos_id, source_id, external_id, library_id) VALUES (?,?,?,?,?)
+        )");
+        s.bind(1, item_type); s.bind(2, kairos_id); s.bind(3, source_id); s.bind(4, kairos_id); s.bind(5, library_id);
+        s.exec();
+    }
+
     ShowListResult  searchShows(const std::string& filter, const std::string& match = "all") {
         ShowSearchParams p; p.filter = filter; p.limit = 50; return repo.searchShows(p);
     }
@@ -300,6 +320,32 @@ TEST_F(FilterExprIntegrationTest, SourceFilterMatchesMappedSource) {
     EXPECT_EQ(searchShows("source:plex1").total, 1);
     EXPECT_EQ(searchShows("-source:plex1").total, 1);
     EXPECT_EQ(searchShows("source:jf1").total, 1);
+}
+
+// Regression: a movie cross-source-merged into one canonical row but mapped
+// to more than one library (one source_mapping row per source it's mapped
+// to — see source_mapping's PRIMARY KEY) used to come back once *per
+// matching source_mapping row* when the library-pill switcher's library_ids
+// scoping was active, instead of once per movie. The count query already
+// used COUNT(DISTINCT m.movie_id), so the total looked right while the
+// actual page of results repeated the same movie — searchShows() already
+// GROUP BY s.show_id'd for this same reason, searchMovies() didn't.
+TEST_F(FilterExprIntegrationTest, MovieMergedAcrossLibrariesReturnsOnceNotOncePerLibrary) {
+    insertMovie("m1", "Merged Movie", "[]", 2020, 5, 6000000);
+    insertSource("plex1", "plex");
+    insertSource("jf1", "jellyfin");
+    insertLibrary("lib-plex-movies", "plex1", "movie");
+    insertLibrary("lib-jf-movies", "jf1", "movie");
+    mapToSourceLib("movie", "m1", "plex1", "lib-plex-movies");
+    mapToSourceLib("movie", "m1", "jf1", "lib-jf-movies");
+
+    MovieSearchParams p;
+    p.limit = 50;
+    p.library_ids = { "lib-plex-movies", "lib-jf-movies" };
+    auto r = repo.searchMovies(p);
+
+    EXPECT_EQ(r.total, 1);
+    ASSERT_EQ(r.items.size(), 1u);
 }
 
 // Seeded random sort (the Library page's die/reroll button) — same seed must
