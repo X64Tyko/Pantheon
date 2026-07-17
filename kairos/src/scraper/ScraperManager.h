@@ -10,6 +10,9 @@ class ConfStore;
 class AnidbScraper;
 class TmdbScraper;
 class TvdbScraper;
+class TvmazeScraper;
+class TraktScraper;
+class AnilistScraper;
 
 struct ScraperCandidate {
     std::string candidate_id;
@@ -328,6 +331,9 @@ private:
     std::unique_ptr<AnidbScraper> anidb_;
     std::unique_ptr<TmdbScraper> tmdb_;
     std::unique_ptr<TvdbScraper> tvdb_;
+    std::unique_ptr<TvmazeScraper> tvmaze_;
+    std::unique_ptr<TraktScraper> trakt_;
+    std::unique_ptr<AnilistScraper> anilist_;
     std::atomic<bool>            matching_{false};
     std::atomic<bool>            refreshing_all_{false};
 };

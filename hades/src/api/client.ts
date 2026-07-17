@@ -10,7 +10,7 @@ import type {
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult,
-  ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperStats, MergedInto, DuplicateCandidate,
+  ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection,
@@ -273,7 +273,7 @@ export const api = {
 
   // Content requests
   getRequests:    ()                                                                           => request<ContentRequest[]>('GET',    '/requests'),
-  createRequest:  (b: { content_type: 'show'|'movie'; source: 'tmdb'|'tvdb'|'anidb'; external_id: string; title: string; year?: number; poster_url?: string }) =>
+  createRequest:  (b: { content_type: 'show'|'movie'; source: ScraperSource; external_id: string; title: string; year?: number; poster_url?: string }) =>
                     request<{ request_id: string; status: string; duplicate?: boolean }>('POST', '/requests', b),
   updateRequest:  (id: string, status: 'approved'|'rejected', arr_add?: { type: 'show'|'movie'; add_data: unknown; quality_profile_id: number; root_folder: string; search_on_add?: boolean }) =>
                     request<{ok: boolean}>('PATCH',  `/requests/${id}`, { status, arr_add }),

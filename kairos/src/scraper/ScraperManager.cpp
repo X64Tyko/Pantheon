@@ -2,6 +2,9 @@
 #include "AnidbScraper.h"
 #include "TmdbScraper.h"
 #include "TvdbScraper.h"
+#include "TvmazeScraper.h"
+#include "TraktScraper.h"
+#include "AnilistScraper.h"
 #include "conf/ConfStore.h"
 #include "db/ContentRepository.h"
 #include "db/Database.h"
@@ -368,7 +371,7 @@ ScraperSettings ScraperManager::getSettings() const {
     s.dedup_folder_corroboration_threshold = std::stod(readKey("dedup_folder_corroboration_threshold", "0.30"));
     s.anidb_download_posters               = readKey("anidb_download_posters", "0") == "1";
 
-    for (const auto* src : { "tmdb", "tvdb", "anidb" }) {
+    for (const auto* src : { "tmdb", "tvdb", "anidb", "tvmaze", "trakt", "anilist" }) {
         ScraperConfig c;
         c.source   = src;
         c.api_key  = readKey(configKey(src, "api_key"),  "");
@@ -619,11 +622,20 @@ void ScraperManager::buildScrapers() {
     anidb_.reset();
     tmdb_.reset();
     tvdb_.reset();
+    tvmaze_.reset();
+    trakt_.reset();
+    anilist_.reset();
     for (const auto& c : s.configs) {
-        if (!c.enabled || c.api_key.empty()) continue;
+        if (!c.enabled) continue;
+        // TVMaze and AniList's public APIs are unauthenticated — unlike the
+        // others, they don't need an api_key to build.
+        if (c.source == "tvmaze")  { tvmaze_  = std::make_unique<TvmazeScraper>();  continue; }
+        if (c.source == "anilist") { anilist_ = std::make_unique<AnilistScraper>(); continue; }
+        if (c.api_key.empty()) continue;
         if (c.source == "tmdb")  tmdb_  = std::make_unique<TmdbScraper>(c.api_key, c.language);
         if (c.source == "tvdb")  tvdb_  = std::make_unique<TvdbScraper>(c.api_key, c.language, c.pin);
         if (c.source == "anidb") anidb_ = std::make_unique<AnidbScraper>(c.api_key);
+        if (c.source == "trakt") trakt_ = std::make_unique<TraktScraper>(c.api_key);
     }
 }
 
@@ -986,9 +998,12 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
                                      r.year.has_value() ? r.year.value() : 0);
             sc += lang_bonus;
             std::string ext;
-            if (source == "tmdb")       ext = r.tmdb_id;
-            else if (source == "tvdb")  ext = r.tvdb_id;
-            else if (source == "anidb") ext = r.show_id;  // AID stored in show_id
+            if (source == "tmdb")        ext = r.tmdb_id;
+            else if (source == "tvdb")   ext = r.tvdb_id;
+            else if (source == "anidb")  ext = r.show_id;  // AID stored in show_id
+            else if (source == "tvmaze") ext = r.show_id;  // TVMaze id stored in show_id
+            else if (source == "trakt")   ext = r.show_id;  // Trakt id stored in show_id
+            else if (source == "anilist") ext = r.show_id;  // AniList id stored in show_id
             if (ext.empty()) continue;
 
             auto it = std::find_if(candidates.begin(), candidates.end(),
@@ -1046,6 +1061,30 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
             DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
             timedSearch("tvdb", qt, std::move(results));
         }
+        if (tvmaze_) {
+            // TVMaze's search has no year param, so there's no hard-filter
+            // empty-result case to retry here (see TvmazeScraper::searchShows).
+            DLOG << "[scraper]   querying tvmaze for show \"" << qt << "\"\n";
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = tvmaze_->searchShows(qt, year);
+            DLOG << "[scraper]   tvmaze done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearch("tvmaze", qt, std::move(results));
+        }
+        if (trakt_) {
+            DLOG << "[scraper]   querying trakt for show \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = trakt_->searchShows(qt, year);
+            // Same defensive retry as TMDB/TVDB — Trakt's `years` search
+            // param isn't documented as strictly a soft filter, so don't let
+            // a locally-parsed year that's off by one turn a real match into
+            // "unmatched".
+            if (results.empty() && year > 0) {
+                DLOG << "[scraper]   trakt: 0 results with year filter, retrying without year\n";
+                results = trakt_->searchShows(qt, 0);
+            }
+            DLOG << "[scraper]   trakt done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearch("trakt", qt, std::move(results));
+        }
         // AniDB is anime-only — never queried for a library unless the admin
         // explicitly opted it in (include_anidb) or placed it anywhere in
         // this library's scraper priority order. Prevents cross-matching an
@@ -1057,6 +1096,23 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
             auto results = anidb_->searchShows(qt, year);
             DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
             timedSearch("anidb", qt, std::move(results));
+        }
+        // AniList is anime/manga-only, same rationale as AniDB above — but
+        // unlike AniDB there's no dedicated "include_anilist" checkbox, only
+        // this priority-list opt-in (add "anilist" to the library's scraper
+        // priority order in Sources to turn it on for that library).
+        if (anilist_ && std::find(priority.begin(), priority.end(), "anilist") != priority.end()) {
+            DLOG << "[scraper]   querying anilist for show \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = anilist_->searchShows(qt, year);
+            // AniList's seasonYear search arg filters server-side — retry
+            // unfiltered on empty results, same defensive pattern as TMDB/TVDB.
+            if (results.empty() && year > 0) {
+                DLOG << "[scraper]   anilist: 0 results with year filter, retrying without year\n";
+                results = anilist_->searchShows(qt, 0);
+            }
+            DLOG << "[scraper]   anilist done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearch("anilist", qt, std::move(results));
         }
     }
 
@@ -1182,6 +1238,8 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
             if (source == "tmdb")       ext = r.tmdb_id;
             else if (source == "tvdb")  ext = r.imdb_id;
             else if (source == "anidb") ext = r.movie_id;  // AID stored in movie_id
+            else if (source == "trakt")   ext = r.movie_id;  // Trakt id stored in movie_id
+            else if (source == "anilist") ext = r.movie_id;  // AniList id stored in movie_id
             if (ext.empty()) continue;
 
             auto it = std::find_if(candidates.begin(), candidates.end(),
@@ -1235,6 +1293,17 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
             DLOG << "[scraper]   tvdb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
             timedSearchM("tvdb", qt, std::move(results));
         }
+        if (trakt_) {
+            DLOG << "[scraper]   querying trakt for movie \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = trakt_->searchMovies(qt, year);
+            if (results.empty() && year > 0) {
+                DLOG << "[scraper]   trakt: 0 results with year filter, retrying without year\n";
+                results = trakt_->searchMovies(qt, 0);
+            }
+            DLOG << "[scraper]   trakt done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearchM("trakt", qt, std::move(results));
+        }
         // AniDB is anime-only — never queried for a library unless the admin
         // explicitly opted it in (include_anidb) or placed it anywhere in
         // this library's scraper priority order. Prevents cross-matching an
@@ -1246,6 +1315,19 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
             auto results = anidb_->searchMovies(qt, year);
             DLOG << "[scraper]   anidb done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
             timedSearchM("anidb", qt, std::move(results));
+        }
+        // See matchShow() — same AniList priority-list-only opt-in, no
+        // separate checkbox.
+        if (anilist_ && std::find(priority.begin(), priority.end(), "anilist") != priority.end()) {
+            DLOG << "[scraper]   querying anilist for movie \"" << qt << "\" year=" << year << '\n';
+            const auto t0 = std::chrono::steady_clock::now();
+            auto results = anilist_->searchMovies(qt, year);
+            if (results.empty() && year > 0) {
+                DLOG << "[scraper]   anilist: 0 results with year filter, retrying without year\n";
+                results = anilist_->searchMovies(qt, 0);
+            }
+            DLOG << "[scraper]   anilist done in " << elapsedMs(t0, std::chrono::steady_clock::now()) << "ms\n";
+            timedSearchM("anilist", qt, std::move(results));
         }
     }
 
@@ -1500,6 +1582,41 @@ AcceptResult ScraperManager::acceptCandidate(const std::string& candidate_id) {
                 }
             } else if (item_type == "movie") {
                 auto movie = tvdb_->fetchMovie(external_id, language);
+                if (movie) applyMovieMetadata(db_.get(), kairos_id, *movie);
+            }
+        }
+        if (source == "tvmaze" && tvmaze_ && item_type == "show") {
+            auto show = tvmaze_->fetchShow(external_id, language);
+            if (show) {
+                linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
+                linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
+                applyShowMetadata(db_.get(), kairos_id, *show);
+            }
+        }
+        if (source == "trakt" && trakt_) {
+            if (item_type == "show") {
+                auto show = trakt_->fetchShow(external_id, language);
+                if (show) {
+                    linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
+                    linkExternalId(item_type, kairos_id, "tmdb", show->tmdb_id, /*promote_to_primary=*/false);
+                    linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
+                    applyShowMetadata(db_.get(), kairos_id, *show);
+                }
+            } else if (item_type == "movie") {
+                auto movie = trakt_->fetchMovie(external_id, language);
+                if (movie) {
+                    linkExternalId(item_type, kairos_id, "tmdb", movie->tmdb_id, /*promote_to_primary=*/false);
+                    linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
+                    applyMovieMetadata(db_.get(), kairos_id, *movie);
+                }
+            }
+        }
+        if (source == "anilist" && anilist_) {
+            if (item_type == "show") {
+                auto show = anilist_->fetchShow(external_id, language);
+                if (show) applyShowMetadata(db_.get(), kairos_id, *show);
+            } else if (item_type == "movie") {
+                auto movie = anilist_->fetchMovie(external_id, language);
                 if (movie) applyMovieMetadata(db_.get(), kairos_id, *movie);
             }
         }
@@ -1801,6 +1918,41 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
                         any_success = true;
                     }
                 }
+            } else if (id.source == "tvmaze" && tvmaze_ && item_type == "show") {
+                auto show = tvmaze_->fetchShow(id.external_id, language);
+                if (show) {
+                    linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
+                    linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
+                    applyShowMetadata(db_.get(), kairos_id, *show);
+                    any_success = true;
+                }
+            } else if (id.source == "trakt" && trakt_) {
+                if (item_type == "show") {
+                    auto show = trakt_->fetchShow(id.external_id, language);
+                    if (show) {
+                        linkExternalId(item_type, kairos_id, "tvdb", show->tvdb_id, /*promote_to_primary=*/false);
+                        linkExternalId(item_type, kairos_id, "tmdb", show->tmdb_id, /*promote_to_primary=*/false);
+                        linkExternalId(item_type, kairos_id, "imdb", show->imdb_id, /*promote_to_primary=*/false);
+                        applyShowMetadata(db_.get(), kairos_id, *show);
+                        any_success = true;
+                    }
+                } else if (item_type == "movie") {
+                    auto movie = trakt_->fetchMovie(id.external_id, language);
+                    if (movie) {
+                        linkExternalId(item_type, kairos_id, "tmdb", movie->tmdb_id, /*promote_to_primary=*/false);
+                        linkExternalId(item_type, kairos_id, "imdb", movie->imdb_id, /*promote_to_primary=*/false);
+                        applyMovieMetadata(db_.get(), kairos_id, *movie);
+                        any_success = true;
+                    }
+                }
+            } else if (id.source == "anilist" && anilist_) {
+                if (item_type == "show") {
+                    auto show = anilist_->fetchShow(id.external_id, language);
+                    if (show) { applyShowMetadata(db_.get(), kairos_id, *show); any_success = true; }
+                } else if (item_type == "movie") {
+                    auto movie = anilist_->fetchMovie(id.external_id, language);
+                    if (movie) { applyMovieMetadata(db_.get(), kairos_id, *movie); any_success = true; }
+                }
             }
         } catch (...) {}
     }
@@ -1816,9 +1968,12 @@ ScraperManager::search(const std::string& query, const std::string& content_type
     auto addShow = [&](const std::string& source, const Show& s) {
         SearchResult r;
         r.source      = source;
-        if (source == "tmdb")       r.external_id = s.tmdb_id;
-        else if (source == "tvdb")  r.external_id = s.tvdb_id;
-        else if (source == "anidb") r.external_id = s.show_id;
+        if (source == "tmdb")        r.external_id = s.tmdb_id;
+        else if (source == "tvdb")   r.external_id = s.tvdb_id;
+        else if (source == "anidb")  r.external_id = s.show_id;
+        else if (source == "tvmaze") r.external_id = s.show_id;
+        else if (source == "trakt")   r.external_id = s.show_id;
+        else if (source == "anilist") r.external_id = s.show_id;
         r.title        = s.title;
         r.year         = s.year.has_value() ? s.year.value() : 0;
         r.overview     = s.overview;
@@ -1862,6 +2017,8 @@ ScraperManager::search(const std::string& query, const std::string& content_type
         if (source == "tmdb")       r.external_id = m.tmdb_id;
         else if (source == "tvdb")  r.external_id = m.imdb_id;
         else if (source == "anidb") r.external_id = m.movie_id;
+        else if (source == "trakt")   r.external_id = m.movie_id;
+        else if (source == "anilist") r.external_id = m.movie_id;
         r.title        = m.title;
         r.year         = m.year.has_value() ? m.year.value() : 0;
         r.overview     = m.overview;
@@ -1895,7 +2052,7 @@ ScraperManager::search(const std::string& query, const std::string& content_type
         if (!r.external_id.empty()) out.push_back(std::move(r));
     };
 
-    // Direct ID lookup: "tmdb:NNN", "tvdb:NNN", or "anidb:NNN"
+    // Direct ID lookup: "tmdb:NNN", "tvdb:NNN", "anidb:NNN", "tvmaze:NNN", "trakt:NNN", or "anilist:NNN"
     std::string id_source, id_value;
     if (query.starts_with("tmdb:") && query.size() > 5) {
         id_source = "tmdb"; id_value = query.substr(5);
@@ -1903,6 +2060,12 @@ ScraperManager::search(const std::string& query, const std::string& content_type
         id_source = "tvdb"; id_value = query.substr(5);
     } else if (query.starts_with("anidb:") && query.size() > 6) {
         id_source = "anidb"; id_value = query.substr(6);
+    } else if (query.starts_with("tvmaze:") && query.size() > 7) {
+        id_source = "tvmaze"; id_value = query.substr(7);
+    } else if (query.starts_with("trakt:") && query.size() > 6) {
+        id_source = "trakt"; id_value = query.substr(6);
+    } else if (query.starts_with("anilist:") && query.size() > 8) {
+        id_source = "anilist"; id_value = query.substr(8);
     }
     if (!id_value.empty()) {
         if (id_source == "tmdb" && tmdb_) {
@@ -1935,6 +2098,30 @@ ScraperManager::search(const std::string& query, const std::string& content_type
                 if (m) addMovie("anidb", *m);
             }
         }
+        if (id_source == "tvmaze" && tvmaze_ && (content_type == "show" || content_type.empty())) {
+            auto s = tvmaze_->fetchShow(id_value);
+            if (s) addShow("tvmaze", *s);
+        }
+        if (id_source == "trakt" && trakt_) {
+            if (content_type == "show" || content_type.empty()) {
+                auto s = trakt_->fetchShow(id_value);
+                if (s) addShow("trakt", *s);
+            }
+            if (content_type == "movie" || content_type.empty()) {
+                auto m = trakt_->fetchMovie(id_value);
+                if (m) addMovie("trakt", *m);
+            }
+        }
+        if (id_source == "anilist" && anilist_) {
+            if (content_type == "show" || content_type.empty()) {
+                auto s = anilist_->fetchShow(id_value);
+                if (s) addShow("anilist", *s);
+            }
+            if (content_type == "movie" || content_type.empty()) {
+                auto m = anilist_->fetchMovie(id_value);
+                if (m) addMovie("anilist", *m);
+            }
+        }
         return out;
     }
 
@@ -1951,6 +2138,8 @@ ScraperManager::search(const std::string& query, const std::string& content_type
     if (content_type == "show" || content_type.empty()) {
         if (tmdb_) for (auto& s : capped(tmdb_->searchShows(query))) addShow("tmdb", s);
         if (tvdb_) for (auto& s : capped(tvdb_->searchShows(query))) addShow("tvdb", s);
+        if (tvmaze_) for (auto& s : capped(tvmaze_->searchShows(query))) addShow("tvmaze", s);
+        if (trakt_) for (auto& s : capped(trakt_->searchShows(query))) addShow("trakt", s);
         // AniDB's title dump has no show/movie distinction (real type only
         // comes from the full per-title detail fetch), so an "all" search
         // queries it here only, not again in the movie branch below —
@@ -1959,12 +2148,18 @@ ScraperManager::search(const std::string& query, const std::string& content_type
         // default to "show".
         if (anidb_ && content_type != "movie")
             for (auto& s : capped(anidb_->searchShows(query))) addShow("anidb", s);
+        // Unlike AniDB, AniList's schema has a real show/movie `format`
+        // distinction (queried separately in AnilistScraper), so no
+        // double-count risk here — safe to query in both branches.
+        if (anilist_) for (auto& s : capped(anilist_->searchShows(query))) addShow("anilist", s);
     }
     if (content_type == "movie" || content_type.empty()) {
         if (tmdb_) for (auto& m : capped(tmdb_->searchMovies(query))) addMovie("tmdb", m);
         if (tvdb_) for (auto& m : capped(tvdb_->searchMovies(query))) addMovie("tvdb", m);
+        if (trakt_) for (auto& m : capped(trakt_->searchMovies(query))) addMovie("trakt", m);
         if (anidb_ && content_type == "movie")
             for (auto& m : capped(anidb_->searchMovies(query))) addMovie("anidb", m);
+        if (anilist_) for (auto& m : capped(anilist_->searchMovies(query))) addMovie("anilist", m);
     }
     return out;
 }
@@ -2040,9 +2235,12 @@ std::vector<SpecialCandidate> ScraperManager::scanSpecialsForShow(const std::str
     std::vector<SourceSpecials> per_source;
     for (const auto& [source, ext_id] : source_ids) {
         std::vector<Episode> eps;
-        if      (source == "tmdb"  && tmdb_)  eps = tmdb_->fetchEpisodes(ext_id);
-        else if (source == "tvdb"  && tvdb_)  eps = tvdb_->fetchEpisodes(ext_id);
-        else if (source == "anidb" && anidb_) eps = anidb_->fetchEpisodes(ext_id);
+        if      (source == "tmdb"   && tmdb_)   eps = tmdb_->fetchEpisodes(ext_id);
+        else if (source == "tvdb"   && tvdb_)   eps = tvdb_->fetchEpisodes(ext_id);
+        else if (source == "anidb"  && anidb_)  eps = anidb_->fetchEpisodes(ext_id);
+        else if (source == "tvmaze" && tvmaze_) eps = tvmaze_->fetchEpisodes(ext_id);
+        else if (source == "trakt"   && trakt_)   eps = trakt_->fetchEpisodes(ext_id);
+        else if (source == "anilist" && anilist_) eps = anilist_->fetchEpisodes(ext_id);
         else continue;
 
         std::vector<Episode> specials;

@@ -182,7 +182,7 @@ export interface Library {
   external_lib_id:     string
   display_name:        string
   library_type:        'show' | 'movie' | 'mixed' | 'music' | 'photo'
-  preferred_scraper:   '' | 'tmdb' | 'tvdb' | 'anidb'
+  preferred_scraper:   '' | ScraperSource
   preferred_language:  string
   // AniDB is anime-only — never queried for a library unless explicitly opted
   // in here (or preferred_scraper is set to 'anidb' outright).
@@ -695,7 +695,7 @@ export interface SpecialCandidate {
   special_overview: string
   special_air_date: string
   special_thumb:    string
-  source:           'tmdb' | 'tvdb' | 'anidb'
+  source:           ScraperSource
   score:            number   // 0-1
   accepted:         -1 | 0 | 1
   movie_id:         string
@@ -966,7 +966,7 @@ export interface MediaHeroItem {
 
 // ── Scraper infrastructure ────────────────────────────────────────────────────
 
-export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb'
+export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist'
 
 export interface ScraperConfig {
   source:          ScraperSource

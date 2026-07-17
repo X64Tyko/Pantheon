@@ -386,7 +386,7 @@ const applyBuffer = () => {
     }
   }
 
-  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb', field: string, value: string | boolean | number) => {
+  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist', field: string, value: string | boolean | number) => {
     if (!scraperSettings) return
     setScraperSettings(prev => prev ? {
       ...prev,
@@ -429,9 +429,12 @@ const applyBuffer = () => {
     pollMatchStatus()
   }
 
-  const tmdb  = scraperSettings?.configs.find(c => c.source === 'tmdb')
-  const tvdb  = scraperSettings?.configs.find(c => c.source === 'tvdb')
-  const anidb = scraperSettings?.configs.find(c => c.source === 'anidb')
+  const tmdb   = scraperSettings?.configs.find(c => c.source === 'tmdb')
+  const tvdb   = scraperSettings?.configs.find(c => c.source === 'tvdb')
+  const anidb  = scraperSettings?.configs.find(c => c.source === 'anidb')
+  const tvmaze = scraperSettings?.configs.find(c => c.source === 'tvmaze')
+  const trakt   = scraperSettings?.configs.find(c => c.source === 'trakt')
+  const anilist = scraperSettings?.configs.find(c => c.source === 'anilist')
 
   return (
     <div style={{ maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -641,6 +644,53 @@ const applyBuffer = () => {
             </SettingRow>
           </Section>
 
+          <Section title="TVMaze">
+            <SettingRow label="Enabled" hint="Free, unauthenticated TV show database — no API key required. Shows only; TVMaze doesn't catalogue movies.">
+              <Toggle
+                id="tvmaze_enabled"
+                checked={tvmaze?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('tvmaze', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference. TVMaze's data is predominantly English.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                style={{ ...inputStyle, width: 80 }}
+                value={tvmaze?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('tvmaze', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="Trakt">
+            <SettingRow label="Enabled" hint="Metadata source for both movies and shows, keyed by Trakt's own IDs plus cross-references to TMDB/IMDB.">
+              <Toggle
+                id="trakt_enabled"
+                checked={trakt?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('trakt', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Client ID" hint="Your registered Trakt app's Client ID. Register at trakt.tv/oauth/applications.">
+              <input
+                style={{ ...inputStyle, width: 280 }}
+                type="password"
+                placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                value={trakt?.api_key ?? ''}
+                onChange={e => updateScraperConfig('trakt', 'api_key', e.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                style={{ ...inputStyle, width: 80 }}
+                value={trakt?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('trakt', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
           <Section title="AniDB">
             <SettingRow label="Enabled" hint="Anime metadata source for shows and movies via the AniDB HTTP API.">
               <Toggle
@@ -675,6 +725,25 @@ const applyBuffer = () => {
                 checked={scraperSettings?.anidb_download_posters ?? false}
                 disabled={!scraperSettings}
                 onChange={v => updateAnidbDownloadPosters(v)}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="AniList">
+            <SettingRow label="Enabled" hint="Anime/manga metadata source via AniList's free public GraphQL API — no API key required. Unlike AniDB, there's no separate 'include' checkbox: once enabled here, add &quot;anilist&quot; to a library's scraper priority order (Sources page) to actually query it for that library.">
+              <Toggle
+                id="anilist_enabled"
+                checked={anilist?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('anilist', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                style={{ ...inputStyle, width: 80 }}
+                value={anilist?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('anilist', 'language_weight', parseFloat(e.target.value))}
               />
             </SettingRow>
           </Section>

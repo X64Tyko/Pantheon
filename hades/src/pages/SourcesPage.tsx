@@ -351,11 +351,11 @@ export default observer(function SourcesPage() {
 
   // ── Add-library form ───────────────────────────────────────────────────────
   const [showAddLib, setShowAddLib] = useState(false)
-  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false })
+  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist', preferred_language: '', include_anidb: false })
 
   // ── Library edit state ─────────────────────────────────────────────────────
   const [editingLib, setEditingLib] = useState<string | null>(null)
-  const [editForm, setEditForm]     = useState({ display_name: '', library_type: 'show' as Library['library_type'], preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false, show_on_home: true, skip_scraping: false })
+  const [editForm, setEditForm]     = useState({ display_name: '', library_type: 'show' as Library['library_type'], preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist', preferred_language: '', include_anidb: false, show_on_home: true, skip_scraping: false })
 
   // ── Local folder browser ───────────────────────────────────────────────────
   const [localBrowsePath,    setLocalBrowsePath]   = useState('')
@@ -381,7 +381,7 @@ export default observer(function SourcesPage() {
     setLocalBrowsePath(''); setLocalEntries([])
   }
 
-  const openEditLib = (lib: { library_id: string; display_name: string; library_type: Library['library_type']; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string; include_anidb: boolean; show_on_home: boolean; skip_scraping: boolean }) => {
+  const openEditLib = (lib: { library_id: string; display_name: string; library_type: Library['library_type']; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist'; preferred_language: string; include_anidb: boolean; show_on_home: boolean; skip_scraping: boolean }) => {
     setEditingLib(lib.library_id)
     setEditForm({ display_name: lib.display_name, library_type: lib.library_type, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '', include_anidb: lib.include_anidb, show_on_home: lib.show_on_home, skip_scraping: lib.skip_scraping })
     setConfirmLib(null)

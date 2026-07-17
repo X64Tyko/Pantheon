@@ -38,8 +38,11 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             cj["language"] = c.language;
             cj["enabled"]  = c.enabled;
             cj["language_weight"] = c.language_weight;
-            if (c.source == "tvdb")  cj["pin"] = c.pin;
-            if (c.source == "anidb") cj["note"] = "api_key is your registered AniDB client name";
+            if (c.source == "tvdb")   cj["pin"] = c.pin;
+            if (c.source == "anidb")  cj["note"] = "api_key is your registered AniDB client name";
+            if (c.source == "tvmaze") cj["note"] = "Free public API — no API key required";
+            if (c.source == "trakt")  cj["note"] = "api_key is your Trakt app's Client ID (register at trakt.tv/oauth/applications)";
+            if (c.source == "anilist") cj["note"] = "Free public API — no API key required. Anime/manga only — add \"anilist\" to a library's scraper priority order (Sources) to enable it there; no separate checkbox.";
             out["configs"].push_back(cj);
         }
         ok(res, out);
