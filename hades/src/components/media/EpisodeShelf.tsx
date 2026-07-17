@@ -5,6 +5,7 @@ import { useFocusable } from '../../nav/useFocusable'
 import { useDebounce } from '../../hooks/useDebounce'
 import { mediaUrl } from '../../api/client'
 import type { Episode } from '../../api/types'
+import styles from './EpisodeShelf.module.css'
 
 // Debounces both directions of the expand/collapse trigger — sweeping the
 // mouse across several collapsed season tiles on the way to somewhere else
@@ -44,7 +45,7 @@ export function EpisodeShelf({ seasonNumber, seasonName, episodes, onEpisodeHove
   return (
     <div
       ref={containerRef}
-      style={{ position: 'relative', marginBottom: 20 }}
+      className={styles.container}
       onMouseEnter={() => { setHovered(true); setShowArrows(true) }}
       onMouseLeave={() => { setHovered(false); setShowArrows(false); onEpisodeHoverEnd?.() }}
     >
@@ -58,18 +59,10 @@ export function EpisodeShelf({ seasonNumber, seasonName, episodes, onEpisodeHove
             the row stays mounted (so focus/D-pad nav can always reach it,
             and there's something in the DOM to actually transition) and just
             collapses to zero visual size instead of snapping in/out. */}
-        <div style={{
-          display: 'grid',
-          gridTemplateRows: expanded ? '1fr' : '0fr',
-          transition: 'grid-template-rows .22s cubic-bezier(0.22,1,0.36,1)',
-          marginTop: expanded ? 10 : 0,
-        }}>
-          <div style={{ overflow: 'hidden', minHeight: 0 }}>
+        <div className={`${styles.animateRow} ${expanded ? styles.animateRowExpanded : ''}`}>
+          <div className={styles.animateRowInner}>
             {showArrows && episodes.length > 3 && <EpArrow side="left" onClick={() => scroll('left')} />}
-            <div ref={scrollRef} style={{
-              display: 'flex', gap: 10, overflowX: 'auto', overflowY: 'hidden',
-              paddingBottom: 4, scrollbarWidth: 'none',
-            }}>
+            <div ref={scrollRef} className={styles.scrollRow}>
               {episodes.map(ep => (
                 <EpisodeTile key={ep.episode_id} episode={ep} onHover={() => onEpisodeHover?.(ep)} />
               ))}
@@ -92,25 +85,11 @@ function SeasonHeaderTile({ focusKey, title, count, expanded }: { focusKey: stri
       ref={ref} data-tv-focused={focused}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-        padding: '10px 14px', borderRadius: 8,
-        border: `1px solid ${active ? 'var(--hds-line-s)' : 'var(--hds-line)'}`,
-        background: active ? 'var(--hds-bg-2)' : 'transparent',
-        transition: 'border-color .12s, background .12s',
-      }}
+      className={`${styles.seasonHeader} ${active ? styles.seasonHeaderActive : ''}`}
     >
-      <span style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-        color: 'var(--hds-txt)', letterSpacing: '0.02em',
-      }}>{title}</span>
-      <span style={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
-      }}>{count} episode{count === 1 ? '' : 's'}</span>
-      <span style={{
-        marginLeft: 'auto', color: 'var(--hds-txt-3)', fontSize: 11,
-        transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s',
-      }}>›</span>
+      <span className={styles.seasonTitle}>{title}</span>
+      <span className={styles.seasonCount}>{count} episode{count === 1 ? '' : 's'}</span>
+      <span className={`${styles.chevron} ${expanded ? styles.chevronExpanded : ''}`}>›</span>
     </div>
   )
 }
@@ -139,74 +118,39 @@ function EpisodeTile({ episode, onHover }: { episode: Episode; onHover?: () => v
       title={tooltip}
       onMouseEnter={() => { setHovered(true); onHover?.() }}
       onMouseLeave={() => setHovered(false)}
-      style={{
-        flexShrink: 0, width: 220, borderRadius: 8, overflow: 'hidden', cursor: 'pointer',
-        border: `1px solid ${hovered ? 'var(--hds-line-s)' : 'var(--hds-line)'}`,
-        background: 'var(--hds-bg-2)', transition: 'border-color .12s, transform .12s',
-        transform: hovered ? 'translateY(-2px)' : 'none',
-      }}
+      className={`${styles.episodeTile} ${hovered ? styles.episodeTileHovered : ''}`}
       onClick={go}
     >
-      <div style={{
-        aspectRatio: '16/9', width: '100%', position: 'relative', overflow: 'hidden',
-        background: 'linear-gradient(135deg, oklch(0.18 0.03 287), oklch(0.13 0.02 285))',
-      }}>
+      <div className={styles.episodeThumbWrap}>
         {showImg ? (
           <img
             src={mediaUrl(`/api/episodes/${episode.episode_id}/thumb`)}
             alt={episode.title}
             onError={() => setImgErr(true)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            className={styles.episodeImg}
           />
         ) : (
-          <span style={{
-            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)',
-          }}>{code}</span>
+          <span className={styles.placeholderCode}>{code}</span>
         )}
         {hovered && (
-          <span style={{
-            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'oklch(0 0 0 / 0.35)',
-          }}>
-            <span style={{
-              width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'oklch(1 0 0 / 0.9)', color: 'oklch(0.15 0.02 285)',
-            }}>
+          <span className={styles.playOverlay}>
+            <span className={styles.playIconCircle}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
             </span>
           </span>
         )}
-        <span style={{
-          position: 'absolute', top: 6, left: 6,
-          background: 'oklch(0 0 0 / 0.6)', borderRadius: 4, padding: '2px 6px',
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'oklch(0.9 0.01 285)',
-          letterSpacing: '0.04em',
-        }}>{code}</span>
+        <span className={styles.codeBadge}>{code}</span>
         {episode.watched && (
-          <span style={{
-            position: 'absolute', top: 6, right: 6,
-            background: 'oklch(0 0 0 / 0.6)', borderRadius: 4, padding: '2px 6px',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-violet)',
-          }}>✓{episode.view_count && episode.view_count > 1 ? ` ${episode.view_count}` : ''}</span>
+          <span className={styles.watchedBadge}>✓{episode.view_count && episode.view_count > 1 ? ` ${episode.view_count}` : ''}</span>
         )}
         {episode.duration_ms > 0 && (
-          <span style={{
-            position: 'absolute', bottom: 6, right: 6,
-            background: 'oklch(0 0 0 / 0.6)', borderRadius: 4, padding: '2px 6px',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'oklch(0.9 0.01 285)',
-          }}>{Math.round(episode.duration_ms / 60000)}m</span>
+          <span className={styles.durationBadge}>{Math.round(episode.duration_ms / 60000)}m</span>
         )}
       </div>
-      <div style={{ padding: '7px 9px 9px' }}>
-        <div style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 11, fontWeight: 600,
-          color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>{episode.title || code}</div>
+      <div className={styles.episodeInfo}>
+        <div className={styles.episodeTitle}>{episode.title || code}</div>
         {episode.air_date && (
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 2,
-          }}>{episode.air_date}</div>
+          <div className={styles.episodeAirDate}>{episode.air_date}</div>
         )}
       </div>
     </div>
@@ -215,14 +159,10 @@ function EpisodeTile({ episode, onHover }: { episode: Episode; onHover?: () => v
 
 function EpArrow({ side, onClick }: { side: 'left' | 'right'; onClick: () => void }) {
   return (
-    <button onClick={onClick} style={{
-      position: 'absolute', top: 66, transform: 'translateY(-50%)',
-      left: side === 'left' ? -6 : undefined, right: side === 'right' ? -6 : undefined,
-      zIndex: 2, width: 28, height: 28, borderRadius: '50%', cursor: 'pointer',
-      background: 'var(--hds-glass)', backdropFilter: 'blur(8px)',
-      border: '1px solid var(--hds-glass-border)', color: 'var(--hds-txt)', fontSize: 16,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
+    <button
+      onClick={onClick}
+      className={`${styles.arrowButton} ${side === 'left' ? styles.arrowLeft : styles.arrowRight}`}
+    >
       {side === 'left' ? '‹' : '›'}
     </button>
   )

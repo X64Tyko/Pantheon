@@ -1,0 +1,196 @@
+.loadingScreen {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loadingSkeleton {
+  width: 300px;
+  height: 450px;
+  border-radius: var(--hds-radius-skeleton);
+}
+
+.screen {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  transition: height .3s ease;
+}
+
+.backdropFallback {
+  background: linear-gradient(135deg,
+    var(--hds-backdrop-fallback-1) 0%,
+    var(--hds-backdrop-fallback-2) 50%,
+    var(--hds-backdrop-fallback-3) 100%);
+}
+
+.backdropScrimH {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, oklch(0 0 0 / 0.8) 0%, oklch(0 0 0 / 0.3) 55%, transparent 100%);
+}
+
+.backdropScrimV {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, var(--hds-bg) 0%, transparent 50%);
+}
+
+.scrollContainer {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.heroSpacer {
+  /* mirrors TvLibraryDetail.tsx's HERO_HEIGHT_CSS ('max(52vh, 460px)') minus
+     HERO_OVERLAP (60px) — both are fixed module constants, not runtime
+     state, so this can be a static rule rather than an inline style. If
+     either constant ever changes, update both places. */
+  height: calc(max(52vh, 460px) - 60px);
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 40px 48px;
+}
+
+.headerRow {
+  display: flex;
+  gap: 40px;
+  align-items: flex-end;
+}
+
+.poster {
+  width: 220px;
+  height: 330px;
+  border-radius: var(--hds-radius-skeleton);
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--hds-bg-3);
+  box-shadow: 0 12px 40px oklch(0 0 0 / 0.55);
+}
+
+.posterImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.infoCol {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: var(--hds-space-3);
+}
+
+.heroTitle {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-hero-title);
+  color: var(--hds-txt-hero);
+  margin: 0 0 var(--hds-space-4);
+  line-height: 1.1;
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: var(--hds-space-5);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-body);
+  color: var(--hds-txt-2);
+}
+
+.ratingText {
+  color: var(--hds-gold);
+}
+
+.contentTypeText {
+  opacity: 0.6;
+}
+
+.genreRow {
+  display: flex;
+  gap: var(--hds-space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--hds-space-5);
+}
+
+.genreChip {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  padding: var(--hds-space-1) var(--hds-space-4);
+  border-radius: var(--hds-radius-lg);
+  background: var(--hds-glass);
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt-2);
+}
+
+.overview {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-body);
+  line-height: 1.7;
+  color: oklch(0.8 0.01 285);
+  margin: 0 0 var(--hds-space-7);
+  max-width: 760px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.buttonRow {
+  display: flex;
+  gap: 14px;
+}
+
+.playButton {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  cursor: pointer;
+  padding: var(--hds-space-4) var(--hds-space-7);
+  border-radius: var(--hds-radius-md);
+  border: none;
+  background: var(--hds-gold);
+  color: oklch(0.15 0.02 90);
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-title);
+  font-weight: 700;
+}
+
+.backButtonDetail {
+  padding: var(--hds-space-4) var(--hds-space-7);
+  border-radius: var(--hds-radius-md);
+  cursor: pointer;
+  border: 1px solid var(--hds-glass-border);
+  background: var(--hds-glass);
+  color: var(--hds-txt-hero);
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-title);
+  font-weight: 600;
+}
+
+.episodesSection {
+  padding: var(--hds-space-3) 48px 64px;
+}
+
+.notFound {
+  padding: 48px;
+  text-align: center;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+}

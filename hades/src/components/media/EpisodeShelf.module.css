@@ -1,0 +1,220 @@
+.container {
+  position: relative;
+  margin-bottom: var(--hds-space-6);
+}
+
+.animateRow {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .22s cubic-bezier(0.22, 1, 0.36, 1);
+  margin-top: 0;
+}
+
+.animateRowExpanded {
+  grid-template-rows: 1fr;
+  margin-top: var(--hds-space-3);
+}
+
+.animateRowInner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.scrollRow {
+  display: flex;
+  gap: var(--hds-space-tile-gap);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: var(--hds-space-1);
+  scrollbar-width: none;
+}
+
+.seasonHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  cursor: pointer;
+  padding: var(--hds-space-tile-gap) var(--hds-space-4);
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  transition: border-color .12s, background .12s;
+}
+
+.seasonHeaderActive {
+  border-color: var(--hds-line-s);
+  background: var(--hds-bg-2);
+}
+
+.seasonTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-meta);
+  font-weight: 600;
+  color: var(--hds-txt);
+  letter-spacing: 0.02em;
+}
+
+.seasonCount {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+}
+
+.chevron {
+  margin-left: auto;
+  color: var(--hds-txt-3);
+  font-size: var(--hds-font-size-tv-small-title);
+  transform: none;
+  transition: transform .15s;
+}
+
+.chevronExpanded {
+  transform: rotate(90deg);
+}
+
+.episodeTile {
+  flex-shrink: 0;
+  width: 220px;
+  border-radius: var(--hds-radius-tile);
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-2);
+  transition: border-color .12s, transform .12s;
+  transform: none;
+}
+
+.episodeTileHovered {
+  border-color: var(--hds-line-s);
+  transform: translateY(-2px);
+}
+
+.episodeThumbWrap {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--hds-poster-bg-1), var(--hds-poster-bg-2));
+}
+
+.episodeImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.placeholderCode {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-txt-3);
+}
+
+.playOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hds-scrim-light);
+}
+
+.playIconCircle {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: oklch(1 0 0 / 0.9);
+  color: oklch(0.15 0.02 285);
+}
+
+.codeBadge {
+  position: absolute;
+  top: var(--hds-space-2);
+  left: var(--hds-space-2);
+  background: var(--hds-scrim);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px var(--hds-space-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: oklch(0.9 0.01 285);
+  letter-spacing: 0.04em;
+}
+
+.watchedBadge {
+  position: absolute;
+  top: var(--hds-space-2);
+  right: var(--hds-space-2);
+  background: var(--hds-scrim);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px var(--hds-space-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-violet);
+}
+
+.durationBadge {
+  position: absolute;
+  bottom: var(--hds-space-2);
+  right: var(--hds-space-2);
+  background: var(--hds-scrim);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px var(--hds-space-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: oklch(0.9 0.01 285);
+}
+
+.episodeInfo {
+  padding: 7px 9px 9px;
+}
+
+.episodeTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 600;
+  color: var(--hds-txt);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.episodeAirDate {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+  margin-top: 2px;
+}
+
+.arrowButton {
+  position: absolute;
+  top: 66px;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--hds-glass);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt);
+  font-size: var(--hds-font-size-tv-title);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arrowLeft {
+  left: -6px;
+}
+
+.arrowRight {
+  right: -6px;
+}

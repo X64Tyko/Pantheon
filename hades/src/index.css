@@ -28,6 +28,70 @@
   /* ── Glass surface ───────────────────────────────────────────────────────── */
   --hds-glass:        oklch(0.14 0.02 285 / 0.82);
   --hds-glass-border: oklch(0.35 0.04 285 / 0.5);
+
+  /* ── Extended tokens (spacing/radius/shadow/typography) ──────────────────────
+     Added as part of the inline-style extraction pass — hades/scripts/
+     generate-tv-tokens.mjs parses every --hds-* declaration in this file into
+     hades/public/tv-tokens.json, so native clients (and eventually Roku) can
+     match more than just color. Values are additive here; nothing existing
+     was renumbered. Only atomic, reusable values live here — composite CSS
+     (multi-layer shadows, gradients) stays as real CSS in each component's
+     .module.css, built from these tokens rather than decomposed into more
+     of them. */
+  --hds-violet-deep: oklch(0.55 0.14 292); /* darker/richer variant of --hds-violet, used for glows/overlays — matches the value .hds-season-btn already used inline before this pass */
+  --hds-violet-deep-wash: oklch(0.55 0.14 292 / 0.2); /* active-state background wash, e.g. filter toggle */
+  --hds-scrim:        oklch(0 0 0 / 0.6);  /* opaque-black overlay for badges/text-legibility scrims on top of images */
+  --hds-scrim-light:  oklch(0 0 0 / 0.35); /* lighter scrim, e.g. hover play-icon overlay */
+  --hds-scrim-heavy:  oklch(0 0 0 / 0.65); /* full-screen overlay backdrop, e.g. filter panel */
+  --hds-poster-bg-1:   oklch(0.18 0.03 287); /* poster/thumbnail placeholder gradient, missing-art tiles */
+  --hds-poster-bg-2:   oklch(0.13 0.02 285);
+  --hds-txt-on-gold:   oklch(0.2 0.04 70);   /* text color used on top of gold-filled controls (active chips) */
+  --hds-gold-glow:     oklch(0.83 0.13 84 / 0.3); /* gold drop-shadow glow on active gold-filled controls */
+  --hds-txt-hero:      #fff; /* text painted directly over a hero backdrop image — deliberately pure white, distinct from --hds-txt's off-white */
+  --hds-backdrop-fallback-1: oklch(0.12 0.04 292); /* Detail hero backdrop gradient when there's no backdrop image */
+  --hds-backdrop-fallback-2: oklch(0.18 0.06 270);
+  --hds-backdrop-fallback-3: oklch(0.14 0.03 280);
+
+  --hds-radius-xs:   4px;  /* smallest overlay badges (episode code/watched/duration pills) */
+  --hds-radius-sm:   6px;  /* small badges/pills */
+  --hds-radius-tile: 8px;  /* episode/season tiles */
+  --hds-radius-md:   10px; /* cards/tiles */
+  --hds-radius-skeleton: 12px; /* loading-skeleton placeholders */
+  --hds-radius-chip-sm: 12px; /* small pill chips, e.g. hero genre chips */
+  --hds-radius-lg:   14px; /* panels */
+  --hds-radius-pill: 20px; /* fully-rounded chip/pill controls */
+
+  --hds-space-1: 4px;
+  --hds-space-2: 6px;
+  --hds-space-3: 8px;
+  --hds-space-4: 12px;
+  --hds-space-5: 16px;
+  --hds-space-6: 20px;
+  --hds-space-7: 24px;
+  --hds-space-tile-gap: 10px; /* episode tile row gap, season header padding — doesn't fall on the space-1..7 scale */
+  --hds-tile-width-shelf: 108px; /* Home shelf card / end-tile width */
+
+  --hds-font-display:    'Chakra Petch', sans-serif;  /* headings/titles */
+  --hds-font-mono-brand: 'JetBrains Mono', monospace; /* meta text/badges — distinct from the base UI's ui-monospace stack */
+
+  --hds-font-size-tv-meta:      13px; /* card meta line, rating badges — 10-foot-scale, larger than desktop's text-sm */
+  --hds-font-size-tv-title:     16px; /* card titles */
+  --hds-font-size-tv-monogram:  32px; /* placeholder-thumbnail initials */
+  --hds-font-size-tv-heading:   17px; /* section headings, e.g. "Live Guide" */
+  --hds-font-size-tv-badge:       9px; /* smallest overlay badges (episode code/watched/duration) */
+  --hds-font-size-tv-caption:    10px; /* small caption text, e.g. episode count */
+  --hds-font-size-tv-small-title: 11px; /* compact tile titles (episode tiles), chevrons */
+  --hds-font-size-tv-h1: 24px; /* screen-level titles, e.g. "Library" */
+  --hds-font-size-tv-h2: 20px; /* panel/overlay titles, e.g. "Filters" */
+  --hds-font-size-tv-label: 12px; /* uppercase section labels, e.g. filter group headers */
+  --hds-font-size-tv-input: 14px; /* text-input fields */
+  --hds-font-size-tv-hero-title: 40px; /* Detail screen's large hero title */
+  --hds-font-size-tv-body: 15px; /* body copy, e.g. overview paragraphs and meta rows */
+
+  --hds-control-height: 38px; /* standard height for compact TV controls: back button, search field, filter toggle */
+
+  --hds-transition-fast: 0.15s;
+  --hds-transition-med:  0.2s;
 }
 
 /* ─── HADES animations ─────────────────────────────────────────────────────── */

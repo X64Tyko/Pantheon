@@ -10,6 +10,7 @@ import { useFocusable } from '../nav/useFocusable'
 import { useNavBack } from '../nav/back'
 import { TvMediaGrid } from './TvMediaGrid'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
+import styles from './TvLibrary.module.css'
 
 const TV_LIBRARY_PATH = '/tv/library'
 
@@ -66,34 +67,28 @@ export const TvLibrary = observer(function TvLibrary() {
   }, [restoreFocusKey, store.loading])
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '24px 48px 16px', display: 'flex', flexDirection: 'column', gap: 14, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+    <div className={styles.screen}>
+      <div className={styles.header}>
+        <div className={styles.headerRow}>
           <TvBackButton onClick={() => navigate('/tv')} forceFocus={!restoreFocusKey} />
-          <h1 style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 24, fontWeight: 700,
-            color: 'var(--hds-txt)', margin: 0, letterSpacing: '-0.02em',
-          }}>Library</h1>
+          <h1 className={styles.title}>Library</h1>
           <TvSearchField value={rawQ} onChange={setRawQ} />
           <TvFilterToggle active={isFilterOpen} onClick={() => setIsFilterOpen(!isFilterOpen)} />
         </div>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      <div className={styles.gridArea}>
         <TvFilterOverlay
           open={isFilterOpen}
           onClose={() => setIsFilterOpen(false)}
           genres={genres}
         />
 
-        <div style={{ height: '100%', overflowY: 'auto' }} className="scrollbar-dark">
+        <div className={`${styles.scrollArea} scrollbar-dark`}>
         {store.loading ? (
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-            gap: 24, padding: '8px 48px',
-          }}>
+          <div className={styles.skeletonGrid}>
             {Array.from({ length: 12 }, (_, i) => (
-              <div key={i} className="hds-skeleton" style={{ aspectRatio: '2/3', borderRadius: 12 }} />
+              <div key={i} className={`hds-skeleton ${styles.skeletonTile}`} />
             ))}
           </div>
         ) : (
@@ -126,11 +121,7 @@ function TvBackButton({ onClick, forceFocus = true }: { onClick: () => void; for
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        width: 38, height: 38, borderRadius: '50%', cursor: 'pointer', flexShrink: 0,
-        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}
+      className={styles.backButton}
     >
       <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 2L4 7l5 5" />
@@ -149,19 +140,12 @@ function TvSearchField({ value, onChange }: { value: string; onChange: (v: strin
     onEnterPress: () => (ref.current?.querySelector('input') as HTMLInputElement | null)?.focus(),
   })
   return (
-    <div ref={ref} data-tv-focused={focused} style={{
-      flex: 1, maxWidth: 380,
-      border: `1px solid ${focused ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-      borderRadius: 10, background: 'var(--hds-bg-2)',
-    }}>
+    <div ref={ref} data-tv-focused={focused} className={`${styles.searchField} ${focused ? styles.searchFieldFocused : ''}`}>
       <input
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder="Search library…"
-        style={{
-          width: '100%', height: 38, padding: '0 16px', border: 'none', background: 'transparent',
-          color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 14, outline: 'none',
-        }}
+        className={styles.searchInput}
       />
     </div>
   )
@@ -176,14 +160,7 @@ function TvFilterToggle({ active, onClick }: { active: boolean; onClick: () => v
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-        padding: '0 16px', height: 38, borderRadius: 10,
-        border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-        background: active ? 'oklch(0.55 0.14 292 / 0.2)' : 'var(--hds-bg-2)',
-        color: active ? 'var(--hds-violet)' : 'var(--hds-txt)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 13,
-      }}
+      className={`${styles.filterToggle} ${active ? styles.filterToggleActive : ''}`}
     >
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
         <path d="M1.5 3.5h11M3.5 7h7M5.5 10.5h3" strokeLinecap="round" />
@@ -208,44 +185,25 @@ const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genre
 
   return (
     <FocusContext.Provider value={focusKey}>
-    <div
-      ref={ref}
-      style={{
-        position: 'absolute', inset: 0, zIndex: 10,
-        background: 'oklch(0 0 0 / 0.65)', backdropFilter: 'blur(12px)',
-        display: 'flex', flexDirection: 'column',
-      }}
-    >
-      <div style={{
-        padding: '32px 48px', display: 'flex', flexDirection: 'column', gap: 24,
-        maxHeight: '100%', overflowY: 'auto',
-      }} className="scrollbar-dark">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 20, fontWeight: 700,
-            color: 'var(--hds-txt)', margin: 0,
-          }}>Filters</h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none', border: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer',
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 13,
-            }}
-          >Close (Back)</button>
+    <div ref={ref} className={styles.filterOverlay}>
+      <div className={`${styles.filterOverlayInner} scrollbar-dark`}>
+        <div className={styles.filterHeaderRow}>
+          <h2 className={styles.filterTitle}>Filters</h2>
+          <button onClick={onClose} className={styles.closeButton}>Close (Back)</button>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--hds-txt-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Content Type</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div className={styles.filterSection}>
+          <div className={styles.filterSectionLabel}>Content Type</div>
+          <div className={styles.chipRow}>
             <GenreChip label="All Types" active={store.contentType === 'all'} onClick={() => store.setContentType('all')} />
             <GenreChip label="Shows"     active={store.contentType === 'show'} onClick={() => store.setContentType('show')} />
             <GenreChip label="Movies"    active={store.contentType === 'movie'} onClick={() => store.setContentType('movie')} />
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--hds-txt-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Genres</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div className={styles.filterSection}>
+          <div className={styles.filterSectionLabel}>Genres</div>
+          <div className={styles.chipRow}>
             <GenreChip label="All Genres" active={!store.filterGenre} onClick={() => store.setFilterGenre('')} />
             {genres.map(g => (
               <GenreChip key={g} label={g} active={store.filterGenre === g} onClick={() => store.setFilterGenre(g)} />
@@ -266,16 +224,7 @@ function GenreChip({ label, active, onClick }: { label: string; active: boolean;
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        padding: '8px 16px', borderRadius: 20, cursor: 'pointer',
-        border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-        background: active ? 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))' : 'var(--hds-bg-2)',
-        color: active ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-2)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 13, whiteSpace: 'nowrap',
-        fontWeight: active ? 700 : 400,
-        boxShadow: active ? '0 4px 12px -2px oklch(0.83 0.13 84 / 0.3)' : 'none',
-        transition: 'all 0.15s',
-      }}
+      className={`${styles.chip} ${active ? styles.chipActive : ''}`}
     >{label}</button>
   )
 }

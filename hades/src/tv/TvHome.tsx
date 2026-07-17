@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FocusContext, setFocus, doesFocusableExist } from '@noriginmedia/norigin-spatial-navigation'
 import { useCastSession } from '../cast/useCastSession'
@@ -12,6 +12,7 @@ import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
 import { TvGuideSection } from './TvGuideSection'
 import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
+import styles from './TvHome.module.css'
 
 const HOME_FOCUS_KEY = 'TV_HOME'
 const TV_HOME_PATH = '/tv'
@@ -203,10 +204,10 @@ export function TvHome() {
 
   return (
     <FocusContext.Provider value={homeFocusKey}>
-    <div ref={homeRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ flexShrink: 0 }}>
+    <div ref={homeRef} className={styles.homeContainer}>
+      <div className={styles.heroWrap}>
         {loading ? (
-          <div className="hds-skeleton" style={{ height: '24vh', minHeight: 190 }} />
+          <div className={`hds-skeleton ${styles.heroSkeleton}`} />
         ) : heroItem ? (
           <TvHeroPanel
             item={heroItem}
@@ -266,25 +267,18 @@ export function TvHome() {
             onDotClick={i => { startRotation(); goToHero(i) }}
           />
         ) : (
-          <div style={{
-            height: '24vh', minHeight: 190, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'linear-gradient(135deg, oklch(0.12 0.04 292), oklch(0.16 0.03 280))',
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, color: 'var(--hds-txt-3)',
-          }}>No content yet</div>
+          <div className={styles.heroEmpty}>No content yet</div>
         )}
       </div>
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          padding: '6px 48px 0', flexShrink: 0,
-        }}>
+        <div className={styles.quickActionRow}>
           <LibraryButton onClick={() => navigate('/tv/library')} />
           <GuideButton onClick={() => guideRef.current?.scrollIntoView({ behavior: 'smooth' })} />
         </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} className="scrollbar-dark">
+      <div className={`${styles.shelvesScroll} scrollbar-dark`}>
         {loading ? (
-          <div style={{ padding: '24px 48px', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>Loading…</div>
+          <div className={styles.loadingText}>Loading…</div>
         ) : (
           <>
             {continueWatching.length > 0 && (
@@ -345,7 +339,7 @@ export function TvHome() {
               />
             )}
 
-            <div ref={guideRef} style={{ padding: '8px 0 64px' }}>
+            <div ref={guideRef} className={styles.guideWrap}>
               <TvGuideSection />
             </div>
           </>
@@ -362,12 +356,7 @@ function LibraryButton({ onClick }: { onClick: () => void }) {
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-        padding: '8px 20px', borderRadius: 10,
-        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
-      }}
+      className={styles.quickActionButton}
     >
       <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
         <rect x="1.5" y="1.5" width="4.5" height="11" rx="1" /><rect x="8" y="1.5" width="4.5" height="11" rx="1" />
@@ -383,12 +372,7 @@ function GuideButton({ onClick }: { onClick: () => void }) {
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-        padding: '8px 20px', borderRadius: 10,
-        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
-      }}
+      className={styles.quickActionButton}
     >
       <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
         <rect x="1.5" y="2.5" width="11" height="9" rx="1.5" /><path d="M4 11.5h6" />
@@ -429,9 +413,13 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
   onDotClick: (i: number) => void
 }) {
   const backdrop = episode ? episode.backdropUrl : artUrl(item)
-  const bg = backdrop
-    ? `url(${backdrop}) center/cover no-repeat`
-    : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)'
+  // Backdrop is a genuinely dynamic runtime value (an arbitrary image URL, or
+  // a fallback gradient using the shared --hds-backdrop-fallback-* tokens
+  // when there's no art) — kept as a targeted inline style rather than a
+  // static class for that reason, same pattern as TvLibraryDetail's backdrop.
+  const heroBgStyle: CSSProperties = backdrop
+    ? { backgroundImage: `url(${backdrop})`, backgroundPosition: 'center', backgroundSize: 'cover', backgroundRepeat: 'no-repeat' }
+    : { background: 'linear-gradient(135deg, var(--hds-backdrop-fallback-1) 0%, var(--hds-backdrop-fallback-2) 50%, var(--hds-backdrop-fallback-3) 100%)' }
 
   const genres: string[] = !episode && detail && 'genres' in detail && Array.isArray(detail.genres) ? (detail.genres as string[]).slice(0, 4) : []
   const overview     = episode ? episode.overview : (detail?.overview ?? '')
@@ -443,68 +431,41 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
   const castBtn    = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-cast',   onEnterPress: onCast,       focusable: castAvailable })
 
   return (
-    <div style={{
-      position: 'relative', height: '24vh', minHeight: 190,
-      background: bg, flexShrink: 0,
-      opacity: fading ? 0 : 1, transition: 'opacity .26s ease',
-      overflow: 'hidden',
-    }}>
-      <div style={{
-        position: 'absolute', inset: 0,
-        background: 'linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%)',
-      }} />
-      <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%',
-        background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 100%)',
-        pointerEvents: 'none',
-      }} />
+    <div className={`${styles.heroRoot} ${fading ? styles.heroRootFading : ''}`} style={heroBgStyle}>
+      <div className={styles.heroScrimH} />
+      <div className={styles.heroScrimV} />
 
-      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 48px 18px', maxWidth: 780 }}>
+      <div className={styles.heroTextBlock}>
         {genres.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          <div className={styles.heroGenreRow}>
             {genres.map(g => (
-              <span key={g} style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-                padding: '2px 8px', borderRadius: 12,
-                background: 'var(--hds-glass)', border: '1px solid var(--hds-glass-border)',
-                color: 'var(--hds-txt-2)', letterSpacing: '0.06em',
-              }}>{g}</span>
+              <span key={g} className={styles.heroGenreChip}>{g}</span>
             ))}
           </div>
         )}
 
-        <h1 style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 24, fontWeight: 700,
-          color: 'oklch(1 0 0)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em',
-          textShadow: heroTextShadow,
-        }}>{displayTitle}</h1>
+        {/* textShadow: heroTextShadow — imported from channel/styles.ts, kept
+            inline here since that shared constant is out of scope for this
+            pass (converted separately when channel/ itself is converted). */}
+        <h1 className={styles.heroTitle} style={{ textShadow: heroTextShadow }}>{displayTitle}</h1>
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 16, marginTop: 6, marginBottom: 8,
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-2)',
-          textShadow: heroTextShadow,
-        }}>
+        <div className={styles.heroMetaRow} style={{ textShadow: heroTextShadow }}>
           {episode ? (
             <span>{episode.metaLine}</span>
           ) : (
             <>
               {item.year && <span>{item.year}</span>}
-              {rating != null && <span style={{ color: 'var(--hds-gold)' }}>★ {rating.toFixed(1)}</span>}
-              <span style={{ opacity: 0.5 }}>{'show_id' in item ? 'series' : 'film'}</span>
+              {rating != null && <span className={styles.heroRatingText}>★ {rating.toFixed(1)}</span>}
+              <span className={styles.heroContentTypeText}>{'show_id' in item ? 'series' : 'film'}</span>
             </>
           )}
         </div>
 
         {overview && (
-          <p style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, lineHeight: 1.5,
-            color: 'oklch(0.75 0.01 285)', margin: '0 0 12px',
-            display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-            textShadow: heroTextShadow,
-          }}>{overview}</p>
+          <p className={styles.heroOverview} style={{ textShadow: heroTextShadow }}>{overview}</p>
         )}
 
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div className={styles.heroButtonRow}>
           <button
             ref={play.ref} data-tv-focused={play.focused}
             onClick={onPlay}
@@ -527,14 +488,7 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
           ref={castBtn.ref} data-tv-focused={castBtn.focused}
           onClick={onCast}
           aria-label="Cast"
-          style={{
-            position: 'absolute', top: 18, right: 24, zIndex: 3,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 34, height: 34, borderRadius: '50%',
-            border: '1px solid var(--hds-glass-border)',
-            background: 'var(--hds-glass)', backdropFilter: 'blur(8px)',
-            color: 'oklch(0.92 0.01 285)', cursor: 'pointer',
-          }}
+          className={styles.heroCastButton}
         >
           <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
             <rect x="2" y="2.5" width="14" height="10" rx="1.2" />
@@ -545,14 +499,12 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
       )}
 
       {totalCandidates > 1 && (
-        <div style={{ position: 'absolute', bottom: 20, right: 48, display: 'flex', gap: 6, zIndex: 2 }}>
+        <div className={styles.heroDots}>
           {Array.from({ length: Math.min(totalCandidates, 8) }, (_, i) => (
-            <button key={i} onClick={() => onDotClick(i)} style={{
-              width: i === currentIdx ? 18 : 6, height: 6, borderRadius: 3,
-              border: 'none', cursor: 'pointer', padding: 0,
-              background: i === currentIdx ? 'var(--hds-gold)' : 'oklch(1 0 0 / 0.3)',
-              transition: 'width .2s, background .2s',
-            }} />
+            <button
+              key={i} onClick={() => onDotClick(i)}
+              className={`${styles.heroDot} ${i === currentIdx ? styles.heroDotActive : ''}`}
+            />
           ))}
         </div>
       )}
@@ -591,19 +543,13 @@ function TvShelf({ title, items, onBlur, endTile }: {
     focusBoundaryDirections: ['left', 'right'],
   })
   return (
-    <div style={{ marginBottom: 10 }} onMouseLeave={onBlur}>
-      <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 6px',
-      }}>{title}</div>
-      <div ref={rowRef} style={{
-        display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
-        padding: '2px 48px 8px', scrollbarWidth: 'none', position: 'relative',
-      }}>
+    <div className={styles.shelfWrap} onMouseLeave={onBlur}>
+      <div className={styles.shelfTitle}>{title}</div>
+      <div ref={rowRef} className={styles.shelfRow}>
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(item => (
-          <div key={item.key} style={{ flexShrink: 0, width: 108 }}>
+          <div key={item.key} className={styles.shelfCardWrap}>
             <TvShelfCard {...item} shelfTitle={title} onBlur={onBlur} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}
@@ -638,46 +584,28 @@ function TvShelfCard({ id, title, year, rating, thumb_url, shelfTitle, onClick, 
       onClick={onClick}
       onMouseEnter={() => { setHovered(true); onFocus?.(); onActivate(ref.current) }}
       onMouseLeave={() => { setHovered(false); onBlur?.(); onDeactivate() }}
-      style={{
-        borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
-        transform: active ? 'translateY(-4px)' : 'none',
-        transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
-      }}
+      className={`${styles.shelfCard} ${active ? styles.shelfCardActive : ''}`}
     >
-      <div style={{
-        aspectRatio: '2/3', width: '100%', position: 'relative',
-        background: 'linear-gradient(135deg, oklch(0.18 0.03 287), oklch(0.13 0.02 285))',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-      }}>
+      <div className={styles.shelfCardPoster}>
         {showImg ? (
-          <img src={thumb_url} alt={title} onError={() => setImgErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <img src={thumb_url} alt={title} onError={() => setImgErr(true)} className={styles.shelfCardImg} />
         ) : (
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 24, color: 'var(--hds-violet)', opacity: 0.4 }}>
+          <span className={styles.shelfCardMonogram}>
             {title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
         )}
         {active && (
-          <div style={{
-            position: 'absolute', bottom: 0, left: 0, right: 0,
-            background: 'linear-gradient(to top, oklch(0 0 0 / 0.85), transparent)',
-            padding: '28px 10px 10px',
-          }}>
-            <div style={{
-              fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-              color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>{title}</div>
+          <div className={styles.shelfCardHoverOverlay}>
+            <div className={styles.shelfCardHoverTitle}>{title}</div>
             {rating != null && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-gold)', marginTop: 2 }}>★ {rating.toFixed(1)}</div>
+              <div className={styles.shelfCardHoverRating}>★ {rating.toFixed(1)}</div>
             )}
           </div>
         )}
       </div>
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-          color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>{title}</div>
-        {year && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 1 }}>{year}</div>}
+      <div className={styles.shelfCardInfo}>
+        <div className={styles.shelfCardTitle}>{title}</div>
+        {year && <div className={styles.shelfCardYear}>{year}</div>}
       </div>
     </div>
   )
@@ -701,20 +629,13 @@ function TvShelfEndTile({ focusKey, onClick, onBlur, onActivate, onDeactivate }:
       onClick={onClick}
       onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
       onMouseLeave={() => { setHovered(false); onBlur?.(); onDeactivate() }}
-      style={{
-        flexShrink: 0, width: 108, aspectRatio: '2/3', borderRadius: 10, cursor: 'pointer',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
-        border: '1px dashed var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt-3)',
-        transform: active ? 'translateY(-4px)' : 'none',
-        transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
-        textAlign: 'center', padding: '0 12px',
-      }}
+      className={`${styles.endTile} ${active ? styles.endTileActive : ''}`}
     >
       <svg width="26" height="26" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.6">
         <rect x="3" y="3" width="7" height="7" rx="1.2" /><rect x="12" y="3" width="7" height="7" rx="1.2" />
         <rect x="3" y="12" width="7" height="7" rx="1.2" /><rect x="12" y="12" width="7" height="7" rx="1.2" />
       </svg>
-      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, letterSpacing: '0.04em', lineHeight: 1.4 }}>
+      <span className={styles.endTileLabel}>
         Continue in Library
       </span>
     </div>
@@ -735,19 +656,13 @@ function TvContinueWatchingShelf({ items, onNavigate, onItemFocus, onRowBlur }: 
     focusBoundaryDirections: ['left', 'right'],
   })
   return (
-    <div style={{ marginBottom: 10 }} onMouseLeave={onRowBlur}>
-      <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 6px',
-      }}>Continue Watching</div>
-      <div ref={rowRef} style={{
-        display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
-        padding: '4px 48px 8px', scrollbarWidth: 'none', position: 'relative',
-      }}>
+    <div className={styles.shelfWrap} onMouseLeave={onRowBlur}>
+      <div className={styles.shelfTitle}>Continue Watching</div>
+      <div ref={rowRef} className={styles.continueWatchingRow}>
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
-          <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 108 }}>
+          <div key={`${p.content_type}:${p.content_id}`} className={styles.shelfCardWrap}>
             <TvContinueWatchingCard
               item={p} onNavigate={onNavigate} onActivate={travel.activate} onDeactivate={travel.deactivate}
               onFocus={onItemFocus} onBlur={onRowBlur}
@@ -793,55 +708,32 @@ function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate, on
       onClick={go}
       onMouseEnter={() => { setHovered(true); onActivate(ref.current); onFocus?.(item) }}
       onMouseLeave={() => { setHovered(false); onDeactivate(); onBlur?.() }}
-      style={{
-        borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
-        transform: active ? 'translateY(-4px)' : 'none',
-        transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
-      }}
+      className={`${styles.shelfCard} ${active ? styles.shelfCardActive : ''}`}
     >
-      <div style={{
-        aspectRatio: '2/3', width: '100%', position: 'relative',
-        background: 'linear-gradient(135deg, oklch(0.18 0.03 287), oklch(0.13 0.02 285))',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-      }}>
+      <div className={styles.shelfCardPoster}>
         {thumbPath && !imgErr ? (
-          <img src={mediaUrl(thumbPath)} alt={title} onError={() => setImgErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <img src={mediaUrl(thumbPath)} alt={title} onError={() => setImgErr(true)} className={styles.shelfCardImg} />
         ) : (
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 24, color: 'var(--hds-violet)', opacity: 0.4 }}>
+          <span className={styles.shelfCardMonogram}>
             {title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
         )}
         {epCode && (
-          <span style={{
-            position: 'absolute', top: 8, left: 8,
-            background: 'oklch(0 0 0 / 0.6)', borderRadius: 5, padding: '3px 7px',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.9 0.01 285)',
-          }}>{epCode}</span>
+          <span className={styles.cwEpBadge}>{epCode}</span>
         )}
         {item.up_next && (
-          <span style={{
-            position: 'absolute', top: 8, right: 8,
-            background: 'var(--hds-violet)', borderRadius: 5, padding: '3px 7px',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700,
-            letterSpacing: '0.04em', color: 'oklch(0.13 0.02 285)',
-          }}>UP NEXT</span>
+          <span className={styles.cwUpNextBadge}>UP NEXT</span>
         )}
         {!item.up_next && (
-          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'oklch(0 0 0 / 0.5)' }}>
-            <div style={{ height: '100%', width: `${progress * 100}%`, background: 'var(--hds-violet)' }} />
+          <div className={styles.cwProgressTrack}>
+            <div className={styles.cwProgressFill} style={{ width: `${progress * 100}%` }} />
           </div>
         )}
       </div>
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-          color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>{title}</div>
+      <div className={styles.shelfCardInfo}>
+        <div className={styles.shelfCardTitle}>{title}</div>
         {item.content_type === 'episode' && (
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 1,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>{item.title}</div>
+          <div className={styles.cwSubtitle}>{item.title}</div>
         )}
       </div>
     </div>

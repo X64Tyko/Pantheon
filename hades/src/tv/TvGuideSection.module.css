@@ -1,0 +1,7 @@
+.heading {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-heading);
+  font-weight: 600;
+  color: var(--hds-txt);
+  padding: 0 48px var(--hds-space-3);
+}

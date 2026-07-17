@@ -1,0 +1,197 @@
+.screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  padding: var(--hds-space-7) 48px var(--hds-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-5);
+}
+
+.title {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-h1);
+  font-weight: 700;
+  color: var(--hds-txt);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.gridArea {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.scrollArea {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.skeletonGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--hds-space-7);
+  padding: var(--hds-space-3) 48px;
+}
+
+.skeletonTile {
+  aspect-ratio: 2 / 3;
+  border-radius: var(--hds-radius-skeleton);
+}
+
+.backButton {
+  width: var(--hds-control-height);
+  height: var(--hds-control-height);
+  border-radius: 50%;
+  cursor: pointer;
+  flex-shrink: 0;
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.searchField {
+  flex: 1;
+  max-width: 380px;
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-md);
+  background: var(--hds-bg-2);
+}
+
+.searchFieldFocused {
+  border-color: var(--hds-violet);
+}
+
+.searchInput {
+  width: 100%;
+  height: var(--hds-control-height);
+  padding: 0 var(--hds-space-5);
+  border: none;
+  background: transparent;
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-input);
+  outline: none;
+}
+
+.filterToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  cursor: pointer;
+  padding: 0 var(--hds-space-5);
+  height: var(--hds-control-height);
+  border-radius: var(--hds-radius-md);
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+}
+
+.filterToggleActive {
+  border-color: var(--hds-violet);
+  background: var(--hds-violet-deep-wash);
+  color: var(--hds-violet);
+}
+
+.filterOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: var(--hds-scrim-heavy);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+}
+
+.filterOverlayInner {
+  padding: var(--hds-space-7) 48px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hds-space-7);
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.filterHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.filterTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-h2);
+  font-weight: 700;
+  color: var(--hds-txt);
+  margin: 0;
+}
+
+.closeButton {
+  background: none;
+  border: none;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+}
+
+.filterSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hds-space-4);
+}
+
+.filterSectionLabel {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  color: var(--hds-txt-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.chipRow {
+  display: flex;
+  gap: var(--hds-space-3);
+  flex-wrap: wrap;
+}
+
+.chip {
+  padding: var(--hds-space-3) var(--hds-space-5);
+  border-radius: var(--hds-radius-pill);
+  cursor: pointer;
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  white-space: nowrap;
+  font-weight: 400;
+  box-shadow: none;
+  transition: all 0.15s;
+}
+
+.chipActive {
+  border-color: var(--hds-violet);
+  background: linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2));
+  color: var(--hds-txt-on-gold);
+  font-weight: 700;
+  box-shadow: 0 4px 12px -2px var(--hds-gold-glow);
+}

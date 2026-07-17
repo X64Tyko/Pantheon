@@ -1,0 +1,72 @@
+.card {
+  border-radius: var(--hds-radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: none;
+  transform: scale(1);
+  transition: transform var(--hds-transition-fast) cubic-bezier(0.2, 0, 0.2, 1),
+              box-shadow var(--hds-transition-fast);
+}
+
+.cardActive {
+  box-shadow: 0 0 0 3px var(--hds-violet), 0 8px 32px oklch(0.55 0.14 292 / 0.35);
+  transform: scale(1.045);
+}
+
+.posterWrap {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  position: relative;
+  background: linear-gradient(135deg, var(--hds-poster-bg-1), var(--hds-poster-bg-2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.posterImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.monogram {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-monogram);
+  color: var(--hds-violet);
+  opacity: 0.4;
+}
+
+.ratingBadge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: var(--hds-scrim);
+  border-radius: var(--hds-radius-sm);
+  padding: 3px var(--hds-space-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  color: var(--hds-gold);
+}
+
+.infoBlock {
+  padding: var(--hds-space-4) var(--hds-space-2) var(--hds-space-1);
+}
+
+.title {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-title);
+  font-weight: 600;
+  color: var(--hds-txt);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  color: var(--hds-txt-3);
+  margin-top: var(--hds-space-1);
+}

@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useGuideSession } from '../guide/useGuideSession'
 import { GuideGrid } from '../guide/GuideGrid'
 import { GuidePreview } from '../guide/GuidePreview'
+import styles from './TvGuideSection.module.css'
 
 // Same session/preview state machine as the desktop GuidePage (useGuideSession)
 // — GuideGrid/GuidePreview/ChannelColumn are reused as-is rather than forked,
@@ -21,10 +22,7 @@ export function TvGuideSection() {
 
   return (
     <div>
-      <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 17, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 10px',
-      }}>Live Guide</div>
+      <div className={styles.heading}>Live Guide</div>
       <GuidePreview channel={focusedChannel} nowProgram={nowProgram} manifestUrl={manifestUrl} onWatch={() => focusedId && watchChannel(focusedId)} />
       <GuideGrid
         channels={channels}

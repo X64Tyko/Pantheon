@@ -1,0 +1,418 @@
+.homeContainer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.heroWrap {
+  flex-shrink: 0;
+}
+
+.heroHeight {
+  height: 24vh;
+  min-height: 190px;
+}
+
+.heroSkeleton {
+  composes: heroHeight;
+}
+
+.heroEmpty {
+  composes: heroHeight;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--hds-backdrop-fallback-1), var(--hds-backdrop-fallback-2));
+  font-family: var(--hds-font-display);
+  font-size: 18px;
+  color: var(--hds-txt-3);
+}
+
+.quickActionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  padding: var(--hds-space-2) 48px 0;
+  flex-shrink: 0;
+}
+
+.quickActionButton {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  cursor: pointer;
+  padding: var(--hds-space-3) var(--hds-space-6);
+  border-radius: var(--hds-radius-md);
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-input);
+}
+
+.shelvesScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.loadingText {
+  padding: var(--hds-space-6) 48px;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.guideWrap {
+  padding: var(--hds-space-3) 0 64px;
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+
+.heroRoot {
+  composes: heroHeight;
+  position: relative;
+  flex-shrink: 0;
+  opacity: 1;
+  transition: opacity .26s ease;
+  overflow: hidden;
+}
+
+.heroRootFading {
+  opacity: 0;
+}
+
+.heroScrimH {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%);
+}
+
+.heroScrimV {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30%;
+  background: linear-gradient(to top, var(--hds-bg) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+.heroTextBlock {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 0 48px 18px;
+  max-width: 780px;
+}
+
+.heroGenreRow {
+  display: flex;
+  gap: var(--hds-space-3);
+  margin-bottom: var(--hds-space-3);
+  flex-wrap: wrap;
+}
+
+.heroGenreChip {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  padding: 2px var(--hds-space-3);
+  border-radius: var(--hds-radius-chip-sm);
+  background: var(--hds-glass);
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt-2);
+  letter-spacing: 0.06em;
+}
+
+.heroTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-h1);
+  font-weight: 700;
+  color: oklch(1 0 0);
+  margin: 0;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.heroMetaRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-5);
+  margin-top: var(--hds-space-2);
+  margin-bottom: var(--hds-space-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-2);
+}
+
+.heroRatingText {
+  color: var(--hds-gold);
+}
+
+.heroContentTypeText {
+  opacity: 0.5;
+}
+
+.heroOverview {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  line-height: 1.5;
+  color: oklch(0.75 0.01 285);
+  margin: 0 0 var(--hds-space-4);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.heroButtonRow {
+  display: flex;
+  gap: var(--hds-space-4);
+}
+
+.heroCastButton {
+  position: absolute;
+  top: 18px;
+  right: var(--hds-space-6);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--hds-glass-border);
+  background: var(--hds-glass);
+  backdrop-filter: blur(8px);
+  color: oklch(0.92 0.01 285);
+  cursor: pointer;
+}
+
+.heroDots {
+  position: absolute;
+  bottom: 20px;
+  right: 48px;
+  display: flex;
+  gap: var(--hds-space-2);
+  z-index: 2;
+}
+
+.heroDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  background: oklch(1 0 0 / 0.3);
+  transition: width .2s, background .2s;
+}
+
+.heroDotActive {
+  width: 18px;
+  background: var(--hds-gold);
+}
+
+/* ── Shelves ──────────────────────────────────────────────────────────────── */
+
+.shelfWrap {
+  margin-bottom: var(--hds-space-tile-gap);
+}
+
+.shelfTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-input);
+  font-weight: 600;
+  color: var(--hds-txt);
+  padding: 0 48px var(--hds-space-2);
+}
+
+.shelfRow {
+  display: flex;
+  gap: var(--hds-space-4);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 48px var(--hds-space-3);
+  scrollbar-width: none;
+  position: relative;
+}
+
+.continueWatchingRow {
+  composes: shelfRow;
+  padding: var(--hds-space-1) 48px var(--hds-space-3);
+}
+
+.shelfCardWrap {
+  flex-shrink: 0;
+  width: var(--hds-tile-width-shelf);
+}
+
+.shelfCard {
+  border-radius: var(--hds-radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  transform: none;
+  transition: transform 0.15s cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+.shelfCardActive {
+  transform: translateY(-4px);
+}
+
+.shelfCardPoster {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  position: relative;
+  background: linear-gradient(135deg, var(--hds-poster-bg-1), var(--hds-poster-bg-2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.shelfCardImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.shelfCardMonogram {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: 24px;
+  color: var(--hds-violet);
+  opacity: 0.4;
+}
+
+.shelfCardHoverOverlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, oklch(0 0 0 / 0.85), transparent);
+  padding: 28px var(--hds-space-3) var(--hds-space-3);
+}
+
+.shelfCardHoverTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-meta);
+  font-weight: 600;
+  color: var(--hds-txt-hero);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shelfCardHoverRating {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-gold);
+  margin-top: 2px;
+}
+
+.shelfCardInfo {
+  padding: var(--hds-space-2) var(--hds-space-1) 2px;
+}
+
+.shelfCardTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-meta);
+  font-weight: 600;
+  color: var(--hds-txt);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shelfCardYear {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  margin-top: 1px;
+}
+
+.endTile {
+  flex-shrink: 0;
+  width: var(--hds-tile-width-shelf);
+  aspect-ratio: 2 / 3;
+  border-radius: var(--hds-radius-md);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--hds-space-4);
+  border: 1px dashed var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt-3);
+  transform: none;
+  transition: transform 0.15s cubic-bezier(0.2, 0, 0.2, 1);
+  text-align: center;
+  padding: 0 var(--hds-space-4);
+}
+
+.endTileActive {
+  transform: translateY(-4px);
+}
+
+.endTileLabel {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+}
+
+/* ── Continue Watching card ───────────────────────────────────────────────── */
+
+.cwEpBadge {
+  position: absolute;
+  top: var(--hds-space-3);
+  left: var(--hds-space-3);
+  background: var(--hds-scrim);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: oklch(0.9 0.01 285);
+}
+
+.cwUpNextBadge {
+  position: absolute;
+  top: var(--hds-space-3);
+  right: var(--hds-space-3);
+  background: var(--hds-violet);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: oklch(0.13 0.02 285);
+}
+
+.cwProgressTrack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: oklch(0 0 0 / 0.5);
+}
+
+.cwProgressFill {
+  height: 100%;
+  background: var(--hds-violet);
+  /* width is set inline per-instance — live watch-progress percentage */
+}
+
+.cwSubtitle {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

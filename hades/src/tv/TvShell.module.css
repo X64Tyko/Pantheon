@@ -1,0 +1,8 @@
+.shell {
+  position: fixed;
+  inset: 0;
+  background: var(--hds-bg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
