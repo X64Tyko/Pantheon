@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import styles from './ErrorBoundary.module.css'
 
 interface Props { children: ReactNode; fallback?: ReactNode }
 interface State { error: Error | null }
@@ -15,14 +16,9 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return this.props.fallback ?? (
-        <div style={{
-          padding: 40,
-          color: 'oklch(0.72 0.16 22)',
-          fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 12,
-        }}>
-          <div style={{ marginBottom: 8, fontSize: 14 }}>Something went wrong</div>
-          <div style={{ color: 'var(--hds-txt-3)' }}>{this.state.error.message}</div>
+        <div className={styles.fallback}>
+          <div className={styles.title}>Something went wrong</div>
+          <div className={styles.message}>{this.state.error.message}</div>
         </div>
       )
     }

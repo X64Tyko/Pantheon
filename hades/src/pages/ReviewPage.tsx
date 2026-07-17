@@ -14,20 +14,13 @@ import type {
 import { MatchBadge } from '../components/media/MatchBadge'
 import type { MatchStatus } from '../components/media/MatchBadge'
 import { folderBaseName } from '../components/media/useMediaDetail'
-import { goldBtnStyle } from '../channel/styles'
+import sharedStyles from '../channel/sharedStyles.module.css'
 import { useDebounce } from '../hooks/useDebounce'
 import { usePlaybackSession } from '../player/usePlaybackSession'
 import type { PlaybackTarget } from '../player/usePlaybackSession'
 import { VideoPlayer } from '../player/VideoPlayer'
 import { LoadingThrobber } from '../player/LoadingThrobber'
-
-// ── Shared chip style ─────────────────────────────────────────────────────────
-
-const chip: React.CSSProperties = {
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-  padding: '2px 8px', borderRadius: 10,
-  border: '1px solid var(--hds-line-s)', color: 'var(--hds-txt-3)',
-}
+import styles from './ReviewPage.module.css'
 
 // ── Episode Groups store ───────────────────────────────────────────────────────
 
@@ -261,34 +254,22 @@ export default observer(function ReviewPage() {
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', background: 'var(--hds-bg)', position: 'relative' }}>
+    <div className={styles.root}>
       {tab === 'queue' && mergeNotice && (
-        <div style={{
-          position: 'absolute', top: 12, right: 12, zIndex: 10, maxWidth: 360,
-          padding: '10px 14px', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 8,
-          border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.15)',
-          color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, lineHeight: 1.5,
-        }}>
-          <div style={{ flex: 1 }}>
+        <div className={styles.mergeNotice}>
+          <div className={styles.mergeNoticeText}>
             <strong>{mergeNotice.fromTitle}</strong> was a duplicate of <strong>{mergeNotice.into.title}</strong> — merged into it.
           </div>
           <button
             onClick={() => setMergeNotice(null)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 14, lineHeight: 1, flexShrink: 0 }}
+            className={styles.iconCloseBtnSm}
           >✕</button>
         </div>
       )}
       {/* ── Left panel ─────────────────────────────────────────────────────── */}
-      <div style={{
-        width: 320, flexShrink: 0, height: '100%', overflow: 'hidden',
-        display: 'flex', flexDirection: 'column',
-        borderRight: '1px solid var(--hds-line)',
-      }}>
+      <div className={styles.leftPanel}>
         {/* Tab bar */}
-        <div style={{
-          display: 'flex', padding: '14px 16px 0', gap: 4,
-          borderBottom: '1px solid var(--hds-line)', flexShrink: 0,
-        }}>
+        <div className={styles.tabBar}>
           {([
             { key: 'queue',    label: 'Queue',    badge: null,                                                            admin: false },
             { key: 'groups',   label: 'Groups',   badge: groupsStore.pendingCount > 0 ? groupsStore.pendingCount : null, admin: false },
@@ -299,28 +280,11 @@ export default observer(function ReviewPage() {
             <button
               key={key}
               onClick={() => switchTab(key as Tab)}
-              style={{
-                flex: 1, padding: '8px 0', borderRadius: '6px 6px 0 0',
-                border: `1px solid ${tab === key ? 'var(--hds-line)' : 'transparent'}`,
-                borderBottom: 'none',
-                background: tab === key ? 'var(--hds-bg)' : 'transparent',
-                color: tab === key ? 'var(--hds-txt)' : 'var(--hds-txt-3)',
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                letterSpacing: '0.06em', cursor: 'pointer', position: 'relative',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                marginBottom: tab === key ? -1 : 0,
-              }}
+              className={`${styles.mainTab} ${tab === key ? styles.mainTabActive : ''}`}
             >
               {label.toUpperCase()}
               {badge !== null && (
-                <span style={{
-                  minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px',
-                  background: 'oklch(0.75 0.12 80 / 0.18)',
-                  border: '1px solid var(--hds-match-amber)',
-                  color: 'var(--hds-match-amber)',
-                  fontSize: 9, fontWeight: 700,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>{badge > 99 ? '99+' : badge}</span>
+                <span className={styles.tabBadge}>{badge > 99 ? '99+' : badge}</span>
               )}
             </button>
           ))}
@@ -417,10 +381,7 @@ export default observer(function ReviewPage() {
 
 function EmptyHint({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{
-      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--hds-txt-3)',
-    }}>
+    <div className={styles.emptyHint}>
       {children}
     </div>
   )
@@ -450,25 +411,18 @@ function QueueListPanel({
   return (
     <>
       {/* Header */}
-      <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--hds-txt)' }}>
+      <div className={styles.panelHeader}>
+        <div className={styles.panelHeaderRow}>
+          <span className={styles.panelTitle}>
             Review Queue
           </span>
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+          <span className={styles.panelCount}>
             {total} item{total !== 1 ? 's' : ''}
           </span>
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div className={styles.filterRow}>
           {(['all', 'uncertain', 'unmatched', 'auto_unconfirmed'] as const).map(f => (
-            <button key={f} onClick={() => onFilterChange(f)} style={{
-              flex: 1, padding: '5px 0', borderRadius: 6,
-              border: `1px solid ${filter === f ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-              background: filter === f ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-              color: filter === f ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-              cursor: 'pointer', letterSpacing: '0.06em',
-            }}>
+            <button key={f} onClick={() => onFilterChange(f)} className={`${styles.filterPill} ${filter === f ? styles.filterPillActive : ''}`}>
               {QUEUE_FILTER_LABELS[f]}
             </button>
           ))}
@@ -476,77 +430,58 @@ function QueueListPanel({
       </div>
 
       {/* List */}
-      <div style={{ flex: 1, overflowY: 'auto' }} className="scrollbar-dark">
+      <div className={`${styles.listScroll} scrollbar-dark`}>
         {loading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <div className={styles.skeletonListGap1}>
             {Array.from({ length: 8 }, (_, i) => (
-              <div key={i} className="hds-skeleton" style={{ height: 60, margin: '1px 0' }} />
+              <div key={i} className={`hds-skeleton ${styles.skeletonRow60}`} />
             ))}
           </div>
         ) : items.length === 0 ? (
-          <div style={{
-            padding: 32, textAlign: 'center',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-            color: 'var(--hds-txt-3)', lineHeight: 1.6,
-          }}>
+          <div className={styles.emptyState}>
             Nothing in the queue.<br />
-            <span style={{ color: 'var(--hds-txt-2)' }}>Run a match pass to find uncertain items.</span>
+            <span className={styles.emptyStateSub}>Run a match pass to find uncertain items.</span>
           </div>
         ) : (
           items.map(item => (
             <button
               key={item.kairos_id}
               onClick={() => onSelect(item)}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                padding: '10px 16px', border: 'none', cursor: 'pointer', textAlign: 'left',
-                background: selected?.kairos_id === item.kairos_id ? 'var(--hds-bg-3)' : 'transparent',
-                borderBottom: '1px solid var(--hds-line-s)',
-                borderLeft: `3px solid ${
-                  item.match_status === 'uncertain' ? 'var(--hds-match-amber)'
-                  : item.match_status === 'matched'  ? 'var(--hds-match-green)'
-                  : 'var(--hds-match-red)'
-                }`,
-                transition: 'background .1s',
-              }}
+              className={`${styles.queueListRow}
+                ${selected?.kairos_id === item.kairos_id ? styles.queueListRowSelected : ''}
+                ${item.match_status === 'uncertain' ? styles.queueListRowUncertain
+                  : item.match_status === 'matched'  ? styles.queueListRowMatched
+                  : styles.queueListRowUnmatched}`}
             >
               {item.thumb && (
                 <img
                   src={mediaUrl(`/api/${item.item_type}s/${item.kairos_id}/thumb`)}
                   alt=""
-                  style={{ width: 32, height: 48, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
+                  className={styles.queueThumb}
                   onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                 />
               )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, fontWeight: 600,
-                  color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>{item.title}</div>
-                <div style={{
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', marginTop: 3,
-                }}>
+              <div className={styles.queueInfo}>
+                <div className={styles.queueTitle}>{item.title}</div>
+                <div className={styles.queueMeta}>
                   {item.item_type}{item.year ? ` · ${item.year}` : ''}
                 </div>
                 {item.folder_path && (
                   <div
                     title={item.folder_path}
-                    style={{
-                      fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)',
-                      marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.75,
-                    }}
+                    className={styles.queueFolder}
                   >{folderBaseName(item.folder_path)}</div>
                 )}
-                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                <div className={styles.queueMatchRow}>
                   <MatchBadge status={item.match_status as MatchStatus} score={item.match_score} size="sm" />
                   {item.match_score > 0 && (
-                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>
+                    <span className={styles.queueMatchPct}>
                       {Math.round(item.match_score * 100)}%
                     </span>
                   )}
                 </div>
               </div>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', flexShrink: 0 }}>
+              <span className={styles.queueCandidateCount}>
                 {item.candidates.length}
               </span>
             </button>
@@ -555,11 +490,11 @@ function QueueListPanel({
       </div>
 
       {/* Run match button */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--hds-line)', flexShrink: 0 }}>
+      <div className={styles.queueRunMatchWrap}>
         <button
           onClick={onTriggerMatch}
           disabled={matching}
-          style={{ ...goldBtnStyle, width: '100%', opacity: matching ? 0.5 : 1, cursor: matching ? 'not-allowed' : 'pointer' }}
+          className={`${sharedStyles.goldBtn} ${styles.queueRunMatchBtn} ${matching ? styles.queueRunMatchBtnDisabled : ''}`}
         >
           {matching ? 'Running…' : 'Run Match Pass'}
         </button>
@@ -576,12 +511,6 @@ interface LinkTarget {
   title:     string
   year?:     number
   thumb?:    string
-}
-
-const labelStyle: React.CSSProperties = {
-  display: 'block', fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-  letterSpacing: '0.1em', color: 'var(--hds-txt-3)', textTransform: 'uppercase',
-  marginBottom: 4,
 }
 
 function CandidatePanel({
@@ -708,35 +637,26 @@ function CandidatePanel({
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className={styles.panelBody}>
       {/* Header */}
-      <div style={{
-        padding: '16px 24px', borderBottom: '1px solid var(--hds-line)',
-        display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
-      }}>
-        <div style={{ flex: 1 }}>
-          <h2 style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, fontWeight: 700,
-            color: 'var(--hds-txt)', margin: '0 0 6px',
-          }}>{item.title}</h2>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {item.year && <span style={chip}>{item.year}</span>}
-            <span style={chip}>{item.item_type}</span>
+      <div className={styles.candidateHeader}>
+        <div className={styles.detailHeaderTop}>
+          <h2 className={styles.detailHeaderTitle}>{item.title}</h2>
+          <div className={styles.detailHeaderChips}>
+            {item.year && <span className={styles.chip}>{item.year}</span>}
+            <span className={styles.chip}>{item.item_type}</span>
             <MatchBadge status={item.match_status as MatchStatus} score={item.match_score} />
           </div>
           {item.folder_path && (
             <div
               title={item.folder_path}
-              style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
-                marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}
+              className={styles.detailHeaderFolder}
             >
-              <span style={{ opacity: 0.7 }}>Folder: </span>{folderBaseName(item.folder_path)}
+              <span className={styles.mutedLabel}>Folder: </span>{folderBaseName(item.folder_path)}
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+        <div className={styles.modeSwitchRow}>
           {([
             { key: 'candidates', label: 'Candidates' },
             { key: 'search',     label: 'Search' },
@@ -745,59 +665,37 @@ function CandidatePanel({
             <button
               key={t.key}
               onClick={() => switchMode(t.key)}
-              style={{
-                padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 10,
-                fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em',
-                border: `1px solid ${mode === t.key ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-                background: mode === t.key ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-                color: mode === t.key ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-              }}
+              className={`${styles.modeSwitchBtn} ${mode === t.key ? styles.modeSwitchBtnActive : ''}`}
             >
               {t.label}
             </button>
           ))}
         </div>
-        <button onClick={onClose} style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--hds-txt-3)', fontSize: 20, lineHeight: 1,
-        }}>✕</button>
+        <button onClick={onClose} className={styles.iconCloseBtn}>✕</button>
       </div>
 
       {mode === 'link' ? (
         /* ── Link Existing panel ── */
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-            <div style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
-              lineHeight: 1.5, marginBottom: 10,
-            }}>
+        <div className={styles.panelBody}>
+          <div className={styles.searchBarWrap}>
+            <div className={styles.linkNoteText}>
               Link this to an existing library {item.item_type} — for the same title synced separately
               from another source (Plex/Jellyfin/local) that didn't auto-merge. The item you pick below
               survives; this queue item is absorbed into it.
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className={styles.searchBarRow}>
               <input
                 autoFocus
                 value={linkQuery}
                 onChange={e => setLinkQuery(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && runLinkSearch(linkQuery)}
                 placeholder={`Search existing ${item.item_type}s…`}
-                style={{
-                  flex: 1, padding: '7px 12px', borderRadius: 7,
-                  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-                  color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
-                  outline: 'none',
-                }}
+                className={styles.searchInput}
               />
               <button
                 onClick={() => runLinkSearch(linkQuery)}
                 disabled={linkLoading || !linkQuery.trim()}
-                style={{
-                  padding: '7px 16px', borderRadius: 7, cursor: 'pointer',
-                  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-                  color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: 11, opacity: (linkLoading || !linkQuery.trim()) ? 0.5 : 1,
-                }}
+                className={`${styles.searchBtn} ${(linkLoading || !linkQuery.trim()) ? styles.searchBtnDisabled : ''}`}
               >
                 {linkLoading ? '…' : 'Search'}
               </button>
@@ -805,96 +703,68 @@ function CandidatePanel({
           </div>
 
           {linkError && (
-            <div style={{
-              margin: '0 24px 12px', padding: '8px 12px', borderRadius: 7,
-              border: '1px solid var(--hds-match-red)', background: 'oklch(0.62 0.2 22 / 0.12)',
-              color: 'var(--hds-match-red)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5,
-            }}>
+            <div className={styles.linkErrorBanner}>
               {linkError}
             </div>
           )}
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }} className="scrollbar-dark">
+          <div className={`${styles.panelBodyScroll} scrollbar-dark`}>
             {linkLoading ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className={styles.skeletonListGap8}>
                 {Array.from({ length: 4 }, (_, i) => (
-                  <div key={i} className="hds-skeleton" style={{ height: 60, borderRadius: 8 }} />
+                  <div key={i} className={`hds-skeleton ${styles.skeletonRow60}`} />
                 ))}
               </div>
             ) : linkResults.length === 0 ? (
-              <div style={{
-                padding: '32px 0', textAlign: 'center',
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', lineHeight: 1.6,
-              }}>
+              <div className={`${styles.emptyState} ${styles.emptyStatePad0}`}>
                 {linkQuery.trim() ? 'No matches in the library.' : 'Enter a title to search.'}
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className={styles.skeletonListGap8}>
                 {linkResults.map(r => {
                   const isLinking = linkingId === r.kairos_id
                   const warning   = folderWarning?.kairos_id === r.kairos_id ? folderWarning : null
                   return (
-                    <div key={r.kairos_id} style={{
-                      display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 9,
-                      border: `1px solid ${warning ? 'var(--hds-match-amber)' : 'var(--hds-line)'}`, background: 'var(--hds-bg-2)',
-                      padding: '8px 12px', opacity: isLinking ? 0.6 : 1,
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div key={r.kairos_id} className={`${styles.resultCard} ${warning ? styles.resultCardWarning : ''} ${isLinking ? styles.resultCardLinking : ''}`}>
+                      <div className={styles.resultCardTopRow}>
                         {r.thumb && (
                           <img src={mediaUrl(`/api/${item.item_type === 'show' ? 'shows' : 'movies'}/${r.kairos_id}/thumb`)} alt=""
-                            style={{ width: 32, height: 48, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
+                            className={styles.resultThumb}
                             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                           />
                         )}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{
-                            fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-                            color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>{r.title}</div>
-                          {r.year && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>{r.year}</div>}
+                        <div className={styles.resultInfo}>
+                          <div className={styles.resultTitle}>{r.title}</div>
+                          {r.year && <div className={styles.resultYear}>{r.year}</div>}
                         </div>
                         {!warning && (
                           <button
                             onClick={() => handleLink(r)}
                             disabled={isLinking}
-                            style={{
-                              flexShrink: 0, padding: '4px 12px', borderRadius: 5, cursor: isLinking ? 'not-allowed' : 'pointer',
-                              border: '1px solid var(--hds-violet)',
-                              background: 'oklch(0.55 0.14 292 / 0.12)',
-                              color: 'var(--hds-violet)',
-                              fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600,
-                            }}
+                            className={`${styles.linkBtn} ${isLinking ? styles.linkBtnDisabled : ''}`}
                           >
                             {isLinking ? '…' : 'Link'}
                           </button>
                         )}
                       </div>
                       {warning && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4, borderTop: '1px solid var(--hds-line-s)' }}>
-                          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-amber)', lineHeight: 1.5 }}>
+                        <div className={styles.warningBlock}>
+                          <div className={styles.warningText}>
                             These are in different folders — make sure they're really the same title before merging.
-                            <div style={{ marginTop: 4, color: 'var(--hds-txt-3)', wordBreak: 'break-all' }}>{warning.targetFolder}</div>
-                            <div style={{ color: 'var(--hds-txt-3)', wordBreak: 'break-all' }}>{warning.duplicateFolder}</div>
+                            <div className={styles.warningFolderPath}>{warning.targetFolder}</div>
+                            <div className={styles.warningFolderPath}>{warning.duplicateFolder}</div>
                           </div>
-                          <div style={{ display: 'flex', gap: 8 }}>
+                          <div className={styles.warningActions}>
                             <button
                               onClick={() => handleLink(r, true)}
                               disabled={isLinking}
-                              style={{
-                                padding: '4px 12px', borderRadius: 5, cursor: isLinking ? 'not-allowed' : 'pointer',
-                                border: '1px solid var(--hds-match-amber)', background: 'oklch(0.75 0.12 80 / 0.12)',
-                                color: 'var(--hds-match-amber)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600,
-                              }}
+                              className={styles.warningMergeBtn}
                             >
                               {isLinking ? '…' : 'Merge Anyway'}
                             </button>
                             <button
                               onClick={() => setFolderWarning(null)}
-                              style={{
-                                padding: '4px 12px', borderRadius: 5, cursor: 'pointer',
-                                border: '1px solid var(--hds-line)', background: 'transparent',
-                                color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                              }}
+                              className={styles.warningCancelBtn}
                             >
                               Cancel
                             </button>
@@ -910,101 +780,70 @@ function CandidatePanel({
         </div>
       ) : mode === 'search' ? (
         /* ── Search panel ── */
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
+        <div className={styles.panelBody}>
+          <div className={styles.searchBarWrap}>
+            <div className={styles.searchBarRow}>
               <input
                 autoFocus
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && runSearch(searchQuery)}
                 placeholder="Title or tmdb:12345 / tvdb:12345"
-                style={{
-                  flex: 1, padding: '7px 12px', borderRadius: 7,
-                  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-                  color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
-                  outline: 'none',
-                }}
+                className={styles.searchInput}
               />
               <button
                 onClick={() => runSearch(searchQuery)}
                 disabled={searchLoading || !searchQuery.trim()}
-                style={{
-                  padding: '7px 16px', borderRadius: 7, cursor: 'pointer',
-                  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-                  color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: 11, opacity: (searchLoading || !searchQuery.trim()) ? 0.5 : 1,
-                }}
+                className={`${styles.searchBtn} ${(searchLoading || !searchQuery.trim()) ? styles.searchBtnDisabled : ''}`}
               >
                 {searchLoading ? '…' : 'Search'}
               </button>
             </div>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }} className="scrollbar-dark">
+          <div className={`${styles.panelBodyScroll} scrollbar-dark`}>
             {searchLoading ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className={styles.skeletonListGap8}>
                 {Array.from({ length: 4 }, (_, i) => (
-                  <div key={i} className="hds-skeleton" style={{ height: 90, borderRadius: 8 }} />
+                  <div key={i} className={`hds-skeleton ${styles.skeletonRow90}`} />
                 ))}
               </div>
             ) : searchResults.length === 0 ? (
-              <div style={{
-                padding: '32px 0', textAlign: 'center',
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', lineHeight: 1.6,
-              }}>
+              <div className={`${styles.emptyState} ${styles.emptyStatePad0}`}>
                 {searchQuery.trim() ? 'No results. Try a different title or use tmdb:ID / tvdb:ID.' : 'Enter a title or ID to search.'}
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className={styles.candidateStack}>
                 {searchResults.map(r => {
                   const key       = r.source + ':' + r.external_id
                   const isMatching = matchingId === key
-                  const srcColor  = r.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
                   return (
-                    <div key={key} style={{
-                      display: 'flex', gap: 0, borderRadius: 9,
-                      border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
-                      overflow: 'hidden', opacity: isMatching ? 0.6 : 1,
-                    }}>
+                    <div key={key} className={`${styles.searchResultCard} ${isMatching ? styles.searchResultCardMatching : ''}`}>
                       {r.poster_url && (
                         <img src={mediaUrl(r.poster_url)} alt=""
-                          style={{ width: 60, height: 90, objectFit: 'cover', flexShrink: 0 }}
+                          className={styles.searchResultPoster}
                           onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                         />
                       )}
-                      <div style={{ flex: 1, padding: '10px 14px', minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 5 }}>
-                          <div style={{
-                            fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-                            color: 'var(--hds-txt)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>{r.title}</div>
+                      <div className={styles.searchResultBody}>
+                        <div className={styles.searchResultTopRow}>
+                          <div className={styles.searchResultTitle}>{r.title}</div>
                           <button
                             onClick={() => handleManualMatch(r)}
                             disabled={isMatching}
-                            style={{
-                              flexShrink: 0, padding: '4px 12px', borderRadius: 5, cursor: isMatching ? 'not-allowed' : 'pointer',
-                              border: '1px solid var(--hds-match-green)',
-                              background: 'oklch(0.7 0.16 150 / 0.1)',
-                              color: 'var(--hds-match-green)',
-                              fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600,
-                            }}
+                            className={`${styles.matchBtn} ${isMatching ? styles.matchBtnDisabled : ''}`}
                           >
                             {isMatching ? '…' : 'Match'}
                           </button>
                         </div>
-                        <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                          {r.year && <span style={chip}>{r.year}</span>}
-                          <span style={{ ...chip, color: srcColor, borderColor: 'currentColor' }}>{r.source.toUpperCase()}</span>
-                          <span style={{ ...chip, fontSize: 8 }}>ID: {r.external_id}</span>
-                          {r.in_library && <span style={{ ...chip, color: 'oklch(0.7 0.16 150)', borderColor: 'currentColor' }}>in library</span>}
+                        <div className={styles.searchResultChipRow}>
+                          {r.year && <span className={styles.chip}>{r.year}</span>}
+                          <span className={`${styles.chip} ${styles.chipCurrentColor} ${r.source === 'tmdb' ? styles.chipTmdb : styles.chipTvdb}`}>{r.source.toUpperCase()}</span>
+                          <span className={`${styles.chip} ${styles.chipSmall}`}>ID: {r.external_id}</span>
+                          {r.in_library && <span className={`${styles.chip} ${styles.chipCurrentColor} ${styles.chipApproved}`}>in library</span>}
                         </div>
                         {r.overview && (
-                          <p style={{
-                            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, lineHeight: 1.5,
-                            color: 'var(--hds-txt-3)', margin: 0,
-                            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                          }}>{r.overview}</p>
+                          <p className={styles.searchResultOverview}>{r.overview}</p>
                         )}
                       </div>
                     </div>
@@ -1016,12 +855,12 @@ function CandidatePanel({
         </div>
       ) : (
         /* ── Candidates panel ── */
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }} className="scrollbar-dark">
+        <div className={`${styles.panelBodyScroll} scrollbar-dark`}>
           {isAdmin && item.match_status === 'matched' && (
-            <div style={{ marginBottom: 20, padding: 12, border: '1px solid var(--hds-line)', borderRadius: 10, background: 'var(--hds-bg-2)' }}>
-              <span style={{ ...labelStyle, marginBottom: 8, display: 'block' }}>PRIORITY & IDENTIFIERS</span>
+            <div className={styles.priorityBox}>
+              <span className={`${styles.fieldLabel} ${styles.priorityLabel}`}>PRIORITY & IDENTIFIERS</span>
               {loadingMeta ? (
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>Loading…</div>
+                <div className={styles.loadingMetaText}>Loading…</div>
               ) : (
                 <ExternalIdEditor
                   type={item.item_type}
@@ -1034,18 +873,12 @@ function CandidatePanel({
             </div>
           )}
           {item.candidates.length === 0 ? (
-            <div style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
-              color: 'var(--hds-txt-3)', padding: '32px 0',
-            }}>
+            <div className={styles.noCandidatesText}>
               No candidates found — use Search to find a match manually.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                color: 'var(--hds-txt-3)', letterSpacing: '0.08em', marginBottom: 4,
-              }}>
+            <div className={styles.candidateStack}>
+              <div className={styles.candidateCountLine}>
                 {item.candidates.length} CANDIDATE{item.candidates.length !== 1 ? 'S' : ''} — sorted by confidence
               </div>
               {item.candidates.map(c => (
@@ -1072,63 +905,35 @@ function CandidateCard({
   onReject:  () => void
 }) {
   const pct        = Math.round(candidate.score * 100)
-  const scoreColor = pct >= 90 ? 'var(--hds-match-green)' : pct >= 70 ? 'var(--hds-match-amber)' : 'var(--hds-match-red)'
+  const scoreClass = pct >= 90 ? styles.scoreHigh : pct >= 70 ? styles.scoreMid : styles.scoreLow
   const accepted   = candidate.accepted
 
   return (
-    <div style={{
-      borderRadius: 10,
-      border: `1px solid ${accepted === true ? 'var(--hds-match-green)' : accepted === false ? 'oklch(0.35 0.04 285)' : 'var(--hds-line)'}`,
-      background: accepted === true ? 'oklch(0.7 0.16 150 / 0.05)' : accepted === false ? 'oklch(0.35 0.04 285 / 0.05)' : 'var(--hds-bg-2)',
-      overflow: 'hidden', opacity: accepted === false ? 0.45 : 1,
-    }}>
-      <div style={{ display: 'flex' }}>
+    <div className={`${styles.candidateCard} ${accepted === true ? styles.candidateCardAccepted : accepted === false ? styles.candidateCardRejected : ''}`}>
+      <div className={styles.candidateCardTop}>
         {candidate.poster_url && (
           <img src={mediaUrl(candidate.poster_url)} alt=""
-            style={{ width: 80, height: 120, objectFit: 'cover', flexShrink: 0 }}
+            className={styles.candidatePoster}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
         )}
-        <div style={{ flex: 1, padding: '14px 16px', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
-            <div style={{
-              fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
-              color: 'var(--hds-txt)', flex: 1,
-            }}>{candidate.title}</div>
-            <span style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700,
-              color: scoreColor, flexShrink: 0, paddingTop: 2,
-            }}>{pct}%</span>
+        <div className={styles.candidateBody}>
+          <div className={styles.candidateTitleRow}>
+            <div className={styles.candidateTitle}>{candidate.title}</div>
+            <span className={`${styles.candidateScore} ${scoreClass}`}>{pct}%</span>
           </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-            {candidate.year && <span style={chip}>{candidate.year}</span>}
-            <span style={{
-              ...chip,
-              color: candidate.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)',
-              borderColor: 'currentColor',
-            }}>{candidate.source.toUpperCase()}</span>
-            <span style={{ ...chip, fontSize: 8 }}>ID: {candidate.external_id}</span>
+          <div className={styles.candidateChipRow}>
+            {candidate.year && <span className={styles.chip}>{candidate.year}</span>}
+            <span className={`${styles.chip} ${styles.chipCurrentColor} ${candidate.source === 'tmdb' ? styles.chipTmdb : styles.chipTvdb}`}>{candidate.source.toUpperCase()}</span>
+            <span className={`${styles.chip} ${styles.chipSmall}`}>ID: {candidate.external_id}</span>
           </div>
           {candidate.overview && (
-            <p style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10, lineHeight: 1.6,
-              color: 'var(--hds-txt-3)', margin: '0 0 10px',
-              display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-            }}>{candidate.overview}</p>
+            <p className={styles.candidateOverview}>{candidate.overview}</p>
           )}
           {accepted === null && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={onAccept} style={{
-                flex: 1, padding: '6px 0', borderRadius: 6, cursor: 'pointer',
-                border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.12)',
-                color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 10, letterSpacing: '0.08em', fontWeight: 600,
-              }}>Accept</button>
-              <button onClick={onReject} style={{
-                flex: 1, padding: '6px 0', borderRadius: 6, cursor: 'pointer',
-                border: '1px solid var(--hds-line)', background: 'transparent',
-                color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: '0.08em',
-              }}>Reject</button>
+            <div className={styles.candidateActionsRow}>
+              <button onClick={onAccept} className={styles.acceptBtn}>Accept</button>
+              <button onClick={onReject} className={styles.rejectBtn}>Reject</button>
             </div>
           )}
           {accepted === true && (
@@ -1139,20 +944,12 @@ function CandidateCard({
             // onAccept (acceptCandidate) on the same candidate_id is
             // idempotent — it just sets match_confirmed=1 and re-pulls fresh
             // metadata, same as picking it fresh would.
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-green)',
-                letterSpacing: '0.08em', flex: 1,
-              }}>✓ Auto-matched</span>
-              <button onClick={onAccept} style={{
-                padding: '6px 14px', borderRadius: 6, cursor: 'pointer',
-                border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.12)',
-                color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 10, letterSpacing: '0.08em', fontWeight: 600,
-              }}>Confirm Match</button>
+            <div className={styles.autoMatchedRow}>
+              <span className={styles.autoMatchedLabel}>✓ Auto-matched</span>
+              <button onClick={onAccept} className={styles.confirmMatchBtn}>Confirm Match</button>
             </div>
           )}
-          {accepted === false && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.08em' }}>Rejected</div>}
+          {accepted === false && <div className={styles.rejectedLabel}>Rejected</div>}
         </div>
       </div>
     </div>
@@ -1164,26 +961,26 @@ function CandidateCard({
 const GroupsListPanel = observer(function GroupsListPanel({ store }: { store: GroupsStore }) {
   return (
     <>
-      <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--hds-txt)' }}>
+      <div className={styles.panelHeader}>
+        <div className={styles.panelHeaderRow}>
+          <span className={styles.panelTitle}>
             Episode Groups
           </span>
           {store.pendingCount > 0 && (
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+            <span className={styles.panelCount}>
               {store.pendingCount} pending
             </span>
           )}
         </div>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto' }} className="scrollbar-dark">
+      <div className={`${styles.listScroll} scrollbar-dark`}>
         {store.loading && store.shows.length === 0 ? (
-          <div style={{ padding: '20px 16px', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--hds-violet)', flexShrink: 0, animation: 'hds-pulse 2.6s ease-in-out infinite' }} />
+          <div className={styles.groupsLoadingRow}>
+            <span className={styles.groupsPulseDot} />
             Scanning shows…
           </div>
         ) : store.shows.length === 0 ? (
-          <div style={{ padding: 32, textAlign: 'center', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', lineHeight: 1.6 }}>
+          <div className={styles.emptyState}>
             No pending grouping candidates.
           </div>
         ) : (
@@ -1194,25 +991,12 @@ const GroupsListPanel = observer(function GroupsListPanel({ store }: { store: Gr
               <button
                 key={s.show_id}
                 onClick={() => store.selectShow(s.show_id)}
-                style={{
-                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  gap: 8, padding: '9px 16px', border: 'none', cursor: 'pointer', textAlign: 'left',
-                  background: isActive ? 'oklch(0.83 0.13 84 / 0.07)' : 'transparent',
-                  borderBottom: '1px solid var(--hds-line-s)',
-                  borderLeft: `3px solid ${isActive ? 'var(--hds-match-amber)' : 'transparent'}`,
-                  color: isActive ? 'var(--hds-match-amber)' : 'var(--hds-txt-2)',
-                  transition: 'background .1s',
-                }}
+                className={`${styles.groupsShowRow} ${isActive ? styles.groupsShowRowActive : ''}`}
               >
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                <span className={styles.groupsShowTitle}>
                   {s.show_title}
                 </span>
-                <span style={{
-                  flexShrink: 0, fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 700,
-                  padding: '2px 6px', borderRadius: 6,
-                  background: isActive ? 'oklch(0.83 0.13 84 / 0.15)' : 'var(--hds-bg-3)',
-                  color: isActive ? 'var(--hds-match-amber)' : 'var(--hds-txt-3)',
-                }}>{pending}</span>
+                <span className={`${styles.groupsShowCount} ${isActive ? styles.groupsShowCountActive : ''}`}>{pending}</span>
               </button>
             )
           })
@@ -1232,62 +1016,48 @@ const GroupsDetailPanel = observer(function GroupsDetailPanel({ store }: { store
   const highConf   = unconfirmed.filter(c => c.confidence >= 80)
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{
-        padding: '16px 24px', borderBottom: '1px solid var(--hds-line)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
-      }}>
-        <h2 style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--hds-txt)', margin: 0 }}>
+    <div className={styles.panelBody}>
+      <div className={styles.groupsDetailHeader}>
+        <h2 className={styles.groupsDetailTitle}>
           {show.show_title}
         </h2>
         {highConf.length > 1 && (
           <button
             disabled={store.saving}
             onClick={() => store.confirmAllHigh()}
-            style={{
-              padding: '6px 14px', borderRadius: 7, cursor: store.saving ? 'not-allowed' : 'pointer',
-              border: '1px solid oklch(0.6 0.18 260 / 0.5)',
-              background: 'oklch(0.55 0.18 260 / 0.1)', color: 'oklch(0.72 0.18 260)',
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10, opacity: store.saving ? 0.5 : 1,
-            }}
+            className={`${styles.confirmAllBtn} ${store.saving ? styles.confirmAllBtnDisabled : ''}`}
           >
             Confirm all high-confidence ({highConf.length})
           </button>
         )}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }} className="scrollbar-dark">
+      <div className={`${styles.panelBodyScroll} scrollbar-dark`}>
         {/* Confirmed groups */}
-        <div style={{
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: '0.14em',
-          color: 'oklch(0.6 0.18 260 / 0.7)', marginBottom: 10, fontWeight: 700,
-        }}>CONFIRMED GROUPS</div>
+        <div className={styles.groupsSectionLabel}>CONFIRMED GROUPS</div>
         {store.groupsLoading ? (
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', paddingBottom: 16 }}>Loading…</div>
+          <div className={styles.groupsEmptyText}>Loading…</div>
         ) : store.confirmedGroups.length === 0 ? (
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', paddingBottom: 16 }}>No confirmed groups yet.</div>
+          <div className={styles.groupsEmptyText}>No confirmed groups yet.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
+          <div className={styles.groupsConfirmedStack}>
             {store.confirmedGroups.map(g => (
-              <div key={g.group_id} style={{
-                borderRadius: 8, border: '1px solid oklch(0.6 0.18 150 / 0.25)',
-                background: 'oklch(0.6 0.18 150 / 0.05)', padding: '10px 14px',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--hds-txt)', flex: 1 }}>{g.name}</span>
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'oklch(0.65 0.16 150)' }}>{g.members.length} parts</span>
+              <div key={g.group_id} className={styles.groupsConfirmedCard}>
+                <div className={styles.groupsCardTopRow}>
+                  <span className={styles.groupsCardName}>{g.name}</span>
+                  <span className={styles.groupsCardPartsCount}>{g.members.length} parts</span>
                   <button
                     disabled={store.saving}
                     onClick={() => store.deleteGroup(g.group_id)}
-                    style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', background: 'none', border: 'none', cursor: 'pointer', opacity: store.saving ? 0.4 : 1 }}
+                    className={`${styles.groupsDeleteBtn} ${store.saving ? styles.groupsDeleteBtnDisabled : ''}`}
                   >Delete</button>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div className={styles.groupsMembersStack}>
                   {g.members.map(m => (
-                    <div key={m.id} style={{ display: 'flex', gap: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
-                      <span style={{ width: 44, flexShrink: 0 }}>Part {m.part_num}</span>
-                      <span style={{ width: 52, flexShrink: 0, color: 'var(--hds-txt-3)' }}>S{String(m.season).padStart(2,'0')}E{String(m.episode).padStart(2,'0')}</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.title}</span>
+                    <div key={m.id} className={styles.groupsMemberRow}>
+                      <span className={styles.groupsMemberPart}>Part {m.part_num}</span>
+                      <span className={styles.groupsMemberEp}>S{String(m.season).padStart(2,'0')}E{String(m.episode).padStart(2,'0')}</span>
+                      <span className={styles.groupsMemberTitle}>{m.title}</span>
                     </div>
                   ))}
                 </div>
@@ -1297,49 +1067,31 @@ const GroupsDetailPanel = observer(function GroupsDetailPanel({ store }: { store
         )}
 
         {/* Candidates */}
-        <div style={{
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: '0.14em',
-          color: 'oklch(0.6 0.18 260 / 0.7)', marginBottom: 10, fontWeight: 700,
-        }}>DETECTED CANDIDATES</div>
+        <div className={styles.groupsSectionLabel}>DETECTED CANDIDATES</div>
         {unconfirmed.length === 0 ? (
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)' }}>All candidates already confirmed.</div>
+          <div className={styles.groupsEmptyText}>All candidates already confirmed.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className={styles.candidateStack}>
             {unconfirmed.sort((a, b) => b.confidence - a.confidence).map((c, i) => {
               const isHigh = c.confidence >= 80
               return (
-                <div key={i} style={{
-                  borderRadius: 8,
-                  border: `1px solid ${isHigh ? 'oklch(0.6 0.18 260 / 0.4)' : 'oklch(0.4 0.05 260 / 0.25)'}`,
-                  padding: '10px 14px',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--hds-txt)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.base_title}</span>
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 700,
-                      padding: '2px 6px', borderRadius: 5, flexShrink: 0,
-                      background: isHigh ? 'oklch(0.55 0.18 260 / 0.25)' : 'oklch(0.4 0.08 260 / 0.15)',
-                      color:      isHigh ? 'oklch(0.75 0.18 260)'         : 'oklch(0.6 0.08 260)',
-                    }}>{c.confidence}%</span>
-                    {!c.adjacent && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-match-amber)', flexShrink: 0 }}>non-adjacent</span>}
+                <div key={i} className={`${styles.groupsCandidateCard} ${isHigh ? styles.groupsCandidateCardHigh : ''}`}>
+                  <div className={styles.groupsCandidateTopRow}>
+                    <span className={styles.groupsCandidateTitle}>{c.base_title}</span>
+                    <span className={`${styles.groupsConfidenceBadge} ${isHigh ? styles.groupsConfidenceBadgeHigh : ''}`}>{c.confidence}%</span>
+                    {!c.adjacent && <span className={styles.groupsNonAdjacent}>non-adjacent</span>}
                     <button
                       disabled={store.saving}
                       onClick={() => store.confirmGroup(c)}
-                      style={{
-                        flexShrink: 0, padding: '3px 10px', borderRadius: 5, cursor: store.saving ? 'not-allowed' : 'pointer',
-                        border: '1px solid oklch(0.6 0.18 260 / 0.5)',
-                        background: 'transparent', color: 'oklch(0.72 0.18 260)',
-                        fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-                        opacity: store.saving ? 0.4 : 1,
-                      }}
+                      className={`${styles.groupsConfirmBtn} ${store.saving ? styles.groupsConfirmBtnDisabled : ''}`}
                     >Confirm</button>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div className={styles.groupsMembersStack}>
                     {c.parts.map(p => (
-                      <div key={p.episode_id} style={{ display: 'flex', gap: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
-                        <span style={{ width: 44, flexShrink: 0 }}>Part {p.part_num}</span>
-                        <span style={{ width: 52, flexShrink: 0 }}>S{String(p.season).padStart(2,'0')}E{String(p.episode).padStart(2,'0')}</span>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+                      <div key={p.episode_id} className={styles.groupsMemberRow}>
+                        <span className={styles.groupsMemberPart}>Part {p.part_num}</span>
+                        <span className={styles.groupsMemberEp}>S{String(p.season).padStart(2,'0')}E{String(p.episode).padStart(2,'0')}</span>
+                        <span className={styles.groupsMemberTitle}>{p.title}</span>
                       </div>
                     ))}
                   </div>
@@ -1355,10 +1107,15 @@ const GroupsDetailPanel = observer(function GroupsDetailPanel({ store }: { store
 
 // ── Requests tab ──────────────────────────────────────────────────────────────
 
-const STATUS_COLOR: Record<RequestStatus, string> = {
-  pending:  'var(--hds-match-amber)',
-  approved: 'oklch(0.7 0.16 150)',
-  rejected: 'var(--hds-match-red)',
+const STATUS_CLASS: Record<RequestStatus, string> = {
+  pending:  styles.statusPending,
+  approved: styles.statusApproved,
+  rejected: styles.statusRejected,
+}
+const STATUS_PILL_CLASS: Record<RequestStatus, string> = {
+  pending:  styles.statusPillPending,
+  approved: styles.statusPillApproved,
+  rejected: styles.statusPillRejected,
 }
 
 function RequestsListPanel({
@@ -1374,24 +1131,18 @@ function RequestsListPanel({
 }) {
   return (
     <>
-      <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--hds-txt)' }}>
+      <div className={styles.panelHeader}>
+        <div className={styles.panelHeaderRow}>
+          <span className={styles.panelTitle}>
             Requests
           </span>
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div className={styles.filterRow}>
           {(['pending', 'all', 'approved', 'rejected'] as const).map(f => (
-            <button key={f} onClick={() => onFilterChange(f)} style={{
-              flex: 1, padding: '5px 0', borderRadius: 6, cursor: 'pointer', fontSize: 9,
-              fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em',
-              border: `1px solid ${filter === f ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-              background: filter === f ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-              color: filter === f ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-            }}>
+            <button key={f} onClick={() => onFilterChange(f)} className={`${styles.filterPill} ${filter === f ? styles.filterPillActive : ''}`}>
               {f === 'all' ? 'ALL' : f.toUpperCase()}
               {f !== 'all' && (
-                <span style={{ marginLeft: 4, opacity: 0.7 }}>
+                <span className={styles.filterPillCount}>
                   {allRequests.filter(r => r.status === f).length}
                 </span>
               )}
@@ -1400,43 +1151,36 @@ function RequestsListPanel({
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto' }} className="scrollbar-dark">
+      <div className={`${styles.listScroll} scrollbar-dark`}>
         {loading ? (
-          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {[...Array(5)].map((_, i) => <div key={i} className="hds-skeleton" style={{ height: 72, borderRadius: 8 }} />)}
+          <div className={styles.skeletonListGap8}>
+            {[...Array(5)].map((_, i) => <div key={i} className={`hds-skeleton ${styles.skeletonRow72}`} />)}
           </div>
         ) : items.length === 0 ? (
-          <div style={{ padding: 32, textAlign: 'center', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)' }}>
+          <div className={styles.emptyState}>
             {filter === 'pending' ? 'No pending requests' : `No ${filter} requests`}
           </div>
         ) : (
-          <div style={{ padding: '8px 10px' }}>
+          <div className={styles.reqListWrap}>
             {items.map(r => {
-              const srcColor = r.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
               const isSelected = selected?.request_id === r.request_id
               return (
                 <div
                   key={r.request_id}
                   onClick={() => onSelect(r)}
-                  style={{
-                    display: 'flex', gap: 10, alignItems: 'center', padding: '9px 10px',
-                    borderRadius: 8, cursor: 'pointer', marginBottom: 2,
-                    background: isSelected ? 'oklch(0.55 0.14 292 / 0.1)' : 'transparent',
-                    border: `1px solid ${isSelected ? 'var(--hds-violet)' : 'transparent'}`,
-                    transition: 'background .1s',
-                  }}
+                  className={`${styles.reqRow} ${isSelected ? styles.reqRowSelected : ''}`}
                 >
-                  <div style={{ width: 32, height: 48, borderRadius: 4, overflow: 'hidden', flexShrink: 0, background: 'var(--hds-bg-3)' }}>
-                    {r.poster_url && <img src={mediaUrl(r.poster_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />}
+                  <div className={styles.reqThumbWrap}>
+                    {r.poster_url && <img src={mediaUrl(r.poster_url)} alt="" className={styles.reqThumbImg} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
-                    <div style={{ display: 'flex', gap: 5, marginTop: 4, alignItems: 'center' }}>
-                      {r.year && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>{r.year}</span>}
-                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: srcColor, border: `1px solid ${srcColor}`, borderRadius: 3, padding: '1px 4px' }}>{r.source.toUpperCase()}</span>
+                  <div className={styles.reqInfo}>
+                    <div className={styles.reqTitle}>{r.title}</div>
+                    <div className={styles.reqMetaRow}>
+                      {r.year && <span className={styles.reqYear}>{r.year}</span>}
+                      <span className={`${styles.reqSourceBadge} ${r.source === 'tmdb' ? styles.chipTmdb : styles.chipTvdb}`}>{r.source.toUpperCase()}</span>
                     </div>
                   </div>
-                  <span style={{ flexShrink: 0, fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: '0.08em', color: STATUS_COLOR[r.status] }}>
+                  <span className={`${styles.reqStatusLabel} ${STATUS_CLASS[r.status]}`}>
                     {r.status.toUpperCase()}
                   </span>
                 </div>
@@ -1464,7 +1208,6 @@ function RequestDetailPanel({ request: r, onClose, onStatusChange }: {
   const [rejecting,        setRejecting]        = useState(false)
 
   const serviceLabel = r.content_type === 'show' ? 'Sonarr' : 'Radarr'
-  const srcColor     = r.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
 
   const handleApproveClick = async () => {
     setArrStep('loading')
@@ -1512,138 +1255,101 @@ function RequestDetailPanel({ request: r, onClose, onStatusChange }: {
   }
 
   return (
-    <div style={{ flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div className={styles.panelBody}>
       {/* Backdrop */}
-      <div style={{ position: 'relative', height: 200, flexShrink: 0 }}>
-        <div style={{
-          position: 'absolute', inset: 0,
-          background: r.poster_url
-            ? `url(${mediaUrl(r.poster_url)}) center 20%/cover no-repeat`
-            : 'linear-gradient(135deg, oklch(0.12 0.04 292), oklch(0.16 0.03 280))',
-        }} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, var(--hds-bg) 0%, oklch(0 0 0 / 0.4) 100%)' }} />
-        <button onClick={onClose} style={{
-          position: 'absolute', top: 12, right: 12, width: 28, height: 28, borderRadius: '50%',
-          border: 'none', cursor: 'pointer', background: 'oklch(0 0 0 / 0.5)',
-          color: 'oklch(0.8 0.01 285)', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>×</button>
+      <div className={styles.reqBackdrop}>
+        {r.poster_url ? (
+          <div className={styles.reqBackdropImg} style={{ backgroundImage: `url(${mediaUrl(r.poster_url)})` }} />
+        ) : (
+          <div className={styles.reqBackdropFallback} />
+        )}
+        <div className={styles.reqBackdropScrim} />
+        <button onClick={onClose} className={styles.iconCloseBtnCircle}>×</button>
         {r.poster_url && (
-          <img src={mediaUrl(r.poster_url)} alt="" style={{
-            position: 'absolute', bottom: -32, left: 24,
-            width: 60, height: 90, objectFit: 'cover', borderRadius: 6,
-            boxShadow: '0 4px 20px oklch(0 0 0 / 0.5)',
-          }} />
+          <img src={mediaUrl(r.poster_url)} alt="" className={styles.reqBackdropPoster} />
         )}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: r.poster_url ? '44px 24px 32px' : '20px 24px 32px', maxWidth: 560 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-          <h2 style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 20, fontWeight: 700, color: 'var(--hds-txt)', margin: 0, lineHeight: 1.2 }}>
+      <div className={`${styles.reqDetailBody} ${r.poster_url ? styles.reqDetailBodyWithPoster : ''}`}>
+        <div className={styles.reqDetailTitleRow}>
+          <h2 className={styles.reqDetailTitle}>
             {r.title}
           </h2>
-          <span style={{
-            flexShrink: 0, marginTop: 4,
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: '0.08em',
-            color: STATUS_COLOR[r.status], border: `1px solid ${STATUS_COLOR[r.status]}`,
-            padding: '2px 8px', borderRadius: 10,
-            background: `${STATUS_COLOR[r.status].replace(')', ' / 0.08)')}`,
-          }}>{r.status.toUpperCase()}</span>
+          <span className={`${styles.reqStatusPill} ${STATUS_PILL_CLASS[r.status]}`}>{r.status.toUpperCase()}</span>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-          {r.year && <span style={chip}>{r.year}</span>}
-          <span style={chip}>{r.content_type}</span>
-          <span style={{ ...chip, color: srcColor, borderColor: `${srcColor.replace(')', ' / 0.4)')}` }}>{r.source.toUpperCase()}</span>
+        <div className={styles.reqDetailChipRow}>
+          {r.year && <span className={styles.chip}>{r.year}</span>}
+          <span className={styles.chip}>{r.content_type}</span>
+          <span className={`${styles.chip} ${styles.reqSourceChip} ${r.source === 'tmdb' ? styles.chipTmdb : styles.chipTvdb}`}>{r.source.toUpperCase()}</span>
         </div>
-        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', marginBottom: 20 }}>
+        <div className={styles.reqDetailMeta}>
           Requested {new Date(r.created_at * 1000).toLocaleString()} · user {r.user_id.slice(0, 8)}
         </div>
 
         {r.status === 'pending' && (
-          <div style={{ borderTop: '1px solid var(--hds-line-s)', paddingTop: 18 }}>
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.08em', marginBottom: 12 }}>
+          <div className={styles.arrSection}>
+            <div className={styles.arrSectionLabel}>
               {serviceLabel.toUpperCase()}
             </div>
             {arrStep === 'idle' && (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={handleApproveClick} style={{
-                  flex: 2, padding: '9px 0', borderRadius: 8, cursor: 'pointer',
-                  border: '1px solid oklch(0.7 0.16 150 / 0.6)', background: 'oklch(0.7 0.16 150 / 0.1)',
-                  color: 'oklch(0.7 0.16 150)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600,
-                }}>Approve → {serviceLabel}</button>
-                <button onClick={handleReject} disabled={rejecting} style={{
-                  flex: 1, padding: '9px 0', borderRadius: 8, cursor: rejecting ? 'default' : 'pointer',
-                  border: '1px solid var(--hds-match-red)', background: 'oklch(0.55 0.22 27 / 0.08)',
-                  color: 'var(--hds-match-red)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-                  opacity: rejecting ? 0.5 : 1,
-                }}>Reject</button>
+              <div className={styles.arrIdleRow}>
+                <button onClick={handleApproveClick} className={styles.arrApproveBtn}>Approve → {serviceLabel}</button>
+                <button onClick={handleReject} disabled={rejecting} className={`${styles.arrRejectBtn} ${rejecting ? styles.arrRejectBtnDisabled : ''}`}>Reject</button>
               </div>
             )}
             {(arrStep === 'loading' || arrStep === 'adding') && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', padding: '8px 0' }}>
+              <div className={styles.arrBusyText}>
                 {arrStep === 'loading' ? `Looking up in ${serviceLabel}…` : `Adding to ${serviceLabel}…`}
               </div>
             )}
             {arrStep === 'form' && options && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                <label style={formLabelStyle}>
+              <div className={styles.arrForm}>
+                <label className={styles.formLabel}>
                   Quality Profile
-                  <select value={qualityProfileId ?? ''} onChange={e => setQualityProfileId(Number(e.target.value))} style={selectStyle}>
+                  <select value={qualityProfileId ?? ''} onChange={e => setQualityProfileId(Number(e.target.value))} className={styles.selectInput}>
                     {options.quality_profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </label>
-                <label style={formLabelStyle}>
+                <label className={styles.formLabel}>
                   Root Folder
-                  <select value={rootFolder} onChange={e => setRootFolder(e.target.value)} style={selectStyle}>
+                  <select value={rootFolder} onChange={e => setRootFolder(e.target.value)} className={styles.selectInput}>
                     {options.root_folders.map(f => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-2)' }}>
-                  <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} style={{ accentColor: 'var(--hds-violet)', width: 14, height: 14 }} />
+                <label className={styles.arrCheckboxLabel}>
+                  <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} className={styles.arrCheckbox} />
                   Search immediately
                 </label>
-                <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
-                  <button onClick={() => setArrStep('idle')} style={{ flex: 1, padding: '8px 0', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>Cancel</button>
-                  <button onClick={handleConfirmApprove} style={{ flex: 2, padding: '8px 0', borderRadius: 7, cursor: 'pointer', border: '1px solid oklch(0.7 0.16 150 / 0.6)', background: 'oklch(0.7 0.16 150 / 0.1)', color: 'oklch(0.7 0.16 150)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600 }}>
+                <div className={styles.arrFormActions}>
+                  <button onClick={() => setArrStep('idle')} className={styles.arrCancelBtn}>Cancel</button>
+                  <button onClick={handleConfirmApprove} className={styles.arrConfirmBtn}>
                     Confirm → {serviceLabel}
                   </button>
                 </div>
               </div>
             )}
             {arrStep === 'error' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid var(--hds-match-red)', background: 'oklch(0.55 0.22 27 / 0.08)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-red)', lineHeight: 1.5 }}>{arrError}</div>
-                <button onClick={() => setArrStep('idle')} style={{ padding: '7px 0', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>Try Again</button>
+              <div className={styles.arrErrorBox}>
+                <div className={styles.arrErrorBanner}>{arrError}</div>
+                <button onClick={() => setArrStep('idle')} className={styles.arrTryAgainBtn}>Try Again</button>
               </div>
             )}
           </div>
         )}
         {arrStep === 'done' && (
-          <div style={{ padding: '12px 16px', borderRadius: 8, border: '1px solid oklch(0.7 0.16 150 / 0.4)', background: 'oklch(0.7 0.16 150 / 0.08)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.7 0.16 150)' }}>
+          <div className={`${styles.arrStatusBanner} ${styles.arrStatusBannerApproved}`}>
             Approved — added to {serviceLabel}{searchOnAdd ? ', search queued' : ''}
           </div>
         )}
         {r.status === 'approved' && arrStep !== 'done' && (
-          <div style={{ padding: '12px 16px', borderRadius: 8, border: '1px solid oklch(0.7 0.16 150 / 0.4)', background: 'oklch(0.7 0.16 150 / 0.08)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.7 0.16 150)' }}>Approved</div>
+          <div className={`${styles.arrStatusBanner} ${styles.arrStatusBannerApproved}`}>Approved</div>
         )}
         {r.status === 'rejected' && (
-          <div style={{ padding: '12px 16px', borderRadius: 8, border: '1px solid var(--hds-match-red)', background: 'oklch(0.55 0.22 27 / 0.08)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-match-red)' }}>Rejected</div>
+          <div className={`${styles.arrStatusBanner} ${styles.arrStatusBannerRejected}`}>Rejected</div>
         )}
       </div>
     </div>
   )
-}
-
-const formLabelStyle: React.CSSProperties = {
-  display: 'flex', flexDirection: 'column', gap: 6,
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-  color: 'var(--hds-txt-3)', letterSpacing: '0.06em',
-}
-
-const selectStyle: React.CSSProperties = {
-  padding: '7px 10px', borderRadius: 7,
-  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-  color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-  cursor: 'pointer', outline: 'none',
 }
 
 // ── Duplicates tab ────────────────────────────────────────────────────────────
@@ -1668,59 +1374,44 @@ function DuplicatesListPanel({
 }) {
   return (
     <>
-      <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--hds-txt)' }}>
+      <div className={styles.panelHeader}>
+        <div className={styles.panelHeaderRow}>
+          <span className={styles.panelTitle}>
             Duplicates
           </span>
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>{total}</span>
+          <span className={styles.panelCount}>{total}</span>
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div className={styles.filterRow}>
           {(['all', 'show', 'movie'] as const).map(f => (
-            <button key={f} onClick={() => onFilterChange(f)} style={{
-              flex: 1, padding: '5px 0', borderRadius: 6, cursor: 'pointer', fontSize: 9,
-              fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em',
-              border: `1px solid ${filter === f ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-              background: filter === f ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-              color: filter === f ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-            }}>{f.toUpperCase()}</button>
+            <button key={f} onClick={() => onFilterChange(f)} className={`${styles.filterPill} ${filter === f ? styles.filterPillActive : ''}`}>{f.toUpperCase()}</button>
           ))}
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto' }} className="scrollbar-dark">
+      <div className={`${styles.listScroll} scrollbar-dark`}>
         {loading ? (
-          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {[...Array(5)].map((_, i) => <div key={i} className="hds-skeleton" style={{ height: 64, borderRadius: 8 }} />)}
+          <div className={styles.skeletonListGap8}>
+            {[...Array(5)].map((_, i) => <div key={i} className={`hds-skeleton ${styles.skeletonRow64}`} />)}
           </div>
         ) : items.length === 0 ? (
-          <div style={{ padding: 32, textAlign: 'center', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)' }}>
+          <div className={styles.emptyState}>
             No pending duplicates
           </div>
         ) : (
-          <div style={{ padding: '8px 10px' }}>
+          <div className={styles.dupListWrap}>
             {items.map(d => {
               const isSelected = selected?.candidate_id === d.candidate_id
-              const simColor = d.title_similarity >= 0.8 ? 'var(--hds-match-amber)' : 'var(--hds-txt-3)'
+              const isSimilar = d.title_similarity >= 0.8
               return (
                 <div
                   key={d.candidate_id}
                   onClick={() => onSelect(d)}
-                  style={{
-                    display: 'flex', flexDirection: 'column', gap: 4, padding: '9px 10px',
-                    borderRadius: 8, cursor: 'pointer', marginBottom: 2,
-                    background: isSelected ? 'oklch(0.55 0.14 292 / 0.1)' : 'transparent',
-                    border: `1px solid ${isSelected ? 'var(--hds-violet)' : 'transparent'}`,
-                    borderLeft: `3px solid ${simColor}`,
-                  }}
+                  className={`${styles.dupRow} ${isSelected ? styles.dupRowSelected : ''} ${isSimilar ? styles.dupRowSimilar : ''}`}
                 >
-                  <div style={{
-                    fontFamily: "'Chakra Petch', sans-serif", fontSize: 11.5, fontWeight: 600, color: 'var(--hds-txt)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
-                    {d.title_a} <span style={{ color: 'var(--hds-txt-3)', fontWeight: 400 }}>vs</span> {d.title_b}
+                  <div className={styles.dupTitleLine}>
+                    {d.title_a} <span className={styles.dupVs}>vs</span> {d.title_b}
                   </div>
-                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>{d.reason}</div>
+                  <div className={styles.dupReason}>{d.reason}</div>
                 </div>
               )
             })}
@@ -1774,45 +1465,36 @@ function DuplicateDetailPanel({ item, onClose, onResolved }: {
   }
 
   return (
-    <div style={{ flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <div style={{
-        padding: '16px 24px', borderBottom: '1px solid var(--hds-line)',
-        display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
-      }}>
-        <div style={{ flex: 1 }}>
-          <h2 style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--hds-txt)', margin: '0 0 4px' }}>
+    <div className={styles.panelBody}>
+      <div className={styles.detailHeader}>
+        <div className={styles.detailHeaderTop}>
+          <h2 className={styles.detailHeaderTitle}>
             Possible duplicate
           </h2>
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-3)' }}>{item.reason}</div>
+          <div className={styles.reqDetailMeta}>{item.reason}</div>
         </div>
-        <button onClick={onClose} style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--hds-txt-3)', fontSize: 20, lineHeight: 1,
-        }}>✕</button>
+        <button onClick={onClose} className={styles.iconCloseBtn}>✕</button>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }} className="scrollbar-dark">
-        <div style={{ display: 'flex', gap: 16 }}>
+      <div className={`${styles.panelBodyScroll} scrollbar-dark ${styles.dupDetailScroll}`}>
+        <div className={styles.dupCompareRow}>
           {[
             { title: item.title_a, year: item.year_a, thumb: item.thumb_a, folder: item.folder_a },
             { title: item.title_b, year: item.year_b, thumb: item.thumb_b, folder: item.folder_b },
           ].map((side, i) => (
-            <div key={i} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ width: '100%', aspectRatio: '2/3', borderRadius: 8, overflow: 'hidden', background: 'var(--hds-bg-3)' }}>
+            <div key={i} className={styles.dupSide}>
+              <div className={styles.dupSidePoster}>
                 {side.thumb && (
-                  <img src={mediaUrl(side.thumb)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  <img src={mediaUrl(side.thumb)} alt="" className={styles.dupSidePosterImg}
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
                 )}
               </div>
-              <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600, color: 'var(--hds-txt)' }}>
-                {side.title} {side.year ? <span style={{ color: 'var(--hds-txt-3)', fontWeight: 400 }}>({side.year})</span> : null}
+              <div className={styles.dupSideTitle}>
+                {side.title} {side.year ? <span className={styles.dupSideYear}>({side.year})</span> : null}
               </div>
               {side.folder && (
-                <div title={side.folder} style={{
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, color: 'var(--hds-txt-3)',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
+                <div title={side.folder} className={styles.dupSideFolder}>
                   {folderBaseName(side.folder)}
                 </div>
               )}
@@ -1821,28 +1503,14 @@ function DuplicateDetailPanel({ item, onClose, onResolved }: {
         </div>
 
         {error && (
-          <div style={{
-            marginTop: 16, padding: '8px 12px', borderRadius: 7,
-            border: '1px solid var(--hds-match-red)', background: 'oklch(0.62 0.2 22 / 0.12)',
-            color: 'var(--hds-match-red)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5,
-          }}>
+          <div className={styles.dupErrorBanner}>
             {error}
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
-          <button onClick={handleMerge} disabled={busy} style={{
-            flex: 1, padding: '10px 0', borderRadius: 7, cursor: busy ? 'not-allowed' : 'pointer',
-            border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.1)',
-            color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600,
-            opacity: busy ? 0.6 : 1,
-          }}>{merging ? '…' : 'Merge'}</button>
-          <button onClick={handleDismiss} disabled={busy} style={{
-            flex: 1, padding: '10px 0', borderRadius: 7, cursor: busy ? 'not-allowed' : 'pointer',
-            border: '1px solid var(--hds-line)', background: 'transparent',
-            color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-            opacity: busy ? 0.6 : 1,
-          }}>{dismissing ? '…' : 'Not a duplicate'}</button>
+        <div className={styles.dupActionsRow}>
+          <button onClick={handleMerge} disabled={busy} className={`${styles.dupMergeBtn} ${busy ? styles.dupActionBtnBusy : ''}`}>{merging ? '…' : 'Merge'}</button>
+          <button onClick={handleDismiss} disabled={busy} className={`${styles.dupDismissBtn} ${busy ? styles.dupActionBtnBusy : ''}`}>{dismissing ? '…' : 'Not a duplicate'}</button>
         </div>
       </div>
     </div>
@@ -1870,6 +1538,10 @@ const CHAPTER_TYPE_LABEL: Record<ChapterType, string> = {
   next_time: 'Next Time',
 }
 
+// A 10-way content-classification color lookup (not a small closed toggle
+// state) — kept as a JS constant consumed via a targeted inline `color`
+// style rather than 10 near-identical CSS modifier classes each setting one
+// property. Same precedent as channel/'s BLOCK_META per-type colors.
 const CHAPTER_TYPE_COLOR: Record<ChapterType, string> = {
   pre_roll:     'oklch(0.7 0.14 200)',
   intro:        'oklch(0.7 0.16 150)',
@@ -1897,12 +1569,12 @@ function ChaptersListPanel({
 }) {
   return (
     <>
-      <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--hds-txt)' }}>
+      <div className={styles.panelHeader}>
+        <div className={styles.panelHeaderRow}>
+          <span className={styles.panelTitle}>
             Chapters
           </span>
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+          <span className={styles.panelCount}>
             {total} item{total !== 1 ? 's' : ''}
           </span>
         </div>
@@ -1910,23 +1582,11 @@ function ChaptersListPanel({
           value={query}
           onChange={e => onQueryChange(e.target.value)}
           placeholder="Search title…"
-          style={{
-            width: '100%', padding: '6px 10px', borderRadius: 6, marginBottom: 8,
-            border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-            color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-            outline: 'none', boxSizing: 'border-box',
-          }}
+          className={styles.chapterSearchInput}
         />
-        <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+        <div className={styles.chapterFilterRow}>
           {(['all', 'episode', 'movie'] as const).map(t => (
-            <button key={t} onClick={() => onMediaTypeChange(t)} style={{
-              flex: 1, padding: '5px 0', borderRadius: 6,
-              border: `1px solid ${mediaType === t ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-              background: mediaType === t ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-              color: mediaType === t ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-              cursor: 'pointer', letterSpacing: '0.06em',
-            }}>
+            <button key={t} onClick={() => onMediaTypeChange(t)} className={`${styles.filterPill} ${mediaType === t ? styles.filterPillActive : ''}`}>
               {t === 'all' ? 'ALL' : t === 'episode' ? 'EPISODES' : 'MOVIES'}
             </button>
           ))}
@@ -1934,26 +1594,22 @@ function ChaptersListPanel({
         <select
           value={chapterType}
           onChange={e => onChapterTypeChange(e.target.value as 'all'|ChapterType)}
-          style={{ ...selectStyle, width: '100%' }}
+          className={`${styles.selectInput} ${styles.selectInputFull}`}
         >
           <option value="all">All chapter types</option>
           {CHAPTER_TYPES.map(t => <option key={t} value={t}>{CHAPTER_TYPE_LABEL[t]}</option>)}
         </select>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto' }} className="scrollbar-dark">
+      <div className={`${styles.listScroll} scrollbar-dark`}>
         {loading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <div className={styles.skeletonListGap1}>
             {Array.from({ length: 8 }, (_, i) => (
-              <div key={i} className="hds-skeleton" style={{ height: 52, margin: '1px 0' }} />
+              <div key={i} className={`hds-skeleton ${styles.skeletonRowSm}`} />
             ))}
           </div>
         ) : items.length === 0 ? (
-          <div style={{
-            padding: 32, textAlign: 'center',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-            color: 'var(--hds-txt-3)', lineHeight: 1.6,
-          }}>
+          <div className={styles.emptyState}>
             No items match these filters.
           </div>
         ) : (
@@ -1965,27 +1621,15 @@ function ChaptersListPanel({
               <button
                 key={item.media_type + item.media_id}
                 onClick={() => onSelect(item)}
-                style={{
-                  width: '100%', display: 'flex', flexDirection: 'column', gap: 5,
-                  padding: '10px 16px', border: 'none', cursor: 'pointer', textAlign: 'left',
-                  background: isSelected ? 'var(--hds-bg-3)' : 'transparent',
-                  borderBottom: '1px solid var(--hds-line-s)',
-                }}
+                className={`${styles.chapterListRow} ${isSelected ? styles.chapterListRowSelected : ''}`}
               >
-                <div style={{
-                  fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, fontWeight: 600,
-                  color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>{item.title}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>
+                <div className={styles.chapterListTitle}>{item.title}</div>
+                <div className={styles.chapterListMetaRow}>
+                  <span className={styles.chapterListDuration}>
                     {fmtMs(item.duration_ms)}
                   </span>
                   {[...typeCounts.entries()].map(([t, n]) => (
-                    <span key={t} style={{
-                      fontFamily: "'JetBrains Mono', monospace", fontSize: 8,
-                      color: CHAPTER_TYPE_COLOR[t], border: '1px solid currentColor',
-                      borderRadius: 8, padding: '1px 5px',
-                    }}>{CHAPTER_TYPE_LABEL[t]} {n}</span>
+                    <span key={t} className={styles.chapterTypeCountChip} style={{ color: CHAPTER_TYPE_COLOR[t] }}>{CHAPTER_TYPE_LABEL[t]} {n}</span>
                   ))}
                 </div>
               </button>
@@ -1995,12 +1639,6 @@ function ChaptersListPanel({
       </div>
     </>
   )
-}
-
-const chapterActionBtnStyle: React.CSSProperties = {
-  padding: '4px 10px', borderRadius: 6, cursor: 'pointer', flexShrink: 0,
-  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-  color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: '0.04em',
 }
 
 function ChapterInspectorPanel({ item, onClose }: { item: ChapterReviewItem; onClose: () => void }) {
@@ -2031,51 +1669,36 @@ function ChapterInspectorPanel({ item, onClose }: { item: ChapterReviewItem; onC
   const activeId = sorted.find(c => currentMs >= c.start_ms && currentMs < (c.end_ms || Infinity))?.chapter_id
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{
-        padding: '16px 24px', borderBottom: '1px solid var(--hds-line)', flexShrink: 0,
-        display: 'flex', alignItems: 'flex-start', gap: 12,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, fontWeight: 700,
-            color: 'var(--hds-txt)', margin: '0 0 6px',
-          }}>{item.title}</h2>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {item.year && <span style={chip}>{item.year}</span>}
-            <span style={chip}>{item.media_type}</span>
-            <span style={chip}>{fmtMs(item.duration_ms)}</span>
-            <span style={chip}>{item.chapters.length} chapter{item.chapters.length !== 1 ? 's' : ''}</span>
+    <div className={styles.panelBody}>
+      <div className={styles.detailHeader}>
+        <div className={styles.detailHeaderTop}>
+          <h2 className={styles.detailHeaderTitle}>{item.title}</h2>
+          <div className={styles.detailHeaderChips}>
+            {item.year && <span className={styles.chip}>{item.year}</span>}
+            <span className={styles.chip}>{item.media_type}</span>
+            <span className={styles.chip}>{fmtMs(item.duration_ms)}</span>
+            <span className={styles.chip}>{item.chapters.length} chapter{item.chapters.length !== 1 ? 's' : ''}</span>
           </div>
           {item.file_path && (
             <div
               title={item.file_path}
-              style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
-                marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}
+              className={styles.detailHeaderFolder}
             >
-              <span style={{ opacity: 0.7 }}>File: </span>{folderBaseName(item.file_path)}
+              <span className={styles.mutedLabel}>File: </span>{folderBaseName(item.file_path)}
             </div>
           )}
         </div>
-        <button onClick={onClose} style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--hds-txt-3)', fontSize: 20, lineHeight: 1, flexShrink: 0,
-        }}>✕</button>
+        <button onClick={onClose} className={styles.iconCloseBtn}>✕</button>
       </div>
 
-      <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#000', flexShrink: 0 }}>
+      <div className={styles.chapterPlayerWrap}>
         {session.loading && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className={styles.chapterPlayerOverlay}>
             <LoadingThrobber label="Starting playback…" />
           </div>
         )}
         {(session.error || playerError) && !session.loading && (
-          <div style={{
-            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--hds-match-red)', padding: 24, textAlign: 'center',
-          }}>{session.error ?? playerError}</div>
+          <div className={styles.chapterPlayerError}>{session.error ?? playerError}</div>
         )}
         {!session.loading && !session.error && session.manifestUrl && (
           <VideoPlayer
@@ -2092,11 +1715,11 @@ function ChapterInspectorPanel({ item, onClose }: { item: ChapterReviewItem; onC
         )}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }} className="scrollbar-dark">
+      <div className={`${styles.panelBodyScroll} scrollbar-dark`}>
         {sorted.length === 0 ? (
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)' }}>No chapters.</div>
+          <div className={styles.chapterNoChaptersText}>No chapters.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className={styles.chapterRowStack}>
             {sorted.map(c => (
               <ChapterRow
                 key={c.chapter_id}
@@ -2123,30 +1746,18 @@ function ChapterRow({
 }) {
   const color = CHAPTER_TYPE_COLOR[chapter.chapter_type]
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8,
-      border: '1px solid var(--hds-line)',
-      borderLeft: `3px solid ${color}`,
-      background: active ? 'var(--hds-bg-3)' : 'var(--hds-bg-2)',
-    }}>
-      <span style={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 700,
-        color, border: '1px solid currentColor', borderRadius: 10,
-        padding: '2px 8px', flexShrink: 0,
-      }}>{CHAPTER_TYPE_LABEL[chapter.chapter_type].toUpperCase()}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
+    <div className={`${styles.chapterRow} ${active ? styles.chapterRowActive : ''}`} style={{ borderLeftColor: color }}>
+      <span className={styles.chapterTypeBadge} style={{ color }}>{CHAPTER_TYPE_LABEL[chapter.chapter_type].toUpperCase()}</span>
+      <div className={styles.chapterRowInfo}>
         {chapter.title && (
-          <div style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, color: 'var(--hds-txt)',
-            marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>{chapter.title}</div>
+          <div className={styles.chapterRowTitle}>{chapter.title}</div>
         )}
-        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
+        <div className={styles.chapterRowTime}>
           {fmtMs(chapter.start_ms)} – {fmtMs(chapter.end_ms)} · {chapter.source}{chapter.locked ? ' · locked' : ''}
         </div>
       </div>
-      <button onClick={onSeekStart} style={chapterActionBtnStyle}>▶ Start</button>
-      <button onClick={onSeekEnd} style={chapterActionBtnStyle}>▶ End</button>
+      <button onClick={onSeekStart} className={styles.chapterActionBtn}>▶ Start</button>
+      <button onClick={onSeekEnd} className={styles.chapterActionBtn}>▶ End</button>
     </div>
   )
 }

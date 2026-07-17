@@ -82,7 +82,7 @@ export const DeviceConnectionsPanel = observer(function DeviceConnectionsPanel()
   const live = connections.filter(c => Date.now() - c.last_seen_ms < STALE_MS)
 
   return (
-    <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4" style={{ flexShrink: 0 }}>
+    <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4 shrink-0">
       <div className="flex items-center justify-between mb-3">
         <h2 className="section-label">Connected Devices</h2>
         <span className="text-xs text-zinc-400">
@@ -107,7 +107,7 @@ export const DeviceConnectionsPanel = observer(function DeviceConnectionsPanel()
                   c.state.playing ? 'bg-emerald-400' : 'bg-zinc-600'
                 }`} />
                 <span className="text-zinc-300 font-medium shrink-0">{user?.username ?? c.user_id}</span>
-                <span className="text-zinc-500 truncate" style={{ maxWidth: 320 }}>
+                <span className="text-zinc-500 truncate max-w-[320px]">
                   {c.state.contentType
                     ? (title ?? 'Loading…')
                     : 'Connected — nothing playing'}

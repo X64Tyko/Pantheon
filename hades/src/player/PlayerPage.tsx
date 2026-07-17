@@ -14,6 +14,7 @@ import { useNavBack } from '../nav/back'
 import { useCastSession } from '../cast/useCastSession'
 import { useRokuSession } from '../cast-roku/useRokuSession'
 import type { CastMediaArgs } from '../cast/castMedia'
+import styles from './PlayerPage.module.css'
 
 const TARGET_BUFFER_SECS = 6 // matches the HLS segment length — "fully buffered" for throbber purposes
 
@@ -368,22 +369,22 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
   return (
     <div
-      style={pageStyle}
+      className={styles.page}
       onMouseMove={resetIdleTimer}
       onClick={resetIdleTimer}
     >
       {session.loading && (
-        <div style={overlayStyle}>
+        <div className={styles.overlay}>
           <LoadingThrobber label="Starting playback…" />
         </div>
       )}
 
       {(session.error || playerError) && !session.loading && (
-        <div style={overlayStyle}>
-          <div style={{ color: 'var(--hds-match-red, oklch(0.62 0.2 22))', marginBottom: 10 }}>
+        <div className={styles.overlay}>
+          <div className={styles.errorText}>
             {session.error ?? playerError}
           </div>
-          <button onClick={() => navigate(-1)} style={backBtnStyle}>Go back</button>
+          <button onClick={() => navigate(-1)} className={styles.backBtn}>Go back</button>
         </div>
       )}
 
@@ -393,15 +394,15 @@ export function PlayerPage({ kind }: PlayerPageProps) {
             // The local hls.js instance only exists inside VideoPlayer — not
             // rendering it while casting tears it down via its own unmount
             // cleanup (hls?.destroy()), same as navigating away normally.
-            <div style={castingBackdropStyle} />
+            <div className={styles.castingBackdrop} />
           ) : (
             <>
               {channelPip && (
-                <div style={pipBackdropStyle}>
-                  <img src={channelLogoUrl(targetId)} alt="" style={pipBackdropLogoStyle} />
+                <div className={styles.pipBackdrop}>
+                  <img src={channelLogoUrl(targetId)} alt="" className={styles.pipBackdropLogo} />
                 </div>
               )}
-              <div style={channelPip ? pipVideoContainerStyle : fullVideoContainerStyle}>
+              <div className={channelPip ? styles.pipVideoContainer : styles.fullVideoContainer}>
                 <VideoPlayer
                   videoRef={videoRef}
                   manifestUrl={session.manifestUrl}
@@ -428,12 +429,12 @@ export function PlayerPage({ kind }: PlayerPageProps) {
             </>
           )}
           {buffering && !isRemoteActive && (
-            <div style={{ ...overlayStyle, pointerEvents: 'none' }}>
+            <div className={`${styles.overlay} ${styles.overlayNoPointer}`}>
               <LoadingThrobber percent={bufferPercent} />
             </div>
           )}
           {showSkipIntro && (
-            <button onClick={() => handleSeek(activeChapter!.end_ms)} style={skipIntroBtnStyle}>
+            <button onClick={() => handleSeek(activeChapter!.end_ms)} className={styles.skipIntroBtn}>
               Skip Intro
             </button>
           )}
@@ -444,7 +445,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
               onDismiss={() => setUpNextDismissed(true)}
             />
           )}
-          <div style={{ opacity: controlsVisible || menu ? 1 : 0, transition: 'opacity .25s', pointerEvents: controlsVisible || menu ? 'auto' : 'none' }}>
+          <div className={`${styles.controlsFade} ${controlsVisible || menu ? styles.controlsVisible : styles.controlsHidden}`}>
             <PlayerControls
               videoRef={videoRef}
               title={title}
@@ -520,64 +521,4 @@ export function PlayerPage({ kind }: PlayerPageProps) {
       )}
     </div>
   )
-}
-
-// Plain fixed backdrop — must NOT be a flex/grid container. Flex alignItems
-// other than the default 'stretch' stops a video/controls child's 100%
-// width+height from actually filling it, so it renders undersized and
-// centered instead of edge-to-edge. Centering for loading/error states lives
-// in overlayStyle, a separate absolutely-positioned layer, not here.
-const pageStyle: React.CSSProperties = {
-  position: 'fixed', inset: 0, background: '#000', zIndex: 100,
-}
-
-const castingBackdropStyle: React.CSSProperties = {
-  width: '100%', height: '100%', background: '#000',
-}
-
-const fullVideoContainerStyle: React.CSSProperties = {
-  position: 'absolute', inset: 0,
-}
-
-// Shrinks the still-airing feed into a corner while its credits play out —
-// the same continuous live stream, just re-laid-out; once the schedule
-// naturally moves past credits (post_credits, or the item itself changes),
-// this reverts to fullVideoContainerStyle and the same <video> is already
-// showing whatever's actually on next.
-const pipVideoContainerStyle: React.CSSProperties = {
-  position: 'absolute', right: 24, bottom: 24, zIndex: 56,
-  width: 320, height: 180, borderRadius: 8, overflow: 'hidden',
-  boxShadow: '0 8px 28px rgba(0,0,0,0.6)',
-  border: '1px solid var(--hds-line, rgba(255,255,255,0.15))',
-  transition: 'all .3s ease',
-}
-
-const pipBackdropStyle: React.CSSProperties = {
-  position: 'absolute', inset: 0, zIndex: 40,
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  background: '#000',
-}
-
-const pipBackdropLogoStyle: React.CSSProperties = {
-  maxWidth: '30%', maxHeight: '30%', opacity: 0.85,
-}
-
-const overlayStyle: React.CSSProperties = {
-  position: 'absolute', inset: 0, zIndex: 50,
-  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: 'var(--hds-txt-2)',
-}
-
-const skipIntroBtnStyle: React.CSSProperties = {
-  position: 'absolute', right: 28, bottom: 110, zIndex: 60,
-  padding: '10px 20px', borderRadius: 6, cursor: 'pointer',
-  border: '1px solid var(--hds-line, rgba(255,255,255,0.12))',
-  background: 'var(--hds-bg-2, rgba(20,20,24,0.92))', color: 'var(--hds-txt, #eee)',
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 600,
-}
-
-const backBtnStyle: React.CSSProperties = {
-  padding: '8px 18px', borderRadius: 8, cursor: 'pointer',
-  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-  color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
 }

@@ -1,0 +1,183 @@
+.root {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+.backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  opacity: 1;
+  transition: height 0.3s ease, opacity 0.3s ease;
+}
+.backdropLoading { opacity: 0.6; }
+
+.backdropScrimH {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, oklch(0 0 0 / 0.75) 0%, oklch(0 0 0 / 0.3) 55%, transparent 100%);
+}
+.backdropScrimV {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, var(--hds-bg) 0%, transparent 46%);
+}
+
+.pinnedBack {
+  position: absolute;
+  top: 18px;
+  left: 24px;
+  z-index: 20;
+}
+
+.scrollArea {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.stickyHeader {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 0 48px 24px;
+}
+
+.heroRow {
+  display: flex;
+  gap: 36px;
+  align-items: flex-start;
+  max-width: 1200px;
+}
+
+.alignUnderInfo {
+  /* Aligns under the primaryInfo column above (poster width 170px + heroRow gap 36px), not the poster itself. */
+  max-width: 1200px;
+  padding-left: 206px;
+}
+
+.secondaryInfoCol { max-width: 760px; display: flex; flex-direction: column; gap: var(--hds-space-tile-gap); }
+.actionsCol { max-width: 760px; }
+
+.belowFold { padding: 0 48px 48px; }
+
+.seasonShelvesWrap { margin-top: 32px; }
+
+.posterBox {
+  width: 170px;
+  height: 255px;
+  border-radius: var(--hds-radius-md);
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--hds-bg-3);
+  box-shadow: 0 8px 32px oklch(0 0 0 / 0.5);
+}
+.posterImg { width: 100%; height: 100%; object-fit: cover; }
+
+.primaryInfo { flex: 1; min-width: 0; }
+.titleRow { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.title {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: 27px;
+  color: var(--hds-txt);
+  margin: 0;
+  flex: 1;
+  line-height: 1.15;
+}
+
+.statusBadge {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  padding: 2px var(--hds-space-3);
+  border-radius: var(--hds-radius-tile);
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+.statusBadgeLocked {
+  background: var(--hds-violet-deep-wash);
+  border: 1px solid oklch(0.7 0.13 287 / 0.4);
+  color: var(--hds-violet);
+}
+.statusBadgeScrapingOff {
+  background: oklch(0.3 0.01 286 / 0.5);
+  border: 1px solid oklch(0.4 0.01 286 / 0.6);
+  color: var(--hds-txt-3);
+}
+
+.metaChipRow { display: flex; gap: var(--hds-space-3); flex-wrap: wrap; margin-bottom: 14px; }
+.metaChip {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  padding: 3px 9px;
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-line-s);
+  color: var(--hds-txt-3);
+}
+.metaChipGold   { color: var(--hds-gold); border-color: oklch(0.83 0.13 84 / 0.4); }
+.metaChipTmdb   { color: oklch(0.65 0.18 220); border-color: oklch(0.65 0.18 220 / 0.4); }
+.metaChipOther  { color: oklch(0.65 0.12 280); border-color: oklch(0.65 0.12 280 / 0.4); }
+.metaChipGreen  { color: oklch(0.7 0.16 150); border-color: oklch(0.7 0.16 150 / 0.4); }
+.metaChipAmber  { color: oklch(0.78 0.15 84); border-color: oklch(0.78 0.15 84 / 0.4); }
+
+.genreRow { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 16px; }
+.genreChip {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  padding: 3px 10px;
+  border-radius: var(--hds-radius-chip-sm);
+  background: var(--hds-glass);
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt-2);
+  letter-spacing: 0.05em;
+}
+
+.overview {
+  font-family: var(--hds-font-mono-brand);
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--hds-txt-2);
+  margin: 0 0 16px;
+  max-width: 760px;
+}
+
+.movieCreditsCol { display: flex; flex-direction: column; gap: var(--hds-space-2); margin-bottom: var(--hds-space-2); }
+.breakAll { word-break: break-all; }
+
+.metaRow { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); }
+.metaRowLabel { color: var(--hds-txt-2); }
+
+.backButton {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  cursor: pointer;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  letter-spacing: 0.06em;
+  transition: color 0.12s, background 0.12s;
+  background: none;
+  border: none;
+  padding: 18px 0 20px;
+  color: var(--hds-txt-3);
+}
+.backButton:hover { color: var(--hds-txt); }
+
+.backButtonOverlay {
+  margin-left: 24px; /* positioning handled by the pinned wrapper in MediaDetailHero */
+  padding: 7px 14px 7px 10px;
+  border-radius: var(--hds-radius-pill);
+  border: 1px solid var(--hds-glass-border);
+  background: var(--hds-glass);
+  backdrop-filter: blur(8px);
+  color: oklch(0.92 0.01 285);
+}
+.backButtonOverlay:hover { color: var(--hds-txt-hero); }
+
+.skeletonRow { display: flex; gap: 32px; padding-top: 20px; }
+.skeletonPoster { width: 170px; height: 255px; border-radius: var(--hds-radius-md); flex-shrink: 0; }
+.skeletonLines { flex: 1; display: flex; flex-direction: column; gap: var(--hds-space-4); max-width: 600px; }
+.skeletonLine { height: 14px; border-radius: var(--hds-radius-xs); }

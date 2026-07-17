@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { Channel, EpgProgram } from '../api/types'
 import { ChannelColumn } from './ChannelColumn'
 import { PX_PER_MIN, WINDOW_LOOKBACK_MIN, WINDOW_FORWARD_HOURS } from './constants'
+import styles from './GuideGrid.module.css'
 
 interface GuideGridProps {
   channels:         Channel[]
@@ -28,12 +29,9 @@ export function GuideGrid({ channels, epgByChannel, windowStartMs, nowMs, focuse
   return (
     <div
       ref={containerRef}
-      style={{
-        height: '70vh', overflow: 'auto', scrollSnapType: 'x mandatory',
-        border: '1px solid var(--hds-line-s)', borderRadius: 10,
-      }}
+      className={styles.scrollContainer}
     >
-      <div style={{ display: 'flex' }}>
+      <div className={styles.columnsRow}>
         {channels.map(ch => (
           <ChannelColumn
             key={ch.channel_id}

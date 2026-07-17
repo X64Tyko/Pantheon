@@ -1,0 +1,257 @@
+.fieldRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  margin-bottom: 9px;
+  transition: opacity 0.12s;
+}
+.fieldRowEnabled  { opacity: 1; }
+.fieldRowDisabled { opacity: 0.45; }
+
+.fieldCheckbox {
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  accent-color: var(--hds-violet);
+  flex-shrink: 0;
+}
+
+.fieldLabel {
+  font-size: var(--hds-font-size-tv-micro);
+  letter-spacing: 0.14em;
+  color: var(--hds-txt-3);
+  width: 82px;
+  flex-shrink: 0;
+}
+
+.fieldContent          { flex: 1; }
+.fieldContentEnabled   { pointer-events: auto; }
+.fieldContentDisabled  { pointer-events: none; }
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px var(--hds-space-6) 14px;
+  border-bottom: 1px solid var(--hds-line-s);
+  flex-shrink: 0;
+}
+
+.headerTitle {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-title);
+  letter-spacing: 0.04em;
+}
+
+.closeBtn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hds-txt-2);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-title);
+}
+
+.blockSelector {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--hds-line-s);
+}
+
+.quickSelectRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 9px var(--hds-space-4) 8px;
+  flex-wrap: wrap;
+}
+
+.chipBtn {
+  padding: 3px var(--hds-space-3);
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-sm);
+  background: transparent;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  cursor: pointer;
+}
+.chipBtnActive {
+  border-color: var(--hds-violet);
+  background: oklch(0.38 0.09 287 / 0.3);
+  color: var(--hds-txt);
+}
+
+.chipDivider {
+  width: 1px;
+  height: 14px;
+  background: var(--hds-line-s);
+  margin: 0 2px;
+}
+
+.chipDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+.blockList {
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.blockRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  padding: 6px var(--hds-space-4);
+  cursor: pointer;
+  border-bottom: 1px solid var(--hds-line-s);
+  transition: background 0.1s;
+}
+.blockRowSelected {
+  background: oklch(0.24 0.025 287 / 0.6);
+}
+.blockRowUnselected {
+  background: transparent;
+}
+.blockRowUnselected:hover {
+  background: var(--hds-bg-3);
+}
+
+.blockRowCheckbox {
+  pointer-events: none;
+  accent-color: var(--hds-violet);
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.blockRowDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.blockRowTime {
+  font-size: 10.5px;
+  color: var(--hds-txt-3);
+  flex-shrink: 0;
+  min-width: 38px;
+}
+
+.blockRowDays {
+  font-size: var(--hds-font-size-tv-micro);
+  color: var(--hds-txt-3);
+  flex-shrink: 0;
+  min-width: 34px;
+}
+
+.blockRowTitle {
+  font-size: var(--hds-font-size-tv-meta);
+  color: var(--hds-txt);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectedCount {
+  padding: 6px var(--hds-space-4);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  letter-spacing: 0.06em;
+}
+
+.fieldControls {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--hds-space-4) var(--hds-space-5) var(--hds-space-3);
+}
+
+.fieldControlsLabel {
+  font-size: var(--hds-font-size-tv-micro);
+  letter-spacing: 0.18em;
+  color: var(--hds-txt-3);
+  margin-bottom: var(--hds-space-4);
+}
+
+.inlineSelect {
+  padding: 5px var(--hds-space-3);
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-input);
+  background: var(--hds-bg-3);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  box-sizing: border-box;
+}
+
+.toggleGroup {
+  display: flex;
+  border: 1px solid var(--hds-line);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.toggleBtn {
+  padding: 4px 12px;
+  border: none;
+  background: var(--hds-bg-3);
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  cursor: pointer;
+  font-weight: 600;
+}
+.toggleBtnActive {
+  background: var(--hds-violet);
+  color: oklch(0.15 0.02 286);
+}
+
+.footer {
+  border-top: 1px solid var(--hds-line-s);
+  padding: var(--hds-space-4) var(--hds-space-5);
+  flex-shrink: 0;
+}
+
+.applyBtn {
+  width: 100%;
+  padding: 10px 0;
+  border: none;
+  border-radius: var(--hds-radius-lg);
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-meta);
+  transition: 0.12s;
+}
+.applyBtnEnabled {
+  background: linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2));
+  color: var(--hds-txt-on-gold);
+  cursor: pointer;
+}
+.applyBtnDisabled {
+  background: var(--hds-bg-3);
+  color: var(--hds-txt-3);
+  cursor: default;
+}
+
+.errText {
+  margin-top: var(--hds-space-3);
+  font-size: var(--hds-font-size-tv-meta);
+  color: oklch(0.72 0.16 22);
+}

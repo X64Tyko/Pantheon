@@ -4,6 +4,7 @@ import { imageQueue } from './imageQueue'
 import { SectionLabel } from './SectionLabel'
 import { fmtMs } from './utils'
 import type { Show, Movie, ShowDetail, MovieDetail, EpisodeSearchResult, Playlist } from '../api/types'
+import styles from './BrowserTiles.module.css'
 
 const MAX_HOVER_SEASONS = 5
 
@@ -58,27 +59,27 @@ export function MediaTile({ imgUrl, title, sub, placeholder, badge, onDragStart,
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
-      style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', transition: 'border-color .1s' }}
+      className={styles.tile}
       onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-violet)'; scrollIn() }}
       onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--hds-line-s)'; scrollOut() }}
     >
-      <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg-3)', position: 'relative', overflow: 'hidden' }}>
+      <div className={styles.thumbWrap}>
         {imgUrl && (
           <img src={imgReady ? imgUrl : ''} alt=""
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: imgReady ? 1 : 0, transition: 'opacity .2s' }} />
+            className={`${styles.thumbImg} ${imgReady ? styles.thumbImgReady : styles.thumbImgHidden}`} />
         )}
         {placeholder && !imgUrl && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, opacity: 0.3 }}>{placeholder}</div>
+          <div className={styles.placeholderIcon}>{placeholder}</div>
         )}
         {badge && (
-          <div style={{ position: 'absolute', top: 5, right: 5, width: 18, height: 18, borderRadius: '50%', background: 'var(--hds-violet)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', fontWeight: 700 }}>✓</div>
+          <div className={styles.checkBadge}>✓</div>
         )}
       </div>
-      <div style={{ padding: '5px 7px 7px' }}>
-        <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.35, height: 30, overflow: 'hidden' }}>
-          <span ref={titleRef} style={{ display: 'block', transition: 'transform 0.35s ease' }}>{title}</span>
+      <div className={styles.tileInfo}>
+        <div className={styles.tileTitle}>
+          <span ref={titleRef} className={styles.tileTitleInner}>{title}</span>
         </div>
-        {sub && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2 }}>{sub}</div>}
+        {sub && <div className={styles.tileSub}>{sub}</div>}
       </div>
     </div>
   )
@@ -140,25 +141,25 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onInfoOpen}
-      style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: `1px solid ${hovering ? 'var(--hds-violet)' : 'var(--hds-line-s)'}`, background: 'var(--hds-bg-2)', transition: 'border-color .1s', position: 'relative' }}
+      className={`${styles.tile} ${styles.tileHoverable} ${hovering ? styles.tileHoverableActive : ''}`}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg-3)', position: 'relative', overflow: 'hidden' }}>
+      <div className={styles.thumbWrap}>
         <img src={imgReady ? imgUrl : ''} alt=""
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: imgReady ? 1 : 0, transition: 'opacity .2s' }} />
+          className={`${styles.thumbImg} ${imgReady ? styles.thumbImgReady : styles.thumbImgHidden}`} />
 
         {isAdded && !hovering && (
-          <div style={{ position: 'absolute', top: 5, right: 5, width: 18, height: 18, borderRadius: '50%', background: 'var(--hds-violet)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', fontWeight: 700 }}>✓</div>
+          <div className={styles.checkBadge}>✓</div>
         )}
 
         {hovering && (
           <div
-            style={{ position: 'absolute', inset: 0, background: 'oklch(0.1 0.02 286 / 0.9)', backdropFilter: 'blur(3px)', display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 3, padding: '8px 6px' }}
+            className={styles.hoverOverlayShow}
             onClick={e => e.stopPropagation()}
           >
             {seasonsLoading ? (
-              <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', textAlign: 'center', fontFamily: "'JetBrains Mono', monospace" }}>loading…</span>
+              <span className={styles.hoverLoadingText}>loading…</span>
             ) : seasons !== null ? (
               <>
                 <HoverSeasonBtn onClick={e => add(e, null, show.title, true)}>All Episodes</HoverSeasonBtn>
@@ -171,7 +172,7 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
                 {hasMore && (
                   <button
                     onClick={e => { e.stopPropagation(); onInfoOpen() }}
-                    style={{ padding: '2px 4px', border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, cursor: 'pointer', textAlign: 'center' }}
+                    className={styles.viewAllLink}
                   >view all →</button>
                 )}
               </>
@@ -179,11 +180,11 @@ export function ShowMediaTile({ show, onAdd, onInfoOpen, onDragStart, onDragEnd,
           </div>
         )}
       </div>
-      <div style={{ padding: '5px 7px 7px' }}>
-        <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.35, height: 30, overflow: 'hidden' }}>
-          <span ref={titleRef} style={{ display: 'block', transition: 'transform 0.35s ease' }}>{show.title}</span>
+      <div className={styles.tileInfo}>
+        <div className={styles.tileTitle}>
+          <span ref={titleRef} className={styles.tileTitleInner}>{show.title}</span>
         </div>
-        {show.year && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2 }}>{show.year}</div>}
+        {show.year && <div className={styles.tileSub}>{show.year}</div>}
       </div>
     </div>
   )
@@ -231,36 +232,36 @@ export function MovieMediaTile({ movie, onAdd, onInfoOpen, onDragStart, onDragEn
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onInfoOpen}
-      style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: `1px solid ${hovering ? 'var(--hds-violet)' : 'var(--hds-line-s)'}`, background: 'var(--hds-bg-2)', transition: 'border-color .1s', position: 'relative' }}
+      className={`${styles.tile} ${styles.tileHoverable} ${hovering ? styles.tileHoverableActive : ''}`}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <div style={{ width: '100%', aspectRatio: '2/3', background: 'var(--hds-bg-3)', position: 'relative', overflow: 'hidden' }}>
+      <div className={styles.thumbWrap}>
         <img src={imgReady ? imgUrl : ''} alt=""
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: imgReady ? 1 : 0, transition: 'opacity .2s' }} />
+          className={`${styles.thumbImg} ${imgReady ? styles.thumbImgReady : styles.thumbImgHidden}`} />
 
         {isAdded && !hovering && (
-          <div style={{ position: 'absolute', top: 5, right: 5, width: 18, height: 18, borderRadius: '50%', background: 'var(--hds-violet)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#fff', fontWeight: 700 }}>✓</div>
+          <div className={styles.checkBadge}>✓</div>
         )}
 
         {hovering && (
           <div
-            style={{ position: 'absolute', inset: 0, background: 'oklch(0.1 0.02 286 / 0.9)', backdropFilter: 'blur(3px)', display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 3, padding: '8px 12px' }}
+            className={styles.hoverOverlayMovie}
             onClick={e => e.stopPropagation()}
           >
             <HoverSeasonBtn onClick={add}>Quick Add</HoverSeasonBtn>
             <button
               onClick={e => { e.stopPropagation(); onInfoOpen() }}
-              style={{ padding: '2px 4px', border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, cursor: 'pointer', textAlign: 'center' }}
+              className={styles.viewAllLink}
             >view details →</button>
           </div>
         )}
       </div>
-      <div style={{ padding: '5px 7px 7px' }}>
-        <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.35, height: 30, overflow: 'hidden' }}>
-          <span ref={titleRef} style={{ display: 'block', transition: 'transform 0.35s ease' }}>{movie.title}</span>
+      <div className={styles.tileInfo}>
+        <div className={styles.tileTitle}>
+          <span ref={titleRef} className={styles.tileTitleInner}>{movie.title}</span>
         </div>
-        <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 2 }}>{movie.year || fmtMs(movie.duration_ms)}</div>
+        <div className={styles.tileSub}>{movie.year || fmtMs(movie.duration_ms)}</div>
       </div>
     </div>
   )
@@ -270,8 +271,7 @@ function HoverSeasonBtn({ onClick, gold, children }: { onClick: (e: React.MouseE
   return (
     <button
       onClick={onClick}
-      className="hds-season-btn"
-      style={{ padding: '2px 4px', border: `1px solid ${gold ? 'oklch(0.55 0.12 58)' : 'var(--hds-line)'}`, borderRadius: 4, background: 'transparent', color: gold ? 'oklch(0.75 0.12 58)' : 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer', textAlign: 'center', width: '100%' }}
+      className={`hds-season-btn ${styles.seasonBtn} ${gold ? styles.seasonBtnGold : ''}`}
     >{children}</button>
   )
 }
@@ -291,15 +291,15 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
   const add = (params: AddContentParams) => { onAdd(params); onBack() }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <button onClick={onBack} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, padding: 0 }}>
+    <div className={styles.infoPanelRoot}>
+      <div className={styles.infoPanelHeader}>
+        <button onClick={onBack} className={styles.backButton}>
           ← Back
         </button>
-        {detailLoading && <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', opacity: 0.7 }}>loading details…</span>}
+        {detailLoading && <span className={styles.loadingDetailsText}>loading details…</span>}
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '14px 14px 20px' }} className="scrollbar-dark">
+      <div className={`${styles.infoPanelBody} scrollbar-dark`}>
 
         {item.kind === 'show' && (() => {
           const s = item.seed
@@ -307,14 +307,14 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
           return (
             <>
               {d?.art && <Backdrop url={d.art} />}
-              <div style={{ display: 'flex', gap: 12, marginBottom: 12, alignItems: 'flex-start' }}>
+              <div className={styles.infoHeaderRow}>
                 <ThumbSlot url={mediaUrl(d?.thumb ?? `/api/shows/${s.show_id}/thumb`)} />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.3, marginBottom: 5 }}>{s.title}</div>
-                  {s.year           && <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginBottom: 3 }}>{s.year}</div>}
+                <div className={styles.infoMinWidth0}>
+                  <div className={styles.infoTitle}>{s.title}</div>
+                  {s.year           && <div className={styles.infoYear}>{s.year}</div>}
                   {s.content_rating && s.content_rating !== '' && <RatingBadge rating={s.content_rating} />}
-                  {d?.genres        && d.genres.length > 0 && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 3, marginBottom: 3 }}>{d.genres.join(', ')}</div>}
-                  <div style={{ fontSize: 10.5, color: 'var(--hds-txt-2)', marginTop: 3 }}>
+                  {d?.genres        && d.genres.length > 0 && <div className={styles.infoGenres}>{d.genres.join(', ')}</div>}
+                  <div className={styles.infoMeta}>
                     {s.episode_count} episode{s.episode_count !== 1 ? 's' : ''}
                     {d?.status ? ` · ${d.status}` : ''}
                   </div>
@@ -323,10 +323,10 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
 
               {d?.overview ? <Overview text={d.overview} /> : detailLoading && <OverviewSkeleton />}
 
-              <div style={{ marginTop: 12 }}>
-                <SectionLabel style={{ fontSize: 9.5, letterSpacing: '0.16em', marginBottom: 0 }}>{addLabel}</SectionLabel>
+              <div className={styles.addSectionSpacer}>
+                <SectionLabel variant="tight">{addLabel}</SectionLabel>
                 {renderAdd ? renderAdd(item, seasons, add) : (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                  <div className={styles.addBtnRow}>
                     <AddBtn onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: null, title: s.title, include_specials: true })}>Add All</AddBtn>
                     {seasons.some(sn => sn.number === 0) && <>
                       <AddBtn onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: null, title: s.title, include_specials: false })}>No S00</AddBtn>
@@ -338,7 +338,7 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
                       </AddBtn>
                     ))}
                     {detailLoading && seasons.length === 0 && (
-                      <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', alignSelf: 'center' }}>loading seasons…</span>
+                      <span className={styles.loadingSeasonsText}>loading seasons…</span>
                     )}
                   </div>
                 )}
@@ -353,27 +353,27 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
           return (
             <>
               {d?.art && <Backdrop url={d.art} />}
-              <div style={{ display: 'flex', gap: 12, marginBottom: 12, alignItems: 'flex-start' }}>
+              <div className={styles.infoHeaderRow}>
                 <ThumbSlot url={mediaUrl(d?.thumb ?? `/api/movies/${m.movie_id}/thumb`)} />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.3, marginBottom: 5 }}>{m.title}</div>
-                  {m.year           && <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginBottom: 3 }}>{m.year}</div>}
+                <div className={styles.infoMinWidth0}>
+                  <div className={styles.infoTitle}>{m.title}</div>
+                  {m.year           && <div className={styles.infoYear}>{m.year}</div>}
                   {m.content_rating && m.content_rating !== '' && <RatingBadge rating={m.content_rating} />}
-                  {d?.genres        && d.genres.length > 0 && <div style={{ fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 3, marginBottom: 3 }}>{d.genres.join(', ')}</div>}
-                  <div style={{ fontSize: 10.5, color: 'var(--hds-txt-2)', marginTop: 3 }}>
+                  {d?.genres        && d.genres.length > 0 && <div className={styles.infoGenres}>{d.genres.join(', ')}</div>}
+                  <div className={styles.infoMeta}>
                     {fmtMs(m.duration_ms)}
                     {d?.director ? ` · Dir. ${d.director}` : ''}
                   </div>
                 </div>
               </div>
 
-              {d?.tagline && <p style={{ fontSize: 11, color: 'var(--hds-txt-3)', fontStyle: 'italic', margin: '0 0 8px' }}>{d.tagline}</p>}
+              {d?.tagline && <p className={styles.tagline}>{d.tagline}</p>}
               {d?.overview ? <Overview text={d.overview} /> : detailLoading && <OverviewSkeleton />}
 
-              <div style={{ marginTop: 12 }}>
-                <SectionLabel style={{ fontSize: 9.5, letterSpacing: '0.16em', marginBottom: 0 }}>{addLabel}</SectionLabel>
+              <div className={styles.addSectionSpacer}>
+                <SectionLabel variant="tight">{addLabel}</SectionLabel>
                 {renderAdd ? renderAdd(item, [], add) : (
-                  <div style={{ marginTop: 6 }}>
+                  <div className={styles.addBtnRowSingle}>
                     <AddBtn onClick={() => add({ content_type: 'movie', content_id: m.movie_id, title: m.title })}>Add Movie</AddBtn>
                   </div>
                 )}
@@ -388,13 +388,13 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
           const title = `${ep.show_title} ${code} — ${ep.title}`
           return (
             <>
-              <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginBottom: 3 }}>{ep.show_title}</div>
-              <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.3, marginBottom: 8 }}>{code} — {ep.title}</div>
-              {ep.duration_ms > 0 && <div style={{ fontSize: 10.5, color: 'var(--hds-txt-3)', marginBottom: 14 }}>{fmtMs(ep.duration_ms)}</div>}
-              <div style={{ marginTop: 4 }}>
-                <SectionLabel style={{ fontSize: 9.5, letterSpacing: '0.16em', marginBottom: 0 }}>{addLabel}</SectionLabel>
+              <div className={styles.episodeShowTitle}>{ep.show_title}</div>
+              <div className={styles.episodeTitle}>{code} — {ep.title}</div>
+              {ep.duration_ms > 0 && <div className={styles.episodeDuration}>{fmtMs(ep.duration_ms)}</div>}
+              <div className={styles.mt4}>
+                <SectionLabel variant="tight">{addLabel}</SectionLabel>
                 {renderAdd ? renderAdd(item, [], add) : (
-                  <div style={{ marginTop: 6 }}>
+                  <div className={styles.addBtnRowSingle}>
                     <AddBtn onClick={() => add({ content_type: 'episode', content_id: ep.episode_id, title })}>Add Episode</AddBtn>
                   </div>
                 )}
@@ -407,13 +407,13 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
           const pl = item.pl
           return (
             <>
-              <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.3, marginBottom: 6 }}>{pl.title}</div>
-              <div style={{ fontSize: 10.5, color: 'var(--hds-txt-3)', marginBottom: 3 }}>{pl.item_count} items · {pl.mode === 'show_collection' ? 'Show Collection' : 'In-Order'}</div>
-              {pl.total_ms > 0 && <div style={{ fontSize: 10.5, color: 'var(--hds-txt-3)', marginBottom: 14 }}>{fmtMs(pl.total_ms)} total</div>}
-              <div style={{ marginTop: 4 }}>
-                <SectionLabel style={{ fontSize: 9.5, letterSpacing: '0.16em', marginBottom: 0 }}>{addLabel}</SectionLabel>
+              <div className={styles.playlistTitle}>{pl.title}</div>
+              <div className={styles.playlistMeta}>{pl.item_count} items · {pl.mode === 'show_collection' ? 'Show Collection' : 'In-Order'}</div>
+              {pl.total_ms > 0 && <div className={styles.playlistTotal}>{fmtMs(pl.total_ms)} total</div>}
+              <div className={styles.mt4}>
+                <SectionLabel variant="tight">{addLabel}</SectionLabel>
                 {renderAdd ? renderAdd(item, [], add) : (
-                  <div style={{ marginTop: 6 }}>
+                  <div className={styles.addBtnRowSingle}>
                     <AddBtn onClick={() => add({ content_type: 'playlist', content_id: pl.playlist_id, title: pl.title })}>Add Playlist</AddBtn>
                   </div>
                 )}
@@ -468,14 +468,14 @@ export function useDetailPanel() {
 
 export function AddBtn({ onClick, gold, children }: { onClick: () => void; gold?: boolean; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className="hds-season-btn" style={{ padding: '4px 10px', borderRadius: 5, border: `1px solid ${gold ? 'oklch(0.55 0.12 58)' : 'var(--hds-line)'}`, background: 'transparent', color: gold ? 'oklch(0.75 0.12 58)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer' }}>
+    <button onClick={onClick} className={`hds-season-btn ${styles.addBtn} ${gold ? styles.addBtnGold : ''}`}>
       {children}
     </button>
   )
 }
 
 export function BrowserEmpty({ hint }: { hint?: string }) {
-  return <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>{hint ?? 'No results.'}</div>
+  return <div className={styles.browserEmpty}>{hint ?? 'No results.'}</div>
 }
 
 export function LoadMoreSentinel({ loading, onVisible }: { loading: boolean; onVisible: () => void }) {
@@ -493,7 +493,7 @@ export function LoadMoreSentinel({ loading, onVisible }: { loading: boolean; onV
     return () => obs.disconnect()
   }, [])
   return (
-    <div ref={ref} style={{ padding: '10px 0 14px', textAlign: 'center', fontSize: 11, color: 'var(--hds-txt-3)' }}>
+    <div ref={ref} className={styles.loadMoreSentinel}>
       {loading ? 'Loading…' : ''}
     </div>
   )
@@ -502,32 +502,32 @@ export function LoadMoreSentinel({ loading, onVisible }: { loading: boolean; onV
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
 function Backdrop({ url }: { url: string }) {
-  return <img src={url} alt="" style={{ width: '100%', height: 130, objectFit: 'cover', borderRadius: 8, marginBottom: 12, display: 'block' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+  return <img src={url} alt="" className={styles.backdrop} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
 }
 
 function ThumbSlot({ url }: { url: string }) {
   const [ready, setReady] = useState(false)
   return (
-    <div style={{ width: 72, height: 108, borderRadius: 6, flexShrink: 0, background: 'var(--hds-bg-3)', overflow: 'hidden', position: 'relative' }}>
-      <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: ready ? 1 : 0, transition: 'opacity .2s', display: 'block' }}
+    <div className={styles.thumbSlot}>
+      <img src={url} alt="" className={`${styles.thumbSlotImg} ${ready ? styles.thumbImgReady : styles.thumbImgHidden}`}
         onLoad={() => setReady(true)} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
     </div>
   )
 }
 
 function RatingBadge({ rating }: { rating: string }) {
-  return <span style={{ fontSize: 10, padding: '1px 5px', border: '1px solid var(--hds-line)', borderRadius: 3, color: 'var(--hds-txt-3)', display: 'inline-block', marginBottom: 4 }}>{rating}</span>
+  return <span className={styles.ratingBadge}>{rating}</span>
 }
 
 function Overview({ text }: { text: string }) {
-  return <p style={{ fontSize: 11.5, color: 'var(--hds-txt-2)', lineHeight: 1.65, margin: '0 0 14px' }}>{text}</p>
+  return <p className={styles.overviewText}>{text}</p>
 }
 
 function OverviewSkeleton() {
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div className={styles.overviewSkeletonWrap}>
       {[100, 92, 85, 60].map((w, i) => (
-        <div key={i} style={{ height: 10, borderRadius: 3, background: 'var(--hds-bg-3)', marginBottom: 6, width: `${w}%`, opacity: 0.6 }} />
+        <div key={i} className={styles.overviewSkeletonBar} style={{ width: `${w}%` }} />
       ))}
     </div>
   )

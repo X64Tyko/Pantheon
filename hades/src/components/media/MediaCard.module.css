@@ -1,0 +1,154 @@
+.card {
+  border-radius: var(--hds-radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  transform: scale(1);
+  transition: transform var(--hds-transition-fast) cubic-bezier(0.2, 0, 0.2, 1), box-shadow var(--hds-transition-fast);
+  position: relative;
+}
+.cardHovered { transform: scale(1.03); }
+.cardMinimal { width: 160px; flex-shrink: 0; }
+
+.posterWrap {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  background: linear-gradient(135deg, var(--hds-poster-bg-1), var(--hds-poster-bg-2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+.posterImg { width: 100%; height: 100%; object-fit: cover; display: block; }
+.monogram {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-h2);
+  color: var(--hds-violet);
+  opacity: 0.5;
+  letter-spacing: 0.05em;
+}
+
+.richOverlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, oklch(0 0 0 / 0.85) 0%, transparent 100%);
+  padding: 20px var(--hds-space-3) var(--hds-space-3);
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+.richRating { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); color: var(--hds-gold); font-weight: 600; }
+.richBadgeRow { display: flex; gap: var(--hds-space-1); margin-left: auto; }
+.formatBadge {
+  font-size: var(--hds-font-size-tv-badge);
+  font-family: var(--hds-font-mono-brand);
+  padding: 1px 5px;
+  border-radius: var(--hds-radius-xs);
+  color: oklch(1 0 0);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.formatBadge4k  { background: oklch(0.55 0.14 292 / 0.8); }
+.formatBadgeDv  { background: oklch(0.83 0.13 84 / 0.8); }
+.formatBadgeHdr { background: oklch(0.42 0.08 285 / 0.8); }
+
+.lockBadge {
+  position: absolute;
+  top: var(--hds-space-3);
+  left: var(--hds-space-3);
+  background: var(--hds-scrim);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px 5px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-violet);
+  letter-spacing: 0.06em;
+}
+
+.scoreChip {
+  position: absolute;
+  bottom: var(--hds-space-3);
+  left: var(--hds-space-3);
+  background: var(--hds-scrim);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px 6px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+}
+.scoreChipMatched   { color: var(--hds-match-green); }
+.scoreChipUncertain { color: var(--hds-match-amber); }
+.scoreChipUnmatched { color: var(--hds-match-red); }
+.scoreChipUnscraped { color: var(--hds-match-grey); }
+
+.topRightStack { position: absolute; top: var(--hds-space-3); right: var(--hds-space-3); display: flex; flex-direction: column; align-items: flex-end; gap: var(--hds-space-1); }
+.networkBadge { background: var(--hds-scrim); border-radius: var(--hds-radius-sm); padding: var(--hds-space-1); }
+.networkLogo { width: 24px; height: 24px; object-fit: contain; }
+.networkText {
+  font-size: 8px;
+  font-family: var(--hds-font-mono-brand);
+  color: oklch(0.8 0.01 285);
+  letter-spacing: 0.06em;
+  display: block;
+  max-width: 40px;
+  text-align: center;
+  line-height: 1.2;
+}
+.watchedBadge {
+  background: var(--hds-scrim);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px 6px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-violet);
+  letter-spacing: 0.04em;
+}
+
+.minimalHoverOverlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, oklch(0 0 0 / 0.9) 0%, transparent 100%);
+  padding: 24px 10px 10px;
+}
+.minimalHoverTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 600;
+  color: oklch(1 0 0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.standardInfo { padding: var(--hds-space-3) 2px 2px; }
+.richInfo { padding: var(--hds-space-3) var(--hds-space-1) var(--hds-space-1); }
+
+.cardTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-label);
+  font-weight: 600;
+  color: var(--hds-txt);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cardMeta { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-badge); color: var(--hds-txt-3); margin-top: 3px; }
+
+.richTitleRow { display: flex; align-items: baseline; gap: var(--hds-space-2); margin-bottom: 5px; }
+.richTitle { flex: 1; }
+.richYear { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-badge); color: var(--hds-txt-3); flex-shrink: 0; }
+
+.genreRow { display: flex; gap: var(--hds-space-1); flex-wrap: wrap; }
+.genreTag {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  padding: 2px var(--hds-space-2);
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-line-s);
+  color: var(--hds-txt-3);
+}

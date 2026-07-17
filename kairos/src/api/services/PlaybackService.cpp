@@ -240,6 +240,55 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 		}
 	});
 
+	// ── GET /api/shows/:id/resolve-play-target ────────────────────────────────
+	// Server-side version of hades/src/player/resolvePlayTarget.ts's show
+	// branch — collapses what used to be 2-3 client-issued round-trips
+	// (watch-state, then conditionally next-episode or the full episode list)
+	// into one internal query chain, and means no client (Android, eventually
+	// Roku) ever needs to re-implement this branch itself. Movies don't need
+	// this endpoint at all — trivial, position_ms always 0, every caller
+	// already special-cases that before ever reaching here.
+	svr.Get("/api/shows/:id/resolve-play-target", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+
+		auto show_id = req.path_params.at("id");
+		try {
+			ContentRepository content(db_);
+
+			auto state = WatchProgressRepository(db_).getLatestForShow(user->user_id, show_id);
+			if (state && !state->completed) {
+				route::ok(res, json{
+					{"kind", "episode"}, {"id", state->content_id}, {"position_ms", state->position_ms},
+				}.dump());
+				return;
+			}
+
+			if (state && state->completed) {
+				auto next = content.getNextEpisode(state->content_id);
+				if (next) {
+					route::ok(res, json{
+						{"kind", "episode"}, {"id", next->episode_id}, {"position_ms", int64_t{0}},
+					}.dump());
+					return;
+				}
+			}
+
+			// No watch state at all, or the completed episode had no next one
+			// — fall back to episode 1. listEpisodesForShow's default ordering
+			// is season/episode ascending, so the first entry is exactly the
+			// same fallback resolvePlayTarget.ts computes client-side.
+			auto episodes = content.listEpisodesForShow(show_id);
+			if (episodes.empty()) { route::ok(res, "null"); return; }
+
+			route::ok(res, json{
+				{"kind", "episode"}, {"id", episodes.front().episode_id}, {"position_ms", int64_t{0}},
+			}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/shows/:id/resolve-play-target", e); route::err(res, 500, e.what());
+		}
+	});
+
 	// ── DELETE /api/watch-progress/:content_type/:id ──────────────────────────
 	svr.Delete("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res) {
 		auto user = currentUser();

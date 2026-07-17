@@ -25,6 +25,7 @@ import ReviewPage             from './pages/ReviewPage'
 import SettingsPage           from './pages/SettingsPage'
 import SourcesPage            from './pages/SourcesPage'
 import UsersPage              from './pages/UsersPage'
+import styles from './App.module.css'
 
 // Lazy: hls.js is a ~500KB dependency that only the player route needs — every
 // other page load (the vast majority of app usage) shouldn't pay for it.
@@ -38,10 +39,8 @@ const TvHome          = lazy(() => import('./tv/TvHome').then(m => ({ default: m
 const TvLibrary       = lazy(() => import('./tv/TvLibrary').then(m => ({ default: m.TvLibrary })))
 const TvLibraryDetail = lazy(() => import('./tv/TvLibraryDetail').then(m => ({ default: m.TvLibraryDetail })))
 
-// Matches PlayerPage's own background so the moment before the lazy chunk
-// resolves doesn't flash unstyled content.
-const playerFallback = <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 100 }} />
-const tvFallback      = <div style={{ position: 'fixed', inset: 0, background: 'var(--hds-bg)', zIndex: 100 }} />
+const playerFallback = <div className={styles.playerFallback} />
+const tvFallback      = <div className={styles.tvFallback} />
 
 export default function App() {
   return (

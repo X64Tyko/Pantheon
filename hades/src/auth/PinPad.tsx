@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import styles from './PinPad.module.css'
 
 interface PinPadProps {
   onComplete: (pin: string) => void
@@ -27,7 +28,7 @@ export default function PinPad({ onComplete, error, busy, autoFocus = true, conf
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
+    <div className={styles.wrap}>
       <input
         ref={inputRef}
         type="password" inputMode="numeric" pattern="[0-9]*" autoComplete="off"
@@ -37,31 +38,17 @@ export default function PinPad({ onComplete, error, busy, autoFocus = true, conf
         onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
         onKeyDown={e => { if (e.key === 'Enter') submit() }}
         placeholder="····"
-        style={{
-          width: 160, padding: '10px 14px', textAlign: 'center', letterSpacing: '0.5em',
-          fontSize: 20, boxSizing: 'border-box',
-          background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line)',
-          borderRadius: 8, color: 'var(--hds-txt)',
-          fontFamily: "'JetBrains Mono', monospace", outline: 'none',
-        }}
+        className={styles.pinInput}
       />
       {error && (
-        <div style={{
-          fontSize: 11, color: 'oklch(0.72 0.18 22)', textAlign: 'center', maxWidth: 220,
-        }}>
+        <div className={styles.errorText}>
           {error}
         </div>
       )}
       <button
         type="button" disabled={!canSubmit}
         onClick={submit}
-        style={{
-          padding: '8px 20px', borderRadius: 7, fontSize: 11, fontWeight: 600,
-          cursor: canSubmit ? 'pointer' : 'not-allowed',
-          fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.08em',
-          background: 'oklch(0.83 0.13 84 / 0.15)', border: '1px solid oklch(0.83 0.13 84 / 0.4)',
-          color: 'var(--hds-gold)', opacity: canSubmit ? 1 : 0.5,
-        }}
+        className={`${styles.submitBtn} ${canSubmit ? styles.submitBtnEnabled : styles.submitBtnDisabled}`}
       >
         {busy ? '…' : confirmLabel}
       </button>

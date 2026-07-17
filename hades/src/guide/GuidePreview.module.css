@@ -1,0 +1,20 @@
+.row {
+  display: flex; gap: var(--hds-space-6); padding: var(--hds-space-5) var(--hds-space-6); margin-bottom: var(--hds-space-4);
+  background: var(--hds-bg-2); border: 1px solid var(--hds-line-s); border-radius: var(--hds-radius-tile);
+}
+.videoWrap { width: 220px; aspect-ratio: 16 / 9; border-radius: var(--hds-radius-tile); overflow: hidden; flex-shrink: 0; background: #000; }
+.infoCol { min-width: 0; }
+.title { font-family: var(--hds-font-display); font-size: var(--hds-font-size-tv-heading); font-weight: 700; color: var(--hds-txt); }
+.subtitle { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); margin-top: var(--hds-space-1); }
+.overview {
+  font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-small-title); line-height: 1.6; color: var(--hds-txt-2);
+  margin: var(--hds-space-3) 0 0; max-width: 560px; display: -webkit-box;
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.channelLine { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); margin-top: var(--hds-space-4); }
+.watchBtn {
+  display: flex; align-items: center; gap: var(--hds-space-2); margin-top: var(--hds-space-4);
+  padding: 7px var(--hds-space-5); border-radius: var(--hds-radius-tile); cursor: pointer;
+  border: 1px solid var(--hds-violet); background: oklch(0.55 0.14 292 / 0.15); color: var(--hds-violet);
+  font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); font-weight: 600;
+}

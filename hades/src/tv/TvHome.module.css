@@ -416,3 +416,24 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Hero title/meta/overview text-shadow (was inline via channel/styles.ts's
+   heroTextShadow constant — now a real class using the same token) ────────── */
+.textShadowHero {
+  text-shadow: var(--hds-text-shadow-hero);
+}
+
+/* Hero Play/View Details buttons — base look comes from
+   channel/sharedStyles.module.css's .goldBtn/.ghostBtn, these two just hold
+   this screen's own size/layout overrides on top. */
+.heroPlayBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  padding: var(--hds-space-3) var(--hds-space-6);
+}
+
+.heroDetailBtn {
+  backdrop-filter: blur(8px);
+  padding: var(--hds-space-3) var(--hds-space-6);
+}

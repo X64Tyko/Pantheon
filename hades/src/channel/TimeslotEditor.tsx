@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import type { Block, TimeslotSlot } from '../api/types'
 import type { ChannelDetailStore } from './store'
+import styles from './TimeslotEditor.module.css'
 
 function slotLabel(slot: TimeslotSlot) {
   const oHH = String(Math.floor(slot.slot_offset_mins / 60)).padStart(2, '0')
@@ -36,10 +37,8 @@ function SlotRow({ slot, store, draggingId, overPos, onDragStart, onDragOver, on
       onDrop={e => onDrop(e, slot.slot_id)}
       onDragEnd={onDragEnd}
       onDragLeave={onDragLeave}
+      className={styles.slotRow}
       style={{
-        display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', marginBottom: 5,
-        borderRadius: 8, border: '1px solid var(--hds-line-s)',
-        background: 'oklch(0.19 0.018 288 / 0.45)', cursor: 'grab', transition: 'border-color .1s, background .1s, opacity .1s',
         opacity: isDragging ? 0.35 : 1,
         boxShadow: over === 'top'    ? 'inset 0 2px 0 var(--hds-violet)'
                  : over === 'bottom' ? 'inset 0 -2px 0 var(--hds-violet)'
@@ -55,22 +54,22 @@ function SlotRow({ slot, store, draggingId, overPos, onDragStart, onDragOver, on
         (e.currentTarget as HTMLDivElement).style.background = 'oklch(0.19 0.018 288 / 0.45)';
       }}
     >
-      <span style={{ fontSize: 10, color: 'var(--hds-txt-3)', flexShrink: 0, cursor: 'grab', lineHeight: 1, marginRight: -2 }}>⠿</span>
-      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, color: 'var(--hds-txt-3)', flexShrink: 0 }}>
+      <span className={styles.dragHandle}>⠿</span>
+      <span className={styles.slotTime}>
         {slotLabel(slot)}
       </span>
-      <span style={{ flex: 1, fontSize: 11, color: head ? 'var(--hds-txt)' : 'var(--hds-txt-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: head ? 'normal' : 'italic' }}>
+      <span className={`${styles.slotTitle} ${head ? styles.slotTitleFilled : styles.slotTitleEmpty}`}>
         {head ? (head.title || head.content_id) : 'empty'}
       </span>
       {head && (
-        <span style={{ fontSize: 9, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
+        <span className={styles.episodePos}>
           ep {slot.episode_pos}
         </span>
       )}
-      <span style={{ fontSize: 9, color: 'var(--hds-violet)', flexShrink: 0 }}>›</span>
+      <span className={styles.chevron}>›</span>
       <button
         onClick={e => { e.stopPropagation(); store.removeDraftSlot(slot.slot_id) }}
-        style={{ background: 'none', border: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 14, lineHeight: 1, flexShrink: 0, padding: 0, marginLeft: 2 }}
+        className={styles.removeBtn}
       >×</button>
     </div>
   )
@@ -119,23 +118,23 @@ export const TimeslotEditor = observer(function TimeslotEditor({
     <div>
       {/* Convert-from-content banner — only shown when there are no slots yet */}
       {slots.length === 0 && convertible.length > 0 && (
-        <div style={{ marginBottom: 12, padding: '12px 14px', borderRadius: 9, border: '1px solid oklch(0.55 0.12 290 / 0.5)', background: 'oklch(0.38 0.09 287 / 0.08)' }}>
-          <div style={{ fontSize: 10.5, color: 'var(--hds-txt)', marginBottom: 4 }}>
+        <div className={styles.convertBanner}>
+          <div className={styles.convertBannerTitle}>
             {convertible.length} content {convertible.length === 1 ? 'entry' : 'entries'} ready to import
           </div>
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', lineHeight: 1.55, marginBottom: 10 }}>
+          <div className={styles.convertBannerBody}>
             Each show or movie becomes a 30-min slot, stacked sequentially. Adjust timing per slot afterward.
           </div>
           <button
             onClick={() => store.convertContentToSlots()}
-            style={{ padding: '6px 14px', borderRadius: 7, border: '1px solid var(--hds-violet)', background: 'oklch(0.38 0.09 287 / 0.15)', color: 'var(--hds-violet)', cursor: 'pointer', fontFamily: "'Chakra Petch', sans-serif", fontSize: 11, letterSpacing: '0.08em' }}
+            className={styles.convertBtn}
           >
             Import as Slots
           </button>
         </div>
       )}
 
-      <div style={{ fontSize: 9, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 8 }}>
+      <div className={styles.slotsHeading}>
         {slots.length === 0 ? 'No slots defined' : `${slots.length} slot${slots.length !== 1 ? 's' : ''}`}
       </div>
 
@@ -156,7 +155,7 @@ export const TimeslotEditor = observer(function TimeslotEditor({
 
       <button
         onClick={() => store.addDraftSlot()}
-        style={{ width: '100%', padding: '9px 0', marginTop: 4, border: '1px dashed var(--hds-violet)', borderRadius: 9, background: 'oklch(0.38 0.09 287 / 0.08)', color: 'var(--hds-violet)', cursor: 'pointer', fontFamily: "'Chakra Petch', sans-serif", fontSize: 12, letterSpacing: '0.08em', transition: '.12s' }}
+        className={styles.addSlotBtn}
       >
         + Add Slot
       </button>

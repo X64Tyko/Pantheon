@@ -17,6 +17,7 @@ interface SmtpForm {
 }
 import { useFocusable } from '../nav/useFocusable'
 import { HelpTip, HelpSection } from '../channel/HelpTip'
+import styles from './SettingsPage.module.css'
 
 interface Settings {
   epg_debug:              boolean
@@ -51,18 +52,9 @@ function Toggle({ id, checked, onChange, disabled }: { id: string; checked: bool
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      style={{
-        position: 'relative', display: 'inline-flex', alignItems: 'center',
-        width: 40, height: 22, borderRadius: 11, border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
-        background: checked ? 'oklch(0.72 0.18 140)' : 'oklch(0.28 0.01 286)',
-        transition: 'background 0.15s', flexShrink: 0, outline: 'none',
-        opacity: disabled ? 0.5 : 1,
-      }}
+      className={`${styles.toggle} ${checked ? styles.toggleOn : styles.toggleOff} ${disabled ? styles.toggleDisabled : ''}`}
     >
-      <span style={{
-        position: 'absolute', left: checked ? 20 : 2, width: 18, height: 18,
-        borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
-      }} />
+      <span className={`${styles.toggleKnob} ${checked ? styles.toggleKnobOn : styles.toggleKnobOff}`} />
     </button>
   )
 }
@@ -73,12 +65,12 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
     // instead of both fighting for horizontal space — several controls here
     // have hardcoded widths (e.g. 260px API key inputs) that would otherwise
     // crush the label into a sliver, or overflow outright, on a phone.
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px 24px', padding: '14px 0', borderBottom: '1px solid oklch(0.22 0.01 286)' }}>
+    <div className={styles.settingRow}>
       <div>
-        <div style={{ fontSize: 13, color: 'var(--hds-txt)', fontWeight: 500 }}>{label}</div>
-        {hint && <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginTop: 3 }}>{hint}</div>}
+        <div className={styles.settingRowLabel}>{label}</div>
+        {hint && <div className={styles.settingRowHint}>{hint}</div>}
       </div>
-      <div style={{ flexShrink: 0 }}>{children}</div>
+      <div className={styles.settingRowControl}>{children}</div>
     </div>
   )
 }
@@ -86,13 +78,13 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
 // Local helper — this page has several one-off action buttons (Clear All,
 // Save x2, Run Match, Reset/Yes/Cancel) all needing the same D-pad wiring;
 // factored out rather than repeating the useFocusable boilerplate 7 times.
-function NavButton({ id, onClick, disabled, style, title, children }: {
+function NavButton({ id, onClick, disabled, className, title, children }: {
   id: string; onClick: () => void; disabled?: boolean; title?: string
-  style: React.CSSProperties; children: React.ReactNode
+  className: string; children: React.ReactNode
 }) {
   const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: `settings-btn-${id}`, onEnterPress: onClick, focusable: !disabled })
   return (
-    <button ref={ref} data-tv-focused={focused} onClick={onClick} disabled={disabled} title={title} style={style}>
+    <button ref={ref} data-tv-focused={focused} onClick={onClick} disabled={disabled} title={title} className={className}>
       {children}
     </button>
   )
@@ -100,20 +92,13 @@ function NavButton({ id, onClick, disabled, style, title, children }: {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: 'var(--hds-bg-2)', border: '1px solid oklch(0.22 0.01 286 / 0.6)', borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ padding: '10px 18px', borderBottom: '1px solid oklch(0.22 0.01 286)', background: 'oklch(0.14 0.012 286 / 0.6)' }}>
-        <span style={{ fontSize: 10, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>{title.toUpperCase()}</span>
+    <div className={styles.section}>
+      <div className={styles.sectionHeader}>
+        <span className={styles.sectionHeaderText}>{title.toUpperCase()}</span>
       </div>
-      <div style={{ padding: '0 18px' }}>{children}</div>
+      <div className={styles.sectionBody}>{children}</div>
     </div>
   )
-}
-
-const inputStyle: React.CSSProperties = {
-  padding: '4px 8px', borderRadius: 6,
-  border: '1px solid oklch(0.3 0.01 286)',
-  background: 'oklch(0.13 0.01 286)', color: 'var(--hds-txt)',
-  fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
 }
 
 export default observer(function SettingsPage() {
@@ -438,38 +423,27 @@ const applyBuffer = () => {
   const wikidata = scraperSettings?.configs.find(c => c.source === 'wikidata')
 
   return (
-    <div style={{ maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div className={styles.page}>
       {tourStore.currentStep?.route === '/settings' && <TourSpotlight step={tourStore.currentStep} />}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--hds-txt)', margin: 0 }}>Settings</h1>
-        {saving && <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>Saving…</span>}
+      <div className={styles.titleRow}>
+        <h1 className={styles.title}>Settings</h1>
+        {saving && <span className={styles.savingText}>Saving…</span>}
       </div>
 
       {error && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'oklch(0.18 0.06 22 / 0.5)', border: '1px solid oklch(0.4 0.1 22 / 0.4)', fontSize: 12, color: 'oklch(0.75 0.15 22)' }}>
+        <div className={styles.errorBanner}>
           {error}
         </div>
       )}
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--hds-line)' }}>
+      <div className={styles.tabBar}>
         {TABS.map(({ key, label }) => (
           <button
             key={key}
             onClick={() => setTab(key)}
-            style={{
-              padding: '9px 20px', borderRadius: '8px 8px 0 0',
-              border: `1px solid ${tab === key ? 'var(--hds-line)' : 'transparent'}`,
-              borderBottom: 'none',
-              background: tab === key ? 'var(--hds-bg-2)' : 'transparent',
-              color: tab === key ? 'var(--hds-gold)' : 'var(--hds-txt-3)',
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-              fontWeight: tab === key ? 600 : 400,
-              letterSpacing: '0.08em', cursor: 'pointer',
-              marginBottom: -1,
-              transition: 'color .12s, background .12s',
-            }}
+            className={`${styles.tabBtn} ${tab === key ? styles.tabBtnActive : ''}`}
           >
             {label.toUpperCase()}
           </button>
@@ -497,7 +471,7 @@ const applyBuffer = () => {
               label="Sync Worker Threads"
               hint="Parallel connections used when fetching episode metadata from media servers. Range: 1–32."
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className={styles.inlineRow}>
                 <input
                   type="number" min={1} max={32}
                   value={threads}
@@ -505,9 +479,7 @@ const applyBuffer = () => {
                   onBlur={applyThreads}
                   onKeyDown={e => e.key === 'Enter' && applyThreads()}
                   disabled={!settings || saving}
-                  style={{
-                    ...inputStyle, width: 60, textAlign: 'center',
-                  }}
+                  className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
                 />
               </div>
             </SettingRow>
@@ -519,7 +491,7 @@ const applyBuffer = () => {
                 value={settings?.image_cache_ttl_hours ?? 2}
                 disabled={!settings || saving}
                 onChange={e => patch({ image_cache_ttl_hours: parseInt(e.target.value, 10) })}
-                style={{ ...inputStyle, width: 120, cursor: 'pointer' }}
+                className={`${styles.input} ${styles.w120} ${styles.inputCursorPointer}`}
               >
                 {([
                   [1,   '1 hour'],
@@ -541,7 +513,7 @@ const applyBuffer = () => {
               label="Stream Buffer Size (KB)"
               hint="Size of the stream buffer while watching streaming channels. (Requires Restart)"
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className={styles.inlineRow}>
                 <input
                   type="number" min={1024}
                   value={bufferSize}
@@ -549,11 +521,9 @@ const applyBuffer = () => {
                   onBlur={applyBuffer}
                   onKeyDown={e => e.key === 'Enter' && applyBuffer()}
                   disabled={!settings || saving}
-                  style={{
-                    ...inputStyle, width: 120, textAlign: 'right',
-                  }}
+                  className={`${styles.input} ${styles.w120} ${styles.inputRight}`}
                 />
-                <span style={{ fontSize: 12, color: 'var(--hds-txt-3)' }}>KB</span>
+                <span className={styles.unitLabel}>KB</span>
               </div>
             </SettingRow>
           </Section>
@@ -575,7 +545,7 @@ const applyBuffer = () => {
             <SettingRow label="API Key (v3)">
               <input
                 data-tour="tmdb-api-key-input"
-                style={{ ...inputStyle, width: 260 }}
+                className={`${styles.input} ${styles.w260}`}
                 type="password"
                 placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                 value={tmdb?.api_key ?? ''}
@@ -584,7 +554,7 @@ const applyBuffer = () => {
             </SettingRow>
             <SettingRow label="Language" hint="e.g. en-US">
               <input
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 placeholder="en-US"
                 value={tmdb?.language ?? 'en-US'}
                 onChange={e => updateScraperConfig('tmdb', 'language', e.target.value)}
@@ -593,7 +563,7 @@ const applyBuffer = () => {
             <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
               <input
                 type="number" step={0.05} min={0} max={1}
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 value={tmdb?.language_weight ?? 0.1}
                 onChange={e => updateScraperConfig('tmdb', 'language_weight', parseFloat(e.target.value))}
               />
@@ -611,7 +581,7 @@ const applyBuffer = () => {
             </SettingRow>
             <SettingRow label="API Key (v4 project key)">
               <input
-                style={{ ...inputStyle, width: 260 }}
+                className={`${styles.input} ${styles.w260}`}
                 type="password"
                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                 value={tvdb?.api_key ?? ''}
@@ -620,7 +590,7 @@ const applyBuffer = () => {
             </SettingRow>
             <SettingRow label="Subscriber PIN" hint="Optional; required for some TVDB accounts.">
               <input
-                style={{ ...inputStyle, width: 140 }}
+                className={`${styles.input} ${styles.w140}`}
                 type="password"
                 placeholder="optional"
                 value={tvdb?.pin ?? ''}
@@ -629,7 +599,7 @@ const applyBuffer = () => {
             </SettingRow>
             <SettingRow label="Language" hint="e.g. eng">
               <input
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 placeholder="eng"
                 value={tvdb?.language ?? 'eng'}
                 onChange={e => updateScraperConfig('tvdb', 'language', e.target.value)}
@@ -638,7 +608,7 @@ const applyBuffer = () => {
             <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
               <input
                 type="number" step={0.05} min={0} max={1}
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 value={tvdb?.language_weight ?? 0.1}
                 onChange={e => updateScraperConfig('tvdb', 'language_weight', parseFloat(e.target.value))}
               />
@@ -657,7 +627,7 @@ const applyBuffer = () => {
             <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference. TVMaze's data is predominantly English.">
               <input
                 type="number" step={0.05} min={0} max={1}
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 value={tvmaze?.language_weight ?? 0.1}
                 onChange={e => updateScraperConfig('tvmaze', 'language_weight', parseFloat(e.target.value))}
               />
@@ -675,7 +645,7 @@ const applyBuffer = () => {
             </SettingRow>
             <SettingRow label="Client ID" hint="Your registered Trakt app's Client ID. Register at trakt.tv/oauth/applications.">
               <input
-                style={{ ...inputStyle, width: 280 }}
+                className={`${styles.input} ${styles.w280}`}
                 type="password"
                 placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                 value={trakt?.api_key ?? ''}
@@ -685,7 +655,7 @@ const applyBuffer = () => {
             <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
               <input
                 type="number" step={0.05} min={0} max={1}
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 value={trakt?.language_weight ?? 0.1}
                 onChange={e => updateScraperConfig('trakt', 'language_weight', parseFloat(e.target.value))}
               />
@@ -703,7 +673,7 @@ const applyBuffer = () => {
             </SettingRow>
             <SettingRow label="Client Name" hint="Your registered AniDB HTTP API client name. Register at anidb.net/software/add.">
               <input
-                style={{ ...inputStyle, width: 200 }}
+                className={`${styles.input} ${styles.w200}`}
                 placeholder="myclientname"
                 value={anidb?.api_key ?? ''}
                 onChange={e => updateScraperConfig('anidb', 'api_key', e.target.value)}
@@ -712,7 +682,7 @@ const applyBuffer = () => {
             <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
               <input
                 type="number" step={0.05} min={0} max={1}
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 value={anidb?.language_weight ?? 0.1}
                 onChange={e => updateScraperConfig('anidb', 'language_weight', parseFloat(e.target.value))}
               />
@@ -742,7 +712,7 @@ const applyBuffer = () => {
             <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
               <input
                 type="number" step={0.05} min={0} max={1}
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 value={anilist?.language_weight ?? 0.1}
                 onChange={e => updateScraperConfig('anilist', 'language_weight', parseFloat(e.target.value))}
               />
@@ -761,7 +731,7 @@ const applyBuffer = () => {
             <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
               <input
                 type="number" step={0.05} min={0} max={1}
-                style={{ ...inputStyle, width: 80 }}
+                className={`${styles.input} ${styles.w80}`}
                 value={wikidata?.language_weight ?? 0.1}
                 onChange={e => updateScraperConfig('wikidata', 'language_weight', parseFloat(e.target.value))}
               />
@@ -773,25 +743,22 @@ const applyBuffer = () => {
               label="Confidence Threshold"
               hint="Items below this score go to the Review Queue. 100% = only exact matches are auto-accepted."
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className={styles.inlineRowSm}>
                 <input
                   type="range" min={0} max={1} step={0.05}
                   value={scraperSettings?.match_threshold ?? 0.8}
                   onChange={e => updateThreshold(parseFloat(e.target.value))}
                   disabled={!scraperSettings}
-                  style={{ width: 110, accentColor: 'var(--hds-violet)' }}
+                  className={styles.thresholdSlider}
                 />
-                <span style={{
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700,
-                  color: 'var(--hds-violet)', minWidth: 38, textAlign: 'right',
-                }}>
+                <span className={styles.thresholdValue}>
                   {Math.round((scraperSettings?.match_threshold ?? 0.8) * 100)}%
                 </span>
               </div>
             </SettingRow>
 
             {scraperStats && (
-              <div style={{ padding: '14px 0', borderBottom: '1px solid oklch(0.22 0.01 286)', display: 'flex', gap: 10 }}>
+              <div className={styles.statsRow}>
                 {([
                   { label: 'Total',     value: scraperStats.total,     color: 'var(--hds-txt-2)' },
                   { label: 'Matched',   value: scraperStats.matched,   color: 'var(--hds-match-green)' },
@@ -800,30 +767,20 @@ const applyBuffer = () => {
                   { label: 'Unscraped', value: scraperStats.unscraped, color: 'var(--hds-txt-3)' },
                   { label: 'Skipped',   value: scraperStats.skipped,   color: 'var(--hds-txt-3)' },
                 ] as const).map(({ label, value, color }) => (
-                  <div key={label} style={{
-                    flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid oklch(0.22 0.01 286)',
-                    background: 'oklch(0.13 0.01 286)',
-                  }}>
-                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, fontWeight: 700, color }}>{value}</div>
-                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', letterSpacing: '0.1em', marginTop: 3 }}>{label.toUpperCase()}</div>
+                  <div key={label} className={styles.statCard}>
+                    <div className={styles.statValue} style={{ color }}>{value}</div>
+                    <div className={styles.statLabel}>{label.toUpperCase()}</div>
                   </div>
                 ))}
               </div>
             )}
 
-            <div style={{ padding: '14px 0', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className={styles.actionsRow}>
               <NavButton
                 id="run-match"
                 onClick={runMatch}
                 disabled={matchRunning}
-                style={{
-                  padding: '6px 16px', borderRadius: 6, cursor: matchRunning ? 'not-allowed' : 'pointer',
-                  border: '1px solid oklch(0.3 0.01 286)',
-                  background: 'transparent',
-                  color: matchRunning ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)',
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-                  opacity: matchRunning ? 0.6 : 1,
-                }}
+                className={`${styles.navBtn} ${styles.navBtnNeutral16} ${matchRunning ? styles.navBtnNeutral16TxtB : styles.navBtnNeutral16TxtA} ${matchRunning ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${matchRunning ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
               >
                 {matchRunning ? '● Running…' : 'Run Match Pass'}
               </NavButton>
@@ -832,14 +789,7 @@ const applyBuffer = () => {
                 onClick={refreshAll}
                 disabled={refreshingAll}
                 title="Re-pulls title, overview, posters, ratings, etc. from each already-linked source for every matched show/movie"
-                style={{
-                  padding: '6px 16px', borderRadius: 6, cursor: refreshingAll ? 'not-allowed' : 'pointer',
-                  border: '1px solid oklch(0.3 0.01 286)',
-                  background: 'transparent',
-                  color: refreshingAll ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)',
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-                  opacity: refreshingAll ? 0.6 : 1,
-                }}
+                className={`${styles.navBtn} ${styles.navBtnNeutral16} ${refreshingAll ? styles.navBtnNeutral16TxtB : styles.navBtnNeutral16TxtA} ${refreshingAll ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${refreshingAll ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
               >
                 {refreshingAll ? '● Refreshing metadata…' : 'Refresh All Metadata'}
               </NavButton>
@@ -853,32 +803,20 @@ const applyBuffer = () => {
                 <NavButton
                   id="confirm-all-matches"
                   onClick={() => { setConfirmAllPending(true); setConfirmAllMsg(null) }}
-                  style={{
-                    padding: '6px 16px', borderRadius: 6, cursor: 'pointer',
-                    border: '1px solid oklch(0.3 0.01 286)',
-                    background: 'transparent', color: 'var(--hds-txt-2)',
-                    fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-                  }}
+                  className={`${styles.navBtn} ${styles.navBtnNeutral16} ${styles.navBtnNeutral16TxtA} ${styles.navBtnCursorPointer}`}
                 >
                   Confirm All Matches
                 </NavButton>
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 11, color: 'oklch(0.78 0.15 84)' }}>
+                <div className={styles.inlineRow}>
+                  <span className={styles.confirmText}>
                     This will confirm all active unconfirmed matches in the library. Sure?
                   </span>
                   <NavButton
                     id="confirm-all-matches-confirm"
                     onClick={confirmAllMatches}
                     disabled={confirmingAll}
-                    style={{
-                      padding: '5px 14px', borderRadius: 6,
-                      border: '1px solid oklch(0.6 0.18 150 / 0.6)',
-                      background: 'oklch(0.3 0.1 150 / 0.3)', color: 'var(--hds-match-green)',
-                      fontSize: 12, cursor: confirmingAll ? 'not-allowed' : 'pointer',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontWeight: 600, opacity: confirmingAll ? 0.6 : 1,
-                    }}
+                    className={`${styles.navBtn} ${styles.navBtnGreen14} ${confirmingAll ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${confirmingAll ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
                   >
                     {confirmingAll ? 'Confirming…' : 'Yes, confirm all'}
                   </NavButton>
@@ -886,13 +824,7 @@ const applyBuffer = () => {
                     id="confirm-all-matches-cancel"
                     onClick={() => setConfirmAllPending(false)}
                     disabled={confirmingAll}
-                    style={{
-                      padding: '5px 10px', borderRadius: 6,
-                      border: '1px solid oklch(0.3 0.01 286)',
-                      background: 'transparent', color: 'var(--hds-txt-3)',
-                      fontSize: 12, cursor: 'pointer',
-                      fontFamily: "'JetBrains Mono', monospace",
-                    }}
+                    className={`${styles.navBtn} ${styles.navBtnCancel10} ${styles.navBtnCursorPointer}`}
                   >
                     Cancel
                   </NavButton>
@@ -900,26 +832,18 @@ const applyBuffer = () => {
               )}
             </SettingRow>
             {confirmAllMsg && (
-              <div style={{ padding: '10px 0 14px', fontSize: 11, color: confirmAllMsg.startsWith('Error') ? 'oklch(0.72 0.18 22)' : 'var(--hds-txt-3)' }}>
+              <div className={`${styles.msgRow} ${confirmAllMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
                 {confirmAllMsg}
               </div>
             )}
           </Section>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className={styles.inlineRowGap12}>
             <NavButton
               id="save-scraper"
               onClick={saveScraperSettings}
               disabled={!scraperDirty || scraperSaving}
-              style={{
-                padding: '6px 18px', borderRadius: 6,
-                border: '1px solid oklch(0.72 0.18 84 / 0.6)',
-                background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
-                fontSize: 12,
-                cursor: (!scraperDirty || scraperSaving) ? 'not-allowed' : 'pointer',
-                fontFamily: "'JetBrains Mono', monospace",
-                opacity: (!scraperDirty || scraperSaving) ? 0.45 : 1,
-              }}
+              className={`${styles.navBtn} ${styles.navBtnGold18} ${(!scraperDirty || scraperSaving) ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${(!scraperDirty || scraperSaving) ? styles.navBtnFaded45 : styles.navBtnOpaque}`}
             >
               {scraperSaving ? 'Saving…' : scraperSaved ? '✓ Saved' : 'Save Scraper Settings'}
             </NavButton>
@@ -944,7 +868,7 @@ const applyBuffer = () => {
               onChange={v => setArr(a => ({ ...a, radarr_api_key: v }))} />
           </Section>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className={styles.inlineRowGap12}>
             <NavButton
               id="save-arr"
               onClick={async () => {
@@ -954,17 +878,11 @@ const applyBuffer = () => {
                 setTimeout(() => setArrSave('idle'), 2000)
               }}
               disabled={arrSave === 'saving'}
-              style={{
-                padding: '6px 18px', borderRadius: 6,
-                border: '1px solid oklch(0.72 0.18 84 / 0.6)',
-                background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
-                fontSize: 12, cursor: arrSave === 'saving' ? 'not-allowed' : 'pointer',
-                fontFamily: "'JetBrains Mono', monospace", opacity: arrSave === 'saving' ? 0.6 : 1,
-              }}
+              className={`${styles.navBtn} ${styles.navBtnGold18} ${arrSave === 'saving' ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${arrSave === 'saving' ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
             >
               {arrSave === 'saving' ? 'Saving…' : arrSave === 'ok' ? 'Saved' : arrSave === 'err' ? 'Error' : 'Save Settings'}
             </NavButton>
-            <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>
+            <span className={styles.captionText}>
               Used when adding missing media from the import preview.
             </span>
           </div>
@@ -982,7 +900,7 @@ const applyBuffer = () => {
                 placeholder={smtpHasPassword ? '••••••••  (unchanged)' : ''}
                 value={smtp.password}
                 onChange={e => setSmtp(s => ({ ...s, password: e.target.value }))}
-                style={{ ...inputStyle, width: 240 }}
+                className={`${styles.input} ${styles.w240}`}
               />
             </SettingRow>
             <ArrField label="From address" hint="What recipients see as the sender" value={smtp.from_address}
@@ -991,7 +909,7 @@ const applyBuffer = () => {
               onChange={v => setSmtp(s => ({ ...s, public_base_url: v }))} />
           </Section>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div className={styles.inlineRowGap12Wrap}>
             <NavButton
               id="save-smtp"
               onClick={async () => {
@@ -1009,13 +927,7 @@ const applyBuffer = () => {
                 setTimeout(() => setSmtpSave('idle'), 2000)
               }}
               disabled={smtpSave === 'saving'}
-              style={{
-                padding: '6px 18px', borderRadius: 6,
-                border: '1px solid oklch(0.72 0.18 84 / 0.6)',
-                background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
-                fontSize: 12, cursor: smtpSave === 'saving' ? 'not-allowed' : 'pointer',
-                fontFamily: "'JetBrains Mono', monospace", opacity: smtpSave === 'saving' ? 0.6 : 1,
-              }}
+              className={`${styles.navBtn} ${styles.navBtnGold18} ${smtpSave === 'saving' ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${smtpSave === 'saving' ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
             >
               {smtpSave === 'saving' ? 'Saving…' : smtpSave === 'ok' ? 'Saved' : smtpSave === 'err' ? 'Error' : 'Save Settings'}
             </NavButton>
@@ -1024,7 +936,7 @@ const applyBuffer = () => {
               placeholder="you@example.com"
               value={testEmailTo}
               onChange={e => setTestEmailTo(e.target.value)}
-              style={{ ...inputStyle, width: 200 }}
+              className={`${styles.input} ${styles.w200}`}
             />
             <NavButton
               id="test-smtp"
@@ -1036,18 +948,12 @@ const applyBuffer = () => {
                 setTimeout(() => setTestSend('idle'), 4000)
               }}
               disabled={testSend === 'sending' || !testEmailTo}
-              style={{
-                padding: '6px 18px', borderRadius: 6,
-                border: '1px solid var(--hds-line)',
-                background: 'transparent', color: 'var(--hds-txt-2)',
-                fontSize: 12, cursor: testSend === 'sending' || !testEmailTo ? 'not-allowed' : 'pointer',
-                fontFamily: "'JetBrains Mono', monospace", opacity: testSend === 'sending' || !testEmailTo ? 0.5 : 1,
-              }}
+              className={`${styles.navBtn} ${styles.navBtnLine18} ${(testSend === 'sending' || !testEmailTo) ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${(testSend === 'sending' || !testEmailTo) ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
             >
               {testSend === 'sending' ? 'Sending…' : testSend === 'ok' ? 'Sent ✓' : testSend === 'err' ? 'Failed' : 'Send Test Email'}
             </NavButton>
             {testSend === 'err' && testError && (
-              <span style={{ fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{testError}</span>
+              <span className={styles.captionTextDanger}>{testError}</span>
             )}
           </div>
         </>
@@ -1062,7 +968,7 @@ const applyBuffer = () => {
               hint="From the Google Cast SDK Developer Console, registered against the Pantheon custom receiver's hosted URL. Leave blank to disable the Cast button."
             >
               <input
-                style={{ ...inputStyle, width: 200 }}
+                className={`${styles.input} ${styles.w200}`}
                 placeholder="XXXXXXXX"
                 value={castAppId}
                 onChange={e => setCastAppId(e.target.value)}
@@ -1083,16 +989,16 @@ const applyBuffer = () => {
                   Gives Pantheon a real <code>https://</code> hostname (e.g. <code>pantheon.yourdomain.com</code>) that reaches your server without opening any inbound ports on your router — the tunnel is outbound-only from your network to Cloudflare's edge.
                 </HelpSection>
                 <HelpSection title="Setup">
-                  <ol style={{ margin: 0, paddingLeft: 18 }}>
-                    <li style={{ marginBottom: 8 }}>You need a domain added to Cloudflare (DNS managed by Cloudflare — free tier is fine).</li>
-                    <li style={{ marginBottom: 8 }}>Cloudflare Zero Trust dashboard → <b style={{ color: 'var(--hds-txt)' }}>Networks → Tunnels → Create a tunnel</b> → connector type <b style={{ color: 'var(--hds-txt)' }}>Docker</b> → copy the token it gives you.</li>
-                    <li style={{ marginBottom: 8 }}>In the same wizard, add a <b style={{ color: 'var(--hds-txt)' }}>Public Hostname</b>: the hostname you want (e.g. <code>pantheon.yourdomain.com</code>) → service type <b style={{ color: 'var(--hds-txt)' }}>HTTP</b> → URL <code>hermes:8000</code>. This is also where the hostname itself is configured — nothing in Pantheon's own files needs your hostname hardcoded.</li>
-                    <li style={{ marginBottom: 8 }}>Put that token in a <code>.env</code> file next to Pantheon's <code>docker-compose.yml</code>:<br /><code>CLOUDFLARE_TUNNEL_TOKEN=eyJ...</code></li>
+                  <ol className={styles.helpList}>
+                    <li className={styles.helpListItemGap}>You need a domain added to Cloudflare (DNS managed by Cloudflare — free tier is fine).</li>
+                    <li className={styles.helpListItemGap}>Cloudflare Zero Trust dashboard → <b className={styles.helpTextBold}>Networks → Tunnels → Create a tunnel</b> → connector type <b className={styles.helpTextBold}>Docker</b> → copy the token it gives you.</li>
+                    <li className={styles.helpListItemGap}>In the same wizard, add a <b className={styles.helpTextBold}>Public Hostname</b>: the hostname you want (e.g. <code>pantheon.yourdomain.com</code>) → service type <b className={styles.helpTextBold}>HTTP</b> → URL <code>hermes:8000</code>. This is also where the hostname itself is configured — nothing in Pantheon's own files needs your hostname hardcoded.</li>
+                    <li className={styles.helpListItemGap}>Put that token in a <code>.env</code> file next to Pantheon's <code>docker-compose.yml</code>:<br /><code>CLOUDFLARE_TUNNEL_TOKEN=eyJ...</code></li>
                     <li>Start/restart the stack however you normally do (plain <code>docker compose up -d</code>, or the Unraid Compose Manager UI) — no extra flags needed. Leaving the token blank keeps the container quietly stopped and doesn't affect anything else.</li>
                   </ol>
                 </HelpSection>
                 <HelpSection title="Important">
-                  <p style={{ margin: 0 }}>
+                  <p className={styles.helpParaFlat}>
                     The <code>cloudflared</code> container has to actually be running — the tunnel
                     only exists while it's up. Registering a tunnel and hostname in the Cloudflare
                     dashboard doesn't do anything on its own if <code>CLOUDFLARE_TUNNEL_TOKEN</code>{' '}
@@ -1110,9 +1016,9 @@ const applyBuffer = () => {
 
           <Section title="Cast Devices">
             {castSessions === null ? (
-              <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>Loading…</div>
+              <div className={styles.listMsg}>Loading…</div>
             ) : castSessions.length === 0 ? (
-              <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>
+              <div className={styles.listMsg}>
                 No devices paired yet — casting to a Chromecast or Google TV for the first time will add one here.
               </div>
             ) : (
@@ -1126,12 +1032,7 @@ const applyBuffer = () => {
                     id={`cast-revoke-${s.session_id}`}
                     onClick={() => revokeCastSession(s.session_id)}
                     disabled={revokingCast === s.session_id}
-                    style={{
-                      padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
-                      border: '1px solid oklch(0.4 0.15 25)', background: 'transparent',
-                      color: 'oklch(0.65 0.2 25)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
-                      opacity: revokingCast === s.session_id ? 0.5 : 1,
-                    }}
+                    className={`${styles.navBtn} ${styles.navBtnRevoke12} ${styles.navBtnCursorPointer} ${revokingCast === s.session_id ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
                   >
                     {revokingCast === s.session_id ? 'Revoking…' : 'Revoke'}
                   </NavButton>
@@ -1145,35 +1046,31 @@ const applyBuffer = () => {
               label="Add a Roku device"
               hint="Enter the IP address shown on the Roku itself (Settings → Network → About) — the Pantheon channel must already be open and signed in on it once before pairing can complete."
             >
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className={styles.rokuAddRow}>
                 <input
                   type="text" placeholder="Living Room TV" value={rokuName}
                   onChange={e => setRokuName(e.target.value)}
-                  style={{ width: 140, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)', color: 'var(--hds-txt)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}
+                  className={`${styles.rokuField} ${styles.w140}`}
                 />
                 <input
                   type="text" placeholder="192.168.1.50" value={rokuIp}
                   onChange={e => setRokuIp(e.target.value)}
-                  style={{ width: 120, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)', color: 'var(--hds-txt)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}
+                  className={`${styles.rokuField} ${styles.w120}`}
                 />
                 <NavButton
                   id="roku-add" onClick={addRokuDevice} disabled={addingRoku || !rokuName.trim() || !rokuIp.trim()}
-                  style={{
-                    padding: '6px 14px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--hds-violet)',
-                    background: 'transparent', color: 'var(--hds-violet)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
-                    opacity: addingRoku ? 0.5 : 1,
-                  }}
+                  className={`${styles.navBtn} ${styles.navBtnViolet14} ${styles.navBtnCursorPointer} ${addingRoku ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
                 >
                   {addingRoku ? 'Adding…' : 'Add'}
                 </NavButton>
               </div>
             </SettingRow>
-            {rokuError && <div style={{ padding: '6px 0', fontSize: 12, color: 'oklch(0.65 0.2 25)' }}>{rokuError}</div>}
+            {rokuError && <div className={styles.rokuErrorMsg}>{rokuError}</div>}
 
             {rokuDevices === null ? (
-              <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>Loading…</div>
+              <div className={styles.listMsg}>Loading…</div>
             ) : rokuDevices.length === 0 ? (
-              <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>No Roku devices added yet.</div>
+              <div className={styles.listMsg}>No Roku devices added yet.</div>
             ) : (
               rokuDevices.map(d => (
                 <SettingRow
@@ -1185,12 +1082,7 @@ const applyBuffer = () => {
                     id={`roku-remove-${d.id}`}
                     onClick={() => removeRokuDevice(d.id)}
                     disabled={removingRoku === d.id}
-                    style={{
-                      padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
-                      border: '1px solid oklch(0.4 0.15 25)', background: 'transparent',
-                      color: 'oklch(0.65 0.2 25)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
-                      opacity: removingRoku === d.id ? 0.5 : 1,
-                    }}
+                    className={`${styles.navBtn} ${styles.navBtnRevoke12} ${styles.navBtnCursorPointer} ${removingRoku === d.id ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
                   >
                     {removingRoku === d.id ? 'Removing…' : 'Remove'}
                   </NavButton>
@@ -1257,18 +1149,13 @@ const applyBuffer = () => {
                 id="debug-dump"
                 onClick={dumpDebugDb}
                 disabled={dumping}
-                style={{
-                  padding: '5px 14px', borderRadius: 6, border: '1px solid oklch(0.3 0.01 286)',
-                  background: 'oklch(0.18 0.01 286)', color: 'var(--hds-txt)',
-                  fontSize: 12, cursor: dumping ? 'not-allowed' : 'pointer',
-                  fontFamily: "'JetBrains Mono', monospace", opacity: dumping ? 0.6 : 1,
-                }}
+                className={`${styles.navBtn} ${styles.navBtnNeutral14} ${dumping ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${dumping ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
               >
                 {dumping ? 'Preparing…' : 'Download'}
               </NavButton>
             </SettingRow>
             {dumpMsg && (
-              <div style={{ padding: '10px 0 14px', fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{dumpMsg}</div>
+              <div className={`${styles.msgRow} ${styles.msgRowError}`}>{dumpMsg}</div>
             )}
           </Section>
 
@@ -1281,18 +1168,13 @@ const applyBuffer = () => {
                 id="clear-epg"
                 onClick={clearAllEpg}
                 disabled={clearing}
-                style={{
-                  padding: '5px 14px', borderRadius: 6, border: '1px solid oklch(0.4 0.1 22 / 0.6)',
-                  background: 'oklch(0.18 0.06 22 / 0.4)', color: 'oklch(0.75 0.15 22)',
-                  fontSize: 12, cursor: clearing ? 'not-allowed' : 'pointer',
-                  fontFamily: "'JetBrains Mono', monospace", opacity: clearing ? 0.6 : 1,
-                }}
+                className={`${styles.navBtn} ${styles.navBtnDangerSoft14} ${clearing ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${clearing ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
               >
                 {clearing ? 'Clearing…' : 'Clear All'}
               </NavButton>
             </SettingRow>
             {clearMsg && (
-              <div style={{ padding: '10px 0 14px', fontSize: 11, color: 'var(--hds-txt-3)' }}>{clearMsg}</div>
+              <div className={styles.msgRow}>{clearMsg}</div>
             )}
           </Section>
 
@@ -1305,44 +1187,25 @@ const applyBuffer = () => {
                 <NavButton
                   id="reset-library"
                   onClick={() => { setResetConfirm(true); setResetMsg(null) }}
-                  style={{
-                    padding: '5px 14px', borderRadius: 6,
-                    border: '1px solid oklch(0.4 0.1 22 / 0.6)',
-                    background: 'oklch(0.18 0.06 22 / 0.4)', color: 'oklch(0.75 0.15 22)',
-                    fontSize: 12, cursor: 'pointer',
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}
+                  className={`${styles.navBtn} ${styles.navBtnDangerSoft14} ${styles.navBtnCursorPointer} ${styles.navBtnOpaque}`}
                 >
                   Reset
                 </NavButton>
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 11, color: 'oklch(0.75 0.15 22)' }}>Sure?</span>
+                <div className={styles.inlineRow}>
+                  <span className={styles.confirmTextDanger}>Sure?</span>
                   <NavButton
                     id="reset-library-confirm"
                     onClick={resetLibrary}
                     disabled={resetting}
-                    style={{
-                      padding: '5px 14px', borderRadius: 6,
-                      border: '1px solid oklch(0.55 0.2 22 / 0.8)',
-                      background: 'oklch(0.35 0.12 22 / 0.6)', color: 'oklch(0.88 0.12 22)',
-                      fontSize: 12, cursor: resetting ? 'not-allowed' : 'pointer',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontWeight: 600, opacity: resetting ? 0.6 : 1,
-                    }}
+                    className={`${styles.navBtn} ${styles.navBtnDangerStrong14} ${resetting ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${resetting ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
                   >
                     {resetting ? 'Resetting…' : 'Yes, wipe it'}
                   </NavButton>
                   <NavButton
                     id="reset-library-cancel"
                     onClick={() => setResetConfirm(false)}
-                    style={{
-                      padding: '5px 10px', borderRadius: 6,
-                      border: '1px solid oklch(0.3 0.01 286)',
-                      background: 'transparent', color: 'var(--hds-txt-3)',
-                      fontSize: 12, cursor: 'pointer',
-                      fontFamily: "'JetBrains Mono', monospace",
-                    }}
+                    className={`${styles.navBtn} ${styles.navBtnCancel10} ${styles.navBtnCursorPointer}`}
                   >
                     Cancel
                   </NavButton>
@@ -1350,7 +1213,7 @@ const applyBuffer = () => {
               )}
             </SettingRow>
             {resetMsg && (
-              <div style={{ padding: '10px 0 14px', fontSize: 11, color: resetMsg.startsWith('Error') ? 'oklch(0.72 0.18 22)' : 'var(--hds-txt-3)' }}>
+              <div className={`${styles.msgRow} ${resetMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
                 {resetMsg}
               </div>
             )}
@@ -1370,12 +1233,7 @@ function ArrField({ label, hint, value, onChange, password }: {
         type={password ? 'password' : 'text'}
         value={value}
         onChange={e => onChange(e.target.value)}
-        style={{
-          width: 240, padding: '4px 8px', borderRadius: 6,
-          border: '1px solid oklch(0.3 0.01 286)',
-          background: 'oklch(0.13 0.01 286)', color: 'var(--hds-txt)',
-          fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
-        }}
+        className={`${styles.input} ${styles.w240}`}
       />
     </SettingRow>
   )

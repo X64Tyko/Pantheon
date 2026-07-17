@@ -260,17 +260,16 @@ const ShowGroupPanel = observer(function ShowGroupPanel({
           <div className="space-y-2">
             {unconfirmed.sort((a, b) => b.confidence - a.confidence).map((c, i) => (
               <div key={i}
-                className="rounded-lg border p-3 space-y-1.5"
-                style={{ borderColor: c.confidence >= 80 ? 'oklch(0.6 0.18 260 / 0.4)' : 'oklch(0.4 0.05 260 / 0.25)' }}
+                className={`rounded-lg border p-3 space-y-1.5 ${c.confidence >= 80 ? 'border-[oklch(0.6_0.18_260_/_0.4)]' : 'border-[oklch(0.4_0.05_260_/_0.25)]'}`}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-zinc-200 flex-1 truncate">{c.base_title}</span>
                   <span
-                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                    style={{
-                      background: c.confidence >= 80 ? 'oklch(0.55 0.18 260 / 0.25)' : 'oklch(0.4 0.08 260 / 0.15)',
-                      color:      c.confidence >= 80 ? 'oklch(0.75 0.18 260)'         : 'oklch(0.6 0.08 260)',
-                    }}
+                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                      c.confidence >= 80
+                        ? 'bg-[oklch(0.55_0.18_260_/_0.25)] text-[oklch(0.75_0.18_260)]'
+                        : 'bg-[oklch(0.4_0.08_260_/_0.15)] text-[oklch(0.6_0.08_260)]'
+                    }`}
                   >{c.confidence}%</span>
                   {!c.adjacent && <span className="text-[10px] text-amber-400">non-adjacent</span>}
                   <button

@@ -4,6 +4,7 @@ import type { ItemMetadata, ScraperSearchResult } from '../../api/types'
 import { folderBaseName } from './useMediaDetail'
 import { ExternalIdEditor } from './LibraryAdminPanel'
 import type { MatchStatus } from './MatchBadge'
+import styles from './FixMatchPanel.module.css'
 
 interface FixMatchPanelProps {
   id:           string
@@ -135,190 +136,116 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
 
   if (mergedNotice) {
     return (
-      <div style={{
-        display: 'flex', flexDirection: 'column', gap: 12, padding: 12,
-        borderRadius: 8, background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',
-      }}>
-        <div style={{
-          padding: '10px 12px', borderRadius: 6, fontSize: 11, lineHeight: 1.5,
-          fontFamily: "'JetBrains Mono', monospace", color: 'var(--hds-violet)',
-          background: 'oklch(0.55 0.14 292 / 0.1)', border: '1px solid oklch(0.7 0.13 287 / 0.4)',
-        }}>
+      <div className={`${styles.panel} ${styles.panelMerged}`}>
+        <div className={styles.violetNotice}>
           This was a duplicate of <strong>{mergedNotice.title}</strong> and has been merged into it —
           reopen it from the library to continue editing.
         </div>
-        <button
-          onClick={onCancel}
-          style={{
-            padding: '9px 0', borderRadius: 6, cursor: 'pointer',
-            border: '1px solid var(--hds-line)', background: 'transparent',
-            color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-          }}
-        >Close</button>
+        <button onClick={onCancel} className={styles.plainButton}>Close</button>
       </div>
     )
   }
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: 10, padding: 12,
-      borderRadius: 8, background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',
-    }}>
+    <div className={styles.panel}>
       {folderPath && (
-        <div
-          title={folderPath}
-          style={{
-            padding: '6px 10px', borderRadius: 6, fontSize: 10,
-            fontFamily: "'JetBrains Mono', monospace", color: 'var(--hds-txt-2)',
-            background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line-s)',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}
-        >
-          <span style={{ color: 'var(--hds-txt-3)' }}>Folder: </span>{folderBaseName(folderPath)}
+        <div title={folderPath} className={styles.folderTag}>
+          <span className={styles.folderTagLabel}>Folder: </span>{folderBaseName(folderPath)}
         </div>
       )}
 
       {locked && (
-        <div style={{
-          padding: '8px 10px', borderRadius: 6, fontSize: 10, lineHeight: 1.5,
-          fontFamily: "'JetBrains Mono', monospace", color: 'var(--hds-violet)',
-          background: 'oklch(0.55 0.14 292 / 0.1)', border: '1px solid oklch(0.7 0.13 287 / 0.4)',
-        }}>
+        <div className={`${styles.violetNotice} ${styles.violetNoticeCompact}`}>
           This item is locked — matching updates the link, but locked fields
           won't be overwritten. Unlock it in Library to update everything.
         </div>
       )}
 
       {matchStatus === 'matched' && !matchConfirmed && (
-        <div style={{
-          display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px',
-          borderRadius: 6, background: 'oklch(0.7 0.16 150 / 0.06)',
-          border: '1px solid oklch(0.7 0.16 150 / 0.35)',
-        }}>
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, lineHeight: 1.5,
-            color: 'var(--hds-txt-2)',
-          }}>
+        <div className={styles.confirmBox}>
+          <div className={styles.confirmBoxText}>
             This was matched automatically and hasn't been reviewed yet — confirm
             it to enable Push to Sources, and pull the latest metadata now.
           </div>
           <button
             onClick={handleConfirm}
             disabled={confirming}
-            style={{
-              padding: '9px 0', borderRadius: 6, cursor: confirming ? 'not-allowed' : 'pointer',
-              border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.14)',
-              color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 10.5, fontWeight: 600, opacity: confirming ? 0.6 : 1,
-            }}
+            className={`${styles.confirmButton} ${confirming ? styles.confirmButtonBusy : ''}`}
           >{confirming ? 'Confirming…' : '✓ Confirm Match'}</button>
           {confirmError && (
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-red)' }}>{confirmError}</div>
+            <div className={styles.confirmErrorText}>{confirmError}</div>
           )}
         </div>
       )}
 
       <div>
-        <span style={{
-          display: 'block', fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-          letterSpacing: '0.08em', color: 'var(--hds-txt-3)', marginBottom: 5,
-        }}>Linked Ids</span>
+        <span className={styles.linkedIdsLabel}>Linked Ids</span>
         {loadingMeta ? (
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>Loading…</div>
+          <div className={styles.loadingText}>Loading…</div>
         ) : (
           <ExternalIdEditor type={contentType} id={id} metadata={metadata} isAdmin onChanged={setMetadata} />
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div className={styles.searchRow}>
         <input
           autoFocus
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && runSearch(query)}
           placeholder="Search title…"
-          style={{
-            flex: 1, padding: '9px 12px', borderRadius: 6,
-            border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
-            color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-            outline: 'none',
-          }}
+          className={styles.searchInput}
         />
         <button
           onClick={() => runSearch(query)}
           disabled={loading || !query.trim()}
-          style={{
-            padding: '9px 16px', borderRadius: 6, cursor: 'pointer',
-            border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
-            color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-            opacity: (loading || !query.trim()) ? 0.5 : 1,
-          }}
+          className={`${styles.searchButton} ${(loading || !query.trim()) ? styles.searchButtonDisabled : ''}`}
         >{loading ? '…' : 'Search'}</button>
       </div>
 
       {error && (
-        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-red)' }}>{error}</div>
+        <div className={styles.errorText}>{error}</div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 440, overflowY: 'auto', flexShrink: 0 }} className="scrollbar-dark">
+      <div className={`${styles.resultsList} scrollbar-dark`}>
         {loading ? (
           Array.from({ length: 3 }, (_, i) => (
-            <div key={i} className="hds-skeleton" style={{ height: 120, borderRadius: 7, flexShrink: 0 }} />
+            <div key={i} className={`hds-skeleton ${styles.resultSkeleton}`} />
           ))
         ) : results.length === 0 ? (
-          <div style={{
-            padding: '16px 0', textAlign: 'center',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)',
-          }}>No results.</div>
+          <div className={styles.noResults}>No results.</div>
         ) : (
           results.map(r => {
             const key = `${r.source}:${r.external_id}`
             const isMatching = matchingKey === key
-            const srcColor = r.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : r.source === 'tvdb' ? 'oklch(0.65 0.12 280)' : 'var(--hds-gold)'
+            const srcClass = r.source === 'tmdb' ? styles.resultSourceTagTmdb : r.source === 'tvdb' ? styles.resultSourceTagTvdb : styles.resultSourceTagGold
             return (
-              <div key={key} style={{
-                display: 'flex', gap: 0, borderRadius: 7, flexShrink: 0,
-                border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)',
-                overflow: 'hidden', opacity: isMatching ? 0.6 : 1,
-              }}>
+              <div key={key} className={`${styles.resultCard} ${isMatching ? styles.resultCardMatching : ''}`}>
                 {r.poster_url && (
                   <img src={mediaUrl(r.poster_url)} alt=""
-                    style={{ width: 80, height: 120, objectFit: 'cover', flexShrink: 0 }}
+                    className={styles.resultPoster}
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
                 )}
-                <div style={{ flex: 1, minWidth: 0, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                    <span style={{
-                      fontFamily: "'Chakra Petch', sans-serif", fontSize: 12.5, fontWeight: 600,
-                      color: 'var(--hds-txt)', flex: 1, lineHeight: 1.3,
-                    }}>{r.title}</span>
+                <div className={styles.resultBody}>
+                  <div className={styles.resultTitleRow}>
+                    <span className={styles.resultTitle}>{r.title}</span>
                     <button
                       onClick={() => handleMatch(r)}
                       disabled={isMatching}
                       title="Set as the primary match — other linked ids stay put, just reordered below it"
-                      style={{
-                        flexShrink: 0, padding: '7px 16px', borderRadius: 6, cursor: isMatching ? 'not-allowed' : 'pointer',
-                        border: '1px solid var(--hds-match-green)', background: 'oklch(0.7 0.16 150 / 0.1)',
-                        color: 'var(--hds-match-green)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600,
-                      }}
+                      className={`${styles.useButton} ${isMatching ? styles.useButtonDisabled : ''}`}
                     >{isMatching ? '…' : justMatchedKey === key ? '✓ Primary' : 'Use'}</button>
                   </div>
-                  <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-                    {r.year && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)' }}>{r.year}</span>}
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: srcColor,
-                      border: `1px solid ${srcColor}`, borderRadius: 4, padding: '1px 5px', letterSpacing: '0.05em',
-                    }}>{r.source.toUpperCase()}</span>
+                  <div className={styles.resultMetaRow}>
+                    {r.year && <span className={styles.resultYear}>{r.year}</span>}
+                    <span className={`${styles.resultSourceTag} ${srcClass}`}>{r.source.toUpperCase()}</span>
                     {r.in_library && (
-                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: 'oklch(0.7 0.16 150)' }}>in library</span>
+                      <span className={styles.resultInLibraryTag}>in library</span>
                     )}
                   </div>
                   {r.overview && (
-                    <p style={{
-                      margin: 0, fontSize: 10.5, lineHeight: 1.4, color: 'var(--hds-txt-2)',
-                      display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                    }}>{r.overview}</p>
+                    <p className={styles.resultOverview}>{r.overview}</p>
                   )}
                 </div>
               </div>
@@ -327,14 +254,7 @@ export function FixMatchPanel({ id, contentType, defaultQuery, locked, folderPat
         )}
       </div>
 
-      <button
-        onClick={onCancel}
-        style={{
-          padding: '9px 0', borderRadius: 6, cursor: 'pointer',
-          border: '1px solid var(--hds-line)', background: 'transparent',
-          color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-        }}
-      >Close</button>
+      <button onClick={onCancel} className={styles.plainButton}>Close</button>
     </div>
   )
 }

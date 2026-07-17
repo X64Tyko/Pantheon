@@ -51,6 +51,11 @@
   --hds-backdrop-fallback-1: oklch(0.12 0.04 292); /* Detail hero backdrop gradient when there's no backdrop image */
   --hds-backdrop-fallback-2: oklch(0.18 0.06 270);
   --hds-backdrop-fallback-3: oklch(0.14 0.03 280);
+  --hds-discover-accent: oklch(0.65 0.18 220); /* Library page's "Discover mode" (TMDB/TVDB search) accent — distinct cyan, recurs across the mode toggle, banner text, and TMDB source badge */
+  --hds-txt-on-bright: oklch(0.15 0.02 286); /* dark text painted on top of a bright accent-filled control (active tab pills) */
+  --hds-allow-accent: oklch(0.6 0.15 145); /* UserOverridesOverlay's "allow" mode */
+  --hds-block-accent: oklch(0.6 0.2 22);   /* UserOverridesOverlay's "block" mode */
+  --hds-approved-accent: oklch(0.7 0.16 150); /* RequestsPage's "approved" status — recurs heavily across that page */
 
   --hds-radius-xs:   4px;  /* smallest overlay badges (episode code/watched/duration pills) */
   --hds-radius-sm:   6px;  /* small badges/pills */
@@ -80,6 +85,7 @@
   --hds-font-size-tv-heading:   17px; /* section headings, e.g. "Live Guide" */
   --hds-font-size-tv-badge:       9px; /* smallest overlay badges (episode code/watched/duration) */
   --hds-font-size-tv-caption:    10px; /* small caption text, e.g. episode count */
+  --hds-font-size-tv-micro:     9.5px; /* dense editor-sidebar field labels/hints (channel block editor) */
   --hds-font-size-tv-small-title: 11px; /* compact tile titles (episode tiles), chevrons */
   --hds-font-size-tv-h1: 24px; /* screen-level titles, e.g. "Library" */
   --hds-font-size-tv-h2: 20px; /* panel/overlay titles, e.g. "Filters" */
@@ -89,6 +95,19 @@
   --hds-font-size-tv-body: 15px; /* body copy, e.g. overview paragraphs and meta rows */
 
   --hds-control-height: 38px; /* standard height for compact TV controls: back button, search field, filter toggle */
+
+  /* ── channel/ module additions (Task #10 batch) ─────────────────────────── */
+  --hds-radius-btn:   9px;  /* channel editor gold/ghost/danger buttons */
+  --hds-radius-input: 8px;  /* form inputs — same value as --hds-radius-tile, distinct semantic name (forms vs. tiles) */
+  --hds-danger-border: oklch(0.5 0.14 22 / 0.5);  /* danger/delete button border */
+  --hds-danger-text:   oklch(0.72 0.16 22);       /* danger/delete button text */
+  --hds-success-text:  oklch(0.72 0.18 140);      /* success/already-added confirmations (ArrAddModal) */
+  --hds-gold-btn-shadow: 0 4px 14px -4px oklch(0.83 0.13 84 / 0.4); /* gold CTA button drop shadow */
+  --hds-text-shadow-hero: 0 1px 3px oklch(0 0 0 / 0.9), 0 2px 14px oklch(0 0 0 / 0.7); /* hero text over backdrop art — Home hero + MediaDetailHero */
+
+  /* ── pages/ReviewPage.tsx additions (Task #11 batch) ────────────────────── */
+  --hds-violet-active-wash: oklch(0.55 0.14 292 / 0.15); /* active tab/filter/mode-switch background — distinct from --hds-violet-deep-wash (0.2), a genuinely different recurring literal in this file */
+  --hds-radius-panel-item: 9px; /* review-panel row/card radius (link results, candidate cards, group cards) */
 
   --hds-transition-fast: 0.15s;
   --hds-transition-med:  0.2s;

@@ -4,6 +4,7 @@ import type { Block } from '../api/types'
 import { BLOCK_META, DAY_BITS, DAY_MIN_W } from './constants'
 import { endOf, t2m } from './utils'
 import type { ChannelDetailStore } from './store'
+import styles from './DayColumn.module.css'
 
 const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId, store, channelId }: {
   dayIdx:     number
@@ -75,13 +76,13 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
             onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.filter = 'brightness(1.15) saturate(1)'}
             onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.filter = filter}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-                <span style={{ fontWeight: 700, fontSize: 11, color: 'var(--hds-txt)', letterSpacing: '0.03em', whiteSpace: 'nowrap' }}>
+            <div className={styles.headerRow}>
+              <span className={styles.timeGroup}>
+                <span className={styles.startTime}>
                   {block.start_time}
                 </span>
                 {block.late_start_mins > 0 && (
-                  <span style={{ fontSize: 8.5, padding: '1px 4px', borderRadius: 4, background: 'oklch(0.98 0 0 / 0.14)', color: 'var(--hds-txt)', whiteSpace: 'nowrap' }}>
+                  <span className={styles.lateStartBadge}>
                     ↧{block.late_start_mins}m
                   </span>
                 )}
@@ -90,16 +91,16 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
                 <button
                   onClick={e => { e.stopPropagation(); store.select(block.block_id); store.duplicate(channelId) }}
                   title="Duplicate"
-                  style={{ width: 18, height: 18, border: 'none', borderRadius: 5, background: 'oklch(0.98 0 0 / 0.1)', color: 'var(--hds-txt)', cursor: 'pointer', fontSize: 10, lineHeight: 1, padding: 0, opacity: 0.65, flexShrink: 0 }}
+                  className={styles.duplicateBtn}
                 >⧉</button>
               )}
             </div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--hds-txt)', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <div className={styles.firstName}>
               {firstName}
             </div>
             {showMeta && (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 6, fontSize: 9.5, letterSpacing: '0.08em', color: m.edge }}>
-                <span style={{ width: 6, height: 6, borderRadius: 2, background: m.edge, flexShrink: 0 }} />
+              <div className={styles.metaRow} style={{ color: m.edge }}>
+                <span className={styles.metaDot} style={{ background: m.edge }} />
                 {metaLabel}
               </div>
             )}

@@ -1,0 +1,79 @@
+/* This grid genuinely computes most of its layout at runtime (block position/
+   height from time math, colors from BLOCK_META per block type, outline from
+   selection state, filter from hover/depth) — those stay targeted inline
+   styles, same precedent as the Guide grid's wall-clock-positioned blocks.
+   Only the parts that never change are pulled out here. */
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hds-space-2);
+}
+
+.timeGroup {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.startTime {
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-txt);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.lateStartBadge {
+  font-size: 8.5px;
+  padding: 1px 4px;
+  border-radius: var(--hds-radius-xs);
+  background: oklch(0.98 0 0 / 0.14);
+  color: var(--hds-txt);
+  white-space: nowrap;
+}
+
+.duplicateBtn {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--hds-radius-xs);
+  background: oklch(0.98 0 0 / 0.1);
+  color: var(--hds-txt);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-caption);
+  line-height: 1;
+  padding: 0;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
+.firstName {
+  font-size: var(--hds-font-size-tv-label);
+  font-weight: 600;
+  color: var(--hds-txt);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metaRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: var(--hds-space-2);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  /* color: dynamic per block-type (m.edge), set inline */
+}
+
+.metaDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  /* background: dynamic per block-type (m.edge), set inline */
+}

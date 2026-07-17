@@ -1,0 +1,308 @@
+.pageRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--hds-bg);
+}
+
+.topBar {
+  padding: 14px 24px 10px;
+  border-bottom: 1px solid var(--hds-line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--hds-space-tile-gap);
+  flex-shrink: 0;
+}
+
+.topBarRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  flex-wrap: wrap;
+}
+
+.searchWrap {
+  flex: 1;
+  position: relative;
+}
+
+.densityRow {
+  display: flex;
+  gap: 2px;
+}
+
+.errorBanner {
+  padding: var(--hds-space-3) var(--hds-space-4);
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid oklch(0.5 0.16 25 / 0.5);
+  background: oklch(0.22 0.06 25 / 0.35);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: oklch(0.8 0.14 25);
+}
+
+.discoverBanner {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-discover-accent);
+  letter-spacing: 0.06em;
+}
+
+.contentArea {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* MediaDetailHero owns its own internal fixed-hero/scrolling-body split, so
+   this container must stop being a second scroller while it's open, or the
+   two fight each other — see original comment, preserved via two classes. */
+.gridScroll {
+  flex: 1;
+  min-height: 0;
+  transition: opacity 0.2s ease;
+}
+.gridScrollAuto      { overflow-y: auto; }
+.gridScrollHidden    { overflow-y: hidden; }
+.gridScrollTransitioning { opacity: 0; }
+.gridScrollVisible       { opacity: 1; }
+
+.skeletonGrid {
+  padding: var(--hds-space-5) 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 14px;
+}
+.skeletonGridDiscover {
+  padding: var(--hds-space-5) 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+}
+.skeletonTile {
+  aspect-ratio: 2 / 3;
+  border-radius: var(--hds-radius-md);
+}
+
+.searchHint {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: var(--hds-space-1);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-violet);
+  letter-spacing: 0.02em;
+}
+
+.discoverToggle {
+  height: 30px;
+  padding: 0 var(--hds-space-4);
+  border-radius: var(--hds-radius-sm);
+  cursor: pointer;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.discoverToggleOn {
+  border: 1px solid var(--hds-discover-accent);
+  background: oklch(0.65 0.18 220 / 0.12);
+  color: var(--hds-discover-accent);
+}
+.discoverToggleOff {
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-3);
+}
+
+.resultCount {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-txt-3);
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+.smallSquareBtn {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--hds-radius-sm);
+  cursor: pointer;
+}
+
+.densityBtn { font-size: 14px; }
+.filterToggleBtn { font-size: var(--hds-font-size-tv-label); }
+
+.smallBtnActive {
+  border: 1px solid var(--hds-violet);
+  background: var(--hds-violet-deep-wash);
+  color: var(--hds-violet);
+}
+.smallBtnInactive {
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-3);
+}
+.smallBtnInactiveMuted {
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-2);
+}
+
+/* Shared "violet active wash" — FilterToggleButton (open) and
+   HideEmptyToggleButton (on) use the exact same combo. */
+.violetActiveWash {
+  border: 1px solid var(--hds-violet);
+  background: oklch(0.55 0.14 292 / 0.15);
+  color: var(--hds-violet);
+}
+
+.hideEmptyBtn {
+  height: 30px;
+  padding: 0 var(--hds-space-3);
+  border-radius: var(--hds-radius-sm);
+  cursor: pointer;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.hideEmptyBtnOff {
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-2);
+}
+
+.discoverStateBox {
+  padding: 48px 24px;
+  text-align: center;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  color: var(--hds-txt-3);
+}
+.discoverEmptyQuery { line-height: 1.6; }
+.discoverNoResults  { line-height: 1.7; }
+
+.noResultsSubtext {
+  font-size: var(--hds-font-size-tv-caption);
+  color: oklch(0.45 0.02 285);
+}
+.noResultsLink {
+  color: var(--hds-violet);
+  text-decoration: none;
+}
+
+.discoverCard {
+  border-radius: var(--hds-radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: var(--hds-bg-2);
+  border: 1px solid var(--hds-line);
+  box-shadow: none;
+  transition: border-color 0.12s, background 0.12s;
+}
+.discoverCardHovered {
+  border-color: var(--hds-line-s);
+}
+.discoverCardSelected {
+  border-color: var(--hds-violet);
+  background: oklch(0.55 0.14 292 / 0.08);
+  box-shadow: 0 0 0 1px var(--hds-violet);
+}
+
+.statusBadge {
+  position: absolute;
+  top: var(--hds-space-3);
+  right: var(--hds-space-3);
+  z-index: 2;
+  border-radius: var(--hds-radius-sm);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  padding: 2px var(--hds-space-2);
+  letter-spacing: 0.06em;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.statusBadgeGreen {
+  background: oklch(0.7 0.16 150);
+  color: var(--hds-txt-hero);
+}
+.statusBadgePending {
+  background: oklch(0.78 0.15 84);
+  color: var(--hds-txt-on-gold);
+}
+
+.posterImg {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+}
+.posterPlaceholder {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  background: var(--hds-bg-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+}
+
+.cardInfo {
+  padding: var(--hds-space-3) var(--hds-space-3) var(--hds-space-4);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hds-space-1);
+}
+
+.cardTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-label);
+  font-weight: 600;
+  color: var(--hds-txt);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cardMetaRow {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.cardYear {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+}
+
+.sourceBadge {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  border-radius: var(--hds-radius-xs);
+  padding: 1px 5px;
+  letter-spacing: 0.05em;
+  border: 1px solid;
+}
+.sourceBadgeTmdb {
+  color: var(--hds-discover-accent);
+  border-color: var(--hds-discover-accent);
+}
+.sourceBadgeTvdb {
+  color: oklch(0.65 0.12 280);
+  border-color: oklch(0.65 0.12 280);
+}
+.searchInputWide {
+  width: 100%;
+  box-sizing: border-box;
+}

@@ -288,8 +288,7 @@ const PerAccountWatchSyncCard = observer(function PerAccountWatchSyncCard({ sour
           <div key={u.external_user_id} className="flex items-center justify-between gap-2">
             <span className="text-xs text-zinc-300 truncate">{u.display_name || u.external_user_id}</span>
             <select
-              className="input text-xs"
-              style={{ minWidth: 150 }}
+              className="input text-xs min-w-[150px]"
               disabled={pending === u.external_user_id}
               value={u.imported_user_id}
               onChange={e => handleChange(u.external_user_id, e.target.value)}

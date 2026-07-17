@@ -1,5 +1,6 @@
 import { useEffect, useState, type RefObject } from 'react'
 import { useFocusable } from '../nav/useFocusable'
+import styles from './PlayerControls.module.css'
 
 const SEEK_STEP_MS = 10_000 // scrub-bar left/right nudge while D-pad focused
 
@@ -169,27 +170,27 @@ export function PlayerControls({
   })
 
   return (
-    <div style={wrapStyle}>
+    <div className={styles.wrap}>
       {/* Top bar */}
-      <div style={topBarStyle}>
-        <button ref={back.ref} data-tv-focused={back.focused} onClick={onBack} style={iconBtnStyle} aria-label="Back">
+      <div className={styles.topBar}>
+        <button ref={back.ref} data-tv-focused={back.focused} onClick={onBack} className={styles.iconBtn} aria-label="Back">
           <BackIcon />
         </button>
-        <span style={titleStyle}>{title}</span>
-        <div style={{ flex: 1 }} />
+        <span className={styles.title}>{title}</span>
+        <div className={styles.spacer} />
         {isCasting ? (
-          <button ref={stopCast.ref} data-tv-focused={stopCast.focused} onClick={() => activeRemote?.endSession()} style={iconBtnStyle} aria-label="Stop casting">
+          <button ref={stopCast.ref} data-tv-focused={stopCast.focused} onClick={() => activeRemote?.endSession()} className={styles.iconBtn} aria-label="Stop casting">
             <CastConnectedIcon />
           </button>
         ) : (
           <>
             {cast?.available && (
-              <button ref={castBtn.ref} data-tv-focused={castBtn.focused} onClick={() => cast.onRequestCast()} style={iconBtnStyle} aria-label="Cast">
+              <button ref={castBtn.ref} data-tv-focused={castBtn.focused} onClick={() => cast.onRequestCast()} className={styles.iconBtn} aria-label="Cast">
                 <CastIcon />
               </button>
             )}
             {roku?.available && (
-              <button ref={rokuBtn.ref} data-tv-focused={rokuBtn.focused} onClick={() => roku.onRequestCast()} style={iconBtnStyle} aria-label="Play on Roku">
+              <button ref={rokuBtn.ref} data-tv-focused={rokuBtn.focused} onClick={() => roku.onRequestCast()} className={styles.iconBtn} aria-label="Play on Roku">
                 <RokuIcon />
               </button>
             )}
@@ -198,7 +199,7 @@ export function PlayerControls({
       </div>
 
       {/* Bottom bar */}
-      <div style={bottomBarStyle}>
+      <div className={styles.bottomBar}>
         {!isLive && (
           // Outer element is the actual hit area (ref/focus/click all live
           // here) — much taller than the visible bar so it's actually
@@ -208,7 +209,7 @@ export function PlayerControls({
           // affect the seek-position math at all.
           <div
             ref={scrub.ref} data-tv-focused={scrub.focused}
-            style={scrubHitAreaStyle}
+            className={styles.scrubHitArea}
             onClick={e => {
               if (durationMs <= 0) return
               const rect = e.currentTarget.getBoundingClientRect()
@@ -216,48 +217,48 @@ export function PlayerControls({
               onSeek(pct * durationMs)
             }}
           >
-            <div style={scrubTrackStyle}>
-              <div style={{ ...scrubFillStyle, width: `${progress * 100}%` }} />
+            <div className={styles.scrubTrack}>
+              <div className={styles.scrubFill} style={{ width: `${progress * 100}%` }} />
             </div>
           </div>
         )}
 
-        <div style={controlsRowStyle}>
-          <button ref={play.ref} data-tv-focused={play.focused} onClick={togglePlay} style={iconBtnStyle} aria-label={playing ? 'Pause' : 'Play'}>
+        <div className={styles.controlsRow}>
+          <button ref={play.ref} data-tv-focused={play.focused} onClick={togglePlay} className={styles.iconBtn} aria-label={playing ? 'Pause' : 'Play'}>
             {playing ? <PauseIcon /> : <PlayIcon />}
           </button>
 
-          <button ref={mute.ref} data-tv-focused={mute.focused} onClick={toggleMute} style={iconBtnStyle} aria-label={displayMuted ? 'Unmute' : 'Mute'}>
+          <button ref={mute.ref} data-tv-focused={mute.focused} onClick={toggleMute} className={styles.iconBtn} aria-label={displayMuted ? 'Unmute' : 'Mute'}>
             {displayMuted || displayVolume === 0 ? <MuteIcon /> : <VolumeIcon />}
           </button>
           <input
             type="range" min={0} max={1} step={0.05}
             value={displayMuted ? 0 : displayVolume}
             onChange={e => changeVolume(Number(e.target.value))}
-            style={volumeSliderStyle}
+            className={styles.volumeSlider}
           />
 
           {isCasting ? (
-            <span style={castingLabelStyle}>Casting to {activeRemote!.deviceName ?? 'device'}</span>
+            <span className={styles.castingLabel}>Casting to {activeRemote!.deviceName ?? 'device'}</span>
           ) : isLive ? (
-            <span style={liveBadgeStyle}>● LIVE</span>
+            <span className={styles.liveBadge}>● LIVE</span>
           ) : (
-            <span style={timeStyle}>{fmtTime(displayMs)} / {fmtTime(durationMs)}</span>
+            <span className={styles.timeText}>{fmtTime(displayMs)} / {fmtTime(durationMs)}</span>
           )}
 
-          <div style={{ flex: 1 }} />
+          <div className={styles.spacer} />
 
           {!isCasting && (
             <>
-              <button ref={tracks.ref} data-tv-focused={tracks.focused} onClick={onOpenTracks} style={iconBtnStyle} aria-label="Audio & Subtitles">
+              <button ref={tracks.ref} data-tv-focused={tracks.focused} onClick={onOpenTracks} className={styles.iconBtn} aria-label="Audio & Subtitles">
                 <TracksIcon />
               </button>
               {showSettings && (
-                <button ref={settings.ref} data-tv-focused={settings.focused} onClick={onOpenSettings} style={iconBtnStyle} aria-label="Playback info">
+                <button ref={settings.ref} data-tv-focused={settings.focused} onClick={onOpenSettings} className={styles.iconBtn} aria-label="Playback info">
                   <SettingsIcon />
                 </button>
               )}
-              <button ref={fullscreen.ref} data-tv-focused={fullscreen.focused} onClick={toggleFullscreen} style={iconBtnStyle} aria-label="Fullscreen">
+              <button ref={fullscreen.ref} data-tv-focused={fullscreen.focused} onClick={toggleFullscreen} className={styles.iconBtn} aria-label="Fullscreen">
                 <FullscreenIcon />
               </button>
             </>
@@ -266,73 +267,6 @@ export function PlayerControls({
       </div>
     </div>
   )
-}
-
-const wrapStyle: React.CSSProperties = {
-  position: 'absolute', inset: 0, zIndex: 10, pointerEvents: 'none',
-  display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-}
-
-const topBarStyle: React.CSSProperties = {
-  pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 12,
-  padding: '18px 24px', background: 'linear-gradient(to bottom, oklch(0 0 0 / 0.6), transparent)',
-}
-
-const titleStyle: React.CSSProperties = {
-  fontFamily: "'Chakra Petch', sans-serif", fontSize: 15, fontWeight: 600, color: '#fff',
-}
-
-const bottomBarStyle: React.CSSProperties = {
-  pointerEvents: 'auto', padding: '10px 24px 20px',
-  background: 'linear-gradient(to top, oklch(0 0 0 / 0.75), transparent)',
-  display: 'flex', flexDirection: 'column', gap: 10,
-}
-
-// Real hit area — a 5px-tall track alone is very hard to drag precisely
-// with a finger, so the clickable/draggable region (see the wrapping div
-// above) is much taller than what's actually drawn.
-const scrubHitAreaStyle: React.CSSProperties = {
-  padding: '14px 0', cursor: 'pointer',
-}
-
-const scrubTrackStyle: React.CSSProperties = {
-  position: 'relative', height: 5, borderRadius: 3,
-  background: 'oklch(1 0 0 / 0.2)',
-}
-
-const scrubFillStyle: React.CSSProperties = {
-  position: 'absolute', top: 0, left: 0, bottom: 0, borderRadius: 3,
-  background: 'var(--hds-violet)',
-}
-
-const controlsRowStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
-}
-
-const iconBtnStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  // 44x44 — below Apple/Google's ~44-48px minimum recommended touch target,
-  // 36px was hard to hit precisely with a finger. Fine on desktop too.
-  width: 44, height: 44, borderRadius: 8, cursor: 'pointer',
-  background: 'transparent', border: 'none', color: '#fff', flexShrink: 0,
-}
-
-const volumeSliderStyle: React.CSSProperties = {
-  width: 70, accentColor: 'var(--hds-violet)', marginRight: 8,
-}
-
-const timeStyle: React.CSSProperties = {
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'oklch(0.85 0.01 285)', marginLeft: 4,
-}
-
-const liveBadgeStyle: React.CSSProperties = {
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600,
-  color: 'var(--hds-match-red, oklch(0.62 0.2 22))', letterSpacing: '0.04em', marginLeft: 4,
-}
-
-const castingLabelStyle: React.CSSProperties = {
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600,
-  color: 'var(--hds-violet)', letterSpacing: '0.02em', marginLeft: 4,
 }
 
 // ── Icons (inline SVG, no icon library dependency) ────────────────────────────

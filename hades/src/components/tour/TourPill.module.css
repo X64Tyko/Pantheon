@@ -1,0 +1,27 @@
+.pill {
+  position: fixed; left: var(--hds-space-6); bottom: var(--hds-space-6); z-index: 500;
+  display: flex; align-items: center; gap: var(--hds-space-tile-gap);
+  padding: var(--hds-space-3) var(--hds-space-3) var(--hds-space-3) var(--hds-space-5); border-radius: var(--hds-radius-pill);
+  background: oklch(0.16 0.022 286);
+  border: 1px solid var(--hds-glass-border);
+  box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.7);
+  font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-meta);
+  animation: hds-toast-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.stepCount { color: var(--hds-txt-3); }
+.stepTitle { color: var(--hds-txt); }
+.goBtn {
+  padding: var(--hds-space-2) var(--hds-space-4); border: none; border-radius: var(--hds-radius-pill);
+  background: linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2));
+  color: var(--hds-txt-on-gold); font-weight: 700; font-size: var(--hds-font-size-tv-small-title);
+  cursor: pointer; font-family: var(--hds-font-mono-brand);
+}
+.skipBtn {
+  background: none; border: none; cursor: pointer;
+  color: var(--hds-txt-3); font-size: var(--hds-font-size-tv-small-title); padding: var(--hds-space-1) 2px;
+  font-family: var(--hds-font-mono-brand);
+}
+.closeBtn {
+  background: none; border: none; cursor: pointer;
+  color: var(--hds-txt-3); font-size: var(--hds-font-size-tv-title); line-height: 1; padding: 2px var(--hds-space-1);
+}

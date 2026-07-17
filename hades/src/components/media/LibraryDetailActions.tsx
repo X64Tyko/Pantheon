@@ -10,6 +10,7 @@ import { goldBtnStyle } from '../../channel/styles'
 import { resolvePlayPath } from '../../player/resolvePlayTarget'
 import { useFocusable } from '../../nav/useFocusable'
 import type { MediaDetailResult } from './useMediaDetail'
+import styles from './LibraryDetailActions.module.css'
 
 interface LibraryDetailActionsProps {
   id?:              string
@@ -248,13 +249,9 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
   if (isLibraryItem) {
     const matchStatus = (detail?.match_status ?? 'unscraped') as MatchStatus
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '4px 0 22px', maxWidth: 900 }}>
-        <div style={{
-          padding: '12px 14px', borderRadius: 8,
-          background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div className={styles.libraryActionsRoot}>
+        <div className={styles.matchStatusRow}>
+          <div className={styles.matchStatusLeft}>
             <MatchBadge status={matchStatus} score={detail?.match_score} size="md" />
             {movie?.watched && <WatchedPill viewCount={movie.view_count ?? 1} />}
           </div>
@@ -287,16 +284,13 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
               onClick={handlePush}
               disabled={pushing || !detail?.match_confirmed}
               title={detail?.match_confirmed ? undefined : 'Confirm this match (Fix Match) before pushing to sources'}
-              style={{
-                ...goldBtnStyle, boxSizing: 'border-box', alignSelf: 'flex-start',
-                opacity: (pushing || !detail?.match_confirmed) ? 0.4 : 1,
-                cursor: (pushing || !detail?.match_confirmed) ? 'not-allowed' : 'pointer',
-              }}
+              style={goldBtnStyle}
+              className={`${styles.pushButton} ${(pushing || !detail?.match_confirmed) ? styles.pushButtonDisabled : ''}`}
             >
               {pushing ? 'Pushing…' : 'Push to Sources'}
             </button>
             {pushResult && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+              <div className={styles.resultText}>
                 {pushResult}
               </div>
             )}
@@ -304,18 +298,12 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
               onClick={handleRefreshMetadata}
               disabled={refreshingMetadata || !detail?.match_confirmed}
               title={detail?.match_confirmed ? "Re-fetch this item's metadata (overview, genres, images, etc.) from its matched scraper" : 'Confirm this match (Fix Match) before refreshing metadata'}
-              style={{
-                alignSelf: 'flex-start', padding: '8px 16px', borderRadius: 7,
-                cursor: (refreshingMetadata || !detail?.match_confirmed) ? 'not-allowed' : 'pointer',
-                border: '1px solid var(--hds-line)', background: 'transparent',
-                color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                opacity: (refreshingMetadata || !detail?.match_confirmed) ? 0.5 : 1,
-              }}
+              className={`${styles.secondaryActionButton} ${(refreshingMetadata || !detail?.match_confirmed) ? styles.secondaryActionButtonDisabled : ''}`}
             >
               {refreshingMetadata ? 'Refreshing…' : 'Refresh Metadata'}
             </button>
             {refreshMetadataResult && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+              <div className={styles.resultText}>
                 {refreshMetadataResult}
               </div>
             )}
@@ -325,18 +313,12 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
               title={contentType === 'movie'
                 ? 'Re-probe this file for chapter markers'
                 : "Re-probe every episode's file for chapter markers"}
-              style={{
-                alignSelf: 'flex-start', padding: '8px 16px', borderRadius: 7,
-                cursor: processingChapters ? 'not-allowed' : 'pointer',
-                border: '1px solid var(--hds-line)', background: 'transparent',
-                color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                opacity: processingChapters ? 0.5 : 1,
-              }}
+              className={`${styles.secondaryActionButton} ${processingChapters ? styles.secondaryActionButtonDisabled : ''}`}
             >
               {processingChapters ? 'Processing…' : 'Process Chapters'}
             </button>
             {chapterResult && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+              <div className={styles.resultText}>
                 {chapterResult}
               </div>
             )}
@@ -346,18 +328,12 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
               title={contentType === 'movie'
                 ? 'Analyze this file for ad-break points'
                 : 'Analyze every episode for intro/credits/ad-break structure'}
-              style={{
-                alignSelf: 'flex-start', padding: '8px 16px', borderRadius: 7,
-                cursor: detecting ? 'not-allowed' : 'pointer',
-                border: '1px solid var(--hds-line)', background: 'transparent',
-                color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-                opacity: detecting ? 0.5 : 1,
-              }}
+              className={`${styles.secondaryActionButton} ${detecting ? styles.secondaryActionButtonDisabled : ''}`}
             >
               {detecting ? 'Detecting…' : 'Detect Structure'}
             </button>
             {detectResult && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: 'var(--hds-txt-2)' }}>
+              <div className={styles.resultText}>
                 {detectResult}
               </div>
             )}
@@ -369,19 +345,14 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
 
   if (discoverResult && discoverResult.in_library) {
     return (
-      <div style={{ borderTop: '1px solid var(--hds-line-s)', borderBottom: '1px solid var(--hds-line-s)', padding: '16px 0', margin: '4px 0 22px', maxWidth: 420 }}>
-        <div style={{
-          padding: '10px 14px', borderRadius: 8,
-          border: '1px solid oklch(0.7 0.16 150 / 0.4)', background: 'oklch(0.7 0.16 150 / 0.08)',
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.7 0.16 150)', lineHeight: 1.5,
-          marginBottom: (onViewInLibrary && discoverResult.library_id) ? 10 : 0,
-        }}>
+      <div className={styles.discoverPanel}>
+        <div className={`${styles.infoBox} ${styles.infoBoxGreen}`}>
           Already in your library — no need to request or add it.
         </div>
         {onViewInLibrary && discoverResult.library_id && (
           <button
             onClick={() => onViewInLibrary(discoverResult.library_id!, discoverResult.content_type)}
-            style={{ padding: '8px 16px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.15)', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600 }}
+            className={styles.viewInLibraryButton}
           >
             View in Library →
           </button>
@@ -392,100 +363,90 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
 
   if (discoverResult && !discoverResult.in_library) {
     return (
-      <div style={{ borderTop: '1px solid var(--hds-line-s)', borderBottom: '1px solid var(--hds-line-s)', padding: '16px 0', margin: '4px 0 22px', maxWidth: 420 }}>
+      <div className={styles.discoverPanel}>
         {discoverResult.request_status && (
-          <div style={{
-            marginBottom: 14, padding: '10px 14px', borderRadius: 8,
-            border: '1px solid oklch(0.78 0.15 84 / 0.4)', background: 'oklch(0.78 0.15 84 / 0.08)',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.78 0.15 84)', lineHeight: 1.5,
-          }}>
+          <div className={`${styles.infoBox} ${styles.infoBoxAmber}`}>
             {REQUEST_STATUS_LABEL[discoverResult.request_status] ?? 'Already requested by someone else.'}
           </div>
         )}
         {isAdmin ? (
           // Admin: add directly to arr service
           <>
-            <div style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-              color: 'var(--hds-txt-3)', letterSpacing: '0.08em', marginBottom: 10,
-            }}>{serviceLabel.toUpperCase()}</div>
+            <div className={styles.serviceLabel}>{serviceLabel.toUpperCase()}</div>
 
             {arrStep === 'idle' && (
               <ArrLookupButton onClick={handleArrLookup} label={`Add to ${serviceLabel} →`} />
             )}
 
             {(arrStep === 'loading' || arrStep === 'adding') && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', padding: '8px 0' }}>
+              <div className={styles.loadingText}>
                 {arrStep === 'loading' ? `Looking up in ${serviceLabel}…` : `Adding to ${serviceLabel}…`}
               </div>
             )}
 
             {arrStep === 'form' && options && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                <label style={formLabelStyle}>
+              <div className={styles.arrForm}>
+                <label className={styles.arrFormLabel}>
                   Quality Profile
-                  <select value={qualityProfileId ?? ''} onChange={e => setQualityProfileId(Number(e.target.value))} style={selectStyle}>
+                  <select value={qualityProfileId ?? ''} onChange={e => setQualityProfileId(Number(e.target.value))} className={styles.arrSelect}>
                     {options.quality_profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </label>
-                <label style={formLabelStyle}>
+                <label className={styles.arrFormLabel}>
                   Root Folder
-                  <select value={rootFolder} onChange={e => setRootFolder(e.target.value)} style={selectStyle}>
+                  <select value={rootFolder} onChange={e => setRootFolder(e.target.value)} className={styles.arrSelect}>
                     {options.root_folders.map(f => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-2)' }}>
-                  <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} style={{ accentColor: 'var(--hds-violet)', width: 14, height: 14 }} />
+                <label className={styles.arrCheckboxLabel}>
+                  <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} className={styles.arrCheckbox} />
                   Search immediately
                 </label>
-                <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
-                  <button onClick={() => setArrStep('idle')} style={{ flex: 1, padding: '8px 0', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>Cancel</button>
-                  <button onClick={handleArrAdd} style={{ flex: 2, padding: '8px 0', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.2)', color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 600 }}>Add to {serviceLabel}</button>
+                <div className={styles.arrFormActions}>
+                  <button onClick={() => setArrStep('idle')} className={styles.arrCancelButton}>Cancel</button>
+                  <button onClick={handleArrAdd} className={styles.arrAddButton}>Add to {serviceLabel}</button>
                 </div>
               </div>
             )}
 
             {arrStep === 'done' && (
-              <div style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid oklch(0.7 0.16 150 / 0.4)', background: 'oklch(0.7 0.16 150 / 0.08)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.7 0.16 150)' }}>
+              <div className={`${styles.infoBox} ${styles.infoBoxGreen}`}>
                 {alreadyAdded ? `Already in ${serviceLabel}` : `Added${searchOnAdd ? ' — search queued' : ''}`}
               </div>
             )}
 
             {arrStep === 'error' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid var(--hds-match-red)', background: 'oklch(0.55 0.22 27 / 0.08)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-red)', lineHeight: 1.5 }}>{arrError}</div>
-                <button onClick={() => setArrStep('idle')} style={{ padding: '7px 0', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>Try Again</button>
+              <div className={styles.errorStack}>
+                <div className={`${styles.infoBox} ${styles.infoBoxRed}`}>{arrError}</div>
+                <button onClick={() => setArrStep('idle')} className={styles.tryAgainButton}>Try Again</button>
               </div>
             )}
           </>
         ) : (
           // Viewer: submit a request for admin to approve
           <>
-            <div style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-              color: 'var(--hds-txt-3)', letterSpacing: '0.08em', marginBottom: 10,
-            }}>REQUEST</div>
+            <div className={styles.serviceLabel}>REQUEST</div>
 
             {reqStep === 'idle' && (
               <RequestButton onClick={handleRequest} />
             )}
 
             {reqStep === 'loading' && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', padding: '8px 0' }}>
+              <div className={styles.loadingText}>
                 Submitting request…
               </div>
             )}
 
             {reqStep === 'done' && (
-              <div style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid oklch(0.7 0.16 150 / 0.4)', background: 'oklch(0.7 0.16 150 / 0.08)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.7 0.16 150)' }}>
+              <div className={`${styles.infoBox} ${styles.infoBoxGreen}`}>
                 {reqDuplicate ? 'Already requested' : 'Requested — an admin will review it'}
               </div>
             )}
 
             {reqStep === 'error' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid var(--hds-match-red)', background: 'oklch(0.55 0.22 27 / 0.08)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-match-red)' }}>Failed to submit request.</div>
-                <button onClick={() => setReqStep('idle')} style={{ padding: '7px 0', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--hds-line)', background: 'transparent', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>Try Again</button>
+              <div className={styles.errorStack}>
+                <div className={`${styles.infoBox} ${styles.infoBoxRed}`}>Failed to submit request.</div>
+                <button onClick={() => setReqStep('idle')} className={styles.tryAgainButton}>Try Again</button>
               </div>
             )}
           </>
@@ -499,12 +460,7 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
 
 function WatchedPill({ viewCount }: { viewCount: number }) {
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 5,
-      padding: '4px 10px', borderRadius: 6,
-      border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.15)',
-      color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, fontWeight: 600,
-    }}>✓ {viewCount > 1 ? `Watched · ${viewCount}×` : 'Watched'}</span>
+    <span className={styles.watchedPill}>✓ {viewCount > 1 ? `Watched · ${viewCount}×` : 'Watched'}</span>
   )
 }
 
@@ -514,13 +470,7 @@ function FixMatchButton({ active, onClick }: { active: boolean; onClick: () => v
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-        padding: '8px 16px', borderRadius: 6, cursor: 'pointer',
-        border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-        background: active ? 'oklch(0.55 0.14 292 / 0.15)' : 'transparent',
-        color: active ? 'var(--hds-violet)' : 'var(--hds-txt-2)',
-      }}
+      className={`${styles.fixMatchButton} ${active ? styles.fixMatchButtonActive : ''}`}
     >{active ? 'Cancel' : 'Fix Match'}</button>
   )
 }
@@ -561,11 +511,8 @@ function PlayButton({ onClick, loading }: { onClick: () => void; loading: boolea
   return (
     <button
       ref={ref} data-tv-focused={focused}
-      onClick={onClick} disabled={loading} style={{
-        ...goldBtnStyle, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
-        justifyContent: 'center', gap: 8, opacity: loading ? 0.6 : 1,
-        cursor: loading ? 'wait' : 'pointer', alignSelf: 'flex-start',
-      }}>
+      onClick={onClick} disabled={loading} style={goldBtnStyle}
+      className={`${styles.playButtonExtra} ${loading ? styles.playButtonLoading : ''}`}>
       <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
       {loading ? 'Loading…' : 'Play'}
     </button>
@@ -578,14 +525,8 @@ function ArrLookupButton({ onClick, label }: { onClick: () => void; label: strin
   return (
     <button
       ref={ref} data-tv-focused={focused}
-      onClick={onClick} style={{
-        width: '100%', padding: '9px 0', borderRadius: 8, cursor: 'pointer',
-        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-        color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-        transition: 'border-color .12s',
-      }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--hds-violet)'}
-      onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hds-line)'}
+      onClick={onClick}
+      className={`${styles.lookupButton} ${styles.lookupButtonViolet}`}
     >{label}</button>
   )
 }
@@ -596,27 +537,8 @@ function RequestButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       ref={ref} data-tv-focused={focused}
-      onClick={onClick} style={{
-        width: '100%', padding: '9px 0', borderRadius: 8, cursor: 'pointer',
-        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-        color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-        transition: 'border-color .12s',
-      }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--hds-gold)'}
-      onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hds-line)'}
+      onClick={onClick}
+      className={`${styles.lookupButton} ${styles.lookupButtonGold}`}
     >Request →</button>
   )
-}
-
-const formLabelStyle: React.CSSProperties = {
-  display: 'flex', flexDirection: 'column', gap: 6,
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-  color: 'var(--hds-txt-3)', letterSpacing: '0.06em',
-}
-
-const selectStyle: React.CSSProperties = {
-  padding: '7px 10px', borderRadius: 7,
-  border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)',
-  color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-  cursor: 'pointer', outline: 'none',
 }

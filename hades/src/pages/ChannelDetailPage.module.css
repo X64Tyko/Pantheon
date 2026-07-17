@@ -1,0 +1,277 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--hds-bg);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  letter-spacing: 0.01em;
+  color: var(--hds-txt);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-6);
+  padding: 14px var(--hds-space-7);
+  border-bottom: 1px solid var(--hds-line-s);
+  background: oklch(0.17 0.018 286 / 0.6);
+  flex-shrink: 0;
+}
+
+.backLink {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  color: var(--hds-txt-2);
+  text-decoration: none;
+  padding: var(--hds-space-2) 9px;
+  border-radius: 7px;
+}
+.backArrow { font-size: var(--hds-font-size-tv-title); }
+
+.divider {
+  width: 1px;
+  height: 22px;
+  background: var(--hds-line-s);
+}
+
+.channelIdentity {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-4);
+}
+
+.channelNumberBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 var(--hds-space-3);
+  border-radius: 7px;
+  background: var(--hds-bg-3);
+  color: var(--hds-gold);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-meta);
+  box-shadow: inset 0 0 0 1px var(--hds-line);
+}
+
+.channelName {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-heading);
+  letter-spacing: 0.01em;
+}
+
+.timezoneBadge {
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.2em;
+  color: var(--hds-txt-3);
+  padding: 3px 7px;
+  border: 1px solid var(--hds-line-s);
+  border-radius: 5px;
+}
+
+.spacer { flex: 1; }
+
+.zoomControl {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--hds-bg-3);
+  border: 1px solid var(--hds-line-s);
+  border-radius: var(--hds-radius-btn);
+  padding: 3px;
+}
+
+.zoomLabel {
+  min-width: 52px;
+  text-align: center;
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-txt-2);
+  letter-spacing: 0.06em;
+}
+
+.headerBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  padding: 9px 14px;
+  border-radius: var(--hds-radius-btn);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  cursor: pointer;
+  transition: 0.12s;
+}
+.headerBtnNeutral {
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-2);
+}
+.headerBtnNeutralMuted {
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-3);
+}
+.headerBtnActive {
+  border: 1px solid var(--hds-violet);
+  background: oklch(0.38 0.09 287 / 0.25);
+  color: var(--hds-txt);
+}
+.headerBtnDisabledCursor { cursor: default; }
+
+.saveBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  padding: 9px 16px;
+  border: none;
+  border-radius: var(--hds-radius-btn);
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-meta);
+  transition: 0.15s;
+}
+.saveBtnDirty {
+  background: oklch(0.42 0.13 145);
+  color: oklch(0.95 0.03 145);
+  cursor: pointer;
+  box-shadow: 0 4px 16px -4px oklch(0.42 0.13 145 / 0.5);
+}
+.saveBtnClean {
+  background: oklch(0.28 0.04 145);
+  color: oklch(0.5 0.04 145);
+  cursor: default;
+  box-shadow: none;
+}
+
+.addBlockBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  padding: 9px 16px;
+  border: none;
+  border-radius: var(--hds-radius-btn);
+  background: linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2));
+  color: var(--hds-txt-on-gold);
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-meta);
+  cursor: pointer;
+  box-shadow: 0 4px 16px -4px oklch(0.83 0.13 84 / 0.5);
+}
+.addBlockPlus { font-size: var(--hds-font-size-tv-small-title); line-height: 1; }
+
+.errorBanner {
+  padding: 10px var(--hds-space-7);
+  background: oklch(0.2 0.05 22 / 0.3);
+  border-bottom: 1px solid oklch(0.4 0.1 22 / 0.4);
+  color: oklch(0.72 0.16 22);
+  font-size: var(--hds-font-size-tv-label);
+  flex-shrink: 0;
+}
+
+.scheduleChangedBanner {
+  padding: 9px var(--hds-space-7);
+  background: oklch(0.22 0.07 76 / 0.4);
+  border-bottom: 1px solid oklch(0.45 0.1 76 / 0.5);
+  color: oklch(0.82 0.12 80);
+  font-size: var(--hds-font-size-tv-small-title);
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+}
+.scheduleChangedIcon { opacity: 0.7; }
+
+.bodyWrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.contentArea {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.editorAside {
+  flex-shrink: 0;
+  width: 360px;
+  border-left: 1px solid var(--hds-line-s);
+  background: var(--hds-bg-2);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.gridViewCol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.gridScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Sticky day header row */
+.dayHeaderRow {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  border-bottom: 1px solid var(--hds-line-s);
+  background: var(--hds-bg);
+}
+
+/* flex-basis (DAY_MIN_W) is a channel/constants.ts value, applied inline
+   alongside this class — everything else about the label is static. */
+.dayHeaderLabel {
+  text-align: center;
+  padding: 11px 0;
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.24em;
+  color: var(--hds-txt-2);
+  border-left: 1px solid var(--hds-line-s);
+}
+
+.gridBodyRow {
+  display: flex;
+}
+
+/* width (GUTTER_W) and height (computed from pph) are dynamic/constant-
+   derived, applied inline alongside this class. */
+.timeGutter {
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* top (h * pph) is dynamic, applied inline alongside this class. */
+.timeGutterLabel {
+  position: absolute;
+  right: 9px;
+  transform: translateY(-50%);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  letter-spacing: 0.04em;
+}
+
+.bulkAside {
+  flex-shrink: 0;
+  width: 392px;
+  border-left: 1px solid var(--hds-line-s);
+  background: var(--hds-bg-2);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}

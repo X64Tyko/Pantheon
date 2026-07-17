@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from 'react'
 import Hls from 'hls.js'
 import { registerReceiverVideoElement } from '../cast/CastReceiverProvider'
+import styles from './VideoPlayer.module.css'
 
 interface VideoPlayerProps {
   videoRef:     RefObject<HTMLVideoElement>
@@ -74,7 +75,7 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
       ref={videoRef}
       onTimeUpdate={e => onTimeUpdate(e.currentTarget.currentTime * 1000, e.currentTarget.duration * 1000)}
       onEnded={onEnded}
-      style={{ width: '100%', height: '100%', background: '#000' }}
+      className={styles.video}
       playsInline
       controls={controls}
     >

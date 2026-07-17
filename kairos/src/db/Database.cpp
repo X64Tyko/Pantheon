@@ -1841,6 +1841,68 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE movie ADD COLUMN primary_source TEXT NOT NULL DEFAULT '';
 )SQL" }
 
+// ── v81: TV manifest — GET /api/tv/manifest's backing store. tv_shelf holds
+//         Home's row composition, tv_zone holds Library/Detail/Guide's zone
+//         layout. Both are DB-backed (not a hardcoded constant) specifically
+//         so a future "customize your Home/Library" feature is additive (new
+//         CRUD endpoints + a settings screen writing to these same tables)
+//         rather than a rework of where TvManifestService reads from — see
+//         hades/src/tv/TvHome.tsx et al for the hardcoded shape this seed
+//         data reproduces exactly. Zones never carry behavior, only
+//         placement + a data pointer (config_json), same discipline as
+//         tv_shelf's params_json — the closed itemAction vocabulary
+//         (open-detail/play-direct-with-position/play-latest-episode/
+//         play-resolved/navigate-library/watch-live) is enforced client-side,
+//         not by this schema.
+,{ 81, R"SQL(
+    CREATE TABLE tv_shelf (
+        id             TEXT    PRIMARY KEY,
+        row_order      INTEGER NOT NULL,
+        row_type       TEXT    NOT NULL,           -- 'hero' | 'shelf' | 'guide'
+        title          TEXT    NOT NULL DEFAULT '',
+        endpoint       TEXT    NOT NULL DEFAULT '', -- '' for hero/guide — hero's dual shows+movies sources are fixed row-type behavior, not per-row data
+        params_json    TEXT    NOT NULL DEFAULT '{}',
+        item_action    TEXT    NOT NULL DEFAULT '', -- '' = client falls back to its own default ('open-detail')
+        end_tile       TEXT    NOT NULL DEFAULT '',
+        empty_behavior TEXT    NOT NULL DEFAULT 'hide',
+        enabled        INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE tv_zone (
+        id          TEXT    PRIMARY KEY,
+        screen      TEXT    NOT NULL,   -- 'library' | 'detail' | 'guide'
+        zone_id     TEXT    NOT NULL,
+        zone_order  INTEGER NOT NULL,
+        config_json TEXT    NOT NULL DEFAULT '{}',
+        enabled     INTEGER NOT NULL DEFAULT 1
+    );
+
+    INSERT INTO tv_shelf (id, row_order, row_type, title, endpoint, params_json, item_action, end_tile, empty_behavior) VALUES
+        ('hero',             0, 'hero',  '',                        '',             '{}', '', '', 'hide'),
+        ('continue-watching',1, 'shelf', 'Continue Watching',       '/api/watch-progress', '{}', 'play-direct-with-position', '', 'hide'),
+        ('recent-shows',     2, 'shelf', 'Recently Added Shows',    '/api/shows',   '{"limit":16,"sort":"recently_added","home":true,"hide_empty":true}',   'open-detail',       'navigate-library', 'hide'),
+        ('recent-movies',    3, 'shelf', 'Recently Added Movies',   '/api/movies',  '{"limit":16,"sort":"recently_added","home":true,"hide_empty":true}',   'open-detail',       'navigate-library', 'hide'),
+        ('recent-released',  4, 'shelf', 'Recently Released',       '/api/movies',  '{"limit":16,"sort":"recently_released","home":true,"hide_empty":true}','open-detail',       'navigate-library', 'hide'),
+        ('recent-aired',     5, 'shelf', 'Recently Aired',          '/api/shows',   '{"limit":16,"sort":"recently_aired","home":true,"hide_empty":true}',   'play-latest-episode','navigate-library', 'hide'),
+        ('guide',            6, 'guide', '',                        '',             '{}', '', '', 'hide');
+
+    INSERT INTO tv_zone (id, screen, zone_id, zone_order, config_json) VALUES
+        ('library-search-bar',    'library', 'search-bar',    0, '{"dataSource":{"endpoint":"/api/shows|/api/movies","queryParam":"q"}}'),
+        ('library-library-pills', 'library', 'library-pills', 1, '{"dataSource":{"endpoint":"/api/libraries"}}'),
+        ('library-filter-pills',  'library', 'filter-pills',  2, '{"filterFields":["genre"]}'),
+        ('library-tile-grid',     'library', 'tile-grid',     3, '{"dataSource":{"endpoints":["/api/shows","/api/movies"]},"itemAction":"open-detail"}'),
+
+        ('detail-hero-backdrop',  'detail',  'hero-backdrop', 0, '{}'),
+        ('detail-meta-block',     'detail',  'meta-block',    1, '{}'),
+        ('detail-genre-chips',    'detail',  'genre-chips',   2, '{}'),
+        ('detail-play-button',    'detail',  'play-button',   3, '{"itemAction":"play-resolved"}'),
+        ('detail-episode-shelves','detail',  'episode-shelves',4,'{"showOnly":true}'),
+
+        ('guide-channel-header',  'guide',   'channel-header',0, '{}'),
+        ('guide-time-grid',       'guide',   'time-grid',     1, '{}'),
+        ('guide-preview-panel',   'guide',   'preview-panel', 2, '{"itemAction":"watch-live"}');
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

@@ -1,0 +1,241 @@
+.panel {
+  margin-top: 32px;
+  max-width: 640px;
+}
+
+.fieldLabel {
+  display: block;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  letter-spacing: 0.08em;
+  color: var(--hds-txt-3);
+  margin-bottom: 5px;
+}
+
+/* ── Generic meta-text sizes reused across this whole panel ────────────────── */
+.metaText {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+}
+.metaTextXs {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+}
+.metaTextSm {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-txt-3);
+}
+
+.sectionBody { display: flex; flex-direction: column; gap: 14px; padding-top: 6px; }
+.sectionBodyWide { display: flex; flex-direction: column; gap: 16px; padding-top: 6px; }
+.stack4 { display: flex; flex-direction: column; gap: var(--hds-space-1); }
+.stack6 { display: flex; flex-direction: column; gap: var(--hds-space-2); }
+.stack8 { display: flex; flex-direction: column; gap: var(--hds-space-3); }
+.stack10 { display: flex; flex-direction: column; gap: 10px; }
+.row8 { display: flex; align-items: center; gap: var(--hds-space-3); }
+.row10 { display: flex; align-items: center; gap: 10px; }
+.row12 { display: flex; align-items: center; gap: var(--hds-space-4); }
+.wrapRow8 { display: flex; gap: var(--hds-space-3); flex-wrap: wrap; }
+
+/* ── External links ──────────────────────────────────────────────────────────
+   Link color is one of a small fixed enum keyed by scraper source — expressed
+   as modifier classes (picked in the component by source name) rather than an
+   inline style, since the set of possible colors is closed and known ahead of
+   time, not a truly arbitrary per-item value. */
+.externalLink {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  padding: 4px 10px;
+  border-radius: var(--hds-radius-tile);
+  text-decoration: none;
+  border: 1px solid currentColor;
+}
+.externalLinkTmdb  { color: oklch(0.7 0.16 150); }
+.externalLinkTvdb  { color: oklch(0.68 0.16 240); }
+.externalLinkImdb  { color: oklch(0.78 0.15 84); }
+.externalLinkAnidb { color: oklch(0.65 0.12 200); }
+.externalLinkPlex  { color: var(--hds-gold); }
+
+.idRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+}
+.idRowLabel { color: var(--hds-txt-3); flex-shrink: 0; }
+.idRowValue { color: var(--hds-txt-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.lockedNotice {
+  margin-top: var(--hds-space-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-violet);
+  background: var(--hds-violet-deep-wash);
+  border: 1px solid oklch(0.7 0.13 287 / 0.3);
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+
+.checkboxLabel {
+  margin-top: var(--hds-space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  cursor: pointer;
+}
+.checkboxLabelBusy { cursor: wait; }
+
+.checkboxLabelLg {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-txt);
+}
+
+.actionBlock { margin-top: var(--hds-space-3); }
+
+.goldButtonSmall {
+  font-size: var(--hds-font-size-tv-caption);
+  padding: 6px 12px;
+  opacity: 1;
+  cursor: pointer;
+}
+.goldButtonSmallStart { align-self: flex-start; }
+.buttonBusy { opacity: 0.6; cursor: wait; }
+
+.hint { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-badge); color: var(--hds-txt-3); margin-top: var(--hds-space-2); }
+
+/* ── External ID editor rows ─────────────────────────────────────────────── */
+.eidRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  padding: 4px var(--hds-space-3);
+  background: var(--hds-bg-3);
+  border-radius: var(--hds-radius-sm);
+  border: 1px solid var(--hds-line);
+}
+.eidPriority {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-gold);
+  width: 14px;
+  text-align: center;
+  font-weight: 700;
+}
+.eidMeta { flex: 1; display: flex; flex-direction: column; }
+.eidSource { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-badge); color: var(--hds-txt-3); text-transform: uppercase; }
+.eidValue { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-2); }
+.eidActions { display: flex; gap: var(--hds-space-1); }
+
+.iconButton {
+  background: none;
+  border: none;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-caption);
+  padding: 2px;
+}
+.iconButtonDanger { color: var(--hds-match-red); margin-left: var(--hds-space-1); }
+
+.addRow { display: flex; gap: var(--hds-space-2); margin-top: var(--hds-space-1); }
+.addInput {
+  flex: 1;
+  padding: 5px var(--hds-space-3);
+  border-radius: var(--hds-radius-sm);
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  outline: none;
+}
+.addButton {
+  padding: 5px var(--hds-space-4);
+  border-radius: var(--hds-radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  opacity: 1;
+}
+.addButtonDisabled { opacity: 0.5; }
+.addError { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-badge); color: var(--hds-match-red); }
+
+/* ── Grouping / Specials candidate cards ─────────────────────────────────── */
+.confirmedCard {
+  border: 1px solid oklch(0.7 0.16 150 / 0.35);
+  background: oklch(0.7 0.16 150 / 0.06);
+  border-radius: var(--hds-radius-tile);
+  padding: 9px 11px;
+}
+.confirmedCardHeader { display: flex; align-items: center; gap: var(--hds-space-3); }
+.confirmedCardTitle { flex: 1; font-family: var(--hds-font-display); font-size: var(--hds-font-size-tv-small-title); font-weight: 600; color: var(--hds-txt); }
+.confirmedCardCount { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-badge); color: oklch(0.7 0.16 150); }
+.confirmedCardMembers { margin-top: 5px; display: flex; flex-direction: column; gap: 2px; }
+.confirmedCardMember { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); }
+
+.candidateCard {
+  border: 1px solid var(--hds-line-s);
+  border-radius: var(--hds-radius-tile);
+  padding: 9px 11px;
+}
+.candidateCardConfident { border-color: oklch(0.6 0.18 260 / 0.4); }
+
+.candidatePill {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  padding: 2px 6px;
+  border-radius: var(--hds-radius-sm);
+  color: var(--hds-txt-3);
+  background: var(--hds-bg-3);
+}
+.candidatePillConfident { color: oklch(0.75 0.18 260); background: oklch(0.55 0.18 260 / 0.18); }
+
+.metaTextXsGold { color: var(--hds-gold); }
+.metaTextSpaced { margin-top: 5px; }
+
+.candidateOutlineButton {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  padding: 3px 9px;
+  border-radius: var(--hds-radius-sm);
+  border: 1px solid var(--hds-violet);
+  background: transparent;
+  color: var(--hds-violet);
+  cursor: pointer;
+}
+.textButton {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* ── Edit form ────────────────────────────────────────────────────────────── */
+.formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.formFieldSpan2 { grid-column: 1 / -1; }
+.formTextarea { resize: vertical; }
+.formError {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-match-red);
+  border: 1px solid var(--hds-match-red);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: oklch(0.55 0.22 27 / 0.08);
+}
+.saveRow { display: flex; align-items: center; gap: var(--hds-space-4); }

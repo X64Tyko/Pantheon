@@ -1,0 +1,30 @@
+.root { position: relative; padding: 0 0 var(--hds-space-3); }
+
+.headerRow { display: flex; align-items: baseline; justify-content: space-between; padding: 0 24px; margin-bottom: var(--hds-space-5); }
+.title { font-family: var(--hds-font-display); font-size: var(--hds-font-size-tv-input); font-weight: 600; color: var(--hds-txt); letter-spacing: 0.03em; }
+.viewAllButton { background: none; border: none; cursor: pointer; font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); letter-spacing: 0.06em; }
+
+.scrollRow { display: flex; gap: var(--hds-space-4); overflow-x: auto; padding: 4px 24px; scrollbar-width: none; }
+.cardSlotMinimal  { flex-shrink: 0; width: 120px; }
+.cardSlotStandard { flex-shrink: 0; width: 160px; }
+
+.arrowButton {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--hds-glass);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt);
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.arrowLeft  { left: 4px; }
+.arrowRight { right: 4px; }

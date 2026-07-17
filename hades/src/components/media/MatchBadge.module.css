@@ -1,0 +1,38 @@
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+  flex-shrink: 0;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  padding: 3px var(--hds-space-3);
+  border-radius: var(--hds-radius-pill);
+  background: color-mix(in oklch, currentColor 15%, transparent);
+  border: 1px solid color-mix(in oklch, currentColor 40%, transparent);
+}
+.badgeDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+  box-shadow: 0 0 5px currentColor;
+}
+.badgeLabel {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: currentColor;
+  letter-spacing: 0.08em;
+}
+
+.matched   { color: var(--hds-match-green); }
+.uncertain { color: var(--hds-match-amber); }
+.unmatched { color: var(--hds-match-red); }
+.unscraped { color: var(--hds-match-grey); }

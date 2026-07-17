@@ -1,0 +1,187 @@
+.page { max-width: 800px; display: flex; flex-direction: column; gap: var(--hds-space-7); }
+
+.titleRow { display: flex; align-items: center; gap: 14px; }
+.title { font-size: var(--hds-font-size-tv-h2); font-weight: 600; color: var(--hds-txt); margin: 0; }
+.savingText { font-size: var(--hds-font-size-tv-small-title); color: var(--hds-txt-3); }
+
+.errorBanner {
+  padding: 10px 14px; border-radius: var(--hds-radius-tile);
+  background: oklch(0.18 0.06 22 / 0.5); border: 1px solid oklch(0.4 0.1 22 / 0.4);
+  font-size: var(--hds-font-size-tv-label); color: oklch(0.75 0.15 22);
+}
+
+/* ── Tab bar ──────────────────────────────────────────────────────────────── */
+.tabBar { display: flex; gap: var(--hds-space-1); border-bottom: 1px solid var(--hds-line); }
+.tabBtn {
+  padding: 9px var(--hds-space-6); border-radius: var(--hds-radius-tile) var(--hds-radius-tile) 0 0;
+  border: 1px solid transparent; border-bottom: none;
+  background: transparent; color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 400; letter-spacing: 0.08em; cursor: pointer;
+  margin-bottom: -1px; transition: color 0.12s, background 0.12s;
+}
+.tabBtnActive {
+  border-color: var(--hds-line); background: var(--hds-bg-2);
+  color: var(--hds-gold); font-weight: 600;
+}
+
+/* ── Section / SettingRow / Toggle ───────────────────────────────────────── */
+.section { background: var(--hds-bg-2); border: 1px solid oklch(0.22 0.01 286 / 0.6); border-radius: var(--hds-radius-md); overflow: hidden; }
+.sectionHeader { padding: 10px 18px; border-bottom: 1px solid oklch(0.22 0.01 286); background: oklch(0.14 0.012 286 / 0.6); }
+.sectionHeaderText { font-size: var(--hds-font-size-tv-caption); letter-spacing: 0.18em; color: var(--hds-txt-3); font-family: var(--hds-font-mono-brand); }
+.sectionBody { padding: 0 18px; }
+
+.settingRow { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px var(--hds-space-7); padding: 14px 0; border-bottom: 1px solid oklch(0.22 0.01 286); }
+.settingRowLabel { font-size: var(--hds-font-size-tv-meta); color: var(--hds-txt); font-weight: 500; }
+.settingRowHint { font-size: var(--hds-font-size-tv-small-title); color: var(--hds-txt-3); margin-top: 3px; }
+.settingRowControl { flex-shrink: 0; }
+
+.toggle {
+  position: relative; display: inline-flex; align-items: center;
+  width: 40px; height: 22px; border-radius: 11px; border: none;
+  transition: background 0.15s; flex-shrink: 0; outline: none;
+}
+.toggleOn  { background: oklch(0.72 0.18 140); cursor: pointer; }
+.toggleOff { background: oklch(0.28 0.01 286); cursor: pointer; }
+.toggleDisabled { cursor: not-allowed; opacity: 0.5; }
+.toggleKnob {
+  position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; transition: left 0.15s; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.toggleKnobOn  { left: 20px; }
+.toggleKnobOff { left: 2px; }
+
+/* ── Shared inputs ────────────────────────────────────────────────────────── */
+.input {
+  padding: 4px var(--hds-space-3); border-radius: var(--hds-radius-sm);
+  border: 1px solid oklch(0.3 0.01 286);
+  background: oklch(0.13 0.01 286); color: var(--hds-txt);
+  font-size: var(--hds-font-size-tv-label); font-family: var(--hds-font-mono-brand);
+}
+.inputCenter { text-align: center; }
+.inputRight { text-align: right; }
+.inputCursorPointer { cursor: pointer; }
+.w60  { width: 60px; }
+.w80  { width: 80px; }
+.w110 { width: 110px; }
+.w120 { width: 120px; }
+.w140 { width: 140px; }
+.w200 { width: 200px; }
+.w240 { width: 240px; }
+.w260 { width: 260px; }
+.w280 { width: 280px; }
+
+.inlineRow    { display: flex; align-items: center; gap: var(--hds-space-3); }
+.inlineRowSm  { display: flex; align-items: center; gap: var(--hds-space-tile-gap); }
+.inlineRowGap12 { display: flex; align-items: center; gap: var(--hds-space-4); }
+.inlineRowGap12Wrap { display: flex; align-items: center; gap: var(--hds-space-4); flex-wrap: wrap; }
+.inlineRowWide { display: flex; align-items: center; gap: var(--hds-space-4); flex-wrap: wrap; }
+.unitLabel { font-size: var(--hds-font-size-tv-label); color: var(--hds-txt-3); }
+.captionText { font-size: var(--hds-font-size-tv-small-title); color: var(--hds-txt-3); }
+.captionTextDanger { font-size: var(--hds-font-size-tv-small-title); color: oklch(0.72 0.18 22); }
+
+/* ── NavButton variants ───────────────────────────────────────────────────────
+   Each class below is one exact (padding, border, background, color,
+   fontSize[, fontWeight]) group as it actually appears in the source —
+   consolidated only where multiple call sites are byte-identical, not forced
+   onto a shared "scale" that doesn't really fit (paddings here are 10/12/14/
+   16/18px, not a clean progression). Dynamic opacity/cursor stay as separate
+   modifier classes applied per call site, since those genuinely vary. */
+.navBtn { border-radius: var(--hds-radius-sm); font-family: var(--hds-font-mono-brand); }
+
+/* run-match, refresh-all, confirm-all-matches (initial) */
+.navBtnNeutral16 { padding: 6px 16px; border: 1px solid oklch(0.3 0.01 286); background: transparent; font-size: var(--hds-font-size-tv-small-title); }
+.navBtnNeutral16TxtA { color: var(--hds-txt-2); }
+.navBtnNeutral16TxtB { color: var(--hds-txt-3); }
+
+/* confirm-all-matches-cancel, reset-library-cancel */
+.navBtnCancel10 { padding: 5px 10px; border: 1px solid oklch(0.3 0.01 286); background: transparent; color: var(--hds-txt-3); font-size: var(--hds-font-size-tv-label); }
+
+/* save-scraper, save-arr, save-smtp */
+.navBtnGold18 {
+  padding: 6px 18px; border: 1px solid oklch(0.72 0.18 84 / 0.6); background: oklch(0.18 0.06 84 / 0.3);
+  color: oklch(0.88 0.14 84); font-size: var(--hds-font-size-tv-label);
+}
+
+/* test-smtp — same shape as navBtnGold18 but a different border/color pair, not a match for it */
+.navBtnLine18 {
+  padding: 6px 18px; border: 1px solid var(--hds-line); background: transparent;
+  color: var(--hds-txt-2); font-size: var(--hds-font-size-tv-label);
+}
+
+/* cast-revoke, roku-remove */
+.navBtnRevoke12 {
+  padding: 5px 12px; border: 1px solid oklch(0.4 0.15 25); background: transparent;
+  color: oklch(0.65 0.2 25); font-size: var(--hds-font-size-tv-small-title);
+}
+
+/* roku-add */
+.navBtnViolet14 {
+  padding: 6px 14px; border: 1px solid var(--hds-violet); background: transparent;
+  color: var(--hds-violet); font-size: var(--hds-font-size-tv-label);
+}
+
+/* debug-dump — neutral gray, distinct from the red danger-soft group below */
+.navBtnNeutral14 {
+  padding: 5px 14px; border: 1px solid oklch(0.3 0.01 286); background: oklch(0.18 0.01 286);
+  color: var(--hds-txt); font-size: var(--hds-font-size-tv-label);
+}
+
+/* clear-epg, reset-library (initial) */
+.navBtnDangerSoft14 {
+  padding: 5px 14px; border: 1px solid oklch(0.4 0.1 22 / 0.6); background: oklch(0.18 0.06 22 / 0.4);
+  color: oklch(0.75 0.15 22); font-size: var(--hds-font-size-tv-label);
+}
+
+/* reset-library-confirm ("Yes, wipe it") */
+.navBtnDangerStrong14 {
+  padding: 5px 14px; border: 1px solid oklch(0.55 0.2 22 / 0.8); background: oklch(0.35 0.12 22 / 0.6);
+  color: oklch(0.88 0.12 22); font-size: var(--hds-font-size-tv-label); font-weight: 600;
+}
+
+/* confirm-all-matches-confirm ("Yes, confirm all") */
+.navBtnGreen14 {
+  padding: 5px 14px; border: 1px solid oklch(0.6 0.18 150 / 0.6); background: oklch(0.3 0.1 150 / 0.3);
+  color: var(--hds-match-green); font-size: var(--hds-font-size-tv-label); font-weight: 600;
+}
+
+.navBtnCursorPointer    { cursor: pointer; }
+.navBtnCursorNotAllowed { cursor: not-allowed; }
+.navBtnFaded45  { opacity: 0.45; }
+.navBtnFaded5   { opacity: 0.5; }
+.navBtnFaded6   { opacity: 0.6; }
+.navBtnOpaque   { opacity: 1; }
+
+.confirmText { font-size: var(--hds-font-size-tv-small-title); color: oklch(0.78 0.15 84); }
+.confirmTextDanger { font-size: var(--hds-font-size-tv-small-title); color: oklch(0.75 0.15 22); }
+.msgRow { padding: 10px 0 14px; font-size: var(--hds-font-size-tv-small-title); color: var(--hds-txt-3); }
+.msgRowError { color: oklch(0.72 0.18 22); }
+.msgRowPlain { padding: 6px 0; font-size: var(--hds-font-size-tv-label); color: oklch(0.65 0.2 25); }
+
+/* ── Matching tab stats ───────────────────────────────────────────────────── */
+.statsRow { padding: 14px 0; border-bottom: 1px solid oklch(0.22 0.01 286); display: flex; gap: var(--hds-space-tile-gap); }
+.statCard { flex: 1; padding: 10px var(--hds-space-4); border-radius: var(--hds-radius-tile); border: 1px solid oklch(0.22 0.01 286); background: oklch(0.13 0.01 286); }
+.statValue { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-title); font-weight: 700; }
+.statLabel { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-badge); color: var(--hds-txt-3); letter-spacing: 0.1em; margin-top: 3px; }
+
+.actionsRow { padding: 14px 0; display: flex; gap: var(--hds-space-tile-gap); align-items: center; flex-wrap: wrap; }
+
+.thresholdSlider { width: 110px; accent-color: var(--hds-violet); }
+.thresholdValue { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-meta); font-weight: 700; color: var(--hds-violet); min-width: 38px; text-align: right; }
+
+/* ── Roku add-device row ──────────────────────────────────────────────────── */
+.listMsg { padding: 14px 0; font-size: var(--hds-font-size-tv-label); color: var(--hds-txt-3); }
+.rokuAddRow { display: flex; gap: var(--hds-space-3); align-items: center; }
+.rokuErrorMsg { padding: 6px 0; font-size: var(--hds-font-size-tv-label); color: oklch(0.65 0.2 25); }
+
+.rokuField {
+  padding: 6px var(--hds-space-3); border-radius: var(--hds-radius-sm);
+  border: 1px solid var(--hds-line); background: var(--hds-bg-3); color: var(--hds-txt);
+  font-size: var(--hds-font-size-tv-label); font-family: var(--hds-font-mono-brand);
+}
+
+/* ── Cloudflare help content (HelpSection children) ──────────────────────── */
+.helpList { margin: 0; padding-left: 18px; }
+.helpListItemGap { margin-bottom: var(--hds-space-3); }
+.helpTextBold { color: var(--hds-txt); }
+.helpParaFlat { margin: 0; }

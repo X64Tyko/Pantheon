@@ -96,11 +96,10 @@ export default observer(function ActivityPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 24, gap: 20, overflowY: 'auto' }}
-         className="scrollbar-dark">
+    <div className="flex flex-col h-full p-6 gap-5 overflow-y-auto scrollbar-dark">
 
       {/* Header */}
-      <div className="flex items-center justify-between" style={{ flexShrink: 0 }}>
+      <div className="flex items-center justify-between shrink-0">
         <h1 className="text-xl font-semibold text-zinc-100">Activity</h1>
         <div className="flex items-center gap-2">
           {confirmHardSyncAll ? (
@@ -144,7 +143,7 @@ export default observer(function ActivityPage() {
       </div>
 
       {/* Sync status */}
-      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4" style={{ flexShrink: 0 }}>
+      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4 shrink-0">
         <h2 className="section-label mb-3">Sync Status</h2>
         <div className="flex items-center gap-2.5 mb-3">
           {statusStore.anyRunning ? (
@@ -190,7 +189,7 @@ export default observer(function ActivityPage() {
       <DeviceConnectionsPanel />
 
       {/* System Resources */}
-      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4" style={{ flexShrink: 0 }}>
+      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4 shrink-0">
         <h2 className="section-label mb-4">System Resources</h2>
         <div className="flex flex-wrap gap-8 justify-between">
             <div className="flex gap-8">
@@ -239,9 +238,9 @@ export default observer(function ActivityPage() {
           readable floor. Without minHeight here, the page's other sections
           (Sync Status, Now Playing, System Resources) push it down to
           nothing on a short mobile viewport instead of the page scrolling. */}
-      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 overflow-hidden"
-           style={{ flex: 1, minHeight: 320, display: 'flex', flexDirection: 'column' }}>
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/80" style={{ flexShrink: 0 }}>
+      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 overflow-hidden
+                      flex-1 min-h-[320px] flex flex-col">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/80 shrink-0">
           <h2 className="section-label">Engine Logs</h2>
           <div className="flex items-center gap-4">
             <span className={`flex items-center gap-1.5 text-xs ${liveColors[liveStatus]}`}>
@@ -262,8 +261,7 @@ export default observer(function ActivityPage() {
         <div
           ref={logRef}
           onScroll={handleScroll}
-          className="overflow-y-auto p-3 font-mono text-xs space-y-0.5 scrollbar-dark"
-          style={{ flex: 1, minHeight: 0 }}
+          className="overflow-y-auto p-3 font-mono text-xs space-y-0.5 scrollbar-dark flex-1 min-h-0"
         >
           {logs.length === 0 ? (
             <span className="text-zinc-700">

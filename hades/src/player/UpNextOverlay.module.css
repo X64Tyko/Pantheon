@@ -1,0 +1,38 @@
+.card {
+  position: absolute; right: 28px; bottom: 110px; z-index: 60;
+  width: 340px; padding: var(--hds-space-5); border-radius: var(--hds-radius-tile);
+  background: var(--hds-bg-2);
+  border: 1px solid var(--hds-line);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  font-family: var(--hds-font-mono-brand); color: var(--hds-txt);
+}
+
+.row { display: flex; gap: var(--hds-space-4); align-items: center; }
+.textCol { display: flex; flex-direction: column; gap: var(--hds-space-1); min-width: 0; }
+
+.thumb { width: 100px; height: 56px; object-fit: cover; border-radius: var(--hds-radius-sm); flex-shrink: 0; background: var(--hds-bg-3); }
+
+.label { font-size: var(--hds-font-size-tv-caption); letter-spacing: 0.12em; text-transform: uppercase; color: var(--hds-gold); }
+.epNum { font-size: var(--hds-font-size-tv-small-title); color: var(--hds-txt-2); }
+.epTitle { font-size: var(--hds-font-size-tv-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.countdownText { margin-top: var(--hds-space-5); font-size: var(--hds-font-size-tv-small-title); color: var(--hds-txt-2); }
+
+.cancelBtn {
+  margin-top: var(--hds-space-3); width: 100%; padding: var(--hds-space-3) 0; border-radius: var(--hds-radius-sm); cursor: pointer;
+  border: 1px solid var(--hds-line);
+  background: transparent; color: var(--hds-txt); font-weight: 600;
+  font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-label);
+}
+
+/* The bar drains over the same countdown that drives auto-play — visually,
+   "how much time is left to hit Cancel" (see hds-upnext-drain in index.css). */
+.progressTrack {
+  margin-top: var(--hds-space-4); height: 3px; border-radius: 2px; overflow: hidden;
+  background: var(--hds-bg-3);
+}
+
+.progressFill {
+  height: 100%; width: 100%; background: var(--hds-gold);
+  animation-name: hds-upnext-drain; animation-timing-function: linear; animation-fill-mode: forwards;
+}

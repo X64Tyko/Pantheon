@@ -1,0 +1,274 @@
+.root {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--hds-space-4) var(--hds-space-4) 20px;
+}
+
+.badgeText {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.sectionLabelRow {
+  display: flex;
+  align-items: center;
+  font-size: var(--hds-font-size-tv-micro);
+  letter-spacing: 0.18em;
+  color: var(--hds-txt-3);
+  margin-bottom: 7px;
+}
+
+.sectionLabel {
+  font-size: var(--hds-font-size-tv-micro);
+  letter-spacing: 0.18em;
+  color: var(--hds-txt-3);
+}
+
+.fieldLabel {
+  font-size: var(--hds-font-size-tv-micro);
+  letter-spacing: 0.16em;
+  color: var(--hds-txt-3);
+  margin-bottom: 5px;
+}
+
+.fieldLabelRow {
+  display: flex;
+  align-items: center;
+  font-size: var(--hds-font-size-tv-micro);
+  letter-spacing: 0.16em;
+  color: var(--hds-txt-3);
+  margin-bottom: 5px;
+}
+
+.hintText {
+  font-size: var(--hds-font-size-tv-micro);
+  color: var(--hds-txt-3);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.hintTextTight {
+  font-size: var(--hds-font-size-tv-micro);
+  color: var(--hds-txt-3);
+  margin-top: 3px;
+}
+
+.hintTextMicroSize {
+  font-size: var(--hds-font-size-tv-micro);
+}
+
+.sectionLabelMb {
+  margin-bottom: 7px;
+}
+
+.mbFlush {
+  margin-bottom: 0;
+}
+
+.hintTextTightFlush {
+  margin-top: 0;
+}
+
+.rangeInput {
+  flex: 1;
+}
+
+.hintTextLoose {
+  font-size: var(--hds-font-size-tv-label);
+  color: var(--hds-txt-3);
+  margin-bottom: 14px;
+  line-height: 1.55;
+}
+
+.hintTextLooseNoMargin {
+  font-size: var(--hds-font-size-tv-label);
+  color: var(--hds-txt-3);
+  line-height: 1.55;
+}
+
+/* ── Block type / stop condition segmented buttons ─────────────────────────── */
+
+.segmentGrid4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--hds-space-2);
+  margin-bottom: var(--hds-space-5);
+}
+
+.segmentGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--hds-space-2);
+  margin-bottom: var(--hds-space-3);
+}
+
+/* Block-type buttons: border/background color come from BLOCK_META (a
+   per-block-type lookup table), a genuinely dynamic value per item, not a
+   fixed on/off pair — kept as a targeted inline style for just those two
+   properties, same precedent as DayColumn.tsx's per-block coloring. */
+.blockTypeButton {
+  padding: 8px 4px;
+  border-radius: var(--hds-radius-tile);
+  font-family: var(--hds-font-mono-brand);
+  font-weight: 600;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: 0.12s;
+}
+
+.conditionButton {
+  padding: 8px 4px;
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-tile);
+  background: var(--hds-bg-3);
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-weight: 600;
+  font-size: 11px;
+  cursor: pointer;
+  transition: 0.12s;
+}
+
+.conditionButtonActive {
+  border-color: oklch(0.7 0.12 84 / 0.5);
+  background: oklch(0.55 0.1 84 / 0.2);
+  color: var(--hds-gold);
+}
+
+/* ── Day-of-week picker ─────────────────────────────────────────────────────── */
+
+.dayRow {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 7px;
+  user-select: none;
+}
+
+.dayCell {
+  flex: 1;
+  text-align: center;
+  padding: 9px 0;
+  border: 1px solid var(--hds-line);
+  border-radius: 7px;
+  background: var(--hds-bg-3);
+  color: var(--hds-txt-2);
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+  transition: 0.1s;
+}
+
+.dayCellActive {
+  border-color: oklch(0.7 0.12 84 / 0.5);
+  background: oklch(0.55 0.1 84 / 0.22);
+  color: var(--hds-gold);
+}
+
+.dayPresetRow {
+  display: flex;
+  gap: var(--hds-space-2);
+  flex-wrap: wrap;
+}
+
+.dayPresetButton {
+  padding: 4px 9px;
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-sm);
+  background: transparent;
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  cursor: pointer;
+}
+
+/* ── Timing grid ────────────────────────────────────────────────────────────── */
+
+.timingGrid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 9px;
+  margin-bottom: var(--hds-space-5);
+}
+
+.timingGrid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.alignScopeToggle {
+  display: flex;
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-sm);
+  overflow: hidden;
+}
+
+.alignScopeButton {
+  padding: 3px 8px;
+  border: none;
+  background: var(--hds-bg-3);
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: 9px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.alignScopeButtonActive {
+  background: var(--hds-violet);
+  color: #fff;
+}
+
+.rowBetween {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.fullWidthInputMb {
+  width: 100%;
+  margin-bottom: 7px;
+}
+
+.narrowInput {
+  width: 64px;
+}
+
+/* ── Playback section ──────────────────────────────────────────────────────── */
+
+.inlineFieldGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.checkboxLabelText {
+  font-size: var(--hds-font-size-tv-micro);
+  color: var(--hds-txt-3);
+}
+
+.rangeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rangeValue {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-2);
+  min-width: 36px;
+}
+
+.mt9 { margin-top: 9px; }

@@ -10,9 +10,9 @@ import { useFocusable } from '../nav/useFocusable'
 import { useTravelingFocus } from '../nav/useTravelingFocus'
 import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
 import { TvGuideSection } from './TvGuideSection'
-import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
 import styles from './TvHome.module.css'
+import sharedStyles from '../channel/sharedStyles.module.css'
 
 const HOME_FOCUS_KEY = 'TV_HOME'
 const TV_HOME_PATH = '/tv'
@@ -444,12 +444,9 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
           </div>
         )}
 
-        {/* textShadow: heroTextShadow — imported from channel/styles.ts, kept
-            inline here since that shared constant is out of scope for this
-            pass (converted separately when channel/ itself is converted). */}
-        <h1 className={styles.heroTitle} style={{ textShadow: heroTextShadow }}>{displayTitle}</h1>
+        <h1 className={`${styles.heroTitle} ${styles.textShadowHero}`}>{displayTitle}</h1>
 
-        <div className={styles.heroMetaRow} style={{ textShadow: heroTextShadow }}>
+        <div className={`${styles.heroMetaRow} ${styles.textShadowHero}`}>
           {episode ? (
             <span>{episode.metaLine}</span>
           ) : (
@@ -462,14 +459,14 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
         </div>
 
         {overview && (
-          <p className={styles.heroOverview} style={{ textShadow: heroTextShadow }}>{overview}</p>
+          <p className={`${styles.heroOverview} ${styles.textShadowHero}`}>{overview}</p>
         )}
 
         <div className={styles.heroButtonRow}>
           <button
             ref={play.ref} data-tv-focused={play.focused}
             onClick={onPlay}
-            style={{ ...goldBtnStyle, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 18px' }}
+            className={`${sharedStyles.goldBtn} ${styles.heroPlayBtn}`}
           >
             <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
             Play
@@ -477,7 +474,7 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
           <button
             ref={viewDetail.ref} data-tv-focused={viewDetail.focused}
             onClick={onViewDetail}
-            style={{ ...ghostBtnStyle, backdropFilter: 'blur(8px)', padding: '8px 18px' }}
+            className={`${sharedStyles.ghostBtn} ${styles.heroDetailBtn}`}
           >View Details</button>
         </div>
       </div>

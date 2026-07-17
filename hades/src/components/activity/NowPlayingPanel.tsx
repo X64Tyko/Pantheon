@@ -91,7 +91,7 @@ export function NowPlayingPanel() {
   const isEstimate = sessions.some(s => s.kind === 'channel' && s.hls_viewer_active)
 
   return (
-    <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4" style={{ flexShrink: 0 }}>
+    <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4 shrink-0">
       <div className="flex items-center justify-between mb-3">
         <h2 className="section-label">Now Playing</h2>
         {sessions.length > 0 && (
@@ -118,7 +118,7 @@ export function NowPlayingPanel() {
                             : 'bg-zinc-950/60 border-zinc-800/60 hover:border-zinc-700'}`}
             >
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.kind === 'channel' ? 'bg-emerald-400' : 'bg-sky-400'}`} />
-              <span className="text-zinc-300 font-medium truncate" style={{ maxWidth: 260 }}>
+              <span className="text-zinc-300 font-medium truncate max-w-[260px]">
                 {s.title || s.file_path || s.id}
               </span>
               <span className="text-zinc-600 uppercase shrink-0">{s.kind}</span>
@@ -151,8 +151,7 @@ export function NowPlayingPanel() {
           </div>
           <div
             ref={logRef}
-            className="overflow-y-auto font-mono text-[11px] text-zinc-400 space-y-0.5 scrollbar-dark"
-            style={{ maxHeight: 220 }}
+            className="overflow-y-auto font-mono text-[11px] text-zinc-400 space-y-0.5 scrollbar-dark max-h-[220px]"
           >
             {logsError ? (
               <span className="text-red-400">{logsError}</span>

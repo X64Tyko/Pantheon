@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "tokens": {
+    "colors": {
+      "hds-bg": "oklch(0.152 0.016 286)",
+      "hds-bg-2": "oklch(0.19 0.018 286)",
+      "hds-bg-3": "oklch(0.235 0.02 286)",
+      "hds-bg-4": "oklch(0.28 0.022 286)",
+      "hds-line": "oklch(0.34 0.02 286)",
+      "hds-line-s": "oklch(0.255 0.016 286)",
+      "hds-txt": "oklch(0.93 0.008 90)",
+      "hds-txt-2": "oklch(0.66 0.012 286)",
+      "hds-txt-3": "oklch(0.5 0.012 286)",
+      "hds-gold": "oklch(0.83 0.13 84)",
+      "hds-gold-2": "oklch(0.72 0.12 80)",
+      "hds-violet": "oklch(0.7 0.13 287)",
+      "hds-match-green": "oklch(0.72 0.18 145)",
+      "hds-match-amber": "oklch(0.78 0.16 68)",
+      "hds-match-red": "oklch(0.62 0.2 22)",
+      "hds-match-grey": "oklch(0.4 0.02 285)",
+      "hds-glass": "oklch(0.14 0.02 285 / 0.82)",
+      "hds-glass-border": "oklch(0.35 0.04 285 / 0.5)",
+      "hds-violet-deep": "oklch(0.55 0.14 292)",
+      "hds-violet-deep-wash": "oklch(0.55 0.14 292 / 0.2)",
+      "hds-scrim": "oklch(0 0 0 / 0.6)",
+      "hds-scrim-light": "oklch(0 0 0 / 0.35)",
+      "hds-scrim-heavy": "oklch(0 0 0 / 0.65)",
+      "hds-poster-bg-1": "oklch(0.18 0.03 287)",
+      "hds-poster-bg-2": "oklch(0.13 0.02 285)",
+      "hds-txt-on-gold": "oklch(0.2 0.04 70)",
+      "hds-gold-glow": "oklch(0.83 0.13 84 / 0.3)",
+      "hds-txt-hero": "#fff",
+      "hds-backdrop-fallback-1": "oklch(0.12 0.04 292)",
+      "hds-backdrop-fallback-2": "oklch(0.18 0.06 270)",
+      "hds-backdrop-fallback-3": "oklch(0.14 0.03 280)",
+      "hds-discover-accent": "oklch(0.65 0.18 220)",
+      "hds-danger-border": "oklch(0.5 0.14 22 / 0.5)",
+      "hds-danger-text": "oklch(0.72 0.16 22)",
+      "hds-gold-btn-shadow": "0 4px 14px -4px oklch(0.83 0.13 84 / 0.4)",
+      "hds-text-shadow-hero": "0 1px 3px oklch(0 0 0 / 0.9), 0 2px 14px oklch(0 0 0 / 0.7)",
+      "hds-shimmer-gradient": "linear-gradient(\n    115deg,\n    transparent 47%,\n    color-mix(in oklch, var(--hds-shimmer-color, var(--hds-violet)) 45%, transparent) 49.4%,\n    color-mix(in oklch, white 80%, var(--hds-shimmer-color, var(--hds-violet))) 50%,\n    color-mix(in oklch, var(--hds-shimmer-color, var(--hds-violet)) 45%, transparent) 50.6%,\n    transparent 53%\n  )",
+      "hds-shimmer-color": "var(--hds-gold)"
+    },
+    "spacing": {
+      "hds-space-1": "4px",
+      "hds-space-2": "6px",
+      "hds-space-3": "8px",
+      "hds-space-4": "12px",
+      "hds-space-5": "16px",
+      "hds-space-6": "20px",
+      "hds-space-7": "24px",
+      "hds-space-tile-gap": "10px"
+    },
+    "radii": {
+      "hds-radius-xs": "4px",
+      "hds-radius-sm": "6px",
+      "hds-radius-tile": "8px",
+      "hds-radius-md": "10px",
+      "hds-radius-skeleton": "12px",
+      "hds-radius-chip-sm": "12px",
+      "hds-radius-lg": "14px",
+      "hds-radius-pill": "20px",
+      "hds-radius-btn": "9px",
+      "hds-radius-input": "8px"
+    },
+    "shadows": {},
+    "fonts": {
+      "hds-font-display": "'Chakra Petch', sans-serif",
+      "hds-font-mono-brand": "'JetBrains Mono', monospace"
+    },
+    "fontSizes": {
+      "hds-font-size-tv-meta": "13px",
+      "hds-font-size-tv-title": "16px",
+      "hds-font-size-tv-monogram": "32px",
+      "hds-font-size-tv-heading": "17px",
+      "hds-font-size-tv-badge": "9px",
+      "hds-font-size-tv-caption": "10px",
+      "hds-font-size-tv-small-title": "11px",
+      "hds-font-size-tv-h1": "24px",
+      "hds-font-size-tv-h2": "20px",
+      "hds-font-size-tv-label": "12px",
+      "hds-font-size-tv-input": "14px",
+      "hds-font-size-tv-hero-title": "40px",
+      "hds-font-size-tv-body": "15px"
+    },
+    "transitions": {
+      "hds-transition-fast": "0.15s",
+      "hds-transition-med": "0.2s"
+    },
+    "sizing": {
+      "hds-tile-width-shelf": "108px",
+      "hds-control-height": "38px"
+    },
+    "other": {}
+  }
+}

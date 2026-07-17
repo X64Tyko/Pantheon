@@ -1,0 +1,4 @@
+/* Matches PlayerPage's own background so the moment before the lazy chunk
+   resolves doesn't flash unstyled content. */
+.playerFallback { position: fixed; inset: 0; background: #000; z-index: 100; }
+.tvFallback { position: fixed; inset: 0; background: var(--hds-bg); z-index: 100; }

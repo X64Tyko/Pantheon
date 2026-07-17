@@ -1,0 +1,101 @@
+/* Real-CSS-class equivalents of styles.ts's CSSProperties objects, for any
+   call site being converted away from inline style={{}} blocks. styles.ts
+   itself is kept intact (tokenized, same shape) for consumers outside this
+   pass's scope — this file doesn't replace it, it's an additive option for
+   converted call sites to use instead of spreading + overriding a JS object. */
+
+.input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-input);
+  background: var(--hds-bg-3);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  box-sizing: border-box;
+}
+
+.filterInput {
+  padding: 5px 7px;
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-sm);
+  background: var(--hds-bg-3);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  box-sizing: border-box;
+}
+
+.goldBtn {
+  padding: 10px 18px;
+  border: none;
+  border-radius: var(--hds-radius-btn);
+  background: linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2));
+  color: var(--hds-txt-on-gold);
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: var(--hds-gold-btn-shadow);
+}
+
+.ghostBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  padding: 10px 14px;
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-btn);
+  background: transparent;
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  cursor: pointer;
+}
+
+.dangerBtn {
+  padding: 10px 16px;
+  border: 1px solid var(--hds-danger-border);
+  border-radius: var(--hds-radius-btn);
+  background: transparent;
+  color: var(--hds-danger-text);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  cursor: pointer;
+}
+
+.seasonBtn {
+  padding: 2px 6px;
+  border-radius: var(--hds-radius-xs);
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  cursor: pointer;
+}
+
+.zoomBtn {
+  width: 28px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--hds-txt-2);
+  border-radius: var(--hds-radius-sm);
+  cursor: pointer;
+  font-size: 16px;
+  font-family: var(--hds-font-mono-brand);
+}
+
+/* Generic paragraph-spacing utilities — the same handful of margin values
+   recur across every HelpTip tooltip body in this directory (EditorForm,
+   EditorPanel, ChannelBumperOverlay, etc.), not just one file's worth. */
+.p0  { margin: 0; }
+.p4  { margin: 0 0 4px; }
+.p10 { margin: 0 0 10px; }
+.p12 { margin: 0 0 12px; }
+
+/* Inline emphasis inside HelpTip tooltip body text (e.g. "<b>Late Start</b>
+   overruns..."). */
+.boldTxt { color: var(--hds-txt); }

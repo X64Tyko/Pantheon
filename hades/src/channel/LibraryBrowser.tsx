@@ -5,12 +5,13 @@ import { useDebounce } from '../hooks/useDebounce'
 import { mediaUrl } from '../api/client'
 import type { PickerTab } from './types'
 import { availablePickerTabs } from './utils'
-import { inputStyle } from './styles'
 import { FilterSection } from '../components/PickerFilters'
 import { HelpTip, HelpSection, GifSlot } from './HelpTip'
 import { MediaTile, ShowMediaTile, MovieMediaTile, MediaInfoPanel, useDetailPanel, LoadMoreSentinel, BrowserEmpty } from './BrowserTiles'
 import type { AddContentParams, InfoItem } from './BrowserTiles'
 import type { ChannelDetailStore } from './store'
+import styles from './LibraryBrowser.module.css'
+import sharedStyles from './sharedStyles.module.css'
 
 const TAB_LABELS: Record<PickerTab, string> = {
   shows: 'Shows', movies: 'Movies', episodes: 'Episodes', playlists: 'Playlists',
@@ -37,22 +38,22 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
 
   if (tabs.length === 0) {
     return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--hds-txt-3)', fontSize: 12, padding: 20, textAlign: 'center' }}>
+      <div className={styles.emptyState}>
         Use the Filler section to add filler lists to this block.
       </div>
     )
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'oklch(0.13 0.015 286)' }}>
+    <div className={styles.root}>
       {!infoItem && (
-        <div style={{ flexShrink: 0, borderBottom: '1px solid var(--hds-line-s)' }}>
-          <div style={{ padding: '10px 14px 8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 7, padding: 3 }}>
+        <div className={styles.header}>
+          <div className={styles.headerInner}>
+            <div className={styles.tabRow}>
+              <div className={styles.tabGroup}>
                 {tabs.map(t => (
                   <button key={t} onClick={() => store.setPickerTab(t)}
-                    style={{ padding: '4px 12px', border: 'none', borderRadius: 5, background: store.pickerTab === t ? 'var(--hds-violet)' : 'transparent', color: store.pickerTab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer' }}>
+                    className={`${styles.tabBtn} ${store.pickerTab === t ? styles.tabBtnActive : styles.tabBtnInactive}`}>
                     {TAB_LABELS[t]}
                   </button>
                 ))}
@@ -67,16 +68,16 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
                   <GifSlot label="Clicking a tile to open the info panel and add a specific season" />
                 </HelpSection>
                 <HelpSection title="Filters">
-                  The Filters toggle (below the search bar) opens a rule builder. Add rules to filter by genre, year, content rating, network, library, and more. Rules combine with <b style={{ color: 'var(--hds-txt)' }}>ALL</b> (every rule must match) or <b style={{ color: 'var(--hds-txt)' }}>ANY</b> (at least one must match). Active rules are shown in violet on the Filters toggle.
+                  The Filters toggle (below the search bar) opens a rule builder. Add rules to filter by genre, year, content rating, network, library, and more. Rules combine with <b className={styles.emphasis}>ALL</b> (every rule must match) or <b className={styles.emphasis}>ANY</b> (at least one must match). Active rules are shown in violet on the Filters toggle.
                   <GifSlot label="Building filter rules to narrow the library by genre and year" />
                 </HelpSection>
               </HelpTip>
             </div>
             {store.pickerTab !== 'playlists' && (
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input value={rawQ} onChange={e => setRawQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, flex: 1, fontSize: 11.5, padding: '6px 9px' }} />
+              <div className={styles.searchRow}>
+                <input value={rawQ} onChange={e => setRawQ(e.target.value)} placeholder="Search…" className={`${sharedStyles.filterInput} ${styles.searchInput}`} />
                 {store.pickerTab === 'episodes' && (
-                  <input type="number" min={0} value={store.pickerSeasonFilter} onChange={e => store.setPickerSeasonFilter(e.target.value)} placeholder="S#" title="Filter by season" style={{ ...inputStyle, width: 48, fontSize: 11, padding: '5px 6px' }} />
+                  <input type="number" min={0} value={store.pickerSeasonFilter} onChange={e => store.setPickerSeasonFilter(e.target.value)} placeholder="S#" title="Filter by season" className={`${sharedStyles.filterInput} ${styles.seasonInput}`} />
                 )}
               </div>
             )}
@@ -100,7 +101,7 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
       {/* Kept mounted (just hidden) rather than a ternary — a fresh mount on
           "back" would reset the grid's scroll to the top instead of leaving
           it where the inspected tile still is. */}
-      <div style={{ display: infoItem ? 'none' : 'contents' }}>
+      <div className={infoItem ? styles.infoHidden : styles.infoVisible}>
         <TileGrid store={store} channelId={channelId} onSelect={setInfoItem} onAdd={handleAdd} />
       </div>
     </div>
@@ -111,7 +112,7 @@ export const LibraryBrowser = observer(function LibraryBrowser({ channelId, stor
 
 const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd }: { store: ChannelDetailStore; channelId: string; onSelect: (item: InfoItem) => void; onAdd: (params: AddContentParams) => void }) {
   if (store.pickerLoading) {
-    return <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
+    return <div className={styles.loadingRow}>Loading…</div>
   }
 
   const startDrag = (e: React.DragEvent, content_type: 'show' | 'movie' | 'episode' | 'playlist', content_id: string, title: string) => {
@@ -120,20 +121,12 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd 
   }
   const endDrag = () => runInAction(() => { store.dragContent = null })
 
-  const gridStyle: React.CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))',
-    gap: 10,
-    padding: 14,
-    alignContent: 'start',
-  }
-
   if (store.pickerTab === 'shows') {
     const items = store.pickerShows
     if (items.length === 0) return <BrowserEmpty />
     return (
-      <div style={{ overflow: 'auto', flex: 1 }} className="scrollbar-dark">
-        <div style={gridStyle}>
+      <div className={`${styles.gridScroll} scrollbar-dark`}>
+        <div className={styles.grid}>
           {items.map(s => (
             <ShowMediaTile key={s.show_id}
               show={s}
@@ -156,8 +149,8 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd 
     const items = store.pickerMovies
     if (items.length === 0) return <BrowserEmpty />
     return (
-      <div style={{ overflow: 'auto', flex: 1 }} className="scrollbar-dark">
-        <div style={gridStyle}>
+      <div className={`${styles.gridScroll} scrollbar-dark`}>
+        <div className={styles.grid}>
           {items.map(m => (
             <MovieMediaTile key={m.movie_id}
               movie={m}
@@ -180,7 +173,7 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd 
     const items = store.pickerEpisodes
     if (items.length === 0) return <BrowserEmpty hint="Type to search episodes." />
     return (
-      <div style={{ ...gridStyle, overflow: 'auto', flex: 1 }} className="scrollbar-dark">
+      <div className={`${styles.grid} ${styles.gridScroll} scrollbar-dark`}>
         {items.map(ep => {
           const code  = `S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')}`
           const title = `${ep.show_title} ${code} — ${ep.title}`
@@ -203,7 +196,7 @@ const TileGrid = observer(function TileGrid({ store, channelId, onSelect, onAdd 
     const items = store.pickerPlaylists
     if (items.length === 0) return <BrowserEmpty />
     return (
-      <div style={{ ...gridStyle, overflow: 'auto', flex: 1 }} className="scrollbar-dark">
+      <div className={`${styles.grid} ${styles.gridScroll} scrollbar-dark`}>
         {items.map(p => (
           <MediaTile key={p.playlist_id}
             title={p.title}

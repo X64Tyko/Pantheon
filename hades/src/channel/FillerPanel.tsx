@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
 import type { FillerEntryAdvancement, Show, Movie, Playlist } from '../api/types'
-import { BLOCK_META, FILLER_ADV_OPTS } from './constants'
-import { filterInputStyle, inputStyle } from './styles'
+import { FILLER_ADV_OPTS } from './constants'
 import type { ChannelDetailStore } from './store'
 import { api } from '../api/client'
+import styles from './FillerPanel.module.css'
+import shared from './sharedStyles.module.css'
 
 // ─── Filler entry row ─────────────────────────────────────────────────────────
 
@@ -16,12 +17,12 @@ export function FillerEntryRow({ entry, showWeight, onAdvancement, onWeight, onR
   onRemove:      () => void
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)', borderRadius: 8 }}>
-      <span style={{ width: 7, height: 7, borderRadius: 2, background: BLOCK_META.filler.edge, flexShrink: 0 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ fontSize: 12, fontWeight: 500, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.title || entry.content_id}</span>
+    <div className={styles.entryRow}>
+      <span className={`${styles.entryDot} ${styles.fillerDot}`} />
+      <div className={styles.entryInfo}>
+        <span className={styles.entryTitle}>{entry.title || entry.content_id}</span>
         {entry.season_filter !== undefined && (
-          <span style={{ fontSize: 9.5, color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace" }}>
+          <span className={styles.entrySeasonTag}>
             S{String(entry.season_filter).padStart(2, '0')} only
           </span>
         )}
@@ -29,7 +30,7 @@ export function FillerEntryRow({ entry, showWeight, onAdvancement, onWeight, onR
       <select
         value={entry.advancement}
         onChange={e => onAdvancement(e.target.value as FillerEntryAdvancement)}
-        style={{ ...filterInputStyle, width: 92 }}
+        className={`${shared.filterInput} ${styles.entryAdvancementSelect}`}
       >
         {FILLER_ADV_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
@@ -37,11 +38,11 @@ export function FillerEntryRow({ entry, showWeight, onAdvancement, onWeight, onR
         <input
           type="number" min={1} value={entry.weight}
           onChange={e => onWeight(Math.max(1, +e.target.value || 1))}
-          style={{ ...filterInputStyle, width: 44, textAlign: 'center' }}
+          className={`${shared.filterInput} ${styles.entryWeightInput}`}
           title="Weight"
         />
       )}
-      <button onClick={onRemove} style={{ width: 22, height: 22, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 13, flexShrink: 0 }}>×</button>
+      <button onClick={onRemove} className={styles.entryRemoveBtn}>×</button>
     </div>
   )
 }
@@ -86,10 +87,10 @@ export function FillerContentPicker({ onSelect }: { onSelect: (item: FillerItem)
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 3, marginBottom: 6 }}>
+      <div className={styles.pickerTabRow}>
         {(['shows', 'movies', 'playlists'] as FillerTab[]).map(t => (
           <button key={t} onClick={() => { setTab(t); setQuery('') }}
-            style={{ padding: '3px 8px', border: 'none', borderRadius: 4, background: tab === t ? 'var(--hds-violet)' : 'var(--hds-bg-3)', color: tab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer', textTransform: 'capitalize' }}>
+            className={`${styles.pickerTab} ${tab === t ? styles.pickerTabActive : ''}`}>
             {t}
           </button>
         ))}
@@ -99,24 +100,22 @@ export function FillerContentPicker({ onSelect }: { onSelect: (item: FillerItem)
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder="Search…"
-          style={{ ...inputStyle, width: '100%', fontSize: 11, padding: '5px 8px', marginBottom: 5, boxSizing: 'border-box' as const }}
+          className={`${shared.input} ${styles.pickerSearch}`}
         />
       )}
-      <div style={{ maxHeight: 140, overflow: 'auto', border: '1px solid var(--hds-line-s)', borderRadius: 7 }} className="scrollbar-dark">
+      <div className={`${styles.pickerListBox} scrollbar-dark`}>
         {loading ? (
-          <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--hds-txt-3)' }}>Loading…</div>
+          <div className={styles.pickerEmptyText}>Loading…</div>
         ) : items.length === 0 ? (
-          <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--hds-txt-3)' }}>No results.</div>
+          <div className={styles.pickerEmptyText}>No results.</div>
         ) : items.map(item => (
           <div key={item.content_id}
             onClick={() => onSelect(item)}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
-            onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--hds-bg-3)'}
-            onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = ''}
+            className={styles.pickerItemRow}
           >
-            <span style={{ width: 6, height: 6, borderRadius: 2, background: BLOCK_META.filler.edge, flexShrink: 0 }} />
-            <span style={{ fontSize: 11.5, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</span>
-            <span style={{ fontSize: 9.5, color: 'var(--hds-violet)' }}>+</span>
+            <span className={`${styles.entryDot} ${styles.fillerDot}`} />
+            <span className={styles.pickerItemTitle}>{item.title}</span>
+            <span className={styles.pickerItemPlus}>+</span>
           </div>
         ))}
       </div>
@@ -142,26 +141,18 @@ function SeasonPicker({ showId, selected, onSelect }: {
       .finally(() => setLoading(false))
   }, [showId])
 
-  const btnStyle = (active: boolean): React.CSSProperties => ({
-    padding: '2px 6px', borderRadius: 4,
-    border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-    background: active ? 'oklch(0.55 0.14 292 / 0.18)' : 'transparent',
-    color: active ? 'var(--hds-violet)' : 'var(--hds-txt-3)',
-    fontFamily: "'JetBrains Mono', monospace", fontSize: 9.5, cursor: 'pointer',
-  })
-
-  if (loading) return <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>Loading seasons…</span>
+  if (loading) return <span className={styles.seasonPickerLoading}>Loading seasons…</span>
 
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-      <button className="hds-season-btn" style={btnStyle(selected === undefined)} onClick={() => onSelect(undefined)}>All</button>
+    <div className={styles.seasonPickerRow}>
+      <button className={`hds-season-btn ${styles.seasonBtn} ${selected === undefined ? styles.seasonBtnActive : ''}`} onClick={() => onSelect(undefined)}>All</button>
       {seasons.filter(s => s.number !== 0).map(s => (
-        <button key={s.number} className="hds-season-btn" style={btnStyle(selected === s.number)} onClick={() => onSelect(s.number)}>
+        <button key={s.number} className={`hds-season-btn ${styles.seasonBtn} ${selected === s.number ? styles.seasonBtnActive : ''}`} onClick={() => onSelect(s.number)}>
           {s.name || `S${String(s.number).padStart(2, '0')}`}
         </button>
       ))}
       {seasons.some(s => s.number === 0) && (
-        <button className="hds-season-btn" style={btnStyle(selected === 0)} onClick={() => onSelect(0)}>S00</button>
+        <button className={`hds-season-btn ${styles.seasonBtn} ${selected === 0 ? styles.seasonBtnActive : ''}`} onClick={() => onSelect(0)}>S00</button>
       )}
     </div>
   )
@@ -182,31 +173,31 @@ export const FillerAddPanel = observer(function FillerAddPanel({ channelId, stor
   }
 
   return (
-    <div style={{ marginTop: 10, padding: '11px 12px', background: 'oklch(0.16 0.016 286)', border: '1px solid var(--hds-line)', borderRadius: 9 }}>
+    <div className={styles.addPanelRoot}>
       {armed ? (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-            <span style={{ fontSize: 11, color: 'var(--hds-txt-2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              <span style={{ color: 'var(--hds-txt-3)' }}>Selected: </span>{armed.title}
-              {seasonFilter !== undefined && <span style={{ color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace" }}> · S{String(seasonFilter).padStart(2,'0')}</span>}
+          <div className={styles.armedRow}>
+            <span className={styles.armedTitle}>
+              <span className={styles.armedTitlePrefix}>Selected: </span>{armed.title}
+              {seasonFilter !== undefined && <span className={styles.armedSeasonTag}> · S{String(seasonFilter).padStart(2,'0')}</span>}
             </span>
             <button onClick={() => { setArmed(null); setSeasonFilter(undefined) }}
-              style={{ width: 18, height: 18, border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 12, flexShrink: 0 }}>✕</button>
+              className={styles.armedClearBtn}>✕</button>
           </div>
 
           {armed.content_type === 'show' && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 9, letterSpacing: '0.14em', color: 'var(--hds-txt-3)', marginBottom: 4, fontFamily: "'JetBrains Mono', monospace" }}>SEASON FILTER</div>
+            <div className={styles.seasonFilterBlock}>
+              <div className={styles.seasonFilterLabel}>SEASON FILTER</div>
               <SeasonPicker showId={armed.content_id} selected={seasonFilter} onSelect={setSeasonFilter} />
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' as const }}>
-            <select value={advancement} onChange={e => setAdvancement(e.target.value as FillerEntryAdvancement)} style={{ ...filterInputStyle, flex: 1 }}>
+          <div className={styles.addRow}>
+            <select value={advancement} onChange={e => setAdvancement(e.target.value as FillerEntryAdvancement)} className={`${shared.filterInput} ${styles.addAdvancementSelect}`}>
               {FILLER_ADV_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
             {showWeight && (
-              <input type="number" min={1} value={weight} onChange={e => setWeight(Math.max(1, +e.target.value || 1))} style={{ ...filterInputStyle, width: 48 }} title="Weight" placeholder="Wt" />
+              <input type="number" min={1} value={weight} onChange={e => setWeight(Math.max(1, +e.target.value || 1))} className={`${shared.filterInput} ${styles.addWeightInput}`} title="Weight" placeholder="Wt" />
             )}
             <button
               onClick={() => {
@@ -215,7 +206,7 @@ export const FillerAddPanel = observer(function FillerAddPanel({ channelId, stor
                 setSeasonFilter(undefined)
               }}
               disabled={store.fillerSaving}
-              style={{ padding: '5px 12px', border: 'none', borderRadius: 6, background: 'var(--hds-violet)', color: 'oklch(0.15 0.02 286)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+              className={styles.addBtn}
             >{store.fillerSaving ? '…' : 'Add'}</button>
           </div>
         </div>

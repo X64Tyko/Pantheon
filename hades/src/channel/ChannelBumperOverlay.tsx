@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
 import { api, mediaUrl } from '../api/client'
-import { inputStyle, filterInputStyle } from './styles'
 import type { BumperContentType, BumperMode, ChannelBumper } from '../api/types'
 import type { ChannelDetailStore } from './store'
 import { MediaTile, MediaInfoPanel, useDetailPanel, BrowserEmpty, LoadMoreSentinel } from './BrowserTiles'
 import type { InfoItem, AddContentParams } from './BrowserTiles'
 import { useBrowserSearch } from './useBrowserSearch'
+import shared from './sharedStyles.module.css'
+import styles from './ChannelBumperOverlay.module.css'
 
 type BumperTab = 'shows' | 'playlists' | 'episodes'
 
@@ -61,56 +62,49 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
     const title = item.kind === 'show' ? item.seed.title : item.kind === 'movie' ? item.seed.title : item.kind === 'episode' ? item.ep.title : item.pl.title
 
     return (
-      <div style={{ marginTop: 6 }}>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-          <select value={pendingMode} onChange={e => setPendingMode(e.target.value as BumperMode)} style={{ ...filterInputStyle, flex: '1 1 110px' }}>
+      <div className={styles.addFormWrap}>
+        <div className={styles.addFormRow}>
+          <select value={pendingMode} onChange={e => setPendingMode(e.target.value as BumperMode)} className={`${shared.filterInput} ${styles.modeSelect}`}>
             <option value="between">Between programs</option>
             <option value="filler">During filler</option>
           </select>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>Every</span>
+          <div className={styles.everyRow}>
+            <span className={styles.everyText}>Every</span>
             <input type="number" min={1} value={pendingN} onChange={e => setPendingN(Math.max(1, +e.target.value || 1))}
-              style={{ ...filterInputStyle, width: 48, textAlign: 'center' }} />
-            <span style={{ fontSize: 10, color: 'var(--hds-txt-3)' }}>progs</span>
+              className={`${shared.filterInput} ${styles.everyInput}`} />
+            <span className={styles.everyText}>progs</span>
           </div>
         </div>
         <button
           onClick={() => addBumper({ content_type: ct, content_id: cid, title })}
           disabled={saving}
-          style={{ padding: '6px 14px', border: 'none', borderRadius: 6, background: 'var(--hds-violet)', color: 'oklch(0.15 0.02 286)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.5 : 1 }}
+          className={`${styles.addBumperBtn} ${saving ? styles.addBumperBtnSaving : ''}`}
         >
           {saving ? '…' : 'Add Bumper'}
         </button>
-        {bumperErr && <div style={{ marginTop: 6, fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{bumperErr}</div>}
+        {bumperErr && <div className={styles.addFormErr}>{bumperErr}</div>}
       </div>
     )
   }
 
-  const gridStyle: React.CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))',
-    gap: 10, padding: 14, alignContent: 'start',
-  }
-
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'oklch(0.08 0.015 286 / 0.85)' }}>
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: 'min(98vw, 1340px)', height: '92vh', background: 'linear-gradient(168deg, oklch(0.18 0.024 290 / 0.98), oklch(0.13 0.018 288 / 0.99))', borderRadius: 14, border: '1px solid var(--hds-line)', boxShadow: '0 32px 80px -16px rgba(0,0,0,0.8)', overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg, transparent, oklch(0.78 0.15 292 / 0.7) 40%, oklch(0.85 0.13 84 / 0.5) 75%, transparent)', pointerEvents: 'none' }} />
+    <div className={styles.overlayBackdrop}>
+    <div className={styles.overlayPanel}>
+      <div className={styles.overlayTopGlow} />
 
       {/* Header */}
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, padding: '16px 22px 14px', borderBottom: '1px solid var(--hds-line-s)' }}>
-        <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: '0.04em' }}>Channel Bumpers</span>
-        <span style={{ fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>injected between or during filler content</span>
-        <div style={{ flex: 1 }} />
-        <button onClick={() => { store.channelBumperOverlayOpen = false }}
-          style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: '1px solid var(--hds-line-s)', background: 'transparent', color: 'var(--hds-txt-2)', fontSize: 18, cursor: 'pointer' }}>×</button>
+      <div className={styles.header}>
+        <span className={styles.headerTitle}>Channel Bumpers</span>
+        <span className={styles.headerSubtitle}>injected between or during filler content</span>
+        <div className={styles.headerSpacer} />
+        <button onClick={() => { store.channelBumperOverlayOpen = false }} className={styles.closeBtn}>×</button>
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+      <div className={styles.body}>
 
         {/* Left: tile browser */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className={styles.leftPane}>
           {infoItem && (
             <MediaInfoPanel
               item={infoItem}
@@ -126,39 +120,39 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
           {/* Kept mounted (just hidden) rather than a ternary — a fresh
               mount on "back" would reset the grid's scroll to the top
               instead of leaving it where the inspected tile still is. */}
-          <div style={{ display: infoItem ? 'none' : 'contents' }}>
+          <div className={`${styles.browseWrap} ${infoItem ? styles.browseWrapHidden : ''}`}>
             <>
-              <div style={{ flexShrink: 0, padding: '10px 14px 0', borderBottom: '1px solid var(--hds-line-s)' }}>
-                <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 7, padding: 3, width: 'fit-content', marginBottom: 8 }}>
+              <div className={styles.tabsWrap}>
+                <div className={styles.tabsRow}>
                   {(['shows', 'playlists', 'episodes'] as BumperTab[]).map(t => (
                     <button key={t} onClick={() => { setTab(t); setQ(''); setSFilter('') }}
-                      style={{ padding: '4px 12px', border: 'none', borderRadius: 5, background: tab === t ? 'var(--hds-violet)' : 'transparent', color: tab === t ? 'oklch(0.15 0.02 286)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, cursor: 'pointer', textTransform: 'capitalize' }}>
+                      className={`${styles.tabButton} ${tab === t ? styles.tabButtonActive : ''}`}>
                       {t}
                     </button>
                   ))}
                 </div>
-                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                <div className={styles.searchRow}>
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…"
-                    style={{ ...inputStyle, flex: 1, fontSize: 11.5, padding: '6px 9px' }} />
+                    className={`${shared.input} ${styles.searchInput}`} />
                   {tab === 'episodes' && (
                     <input type="number" min={0} value={sFilter} onChange={e => setSFilter(e.target.value)} placeholder="S#"
-                      style={{ ...inputStyle, width: 52, fontSize: 11 }} />
+                      className={`${shared.input} ${styles.seasonInput}`} />
                   )}
                   {tab === 'episodes' && (
                     <input type="number" min={1} value={epsDurMax} onChange={e => setEpsDurMax(e.target.value)} placeholder="≤m"
                       title="Max duration in minutes"
-                      style={{ ...inputStyle, width: 60, fontSize: 11, padding: '6px 9px' }} />
+                      className={`${shared.input} ${styles.durInput}`} />
                   )}
                 </div>
               </div>
 
-              <div style={{ flex: 1, overflow: 'auto' }} className="scrollbar-dark">
+              <div className={`${styles.gridScroll} scrollbar-dark`}>
                 {loading ? (
-                  <div style={{ padding: '20px 14px', color: 'var(--hds-txt-3)', fontSize: 12 }}>Loading…</div>
+                  <div className={styles.loadingText}>Loading…</div>
                 ) : tab === 'shows' ? (
                   shows.length === 0 ? <BrowserEmpty /> : (
                     <>
-                      <div style={gridStyle}>
+                      <div className={styles.tileGrid}>
                         {shows.map(s => (
                           <MediaTile key={s.show_id}
                             imgUrl={mediaUrl(`/api/shows/${s.show_id}/thumb`)}
@@ -174,7 +168,7 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
                   )
                 ) : tab === 'playlists' ? (
                   lists.length === 0 ? <BrowserEmpty hint="No playlists." /> : (
-                    <div style={gridStyle}>
+                    <div className={styles.tileGrid}>
                       {lists.map(p => (
                         <MediaTile key={p.playlist_id}
                           title={p.title} sub={`${p.item_count} items`} placeholder="☰"
@@ -189,7 +183,7 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
                   const filtered = eps.filter(ep => maxMs === undefined || ep.duration_ms === 0 || ep.duration_ms <= maxMs)
                   return filtered.length === 0 ? <BrowserEmpty hint={eps.length === 0 ? 'Type to search episodes.' : 'No episodes match the duration filter.'} /> : (
                     <>
-                      <div style={gridStyle}>
+                      <div className={styles.tileGrid}>
                         {filtered.map(ep => (
                           <MediaTile key={ep.episode_id}
                             imgUrl={mediaUrl(`/api/shows/${ep.show_id}/thumb`)}
@@ -210,24 +204,23 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
         </div>
 
         {/* Right: bumpers list */}
-        <div style={{ flexShrink: 0, width: 380, borderLeft: '1px solid var(--hds-line-s)', display: 'flex', flexDirection: 'column', background: 'oklch(0.15 0.018 288 / 0.55)', overflow: 'auto', padding: 18 }} className="scrollbar-dark">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 15 }}>
-            <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: '0.14em', color: 'var(--hds-gold)' }}>BUMPERS</span>
-            <span style={{ fontSize: 11, color: 'var(--hds-violet)', fontFamily: "'JetBrains Mono', monospace" }}>{bumpers.length}</span>
+        <div className={`${styles.rightPane} scrollbar-dark`}>
+          <div className={styles.rightPaneHeader}>
+            <span className={styles.rightPaneTitle}>BUMPERS</span>
+            <span className={styles.rightPaneCount}>{bumpers.length}</span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 14 }}>
+          <div className={styles.bumperList}>
             {bumpers.map(b => (
-              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px', background: 'oklch(0.21 0.024 290 / 0.5)', border: '1px solid var(--hds-line-s)', borderRadius: 9 }}>
-                <span style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 3, background: 'var(--hds-bg)', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{b.content_type}</span>
-                <span style={{ flex: 1, fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title || b.content_id}</span>
-                <span style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{b.mode} / {b.every_n}</span>
-                <button onClick={() => deleteBumper(b.id)}
-                  style={{ width: 22, height: 22, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--hds-txt-3)', cursor: 'pointer', fontSize: 13, flexShrink: 0 }}>×</button>
+              <div key={b.id} className={styles.bumperRow}>
+                <span className={styles.bumperTypeTag}>{b.content_type}</span>
+                <span className={styles.bumperTitle}>{b.title || b.content_id}</span>
+                <span className={styles.bumperModeText}>{b.mode} / {b.every_n}</span>
+                <button onClick={() => deleteBumper(b.id)} className={styles.bumperDeleteBtn}>×</button>
               </div>
             ))}
             {bumpers.length === 0 && (
-              <div style={{ padding: '16px 12px', textAlign: 'center', fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", border: '1px dashed var(--hds-line-s)', borderRadius: 8 }}>
+              <div className={styles.bumperEmpty}>
                 No bumpers configured for this channel
               </div>
             )}
@@ -236,18 +229,17 @@ const ChannelBumperOverlay = observer(function ChannelBumperOverlay({ channelId,
       </div>
 
       {/* Footer */}
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 11, padding: '14px 22px', borderTop: '1px solid var(--hds-line-s)' }}>
-        <span style={{ flex: 1, fontSize: 11, color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
+      <div className={styles.footer}>
+        <span className={styles.footerText}>
           {bumpers.length > 0
             ? `${bumpers.length} bumper${bumpers.length !== 1 ? 's' : ''} · click a tile to add more`
             : 'No channel bumpers configured'}
         </span>
         {bumperErr && !infoItem && (
-          <span style={{ fontSize: 11, color: 'oklch(0.72 0.16 22)' }}>{bumperErr}</span>
+          <span className={styles.footerErr}>{bumperErr}</span>
         )}
         <button onClick={() => { store.channelBumperOverlayOpen = false }}
-          style={{ padding: '11px 26px', borderRadius: 10, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: '0.04em', border: 'none', cursor: 'pointer' }}
-          className="hds-btn-gold">Done</button>
+          className={`${styles.doneBtn} hds-btn-gold`}>Done</button>
       </div>
     </div>
     </div>

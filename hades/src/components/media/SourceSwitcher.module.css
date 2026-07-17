@@ -1,0 +1,19 @@
+.row { display: flex; gap: var(--hds-space-3); flex-wrap: wrap; align-items: center; }
+
+.pill {
+  padding: 5px 14px;
+  border-radius: var(--hds-radius-pill);
+  cursor: pointer;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-2);
+}
+.pillActive {
+  background: var(--hds-violet);
+  border-color: var(--hds-violet);
+  color: oklch(0.1 0.02 287);
+}

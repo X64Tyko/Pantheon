@@ -10,6 +10,7 @@ import { msToTzMins, mergeFiller, localDateStr } from '../channel/EpgPreview'
 import ArrAddModal from '../components/ArrAddModal'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
+import stripStyles from './ChannelGuideStrip.module.css'
 
 function triggerJsonDownload(data: object, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -520,44 +521,41 @@ function ChannelGuideStrip({ channelId, timezone }: { channelId: string; timezon
   })
 
   return (
-    <div style={{ marginTop: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-        <span style={{ fontSize: 9, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
+    <div className={stripStyles.stripWrap}>
+      <div className={stripStyles.stripHeader}>
+        <span className={stripStyles.stripDayLabel}>
           {dayLabel}
         </span>
         {programs && (
-          <span style={{ fontSize: 9, color: 'var(--hds-txt-3)' }}>
+          <span className={stripStyles.stripProgramCount}>
             {todayItems.length === 0 ? 'no programs' : `${todayItems.length} program${todayItems.length !== 1 ? 's' : ''}`}
           </span>
         )}
       </div>
-      <div style={{ borderRadius: 6, border: '1px solid var(--hds-line-s)', overflow: 'hidden' }}>
-        <div style={{ position: 'relative', height: 44, background: 'oklch(0.13 0.014 286)' }}>
+      <div className={stripStyles.stripFrame}>
+        <div className={stripStyles.stripTrack}>
           {!programs && (
-            <div style={{ position: 'absolute', inset: 0, background: 'oklch(0.16 0.014 286)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+            <div className={stripStyles.stripLoadingPulse} />
           )}
           {segs.map((s, i) => (
             <div
               key={i}
               title={[s.time, s.title, s.subtitle].filter(Boolean).join('  ·  ')}
+              className={stripStyles.stripSeg}
               style={{
-                position: 'absolute', top: 0, bottom: 0,
                 left: `${s.leftPct}%`, width: `${s.widthPct}%`,
                 background: s.bg,
-                borderLeft: '1px solid oklch(0.13 0.014 286)',
-                padding: '5px 7px',
-                overflow: 'hidden',
                 opacity: s.faded ? 0.45 : 1,
               }}
             >
-              <div style={{ fontSize: 8.5, color: s.faded ? 'var(--hds-txt-3)' : 'oklch(0.78 0.04 286)', letterSpacing: '0.06em', lineHeight: 1 }}>
+              <div className={`${stripStyles.stripSegTime} ${s.faded ? stripStyles.stripSegTimeFaded : stripStyles.stripSegTimeActive}`}>
                 {s.time}
               </div>
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: s.faded ? 'var(--hds-txt-3)' : 'var(--hds-txt)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 3, lineHeight: 1.2 }}>
+              <div className={`${stripStyles.stripSegTitle} ${s.faded ? stripStyles.stripSegTitleFaded : stripStyles.stripSegTitleActive}`}>
                 {s.title}
               </div>
               {s.subtitle && (
-                <div style={{ fontSize: 9, color: 'var(--hds-txt-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
+                <div className={stripStyles.stripSegSubtitle}>
                   {s.subtitle}
                 </div>
               )}
@@ -565,15 +563,10 @@ function ChannelGuideStrip({ channelId, timezone }: { channelId: string; timezon
           ))}
           {/* Now indicator */}
           {programs && segs.length > 0 && (
-            <div style={{
-              position: 'absolute', top: 0, bottom: 0, width: 2,
-              left: `${nowMins / 1440 * 100}%`,
-              background: 'oklch(0.85 0.18 50 / 0.9)',
-              pointerEvents: 'none',
-            }} />
+            <div className={stripStyles.stripNowIndicator} style={{ left: `${nowMins / 1440 * 100}%` }} />
           )}
           {programs && segs.length === 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>
+            <div className={stripStyles.stripEmpty}>
               No programs scheduled for today
             </div>
           )}
@@ -595,16 +588,14 @@ function ExportButton({ channel, onExport }: {
       <select
         value={depth}
         onChange={e => setDepth(e.target.value as ExportDepth)}
-        className="input text-xs rounded-r-none border-r-0 pr-1 pl-2 py-1 h-auto"
-        style={{ borderRight: 'none', borderRadius: '6px 0 0 6px' }}
+        className="input text-xs rounded-r-none rounded-l-md border-r-0 pr-1 pl-2 py-1 h-auto"
       >
         <option value="shallow">Shallow</option>
         <option value="deep">Deep</option>
       </select>
       <button
         onClick={() => onExport(channel, depth)}
-        className="btn-secondary rounded-l-none text-xs px-2"
-        style={{ borderRadius: '0 6px 6px 0' }}
+        className="btn-secondary rounded-l-none rounded-r-md text-xs px-2"
       >
         Export
       </button>

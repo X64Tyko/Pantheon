@@ -1,0 +1,403 @@
+.pageRoot {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--hds-bg);
+}
+
+.heroWrap { flex-shrink: 0; }
+.heroSkeletonBox { height: 62vh; min-height: 360px; }
+
+.scrollArea { flex: 1; min-height: 0; }
+.scrollAreaScrollable { overflow-y: auto; }
+.scrollAreaFixed { overflow-y: hidden; }
+
+.crossfade {
+  position: relative;
+  background: var(--hds-bg);
+  transition: opacity var(--hds-transition-med) ease;
+}
+.crossfadeHidden { opacity: 0; }
+.crossfadeVisible { opacity: 1; }
+.crossfadeDetailHeight { height: 100%; }
+.crossfadeShelvesHeight { min-height: 100%; }
+
+.guideWrap { padding: 0 var(--hds-space-7) 48px; }
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+
+.heroRoot {
+  position: relative;
+  height: 62vh;
+  min-height: 360px;
+  flex-shrink: 0;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.26s ease;
+}
+.heroRootFading { opacity: 0; }
+
+.heroScrimH {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%);
+}
+.heroScrimV {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 30%;
+  background: linear-gradient(to top, var(--hds-bg) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+.heroTextBlock {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 0 64px 56px;
+  max-width: 640px;
+}
+.heroGenreRow {
+  display: flex;
+  gap: var(--hds-space-3);
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.heroGenreChip {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  padding: 3px 10px;
+  border-radius: var(--hds-radius-chip-sm);
+  background: var(--hds-glass);
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt-2);
+  letter-spacing: 0.06em;
+}
+.heroTitle {
+  font-family: var(--hds-font-display);
+  font-size: 34px;
+  font-weight: 700;
+  color: oklch(1 0 0);
+  margin: 0;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  text-shadow: var(--hds-text-shadow-hero);
+}
+.heroMetaRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-5);
+  margin-top: var(--hds-space-tile-gap);
+  margin-bottom: 14px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-txt-2);
+  text-shadow: var(--hds-text-shadow-hero);
+}
+.heroRatingText { color: var(--hds-gold); }
+.heroContentTypeText { opacity: 0.5; }
+.heroOverview {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  line-height: 1.6;
+  color: oklch(0.75 0.01 285);
+  margin: 0 0 22px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-shadow: var(--hds-text-shadow-hero);
+}
+.heroButtonRow { display: flex; gap: var(--hds-space-tile-gap); flex-wrap: wrap; }
+.heroPlayBtn { display: flex; align-items: center; gap: var(--hds-space-3); }
+
+.heroCastButton {
+  position: absolute;
+  top: 18px; right: var(--hds-space-7);
+  z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--hds-glass-border);
+  background: var(--hds-glass);
+  backdrop-filter: blur(8px);
+  color: oklch(0.92 0.01 285);
+  cursor: pointer;
+}
+.heroReviewButton {
+  position: absolute;
+  right: var(--hds-space-7);
+  z-index: 3;
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px var(--hds-space-4);
+  border-radius: var(--hds-radius-pill);
+  border: 1px solid var(--hds-match-amber);
+  background: oklch(0.75 0.12 80 / 0.12);
+  backdrop-filter: blur(8px);
+  color: var(--hds-match-amber);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  cursor: pointer;
+  letter-spacing: 0.06em;
+}
+.heroReviewButtonWithCast { top: 60px; }
+.heroReviewButtonNoCast { top: 18px; }
+
+.heroDots {
+  position: absolute;
+  bottom: 20px; right: var(--hds-space-7);
+  display: flex; gap: var(--hds-space-2);
+  z-index: 2;
+}
+.heroDot {
+  height: 6px;
+  border-radius: 3px;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  background: oklch(1 0 0 / 0.3);
+  transition: width 0.2s, background 0.2s;
+  width: 6px;
+}
+.heroDotActive { width: 18px; background: var(--hds-gold); }
+
+.emptyHero {
+  height: 62vh;
+  min-height: 360px;
+  flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--hds-space-5);
+  /* Deliberately its own 2-stop gradient, distinct from the hero fallback's
+     3-stop --hds-backdrop-fallback-* set — not the same visual, don't merge. */
+  background: linear-gradient(135deg, oklch(0.12 0.04 292), oklch(0.16 0.03 280));
+}
+.emptyHeroText {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-body);
+  color: var(--hds-txt-3);
+}
+
+/* ── Quick actions ────────────────────────────────────────────────────────── */
+
+.quickActionsWrap { padding: var(--hds-space-6) var(--hds-space-7) var(--hds-space-3); }
+.quickActionsBar {
+  display: flex;
+  gap: var(--hds-space-tile-gap);
+  padding: 14px 18px;
+  border-radius: var(--hds-radius-skeleton);
+  background: var(--hds-glass);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--hds-glass-border);
+}
+.quickActionButton {
+  display: flex; align-items: center; gap: var(--hds-space-3);
+  padding: 9px var(--hds-space-5);
+  border-radius: var(--hds-radius-tile);
+  cursor: pointer;
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+}
+
+/* ── Shelves ──────────────────────────────────────────────────────────────── */
+
+.shelvesWrap { padding: var(--hds-space-6) 0 48px; }
+
+.shelfRowWrap { padding: 0 0 var(--hds-space-3); margin-bottom: var(--hds-space-7); position: relative; }
+.shelfHeaderRow {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 0 var(--hds-space-7);
+  margin-bottom: 14px;
+}
+.shelfTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 600;
+  color: var(--hds-txt);
+  letter-spacing: 0.03em;
+}
+.shelfViewAll {
+  background: none; border: none; cursor: pointer;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  letter-spacing: 0.06em;
+}
+.shelfRowScroller {
+  display: flex;
+  gap: var(--hds-space-4);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--hds-space-3) var(--hds-space-7);
+  scrollbar-width: none;
+  position: relative;
+}
+
+.tileBase { flex-shrink: 0; width: 130px; }
+
+.shelfEndTile {
+  aspect-ratio: 2 / 3;
+  border-radius: var(--hds-radius-md);
+  cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--hds-space-tile-gap);
+  border: 1px dashed var(--hds-line);
+  background: var(--hds-bg-2);
+  color: var(--hds-txt-3);
+  transform: none;
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  text-align: center;
+  padding: 0 var(--hds-space-5);
+}
+.shelfEndTileActive { transform: translateY(-4px); }
+.shelfEndTileLabel {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+}
+
+.shelfCard {
+  border-radius: var(--hds-radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  transform: none;
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.shelfCardActive { transform: translateY(-4px); }
+
+.shelfCardPoster {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  position: relative;
+  background: linear-gradient(135deg, var(--hds-poster-bg-1), var(--hds-poster-bg-2));
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.shelfCardImg { width: 100%; height: 100%; object-fit: cover; }
+.shelfCardMonogram {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: 26px;
+  color: var(--hds-violet);
+  opacity: 0.4;
+}
+.shelfCardMenuBtn {
+  position: absolute; top: var(--hds-space-2); right: var(--hds-space-2);
+  z-index: 2;
+  width: 22px; height: 22px;
+  border-radius: var(--hds-radius-sm);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border: none;
+  background: oklch(0 0 0 / 0.55); /* distinct alpha from --hds-scrim (0.6), not a match */
+  color: var(--hds-txt-hero);
+  font-size: 13px;
+  line-height: 1;
+}
+.shelfCardMenu {
+  position: absolute; top: 30px; right: var(--hds-space-2);
+  z-index: 3; width: 150px;
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-glass-border);
+  background: var(--hds-bg-2);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.5);
+  overflow: hidden;
+}
+.shelfCardMenuItem {
+  display: block; width: 100%;
+  padding: var(--hds-space-3) 10px;
+  text-align: left;
+  border: none; background: none; cursor: pointer;
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  line-height: 1.4;
+}
+.shelfCardHoverOverlay {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(to top, oklch(0 0 0 / 0.85), transparent);
+  padding: var(--hds-space-7) var(--hds-space-tile-gap) var(--hds-space-tile-gap);
+}
+.shelfCardHoverTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-caption);
+  font-weight: 600;
+  color: var(--hds-txt-hero);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.shelfCardHoverRating {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-gold);
+  margin-top: 2px;
+}
+.shelfCardInfo { padding: var(--hds-space-3) var(--hds-space-1) var(--hds-space-1); }
+.shelfCardTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 600;
+  color: var(--hds-txt);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.shelfCardMeta {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+  margin-top: 2px;
+}
+
+/* ── Continue Watching card ───────────────────────────────────────────────── */
+
+.cwEpBadge {
+  position: absolute; top: var(--hds-space-2); left: var(--hds-space-2);
+  background: var(--hds-scrim);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px 6px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: oklch(0.9 0.01 285);
+}
+.cwUpNextBadge {
+  position: absolute; top: var(--hds-space-2); right: var(--hds-space-2);
+  background: var(--hds-violet);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px 6px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: oklch(0.13 0.02 285);
+}
+.cwProgressTrack {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 3px;
+  background: oklch(0 0 0 / 0.5); /* distinct alpha from the --hds-scrim-* set, not a match for any of them */
+}
+.cwProgressFill { height: 100%; background: var(--hds-violet); /* width set inline per-instance — live watch-progress percentage */ }
+
+/* ── Shared row chrome (Shelf + ContinueWatchingShelf) ───────────────────── */
+
+.shelfArrow {
+  position: absolute; top: 50%;
+  transform: translateY(-50%);
+  z-index: 2; width: 36px; height: 36px;
+  border-radius: 50%; cursor: pointer;
+  background: var(--hds-glass);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt);
+  font-size: 22px;
+  display: flex; align-items: center; justify-content: center;
+}
+.shelfArrowLeft { left: 4px; }
+.shelfArrowRight { right: 4px; }
+
+/* ── Skeletons ────────────────────────────────────────────────────────────── */
+
+.skeletonWrap { margin-bottom: 32px; }
+.skeletonTitle { height: 14px; width: 180px; border-radius: var(--hds-radius-xs); margin: 0 var(--hds-space-7) 14px; }
+.skeletonRow { display: flex; gap: var(--hds-space-4); padding: var(--hds-space-3) var(--hds-space-7); }
+.skeletonCard { width: 130px; aspect-ratio: 2 / 3; border-radius: var(--hds-radius-md); flex-shrink: 0; }

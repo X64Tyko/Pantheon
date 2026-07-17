@@ -1,0 +1,370 @@
+/* ─── Compact week grid ────────────────────────────────────────────────────── */
+
+.weekGridRoot {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--hds-line-s);
+  background: var(--hds-bg);
+}
+
+.weekGridHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  padding: 5px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.weekGridLabel {
+  font-size: 8px;
+  color: var(--hds-txt-3);
+  letter-spacing: 0.22em;
+  font-family: var(--hds-font-mono-brand);
+}
+
+.weekGridSpacer { flex: 1; }
+
+.weekGridChevron {
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+  transition: transform var(--hds-transition-fast);
+  display: inline-block;
+  transform: rotate(90deg);
+}
+
+.weekGridChevronCollapsed { transform: none; }
+
+/* COMPACT_GRID_H (188) is a fixed module-level constant in BlockEditMain.tsx, not per-render. */
+.weekGridScroll {
+  height: 188px;
+  overflow: auto;
+}
+
+/* GUTTER_W (58) + DAY_MIN_W (94) * 7 — fixed constants from constants.ts. */
+.weekGridInner { min-width: 716px; }
+
+.dayHeaderRow {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  border-bottom: 1px solid var(--hds-line-s);
+  background: var(--hds-bg);
+}
+
+.dayHeaderGutter { width: 58px; flex-shrink: 0; }
+
+.dayHeaderCell {
+  flex: 1 0 94px;
+  text-align: center;
+  padding: var(--hds-space-2) 0;
+  font-size: var(--hds-font-size-tv-badge);
+  letter-spacing: 0.2em;
+  color: var(--hds-txt-2);
+  border-left: 1px solid var(--hds-line-s);
+}
+
+.gridBody { display: flex; }
+
+.hourGutter {
+  width: 58px;
+  flex-shrink: 0;
+  position: relative;
+  /* height is pxPerHour-driven (live zoom level) — set inline */
+}
+
+.hourLabel {
+  position: absolute;
+  right: 7px;
+  transform: translateY(-50%);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+  letter-spacing: 0.03em;
+  /* top is pxPerHour-driven — set inline */
+}
+
+/* ─── Main component ───────────────────────────────────────────────────────── */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tabBar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--hds-space-3) var(--hds-space-5) 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--hds-line-s);
+}
+
+.tabButton {
+  padding: 7px var(--hds-space-5) 9px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+  margin-bottom: -1px;
+}
+
+.tabButtonActive {
+  border-bottom-color: var(--hds-violet);
+  color: var(--hds-txt);
+  font-weight: 600;
+}
+
+.splitPanel { display: flex; flex: 1; min-height: 0; }
+
+.leftPanel {
+  flex: 1;
+  min-width: 0;
+  border-right: 1px solid var(--hds-line-s);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rightPanel {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Shared list styles (Content/Slot/Filler/Bumper lists) ─────────────────── */
+
+.listRoot { display: flex; flex-direction: column; height: 100%; }
+
+.listHeader {
+  padding: 10px var(--hds-space-4) 6px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.listHeaderLabel {
+  font-size: var(--hds-font-size-tv-badge);
+  letter-spacing: 0.2em;
+  color: var(--hds-txt-3);
+}
+
+.listHeaderCount {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-violet);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.listScroll {
+  flex: 1;
+  overflow: auto;
+  padding: var(--hds-space-1) 10px 16px;
+}
+
+.emptyState {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--hds-txt-3);
+  font-size: var(--hds-font-size-tv-small-title);
+}
+
+/* ─── Content list item ──────────────────────────────────────────────────────
+   dot color is BLOCK_META[type].edge — a fixed constant per content type
+   (only 'movie'/'episode' reach this dot), not a per-render value, so it's
+   baked as a modifier class rather than an inline style. */
+
+.itemRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  margin-bottom: var(--hds-space-1);
+  border-radius: var(--hds-radius-tile);
+  cursor: grab;
+  border: 1px solid var(--hds-line-s);
+  background: oklch(0.19 0.018 288 / 0.45);
+  opacity: 1;
+  box-shadow: none;
+  transition: border-color .1s, background .1s, opacity .1s;
+}
+
+.itemRowSelected {
+  border-color: var(--hds-violet);
+  background: oklch(0.55 0.14 292 / 0.1);
+}
+
+.itemRowDragging { opacity: 0.35; }
+.itemRowOverTop    { box-shadow: inset 0 2px 0 var(--hds-violet); }
+.itemRowOverBottom { box-shadow: inset 0 -2px 0 var(--hds-violet); }
+
+.dragHandle {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  flex-shrink: 0;
+  cursor: grab;
+  line-height: 1;
+  margin-right: -2px;
+}
+
+.itemThumb {
+  width: 28px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity .2s;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+.dotMovie   { background: oklch(0.78 0.12 68); }  /* BLOCK_META.movie.edge */
+.dotEpisode { background: oklch(0.74 0.13 287); } /* BLOCK_META.episode.edge */
+
+.itemTitle {
+  flex: 1;
+  font-size: 11.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-small-title);
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.removeBtnLg { font-size: 13px; }
+
+/* ─── Slot list ──────────────────────────────────────────────────────────────*/
+
+.dropZoneWrap { margin-top: var(--hds-space-3); }
+
+/* ─── Filler list item ───────────────────────────────────────────────────────*/
+
+.fillerItemRow {
+  margin-bottom: var(--hds-space-1);
+  border-radius: var(--hds-radius-tile);
+  cursor: pointer;
+  overflow: hidden;
+  border: 1px solid var(--hds-line-s);
+  background: transparent;
+  transition: border-color .1s, background .1s;
+}
+
+.fillerItemRowSelected {
+  border-color: var(--hds-violet);
+  background: oklch(0.55 0.14 292 / 0.1);
+}
+
+/* ─── Bumper slot list ───────────────────────────────────────────────────────*/
+
+.bumperHint {
+  font-size: var(--hds-font-size-tv-micro);
+  color: var(--hds-txt-3);
+  line-height: 1.55;
+  margin-bottom: 14px;
+}
+
+.bumperSlotRow {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px var(--hds-space-4);
+  margin-bottom: var(--hds-space-3);
+  border-radius: var(--hds-radius-lg);
+  cursor: pointer;
+  border: 1px solid var(--hds-line-s);
+  background: oklch(0.19 0.018 288 / 0.35);
+  transition: border-color .1s, background .1s;
+}
+
+.bumperSlotRowSelected {
+  border-color: var(--hds-violet);
+  background: oklch(0.55 0.14 292 / 0.1);
+}
+
+.bumperSlotRowAssigned { border-color: var(--hds-line); }
+
+.bumperSlotTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hds-space-3);
+}
+
+.bumperSlotLabel {
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.12em;
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.bumperSlotLabelSelected { color: var(--hds-violet); }
+
+.bumperActiveTag {
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-violet);
+  font-family: var(--hds-font-mono-brand);
+  letter-spacing: 0.06em;
+}
+
+.bumperClearBtn {
+  background: none;
+  border: none;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-small-title);
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.bumperAssignedRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+}
+
+.bumperTypeTag {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--hds-bg);
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.bumperContentId {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bumperHintText {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  font-style: italic;
+}

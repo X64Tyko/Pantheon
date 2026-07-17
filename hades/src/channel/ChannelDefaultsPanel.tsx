@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
 import type { AdvanceMode, Channel, EpisodeSearchResult } from '../api/types'
-import { inputStyle, filterInputStyle } from './styles'
 import { CardSection, LauncherRow } from './sections'
 import type { ChannelDetailStore } from './store'
 import { api } from '../api/client'
 import { CHANNEL_RATINGS } from '../api/ratingScales'
+import shared from './sharedStyles.module.css'
+import styles from './ChannelDefaultsPanel.module.css'
 
 // ISO 639-2 code → display name for the language dropdowns.
 const LANG_NAMES: Record<string, string> = {
@@ -40,34 +41,34 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
   }, [])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid var(--hds-line-s)', flexShrink: 0 }}>
-        <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 15, letterSpacing: '0.04em' }}>Channel Settings</span>
+    <div className={styles.panelRoot}>
+      <div className={styles.panelHeader}>
+        <span className={styles.panelTitle}>Channel Settings</span>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '14px 16px 20px' }} className="scrollbar-dark">
-        <div style={{ fontSize: 11.5, color: 'var(--hds-txt-3)', lineHeight: 1.6, marginBottom: 16, fontFamily: "'JetBrains Mono', monospace" }}>
-          Select a block to edit it, or press <span style={{ color: 'var(--hds-gold)' }}>Add Block</span> to create one.
+      <div className={`${styles.panelBody} scrollbar-dark`}>
+        <div className={styles.introHelp}>
+          Select a block to edit it, or press <span className={styles.goldInline}>Add Block</span> to create one.
         </div>
 
         <CardSection title="CHANNEL">
-        <div style={{ display: 'flex', gap: 7, marginBottom: 8 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>NAME</div>
-            <input value={store.channelDraft.name} onChange={e => store.setChannelDraft({ name: e.target.value })} style={inputStyle} />
+        <div className={styles.fieldRow}>
+          <div className={styles.fieldCol}>
+            <div className={styles.fieldLabel}>NAME</div>
+            <input value={store.channelDraft.name} onChange={e => store.setChannelDraft({ name: e.target.value })} className={shared.input} />
           </div>
-          <div style={{ width: 64 }}>
-            <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>CH #</div>
-            <input type="number" min={1} value={store.channelDraft.number} onChange={e => store.setChannelDraft({ number: Math.max(1, +e.target.value || 1) })} style={inputStyle} />
+          <div className={styles.fieldColNarrow}>
+            <div className={styles.fieldLabel}>CH #</div>
+            <input type="number" min={1} value={store.channelDraft.number} onChange={e => store.setChannelDraft({ number: Math.max(1, +e.target.value || 1) })} className={shared.input} />
           </div>
         </div>
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>TIMEZONE</div>
+        <div className={styles.fieldGroup8}>
+          <div className={styles.fieldLabel}>TIMEZONE</div>
           <input
             list="tz-suggestions"
             value={store.channelDraft.timezone}
             onChange={e => store.setChannelDraft({ timezone: e.target.value })}
-            style={inputStyle}
+            className={shared.input}
             placeholder="America/Denver"
             spellCheck={false}
           />
@@ -85,41 +86,41 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
             <option value="Australia/Sydney" />
             <option value="Asia/Tokyo" />
           </datalist>
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
-            IANA format — e.g. <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>America/Denver</span>
+          <div className={styles.fieldHint}>
+            IANA format — e.g. <span className={styles.fieldHintMono}>America/Denver</span>
           </div>
         </div>
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>EPG SEED</div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input type="number" min={0} value={store.channelDraft.seed} onChange={e => store.setChannelDraft({ seed: Math.max(0, +e.target.value || 0) })} style={{ ...inputStyle, flex: 1 }} />
+        <div className={styles.fieldGroup8}>
+          <div className={styles.fieldLabel}>EPG SEED</div>
+          <div className={styles.seedRow}>
+            <input type="number" min={0} value={store.channelDraft.seed} onChange={e => store.setChannelDraft({ seed: Math.max(0, +e.target.value || 0) })} className={`${shared.input} ${styles.seedInputFlex}`} />
             <button
               onClick={() => store.setChannelDraft({ seed: Math.floor(Math.random() * 99999) + 1 })}
               title="Randomize seed"
-              style={{ padding: '5px 9px', border: '1px solid var(--hds-line)', borderRadius: 6, background: 'transparent', color: 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer' }}
+              className={styles.seedRandomBtn}
             >⚄</button>
           </div>
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+          <div className={`${styles.fieldHint} ${styles.fieldHintTight}`}>
             Controls the starting position for EPG simulation when no live schedule exists. Change to get a different ordering.
           </div>
         </div>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>CONTENT TAG</div>
+        <div className={styles.fieldGroup14}>
+          <div className={styles.fieldLabel}>CONTENT TAG</div>
           <select
             value={store.channelDraft.content_tag}
             onChange={e => store.setChannelDraft({ content_tag: e.target.value })}
-            style={inputStyle}
+            className={shared.input}
           >
             <option value="">Unrated</option>
             {CHANNEL_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4, lineHeight: 1.5 }}>
+          <div className={`${styles.fieldHint} ${styles.fieldHintTight}`}>
             Ceiling for this channel's own content, evaluated the same way as a show's rating. Restricted accounts can't see or play this channel above their max channel rating — "Unrated" fails closed.
           </div>
         </div>
 
         {store.channelSaveErr && (
-          <div style={{ padding: '7px 10px', marginBottom: 10, borderRadius: 6, background: 'oklch(0.2 0.05 22 / 0.3)', border: '1px solid oklch(0.4 0.1 22 / 0.4)', color: 'oklch(0.72 0.16 22)', fontSize: 11 }}>
+          <div className={styles.errorBanner}>
             {store.channelSaveErr}
           </div>
         )}
@@ -127,23 +128,27 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         <button
           onClick={() => store.saveChannel(channelId)}
           disabled={store.channelSaving || !store.isDirty}
-          style={{ width: '100%', padding: '9px 0', border: 'none', borderRadius: 8, background: store.isDirty ? 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))' : 'var(--hds-bg-3)', color: store.isDirty ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-3)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: store.channelSaving || !store.isDirty ? 'default' : 'pointer', marginBottom: 22, opacity: store.channelSaving ? 0.6 : 1, transition: 'background 0.15s, color 0.15s' }}
+          className={[
+            styles.saveBtn,
+            store.isDirty ? styles.saveBtnDirty : '',
+            store.channelSaving ? styles.saveBtnSaving : '',
+          ].filter(Boolean).join(' ')}
         >
           {store.channelSaving ? 'Saving…' : 'Save Channel'}
         </button>
         </CardSection>
 
         <CardSection title="LOGO">
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>LOGO PATH</div>
+        <div className={styles.fieldGroup8}>
+          <div className={styles.fieldLabel}>LOGO PATH</div>
           <input
             value={store.channelDraft.logo_path}
             onChange={e => store.setChannelDraft({ logo_path: e.target.value })}
-            style={inputStyle}
+            className={shared.input}
             placeholder="/path/to/logo.png or https://…"
             spellCheck={false}
           />
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+          <div className={styles.fieldHint}>
             Container path or URL to a PNG or JPG logo for this channel.
           </div>
         </div>
@@ -168,66 +173,66 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         </CardSection>
 
         <CardSection title="STREAMING" summary="Hephaestus audio and subtitle preferences">
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>AUDIO LANGUAGE</div>
+        <div className={styles.fieldGroup8}>
+          <div className={styles.fieldLabel}>AUDIO LANGUAGE</div>
           <LangSelect
             value={store.channelDraft.audio_lang}
             onChange={v => store.setChannelDraft({ audio_lang: v })}
             langs={mediaLangs?.audio ?? []}
             emptyLabel="Global default"
           />
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+          <div className={styles.fieldHint}>
             Overrides the server-wide default for this channel only.
           </div>
         </div>
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>SUBTITLE LANGUAGE</div>
+        <div className={styles.fieldGroup10}>
+          <div className={styles.fieldLabel}>SUBTITLE LANGUAGE</div>
           <LangSelect
             value={store.channelDraft.subtitle_lang}
             onChange={v => store.setChannelDraft({ subtitle_lang: v })}
             langs={mediaLangs?.subtitle ?? []}
             emptyLabel="Disabled (no subtitles)"
           />
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+          <div className={styles.fieldHint}>
             When set, Hephaestus maps a matching subtitle track into the stream.
           </div>
         </div>
         </CardSection>
 
         <CardSection title="TRANSCODE QUALITY" summary="Per-channel resolution and bitrate limits">
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>MAX RESOLUTION</div>
+        <div className={styles.fieldGroup8}>
+          <div className={styles.fieldLabel}>MAX RESOLUTION</div>
           <select
             value={store.channelDraft.stream_resolution ?? 'source'}
             onChange={e => store.setChannelDraft({ stream_resolution: e.target.value as 'source' | '1080p' | '720p' | '480p' })}
-            style={{ ...inputStyle, cursor: 'pointer' }}
+            className={`${shared.input} ${styles.selectPointer}`}
           >
             <option value="source">Source (no scaling)</option>
             <option value="1080p">1080p</option>
             <option value="720p">720p</option>
             <option value="480p">480p</option>
           </select>
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+          <div className={styles.fieldHint}>
             Scales down only — never upscales. Useful for SD-only channels.
           </div>
         </div>
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>VIDEO BITRATE CAP (kbps)</div>
+        <div className={styles.fieldGroup8}>
+          <div className={styles.fieldLabel}>VIDEO BITRATE CAP (kbps)</div>
           <input
             type="number"
             min={0}
             step={100}
             value={store.channelDraft.stream_video_bitrate ?? 0}
             onChange={e => store.setChannelDraft({ stream_video_bitrate: Math.max(0, +e.target.value || 0) })}
-            style={inputStyle}
+            className={shared.input}
             placeholder="0 = CRF auto (no cap)"
           />
-          <div style={{ fontSize: 9.5, color: 'var(--hds-txt-3)', marginTop: 4 }}>
+          <div className={styles.fieldHint}>
             0 = quality-based (CRF). Set a value to cap bandwidth, e.g. 3000 for ~3 Mbps.
           </div>
         </div>
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>AUDIO BITRATE (kbps)</div>
+        <div className={styles.fieldGroup10}>
+          <div className={styles.fieldLabel}>AUDIO BITRATE (kbps)</div>
           <input
             type="number"
             min={64}
@@ -235,36 +240,36 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
             step={32}
             value={store.channelDraft.stream_audio_bitrate ?? 192}
             onChange={e => store.setChannelDraft({ stream_audio_bitrate: Math.max(64, Math.min(320, +e.target.value || 192)) })}
-            style={inputStyle}
+            className={shared.input}
           />
         </div>
         </CardSection>
 
         <CardSection title="OFFLINE FALLBACK" summary="Served when no content is scheduled">
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>VIDEO (looping)</div>
+        <div className={styles.fieldGroup10}>
+          <div className={styles.fieldLabel}>VIDEO (looping)</div>
           <input
             value={store.channelDraft.offline_video_path}
             onChange={e => store.setChannelDraft({ offline_video_path: e.target.value })}
-            style={inputStyle}
+            className={shared.input}
             placeholder="/path/to/offline.mp4"
             spellCheck={false}
           />
         </div>
 
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>IMAGE</div>
+        <div className={styles.fieldGroup10}>
+          <div className={styles.fieldLabel}>IMAGE</div>
           <input
             value={store.channelDraft.offline_image_path}
             onChange={e => store.setChannelDraft({ offline_image_path: e.target.value })}
-            style={inputStyle}
+            className={shared.input}
             placeholder="/path/to/offline.png or https://…"
             spellCheck={false}
           />
         </div>
 
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--hds-txt-3)', marginBottom: 4 }}>AUDIO (with image)</div>
+        <div className={styles.fieldGroup10}>
+          <div className={styles.fieldLabel}>AUDIO (with image)</div>
           <AudioPicker
             audioId={store.channelDraft.offline_audio_id}
             audioTitle={store.channelDraft.offline_audio_title}
@@ -312,7 +317,7 @@ function LangSelect({ value, onChange, langs, emptyLabel }: {
     <select
       value={value}
       onChange={e => onChange(e.target.value)}
-      style={inputStyle}
+      className={shared.input}
     >
       <option value="">{emptyLabel}</option>
       {!hasValue && value && (
@@ -379,13 +384,13 @@ const AudioPicker = observer(function AudioPicker({ audioId, audioTitle, onSelec
   }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div className={styles.audioPickerRoot}>
       {audioId && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-          <span style={{ fontSize: 11, color: 'var(--hds-txt-1)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div className={styles.audioSelectedRow}>
+          <span className={styles.audioSelectedText}>
             {audioTitle || audioId}
           </span>
-          <button onClick={onClear} style={{ padding: '2px 7px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', color: 'var(--hds-txt-3)', fontSize: 10, cursor: 'pointer' }}>✕</button>
+          <button onClick={onClear} className={styles.audioClearBtn}>✕</button>
         </div>
       )}
       <input
@@ -393,21 +398,19 @@ const AudioPicker = observer(function AudioPicker({ audioId, audioTitle, onSelec
         onChange={e => search(e.target.value)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onFocus={() => results.length > 0 && setOpen(true)}
-        style={filterInputStyle}
+        className={shared.filterInput}
         placeholder="Search episodes or movies…"
         spellCheck={false}
       />
       {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line)', borderRadius: 7, marginTop: 3, maxHeight: 200, overflow: 'auto' }} className="scrollbar-dark">
+        <div className={`${styles.audioResultsDropdown} scrollbar-dark`}>
           {results.map(r => (
             <div
               key={r.id}
               onMouseDown={() => pick(r)}
-              style={{ padding: '6px 10px', fontSize: 11, cursor: 'pointer', borderBottom: '1px solid var(--hds-line-s)' }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--hds-bg-3)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              className={styles.audioResultItem}
             >
-              <span style={{ color: 'var(--hds-txt-3)', fontSize: 9.5, marginRight: 5 }}>{r.type}</span>
+              <span className={styles.audioResultType}>{r.type}</span>
               {r.title}
             </div>
           ))}

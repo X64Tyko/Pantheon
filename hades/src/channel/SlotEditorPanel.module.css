@@ -1,0 +1,158 @@
+.label {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--hds-txt-3);
+  margin-bottom: 3px;
+  display: block;
+}
+
+.row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--hds-space-3);
+  margin-bottom: var(--hds-space-3);
+}
+
+.col {
+  flex: 1;
+  min-width: 0;
+  /* flex-basis overridden inline when a fixed `width` prop is passed */
+}
+
+.card {
+  border-radius: var(--hds-radius-btn);
+  border: 1px solid var(--hds-line-s);
+  margin-bottom: var(--hds-space-tile-gap);
+  overflow: hidden;
+}
+
+.cardInner { padding: 12px 14px 14px; }
+
+.queueRow {
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-line-s);
+  margin-bottom: var(--hds-space-2);
+  overflow: hidden;
+}
+
+.queueTitleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  padding: 7px var(--hds-space-4);
+  background: oklch(0.18 0.015 285 / 0.7);
+}
+
+.queueTitle {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-txt);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queueType {
+  font-size: 9px;
+  color: var(--hds-txt-3);
+  flex-shrink: 0;
+}
+
+.queuePremiereDate {
+  font-size: 9px;
+  color: oklch(0.78 0.12 68);
+  font-family: var(--hds-font-mono-brand);
+  flex-shrink: 0;
+}
+
+.queueRemoveBtn {
+  background: none;
+  border: none;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-body);
+  line-height: 1;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.queueDetailRow {
+  display: flex;
+  gap: var(--hds-space-3);
+  padding: var(--hds-space-3) var(--hds-space-4) var(--hds-space-tile-gap);
+  border-top: 1px solid var(--hds-line-s);
+  background: oklch(0.165 0.012 284 / 0.5);
+}
+
+.root {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 12px 20px;
+}
+
+.backBtn {
+  background: none;
+  border: none;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-caption);
+  font-family: var(--hds-font-mono-brand);
+  margin-bottom: var(--hds-space-tile-gap);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  letter-spacing: 0.12em;
+}
+
+.slotIdentity {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  color: var(--hds-txt);
+  margin-bottom: 14px;
+  letter-spacing: 0.05em;
+}
+
+.slotDuration {
+  font-size: 9px;
+  color: var(--hds-txt-3);
+  margin-left: var(--hds-space-tile-gap);
+}
+
+.queueHeaderRow {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--hds-space-3);
+}
+
+.queueHeaderSpacer { flex: 1; }
+
+.queueCursor {
+  font-size: 9px;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  margin-right: var(--hds-space-3);
+}
+
+.resetBtn {
+  font-size: 9px;
+  padding: 2px 7px;
+  border-radius: var(--hds-radius-xs);
+  border: 1px solid var(--hds-line);
+  background: none;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-family: var(--hds-font-mono-brand);
+}
+
+.emptyQueueHint {
+  padding: 4px 0 6px;
+  font-size: 10.5px;
+  color: var(--hds-txt-3);
+  line-height: 1.55;
+}
+
+.dropZoneWrap { margin-top: 6px; }
+.dropZoneWrapNoGap { margin-top: 0; }

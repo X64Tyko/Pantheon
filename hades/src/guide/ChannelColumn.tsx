@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import type { Channel, EpgProgram } from '../api/types'
 import { channelLogoUrl } from '../api/client'
-import { COLUMN_WIDTH, PX_PER_MIN, HEADER_HEIGHT } from './constants'
+import { PX_PER_MIN } from './constants'
 import { useFocusable } from '../nav/useFocusable'
+import styles from './ChannelColumn.module.css'
 
 interface ChannelColumnProps {
   channel:       Channel
@@ -30,34 +31,28 @@ export function ChannelColumn({ channel, programs, windowStartMs, windowMs, nowM
 
   return (
     <div
-      style={{ width: COLUMN_WIDTH, flexShrink: 0, scrollSnapAlign: 'start', borderRight: '1px solid var(--hds-line-s)', cursor: 'pointer' }}
+      className={styles.column}
       onMouseEnter={onFocus}
       onClick={onWatch}
     >
       <div
         ref={headerRef}
         data-tv-focused={headerNavFocused}
-        style={{
-          position: 'sticky', top: 0, zIndex: 2, height: HEADER_HEIGHT,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
-          background: focused ? 'var(--hds-bg-3)' : 'var(--hds-bg-2)',
-          borderBottom: `1px solid ${focused ? 'var(--hds-violet)' : 'var(--hds-line-s)'}`,
-          cursor: 'pointer', transition: 'background .12s, border-color .12s',
-        }}>
-        <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, fontWeight: 800, color: focused ? 'var(--hds-gold)' : 'var(--hds-txt-2)' }}>
+        className={`${styles.header} ${focused ? styles.headerFocused : ''}`}>
+        <span className={`${styles.channelNumber} ${focused ? styles.channelNumberFocused : ''}`}>
           {channel.number}
         </span>
         {channel.logo_path && !logoErr ? (
           <img
             src={channelLogoUrl(channel.channel_id)} alt={channel.name} onError={() => setLogoErr(true)}
-            style={{ height: 20, maxWidth: 120, objectFit: 'contain' }}
+            className={styles.channelLogo}
           />
         ) : (
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>{channel.name}</span>
+          <span className={styles.channelNameFallback}>{channel.name}</span>
         )}
       </div>
 
-      <div style={{ position: 'relative', height: windowMs / 60000 * PX_PER_MIN }}>
+      <div className={styles.programsWrap} style={{ height: windowMs / 60000 * PX_PER_MIN }}>
         {programs.map(p => (
           <ProgramBlock
             key={`${p.item_type}:${p.item_id}:${p.wall_clock_start_ms}`}
@@ -100,20 +95,10 @@ function ProgramBlock({ program, windowStartMs, nowMs, channelId, onFocus, onWat
       ref={ref}
       data-tv-focused={navFocused}
       title={label}
-      className={isNow ? 'hds-guide-now' : undefined}
-      style={{
-        position: 'absolute', top, left: 2, right: 2, height: height - 2,
-        borderRadius: 5, padding: '4px 6px', overflow: 'hidden', boxSizing: 'border-box',
-        background: isNow ? undefined : isPast ? 'var(--hds-bg-3)' : 'var(--hds-bg-4)',
-        opacity: isPast ? 0.55 : 1,
-        border: '1px solid var(--hds-line-s)',
-      }}
+      className={`${styles.programBlock} ${isNow ? 'hds-guide-now' : isPast ? styles.programBlockPast : styles.programBlockFuture}`}
+      style={{ top, left: 2, right: 2, height: height - 2 }}
     >
-      <div style={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 10, lineHeight: 1.3,
-        color: isNow ? 'oklch(0.98 0.01 285)' : 'var(--hds-txt-2)',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}>{label}</div>
+      <div className={`${styles.programLabel} ${isNow ? styles.programLabelNow : styles.programLabelDefault}`}>{label}</div>
     </div>
   )
 }

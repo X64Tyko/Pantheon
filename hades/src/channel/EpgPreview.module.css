@@ -1,0 +1,208 @@
+.errorBoundary {
+  padding: 12px 24px;
+  font-size: var(--hds-font-size-tv-meta);
+  color: oklch(0.65 0.12 22);
+  border-top: 1px solid var(--hds-line-s);
+}
+
+.root {
+  flex-shrink: 0;
+  border-top: 1px solid var(--hds-line-s);
+  background: oklch(0.17 0.018 286 / 0.7);
+  padding: var(--hds-space-4) var(--hds-space-6) 16px;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  margin-bottom: var(--hds-space-3);
+}
+
+.headerLabel {
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.22em;
+  color: var(--hds-txt-2);
+  white-space: nowrap;
+}
+
+.statusText {
+  flex: 1;
+  font-size: var(--hds-font-size-tv-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.statusCached   { color: oklch(0.62 0.1 145); }
+.statusEpg      { color: oklch(0.62 0.1 220); }
+.statusNone     { color: var(--hds-txt-3); }
+
+.zoomGroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.iconBtn {
+  padding: 3px 7px;
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-sm);
+  background: transparent;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  cursor: pointer;
+  color: var(--hds-txt-2);
+}
+.iconBtnDisabled { opacity: 0.35; cursor: default; }
+.iconBtnMuted    { color: var(--hds-txt-3); cursor: default; opacity: 0.5; }
+
+.zoomLabel {
+  font-size: 9px;
+  color: var(--hds-txt-3);
+  width: 24px;
+  text-align: center;
+  letter-spacing: 0.05em;
+}
+
+.weekToggle {
+  display: flex;
+  gap: 2px;
+  background: var(--hds-bg-3);
+  border-radius: var(--hds-radius-tile);
+  padding: 3px;
+  flex-shrink: 0;
+}
+
+.weekBtn {
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.weekBtnActive {
+  background: oklch(0.38 0.09 287);
+  color: var(--hds-txt);
+}
+
+.dayToggle {
+  display: flex;
+  gap: 3px;
+  background: var(--hds-bg-3);
+  border-radius: var(--hds-radius-tile);
+  padding: 3px;
+  flex-shrink: 0;
+}
+
+.dayBtn {
+  padding: 5px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.dayBtnActive {
+  background: var(--hds-gold);
+  color: var(--hds-txt-on-gold);
+}
+.dayBtnDisabled {
+  cursor: default;
+  opacity: 0.3;
+}
+
+.stripFrame {
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-line-s);
+  overflow-y: hidden;
+}
+.stripFrameZoomed  { overflow-x: auto; }
+.stripFrameNoZoom  { overflow-x: hidden; }
+
+.stripInner {
+  position: relative;
+  height: 68px;
+  min-width: 100%;
+  background: oklch(0.13 0.014 286);
+}
+
+.seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid oklch(0.13 0.014 286);
+  padding: 7px 8px;
+  overflow: hidden;
+  transition: filter 0.1s;
+}
+.segClickable {
+  cursor: pointer;
+}
+.segClickable:hover {
+  filter: brightness(1.2);
+}
+.segFaded { opacity: 0.5; }
+.segNotFaded { opacity: 1; }
+
+.segTime {
+  font-size: var(--hds-font-size-tv-badge);
+  letter-spacing: 0.06em;
+  line-height: 1;
+}
+.segTimeFaded    { color: var(--hds-txt-3); }
+.segTimeNotFaded { color: oklch(0.78 0.04 286); }
+
+.segTitle {
+  font-size: var(--hds-font-size-tv-meta);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 3px;
+  line-height: 1.2;
+}
+.segTitleFaded    { color: var(--hds-txt-3); }
+.segTitleNotFaded { color: var(--hds-txt); }
+
+.segSubRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  min-width: 0;
+}
+
+.segEpLabel {
+  flex-shrink: 0;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: oklch(0.98 0 0 / 0.13);
+  color: oklch(0.82 0.05 286);
+}
+
+.segSubtitle {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stripEmptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--hds-txt-3);
+  font-size: var(--hds-font-size-tv-meta);
+}

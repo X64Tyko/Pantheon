@@ -1,0 +1,5 @@
+.scrollContainer {
+  height: 70vh; overflow: auto; scroll-snap-type: x mandatory;
+  border: 1px solid var(--hds-line-s); border-radius: var(--hds-radius-tile);
+}
+.columnsRow { display: flex; }

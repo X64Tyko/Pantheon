@@ -31,6 +31,7 @@
 #include "services/SchedulerService.h"
 #include "services/SourceService.h"
 #include "services/TimeslotService.h"
+#include "services/TvManifestService.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -60,6 +61,10 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	if (path.starts_with("/api/playback/")) return true;
 	// Hephaestus fetching runtime flags.
 	if (method == "GET" && path == "/api/config/public-settings") return true;
+	// TV manifest — structural layout data, not per-user, same reasoning as
+	// public-settings above. Consumed by /tv (unauthenticated on first paint,
+	// before any session exists) and eventually native clients.
+	if (method == "GET" && path == "/api/tv/manifest") return true;
 	// Hermes aggregating system metrics across services for the Activity page.
 	if (method == "GET" && path == "/api/system/metrics") return true;
 	// Log stream — relayed by Hermes into the unified Hades log view.
@@ -175,6 +180,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<TimeslotService>(ctx));
 	services_.push_back(std::make_unique<RokuDeviceService>(ctx));
 	services_.push_back(std::make_unique<PlaybackService>(ctx));
+	services_.push_back(std::make_unique<TvManifestService>(ctx));
 
 	for (auto& svc : services_) svc->registerRoutes(svr_);
 }

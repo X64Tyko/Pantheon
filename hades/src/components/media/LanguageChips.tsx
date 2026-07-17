@@ -1,4 +1,5 @@
 import type { MediaLanguages } from '../../api/types'
+import styles from './LanguageChips.module.css'
 
 const LANG_NAMES: Record<string, string> = {
   eng: 'English', jpn: 'Japanese', spa: 'Spanish', fre: 'French', fra: 'French',
@@ -17,7 +18,7 @@ export function LanguageChips({ languages }: { languages: MediaLanguages | null 
   if (!languages || (languages.audio.length === 0 && languages.subtitle.length === 0)) return null
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 18 }}>
+    <div className={styles.root}>
       {languages.audio.length > 0 && (
         <LangRow icon="🔊" label="Audio" codes={languages.audio} />
       )}
@@ -30,17 +31,10 @@ export function LanguageChips({ languages }: { languages: MediaLanguages | null 
 
 function LangRow({ icon, label, codes }: { icon: string; label: string; codes: string[] }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <span style={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-        color: 'var(--hds-txt-3)', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: 4,
-      }}>{icon} {label}</span>
+    <div className={styles.row}>
+      <span className={styles.rowLabel}>{icon} {label}</span>
       {codes.map(c => (
-        <span key={c} style={{
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-          padding: '2px 8px', borderRadius: 10,
-          border: '1px solid var(--hds-line-s)', color: 'var(--hds-txt-2)',
-        }}>{langName(c)}</span>
+        <span key={c} className={styles.chip}>{langName(c)}</span>
       ))}
     </div>
   )

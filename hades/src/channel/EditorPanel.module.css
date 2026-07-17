@@ -1,0 +1,133 @@
+/* ─── Selected-item sidebar section ──────────────────────────────────────── */
+
+.sidebarSection {
+  padding: 10px var(--hds-space-4) 12px;
+  border-bottom: 1px solid var(--hds-line-s);
+  flex-shrink: 0;
+}
+.sidebarSectionTight { padding-bottom: var(--hds-space-1); }
+
+.sidebarSectionLabel {
+  font-size: var(--hds-font-size-tv-badge);
+  letter-spacing: 0.2em;
+  color: var(--hds-violet);
+  font-family: var(--hds-font-mono-brand);
+  margin-bottom: var(--hds-space-3);
+}
+
+.sidebarItemTitle {
+  font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 500;
+  color: var(--hds-txt);
+  margin-bottom: var(--hds-space-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fieldRow2 { display: flex; gap: var(--hds-space-3); margin-bottom: var(--hds-space-3); }
+.fieldRowNoGap { display: flex; gap: var(--hds-space-3); }
+.fieldCol { flex: 1; }
+.fieldCol70 { width: 70px; }
+
+.miniFieldLabel {
+  font-size: var(--hds-font-size-tv-badge);
+  letter-spacing: 0.18em;
+  color: var(--hds-txt-3);
+  margin-bottom: 3px;
+}
+
+.miniInput {
+  width: 100%;
+  font-size: var(--hds-font-size-tv-small-title);
+  padding: 4px 7px;
+}
+
+.specialsCol { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+
+.specialsLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  cursor: pointer;
+  padding-bottom: var(--hds-space-2);
+}
+
+.specialsText {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-2);
+  letter-spacing: 0.06em;
+}
+
+.bumperAssignText { font-size: 10.5px; color: var(--hds-txt-2); }
+.bumperAssignTextGap { margin-bottom: var(--hds-space-3); }
+.bumperAssignStrong { color: var(--hds-txt); }
+.bumperNoSlotText { font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); }
+.interstitialWrap { margin-top: var(--hds-space-3); }
+.interstitialInput { width: 80px; font-size: var(--hds-font-size-tv-small-title); padding: 4px 7px; }
+
+/* ─── Editor panel shell ─────────────────────────────────────────────────── */
+
+.panelRoot { display: flex; flex-direction: column; height: 100%; }
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--hds-space-4) var(--hds-space-5) var(--hds-space-4);
+  border-bottom: 1px solid var(--hds-line-s);
+  flex-shrink: 0;
+}
+
+.headerTitleSpan {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-small-title);
+  letter-spacing: 0.04em;
+}
+
+.headerActions { display: flex; align-items: center; gap: var(--hds-space-1); }
+
+.hintsToggleBtn {
+  padding: 3px var(--hds-space-3);
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-sm);
+  background: transparent;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-micro);
+  cursor: pointer;
+  letter-spacing: 0.06em;
+}
+.hintsToggleBtnActive { color: var(--hds-violet); }
+
+.closeBtn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--hds-radius-tile);
+  background: transparent;
+  color: var(--hds-txt-2);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-heading);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  padding: var(--hds-space-4) var(--hds-space-5);
+  border-top: 1px solid var(--hds-line-s);
+  flex-shrink: 0;
+}
+
+.footerSpacer { flex: 1; }
+
+.errorBanner {
+  padding: var(--hds-space-3) var(--hds-space-5);
+  font-size: var(--hds-font-size-tv-small-title);
+  color: var(--hds-danger-text);
+  background: oklch(0.2 0.05 22 / 0.3);
+  border-top: 1px solid oklch(0.4 0.1 22 / 0.4);
+  flex-shrink: 0;
+}
