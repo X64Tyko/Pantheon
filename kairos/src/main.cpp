@@ -27,10 +27,10 @@ int main(int argc, char* argv[]) {
     setvbuf(stderr, nullptr, _IOLBF, 0);
 
     // Intercept cout/cerr before anything else so startup messages are captured.
-    LogBuffer log_buffer;
+	LogBuffer log_buffer;
+	LogTee    tee_cout(std::cout, log_buffer);
+	LogTee    tee_cerr(std::cerr, log_buffer);
     log_buffer.setFile("./data/kairos.log");
-    LogTee    tee_cout(std::cout, log_buffer);
-    LogTee    tee_cerr(std::cerr, log_buffer);
 
     int port = 8080;
     std::string db_path    = "./data/kairos.db";

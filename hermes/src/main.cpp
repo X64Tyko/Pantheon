@@ -52,11 +52,11 @@ int main(int argc, char* argv[]) {
     // else's already-logged lines through Hermes doesn't also duplicate them
     // into hermes.log.
     LogBuffer combined_log;
-    LogBuffer local_log;
+	LogBuffer local_log;
+	local_log.setForward(&combined_log);
+	LogTee    tee_cout(std::cout, local_log);
+	LogTee    tee_cerr(std::cerr, local_log);
     local_log.setFile("./data/hermes.log");
-    local_log.setForward(&combined_log);
-    LogTee    tee_cout(std::cout, local_log);
-    LogTee    tee_cerr(std::cerr, local_log);
 
     Config cfg = parseConfig(argc, argv);
 
