@@ -41,6 +41,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
+# ── pugixml (NFO sidecar parsing — LocalSource only) ───────────────────────────
+FetchContent_Declare(
+    pugixml
+    GIT_REPOSITORY https://github.com/zeux/pugixml.git
+    GIT_TAG        v1.14
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(pugixml)
+
 # ── kairos_core (all sources except main.cpp — linkable by tests) ─────────────
 file(GLOB_RECURSE ALL_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 list(FILTER ALL_SOURCES EXCLUDE REGEX ".*[/\\\\]main\\.cpp$")
@@ -58,6 +67,7 @@ if(ALL_SOURCES)
         nlohmann_json::nlohmann_json
         SQLiteCpp
         httplib::httplib
+        pugixml
         OpenSSL::SSL OpenSSL::Crypto
     )
     if(UNIX)
@@ -72,6 +82,7 @@ else()
         nlohmann_json::nlohmann_json
         SQLiteCpp
         httplib::httplib
+        pugixml
         OpenSSL::SSL OpenSSL::Crypto
     )
     if(UNIX)

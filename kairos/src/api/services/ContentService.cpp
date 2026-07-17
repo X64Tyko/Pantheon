@@ -87,12 +87,14 @@ bool startsWithCI(const std::string& v, const std::string& prefix) {
 }
 
 // "local:" is proxyImage()'s internal sentinel for serving a file straight
-// off disk (see ScraperManager::persistAnidbThumbLocally) — the only code
-// path allowed to produce it. thumb/art are otherwise free-text admin-edit
-// fields (PATCH /api/shows/:id, PATCH /api/movies/:id); without this guard
-// an admin could type "local:/etc/passwd" into one and turn the resulting
-// GET .../thumb route — which only requires a valid session, not admin —
-// into an arbitrary local file read for any logged-in user.
+// off disk — produced by sync-time code only (ScraperManager::
+// persistAnidbThumbLocally, and LocalSource's own poster.jpg/fanart.jpg/NFO
+// sidecar detection, see SidecarMetadata.h), never by user input. thumb/art
+// are otherwise free-text admin-edit fields (PATCH /api/shows/:id, PATCH
+// /api/movies/:id); without this guard an admin could type
+// "local:/etc/passwd" into one and turn the resulting GET .../thumb route —
+// which only requires a valid session, not admin — into an arbitrary local
+// file read for any logged-in user.
 bool isLocalSentinel(const std::string& v) { return startsWithCI(v, "local:"); }
 
 // Per-item language probe results are cached in-memory since ffprobe is
@@ -309,6 +311,49 @@ void ContentService::proxyImage(const Req& req,
 	res.set_header("Cache-Control", "public, max-age=86400");
 	res.set_header("ETag", etag);
 	res.set_content(img->body, ct);
+}
+
+std::optional<WritebackImage> ContentService::fetchImageBytes(const std::string& imgPath,
+                                                                const std::string& sourceId) {
+	if (imgPath.empty()) return std::nullopt;
+
+	if (isLocalSentinel(imgPath)) {
+		fs::path local_path = imgPath.substr(6);
+		std::ifstream f(local_path, std::ios::binary);
+		if (!f) return std::nullopt;
+		std::string body((std::istreambuf_iterator<char>(f)), {});
+		return WritebackImage{std::move(body), "image/jpeg"};
+	}
+
+	std::string effective_base, fetch_path;
+	bool is_cdn = (imgPath.rfind("http", 0) == 0);
+	if (is_cdn) {
+		auto scheme_end = imgPath.find("://");
+		auto path_start = (scheme_end != std::string::npos) ? imgPath.find('/', scheme_end + 3) : std::string::npos;
+		if (path_start == std::string::npos) return std::nullopt;
+		effective_base = imgPath.substr(0, path_start);
+		fetch_path     = imgPath.substr(path_start);
+	} else {
+		ContentRepository repo(db_);
+		effective_base = repo.getSourceBaseUrl(sourceId);
+		if (effective_base.empty()) return std::nullopt;
+		fetch_path = imgPath;
+	}
+
+	std::string token = is_cdn ? "" : conf_.token(sourceId);
+	try {
+		httplib::Client client(effective_base);
+		httplib::Headers headers{{"User-Agent", "kairos/1.0 (https://github.com/X64Tyko/Pantheon)"}};
+		if (!token.empty()) { headers.emplace("X-Plex-Token", token); headers.emplace("Accept", "*/*"); }
+		client.set_default_headers(headers);
+		client.set_connection_timeout(5);
+		client.set_read_timeout(8);
+		auto img = client.Get(fetch_path);
+		if (!img || img->status != 200) return std::nullopt;
+		std::string ct = img->get_header_value("Content-Type");
+		if (ct.empty()) ct = "image/jpeg";
+		return WritebackImage{std::move(img->body), std::move(ct)};
+	} catch (const std::exception&) { return std::nullopt; }
 }
 
 void ContentService::registerRoutes(httplib::Server& svr) {
@@ -854,6 +899,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			fields.countries       = d->countries;
 			fields.collections     = d->collections;
 			fields.release_date    = d->originally_available_at;
+			fields.thumb            = fetchImageBytes(d->thumb, d->source_id);
+			fields.art              = fetchImageBytes(d->art, d->source_id);
 
 			auto targets = SourceRepository(db_).getWritebackTargets("show", id);
 			json results = json::array();
@@ -1059,6 +1106,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			fields.countries       = d->countries;
 			fields.collections     = d->collections;
 			fields.release_date    = d->release_date;
+			fields.thumb            = fetchImageBytes(d->thumb, d->source_id);
+			fields.art              = fetchImageBytes(d->art, d->source_id);
 
 			auto targets = SourceRepository(db_).getWritebackTargets("movie", id);
 			json results = json::array();

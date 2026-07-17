@@ -203,6 +203,10 @@ export const api = {
   // Which local user (if any) should have watch/resume state pulled from
   // this source's primary account during sync — empty string clears it.
   setSourceSyncedUser: (id: string, userId: string)     => request<{ok: boolean}>('PATCH', `/sources/${id}`, { synced_user_id: userId || null }),
+  // Lower syncs/wins first — drives both sync order and which source's data
+  // wins a field-level conflict when the same item is matched across
+  // sources (see SyncManager's primary_source merge).
+  setSourceSyncPriority: (id: string, priority: number) => request<{ok: boolean}>('PATCH', `/sources/${id}`, { sync_priority: priority }),
 
   // Source-reported accounts with no local Pantheon account imported yet.
   getUnmappedSourceUsers: () => request<UnmappedSourceUser[]>('GET', '/sources/unmapped-users'),
@@ -235,13 +239,6 @@ export const api = {
                                                         request<{order: string[]}>('GET', `/sources/${sourceId}/libraries/${lid}/scraper-priority?item_type=${itemType}`),
   setScraperPriority: (sourceId: string, lid: string, itemType: 'show'|'movie', order: string[]) =>
                                                         request<{ok: boolean}>('PUT', `/sources/${sourceId}/libraries/${lid}/scraper-priority`, { item_type: itemType, order }),
-  // Same shape, but ranks media sources (plex/jellyfin/emby/local) against
-  // each other for "date added" when an item is matched across multiple of
-  // them — see the Library "Date Added" filter/sort.
-  getSourcePriority: (sourceId: string, lid: string, itemType: 'show'|'movie') =>
-                                                        request<{order: string[]}>('GET', `/sources/${sourceId}/libraries/${lid}/source-priority?item_type=${itemType}`),
-  setSourcePriority: (sourceId: string, lid: string, itemType: 'show'|'movie', order: string[]) =>
-                                                        request<{ok: boolean}>('PUT', `/sources/${sourceId}/libraries/${lid}/source-priority`, { item_type: itemType, order }),
   // Focused sibling of patchLibrary for call sites that only have a
   // library_id (e.g. a Home shelf card) — patchLibrary needs source_id too.
   setLibraryShowOnHome: (libraryId: string, showOnHome: boolean) =>

@@ -17,6 +17,12 @@ struct MediaSourceConfig {
     // sync succeeded (or none has run yet); otherwise the last failure,
     // refreshed every sync.
     std::string user_sync_error;
+    // Lower syncs/wins first — drives both SyncManager::loadSources()' sync
+    // order and, via show/movie.primary_source, which source's data wins a
+    // field-level conflict when the same item is matched across sources.
+    // Default 0 for every source until the user actually ranks them, so
+    // behavior is unchanged (ties, first-writer-keeps) until they opt in.
+    int sync_priority = 0;
 };
 
 struct MediaLibraryConfig {

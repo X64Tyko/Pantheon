@@ -21,7 +21,7 @@ SourceRepository::SourceRepository(Database& db) : db_(db) {}
 std::vector<MediaSourceConfig> SourceRepository::listSources() {
     SQLite::Statement q(db_.get(),
         "SELECT source_id, source_type, display_name, COALESCE(base_url,''), enabled, "
-        "       COALESCE(synced_user_id,''), user_sync_error "
+        "       COALESCE(synced_user_id,''), user_sync_error, sync_priority "
         "FROM media_source ORDER BY display_name");
     std::vector<MediaSourceConfig> result;
     while (q.executeStep()) {
@@ -33,6 +33,7 @@ std::vector<MediaSourceConfig> SourceRepository::listSources() {
         s.enabled          = q.getColumn(4).getInt() != 0;
         s.synced_user_id   = q.getColumn(5).getString();
         s.user_sync_error  = q.getColumn(6).getString();
+        s.sync_priority    = q.getColumn(7).getInt();
         result.push_back(std::move(s));
     }
     return result;
@@ -41,12 +42,20 @@ std::vector<MediaSourceConfig> SourceRepository::listSources() {
 void SourceRepository::createSource(const std::string& source_id,
                                      const std::string& source_type,
                                      const std::string& display_name,
-                                     const std::string& base_url) {
+                                     const std::string& base_url,
+                                     int sync_priority) {
     SQLite::Statement s(db_.get(),
-        "INSERT INTO media_source (source_id, source_type, display_name, base_url) "
-        "VALUES (?,?,?,?)");
+        "INSERT INTO media_source (source_id, source_type, display_name, base_url, sync_priority) "
+        "VALUES (?,?,?,?,?)");
     s.bind(1, source_id); s.bind(2, source_type);
     s.bind(3, display_name); s.bind(4, base_url);
+    s.bind(5, sync_priority);
+    s.exec();
+}
+
+void SourceRepository::setSyncPriority(const std::string& source_id, int priority) {
+    SQLite::Statement s(db_.get(), "UPDATE media_source SET sync_priority = ? WHERE source_id = ?");
+    s.bind(1, priority); s.bind(2, source_id);
     s.exec();
 }
 
@@ -171,41 +180,6 @@ void SourceRepository::setScraperPriority(const std::string& library_id, const s
     txn.commit();
 }
 
-std::vector<std::string> SourceRepository::getSourcePriority(const std::string& library_id,
-                                                               const std::string& item_type) {
-    std::vector<std::string> out;
-    SQLite::Statement q(db_.get(),
-        "SELECT source FROM library_source_priority WHERE library_id = ? AND item_type = ? ORDER BY priority ASC");
-    q.bind(1, library_id);
-    q.bind(2, item_type);
-    while (q.executeStep()) out.push_back(q.getColumn(0).getString());
-    return out;
-}
-
-void SourceRepository::setSourcePriority(const std::string& library_id, const std::string& item_type,
-                                          const std::vector<std::string>& order) {
-    SQLite::Transaction txn(db_.get());
-    {
-        SQLite::Statement d(db_.get(),
-            "DELETE FROM library_source_priority WHERE library_id = ? AND item_type = ?");
-        d.bind(1, library_id);
-        d.bind(2, item_type);
-        d.exec();
-    }
-    SQLite::Statement ins(db_.get(),
-        "INSERT INTO library_source_priority (library_id, item_type, source, priority) VALUES (?, ?, ?, ?)");
-    int priority = 1;
-    for (const auto& source : order) {
-        if (source.empty()) continue;
-        ins.bind(1, library_id);
-        ins.bind(2, item_type);
-        ins.bind(3, source);
-        ins.bind(4, priority++);
-        ins.exec();
-        ins.reset();
-    }
-    txn.commit();
-}
 
 void SourceRepository::removeLibrary(const std::string& library_id) {
     // No transaction: avoids "cannot start a transaction within a transaction" when sync is mid-write on the same connection.

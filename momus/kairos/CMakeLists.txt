@@ -37,6 +37,7 @@ add_executable(momus_kairos
     source/test_jellyfin_source.cpp
     source/test_plex_source.cpp
     source/test_local_source.cpp
+    source/test_sync_manager.cpp
 )
 
 # kairos_core brings in SQLiteCpp, nlohmann_json, httplib, and the src/ include

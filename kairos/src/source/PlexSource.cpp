@@ -116,7 +116,7 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
             		show.art            = item.value("art", "");
             		show.originally_available_at = item.value("originallyAvailableAt", "");
             		show.added_at       = item.value("addedAt", 0);
-            		show.added_at_source = "plex";
+            		show.added_at_source = source_id_;
 
             		// Root folder(s): [{"path":"/data/TV Shows/Show Name"}, ...] —
             		// same array-of-object shape as Genre/Label below. Only the
@@ -260,7 +260,7 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
                 if (item.contains("audienceRating") && !item["audienceRating"].is_null())
                     movie.audience_rating = item["audienceRating"].get<float>();
                 movie.added_at        = item.value("addedAt", int64_t{0});
-                movie.added_at_source = "plex";
+                movie.added_at_source = source_id_;
 
                 // Director
                 if (item.contains("Director") && !item["Director"].empty())
@@ -824,12 +824,15 @@ bool PlexSource::pushMetadata(const std::string& external_id,
         return false;
     }
 
-    // Scalar text fields only for v1 — Plex's array-valued fields (genres,
-    // cast, countries, collections) use a different multi-value tag-editing
-    // convention (separate add/remove directives per tag) that needs live
-    // verification against a real server before it's safe to guess at; a
-    // wrong shape here risks corrupting tags rather than just failing to
-    // apply, so it's deliberately deferred rather than attempted blind.
+    bool ok = true;
+
+    // Scalar text fields only — Plex's array-valued fields (genres, cast,
+    // countries, collections, director, network) use a different multi-value
+    // tag-editing convention (separate add/remove directives per tag) that
+    // needs live verification against a real server before it's safe to
+    // guess at; a wrong shape here risks corrupting tags rather than just
+    // failing to apply, so it's deliberately deferred rather than attempted
+    // blind.
     std::string path = "/library/sections/" + external_lib_id + "/all?type="
         + (item_type == "movie" ? "1" : "2") + "&id=" + external_id;
 
@@ -849,12 +852,28 @@ bool PlexSource::pushMetadata(const std::string& external_id,
     if (!res) {
         std::cerr << "[plex:" << source_id_ << "] pushMetadata failed (id=" << external_id
                   << "): " << httplib::to_string(res.error()) << '\n';
-        return false;
-    }
-    if (res->status != 200) {
+        ok = false;
+    } else if (res->status != 200) {
         std::cerr << "[plex:" << source_id_ << "] pushMetadata HTTP " << res->status
                   << " (id=" << external_id << ")\n";
-        return false;
+        ok = false;
     }
-    return true;
+
+    // Poster/background upload — POSTs raw image bytes to Plex's own
+    // per-item art endpoints, the same mechanism as "upload custom poster"
+    // in Plex Web. Unlike the tag fields above, this is a well-established,
+    // unambiguous convention rather than a guess, so it's not deferred.
+    auto uploadArt = [&](const char* kind, const WritebackImage& img) {
+        std::string art_path = "/library/metadata/" + external_id + "/" + kind;
+        auto art_res = client_.Post(art_path.c_str(), img.bytes, img.content_type);
+        if (!art_res || (art_res->status != 200 && art_res->status != 201)) {
+            std::cerr << "[plex:" << source_id_ << "] pushMetadata (" << kind
+                      << ") failed (id=" << external_id << ")\n";
+            ok = false;
+        }
+    };
+    if (fields.thumb) uploadArt("posters", *fields.thumb);
+    if (fields.art)   uploadArt("arts",    *fields.art);
+
+    return ok;
 }

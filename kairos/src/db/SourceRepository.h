@@ -17,9 +17,15 @@ public:
     void createSource(const std::string& source_id,
                       const std::string& source_type,
                       const std::string& display_name,
-                      const std::string& base_url);
+                      const std::string& base_url,
+                      int sync_priority = 0);
 
     void removeSource(const std::string& source_id);
+
+    // See MediaSourceConfig::sync_priority. Caller (SourceService) is
+    // responsible for calling SyncManager::loadSources() afterward so the
+    // new order/ranking actually takes effect on the next sync.
+    void setSyncPriority(const std::string& source_id, int priority);
 
     // ── Libraries ─────────────────────────────────────────────────────────────
 
@@ -57,16 +63,6 @@ public:
     std::vector<std::string> getScraperPriority(const std::string& library_id,
                                                  const std::string& item_type);
     void setScraperPriority(const std::string& library_id, const std::string& item_type,
-                            const std::vector<std::string>& order);
-
-    // Same shape/semantics as getScraperPriority/setScraperPriority, but for
-    // media *sources* (plex/jellyfin/local) rather than metadata scrapers —
-    // resolves which source's "date added" wins when an item is matched
-    // across multiple sources (see SyncManager's added_at upsert logic).
-    // Empty = no preference (first source to sync a value keeps it).
-    std::vector<std::string> getSourcePriority(const std::string& library_id,
-                                                const std::string& item_type);
-    void setSourcePriority(const std::string& library_id, const std::string& item_type,
                             const std::vector<std::string>& order);
 
     // ── Source mapping ────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			result.push_back({{"source_id", s.source_id}, {"source_type", s.source_type},
 			                  {"display_name", s.display_name}, {"base_url", s.base_url},
 			                  {"enabled", s.enabled}, {"synced_user_id", s.synced_user_id},
-			                  {"user_sync_error", s.user_sync_error}});
+			                  {"user_sync_error", s.user_sync_error}, {"sync_priority", s.sync_priority}});
 		route::ok(res, result.dump());
 	});
 
@@ -55,11 +55,12 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			std::string source_type  = b.value("source_type",  "");
 			std::string display_name = b.value("display_name", "");
 			std::string base_url     = b.value("base_url",     "");
+			int sync_priority        = b.value("sync_priority", 0);
 			if (source_id.empty() || source_type.empty() || display_name.empty()) {
 				route::err(res, 400, "source_id, source_type, and display_name required");
 				return;
 			}
-			SourceRepository(db_).createSource(source_id, source_type, display_name, base_url);
+			SourceRepository(db_).createSource(source_id, source_type, display_name, base_url, sync_priority);
 			sync_.loadSources();
 			res.status = 201;
 			route::ok(res, json{{"source_id", source_id}}.dump());
@@ -191,6 +192,10 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("synced_user_id")) {
 				std::string user_id = b["synced_user_id"].is_null() ? "" : b["synced_user_id"].get<std::string>();
 				repo.setSyncedUserId(id, user_id);
+			}
+			if (b.contains("sync_priority")) {
+				repo.setSyncPriority(id, b["sync_priority"].get<int>());
+				sync_.loadSources();
 			}
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const json::exception& e) {
@@ -494,38 +499,6 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			route::err(res, 400, e.what());
 		} catch (const std::exception& e) {
 			route::logErr("PUT /api/sources/:id/libraries/:lid/scraper-priority", e);
-			route::err(res, 500, e.what());
-		}
-	});
-
-	// GET /api/sources/:id/libraries/:lid/source-priority?item_type=show|movie
-	// Which media source (plex/jellyfin/local) wins for "date added" when an
-	// item is matched across multiple sources — see SyncManager's added_at
-	// upsert logic. Same shape as scraper-priority above.
-	svr.Get("/api/sources/:id/libraries/:lid/source-priority", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		auto lid = req.path_params.at("lid");
-		auto item_type = req.has_param("item_type") ? req.get_param_value("item_type") : "show";
-		if (item_type != "show" && item_type != "movie") { route::err(res, 400, "item_type must be show or movie"); return; }
-		auto order = SourceRepository(db_).getSourcePriority(lid, item_type);
-		route::ok(res, json{{"order", order}}.dump());
-	});
-
-	// PUT /api/sources/:id/libraries/:lid/source-priority  body {item_type, order:["plex","jellyfin"]}
-	svr.Put("/api/sources/:id/libraries/:lid/source-priority", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		auto lid = req.path_params.at("lid");
-		try {
-			auto b = json::parse(req.body);
-			std::string item_type = b.value("item_type", "");
-			if (item_type != "show" && item_type != "movie") { route::err(res, 400, "item_type must be show or movie"); return; }
-			auto order = b.value("order", std::vector<std::string>{});
-			SourceRepository(db_).setSourcePriority(lid, item_type, order);
-			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const json::exception& e) {
-			route::err(res, 400, e.what());
-		} catch (const std::exception& e) {
-			route::logErr("PUT /api/sources/:id/libraries/:lid/source-priority", e);
 			route::err(res, 500, e.what());
 		}
 	});

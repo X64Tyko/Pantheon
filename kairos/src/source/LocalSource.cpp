@@ -1,4 +1,5 @@
 #include "LocalSource.h"
+#include "SidecarMetadata.h"
 #include "conf/ConfStore.h"
 #include "model/Episode.h"
 #include "model/Movie.h"
@@ -170,6 +171,29 @@ bool looksLikeMovieDir(const fs::path& dir) {
     return !looksLikeShowDir(dir) && !videosIn(dir).empty();
 }
 
+// A movie.nfo (or "<video>.nfo") is authoritative when present, same "NFO
+// wins" precedent as loadShowSidecar's caller — overrides filename-parsed
+// title/year too, not just fields the filename can't provide.
+void applyMovieSidecar(Movie& movie, std::optional<NfoMovie> nfo) {
+    if (!nfo) return;
+    if (!nfo->title.empty())          movie.title           = nfo->title;
+    if (nfo->year)                     movie.year            = nfo->year;
+    if (!nfo->overview.empty())       movie.overview        = nfo->overview;
+    if (!nfo->tagline.empty())        movie.tagline         = nfo->tagline;
+    if (!nfo->content_rating.empty()) movie.content_rating  = nfo->content_rating;
+    if (nfo->genres != "[]")          movie.genres          = nfo->genres;
+    if (!nfo->studio.empty())         movie.studio          = nfo->studio;
+    if (!nfo->director.empty())       movie.director        = nfo->director;
+    if (nfo->actors != "[]")          movie.actors          = nfo->actors;
+    if (nfo->countries != "[]")       movie.countries       = nfo->countries;
+    if (!nfo->release_date.empty())   movie.release_date    = nfo->release_date;
+    if (!nfo->imdb_id.empty())        movie.imdb_id         = nfo->imdb_id;
+    if (!nfo->tmdb_id.empty())        movie.tmdb_id         = nfo->tmdb_id;
+    if (nfo->audience_rating)         movie.audience_rating = nfo->audience_rating;
+    if (!nfo->thumb.empty())          movie.thumb           = nfo->thumb;
+    if (!nfo->art.empty())            movie.art             = nfo->art;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -312,7 +336,32 @@ std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
         if (year) show.year = year;
         if (int64_t added = fsAddedAtEpoch(entry.path()); added > 0) {
             show.added_at = added;
-            show.added_at_source = "local";
+            show.added_at_source = source_id_;
+        }
+
+        // A Kodi-style tvshow.nfo (plus poster.jpg/fanart.jpg alongside it) is
+        // authoritative when present — same "NFO wins" precedent every other
+        // media server built on this convention follows — filling in fields
+        // the bare folder name can't provide (overview, genres, ratings,
+        // provider ids) and taking priority over the filename-parsed
+        // title/year, not just filling gaps.
+        if (auto nfo = loadShowSidecar(entry.path())) {
+            if (!nfo->title.empty())          show.title            = nfo->title;
+            if (nfo->year)                     show.year             = nfo->year;
+            if (!nfo->overview.empty())       show.overview         = nfo->overview;
+            if (!nfo->content_rating.empty()) show.content_rating   = nfo->content_rating;
+            if (nfo->genres != "[]")          show.genres           = nfo->genres;
+            if (!nfo->network.empty())        show.network          = nfo->network;
+            if (!nfo->status.empty())         show.status           = nfo->status;
+            if (nfo->actors != "[]")          show.actors           = nfo->actors;
+            if (nfo->countries != "[]")       show.countries        = nfo->countries;
+            if (!nfo->release_date.empty())   show.originally_available_at = nfo->release_date;
+            if (!nfo->imdb_id.empty())        show.imdb_id          = nfo->imdb_id;
+            if (!nfo->tmdb_id.empty())        show.tmdb_id          = nfo->tmdb_id;
+            if (!nfo->tvdb_id.empty())        show.tvdb_id          = nfo->tvdb_id;
+            if (nfo->audience_rating)         show.audience_rating  = nfo->audience_rating;
+            if (!nfo->thumb.empty())          show.thumb            = nfo->thumb;
+            if (!nfo->art.empty())            show.art              = nfo->art;
         }
         result.push_back(std::move(show));
     }
@@ -352,8 +401,9 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
             if (year) movie.year = year;
             if (int64_t added = fsAddedAtEpoch(p); added > 0) {
                 movie.added_at = added;
-                movie.added_at_source = "local";
+                movie.added_at_source = source_id_;
             }
+            applyMovieSidecar(movie, loadMovieSidecar(vfiles.front(), p, /*has_own_folder=*/true));
             result.push_back(std::move(movie));
         } else if (isVideo(p)) {
             auto [title, year] = parseTitle(p.stem().string());
@@ -369,8 +419,9 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
             if (year) movie.year = year;
             if (int64_t added = fsAddedAtEpoch(p); added > 0) {
                 movie.added_at = added;
-                movie.added_at_source = "local";
+                movie.added_at_source = source_id_;
             }
+            applyMovieSidecar(movie, loadMovieSidecar(p, p.parent_path(), /*has_own_folder=*/false));
             result.push_back(std::move(movie));
         }
     }
@@ -409,29 +460,42 @@ std::vector<Episode> LocalSource::fetchEpisodes(const std::string& external_show
     // multi-episode file expands into one Episode per number below) — kept
     // empty for the common single-episode case so episode_id stays exactly
     // the mapped file path, unchanged from before this file could expand.
+    // A per-episode .nfo (title/plot/aired) plus a "<episode>-thumb.jpg"
+    // sidecar is authoritative when present, same "NFO wins" precedent as
+    // fetchShows/fetchMovies — season/episode numbers are deliberately left
+    // to the filename parse below regardless (that's what drives the
+    // multi-episode-range expansion a single NFO can't express per-number).
     auto makeEpisode = [&](const std::string& mapped_file, int season, int episode,
-                            const std::string& title, const std::string& id_suffix) {
+                            const std::string& title, const std::string& id_suffix,
+                            const NfoEpisode* nfo) {
         Episode ep;
         ep.episode_id = mapped_file + id_suffix;
         ep.show_id    = external_show_id;
         ep.file_path  = mapped_file;
         ep.season     = season;
         ep.episode    = episode;
-        ep.title      = title;
+        ep.title      = (nfo && !nfo->title.empty()) ? nfo->title : title;
+        if (nfo) {
+            if (!nfo->overview.empty()) ep.overview = nfo->overview;
+            if (!nfo->air_date.empty()) ep.air_date = nfo->air_date;
+            if (!nfo->thumb.empty())    ep.thumb    = nfo->thumb;
+        }
         result.push_back(std::move(ep));
     };
 
     auto addEpisode = [&](const fs::path& file, int season_hint) {
         auto loc = parseEpisodeFilename(file.stem().string());
         std::string mapped_file = conf_.applyPathMap(file.string());
+        auto nfo = loadEpisodeSidecar(file);
+        const NfoEpisode* nfo_ptr = nfo ? &*nfo : nullptr;
         if (loc && loc->episode_end > loc->episode) {
             for (int e = loc->episode; e <= loc->episode_end; ++e)
-                makeEpisode(mapped_file, loc->season, e, loc->title, "#" + std::to_string(e));
+                makeEpisode(mapped_file, loc->season, e, loc->title, "#" + std::to_string(e), nfo_ptr);
         } else if (loc) {
-            makeEpisode(mapped_file, loc->season, loc->episode, loc->title, "");
+            makeEpisode(mapped_file, loc->season, loc->episode, loc->title, "", nfo_ptr);
         } else {
             makeEpisode(mapped_file, (season_hint > 0) ? season_hint : 1, 0,
-                        file.stem().string(), "");
+                        file.stem().string(), "", nfo_ptr);
         }
     };
 

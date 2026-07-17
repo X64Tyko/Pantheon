@@ -62,9 +62,15 @@ std::string envVar(const char* prefix, const std::string& source_id) {
 
 void SyncManager::loadSources() {
     sources_.clear();
+    // ORDER BY here is what makes syncAll()'s phase-1 loop (which just walks
+    // sources_ directly) a priority-ordered sync, not just a priority-ordered
+    // field-merge decision — see the show/movie upsert's primary_source logic
+    // for the other half of this. source_id as a tiebreak keeps ordering
+    // deterministic across reloads for sources tied on sync_priority (the
+    // default, until a user actually ranks them).
     SQLite::Statement q(db_.get(),
         "SELECT source_id, source_type, COALESCE(base_url,'') "
-        "FROM media_source WHERE enabled = 1");
+        "FROM media_source WHERE enabled = 1 ORDER BY sync_priority ASC, source_id ASC");
 
     while (q.executeStep()) {
         const std::string sid   = q.getColumn(0).getString();
@@ -497,6 +503,57 @@ void SyncManager::syncShows(IMediaSource& src,
         }
     }
 
+    // primary_source + match_confirmed: which source currently owns each
+    // show's metadata, and whether a human has confirmed a scraper match for
+    // it, for the priority-gated merge in s_upsert_show below. Batch-loaded
+    // up front like everything else here — no per-item reads during the
+    // write phase.
+    std::unordered_map<std::string, std::string> show_primary_source;
+    std::unordered_set<std::string> show_match_confirmed;
+    {
+        SQLite::Statement q(sync_db_, "SELECT show_id, primary_source, match_confirmed FROM show");
+        while (q.executeStep()) {
+            show_primary_source[q.getColumn(0).getString()] = q.getColumn(1).getString();
+            if (q.getColumn(2).getInt() != 0) show_match_confirmed.insert(q.getColumn(0).getString());
+        }
+    }
+    // source_id -> sync_priority (lower wins); see priorityOf()/incomingWins() below.
+    std::unordered_map<std::string, int> source_priority_by_id;
+    {
+        SQLite::Statement q(sync_db_, "SELECT source_id, sync_priority FROM media_source");
+        while (q.executeStep())
+            source_priority_by_id[q.getColumn(0).getString()] = q.getColumn(1).getInt();
+    }
+    // Unranked/unknown sources sort last (999999, same sentinel the old
+    // added_at-only priority logic used) — an item with no configured
+    // priority anywhere just keeps today's behavior of whichever source
+    // touches it prevailing, so this is a no-op until a user actually ranks
+    // their sources.
+    auto priorityOf = [&](const std::string& sid) {
+        auto it = source_priority_by_id.find(sid);
+        return it != source_priority_by_id.end() ? it->second : 999999;
+    };
+    // True when this sync pass's own source should claim/overwrite an item
+    // currently owned by current_owner — same-or-better priority always
+    // wins (including a source re-affirming its own data every pass); a
+    // strictly lower-priority source only backfills empty fields instead of
+    // being locked out entirely (see s_upsert_show's per-field CASE).
+    //
+    // Once a human has confirmed a scraper match (match_confirmed — distinct
+    // from `locked`, which only a manual field edit sets), a raw source can
+    // no longer newly *claim* ownership away from whoever already holds it,
+    // even by outranking them — it can still refresh fields it already
+    // owns, and still backfill genuine gaps (that's the per-field CASE's
+    // own, separate "current value is empty" branch, unaffected by this).
+    // Without this, fixing the cross-ref-never-writes bug above would let a
+    // higher-priority raw source silently overwrite a scraper's confirmed,
+    // human-verified metadata the first time it happened to sync — the
+    // exact "syncing overwrote a match the user made" outcome this guards.
+    auto incomingWins = [&](const std::string& current_owner, bool match_confirmed) {
+        if (match_confirmed && source_id != current_owner) return false;
+        return priorityOf(source_id) <= priorityOf(current_owner);
+    };
+
     // Sync-time dedup thresholds — see ScraperSettings::dedup_fuzzy_title_threshold
     // doc comment; proposed defaults expecting real-world tuning post-rollout.
     const ScraperSettings dedup_settings = scraper_ ? scraper_->getSettings() : ScraperSettings{};
@@ -700,48 +757,45 @@ void SyncManager::syncShows(IMediaSource& src,
     }
 
     // ── Write show metadata (Pass 2) ─────────────────────────────────────────
-    // added_at/added_at_source: see the identical, more-detailed comment on
-    // s_upsert_movie below — same highest-priority-source-wins rule.
+    // Every field follows the same rule now (generalizing what used to be an
+    // added_at-only special case, see s_upsert_movie's identical comment for
+    // the full rationale): the incoming source overwrites unconditionally
+    // when it's the same-or-higher priority than the item's current owner
+    // (primary_source) — and claims ownership — otherwise it only backfills
+    // fields the current owner left empty. incomingWins() above is computed
+    // once per item in C++ (batch-loaded primary_source + sync_priority, no
+    // per-row subqueries) and passed in as a single 0/1 bound once per field.
     SQLite::Statement s_upsert_show(sync_db_, R"(
         INSERT INTO show (show_id, title, content_rating, overview, studio, status,
                           genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
                           originally_available_at, year, audience_rating,
                           labels, network, actors, countries, collections, folder_path,
-                          added_at, added_at_source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          added_at, added_at_source, primary_source)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(show_id) DO UPDATE SET
-            title                   = CASE WHEN locked THEN title                   ELSE excluded.title                   END,
-            content_rating          = CASE WHEN locked THEN content_rating          ELSE excluded.content_rating          END,
-            overview                = CASE WHEN locked THEN overview                ELSE excluded.overview                END,
-            studio                  = CASE WHEN locked THEN studio                  ELSE excluded.studio                  END,
-            status                  = CASE WHEN locked THEN status                  ELSE excluded.status                  END,
-            genres                  = CASE WHEN locked THEN genres                  ELSE excluded.genres                  END,
-            thumb                   = CASE WHEN locked THEN thumb                   ELSE excluded.thumb                   END,
-            art                     = CASE WHEN locked THEN art                     ELSE excluded.art                     END,
-            imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE excluded.imdb_id                 END,
-            tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE excluded.tvdb_id                 END,
-            tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE excluded.tmdb_id                 END,
-            originally_available_at = CASE WHEN locked THEN originally_available_at ELSE excluded.originally_available_at END,
-            year                    = CASE WHEN locked THEN year                    ELSE excluded.year                    END,
-            audience_rating         = CASE WHEN locked THEN audience_rating         ELSE excluded.audience_rating         END,
-            labels                  = CASE WHEN locked THEN labels                  ELSE excluded.labels                  END,
-            network                 = CASE WHEN locked THEN network                 ELSE excluded.network                 END,
-            actors                  = CASE WHEN locked THEN actors                  ELSE excluded.actors                  END,
-            countries               = CASE WHEN locked THEN countries               ELSE excluded.countries               END,
-            collections             = CASE WHEN locked THEN collections             ELSE excluded.collections             END,
-            folder_path             = CASE WHEN locked THEN folder_path             ELSE excluded.folder_path             END,
-            added_at                = CASE
-                WHEN locked OR excluded.added_at IS NULL THEN added_at
-                WHEN added_at IS NULL THEN excluded.added_at
-                WHEN COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'show' AND source = excluded.added_at_source), 999999)
-                   < COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'show' AND source = added_at_source), 999999)
-                THEN excluded.added_at ELSE added_at END,
-            added_at_source         = CASE
-                WHEN locked OR excluded.added_at IS NULL THEN added_at_source
-                WHEN added_at IS NULL THEN excluded.added_at_source
-                WHEN COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'show' AND source = excluded.added_at_source), 999999)
-                   < COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'show' AND source = added_at_source), 999999)
-                THEN excluded.added_at_source ELSE added_at_source END
+            title                   = CASE WHEN locked THEN title                   WHEN ? AND excluded.title<>''                   THEN excluded.title                   WHEN title=''                   THEN excluded.title                   ELSE title                   END,
+            content_rating          = CASE WHEN locked THEN content_rating          WHEN ? AND excluded.content_rating<>''          THEN excluded.content_rating          WHEN content_rating=''          THEN excluded.content_rating          ELSE content_rating          END,
+            overview                = CASE WHEN locked THEN overview                WHEN ? AND excluded.overview<>''                THEN excluded.overview                WHEN overview=''                THEN excluded.overview                ELSE overview                END,
+            studio                  = CASE WHEN locked THEN studio                  WHEN ? AND excluded.studio<>''                  THEN excluded.studio                  WHEN studio=''                  THEN excluded.studio                  ELSE studio                  END,
+            status                  = CASE WHEN locked THEN status                  WHEN ? AND excluded.status<>''                  THEN excluded.status                  WHEN status=''                  THEN excluded.status                  ELSE status                  END,
+            genres                  = CASE WHEN locked THEN genres                  WHEN ? AND excluded.genres<>'' AND excluded.genres<>'[]'         THEN excluded.genres                  WHEN genres='' OR genres='[]'   THEN excluded.genres                  ELSE genres                  END,
+            thumb                   = CASE WHEN locked THEN thumb                   WHEN ? AND excluded.thumb<>''                   THEN excluded.thumb                   WHEN thumb=''                   THEN excluded.thumb                   ELSE thumb                   END,
+            art                     = CASE WHEN locked THEN art                     WHEN ? AND excluded.art<>''                     THEN excluded.art                     WHEN art=''                     THEN excluded.art                     ELSE art                     END,
+            imdb_id                 = CASE WHEN locked THEN imdb_id                 WHEN ? AND excluded.imdb_id<>''                 THEN excluded.imdb_id                 WHEN imdb_id=''                 THEN excluded.imdb_id                 ELSE imdb_id                 END,
+            tvdb_id                 = CASE WHEN locked THEN tvdb_id                 WHEN ? AND excluded.tvdb_id<>''                 THEN excluded.tvdb_id                 WHEN tvdb_id=''                 THEN excluded.tvdb_id                 ELSE tvdb_id                 END,
+            tmdb_id                 = CASE WHEN locked THEN tmdb_id                 WHEN ? AND excluded.tmdb_id<>''                 THEN excluded.tmdb_id                 WHEN tmdb_id=''                 THEN excluded.tmdb_id                 ELSE tmdb_id                 END,
+            originally_available_at = CASE WHEN locked THEN originally_available_at WHEN ? AND excluded.originally_available_at<>'' THEN excluded.originally_available_at WHEN originally_available_at='' THEN excluded.originally_available_at ELSE originally_available_at END,
+            year                    = CASE WHEN locked THEN year                    WHEN ? AND excluded.year IS NOT NULL            THEN excluded.year                    WHEN year IS NULL               THEN excluded.year                    ELSE year                    END,
+            audience_rating         = CASE WHEN locked THEN audience_rating         WHEN ? AND excluded.audience_rating IS NOT NULL THEN excluded.audience_rating         WHEN audience_rating IS NULL    THEN excluded.audience_rating         ELSE audience_rating         END,
+            labels                  = CASE WHEN locked THEN labels                  WHEN ? AND excluded.labels<>'' AND excluded.labels<>'[]'         THEN excluded.labels                  WHEN labels='' OR labels='[]'   THEN excluded.labels                  ELSE labels                  END,
+            network                 = CASE WHEN locked THEN network                 WHEN ? AND excluded.network<>''                 THEN excluded.network                 WHEN network=''                 THEN excluded.network                 ELSE network                 END,
+            actors                  = CASE WHEN locked THEN actors                  WHEN ? AND excluded.actors<>'' AND excluded.actors<>'[]'         THEN excluded.actors                  WHEN actors='' OR actors='[]'   THEN excluded.actors                  ELSE actors                  END,
+            countries               = CASE WHEN locked THEN countries               WHEN ? AND excluded.countries<>'' AND excluded.countries<>'[]'   THEN excluded.countries               WHEN countries='' OR countries='[]' THEN excluded.countries           ELSE countries               END,
+            collections             = CASE WHEN locked THEN collections             WHEN ? AND excluded.collections<>'' AND excluded.collections<>'[]' THEN excluded.collections           WHEN collections='' OR collections='[]' THEN excluded.collections     ELSE collections             END,
+            folder_path             = CASE WHEN locked THEN folder_path             WHEN ? AND excluded.folder_path<>''             THEN excluded.folder_path             WHEN folder_path=''             THEN excluded.folder_path             ELSE folder_path             END,
+            added_at                = CASE WHEN locked THEN added_at                WHEN ? AND excluded.added_at IS NOT NULL        THEN excluded.added_at                WHEN added_at IS NULL           THEN excluded.added_at                ELSE added_at                END,
+            added_at_source         = CASE WHEN locked THEN added_at_source         WHEN ? AND excluded.added_at IS NOT NULL        THEN excluded.added_at_source         WHEN added_at_source=''         THEN excluded.added_at_source         ELSE added_at_source         END,
+            primary_source          = CASE WHEN locked THEN primary_source          WHEN ?                                                                              THEN excluded.primary_source                                                                                  ELSE primary_source          END
         WHERE NOT locked AND (
             title                   != excluded.title                   OR
             content_rating          != excluded.content_rating          OR
@@ -763,7 +817,9 @@ void SyncManager::syncShows(IMediaSource& src,
             countries               != excluded.countries               OR
             collections             != excluded.collections             OR
             folder_path             != excluded.folder_path             OR
-            excluded.added_at IS NOT NULL
+            COALESCE(added_at,       -1) != COALESCE(excluded.added_at,       -1) OR
+            added_at_source         != excluded.added_at_source         OR
+            primary_source          != excluded.primary_source
         )
     )");
     SQLite::Statement s_show_mapping(sync_db_, R"(
@@ -787,7 +843,12 @@ void SyncManager::syncShows(IMediaSource& src,
             SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
             for (size_t i = batch_start; i < batch_end; ++i) {
                 const auto& show = shows[i];
-                if (!cross_ref_shows[i]) {
+                {
+                    const auto owner_it = show_primary_source.find(show.show_id);
+                    const std::string current_owner = owner_it != show_primary_source.end() ? owner_it->second : "";
+                    const bool confirmed = show_match_confirmed.count(show.show_id) != 0;
+                    const int wins = incomingWins(current_owner, confirmed) ? 1 : 0;
+
                     s_upsert_show.reset();
                     s_upsert_show.bind(1,  show.show_id);
                     s_upsert_show.bind(2,  show.title);
@@ -815,10 +876,8 @@ void SyncManager::syncShows(IMediaSource& src,
                     if (show.added_at.has_value()) s_upsert_show.bind(22, show.added_at.value());
                     else                            s_upsert_show.bind(22);
                     s_upsert_show.bind(23, show.added_at_source);
-                    s_upsert_show.bind(24, library_id);
-                    s_upsert_show.bind(25, library_id);
-                    s_upsert_show.bind(26, library_id);
-                    s_upsert_show.bind(27, library_id);
+                    s_upsert_show.bind(24, source_id); // primary_source for a brand-new row
+                    for (int p = 25; p <= 47; ++p) s_upsert_show.bind(p, wins);
                     s_upsert_show.exec();
                 }
                 s_show_mapping.reset();
@@ -1155,6 +1214,33 @@ void SyncManager::syncMovies(IMediaSource& src,
         }
     }
 
+    // primary_source + match_confirmed + source priority — see syncShows()'s
+    // identical setup for the full reasoning; incomingWins() drives
+    // s_upsert_movie's priority-wins/lower-priority-backfills merge below.
+    std::unordered_map<std::string, std::string> movie_primary_source;
+    std::unordered_set<std::string> movie_match_confirmed;
+    {
+        SQLite::Statement q(sync_db_, "SELECT movie_id, primary_source, match_confirmed FROM movie");
+        while (q.executeStep()) {
+            movie_primary_source[q.getColumn(0).getString()] = q.getColumn(1).getString();
+            if (q.getColumn(2).getInt() != 0) movie_match_confirmed.insert(q.getColumn(0).getString());
+        }
+    }
+    std::unordered_map<std::string, int> source_priority_by_id;
+    {
+        SQLite::Statement q(sync_db_, "SELECT source_id, sync_priority FROM media_source");
+        while (q.executeStep())
+            source_priority_by_id[q.getColumn(0).getString()] = q.getColumn(1).getInt();
+    }
+    auto priorityOf = [&](const std::string& sid) {
+        auto it = source_priority_by_id.find(sid);
+        return it != source_priority_by_id.end() ? it->second : 999999;
+    };
+    auto incomingWins = [&](const std::string& current_owner, bool match_confirmed) {
+        if (match_confirmed && source_id != current_owner) return false;
+        return priorityOf(source_id) <= priorityOf(current_owner);
+    };
+
     // Folder-path (parentDir of file_path) + year-bucket snapshots for the
     // tiered dedup below — see syncShows()'s identical structure for the
     // full reasoning. Tried in addition to, and after, the exact full-path
@@ -1352,55 +1438,48 @@ void SyncManager::syncMovies(IMediaSource& src,
     // ── Batch write (no DB reads) ─────────────────────────────────────────────
     const auto t_write = std::chrono::steady_clock::now();
 
-    // added_at/added_at_source: unlike every other field here (which always
-    // takes whichever source synced most recently), "date added" should
-    // reflect the highest-*priority* source per library_source_priority —
-    // otherwise the value would just bounce to whatever source happened to
-    // sync last. An empty/unranked source (added_at_source = '' or no
-    // matching priority row) sorts as lowest priority (COALESCE .. 999999),
-    // so a genuinely-ranked source can always claim an unset/unranked value,
-    // but two unranked sources just keep whichever wrote first.
+    // Every field follows the same priority-wins/lower-priority-backfills
+    // rule now (generalizing what used to be an added_at-only special case,
+    // and separately, writer/resolution_label's own non-priority-aware
+    // "never let a blank clobber a set value" carve-out — both folded into
+    // one consistent policy): the incoming source overwrites unconditionally
+    // when it's the same-or-higher priority than the item's current owner
+    // (primary_source) — and claims ownership — otherwise it only backfills
+    // fields the current owner left empty. incomingWins() above is computed
+    // once per item in C++ (batch-loaded primary_source + sync_priority, no
+    // per-row subqueries) and passed in as a single 0/1 bound once per field.
     SQLite::Statement s_upsert_movie(sync_db_, R"(
         INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
                            overview, tagline, studio, director, writer, genres, thumb, art,
                            imdb_id, tmdb_id, audience_rating,
                            labels, actors, countries, collections,
-                           added_at, added_at_source, resolution_label)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           added_at, added_at_source, resolution_label, primary_source)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(movie_id) DO UPDATE SET
-            title           = CASE WHEN locked THEN title           ELSE excluded.title           END,
-            content_rating  = CASE WHEN locked THEN content_rating  ELSE excluded.content_rating  END,
-            file_path       = CASE WHEN locked THEN file_path       ELSE excluded.file_path       END,
-            duration_ms     = CASE WHEN locked THEN duration_ms     ELSE excluded.duration_ms     END,
-            year            = CASE WHEN locked THEN year            ELSE excluded.year            END,
-            overview        = CASE WHEN locked THEN overview        ELSE excluded.overview        END,
-            tagline         = CASE WHEN locked THEN tagline         ELSE excluded.tagline         END,
-            studio          = CASE WHEN locked THEN studio          ELSE excluded.studio          END,
-            director        = CASE WHEN locked THEN director        ELSE excluded.director        END,
-            writer          = CASE WHEN locked THEN writer          ELSE COALESCE(NULLIF(excluded.writer, ''), writer) END,
-            genres          = CASE WHEN locked THEN genres          ELSE excluded.genres          END,
-            thumb           = CASE WHEN locked THEN thumb           ELSE excluded.thumb           END,
-            art             = CASE WHEN locked THEN art             ELSE excluded.art             END,
-            imdb_id         = CASE WHEN locked THEN imdb_id         ELSE excluded.imdb_id         END,
-            tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE excluded.tmdb_id         END,
-            audience_rating = CASE WHEN locked THEN audience_rating ELSE excluded.audience_rating END,
-            labels          = CASE WHEN locked THEN labels          ELSE excluded.labels          END,
-            actors          = CASE WHEN locked THEN actors          ELSE excluded.actors          END,
-            countries       = CASE WHEN locked THEN countries       ELSE excluded.countries       END,
-            collections     = CASE WHEN locked THEN collections     ELSE excluded.collections     END,
-            added_at        = CASE
-                WHEN locked OR excluded.added_at IS NULL THEN added_at
-                WHEN added_at IS NULL THEN excluded.added_at
-                WHEN COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'movie' AND source = excluded.added_at_source), 999999)
-                   < COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'movie' AND source = added_at_source), 999999)
-                THEN excluded.added_at ELSE added_at END,
-            added_at_source = CASE
-                WHEN locked OR excluded.added_at IS NULL THEN added_at_source
-                WHEN added_at IS NULL THEN excluded.added_at_source
-                WHEN COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'movie' AND source = excluded.added_at_source), 999999)
-                   < COALESCE((SELECT priority FROM library_source_priority WHERE library_id = ? AND item_type = 'movie' AND source = added_at_source), 999999)
-                THEN excluded.added_at_source ELSE added_at_source END,
-            resolution_label = COALESCE(NULLIF(excluded.resolution_label, ''), resolution_label)
+            title            = CASE WHEN locked THEN title            WHEN ? AND excluded.title<>''            THEN excluded.title            WHEN title=''                     THEN excluded.title            ELSE title            END,
+            content_rating   = CASE WHEN locked THEN content_rating   WHEN ? AND excluded.content_rating<>''   THEN excluded.content_rating   WHEN content_rating=''            THEN excluded.content_rating   ELSE content_rating   END,
+            file_path        = CASE WHEN locked THEN file_path        WHEN ? AND excluded.file_path<>''        THEN excluded.file_path        WHEN file_path=''                 THEN excluded.file_path        ELSE file_path        END,
+            duration_ms      = CASE WHEN locked THEN duration_ms      WHEN ? AND excluded.duration_ms<>0       THEN excluded.duration_ms      WHEN duration_ms=0                THEN excluded.duration_ms      ELSE duration_ms      END,
+            year             = CASE WHEN locked THEN year             WHEN ? AND excluded.year IS NOT NULL     THEN excluded.year             WHEN year IS NULL                 THEN excluded.year             ELSE year             END,
+            overview         = CASE WHEN locked THEN overview         WHEN ? AND excluded.overview<>''         THEN excluded.overview         WHEN overview=''                  THEN excluded.overview         ELSE overview         END,
+            tagline          = CASE WHEN locked THEN tagline          WHEN ? AND excluded.tagline<>''          THEN excluded.tagline          WHEN tagline=''                   THEN excluded.tagline          ELSE tagline          END,
+            studio           = CASE WHEN locked THEN studio           WHEN ? AND excluded.studio<>''           THEN excluded.studio           WHEN studio=''                    THEN excluded.studio           ELSE studio           END,
+            director         = CASE WHEN locked THEN director         WHEN ? AND excluded.director<>''         THEN excluded.director         WHEN director=''                  THEN excluded.director         ELSE director         END,
+            writer           = CASE WHEN locked THEN writer           WHEN ? AND excluded.writer<>''           THEN excluded.writer           WHEN writer=''                    THEN excluded.writer           ELSE writer           END,
+            genres           = CASE WHEN locked THEN genres           WHEN ? AND excluded.genres<>'' AND excluded.genres<>'[]'         THEN excluded.genres           WHEN genres='' OR genres='[]'     THEN excluded.genres           ELSE genres           END,
+            thumb            = CASE WHEN locked THEN thumb            WHEN ? AND excluded.thumb<>''            THEN excluded.thumb            WHEN thumb=''                     THEN excluded.thumb            ELSE thumb            END,
+            art              = CASE WHEN locked THEN art              WHEN ? AND excluded.art<>''              THEN excluded.art              WHEN art=''                       THEN excluded.art              ELSE art              END,
+            imdb_id          = CASE WHEN locked THEN imdb_id          WHEN ? AND excluded.imdb_id<>''          THEN excluded.imdb_id          WHEN imdb_id=''                   THEN excluded.imdb_id          ELSE imdb_id          END,
+            tmdb_id          = CASE WHEN locked THEN tmdb_id          WHEN ? AND excluded.tmdb_id<>''          THEN excluded.tmdb_id          WHEN tmdb_id=''                   THEN excluded.tmdb_id          ELSE tmdb_id          END,
+            audience_rating  = CASE WHEN locked THEN audience_rating  WHEN ? AND excluded.audience_rating IS NOT NULL THEN excluded.audience_rating WHEN audience_rating IS NULL THEN excluded.audience_rating  ELSE audience_rating  END,
+            labels           = CASE WHEN locked THEN labels           WHEN ? AND excluded.labels<>'' AND excluded.labels<>'[]'         THEN excluded.labels           WHEN labels='' OR labels='[]'     THEN excluded.labels           ELSE labels           END,
+            actors           = CASE WHEN locked THEN actors           WHEN ? AND excluded.actors<>'' AND excluded.actors<>'[]'         THEN excluded.actors           WHEN actors='' OR actors='[]'     THEN excluded.actors           ELSE actors           END,
+            countries        = CASE WHEN locked THEN countries        WHEN ? AND excluded.countries<>'' AND excluded.countries<>'[]'   THEN excluded.countries        WHEN countries='' OR countries='[]' THEN excluded.countries       ELSE countries        END,
+            collections      = CASE WHEN locked THEN collections      WHEN ? AND excluded.collections<>'' AND excluded.collections<>'[]' THEN excluded.collections    WHEN collections='' OR collections='[]' THEN excluded.collections ELSE collections      END,
+            added_at         = CASE WHEN locked THEN added_at         WHEN ? AND excluded.added_at IS NOT NULL THEN excluded.added_at         WHEN added_at IS NULL             THEN excluded.added_at         ELSE added_at         END,
+            added_at_source  = CASE WHEN locked THEN added_at_source  WHEN ? AND excluded.added_at IS NOT NULL THEN excluded.added_at_source  WHEN added_at_source=''           THEN excluded.added_at_source  ELSE added_at_source  END,
+            resolution_label = CASE WHEN locked THEN resolution_label WHEN ? AND excluded.resolution_label<>'' THEN excluded.resolution_label WHEN resolution_label=''          THEN excluded.resolution_label ELSE resolution_label END,
+            primary_source   = CASE WHEN locked THEN primary_source   WHEN ?                                   THEN excluded.primary_source                                                                     ELSE primary_source   END
         WHERE NOT locked AND (
             title           != excluded.title           OR
             content_rating  != excluded.content_rating  OR
@@ -1410,7 +1489,7 @@ void SyncManager::syncMovies(IMediaSource& src,
             tagline         != excluded.tagline         OR
             studio          != excluded.studio          OR
             director        != excluded.director        OR
-            (excluded.writer != '' AND writer != excluded.writer) OR
+            writer          != excluded.writer          OR
             genres          != excluded.genres          OR
             thumb           != excluded.thumb           OR
             art             != excluded.art             OR
@@ -1422,8 +1501,10 @@ void SyncManager::syncMovies(IMediaSource& src,
             actors          != excluded.actors          OR
             countries       != excluded.countries       OR
             collections     != excluded.collections     OR
-            excluded.added_at IS NOT NULL              OR
-            (excluded.resolution_label != '' AND resolution_label != excluded.resolution_label)
+            COALESCE(added_at,       -1) != COALESCE(excluded.added_at,       -1) OR
+            added_at_source != excluded.added_at_source OR
+            resolution_label != excluded.resolution_label OR
+            primary_source  != excluded.primary_source
         )
     )");
     SQLite::Statement s_movie_mapping(sync_db_, R"(
@@ -1468,7 +1549,12 @@ void SyncManager::syncMovies(IMediaSource& src,
                 const auto& movie = movies[i];
                 const auto& res   = resolved[i];
 
-                if (!res.is_cross_ref) {
+                {
+                    const auto owner_it = movie_primary_source.find(movie.movie_id);
+                    const std::string current_owner = owner_it != movie_primary_source.end() ? owner_it->second : "";
+                    const bool confirmed = movie_match_confirmed.count(movie.movie_id) != 0;
+                    const int wins = incomingWins(current_owner, confirmed) ? 1 : 0;
+
                     s_upsert_movie.reset();
                     s_upsert_movie.bind(1,  movie.movie_id);
                     s_upsert_movie.bind(2,  movie.title);
@@ -1497,10 +1583,8 @@ void SyncManager::syncMovies(IMediaSource& src,
                     else                             s_upsert_movie.bind(22);
                     s_upsert_movie.bind(23, movie.added_at_source);
                     s_upsert_movie.bind(24, movie.resolution_label);
-                    s_upsert_movie.bind(25, library_id);
-                    s_upsert_movie.bind(26, library_id);
-                    s_upsert_movie.bind(27, library_id);
-                    s_upsert_movie.bind(28, library_id);
+                    s_upsert_movie.bind(25, source_id); // primary_source for a brand-new row
+                    for (int p = 26; p <= 49; ++p) s_upsert_movie.bind(p, wins);
                     s_upsert_movie.exec();
                 }
 
@@ -1957,6 +2041,10 @@ void SyncManager::syncItemChapters(IMediaSource& src,
     }
 }
 
+// Probes only items with no existing 'file'-sourced chapter row — i.e. items
+// this pass hasn't chaptered before, not a full re-probe of the source every
+// sync. Revisit this gating once our own chapter-detection algorithm (see
+// ChapterDetector.h) replaces raw ffprobe markers as the primary source.
 void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
     {
         SQLite::Statement q(sync_db_,
@@ -1984,6 +2072,10 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
             JOIN episode e  ON e.episode_id = sm.kairos_id
             JOIN show    sh ON sh.show_id   = e.show_id
             WHERE sm.item_type='episode' AND sm.source_id=?
+              AND NOT EXISTS (
+                  SELECT 1 FROM chapter c
+                  WHERE c.media_type='episode' AND c.media_id=sm.kairos_id AND c.source='file'
+              )
             ORDER BY e.show_id
         )");
         q.bind(1, source_id);
@@ -2008,6 +2100,10 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
             FROM source_mapping sm
             JOIN movie m ON m.movie_id = sm.kairos_id
             WHERE sm.item_type='movie' AND sm.source_id=?
+              AND NOT EXISTS (
+                  SELECT 1 FROM chapter c
+                  WHERE c.media_type='movie' AND c.media_id=sm.kairos_id AND c.source='file'
+              )
         )");
         q.bind(1, source_id);
         while (q.executeStep()) {

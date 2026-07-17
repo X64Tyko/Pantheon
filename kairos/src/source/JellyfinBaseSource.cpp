@@ -7,6 +7,7 @@
 #include <ctime>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <openssl/evp.h>
 #include <unordered_map>
 
 #include "log/DebugLog.h"
@@ -109,6 +110,19 @@ std::string personNames(const json& people, const std::string& role) {
     return out.dump();
 }
 
+// Jellyfin's image-upload endpoint (pushMetadata below) takes raw image
+// bytes base64-encoded in the request body, unlike every other write in this
+// file which POSTs plain JSON.
+std::string base64Encode(const std::string& in) {
+    std::string out;
+    out.resize(4 * ((in.size() + 2) / 3) + 1);
+    int len = EVP_EncodeBlock(reinterpret_cast<unsigned char*>(out.data()),
+                               reinterpret_cast<const unsigned char*>(in.data()),
+                               static_cast<int>(in.size()));
+    out.resize(static_cast<size_t>(len));
+    return out;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -202,7 +216,7 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
                     show.originally_available_at = isoDate(item["PremiereDate"].get<std::string>());
                 if (item.contains("DateCreated") && !item["DateCreated"].is_null()) {
                     int64_t created = parseIsoToEpoch(item["DateCreated"].get<std::string>());
-                    if (created > 0) { show.added_at = created; show.added_at_source = sourceType(); }
+                    if (created > 0) { show.added_at = created; show.added_at_source = source_id_; }
                 }
 
                 if (item.contains("Genres"))
@@ -317,7 +331,7 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
                     movie.countries = jsonStringArray(item["ProductionLocations"]);
                 if (item.contains("DateCreated") && !item["DateCreated"].is_null()) {
                     int64_t created = parseIsoToEpoch(item["DateCreated"].get<std::string>());
-                    if (created > 0) { movie.added_at = created; movie.added_at_source = sourceType(); }
+                    if (created > 0) { movie.added_at = created; movie.added_at_source = source_id_; }
                 }
 
                 const auto& pids = item.value("ProviderIds", json::object());
@@ -667,50 +681,82 @@ std::vector<ExternalWatchState> JellyfinBaseSource::fetchWatchState(const std::s
 // Jellyfin's update endpoint (POST /Items/{itemId}) takes a full BaseItemDto,
 // unlike Plex's per-field query-string PATCH (PlexSource::pushMetadata) — so
 // this fetches the existing item, merges in only the changed fields, and
-// posts the whole thing back. Scalar text fields only for v1, mirroring
-// Plex's own deferral of array fields (genres/actors/countries/collections):
-// Jellyfin's merge semantics for those need live verification before it's
-// safe to guess at, same reasoning as Plex's multi-value tag convention.
+// posts the whole thing back. Array fields (genres/actors/countries/
+// collections/director) are deliberately NOT sent, mirroring Plex's own
+// deferral: Jellyfin's People/tag merge semantics need live verification
+// before it's safe to guess at, same reasoning as Plex's multi-value tag
+// convention.
 bool JellyfinBaseSource::pushMetadata(const std::string& external_id,
                                        const std::string& /*external_lib_id*/,
-                                       const std::string& /*item_type*/,
+                                       const std::string& item_type,
                                        const WritebackFields& fields) {
+    bool ok = true;
+
     auto getRes = get("/Users/" + user_id_ + "/Items/" + external_id);
     if (!getRes || getRes->status != 200) {
         std::cerr << "[" << sourceType() << ":" << source_id_
                   << "] pushMetadata: couldn't fetch existing item (id=" << external_id << ")\n";
-        return false;
+        ok = false;
+    } else {
+        json item;
+        bool parsed = true;
+        try {
+            item = json::parse(getRes->body);
+        } catch (const json::exception& e) {
+            std::cerr << "[" << sourceType() << ":" << source_id_
+                      << "] pushMetadata: parse error (id=" << external_id << "): " << e.what() << '\n';
+            parsed = false;
+        }
+
+        if (!parsed) {
+            ok = false;
+        } else {
+            if (!fields.title.empty())          item["Name"]           = fields.title;
+            if (!fields.overview.empty())       item["Overview"]       = fields.overview;
+            if (!fields.content_rating.empty()) item["OfficialRating"] = fields.content_rating;
+            if (!fields.tagline.empty())        item["Taglines"]       = json::array({fields.tagline});
+            // Jellyfin has no separate "network" concept for shows — Studios
+            // is the same field the read side maps a show's network from
+            // (see fetchShows above) — so a show prefers the canonical
+            // network value over studio when both are set.
+            const std::string& studio_value =
+                (item_type == "show" && !fields.network.empty()) ? fields.network : fields.studio;
+            if (!studio_value.empty())        item["Studios"]      = json::array({json{{"Name", studio_value}}});
+            if (!fields.release_date.empty()) item["PremiereDate"] = fields.release_date + "T00:00:00.0000000Z";
+
+            auto res = client_.Post(("/Items/" + external_id).c_str(), item.dump(), "application/json");
+            if (!res) {
+                std::cerr << "[" << sourceType() << ":" << source_id_
+                          << "] pushMetadata failed (id=" << external_id
+                          << "): " << httplib::to_string(res.error()) << '\n';
+                ok = false;
+            } else if (res->status != 200 && res->status != 204) {
+                std::cerr << "[" << sourceType() << ":" << source_id_
+                          << "] pushMetadata HTTP " << res->status << " (id=" << external_id << ")\n";
+                ok = false;
+            }
+        }
     }
 
-    json item;
-    try {
-        item = json::parse(getRes->body);
-    } catch (const json::exception& e) {
-        std::cerr << "[" << sourceType() << ":" << source_id_
-                  << "] pushMetadata: parse error (id=" << external_id << "): " << e.what() << '\n';
-        return false;
-    }
+    // Poster/backdrop upload — Jellyfin's image endpoint takes the raw image
+    // bytes base64-encoded in the request body with Content-Type set to the
+    // image's real mime type (matches Jellyfin's own web client upload
+    // behavior; unlike the array-field merge above, this wire format is
+    // well-documented, not a guess). Attempted independently of the text
+    // update above, since it's a separate endpoint with no dependency on it.
+    auto uploadImage = [&](const char* image_type, const WritebackImage& img) {
+        auto img_res = client_.Post(("/Items/" + external_id + "/Images/" + image_type).c_str(),
+                                     base64Encode(img.bytes), img.content_type);
+        if (!img_res || (img_res->status != 200 && img_res->status != 204)) {
+            std::cerr << "[" << sourceType() << ":" << source_id_
+                      << "] pushMetadata (" << image_type << ") failed (id=" << external_id << ")\n";
+            ok = false;
+        }
+    };
+    if (fields.thumb) uploadImage("Primary",  *fields.thumb);
+    if (fields.art)   uploadImage("Backdrop", *fields.art);
 
-    if (!fields.title.empty())          item["Name"]          = fields.title;
-    if (!fields.overview.empty())       item["Overview"]      = fields.overview;
-    if (!fields.content_rating.empty()) item["OfficialRating"] = fields.content_rating;
-    if (!fields.tagline.empty())        item["Taglines"]      = json::array({fields.tagline});
-    if (!fields.studio.empty())         item["Studios"]       = json::array({json{{"Name", fields.studio}}});
-    if (!fields.release_date.empty())   item["PremiereDate"]  = fields.release_date + "T00:00:00.0000000Z";
-
-    auto res = client_.Post(("/Items/" + external_id).c_str(), item.dump(), "application/json");
-    if (!res) {
-        std::cerr << "[" << sourceType() << ":" << source_id_
-                  << "] pushMetadata failed (id=" << external_id
-                  << "): " << httplib::to_string(res.error()) << '\n';
-        return false;
-    }
-    if (res->status != 200 && res->status != 204) {
-        std::cerr << "[" << sourceType() << ":" << source_id_
-                  << "] pushMetadata HTTP " << res->status << " (id=" << external_id << ")\n";
-        return false;
-    }
-    return true;
+    return ok;
 }
 
 // ---------------------------------------------------------------------------

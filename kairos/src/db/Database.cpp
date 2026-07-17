@@ -1823,6 +1823,24 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_lib_source_priority ON library_source_priority(library_id, item_type);
 )SQL" }
 
+// ── v80: source priority now actually does something — superseded the v79
+//         per-library/per-item-type library_source_priority table (which only
+//         ever gated added_at, was never surfaced anywhere editable, and made
+//         "priority" mean something different per library) with the already-
+//         existing but functionally dead media_source.sync_priority (v77 —
+//         collected in the add-source form, never read server-side, never
+//         shown again after creation). One priority per source now governs
+//         both sync order (SyncManager::loadSources) and, via the new
+//         primary_source column, which source's data wins on every field —
+//         not just added_at — when the same show/movie is matched across
+//         multiple sources, with lower-priority sources backfilling whatever
+//         the current owner left empty instead of being locked out entirely.
+,{ 80, R"SQL(
+    DROP TABLE IF EXISTS library_source_priority;
+    ALTER TABLE show  ADD COLUMN primary_source TEXT NOT NULL DEFAULT '';
+    ALTER TABLE movie ADD COLUMN primary_source TEXT NOT NULL DEFAULT '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

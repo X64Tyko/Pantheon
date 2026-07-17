@@ -125,6 +125,14 @@ export class SourceStore {
     })
   }
 
+  async setSyncPriority(sourceId: string, priority: number) {
+    await api.setSourceSyncPriority(sourceId, priority)
+    runInAction(() => {
+      const src = this.sources.find(s => s.source_id === sourceId)
+      if (src) src.sync_priority = priority
+    })
+  }
+
   async triggerSync(sourceId: string) {
     this.syncing = true
     try {

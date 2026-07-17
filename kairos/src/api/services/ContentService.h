@@ -1,6 +1,8 @@
 #pragma once
 #include "../IKairosService.h"
+#include "../../model/WritebackFields.h"
 #include <httplib.h>
+#include <optional>
 #include <string>
 
 class ConfStore;
@@ -22,4 +24,13 @@ private:
 
 	void proxyImage(const httplib::Request& req, const std::string& imgPath,
 	                const std::string& sourceId, httplib::Response& res);
+
+	// Resolves imgPath (CDN URL / source-relative path / "local:" sentinel —
+	// same three forms proxyImage() serves) into raw bytes for writeback
+	// upload. Unlike proxyImage this is a synchronous, uncached fetch — it's
+	// only called from an admin-triggered writeback action, not hot-path
+	// image traffic, so the on-disk image-cache machinery would be
+	// pointless overhead here.
+	std::optional<WritebackImage> fetchImageBytes(const std::string& imgPath,
+	                                               const std::string& sourceId);
 };
