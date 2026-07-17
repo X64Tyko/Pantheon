@@ -966,7 +966,7 @@ export interface MediaHeroItem {
 
 // ── Scraper infrastructure ────────────────────────────────────────────────────
 
-export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist'
+export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist' | 'wikidata'
 
 export interface ScraperConfig {
   source:          ScraperSource

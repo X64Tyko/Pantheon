@@ -13,6 +13,7 @@ class TvdbScraper;
 class TvmazeScraper;
 class TraktScraper;
 class AnilistScraper;
+class WikidataScraper;
 
 struct ScraperCandidate {
     std::string candidate_id;
@@ -334,6 +335,7 @@ private:
     std::unique_ptr<TvmazeScraper> tvmaze_;
     std::unique_ptr<TraktScraper> trakt_;
     std::unique_ptr<AnilistScraper> anilist_;
+    std::unique_ptr<WikidataScraper> wikidata_;
     std::atomic<bool>            matching_{false};
     std::atomic<bool>            refreshing_all_{false};
 };

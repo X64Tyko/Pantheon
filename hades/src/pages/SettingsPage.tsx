@@ -386,7 +386,7 @@ const applyBuffer = () => {
     }
   }
 
-  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist', field: string, value: string | boolean | number) => {
+  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist' | 'wikidata', field: string, value: string | boolean | number) => {
     if (!scraperSettings) return
     setScraperSettings(prev => prev ? {
       ...prev,
@@ -434,7 +434,8 @@ const applyBuffer = () => {
   const anidb  = scraperSettings?.configs.find(c => c.source === 'anidb')
   const tvmaze = scraperSettings?.configs.find(c => c.source === 'tvmaze')
   const trakt   = scraperSettings?.configs.find(c => c.source === 'trakt')
-  const anilist = scraperSettings?.configs.find(c => c.source === 'anilist')
+  const anilist  = scraperSettings?.configs.find(c => c.source === 'anilist')
+  const wikidata = scraperSettings?.configs.find(c => c.source === 'wikidata')
 
   return (
     <div style={{ maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -744,6 +745,25 @@ const applyBuffer = () => {
                 style={{ ...inputStyle, width: 80 }}
                 value={anilist?.language_weight ?? 0.1}
                 onChange={e => updateScraperConfig('anilist', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="Wikidata">
+            <SettingRow label="Enabled" hint="Broadest coverage of any source here (Wikidata's structured data + a Wikipedia summary for overview text) — no API key required. No per-episode data and thinner fields than dedicated media databases, so it's best kept as a low-priority fallback for obscure, regional, or web-only titles the other sources don't have.">
+              <Toggle
+                id="wikidata_enabled"
+                checked={wikidata?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('wikidata', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                style={{ ...inputStyle, width: 80 }}
+                value={wikidata?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('wikidata', 'language_weight', parseFloat(e.target.value))}
               />
             </SettingRow>
           </Section>

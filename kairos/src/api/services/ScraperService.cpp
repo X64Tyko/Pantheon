@@ -43,6 +43,7 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
             if (c.source == "tvmaze") cj["note"] = "Free public API — no API key required";
             if (c.source == "trakt")  cj["note"] = "api_key is your Trakt app's Client ID (register at trakt.tv/oauth/applications)";
             if (c.source == "anilist") cj["note"] = "Free public API — no API key required. Anime/manga only — add \"anilist\" to a library's scraper priority order (Sources) to enable it there; no separate checkbox.";
+            if (c.source == "wikidata") cj["note"] = "Free public API — no API key required. Broadest coverage of any source here (Wikidata + Wikipedia), but no per-episode data and thinner fields than dedicated media databases — best as a low-priority fallback for obscure/regional titles.";
             out["configs"].push_back(cj);
         }
         ok(res, out);
