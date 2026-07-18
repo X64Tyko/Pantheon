@@ -26,8 +26,15 @@
   --hds-match-grey:   oklch(0.4 0.02 285);
 
   /* ── Glass surface ───────────────────────────────────────────────────────── */
-  --hds-glass:        oklch(0.14 0.02 285 / 0.82);
-  --hds-glass-border: oklch(0.35 0.04 285 / 0.5);
+  /* rgba, not oklch alpha-channel — oklch(... / alpha) is invalid (the whole
+     declaration gets dropped, not just a wrong color) on TV/Cast browsers
+     without CSS Color-5 support; confirmed on real hardware via /tv's
+     profile-picker avatars and filter overlay rendering with no fill at
+     all. Plain (non-alpha) oklch() is unaffected and stays as-is throughout
+     this file — this token layer is the only place alpha-channel oklch was
+     used, so fixing it here covers every consumer at once. */
+  --hds-glass:        rgba(20, 19, 24, 0.82);
+  --hds-glass-border: rgba(63, 60, 71, 0.5);
 
   /* ── Extended tokens (spacing/radius/shadow/typography) ──────────────────────
      Added as part of the inline-style extraction pass — hades/scripts/
@@ -39,14 +46,14 @@
      .module.css, built from these tokens rather than decomposed into more
      of them. */
   --hds-violet-deep: oklch(0.55 0.14 292); /* darker/richer variant of --hds-violet, used for glows/overlays — matches the value .hds-season-btn already used inline before this pass */
-  --hds-violet-deep-wash: oklch(0.55 0.14 292 / 0.2); /* active-state background wash, e.g. filter toggle */
-  --hds-scrim:        oklch(0 0 0 / 0.6);  /* opaque-black overlay for badges/text-legibility scrims on top of images */
-  --hds-scrim-light:  oklch(0 0 0 / 0.35); /* lighter scrim, e.g. hover play-icon overlay */
-  --hds-scrim-heavy:  oklch(0 0 0 / 0.65); /* full-screen overlay backdrop, e.g. filter panel */
+  --hds-violet-deep-wash: rgba(124, 77, 196, 0.2); /* active-state background wash, e.g. filter toggle — rgba, see Glass surface comment above */
+  --hds-scrim:        rgba(0, 0, 0, 0.6);  /* opaque-black overlay for badges/text-legibility scrims on top of images */
+  --hds-scrim-light:  rgba(0, 0, 0, 0.35); /* lighter scrim, e.g. hover play-icon overlay */
+  --hds-scrim-heavy:  rgba(0, 0, 0, 0.65); /* full-screen overlay backdrop, e.g. filter panel */
   --hds-poster-bg-1:   oklch(0.18 0.03 287); /* poster/thumbnail placeholder gradient, missing-art tiles */
   --hds-poster-bg-2:   oklch(0.13 0.02 285);
   --hds-txt-on-gold:   oklch(0.2 0.04 70);   /* text color used on top of gold-filled controls (active chips) */
-  --hds-gold-glow:     oklch(0.83 0.13 84 / 0.3); /* gold drop-shadow glow on active gold-filled controls */
+  --hds-gold-glow:     rgba(224, 184, 78, 0.3); /* gold drop-shadow glow on active gold-filled controls — rgba, see Glass surface comment above */
   --hds-txt-hero:      #fff; /* text painted directly over a hero backdrop image — deliberately pure white, distinct from --hds-txt's off-white */
   --hds-backdrop-fallback-1: oklch(0.12 0.04 292); /* Detail hero backdrop gradient when there's no backdrop image */
   --hds-backdrop-fallback-2: oklch(0.18 0.06 270);
@@ -91,7 +98,7 @@
   --hds-font-size-tv-h2: 20px; /* panel/overlay titles, e.g. "Filters" */
   --hds-font-size-tv-label: 12px; /* uppercase section labels, e.g. filter group headers */
   --hds-font-size-tv-input: 14px; /* text-input fields */
-  --hds-font-size-tv-hero-title: 40px; /* Detail screen's large hero title */
+  --hds-font-size-tv-hero-title: 30px; /* Detail screen's large hero title */
   --hds-font-size-tv-body: 15px; /* body copy, e.g. overview paragraphs and meta rows */
 
   --hds-control-height: 38px; /* standard height for compact TV controls: back button, search field, filter toggle */
@@ -99,11 +106,11 @@
   /* ── channel/ module additions (Task #10 batch) ─────────────────────────── */
   --hds-radius-btn:   9px;  /* channel editor gold/ghost/danger buttons */
   --hds-radius-input: 8px;  /* form inputs — same value as --hds-radius-tile, distinct semantic name (forms vs. tiles) */
-  --hds-danger-border: oklch(0.5 0.14 22 / 0.5);  /* danger/delete button border */
+  --hds-danger-border: rgba(181, 71, 51, 0.5);  /* danger/delete button border — rgba, see Glass surface comment above */
   --hds-danger-text:   oklch(0.72 0.16 22);       /* danger/delete button text */
   --hds-success-text:  oklch(0.72 0.18 140);      /* success/already-added confirmations (ArrAddModal) */
   --hds-gold-btn-shadow: 0 4px 14px -4px oklch(0.83 0.13 84 / 0.4); /* gold CTA button drop shadow */
-  --hds-text-shadow-hero: 0 1px 3px oklch(0 0 0 / 0.9), 0 2px 14px oklch(0 0 0 / 0.7); /* hero text over backdrop art — Home hero + MediaDetailHero */
+  --hds-text-shadow-hero: 0 1px 3px rgba(0, 0, 0, 0.9), 0 2px 14px rgba(0, 0, 0, 0.7); /* hero text over backdrop art — Home hero + MediaDetailHero. rgba, see Glass surface comment above */
 
   /* ── pages/ReviewPage.tsx additions (Task #11 batch) ────────────────────── */
   --hds-violet-active-wash: oklch(0.55 0.14 292 / 0.15); /* active tab/filter/mode-switch background — distinct from --hds-violet-deep-wash (0.2), a genuinely different recurring literal in this file */

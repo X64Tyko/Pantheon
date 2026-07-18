@@ -115,7 +115,14 @@
   position: absolute;
   inset: 0;
   z-index: 10;
-  background: var(--hds-scrim-heavy);
+  /* Plain rgba, not the --hds-scrim-heavy oklch-alpha token — on a TV
+     browser without CSS Color-5 alpha-channel oklch support, that
+     declaration is invalid and gets dropped entirely, leaving only the
+     backdrop-filter blur with no darkening tint at all: a bright, blurred
+     poster grid with no contrast for the (light-colored) filter text on
+     top, reported as "white text on white blur background." rgba() has no
+     such dependency. */
+  background: rgba(0, 0, 0, 0.78);
   backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
@@ -151,7 +158,11 @@
   cursor: pointer;
   font-family: var(--hds-font-mono-brand);
   font-size: var(--hds-font-size-tv-meta);
+  padding: var(--hds-space-2) var(--hds-space-4);
+  border-radius: var(--hds-radius-sm);
+  transition: color var(--hds-transition-fast), background var(--hds-transition-fast);
 }
+.closeButton[data-tv-focused="true"] { color: var(--hds-gold); background: var(--hds-bg-3); }
 
 .filterSection {
   display: flex;

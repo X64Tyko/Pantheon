@@ -1,5 +1,5 @@
 import { FocusContext, setFocus, doesFocusableExist } from '@noriginmedia/norigin-spatial-navigation'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { useNavigate } from 'react-router-dom'
 import { libraryStore } from '../stores/LibraryStore'
@@ -200,6 +200,18 @@ const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genre
     autoRestoreFocus: true,
   })
 
+  // isFocusBoundary only stops focus that's already inside this subtree from
+  // leaving it — it does nothing if focus never actually moved in here to
+  // begin with. Opening the overlay was pure React state with no setFocus()
+  // call, so the D-pad kept driving whatever grid tile was focused
+  // underneath (visually hidden but still logically focused) — reported as
+  // "pressing down scrolls the library instead of focusing filter options."
+  // Close needs its own real focusKey to have a first target at all — it was
+  // a plain <button>, entirely outside spatial-nav before this.
+  useLayoutEffect(() => {
+    if (open) setFocus('tv-library-filter-close')
+  }, [open])
+
   if (!open) return null
 
   return (
@@ -208,7 +220,7 @@ const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genre
       <div className={`${styles.filterOverlayInner} scrollbar-dark`}>
         <div className={styles.filterHeaderRow}>
           <h2 className={styles.filterTitle}>Filters</h2>
-          <button onClick={onClose} className={styles.closeButton}>Close (Back)</button>
+          <TvFilterCloseButton onClick={onClose} />
         </div>
 
         {showContentTypeSection && (
@@ -238,6 +250,17 @@ const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genre
     </FocusContext.Provider>
   )
 })
+
+function TvFilterCloseButton({ onClick }: { onClick: () => void }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({
+    focusKey: 'tv-library-filter-close', onEnterPress: onClick,
+  })
+  return (
+    <button ref={ref} data-tv-focused={focused} onClick={onClick} className={styles.closeButton}>
+      Close (Back)
+    </button>
+  )
+}
 
 function GenreChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   const { ref, focused } = useFocusable<object, HTMLButtonElement>({

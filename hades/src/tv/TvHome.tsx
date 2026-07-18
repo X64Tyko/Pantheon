@@ -9,7 +9,7 @@ import { resolvePlayTarget } from '../player/resolvePlayTarget'
 import { useFocusable } from '../nav/useFocusable'
 import { useTravelingFocus } from '../nav/useTravelingFocus'
 import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
-import { TvGuideSection } from './TvGuideSection'
+import { TvGuideSection, TV_GUIDE_SECTION_FOCUS_KEY } from './TvGuideSection'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
 import { useHomeManifest, toClientParams } from './useHomeManifest'
 import type { TvHomeRow } from '../api/types'
@@ -316,7 +316,16 @@ export function TvHome() {
 
         <div className={styles.quickActionRow}>
           <LibraryButton onClick={() => navigate('/tv/library')} />
-          <GuideButton onClick={() => guideRef.current?.scrollIntoView({ behavior: 'smooth' })} />
+          <GuideButton onClick={() => {
+            // scrollIntoView alone only moved the viewport — it never
+            // touched actual spatial-nav focus, so the D-pad kept driving
+            // whatever shelf card was focused before, which reads as
+            // "pressing any direction goes back to the top of the list."
+            // setFocus() on the guide section's own container key resolves
+            // down to a real focusable descendant (see TvGuideSection.tsx).
+            guideRef.current?.scrollIntoView({ behavior: 'smooth' })
+            setFocus(TV_GUIDE_SECTION_FOCUS_KEY)
+          }} />
         </div>
 
       <div className={`${styles.shelvesScroll} scrollbar-dark`}>

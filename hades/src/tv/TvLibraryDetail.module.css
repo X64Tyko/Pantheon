@@ -37,13 +37,19 @@
 .backdropScrimH {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to right, oklch(0 0 0 / 0.8) 0%, oklch(0 0 0 / 0.3) 55%, transparent 100%);
+  /* rgba, not oklch-alpha — see TvLibrary.module.css's .filterOverlay
+     comment: oklch(... / alpha) is invalid (declaration dropped, not just a
+     wrong color) on TV browsers without CSS Color-5 alpha support. */
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.3) 55%, transparent 100%);
 }
 
 .backdropScrimV {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to top, var(--hds-bg) 0%, transparent 50%);
+  /* Fades over more of the (now-shorter) backdrop's height than the old
+     50% stop did, so the transition into the body reads as a smooth fade
+     rather than a hard edge. */
+  background: linear-gradient(to top, var(--hds-bg) 0%, transparent 75%);
 }
 
 .scrollContainer {
@@ -53,11 +59,11 @@
 }
 
 .heroSpacer {
-  /* mirrors TvLibraryDetail.tsx's HERO_HEIGHT_CSS ('max(52vh, 460px)') minus
-     HERO_OVERLAP (60px) — both are fixed module constants, not runtime
+  /* mirrors TvLibraryDetail.tsx's HERO_HEIGHT_CSS ('max(36vh, 320px)') minus
+     HERO_OVERLAP (40px) — both are fixed module constants, not runtime
      state, so this can be a static rule rather than an inline style. If
      either constant ever changes, update both places. */
-  height: calc(max(52vh, 460px) - 60px);
+  height: calc(max(36vh, 320px) - 40px);
 }
 
 .header {
@@ -74,13 +80,13 @@
 }
 
 .poster {
-  width: 220px;
-  height: 330px;
+  width: 170px;
+  height: 255px;
   border-radius: var(--hds-radius-skeleton);
   overflow: hidden;
   flex-shrink: 0;
   background: var(--hds-bg-3);
-  box-shadow: 0 12px 40px oklch(0 0 0 / 0.55);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
 }
 
 .posterImg {

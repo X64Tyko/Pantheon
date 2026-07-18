@@ -22,12 +22,12 @@ import styles from './TvLibraryDetail.module.css'
 // container, starting at its normal document position (overlapping the
 // backdrop's lower edge by HERO_OVERLAP) and translating up with the
 // scroll like anything else until it locks at the top, still overlaid on
-// the backdrop throughout (its zIndex is higher). Sized larger than
-// desktop's own HERO_HEIGHT_CSS (see MediaDetailHero.tsx) — this is a TV,
-// not a phone; matches TV's own historical hero proportions rather than
-// desktop's HomePage (a different screen).
-const HERO_HEIGHT_CSS = 'max(52vh, 460px)'
-const HERO_OVERLAP    = 60
+// the backdrop throughout (its zIndex is higher). Reduced from an earlier
+// max(52vh, 460px)/460px overlap — real-hardware feedback (a TV, not the
+// dev-machine browser this was first tuned in) found that blocked almost
+// all content above the fold with a visibly hard edge where it ended.
+const HERO_HEIGHT_CSS = 'max(36vh, 320px)'
+const HERO_OVERLAP    = 40
 
 export function TvLibraryDetail() {
   const navigate = useNavigate()

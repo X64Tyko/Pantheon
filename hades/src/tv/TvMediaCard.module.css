@@ -9,7 +9,10 @@
 }
 
 .cardActive {
-  box-shadow: 0 0 0 3px var(--hds-violet), 0 8px 32px oklch(0.55 0.14 292 / 0.35);
+  /* rgba approximation of oklch(0.55 0.14 292 / 0.35) — see
+     TvLibrary.module.css's .filterOverlay comment for why plain oklch is
+     kept (works fine) but the alpha-channel form is avoided here. */
+  box-shadow: 0 0 0 3px var(--hds-violet), 0 8px 32px rgba(124, 77, 196, 0.35);
   transform: scale(1.045);
 }
 

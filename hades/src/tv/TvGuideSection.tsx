@@ -1,9 +1,19 @@
 import { useNavigate } from 'react-router-dom'
+import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useGuideSession } from '../guide/useGuideSession'
 import { GuideGrid } from '../guide/GuideGrid'
 import { GuidePreview } from '../guide/GuidePreview'
+import { useFocusable } from '../nav/useFocusable'
 import { useZoneManifest } from './useZoneManifest'
 import styles from './TvGuideSection.module.css'
+
+// Stable key for TvHome's Guide quick-action button to setFocus() into —
+// see that button's own comment for why scrollIntoView() alone wasn't
+// enough. trackChildren lets norigin-spatial-navigation resolve setFocus on
+// this container key down to an actual focusable descendant (the preview's
+// Watch button or the grid's first channel column/program block) instead of
+// requiring the caller to know a specific, data-dependent leaf key.
+export const TV_GUIDE_SECTION_FOCUS_KEY = 'tv-guide-section'
 
 // Same session/preview state machine as the desktop GuidePage (useGuideSession)
 // — GuideGrid/GuidePreview/ChannelColumn are reused as-is rather than forked,
@@ -26,13 +36,18 @@ export function TvGuideSection() {
   // TvLibrary.tsx already makes for library-pills.
   const { hasZone } = useZoneManifest('guide')
 
+  const { ref, focusKey } = useFocusable<object, HTMLDivElement>({
+    focusKey: TV_GUIDE_SECTION_FOCUS_KEY, trackChildren: true, saveLastFocusedChild: true,
+  })
+
   if (channels.length === 0) return null
 
   const watchChannel = (channelId: string) => navigate(`/player/channel/${channelId}`)
 
   return (
-    <div>
+    <div ref={ref}>
       <div className={styles.heading}>Live Guide</div>
+      <FocusContext.Provider value={focusKey}>
       {hasZone('preview-panel') && (
         <GuidePreview channel={focusedChannel} nowProgram={nowProgram} manifestUrl={manifestUrl} onWatch={() => focusedId && watchChannel(focusedId)} />
       )}
@@ -47,6 +62,7 @@ export function TvGuideSection() {
           onWatch={watchChannel}
         />
       )}
+      </FocusContext.Provider>
     </div>
   )
 }

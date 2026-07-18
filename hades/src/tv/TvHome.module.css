@@ -86,7 +86,10 @@
 .heroScrimH {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%);
+  /* rgba, not oklch-alpha — see TvLibrary.module.css's .filterOverlay
+     comment: oklch(... / alpha) is invalid (declaration dropped entirely,
+     not just a wrong color) on TV browsers without CSS Color-5 support. */
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.42) 52%, transparent 100%);
 }
 
 .heroScrimV {
@@ -206,7 +209,7 @@
   border: none;
   cursor: pointer;
   padding: 0;
-  background: oklch(1 0 0 / 0.3);
+  background: rgba(255, 255, 255, 0.3);
   transition: width .2s, background .2s;
 }
 
@@ -291,7 +294,7 @@
   bottom: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(to top, oklch(0 0 0 / 0.85), transparent);
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85), transparent);
   padding: 28px var(--hds-space-3) var(--hds-space-3);
 }
 
@@ -398,7 +401,7 @@
   right: 0;
   bottom: 0;
   height: 4px;
-  background: oklch(0 0 0 / 0.5);
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .cwProgressFill {
