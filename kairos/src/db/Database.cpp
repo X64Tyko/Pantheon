@@ -1903,6 +1903,27 @@ constexpr Migration kMigrations[] = {
         ('guide-preview-panel',   'guide',   'preview-panel', 2, '{"itemAction":"watch-live"}');
 )SQL" }
 
+// ── v82: filter-pills zone's filterFields expanded past just "genre" — real
+//         usage feedback on the native Android client asked for a real
+//         multi-field filter builder ("just like the web version"), and per
+//         this whole manifest design's own founding principle, *which*
+//         fields are filterable is server-owned data a client renders, not
+//         something to hardcode per-platform (see TvManifestService's own
+//         header comment). Limited to fields ContentRepository::
+//         getMetadataValues actually backs with real distinct-value queries
+//         (genre/content_rating/studio/network/actor/director/country/
+//         collection) plus a few numeric/enum fields every client's own
+//         field registry (FIELD_DEFS in hades/src/components/media/
+//         filterFields.ts, mirrored client-side per platform) already knows
+//         how to render without a values fetch (year/resolution/decade/
+//         audience_rating). Excludes library/source/title — those already
+//         have their own dedicated library-pills/search-bar zones.
+,{ 82, R"SQL(
+    UPDATE tv_zone
+    SET config_json = '{"filterFields":["genre","content_rating","studio","network","actor","director","country","collection","year","resolution","decade","audience_rating"]}'
+    WHERE id = 'library-filter-pills';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace
