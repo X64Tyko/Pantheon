@@ -12,7 +12,7 @@ import type {
   Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult,
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
-  NextEpisode, ShowWatchState, ChannelNow,
+  NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection,
   UnmappedSourceUser, SourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
 } from './types'
@@ -329,6 +329,13 @@ export const api = {
                         request<{ ok: boolean; watched: boolean }>('PUT', `/watch-progress/${contentType}/${id}`, b),
   clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
   getShowWatchState:  (showId: string)                                     => request<ShowWatchState | null>('GET', `/shows/${showId}/watch-state`),
+
+  // Server-side resolvePlayTarget.ts (see hades/src/player/resolvePlayTarget.ts) —
+  // one call instead of watch-state + conditionally next-episode/full-episode-list.
+  getResolvedPlayTarget: (showId: string)                                  => request<ResolvedPlayTarget | null>('GET', `/shows/${showId}/resolve-play-target`),
+
+  // Home row composition + Library/Detail/Guide zone layout — see hades/src/tv/useHomeManifest.ts.
+  getTvManifest: ()                                                        => request<TvManifest>('GET', '/tv/manifest'),
 
   // Series continuation. Deliberately not ".../next" — see the Kairos route's
   // own comment (ContentService.cpp): that suffix is exempted from auth for

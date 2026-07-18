@@ -55,4 +55,9 @@ desktop.ini
 # Symlink to a separate, standalone git repo (native Roku channel) — same
 # rationale as pantheon-relay above.
 /pantheon-roku
+
+# ── pantheon-android ───────────────────────────────────────────────────────────
+# Symlink to a separate, standalone git repo (Kindle Fire/Fire TV/Android/
+# Android TV native client) — same rationale as pantheon-relay above.
+/pantheon-android
 /screens/

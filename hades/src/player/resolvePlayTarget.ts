@@ -16,20 +16,18 @@ export interface PlayTarget {
 // Shared by any "Play" affordance that only knows a show/movie id and needs
 // a concrete playable target — either to build a /player/... route (below)
 // or to hand off to a session-based player like Hades' own or a cast device.
+//
+// The actual branch lives server-side now (Kairos's GET /:id/resolve-play-target,
+// PlaybackService.cpp) — this is a thin wrapper, not the algorithm. Kept as its
+// own endpoint/call rather than folded into the movie case so every "Play"
+// affordance still resolves once, up front, to a concrete target before
+// navigating/starting a session — same route-stability/reload/cast-handoff
+// guarantees as before, just one round-trip instead of 2-3.
 export async function resolvePlayTarget(contentType: 'show' | 'movie', id: string): Promise<PlayTarget | null> {
   if (contentType === 'movie') return { kind: 'movie', id, positionMs: 0 }
 
-  const state = await api.getShowWatchState(id).catch(() => null)
-  if (state && !state.completed) return { kind: 'episode', id: state.content_id, positionMs: state.position_ms }
-
-  if (state && state.completed) {
-    const next = await api.getNextEpisode(state.content_id).catch(() => null)
-    if (next) return { kind: 'episode', id: next.episode_id, positionMs: 0 }
-  }
-
-  const episodes = await api.getEpisodes(id)
-  const first = [...episodes].sort((a, b) => a.season - b.season || a.episode - b.episode)[0]
-  return first ? { kind: 'episode', id: first.episode_id, positionMs: 0 } : null
+  const target = await api.getResolvedPlayTarget(id)
+  return target ? { kind: target.kind, id: target.id, positionMs: target.position_ms } : null
 }
 
 export async function resolvePlayPath(contentType: 'show' | 'movie', id: string): Promise<string | null> {

@@ -11,6 +11,8 @@ import { useTravelingFocus } from '../nav/useTravelingFocus'
 import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
 import { TvGuideSection } from './TvGuideSection'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
+import { useHomeManifest, toClientParams } from './useHomeManifest'
+import type { TvHomeRow } from '../api/types'
 import styles from './TvHome.module.css'
 import sharedStyles from '../channel/sharedStyles.module.css'
 
@@ -141,13 +143,29 @@ export function TvHome() {
     handleShelfBlur()
   }
 
+  // Home's manifest — which rows exist, in what order, fed by what query,
+  // with what per-item action on select. See useHomeManifest.ts. Everything
+  // below reacts to this instead of hardcoding shelf definitions, so a
+  // server-side change to e.g. recent-aired's sort/filter, or its removal
+  // entirely, needs zero changes here.
+  const { rows: manifestRows, loading: manifestLoading } = useHomeManifest()
+  const findRow = (id: string) => manifestRows.find(r => r.id === id)
+
   useEffect(() => {
+    if (manifestLoading) return
+
+    const showsRow    = findRow('recent-shows')
+    const moviesRow    = findRow('recent-movies')
+    const releasedRow = findRow('recent-released')
+    const airedRow    = findRow('recent-aired')
+    const cwRow       = findRow('continue-watching')
+
     Promise.all([
-      api.getShows({ limit: 16, sort: 'recently_added', home: true, hideEmpty: true }),
-      api.getMovies({ limit: 16, sort: 'recently_added', home: true, hideEmpty: true }),
-      api.getMovies({ limit: 16, sort: 'recently_released', home: true, hideEmpty: true }).catch(() => ({ items: [] as Movie[], total: 0 })),
-      api.getShows({ limit: 16, sort: 'recently_aired', home: true, hideEmpty: true }).catch(() => ({ items: [] as Show[], total: 0 })),
-      api.getWatchProgress().catch(() => []),
+      showsRow    ? api.getShows(toClientParams(showsRow.dataSource?.params))     : Promise.resolve({ items: [] as Show[], total: 0 }),
+      moviesRow   ? api.getMovies(toClientParams(moviesRow.dataSource?.params))   : Promise.resolve({ items: [] as Movie[], total: 0 }),
+      releasedRow ? api.getMovies(toClientParams(releasedRow.dataSource?.params)).catch(() => ({ items: [] as Movie[], total: 0 })) : Promise.resolve({ items: [] as Movie[], total: 0 }),
+      airedRow    ? api.getShows(toClientParams(airedRow.dataSource?.params)).catch(() => ({ items: [] as Show[], total: 0 })) : Promise.resolve({ items: [] as Show[], total: 0 }),
+      cwRow       ? api.getWatchProgress().catch(() => [] as WatchProgress[]) : Promise.resolve([] as WatchProgress[]),
     ]).then(([sr, mr, rr, ra, cw]) => {
       setRecentShows(sr.items)
       setRecentMovies(mr.items)
@@ -165,7 +183,8 @@ export function TvHome() {
       const first = withArt[0] ?? sr.items[0]
       if (first) { heroIdx.current = 0; setHeroItem(first); loadHeroDetail(first) }
     }).finally(() => setLoading(false))
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manifestLoading])
 
   // Only ever applies once — see the identical guard in TvLibrary.tsx. Falls
   // back to the hero Play button (the same target its own suppressed
@@ -200,6 +219,30 @@ export function TvHome() {
   const goToLibrary = (id: string, type: 'show' | 'movie', focusKey = 'tv-hero-detail') => {
     rememberDetailReturn({ returnTo: TV_HOME_PATH, focusKey })
     navigate(`/tv/library/${type}/${id}`)
+  }
+
+  // The two tile actions a generic (non-continue-watching) shelf's manifest
+  // row can declare — 'play-latest-episode' (Recently Aired only, and only
+  // when this particular show actually has one) or the open-detail default.
+  // Any other itemAction on a plain shelf row is a manifest/client vocabulary
+  // drift, not a state this should silently render around.
+  const resolveShelfItemOnClick = (row: TvHomeRow, item: Show | Movie): () => void => {
+    const id   = isShow(item) ? item.show_id : item.movie_id
+    const type: 'show' | 'movie' = isShow(item) ? 'show' : 'movie'
+    if (row.itemAction === 'play-latest-episode' && isShow(item) && item.latest_episode) {
+      const episodeId = item.latest_episode.episode_id
+      return () => navigate(`/player/episode/${episodeId}`)
+    }
+    return () => goToLibrary(id, type, tvShelfCardFocusKey(row.title ?? row.id, id))
+  }
+
+  // recent-aired's real item list also filters to shows that actually have a
+  // latest_episode — same filter the pre-manifest hardcoded version applied.
+  const rowItems: Record<string, (Show | Movie)[]> = {
+    'recent-shows':    recentShows,
+    'recent-movies':   recentMovies,
+    'recent-released': recentlyReleased,
+    'recent-aired':    recentlyAired.filter(s => s.latest_episode),
   }
 
   return (
@@ -277,71 +320,49 @@ export function TvHome() {
         </div>
 
       <div className={`${styles.shelvesScroll} scrollbar-dark`}>
-        {loading ? (
+        {loading || manifestLoading ? (
           <div className={styles.loadingText}>Loading…</div>
         ) : (
           <>
-            {continueWatching.length > 0 && (
-              <TvContinueWatchingShelf
-                items={continueWatching} onNavigate={navigate}
-                onItemFocus={handleContinueWatchingFocus} onRowBlur={handleContinueWatchingBlur}
-              />
-            )}
-            {recentShows.length > 0 && (
-              <TvShelf
-                title="Recently Added Shows"
-                items={recentShows.map(s => ({
-                  key: s.show_id, id: s.show_id, title: s.title, year: s.year, rating: s.audience_rating,
-                  thumb_url: thumbUrl(s),
-                  onClick: () => goToLibrary(s.show_id, 'show', tvShelfCardFocusKey('Recently Added Shows', s.show_id)),
-                  onFocus: () => handleShelfFocus(s.show_id),
-                }))}
-                onBlur={handleShelfBlur}
-                endTile={{ focusKey: 'tv-shelf-end-shows', onClick: () => navigate('/tv/library') }}
-              />
-            )}
-            {recentMovies.length > 0 && (
-              <TvShelf
-                title="Recently Added Movies"
-                items={recentMovies.map(m => ({
-                  key: m.movie_id, id: m.movie_id, title: m.title, year: m.year, rating: m.audience_rating,
-                  thumb_url: thumbUrl(m),
-                  onClick: () => goToLibrary(m.movie_id, 'movie', tvShelfCardFocusKey('Recently Added Movies', m.movie_id)),
-                  onFocus: () => handleShelfFocus(m.movie_id),
-                }))}
-                onBlur={handleShelfBlur}
-                endTile={{ focusKey: 'tv-shelf-end-movies', onClick: () => navigate('/tv/library') }}
-              />
-            )}
-            {recentlyReleased.length > 0 && (
-              <TvShelf
-                title="Recently Released"
-                items={recentlyReleased.map(m => ({
-                  key: m.movie_id, id: m.movie_id, title: m.title, year: m.year, rating: m.audience_rating,
-                  thumb_url: thumbUrl(m),
-                  onClick: () => goToLibrary(m.movie_id, 'movie', tvShelfCardFocusKey('Recently Released', m.movie_id)),
-                  onFocus: () => handleShelfFocus(m.movie_id),
-                }))}
-                onBlur={handleShelfBlur}
-                endTile={{ focusKey: 'tv-shelf-end-released', onClick: () => navigate('/tv/library') }}
-              />
-            )}
-            {recentlyAired.filter(s => s.latest_episode).length > 0 && (
-              <TvShelf
-                title="Recently Aired"
-                items={recentlyAired.filter(s => s.latest_episode).map(s => ({
-                  key: s.show_id, id: s.show_id, title: s.title, year: s.year, rating: s.audience_rating,
-                  thumb_url: thumbUrl(s), onClick: () => navigate(`/player/episode/${s.latest_episode!.episode_id}`),
-                  onFocus: () => handleShelfFocus(s.show_id),
-                }))}
-                onBlur={handleShelfBlur}
-                endTile={{ focusKey: 'tv-shelf-end-aired', onClick: () => navigate('/tv/library') }}
-              />
-            )}
+            {manifestRows.filter(row => row.type !== 'hero').map(row => {
+              if (row.type === 'guide') {
+                return (
+                  <div key={row.id} ref={guideRef} className={styles.guideWrap}>
+                    <TvGuideSection />
+                  </div>
+                )
+              }
 
-            <div ref={guideRef} className={styles.guideWrap}>
-              <TvGuideSection />
-            </div>
+              if (row.id === 'continue-watching') {
+                return continueWatching.length > 0 ? (
+                  <TvContinueWatchingShelf
+                    key={row.id}
+                    items={continueWatching} onNavigate={navigate}
+                    onItemFocus={handleContinueWatchingFocus} onRowBlur={handleContinueWatchingBlur}
+                  />
+                ) : null
+              }
+
+              const items = rowItems[row.id] ?? []
+              if (items.length === 0) return null
+              const title = row.title ?? row.id
+              return (
+                <TvShelf
+                  key={row.id}
+                  title={title}
+                  items={items.map(item => ({
+                    key: isShow(item) ? item.show_id : item.movie_id,
+                    id: isShow(item) ? item.show_id : item.movie_id,
+                    title: item.title, year: item.year, rating: item.audience_rating,
+                    thumb_url: thumbUrl(item),
+                    onClick: resolveShelfItemOnClick(row, item),
+                    onFocus: () => handleShelfFocus(isShow(item) ? item.show_id : item.movie_id),
+                  }))}
+                  onBlur={handleShelfBlur}
+                  endTile={row.endTile ? { focusKey: `tv-shelf-end-${row.id}`, onClick: () => navigate('/tv/library') } : undefined}
+                />
+              )
+            })}
           </>
         )}
       </div>

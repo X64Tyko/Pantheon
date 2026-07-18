@@ -38,6 +38,7 @@ const TvShell         = lazy(() => import('./tv/TvShell').then(m => ({ default: 
 const TvHome          = lazy(() => import('./tv/TvHome').then(m => ({ default: m.TvHome })))
 const TvLibrary       = lazy(() => import('./tv/TvLibrary').then(m => ({ default: m.TvLibrary })))
 const TvLibraryDetail = lazy(() => import('./tv/TvLibraryDetail').then(m => ({ default: m.TvLibraryDetail })))
+const TvProfileSelect = lazy(() => import('./tv/TvProfileSelect').then(m => ({ default: m.TvProfileSelect })))
 
 const playerFallback = <div className={styles.playerFallback} />
 const tvFallback      = <div className={styles.tvFallback} />
@@ -86,6 +87,10 @@ export default function App() {
             <Route index                    element={<TvHome />} />
             <Route path="library"           element={<TvLibrary />} />
             <Route path="library/:type/:id" element={<TvLibraryDetail />} />
+            {/* Reached via ProtectedRoute's !profileChosen redirect when it
+                fires from inside /tv (e.g. a Cast handoff) — not a normal
+                nav target. See ProtectedRoute.tsx and TvProfileSelect.tsx. */}
+            <Route path="profiles"          element={<TvProfileSelect />} />
           </Route>
 
           <Route element={<Layout />}>

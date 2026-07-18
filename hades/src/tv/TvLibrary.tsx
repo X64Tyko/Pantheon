@@ -10,6 +10,7 @@ import { useFocusable } from '../nav/useFocusable'
 import { useNavBack } from '../nav/back'
 import { TvMediaGrid } from './TvMediaGrid'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
+import { useZoneManifest } from './useZoneManifest'
 import styles from './TvLibrary.module.css'
 
 const TV_LIBRARY_PATH = '/tv/library'
@@ -25,6 +26,19 @@ export const TvLibrary = observer(function TvLibrary() {
   const debouncedQ = useDebounce(rawQ, 300)
   const [genres, setGenres] = useState<string[]>([])
   const [isFilterOpen, setIsFilterOpen] = useState(false)
+  // Which zones this screen actually renders — search-bar/library-pills/
+  // filter-pills/tile-grid, per GET /api/tv/manifest's library.zones. Gates
+  // presence of the secondary chrome (search, content-type toggle, genre
+  // filter); the grid itself always attempts to render regardless of
+  // manifest load state, same resilience the Home shelves already have.
+  const { hasZone, zone } = useZoneManifest('library')
+  // filter-pills declares which fields are filterable (today just
+  // ["genre"]) — this screen only has genre filtering actually wired up, so
+  // the check is "is genre among the declared fields" rather than a fully
+  // generic loop. A real multi-field filter system (LibraryStore currently
+  // only has a dedicated filterGenre, not a generic filter-value map) is
+  // real follow-up scope, not built in this pass.
+  const genreFilterEnabled = (zone('filter-pills')?.filterFields ?? []).includes('genre')
 
   // Set only when this mount is the remote's Back arriving from a grid
   // item's Detail route (TvMediaCard's onClick below) — consumed once so a
@@ -72,8 +86,10 @@ export const TvLibrary = observer(function TvLibrary() {
         <div className={styles.headerRow}>
           <TvBackButton onClick={() => navigate('/tv')} forceFocus={!restoreFocusKey} />
           <h1 className={styles.title}>Library</h1>
-          <TvSearchField value={rawQ} onChange={setRawQ} />
-          <TvFilterToggle active={isFilterOpen} onClick={() => setIsFilterOpen(!isFilterOpen)} />
+          {hasZone('search-bar') && <TvSearchField value={rawQ} onChange={setRawQ} />}
+          {(hasZone('library-pills') || genreFilterEnabled) && (
+            <TvFilterToggle active={isFilterOpen} onClick={() => setIsFilterOpen(!isFilterOpen)} />
+          )}
         </div>
       </div>
 
@@ -82,6 +98,8 @@ export const TvLibrary = observer(function TvLibrary() {
           open={isFilterOpen}
           onClose={() => setIsFilterOpen(false)}
           genres={genres}
+          showContentTypeSection={hasZone('library-pills')}
+          showGenreSection={genreFilterEnabled}
         />
 
         <div className={`${styles.scrollArea} scrollbar-dark`}>
@@ -170,8 +188,9 @@ function TvFilterToggle({ active, onClick }: { active: boolean; onClick: () => v
   )
 }
 
-const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genres }: {
+const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genres, showContentTypeSection, showGenreSection }: {
   open: boolean; onClose: () => void; genres: string[]
+  showContentTypeSection: boolean; showGenreSection: boolean
 }) {
   const store = libraryStore
   const { ref, focusKey } = useFocusable<object, HTMLDivElement>({
@@ -192,24 +211,28 @@ const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genre
           <button onClick={onClose} className={styles.closeButton}>Close (Back)</button>
         </div>
 
-        <div className={styles.filterSection}>
-          <div className={styles.filterSectionLabel}>Content Type</div>
-          <div className={styles.chipRow}>
-            <GenreChip label="All Types" active={store.contentType === 'all'} onClick={() => store.setContentType('all')} />
-            <GenreChip label="Shows"     active={store.contentType === 'show'} onClick={() => store.setContentType('show')} />
-            <GenreChip label="Movies"    active={store.contentType === 'movie'} onClick={() => store.setContentType('movie')} />
+        {showContentTypeSection && (
+          <div className={styles.filterSection}>
+            <div className={styles.filterSectionLabel}>Content Type</div>
+            <div className={styles.chipRow}>
+              <GenreChip label="All Types" active={store.contentType === 'all'} onClick={() => store.setContentType('all')} />
+              <GenreChip label="Shows"     active={store.contentType === 'show'} onClick={() => store.setContentType('show')} />
+              <GenreChip label="Movies"    active={store.contentType === 'movie'} onClick={() => store.setContentType('movie')} />
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className={styles.filterSection}>
-          <div className={styles.filterSectionLabel}>Genres</div>
-          <div className={styles.chipRow}>
-            <GenreChip label="All Genres" active={!store.filterGenre} onClick={() => store.setFilterGenre('')} />
-            {genres.map(g => (
-              <GenreChip key={g} label={g} active={store.filterGenre === g} onClick={() => store.setFilterGenre(g)} />
-            ))}
+        {showGenreSection && (
+          <div className={styles.filterSection}>
+            <div className={styles.filterSectionLabel}>Genres</div>
+            <div className={styles.chipRow}>
+              <GenreChip label="All Genres" active={!store.filterGenre} onClick={() => store.setFilterGenre('')} />
+              {genres.map(g => (
+                <GenreChip key={g} label={g} active={store.filterGenre === g} onClick={() => store.setFilterGenre(g)} />
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
     </FocusContext.Provider>

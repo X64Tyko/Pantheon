@@ -8,6 +8,7 @@ import { useFocusable } from '../nav/useFocusable'
 import { useNavBack } from '../nav/back'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
 import { peekDetailReturnTo, clearPendingDetailReturn } from './tvDetailNav'
+import { useZoneManifest } from './useZoneManifest'
 import styles from './TvLibraryDetail.module.css'
 
 // The backdrop is a genuinely fixed layer — never scrolls. It's
@@ -48,6 +49,15 @@ export function TvLibraryDetail() {
     seasonsWithEpisodes, setFocusedEpisode,
   } = useMediaDetail({ id, content_type: type })
 
+  // Which zones this screen renders — hero-backdrop/meta-block/genre-chips/
+  // play-button/episode-shelves, per GET /api/tv/manifest's detail.zones.
+  // This screen's structure is already fixed/1:1 with that vocabulary (no
+  // genuinely variable composition to drive here, unlike Library's filters)
+  // — presence-gating is what makes it a real manifest consumer rather than
+  // hardcoded, without inventing new behavior. episode-shelves' showOnly is
+  // already naturally respected: seasonsWithEpisodes is empty for movies.
+  const { hasZone } = useZoneManifest('detail')
+
   const { scrollRef, sentinelRef, collapsed } = useScrollCollapse()
   const { ref: headerRef, height: headerHeight } = useElementHeight<HTMLDivElement>()
 
@@ -86,13 +96,15 @@ export function TvLibraryDetail() {
     <div className={styles.screen}>
       {/* Fixed backdrop — never scrolls; shrinks to the locked header's
           measured height once collapsed, back to full size once not. */}
-      <div
-        className={`${styles.backdrop} ${backdropUrl ? '' : styles.backdropFallback}`}
-        style={backdropStyle}
-      >
-        <div className={styles.backdropScrimH} />
-        <div className={styles.backdropScrimV} />
-      </div>
+      {hasZone('hero-backdrop') && (
+        <div
+          className={`${styles.backdrop} ${backdropUrl ? '' : styles.backdropFallback}`}
+          style={backdropStyle}
+        >
+          <div className={styles.backdropScrimH} />
+          <div className={styles.backdropScrimV} />
+        </div>
+      )}
 
       <div ref={scrollRef} className={`${styles.scrollContainer} scrollbar-dark`}>
         {/* Spacer — the sticky header's natural (unstuck) starting position,
@@ -122,13 +134,15 @@ export function TvLibraryDetail() {
             <div className={styles.infoCol}>
               <h1 className={styles.heroTitle}>{title}</h1>
 
-              <div className={styles.metaRow}>
-                {year && <span>{year}</span>}
-                {rating != null && <span className={styles.ratingText}>★ {rating.toFixed(1)}</span>}
-                <span className={styles.contentTypeText}>{contentType === 'show' ? 'series' : 'film'}</span>
-              </div>
+              {hasZone('meta-block') && (
+                <div className={styles.metaRow}>
+                  {year && <span>{year}</span>}
+                  {rating != null && <span className={styles.ratingText}>★ {rating.toFixed(1)}</span>}
+                  <span className={styles.contentTypeText}>{contentType === 'show' ? 'series' : 'film'}</span>
+                </div>
+              )}
 
-              {genres.length > 0 && (
+              {hasZone('genre-chips') && genres.length > 0 && (
                 <div className={styles.genreRow}>
                   {genres.map(g => (
                     <span key={g} className={styles.genreChip}>{g}</span>
@@ -141,14 +155,16 @@ export function TvLibraryDetail() {
               )}
 
               <div className={styles.buttonRow}>
-                <button
-                  ref={play.ref} data-tv-focused={play.focused}
-                  onClick={goPlay}
-                  className={styles.playButton}
-                >
-                  <svg width="16" height="16" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
-                  Play
-                </button>
+                {hasZone('play-button') && (
+                  <button
+                    ref={play.ref} data-tv-focused={play.focused}
+                    onClick={goPlay}
+                    className={styles.playButton}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
+                    Play
+                  </button>
+                )}
                 <button
                   ref={back.ref} data-tv-focused={back.focused}
                   onClick={goBack}
@@ -162,7 +178,7 @@ export function TvLibraryDetail() {
         {/* Plain flow — no position/z-index, so it naturally paints *below*
             the fixed backdrop (a positioned element) wherever it scrolls
             into that region, i.e. behind it. */}
-        {seasonsWithEpisodes.length > 0 && (
+        {hasZone('episode-shelves') && seasonsWithEpisodes.length > 0 && (
           <div className={styles.episodesSection}>
             {seasonsWithEpisodes.map(s => (
               <EpisodeShelf

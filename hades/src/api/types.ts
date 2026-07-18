@@ -1091,6 +1091,63 @@ export interface ShowWatchState {
   updated_at:  number
 }
 
+// GET /api/shows/:id/resolve-play-target — server-side resolvePlayTarget.ts
+// (see that file), collapsing what used to be 2-3 client round-trips
+// (watch-state, then conditionally next-episode or the full episode list)
+// into one.
+export interface ResolvedPlayTarget {
+  kind:       'movie' | 'episode'
+  id:         string
+  position_ms: number
+}
+
+// GET /api/tv/manifest — backs Home's row composition and Library/Detail/
+// Guide's zone layout, shared identically by /tv and (eventually) native
+// clients. See kairos/src/db/Database.cpp's v81 migration + TvManifestService
+// for the server side; hades/src/tv/useHomeManifest.ts for how /tv consumes
+// it. Deliberately loose typing on dataSource.params/zone config (Record<string,
+// unknown>) — the manifest is data describing composition, not a typed
+// contract for every possible future field.
+export type TvItemAction =
+  | 'open-detail' | 'play-direct-with-position' | 'play-latest-episode'
+  | 'play-resolved' | 'navigate-library' | 'watch-live'
+
+export interface TvDataSource {
+  endpoint: string
+  params?:  Record<string, unknown>
+}
+
+export interface TvHomeRow {
+  id:    string
+  order: number
+  type:  'hero' | 'shelf' | 'guide'
+  title?: string
+  dataSource?:  TvDataSource
+  dataSources?: { shows: TvDataSource; movies: TvDataSource }
+  itemAction?:  TvItemAction
+  endTile?:     TvItemAction
+  emptyBehavior?: 'hide'
+  requiresArt?: boolean
+  actions?:     TvItemAction[]
+}
+
+export interface TvZone {
+  id:    string
+  order: number
+  dataSource?:   TvDataSource
+  filterFields?: string[]
+  itemAction?:   TvItemAction
+  showOnly?:     boolean
+}
+
+export interface TvManifest {
+  version: number
+  home:    { rows: TvHomeRow[] }
+  library: { zones: TvZone[] }
+  detail:  { zones: TvZone[] }
+  guide:   { zones: TvZone[] }
+}
+
 export interface ScraperStats {
   total:     number
   matched:   number

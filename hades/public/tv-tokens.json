@@ -34,10 +34,16 @@
       "hds-backdrop-fallback-2": "oklch(0.18 0.06 270)",
       "hds-backdrop-fallback-3": "oklch(0.14 0.03 280)",
       "hds-discover-accent": "oklch(0.65 0.18 220)",
+      "hds-txt-on-bright": "oklch(0.15 0.02 286)",
+      "hds-allow-accent": "oklch(0.6 0.15 145)",
+      "hds-block-accent": "oklch(0.6 0.2 22)",
+      "hds-approved-accent": "oklch(0.7 0.16 150)",
       "hds-danger-border": "oklch(0.5 0.14 22 / 0.5)",
       "hds-danger-text": "oklch(0.72 0.16 22)",
+      "hds-success-text": "oklch(0.72 0.18 140)",
       "hds-gold-btn-shadow": "0 4px 14px -4px oklch(0.83 0.13 84 / 0.4)",
       "hds-text-shadow-hero": "0 1px 3px oklch(0 0 0 / 0.9), 0 2px 14px oklch(0 0 0 / 0.7)",
+      "hds-violet-active-wash": "oklch(0.55 0.14 292 / 0.15)",
       "hds-shimmer-gradient": "linear-gradient(\n    115deg,\n    transparent 47%,\n    color-mix(in oklch, var(--hds-shimmer-color, var(--hds-violet)) 45%, transparent) 49.4%,\n    color-mix(in oklch, white 80%, var(--hds-shimmer-color, var(--hds-violet))) 50%,\n    color-mix(in oklch, var(--hds-shimmer-color, var(--hds-violet)) 45%, transparent) 50.6%,\n    transparent 53%\n  )",
       "hds-shimmer-color": "var(--hds-gold)"
     },
@@ -61,7 +67,8 @@
       "hds-radius-lg": "14px",
       "hds-radius-pill": "20px",
       "hds-radius-btn": "9px",
-      "hds-radius-input": "8px"
+      "hds-radius-input": "8px",
+      "hds-radius-panel-item": "9px"
     },
     "shadows": {},
     "fonts": {
@@ -75,6 +82,7 @@
       "hds-font-size-tv-heading": "17px",
       "hds-font-size-tv-badge": "9px",
       "hds-font-size-tv-caption": "10px",
+      "hds-font-size-tv-micro": "9.5px",
       "hds-font-size-tv-small-title": "11px",
       "hds-font-size-tv-h1": "24px",
       "hds-font-size-tv-h2": "20px",
