@@ -71,6 +71,20 @@
   top: 0;
   z-index: 2;
   padding: 40px 48px;
+  /* .backdrop's own scrims are sized/tuned to the *unscrolled* hero height
+     (percentage-based, so they do rescale once the backdrop shrinks to
+     match this header's collapsed height, but .backdropScrimV's gradient
+     stays weak over roughly its own top 25% — see that rule's comment) —
+     wide enough that title/meta text sitting in that region on a tall
+     header (long overview, several genre chips) was reading straight off
+     the raw backdrop image. This is a second scrim that's part of the
+     header itself, so it holds regardless of collapsed height or what's
+     actually in the image. rgba, not oklch-alpha — see .filterOverlay's
+     own comment on TV browsers dropping oklch(... / alpha) entirely. */
+  background: linear-gradient(to bottom,
+    rgba(0, 0, 0, 0.25) 0%,
+    rgba(0, 0, 0, 0.55) 50%,
+    rgba(0, 0, 0, 0.7) 100%);
 }
 
 .headerRow {
@@ -108,6 +122,7 @@
   color: var(--hds-txt-hero);
   margin: 0 0 var(--hds-space-4);
   line-height: 1.1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 }
 
 .metaRow {

@@ -44,6 +44,17 @@
   top: 0;
   z-index: 2;
   padding: 0 48px 24px;
+  /* Same fix as TvLibraryDetail.module.css's .header — .backdrop's own
+     scrims are sized/tuned to the *unscrolled* hero height and stay weak
+     over roughly the top quarter of a collapsed backdrop (.backdropScrimV's
+     46% stop), so title/overview text sitting there on a tall header (long
+     overview, many genre chips) can read straight off the raw image. This
+     scrim is part of the header itself, so it holds regardless of
+     collapsed height or what's actually in the image. */
+  background: linear-gradient(to bottom,
+    oklch(0 0 0 / 0.2) 0%,
+    oklch(0 0 0 / 0.5) 50%,
+    oklch(0 0 0 / 0.65) 100%);
 }
 
 .heroRow {
@@ -87,6 +98,7 @@
   margin: 0;
   flex: 1;
   line-height: 1.15;
+  text-shadow: 0 2px 8px oklch(0 0 0 / 0.7);
 }
 
 .statusBadge {
