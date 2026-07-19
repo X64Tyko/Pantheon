@@ -178,6 +178,27 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
     if (audio_track < 0) audio_track = pickAudioTrack(media_info, "");
     direct_play = isDirectPlayable(media_info, audio_track, client_caps);
 
+    {
+        auto audioIt = std::find_if(media_info.audio.begin(), media_info.audio.end(),
+            [&](const AudioTrack& t) { return t.relative_index == audio_track; });
+        std::string sourceVideoCodec = media_info.video.empty() ? "(none)" : media_info.video[0].codec;
+        std::string sourceAudioCodec = audioIt != media_info.audio.end() ? audioIt->codec : "(none)";
+        std::cerr << "[vod:" << session_id << "] source video=" << sourceVideoCodec
+                  << " audio=" << sourceAudioCodec;
+        if (client_caps) {
+            std::cerr << " | client declared video=[";
+            bool first = true;
+            for (auto& c : client_caps->video_codecs) { if (!first) std::cerr << ","; std::cerr << c; first = false; }
+            std::cerr << "] audio=[";
+            first = true;
+            for (auto& c : client_caps->audio_codecs) { if (!first) std::cerr << ","; std::cerr << c; first = false; }
+            std::cerr << "]";
+        } else {
+            std::cerr << " | no client capability declaration cached — falling back to h264/aac allowlist";
+        }
+        std::cerr << " -> direct_play=" << (direct_play ? "yes" : "no") << "\n";
+    }
+
     subtitle_output  = false;
     subtitle_burn_in = false;
     if (subtitle_track >= 0) {
