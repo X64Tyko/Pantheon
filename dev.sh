@@ -16,9 +16,18 @@ for svc in kairos hephaestus hermes; do
     fi
 done
 
+# ── Design tokens ─────────────────────────────────────────────────────────────
+# Regenerated here (not just via Hades' own predev hook) so Kairos serves
+# fresh theme data from its very first request — Hades' dev server starts
+# last, below, and its predev hook wouldn't otherwise run until then. Zero
+# npm dependencies (node:fs/url/path only), so this works even before
+# `pnpm install` has run.
+echo '[dev] generating design tokens ...'
+node "$root/hades/scripts/generate-tv-tokens.mjs"
+
 # ── Kairos    :8080 ───────────────────────────────────────────────────────────
 echo '[dev] starting Kairos on :8080 ...'
-"$build/kairos/kairos" &
+KAIROS_TV_TOKENS_PATH="$root/kairos/assets/tv-tokens.json" "$build/kairos/kairos" &
 kairos_pid=$!
 
 # ── Hephaestus :8082 ─────────────────────────────────────────────────────────

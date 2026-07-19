@@ -2,7 +2,11 @@
 #include "../RouteHelpers.h"
 #include "../../db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <cstdlib>
+#include <fstream>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <sstream>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -11,6 +15,33 @@ using Res  = httplib::Response;
 TvManifestService::TvManifestService(const ServiceContext& ctx) : db_(ctx.db) {}
 
 namespace {
+
+// Design tokens generated from hades/src/index.css by
+// hades/scripts/generate-tv-tokens.mjs — "styling comes from the manifest,
+// not a per-client hardcoded guess" (see that script's own header comment).
+// KAIROS_TV_TOKENS_PATH lets dev.sh/dev.ps1 point this at the repo-relative
+// kairos/assets/tv-tokens.json for local dev, same env-var-over-CLI-flag
+// convention as KAIROS_API_THREADS elsewhere in this codebase (no Router/
+// ServiceContext/TvManifestService constructor signature changes needed —
+// several momus test fixtures construct these directly). The Docker image
+// bakes a copy at the default path (kairos/Dockerfile), so production never
+// needs the env var set at all. Missing/unreadable/malformed file → nullopt,
+// not an error — the manifest is still fully usable without a theme, same
+// "degrade gracefully" reasoning as this route's other optional fields.
+std::optional<json> loadThemeTokens() {
+	const char* env_path = std::getenv("KAIROS_TV_TOKENS_PATH");
+	const std::string path = env_path ? env_path : "/usr/local/share/kairos/assets/tv-tokens.json";
+
+	std::ifstream f(path);
+	if (!f) return std::nullopt;
+	std::ostringstream buf;
+	buf << f.rdbuf();
+	try {
+		return json::parse(buf.str());
+	} catch (const json::exception&) {
+		return std::nullopt;
+	}
+}
 
 // hero's data sources are two merged endpoints (recently-added shows +
 // movies, filtered to items with backdrop art) — not reproducible as a
@@ -85,13 +116,16 @@ void TvManifestService::registerRoutes(httplib::Server& svr) {
 				return zones;
 			};
 
-			route::ok(res, json{
+			json manifest = {
 				{"version", 1},
 				{"home",    {{"rows", home_rows}}},
 				{"library", {{"zones", zonesForScreen("library")}}},
 				{"detail",  {{"zones", zonesForScreen("detail")}}},
 				{"guide",   {{"zones", zonesForScreen("guide")}}},
-			}.dump());
+			};
+			if (auto theme = loadThemeTokens()) manifest["theme"] = *theme;
+
+			route::ok(res, manifest.dump());
 		} catch (const std::exception& e) {
 			route::logErr("GET /api/tv/manifest", e); route::err(res, 500, e.what());
 		}

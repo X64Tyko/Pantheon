@@ -47,6 +47,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /src/build/kairos /usr/local/bin/kairos
 
+# Design tokens (see hades/scripts/generate-tv-tokens.mjs) — read at request
+# time by TvManifestService, served as the manifest's "theme" key. Default
+# path native clients' theme lives at; KAIROS_TV_TOKENS_PATH overrides it for
+# local dev (see dev.sh/dev.ps1), same pattern as hephaestus's default_logo_path.
+COPY assets/tv-tokens.json /usr/local/share/kairos/assets/tv-tokens.json
+
 WORKDIR /app
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/kairos"]

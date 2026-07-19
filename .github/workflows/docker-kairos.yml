@@ -8,6 +8,12 @@ on:
       - "momus/kairos/**"
       - "momus/CMakeLists.txt"
       - ".github/workflows/docker-kairos.yml"
+      # Kairos's served theme (GET /api/tv/manifest) is generated from
+      # Hades' own CSS — see hades/scripts/generate-tv-tokens.mjs — so a
+      # token-affecting change there needs a Kairos rebuild too, not just
+      # Hades'.
+      - "hades/src/index.css"
+      - "hades/scripts/generate-tv-tokens.mjs"
   workflow_dispatch:
 
 env:
@@ -58,6 +64,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Node (for design-token generation)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Docker's build context below is scoped to ./kairos (can't reach
+      # hades/public/ directly), so the token file this writes to
+      # kairos/assets/ has to exist before the build step runs. A committed
+      # copy already ships in the repo (see hades/scripts/
+      # generate-tv-tokens.mjs's own comment) — this just guarantees the
+      # image always gets a fresh one, not a possibly-stale commit.
+      - name: Generate design tokens
+        run: node hades/scripts/generate-tv-tokens.mjs
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
