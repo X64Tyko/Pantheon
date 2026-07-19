@@ -1,8 +1,10 @@
 #include "Config.h"
 #include "api/ActivityRouter.h"
+#include "api/ClientCapabilitiesRouter.h"
 #include "api/Router.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
+#include "stream/ClientCapabilities.h"
 #include "stream/EncoderArgs.h" // hwAccelName
 #include "stream/HwProbe.h"
 #include "stream/SessionManager.h"
@@ -85,7 +87,13 @@ int main(int argc, char* argv[]) {
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(16); };
 
-    registerRoutes(svr, sessions, vodSessions, previewSessions, kairos, log_buffer, cfg);
+    // Per-client declared decode capability for VodSession's direct-play
+    // decision — see ClientCapabilities.h. One cache for the whole
+    // process's lifetime, same as every *SessionManager above.
+    ClientCapabilityCache capability_cache;
+
+    registerRoutes(svr, sessions, vodSessions, previewSessions, kairos, log_buffer, cfg, capability_cache);
+    registerClientCapabilitiesRoutes(svr, capability_cache);
     // Prefer encode if resolved, else decode -- either way the physical GPU
     // in question is the one whose live utilization/memory/temp the
     // Activity page cares about (see ActivityRouter.h's own comment).

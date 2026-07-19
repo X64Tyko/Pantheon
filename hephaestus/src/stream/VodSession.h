@@ -1,10 +1,12 @@
 #pragma once
 #include "ChannelSession.h" // HwAccel
+#include "ClientCapabilities.h"
 #include "FfmpegProcess.h"
 #include "MediaProbe.h"
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -47,8 +49,13 @@ public:
     // api/client.ts's isHdrCapableDisplay) — an HDR source gets a real
     // HEVC Main10 HDR10 re-encode when true, or a real tone-map to correct
     // SDR when false (see EncoderArgs.cpp's pushVideoEncoderArgs).
+    // client_caps is this specific client's declared decode capability (see
+    // ClientCapabilities.h) — nullopt when the requesting token never
+    // declared one (or Hephaestus restarted since), in which case
+    // isDirectPlayable() falls back to the conservative h264/aac allowlist.
     bool start(const std::string& file_path, int64_t position_ms,
-               int audio_track, int subtitle_track, bool hdr_capable);
+               int audio_track, int subtitle_track, bool hdr_capable,
+               const std::optional<ClientCapabilities>& client_caps);
 
     void stop();
     // Called by the HTTP handler on every playlist/segment GET.

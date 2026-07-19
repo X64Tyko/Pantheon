@@ -33,12 +33,24 @@ static bool isBitmapSubtitleCodec(const std::string& codec) {
 }
 
 // h264/aac is the conservative "every browser can play this without
-// transcoding" allowlist. Anything else (hevc, av1, ac3, dts, ...) transcodes.
-static bool isDirectPlayable(const MediaInfo& info, int audioTrack) {
-    if (info.video.empty() || info.video[0].codec != "h264") return false;
+// transcoding" fallback for a client that hasn't declared its own decode
+// capability (see ClientCapabilities.h). When it has, direct-play is
+// decided against that declared set instead — native Android via
+// MediaCodec, or a real TV's hardware decoder, can often handle far more
+// than a browser's <video>/hls.js path can (hevc, av1, ac3, ...), and a
+// fixed global allowlist has no way to take advantage of that.
+static bool isDirectPlayable(const MediaInfo& info, int audioTrack,
+                              const std::optional<ClientCapabilities>& client_caps) {
+    if (info.video.empty()) return false;
     auto it = std::find_if(info.audio.begin(), info.audio.end(),
         [&](const AudioTrack& t) { return t.relative_index == audioTrack; });
-    return it != info.audio.end() && it->codec == "aac";
+    if (it == info.audio.end()) return false;
+
+    const std::string& videoCodec = info.video[0].codec;
+    const std::string& audioCodec = it->codec;
+    if (client_caps)
+        return client_caps->video_codecs.count(videoCodec) > 0 && client_caps->audio_codecs.count(audioCodec) > 0;
+    return videoCodec == "h264" && audioCodec == "aac";
 }
 
 static std::vector<std::string> buildVodArgs(
@@ -150,7 +162,8 @@ VodSession::VodSession(std::string session_id, std::string ffmpeg_path, VodStrea
 VodSession::~VodSession() { stop(); }
 
 bool VodSession::start(const std::string& file_path, int64_t position_ms,
-                        int audio_track, int subtitle_track, bool hdr_capable) {
+                        int audio_track, int subtitle_track, bool hdr_capable,
+                        const std::optional<ClientCapabilities>& client_caps) {
     auto info = probeMediaCached(opts.ffprobe_path, file_path);
     if (!info) {
         std::cerr << "[vod:" << session_id << "] probe failed for \"" << file_path << "\"\n";
@@ -163,7 +176,7 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
         decodeCodecKey(media_info.video[0].codec, media_info.video[0].bit_depth);
 
     if (audio_track < 0) audio_track = pickAudioTrack(media_info, "");
-    direct_play = isDirectPlayable(media_info, audio_track);
+    direct_play = isDirectPlayable(media_info, audio_track, client_caps);
 
     subtitle_output  = false;
     subtitle_burn_in = false;

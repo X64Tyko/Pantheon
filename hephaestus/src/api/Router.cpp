@@ -1,4 +1,5 @@
 #include "Router.h"
+#include "ClientCapabilitiesRouter.h" // extractBearerToken
 #include "../stream/MediaProbe.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -92,7 +93,8 @@ static void handleStream(const std::string& channel_id,
 
 void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionManager& vodSessions,
                     PreviewSessionManager& previewSessions,
-                    KairosClient& kairos, LogBuffer& logs, const Config& cfg) {
+                    KairosClient& kairos, LogBuffer& logs, const Config& cfg,
+                    ClientCapabilityCache& capabilityCache) {
 
     // ── Health ────────────────────────────────────────────────────────────────
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
@@ -287,7 +289,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
     // One session per viewer. Seek and track-switch are both "stop this
     // session, start a fresh one at the new position/track" — see the plan's
     // "seek is a new session" design note.
-    svr.Post("/stream/vod/start", [&kairos, &vodSessions](
+    svr.Post("/stream/vod/start", [&kairos, &vodSessions, &capabilityCache](
             const httplib::Request& req, httplib::Response& res) {
         json body;
         try { body = json::parse(req.body); } catch (...) {
@@ -310,7 +312,11 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         if (position_ms < 0) position_ms = 0;
         bool hdr_capable = body.value("hdr_capable", false);
 
-        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable);
+        std::optional<ClientCapabilities> client_caps;
+        auto token = extractBearerToken(req);
+        if (!token.empty()) client_caps = capabilityCache.get(token);
+
+        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable, client_caps);
         if (!session) {
             res.status = 500; res.set_content(json{{"error","failed to start playback"}}.dump(), "application/json"); return;
         }
