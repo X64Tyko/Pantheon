@@ -1674,6 +1674,7 @@ AcceptResult ScraperManager::acceptCandidate(const std::string& candidate_id) {
     } catch (const std::exception& e) {
         std::cerr << "[scraper] metadata fetch/apply failed for " << kairos_id << " (" << source << "): " << e.what() << "\n";
     }
+    if (on_match_confirmed_) on_match_confirmed_(item_type, kairos_id);
     return { true, item_type, "", "", false };
 }
 
@@ -2015,6 +2016,7 @@ bool ScraperManager::refreshMetadata(const std::string& kairos_id, const std::st
             }
         } catch (...) {}
     }
+    if (any_success && on_match_confirmed_) on_match_confirmed_(item_type, kairos_id);
     return any_success;
 }
 

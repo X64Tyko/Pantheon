@@ -764,7 +764,8 @@ void registerPlexPushMetadataRoutes(httplib::Server& s, std::string* capturedTar
             "Genre":[{"tag":"Old Genre"}],
             "Director":[{"tag":"Old Director"}],
             "Country":[{"tag":"Old Country"}],
-            "Collection":[{"tag":"Old Collection"}]
+            "Collection":[{"tag":"Old Collection"}],
+            "Label":[{"tag":"Old Label"}]
         }]}})", "application/json");
     });
     s.Put("/library/sections/lib1/all", [capturedTarget](const httplib::Request& req, httplib::Response& res) {
@@ -880,6 +881,58 @@ TEST(PlexPushMetadata, CollectionsReplaced) {
 
     EXPECT_NE(captured.find("collection%5B%5D.tag.tag-=Old%20Collection"), std::string::npos);
     EXPECT_NE(captured.find("collection%5B0%5D.tag.tag=New%20Collection"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, LabelsRemovesOldAndAddsNew) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.labels = R"(["New Label"])";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    EXPECT_NE(captured.find("label%5B%5D.tag.tag-=Old%20Label"), std::string::npos);
+    EXPECT_NE(captured.find("label%5B0%5D.tag.tag=New%20Label"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, AudienceRatingSent) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.audience_rating = 8.1;
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    EXPECT_NE(captured.find("audienceRating.value=8.1"), std::string::npos);
+    EXPECT_NE(captured.find("audienceRating.locked=1"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, ExternalIdsNeverSent) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.imdb_id = "tt-new";
+    f.tmdb_id = "999";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    // Plex external IDs are only changeable via a "match" call (re-scrapes
+    // the whole item under a new agent result), a structurally different
+    // and more invasive operation than a field edit — deliberately not
+    // implemented yet, not merely forgotten. Confirms no such field edit is
+    // attempted.
+    EXPECT_EQ(captured.find("imdb"), std::string::npos);
+    EXPECT_EQ(captured.find("tmdb"), std::string::npos);
+    EXPECT_EQ(captured.find("Guid"), std::string::npos);
 }
 
 TEST(PlexPushMetadata, ActorsNeverSent) {

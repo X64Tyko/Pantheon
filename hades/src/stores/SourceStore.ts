@@ -61,7 +61,7 @@ export class SourceStore {
     }
   }
 
-  async addSource(data: Omit<Source, 'enabled' | 'synced_user_id' | 'user_sync_error'>) {
+  async addSource(data: Omit<Source, 'enabled' | 'synced_user_id' | 'user_sync_error' | 'auto_writeback' | 'writeback_update_art' | 'writeback_update_external_ids' | 'writeback_update_collections'>) {
     await api.createSource(data)
     await this.fetchAll()
   }
@@ -130,6 +130,38 @@ export class SourceStore {
     runInAction(() => {
       const src = this.sources.find(s => s.source_id === sourceId)
       if (src) src.sync_priority = priority
+    })
+  }
+
+  async setAutoWriteback(sourceId: string, enabled: boolean) {
+    await api.setSourceAutoWriteback(sourceId, enabled)
+    runInAction(() => {
+      const src = this.sources.find(s => s.source_id === sourceId)
+      if (src) src.auto_writeback = enabled
+    })
+  }
+
+  async setWritebackUpdateArt(sourceId: string, enabled: boolean) {
+    await api.setSourceWritebackUpdateArt(sourceId, enabled)
+    runInAction(() => {
+      const src = this.sources.find(s => s.source_id === sourceId)
+      if (src) src.writeback_update_art = enabled
+    })
+  }
+
+  async setWritebackUpdateExternalIds(sourceId: string, enabled: boolean) {
+    await api.setSourceWritebackUpdateExternalIds(sourceId, enabled)
+    runInAction(() => {
+      const src = this.sources.find(s => s.source_id === sourceId)
+      if (src) src.writeback_update_external_ids = enabled
+    })
+  }
+
+  async setWritebackUpdateCollections(sourceId: string, enabled: boolean) {
+    await api.setSourceWritebackUpdateCollections(sourceId, enabled)
+    runInAction(() => {
+      const src = this.sources.find(s => s.source_id === sourceId)
+      if (src) src.writeback_update_collections = enabled
     })
   }
 

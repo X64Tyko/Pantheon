@@ -198,7 +198,7 @@ export const api = {
   // Sources
   getSources:       ()                                  => request<Source[]>    ('GET',    '/sources'),
   getSourceTypes:   ()                                  => request<SourceType[]>('GET',    '/sources/types'),
-  createSource:     (b: Omit<Source, 'enabled' | 'synced_user_id' | 'user_sync_error'>) => request<{source_id: string}>('POST', '/sources', b),
+  createSource:     (b: Omit<Source, 'enabled' | 'synced_user_id' | 'user_sync_error' | 'auto_writeback' | 'writeback_update_art' | 'writeback_update_external_ids' | 'writeback_update_collections'>) => request<{source_id: string}>('POST', '/sources', b),
   deleteSource:     (id: string)                        => request<void>        ('DELETE', `/sources/${id}`),
   // Which local user (if any) should have watch/resume state pulled from
   // this source's primary account during sync — empty string clears it.
@@ -207,6 +207,12 @@ export const api = {
   // wins a field-level conflict when the same item is matched across
   // sources (see SyncManager's primary_source merge).
   setSourceSyncPriority: (id: string, priority: number) => request<{ok: boolean}>('PATCH', `/sources/${id}`, { sync_priority: priority }),
+  // See Source.auto_writeback / writeback_update_* — false by default,
+  // opt-in per source.
+  setSourceAutoWriteback:            (id: string, enabled: boolean) => request<{ok: boolean}>('PATCH', `/sources/${id}`, { auto_writeback: enabled }),
+  setSourceWritebackUpdateArt:       (id: string, enabled: boolean) => request<{ok: boolean}>('PATCH', `/sources/${id}`, { writeback_update_art: enabled }),
+  setSourceWritebackUpdateExternalIds: (id: string, enabled: boolean) => request<{ok: boolean}>('PATCH', `/sources/${id}`, { writeback_update_external_ids: enabled }),
+  setSourceWritebackUpdateCollections: (id: string, enabled: boolean) => request<{ok: boolean}>('PATCH', `/sources/${id}`, { writeback_update_collections: enabled }),
 
   // Source-reported accounts with no local Pantheon account imported yet.
   getUnmappedSourceUsers: () => request<UnmappedSourceUser[]>('GET', '/sources/unmapped-users'),

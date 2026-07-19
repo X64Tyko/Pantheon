@@ -654,6 +654,11 @@ void registerPushMetadataRoutes(httplib::Server& s, json* out) {
                 json{{"Name","Old Director"},{"Type","Director"}},
                 json{{"Name","Old Actor"},{"Type","Actor"}},
             })},
+            // Tvrage is a provider Pantheon doesn't track — must survive a
+            // ProviderIds writeback untouched. Imdb is present so a test can
+            // confirm an override actually replaces it, not just adds a
+            // duplicate key.
+            {"ProviderIds", json{{"Tvrage", "12345"}, {"Imdb", "tt-old"}}},
         }.dump(), "application/json");
     });
     s.Post("/Items/item1", [out](const httplib::Request& req, httplib::Response& res) {
@@ -784,6 +789,60 @@ TEST(JellyfinPushMetadata, OriginalTitleSent) {
     EXPECT_TRUE(src.pushMetadata("item1", "", "show", f));
 
     EXPECT_EQ(captured.value("OriginalTitle", ""), "Some Original Name");
+}
+
+TEST(JellyfinPushMetadata, LabelsAndCountriesReplaced) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.labels    = json::array({"favorite"}).dump();
+    f.countries = json::array({"United States", "Canada"}).dump();
+    EXPECT_TRUE(src.pushMetadata("item1", "", "movie", f));
+
+    EXPECT_EQ(captured["Tags"], json::array({"favorite"}));
+    EXPECT_EQ(captured["ProductionLocations"], json::array({"United States", "Canada"}));
+}
+
+TEST(JellyfinPushMetadata, AudienceRatingSent) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.audience_rating = 7.8;
+    EXPECT_TRUE(src.pushMetadata("item1", "", "movie", f));
+
+    ASSERT_TRUE(captured.contains("CommunityRating"));
+    EXPECT_DOUBLE_EQ(captured["CommunityRating"].get<double>(), 7.8);
+}
+
+TEST(JellyfinPushMetadata, ExternalIdsOverrideKnownKeysPreserveUnknownOnes) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.imdb_id = "tt-new";
+    f.tmdb_id = "999";
+    // tvdb_id left empty — the show's pre-existing Tvdb (if any) must not
+    // be touched either; this canned item has none, so it just confirms no
+    // "Tvdb": "" key gets fabricated.
+    EXPECT_TRUE(src.pushMetadata("item1", "", "movie", f));
+
+    ASSERT_TRUE(captured.contains("ProviderIds"));
+    const auto& pids = captured["ProviderIds"];
+    EXPECT_EQ(pids.value("Imdb", ""), "tt-new");     // overridden
+    EXPECT_EQ(pids.value("Tmdb", ""), "999");        // newly set
+    EXPECT_EQ(pids.value("Tvrage", ""), "12345");    // untouched, unknown provider
+    EXPECT_FALSE(pids.contains("Tvdb"));             // never fabricated
 }
 
 TEST(JellyfinPushMetadata, EmptyGenresAndActorsLeaveExistingUntouched) {

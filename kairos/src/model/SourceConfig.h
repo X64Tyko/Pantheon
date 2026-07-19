@@ -23,6 +23,22 @@ struct MediaSourceConfig {
     // Default 0 for every source until the user actually ranks them, so
     // behavior is unchanged (ties, first-writer-keeps) until they opt in.
     int sync_priority = 0;
+    // Whether a confirmed/refreshed match automatically pushes writeback to
+    // this source (see ScraperManager's MatchConfirmedCallback, fired from
+    // acceptCandidate()/refreshMetadata()) instead of requiring the
+    // single-item "Push to Sources" button or a "Writeback All" run.
+    // Defaults false — see Database.cpp v85's migration comment for why.
+    bool auto_writeback = false;
+    // Per-field opt-outs for whenever writeback DOES run against this
+    // source (auto or manual) — all default true, preserving existing
+    // writeback behavior; an admin flips one off for a source they don't
+    // trust with that specific field. update_external_ids in particular
+    // guards against exactly the failure mode a corrected-but-unpushed
+    // match creates: the source's own periodic refresh silently re-pulling
+    // metadata for the old, wrong match forever.
+    bool writeback_update_art           = true;
+    bool writeback_update_external_ids  = true;
+    bool writeback_update_collections   = true;
 };
 
 struct MediaLibraryConfig {

@@ -782,6 +782,56 @@ export default observer(function SourcesPage() {
               />
             </div>
 
+            {/* Writeback settings */}
+            {store.selected?.source_type !== 'local' && (
+              <div className="card p-3 space-y-2">
+                <span className="section-label">Writeback</span>
+                <p className="text-xs text-zinc-600">
+                  Pushes confirmed metadata back to this source. Manual (the item's own "Push
+                  to Sources" button) and bulk ("Writeback All" on the Activity page) always
+                  work regardless of the setting below — Auto only controls whether a scraper
+                  match confirmation or refresh also pushes here on its own.
+                </p>
+                <label className="flex items-center gap-2 text-sm text-zinc-400">
+                  <input
+                    type="checkbox"
+                    checked={store.selected?.auto_writeback ?? false}
+                    onChange={e => store.setAutoWriteback(store.selectedId!, e.target.checked)}
+                  />
+                  Auto writeback on match confirm/refresh
+                </label>
+                <div className="pl-1 pt-1 space-y-2 border-l border-zinc-800 ml-1">
+                  <p className="text-[11px] text-zinc-600 pl-2">
+                    Applies whenever writeback runs against this source, auto or manual:
+                  </p>
+                  <label className="flex items-center gap-2 text-sm text-zinc-400 pl-2">
+                    <input
+                      type="checkbox"
+                      checked={store.selected?.writeback_update_art ?? true}
+                      onChange={e => store.setWritebackUpdateArt(store.selectedId!, e.target.checked)}
+                    />
+                    Update poster/backdrop art
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-400 pl-2">
+                    <input
+                      type="checkbox"
+                      checked={store.selected?.writeback_update_external_ids ?? true}
+                      onChange={e => store.setWritebackUpdateExternalIds(store.selectedId!, e.target.checked)}
+                    />
+                    Update external IDs (IMDb/TVDB/TMDB)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-400 pl-2">
+                    <input
+                      type="checkbox"
+                      checked={store.selected?.writeback_update_collections ?? true}
+                      onChange={e => store.setWritebackUpdateCollections(store.selectedId!, e.target.checked)}
+                    />
+                    Update collections
+                  </label>
+                </div>
+              </div>
+            )}
+
             {/* Watch history sync */}
             {store.selected?.source_type !== 'local' && (
               <div className="card p-3 space-y-2">

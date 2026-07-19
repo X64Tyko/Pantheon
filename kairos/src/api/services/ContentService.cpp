@@ -357,7 +357,21 @@ std::optional<WritebackImage> ContentService::fetchImageBytes(const std::string&
 	} catch (const std::exception&) { return std::nullopt; }
 }
 
-json ContentService::writebackShow(const ShowDetail& d, const std::string& source_id_filter) {
+namespace {
+// Applies a target's per-field writeback opt-outs to a copy of `fields` —
+// shared by writebackShow/writebackMovie's target loops. Takes fields by
+// value deliberately: each target in a multi-target loop may have different
+// settings, so the base object built once per item can't be mutated in
+// place.
+WritebackFields shapeForTarget(WritebackFields fields, const SourceRepository::WritebackTarget& t) {
+	if (!t.writeback_update_art) { fields.thumb.reset(); fields.art.reset(); }
+	if (!t.writeback_update_external_ids) { fields.imdb_id.clear(); fields.tvdb_id.clear(); fields.tmdb_id.clear(); }
+	if (!t.writeback_update_collections) fields.collections.clear();
+	return fields;
+}
+}
+
+json ContentService::writebackShow(const ShowDetail& d, const std::string& source_id_filter, bool auto_only) {
 	WritebackFields fields;
 	fields.title           = d.title;
 	fields.original_title  = d.original_title;
@@ -369,6 +383,11 @@ json ContentService::writebackShow(const ShowDetail& d, const std::string& sourc
 	fields.actors          = d.actors;
 	fields.countries       = d.countries;
 	fields.collections     = d.collections;
+	fields.labels          = d.labels;
+	fields.audience_rating = d.audience_rating;
+	fields.imdb_id         = d.imdb_id;
+	fields.tvdb_id         = d.tvdb_id;
+	fields.tmdb_id         = d.tmdb_id;
 	fields.release_date    = d.originally_available_at;
 	fields.thumb            = fetchImageBytes(d.thumb, d.source_id);
 	fields.art              = fetchImageBytes(d.art, d.source_id);
@@ -377,14 +396,15 @@ json ContentService::writebackShow(const ShowDetail& d, const std::string& sourc
 	json results = json::array();
 	for (const auto& t : targets) {
 		if (!source_id_filter.empty() && t.source_id != source_id_filter) continue;
+		if (auto_only && !t.auto_writeback) continue;
 		auto* src = sync_.findSource(t.source_id);
-		bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "show", fields);
+		bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "show", shapeForTarget(fields, t));
 		results.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"ok", ok}});
 	}
 	return results;
 }
 
-json ContentService::writebackMovie(const MovieDetail& d, const std::string& source_id_filter) {
+json ContentService::writebackMovie(const MovieDetail& d, const std::string& source_id_filter, bool auto_only) {
 	WritebackFields fields;
 	fields.title           = d.title;
 	fields.original_title  = d.original_title;
@@ -398,6 +418,10 @@ json ContentService::writebackMovie(const MovieDetail& d, const std::string& sou
 	fields.actors          = d.actors;
 	fields.countries       = d.countries;
 	fields.collections     = d.collections;
+	fields.labels          = d.labels;
+	fields.audience_rating = d.audience_rating;
+	fields.imdb_id         = d.imdb_id;
+	fields.tmdb_id         = d.tmdb_id;
 	fields.release_date    = d.release_date;
 	fields.thumb            = fetchImageBytes(d.thumb, d.source_id);
 	fields.art              = fetchImageBytes(d.art, d.source_id);
@@ -406,11 +430,23 @@ json ContentService::writebackMovie(const MovieDetail& d, const std::string& sou
 	json results = json::array();
 	for (const auto& t : targets) {
 		if (!source_id_filter.empty() && t.source_id != source_id_filter) continue;
+		if (auto_only && !t.auto_writeback) continue;
 		auto* src = sync_.findSource(t.source_id);
-		bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "movie", fields);
+		bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "movie", shapeForTarget(fields, t));
 		results.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"ok", ok}});
 	}
 	return results;
+}
+
+void ContentService::autoWritebackIfEnabled(const std::string& item_type, const std::string& kairos_id) {
+	ContentRepository repo(db_);
+	if (item_type == "show") {
+		auto d = repo.getShowDetail(kairos_id);
+		if (d && d->match_confirmed) writebackShow(*d, "", /*auto_only=*/true);
+	} else if (item_type == "movie") {
+		auto d = repo.getMovieDetail(kairos_id);
+		if (d && d->match_confirmed) writebackMovie(*d, "", /*auto_only=*/true);
+	}
 }
 
 void ContentService::runWritebackAll(const std::string& library_id, const std::string& source_id) {

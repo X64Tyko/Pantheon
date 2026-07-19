@@ -21,7 +21,8 @@ SourceRepository::SourceRepository(Database& db) : db_(db) {}
 std::vector<MediaSourceConfig> SourceRepository::listSources() {
     SQLite::Statement q(db_.get(),
         "SELECT source_id, source_type, display_name, COALESCE(base_url,''), enabled, "
-        "       COALESCE(synced_user_id,''), user_sync_error, sync_priority "
+        "       COALESCE(synced_user_id,''), user_sync_error, sync_priority, "
+        "       auto_writeback, writeback_update_art, writeback_update_external_ids, writeback_update_collections "
         "FROM media_source ORDER BY display_name");
     std::vector<MediaSourceConfig> result;
     while (q.executeStep()) {
@@ -34,6 +35,10 @@ std::vector<MediaSourceConfig> SourceRepository::listSources() {
         s.synced_user_id   = q.getColumn(5).getString();
         s.user_sync_error  = q.getColumn(6).getString();
         s.sync_priority    = q.getColumn(7).getInt();
+        s.auto_writeback                = q.getColumn(8).getInt() != 0;
+        s.writeback_update_art          = q.getColumn(9).getInt() != 0;
+        s.writeback_update_external_ids = q.getColumn(10).getInt() != 0;
+        s.writeback_update_collections  = q.getColumn(11).getInt() != 0;
         result.push_back(std::move(s));
     }
     return result;
@@ -56,6 +61,30 @@ void SourceRepository::createSource(const std::string& source_id,
 void SourceRepository::setSyncPriority(const std::string& source_id, int priority) {
     SQLite::Statement s(db_.get(), "UPDATE media_source SET sync_priority = ? WHERE source_id = ?");
     s.bind(1, priority); s.bind(2, source_id);
+    s.exec();
+}
+
+void SourceRepository::setAutoWriteback(const std::string& source_id, bool enabled) {
+    SQLite::Statement s(db_.get(), "UPDATE media_source SET auto_writeback = ? WHERE source_id = ?");
+    s.bind(1, enabled ? 1 : 0); s.bind(2, source_id);
+    s.exec();
+}
+
+void SourceRepository::setWritebackUpdateArt(const std::string& source_id, bool enabled) {
+    SQLite::Statement s(db_.get(), "UPDATE media_source SET writeback_update_art = ? WHERE source_id = ?");
+    s.bind(1, enabled ? 1 : 0); s.bind(2, source_id);
+    s.exec();
+}
+
+void SourceRepository::setWritebackUpdateExternalIds(const std::string& source_id, bool enabled) {
+    SQLite::Statement s(db_.get(), "UPDATE media_source SET writeback_update_external_ids = ? WHERE source_id = ?");
+    s.bind(1, enabled ? 1 : 0); s.bind(2, source_id);
+    s.exec();
+}
+
+void SourceRepository::setWritebackUpdateCollections(const std::string& source_id, bool enabled) {
+    SQLite::Statement s(db_.get(), "UPDATE media_source SET writeback_update_collections = ? WHERE source_id = ?");
+    s.bind(1, enabled ? 1 : 0); s.bind(2, source_id);
     s.exec();
 }
 
@@ -315,7 +344,8 @@ std::string SourceRepository::getSourceBaseUrl(const std::string& source_id) {
 std::optional<MediaSourceConfig> SourceRepository::getSource(const std::string& source_id) {
     SQLite::Statement q(db_.get(),
         "SELECT source_id, source_type, display_name, COALESCE(base_url,''), enabled, "
-        "       COALESCE(synced_user_id,''), user_sync_error "
+        "       COALESCE(synced_user_id,''), user_sync_error, "
+        "       auto_writeback, writeback_update_art, writeback_update_external_ids, writeback_update_collections "
         "FROM media_source WHERE source_id = ?");
     q.bind(1, source_id);
     if (!q.executeStep()) return std::nullopt;
@@ -327,6 +357,10 @@ std::optional<MediaSourceConfig> SourceRepository::getSource(const std::string& 
     s.enabled         = q.getColumn(4).getInt() != 0;
     s.synced_user_id  = q.getColumn(5).getString();
     s.user_sync_error = q.getColumn(6).getString();
+    s.auto_writeback                = q.getColumn(7).getInt() != 0;
+    s.writeback_update_art          = q.getColumn(8).getInt() != 0;
+    s.writeback_update_external_ids = q.getColumn(9).getInt() != 0;
+    s.writeback_update_collections  = q.getColumn(10).getInt() != 0;
     return s;
 }
 
@@ -344,7 +378,9 @@ std::vector<SourceRepository::WritebackTarget> SourceRepository::getWritebackTar
     const std::string& item_type, const std::string& kairos_id) {
     SQLite::Statement q(db_.get(), R"(
         SELECT ms.source_id, ms.source_type, ms.base_url,
-               sm.external_id, COALESCE(ml.external_lib_id, ''), ms.display_name
+               sm.external_id, COALESCE(ml.external_lib_id, ''), ms.display_name,
+               ms.auto_writeback, ms.writeback_update_art,
+               ms.writeback_update_external_ids, ms.writeback_update_collections
         FROM source_mapping sm
         JOIN media_source ms ON ms.source_id = sm.source_id
         LEFT JOIN media_library ml ON ml.library_id = sm.library_id
@@ -355,14 +391,18 @@ std::vector<SourceRepository::WritebackTarget> SourceRepository::getWritebackTar
 
     std::vector<WritebackTarget> out;
     while (q.executeStep()) {
-        out.push_back({
-            q.getColumn(0).getString(),
-            q.getColumn(1).getString(),
-            q.getColumn(2).getString(),
-            q.getColumn(3).getString(),
-            q.getColumn(4).getString(),
-            q.getColumn(5).getString(),
-        });
+        WritebackTarget t;
+        t.source_id        = q.getColumn(0).getString();
+        t.source_type      = q.getColumn(1).getString();
+        t.base_url          = q.getColumn(2).getString();
+        t.external_id       = q.getColumn(3).getString();
+        t.external_lib_id   = q.getColumn(4).getString();
+        t.display_name      = q.getColumn(5).getString();
+        t.auto_writeback                = q.getColumn(6).getInt() != 0;
+        t.writeback_update_art          = q.getColumn(7).getInt() != 0;
+        t.writeback_update_external_ids = q.getColumn(8).getInt() != 0;
+        t.writeback_update_collections  = q.getColumn(9).getInt() != 0;
+        out.push_back(std::move(t));
     }
     return out;
 }

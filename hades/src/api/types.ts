@@ -96,6 +96,17 @@ export interface Source {
   // permissions, HTTP error, etc.) — see IMediaSource::lastUserDiscoveryError.
   user_sync_error: string
   sync_priority:   number
+  // Whether a confirmed/refreshed scraper match automatically pushes
+  // writeback to this source, instead of requiring the "Push to Sources"
+  // button or a "Writeback All" run. Defaults false — writeback pushing to
+  // a real external library shouldn't newly start happening on its own.
+  auto_writeback: boolean
+  // Per-field writeback opt-outs, all default true (preserving existing
+  // manual/bulk-writeback behavior) — flip one off for a source you don't
+  // want that specific field touched on.
+  writeback_update_art:           boolean
+  writeback_update_external_ids:  boolean
+  writeback_update_collections:   boolean
 }
 
 // A source-reported account with no local Pantheon account imported for it

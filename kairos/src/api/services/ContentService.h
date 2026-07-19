@@ -20,6 +20,17 @@ public:
 	ContentService(const ServiceContext& ctx, ScraperManager& scraper);
 	void registerRoutes(httplib::Server& svr) override;
 
+	// Entry point for ScraperManager's MatchConfirmedCallback (wired up in
+	// Router.cpp, not a direct member reference — ScraperManager can't hold
+	// a ContentService& itself since ContentService already holds a
+	// ScraperManager&, and the two constructing each other back-and-forth
+	// would be circular). Pushes to every target whose source has
+	// auto_writeback enabled; no-ops entirely if the item isn't
+	// match_confirmed (mirrors the single-item routes' own gate) or if none
+	// of its targets have auto_writeback on. Safe to call for an item with
+	// zero targets or that doesn't exist — both just no-op.
+	void autoWritebackIfEnabled(const std::string& item_type, const std::string& kairos_id);
+
 private:
 	Database&       db_;
 	ConfStore&      conf_;
@@ -48,13 +59,21 @@ private:
 	// pushes to every linked source, or only source_id_filter's target when
 	// non-empty (used by "Writeback All"'s per-source scoping — the
 	// single-item routes always pass "" for unfiltered/all-targets
-	// behavior). Returns a JSON array of {source_id, source_type, ok}, same
-	// shape the single-item routes have always returned. Caller must have
-	// already checked match_confirmed — these don't re-check it, so
-	// "Writeback All" can rely on getWritebackEligibleShowIds/
-	// getWritebackEligibleMovieIds having already filtered for it.
-	nlohmann::json writebackShow(const ShowDetail& d, const std::string& source_id_filter);
-	nlohmann::json writebackMovie(const MovieDetail& d, const std::string& source_id_filter);
+	// behavior). auto_only=true additionally skips any target whose source
+	// doesn't have auto_writeback enabled (used by autoWritebackIfEnabled();
+	// the single-item/bulk routes always pass false — an explicit trigger
+	// bypasses the auto gate entirely, it doesn't mean "auto"). Per-target
+	// art/external_ids/collections toggles (MediaSourceConfig::
+	// writeback_update_*) are applied here too, shaping a copy of `fields`
+	// per target rather than a single shared object, since different
+	// targets can have different settings. Returns a JSON array of
+	// {source_id, source_type, ok}, same shape the single-item routes have
+	// always returned. Caller must have already checked match_confirmed —
+	// these don't re-check it, so "Writeback All" can rely on
+	// getWritebackEligibleShowIds/getWritebackEligibleMovieIds having
+	// already filtered for it.
+	nlohmann::json writebackShow(const ShowDetail& d, const std::string& source_id_filter, bool auto_only = false);
+	nlohmann::json writebackMovie(const MovieDetail& d, const std::string& source_id_filter, bool auto_only = false);
 
 	// Background worker for POST /api/writeback/all — iterates every
 	// match-confirmed show then movie (scoped per getWritebackEligible*Ids),

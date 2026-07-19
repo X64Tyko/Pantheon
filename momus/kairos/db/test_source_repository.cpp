@@ -122,3 +122,63 @@ TEST_F(SourceRepositoryTest, SyncedUserId_DefaultsEmptyThenRoundTrips) {
     repo.setSyncedUserId("src1", "");
     EXPECT_EQ(repo.getSyncedUserId("src1"), "");
 }
+
+// ---------------------------------------------------------------------------
+// Writeback settings — auto_writeback defaults OFF, the three per-field
+// toggles default ON (see Database.cpp v85's migration comment for why).
+// ---------------------------------------------------------------------------
+
+TEST_F(SourceRepositoryTest, WritebackSettings_DefaultsMatchMigrationIntent) {
+    insertSource("src1");
+    auto s = repo.getSource("src1");
+    ASSERT_TRUE(s.has_value());
+    EXPECT_FALSE(s->auto_writeback);
+    EXPECT_TRUE(s->writeback_update_art);
+    EXPECT_TRUE(s->writeback_update_external_ids);
+    EXPECT_TRUE(s->writeback_update_collections);
+}
+
+TEST_F(SourceRepositoryTest, WritebackSettings_SettersRoundTripViaGetSource) {
+    insertSource("src1");
+
+    repo.setAutoWriteback("src1", true);
+    repo.setWritebackUpdateArt("src1", false);
+    repo.setWritebackUpdateExternalIds("src1", false);
+    repo.setWritebackUpdateCollections("src1", false);
+
+    auto s = repo.getSource("src1");
+    ASSERT_TRUE(s.has_value());
+    EXPECT_TRUE(s->auto_writeback);
+    EXPECT_FALSE(s->writeback_update_art);
+    EXPECT_FALSE(s->writeback_update_external_ids);
+    EXPECT_FALSE(s->writeback_update_collections);
+}
+
+TEST_F(SourceRepositoryTest, WritebackSettings_ListSourcesReflectsSameValues) {
+    insertSource("src1");
+    repo.setAutoWriteback("src1", true);
+    repo.setWritebackUpdateArt("src1", false);
+
+    auto sources = repo.listSources();
+    ASSERT_EQ(sources.size(), 1u);
+    EXPECT_TRUE(sources[0].auto_writeback);
+    EXPECT_FALSE(sources[0].writeback_update_art);
+    EXPECT_TRUE(sources[0].writeback_update_external_ids);  // untouched, still default
+}
+
+TEST_F(SourceRepositoryTest, WritebackSettings_CarriedOnWritebackTarget) {
+    insertSource("src1");
+    repo.setAutoWriteback("src1", true);
+    repo.setWritebackUpdateCollections("src1", false);
+
+    { SQLite::Statement s(db.get(),
+        "INSERT INTO source_mapping (item_type, kairos_id, source_id, external_id) VALUES ('show','show1','src1','ext1')");
+      s.exec(); }
+
+    auto targets = repo.getWritebackTargets("show", "show1");
+    ASSERT_EQ(targets.size(), 1u);
+    EXPECT_TRUE(targets[0].auto_writeback);
+    EXPECT_TRUE(targets[0].writeback_update_art);
+    EXPECT_TRUE(targets[0].writeback_update_external_ids);
+    EXPECT_FALSE(targets[0].writeback_update_collections);
+}

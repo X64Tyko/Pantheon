@@ -695,9 +695,8 @@ std::vector<ExternalWatchState> JellyfinBaseSource::fetchWatchState(const std::s
 // the whole array with actor-only entries would silently wipe any existing
 // Director/Writer credits Jellyfin already has — so only the Actor-typed
 // entries are replaced; everything else in the existing People array is
-// preserved untouched. countries/collections/director are still deliberately
-// NOT sent — no user-reported need yet, and director in particular would hit
-// the same People-merge path and hasn't been exercised against a real server.
+// preserved untouched — same technique now used for Director/Writer too.
+// `collections` remains unsent — no user-reported need yet.
 bool JellyfinBaseSource::pushMetadata(const std::string& external_id,
                                        const std::string& /*external_lib_id*/,
                                        const std::string& item_type,
@@ -731,6 +730,30 @@ bool JellyfinBaseSource::pushMetadata(const std::string& external_id,
             if (!fields.genres.empty()) {
                 try { item["Genres"] = json::parse(fields.genres); }
                 catch (const json::exception&) { /* leave existing Genres untouched on parse failure */ }
+            }
+            if (!fields.labels.empty()) {
+                try { item["Tags"] = json::parse(fields.labels); }
+                catch (const json::exception&) { /* leave existing Tags untouched on parse failure */ }
+            }
+            if (!fields.countries.empty()) {
+                try { item["ProductionLocations"] = json::parse(fields.countries); }
+                catch (const json::exception&) { /* leave existing ProductionLocations untouched on parse failure */ }
+            }
+            if (fields.audience_rating) item["CommunityRating"] = *fields.audience_rating;
+            // Merged key-by-key, not replaced wholesale — Jellyfin can carry
+            // provider IDs Pantheon doesn't track (Tvrage, Zap2It, ...) and
+            // those must survive untouched. This matters more than a typical
+            // "extra field": if a scraper match gets corrected in Pantheon
+            // but Jellyfin's own stored ProviderIds is never updated,
+            // Jellyfin's own periodic "refresh from internet" keeps
+            // re-pulling metadata for the OLD (wrong) match forever, quietly
+            // undoing the correction.
+            if (!fields.imdb_id.empty() || !fields.tvdb_id.empty() || !fields.tmdb_id.empty()) {
+                json pids = item.value("ProviderIds", json::object());
+                if (!fields.imdb_id.empty()) pids["Imdb"] = fields.imdb_id;
+                if (!fields.tvdb_id.empty()) pids["Tvdb"] = fields.tvdb_id;
+                if (!fields.tmdb_id.empty()) pids["Tmdb"] = fields.tmdb_id;
+                item["ProviderIds"] = pids;
             }
             // Replaces every People entry of `type` with `names`, leaving
             // every other Type (and any Type not touched by this call at

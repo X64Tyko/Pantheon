@@ -27,6 +27,12 @@ public:
     // new order/ranking actually takes effect on the next sync.
     void setSyncPriority(const std::string& source_id, int priority);
 
+    // See MediaSourceConfig::auto_writeback / writeback_update_*.
+    void setAutoWriteback(const std::string& source_id, bool enabled);
+    void setWritebackUpdateArt(const std::string& source_id, bool enabled);
+    void setWritebackUpdateExternalIds(const std::string& source_id, bool enabled);
+    void setWritebackUpdateCollections(const std::string& source_id, bool enabled);
+
     // ── Libraries ─────────────────────────────────────────────────────────────
 
     std::vector<MediaLibraryConfig> listLibraries(const std::string& source_id);
@@ -111,6 +117,13 @@ public:
         std::string external_id;
         std::string external_lib_id; // Plex "section" id; empty if not tracked for this mapping
         std::string display_name;   // media_source.display_name — for the detail panel's "Sources" list
+        // See MediaSourceConfig::auto_writeback / writeback_update_* —
+        // carried per-target (not a separate lookup) so ContentService can
+        // shape/filter without an extra query per target.
+        bool auto_writeback               = false;
+        bool writeback_update_art         = true;
+        bool writeback_update_external_ids = true;
+        bool writeback_update_collections  = true;
     };
     // Every source this show/movie is mapped to, with what's needed to push
     // metadata back to each one. Usually one row, but not assumed — an item

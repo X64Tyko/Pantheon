@@ -169,7 +169,18 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<ChannelService>(ctx));
 	services_.push_back(std::make_unique<KairosService>(ctx, *scraper_mgr_));
 	services_.push_back(std::make_unique<BlockService>(ctx));
-	services_.push_back(std::make_unique<ContentService>(ctx, *scraper_mgr_));
+	// Captured as a raw pointer before the unique_ptr moves into services_ so
+	// ScraperManager's match-confirmed callback (below) has something to call
+	// into — ContentService already depends on ScraperManager (previous
+	// line's constructor arg), so a direct ContentService& member on
+	// ScraperManager would be circular; wiring a std::function here after
+	// both exist isn't.
+	auto content_service = std::make_unique<ContentService>(ctx, *scraper_mgr_);
+	ContentService* content_service_ptr = content_service.get();
+	scraper_mgr_->setOnMatchConfirmed([content_service_ptr](const std::string& item_type, const std::string& kairos_id) {
+		content_service_ptr->autoWritebackIfEnabled(item_type, kairos_id);
+	});
+	services_.push_back(std::move(content_service));
 	services_.push_back(std::make_unique<ChapterService>(ctx, *chapter_detect_mgr_));
 	services_.push_back(std::make_unique<PlaylistService>(ctx));
 	services_.push_back(std::make_unique<FillerService>(ctx));

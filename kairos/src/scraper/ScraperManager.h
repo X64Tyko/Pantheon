@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -122,6 +123,20 @@ class ScraperManager {
 public:
     ScraperManager(Database& db, ConfStore& conf);
     ~ScraperManager();
+
+    // Fired at the end of acceptCandidate() and refreshMetadata() (and
+    // therefore also runRefreshAll()'s per-item sweep, which calls the
+    // latter) once that item's metadata has actually been (re)applied —
+    // never before, so this never fires with stale pre-scrape data. Wired
+    // in Router.cpp to ContentService::autoWritebackIfEnabled() after both
+    // are constructed, rather than ScraperManager holding a ContentService&
+    // directly — ContentService already holds a ScraperManager&, so a
+    // direct reference back would be circular; a std::function set post-
+    // construction isn't. autoWritebackIfEnabled() itself is what actually
+    // checks match_confirmed and each target's auto_writeback setting —
+    // this class doesn't know or care about either.
+    using MatchConfirmedCallback = std::function<void(const std::string& item_type, const std::string& kairos_id)>;
+    void setOnMatchConfirmed(MatchConfirmedCallback cb) { on_match_confirmed_ = std::move(cb); }
 
     // Kick off a background match pass.  target_id + item_type optionally scope
     // the pass to a single item; empty strings → match all unscraped items.
@@ -258,6 +273,8 @@ private:
     void buildScrapers();
     void runMatch(const std::string& target_id, const std::string& item_type);
     void runRefreshAll();
+
+    MatchConfirmedCallback on_match_confirmed_;
 
     // Downloads a just-applied AniDB thumb to the item's own media folder
     // (as aniThumb.jpg) and rewrites the DB thumb column to a "local:" path

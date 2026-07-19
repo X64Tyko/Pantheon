@@ -1956,6 +1956,25 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE movie ADD COLUMN original_title TEXT NOT NULL DEFAULT '';
 )SQL" }
 
+
+// ── v85: per-source writeback settings. auto_writeback defaults OFF —
+//         writeback pushing to a real external library is exactly the kind
+//         of thing that shouldn't newly start happening for existing
+//         sources just because the column now exists; an admin has to
+//         explicitly opt each source in. The three per-field toggles
+//         default ON, preserving today's existing manual/bulk-writeback
+//         behavior (which has always sent art and, as of this same
+//         session, external IDs) — they're an opt-OUT for a specific
+//         source that doesn't want a given field touched, not a new
+//         opt-in gate on top of the existing single-item/"Writeback All"
+//         triggers.
+,{ 85, R"SQL(
+    ALTER TABLE media_source ADD COLUMN auto_writeback INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE media_source ADD COLUMN writeback_update_art INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE media_source ADD COLUMN writeback_update_external_ids INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE media_source ADD COLUMN writeback_update_collections INTEGER NOT NULL DEFAULT 1;
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

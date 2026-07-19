@@ -805,6 +805,16 @@ std::vector<ExternalWatchState> PlexSource::fetchWatchState(const std::string& e
 }
 
 namespace {
+// std::to_string(double) always pads to 6 decimals ("8.100000") — valid
+// for Plex to parse, but needless noise in the request/logs. Trims trailing
+// zeros (and a trailing '.' if the value was a whole number).
+std::string formatRating(double v) {
+    std::string s = std::to_string(v);
+    s.erase(s.find_last_not_of('0') + 1, std::string::npos);
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    return s;
+}
+
 std::string plexUrlEncode(const std::string& s) {
     std::string out;
     for (unsigned char c : s) {
@@ -895,9 +905,11 @@ bool PlexSource::pushMetadata(const std::string& external_id,
     addField("studio",               fields.studio);
     addField("tagline",              fields.tagline);
     addField("originallyAvailableAt", fields.release_date);
+    if (fields.audience_rating)
+        path += "&audienceRating.value=" + formatRating(*fields.audience_rating) + "&audienceRating.locked=1";
 
-    // Array-valued fields (genre/director/writer/country/collection) use
-    // Plex's add/remove tag-directive convention, not a whole-object
+    // Array-valued fields (genre/director/writer/country/collection/label)
+    // use Plex's add/remove tag-directive convention, not a whole-object
     // replace like Jellyfin's — verified against python-plexapi's actual
     // production implementation (github.com/pkkid/python-plexapi,
     // plexapi/mixins/edit.py: EditTagsMixin/_tagHelper) rather than
@@ -925,7 +937,7 @@ bool PlexSource::pushMetadata(const std::string& external_id,
     // WritebackFields.countries is populated for shows too.
     const bool needs_current_tags =
         !fields.genres.empty() || !fields.director.empty() || !fields.writer.empty() ||
-        !fields.countries.empty() || !fields.collections.empty();
+        !fields.countries.empty() || !fields.collections.empty() || !fields.labels.empty();
     if (needs_current_tags) {
         auto cur_res = get("/library/metadata/" + external_id);
         if (cur_res && cur_res->status == 200) {
@@ -944,6 +956,8 @@ bool PlexSource::pushMetadata(const std::string& external_id,
                         appendTagEdit(path, "country", extractTagArray(item, "Country"), parseJsonStringArray(fields.countries));
                     if (!fields.collections.empty())
                         appendTagEdit(path, "collection", extractTagArray(item, "Collection"), parseJsonStringArray(fields.collections));
+                    if (!fields.labels.empty())
+                        appendTagEdit(path, "label", extractTagArray(item, "Label"), parseJsonStringArray(fields.labels));
                 }
             } catch (const json::exception& e) {
                 std::cerr << "[plex:" << source_id_ << "] pushMetadata: couldn't parse current tags (id="

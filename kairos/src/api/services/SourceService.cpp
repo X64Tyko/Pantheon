@@ -43,7 +43,11 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 			result.push_back({{"source_id", s.source_id}, {"source_type", s.source_type},
 			                  {"display_name", s.display_name}, {"base_url", s.base_url},
 			                  {"enabled", s.enabled}, {"synced_user_id", s.synced_user_id},
-			                  {"user_sync_error", s.user_sync_error}, {"sync_priority", s.sync_priority}});
+			                  {"user_sync_error", s.user_sync_error}, {"sync_priority", s.sync_priority},
+			                  {"auto_writeback", s.auto_writeback},
+			                  {"writeback_update_art", s.writeback_update_art},
+			                  {"writeback_update_external_ids", s.writeback_update_external_ids},
+			                  {"writeback_update_collections", s.writeback_update_collections}});
 		route::ok(res, result.dump());
 	});
 
@@ -179,9 +183,12 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 		}
 	});
 
-	// Source-level settings not tied to a specific library. Currently just
-	// synced_user_id (watch-state sync target) — see WatchProgressRepository /
-	// SyncManager::syncMovies for how it's consumed.
+	// Source-level settings not tied to a specific library: synced_user_id
+	// (watch-state sync target — see WatchProgressRepository /
+	// SyncManager::syncMovies), sync_priority, and the writeback settings
+	// (auto_writeback + the per-field update_* opt-outs — see
+	// MediaSourceConfig's own comments and ContentService::writebackShow/
+	// writebackMovie for how they're consumed).
 	svr.Patch("/api/sources/:id", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
@@ -197,6 +204,14 @@ void SourceService::registerRoutes(httplib::Server& svr) {
 				repo.setSyncPriority(id, b["sync_priority"].get<int>());
 				sync_.loadSources();
 			}
+			if (b.contains("auto_writeback"))
+				repo.setAutoWriteback(id, b["auto_writeback"].get<bool>());
+			if (b.contains("writeback_update_art"))
+				repo.setWritebackUpdateArt(id, b["writeback_update_art"].get<bool>());
+			if (b.contains("writeback_update_external_ids"))
+				repo.setWritebackUpdateExternalIds(id, b["writeback_update_external_ids"].get<bool>());
+			if (b.contains("writeback_update_collections"))
+				repo.setWritebackUpdateCollections(id, b["writeback_update_collections"].get<bool>());
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const json::exception& e) {
 			route::err(res, 400, e.what());
