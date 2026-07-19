@@ -1,6 +1,7 @@
 #include "ActivityRouter.h"
 #include "../log/LogBuffer.h"
 #include "../stream/EncoderArgs.h" // hwAccelName
+#include "../stream/GpuMetrics.h"
 #include "../stream/SessionManager.h"
 #include "../stream/VodSessionManager.h"
 #include <filesystem>
@@ -95,7 +96,8 @@ json vodSessionJson(const std::shared_ptr<VodSession>& s) {
 } // namespace
 
 void registerActivityRoutes(httplib::Server& svr, SessionManager& sessions,
-                             VodSessionManager& vodSessions, LogBuffer& logs) {
+                             VodSessionManager& vodSessions, LogBuffer& logs,
+                             HwAccel gpu_backend, const std::string& vaapi_device) {
     svr.Get("/stream/activity/sessions", [&sessions, &vodSessions](
             const httplib::Request&, httplib::Response& res) {
         json out = json::array();
@@ -142,12 +144,29 @@ void registerActivityRoutes(httplib::Server& svr, SessionManager& sessions,
         res.set_content(json(matched).dump(), "application/json");
     });
 
-    svr.Get("/stream/activity/metrics", [](const httplib::Request&, httplib::Response& res) {
+    svr.Get("/stream/activity/metrics", [gpu_backend, vaapi_device](const httplib::Request&, httplib::Response& res) {
         auto pm = MetricsGatherer::getProcessMetrics();
         json j = {
             {"cpu_usage", pm.cpu_usage},
             {"ram_bytes", pm.ram_bytes}
         };
+        // Absent entirely when gpu_backend == HwAccel::none or the query
+        // itself fails — the Activity page draws nothing in either case
+        // rather than an empty/zeroed GPU section (real feedback: "not
+        // drawn at all" when no hw-accel is available, not a blank card).
+        if (auto gpu = queryGpuMetrics(gpu_backend, vaapi_device)) {
+            json j_gpu = {
+                {"backend",       gpu->backend},
+                {"gpu_util_pct",  gpu->gpu_util_pct},
+                {"mem_used_mb",   gpu->mem_used_mb},
+                {"mem_total_mb",  gpu->mem_total_mb},
+            };
+            if (gpu->name)             j_gpu["name"]               = *gpu->name;
+            if (gpu->encoder_util_pct) j_gpu["encoder_util_pct"]   = *gpu->encoder_util_pct;
+            if (gpu->decoder_util_pct) j_gpu["decoder_util_pct"]   = *gpu->decoder_util_pct;
+            if (gpu->temp_c)           j_gpu["temp_c"]             = *gpu->temp_c;
+            j["gpu"] = j_gpu;
+        }
         res.set_content(j.dump(), "application/json");
     });
 }

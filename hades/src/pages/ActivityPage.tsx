@@ -74,6 +74,14 @@ export default observer(function ActivityPage() {
     return () => clearInterval(timer)
   }, [])
 
+  // Only the latest poll decides whether to draw the GPU row at all — not
+  // every historical entry, so a single transient query hiccup upstream
+  // (see GpuMetrics.h's "nullopt on failure" convention) doesn't flicker
+  // the section in and out. Absent (no hw-accel resolved to a real GPU
+  // backend) is "draw nothing," not a zeroed-out card — real feedback: "it
+  // should change between nvidia, AMD or not drawn at all."
+  const latestGpu = metricsStore.history[metricsStore.history.length - 1]?.hephaestus.gpu
+
   const syncAll = async () => {
     try { await api.syncAll() } catch {}
   }
@@ -223,15 +231,62 @@ export default observer(function ActivityPage() {
                     data={metricsStore.history.map(h => h.hermes.cpu_usage)} 
                     color="#3B82F6" 
                 />
-                <Sparkline 
-                    label="Hephaestus CPU" 
+                <Sparkline
+                    label="Hephaestus CPU"
                     unit="%"
                     width={120}
-                    data={metricsStore.history.map(h => h.hephaestus.cpu_usage)} 
-                    color="#F43F5E" 
+                    data={metricsStore.history.map(h => h.hephaestus.cpu_usage)}
+                    color="#F43F5E"
                 />
             </div>
         </div>
+
+        {latestGpu && (
+          <div className="flex flex-wrap items-end gap-6 pt-4 mt-4 border-t border-zinc-800/60">
+            <Sparkline
+                label={latestGpu.backend === 'nvidia' ? 'NVIDIA GPU' : 'AMD GPU'}
+                unit="%"
+                width={120}
+                data={metricsStore.history.map(h => h.hephaestus.gpu?.gpu_util_pct ?? 0)}
+                max={100}
+                color="#22D3EE"
+            />
+            {/* Separate encode/decode engine load — nvidia-smi only,
+                see GpuMetrics.h's own comment on why AMD has no
+                equivalent query. */}
+            {latestGpu.backend === 'nvidia' && (
+              <>
+                <Sparkline
+                    label="NVENC"
+                    unit="%"
+                    width={120}
+                    data={metricsStore.history.map(h => h.hephaestus.gpu?.encoder_util_pct ?? 0)}
+                    max={100}
+                    color="#F59E0B"
+                />
+                <Sparkline
+                    label="NVDEC"
+                    unit="%"
+                    width={120}
+                    data={metricsStore.history.map(h => h.hephaestus.gpu?.decoder_util_pct ?? 0)}
+                    max={100}
+                    color="#84CC16"
+                />
+              </>
+            )}
+            <div className="flex flex-col gap-1 text-xs">
+              <span className="text-white/60 uppercase tracking-wider font-medium">
+                {latestGpu.name || (latestGpu.backend === 'nvidia' ? 'NVIDIA GPU' : 'AMD GPU')}
+              </span>
+              <span className="text-zinc-400">
+                {(latestGpu.mem_used_mb / 1024).toFixed(1)} / {(latestGpu.mem_total_mb / 1024).toFixed(1)} GB VRAM
+              </span>
+              {latestGpu.temp_c != null && (
+                <span className="text-zinc-400">{latestGpu.temp_c.toFixed(0)}°C</span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Log viewer — fills remaining height, but never shrinks below a
