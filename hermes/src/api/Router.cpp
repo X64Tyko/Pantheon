@@ -484,6 +484,16 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
     svr.Post(R"(/stream/vod/.*)",     authedHephaestusProxy);
     svr.Post(R"(/stream/preview/.*)", authedHephaestusProxy);
 
+    // Client-declared decode capability (see ClientCapabilitiesRouter.cpp
+    // on the Hephaestus side, which validates the bearer token itself) —
+    // no content is referenced here, so the plain pass-through is enough,
+    // same as the GET routes above. This was missing entirely: clients'
+    // declare/forget calls were falling through to the Hades catch-all
+    // below with no error surfaced, so direct-play silently never had a
+    // capability declaration to check against.
+    svr.Post(R"(/stream/client-capabilities)",   hephaestusProxy);
+    svr.Delete(R"(/stream/client-capabilities)", hephaestusProxy);
+
     // GET /stream/activity/... (Hades' Activity page "Now Playing" panel) —
     // authenticated for the same reason as the POST routes above: unlike a
     // segment/manifest fetch for a stream ID the caller already knows, this
