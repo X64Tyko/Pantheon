@@ -107,6 +107,7 @@ std::vector<Show> PlexSource::fetchShows(const std::string& external_lib_id) {
             		Show show;
             		show.show_id        = item["ratingKey"].get<std::string>();
             		show.title          = item["title"].get<std::string>();
+            		show.original_title = item.value("originalTitle", "");
             		show.content_rating = item.value("contentRating", "");
             		show.overview       = item.value("summary", "");
             		show.tagline        = item.value("tagline", "");
@@ -242,6 +243,7 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id) {
                 Movie movie;
                 movie.movie_id       = item["ratingKey"].get<std::string>();
                 movie.title          = item["title"].get<std::string>();
+                movie.original_title = item.value("originalTitle", "");
                 movie.content_rating = item.value("contentRating", "");
                 movie.file_path      = std::move(file_path);
                 {
@@ -812,6 +814,58 @@ std::string plexUrlEncode(const std::string& s) {
     }
     return out;
 }
+
+// item["Genre"]/["Director"]/etc. is an array of {"tag": "..."} objects —
+// same shape the read side already parses in fetchShows/fetchMovies.
+std::vector<std::string> extractTagArray(const json& item, const char* key) {
+    std::vector<std::string> out;
+    if (item.contains(key))
+        for (const auto& t : item[key])
+            out.push_back(t.value("tag", ""));
+    return out;
+}
+
+// Appends Plex's tag-array edit directives for one field to `path`,
+// diffing `current` (freshly fetched) against `desired` (what Pantheon
+// wants) — see PlexSource::pushMetadata's own comment for why a diff, not
+// a naive resend, is required. No-ops if the sets already match (nothing
+// to add or remove).
+void appendTagEdit(std::string& path, const std::string& plex_field,
+                    const std::vector<std::string>& current,
+                    const std::vector<std::string>& desired) {
+    std::vector<std::string> to_remove;
+    for (const auto& c : current)
+        if (std::find(desired.begin(), desired.end(), c) == desired.end())
+            to_remove.push_back(c);
+    const bool already_matches = to_remove.empty() && desired.size() == current.size()
+        && std::all_of(desired.begin(), desired.end(), [&](const std::string& d) {
+               return std::find(current.begin(), current.end(), d) != current.end();
+           });
+    if (already_matches) return;
+
+    if (!to_remove.empty()) {
+        std::string joined;
+        for (size_t i = 0; i < to_remove.size(); ++i) {
+            if (i) joined += ",";
+            joined += plexUrlEncode(to_remove[i]);
+        }
+        path += "&" + plex_field + "%5B%5D.tag.tag-=" + joined;
+    }
+    for (size_t i = 0; i < desired.size(); ++i)
+        path += "&" + plex_field + "%5B" + std::to_string(i) + "%5D.tag.tag=" + plexUrlEncode(desired[i]);
+    path += "&" + plex_field + ".locked=1";
+}
+
+// Parses a Pantheon JSON-array-string field (Show/Movie.genres etc.) into
+// plain strings, silently yielding an empty list on malformed input.
+std::vector<std::string> parseJsonStringArray(const std::string& json_str) {
+    std::vector<std::string> out;
+    try {
+        for (const auto& v : json::parse(json_str))
+            if (v.is_string()) out.push_back(v.get<std::string>());
+    } catch (const json::exception&) {}
+    return out;
+}
 }
 
 bool PlexSource::pushMetadata(const std::string& external_id,
@@ -826,13 +880,6 @@ bool PlexSource::pushMetadata(const std::string& external_id,
 
     bool ok = true;
 
-    // Scalar text fields only — Plex's array-valued fields (genres, cast,
-    // countries, collections, director, network) use a different multi-value
-    // tag-editing convention (separate add/remove directives per tag) that
-    // needs live verification against a real server before it's safe to
-    // guess at; a wrong shape here risks corrupting tags rather than just
-    // failing to apply, so it's deliberately deferred rather than attempted
-    // blind.
     std::string path = "/library/sections/" + external_lib_id + "/all?type="
         + (item_type == "movie" ? "1" : "2") + "&id=" + external_id;
 
@@ -842,11 +889,71 @@ bool PlexSource::pushMetadata(const std::string& external_id,
               + "&" + plex_field + ".locked=1";
     };
     addField("title",                fields.title);
+    addField("originalTitle",        fields.original_title);
     addField("summary",              fields.overview);
     addField("contentRating",        fields.content_rating);
     addField("studio",               fields.studio);
     addField("tagline",              fields.tagline);
     addField("originallyAvailableAt", fields.release_date);
+
+    // Array-valued fields (genre/director/writer/country/collection) use
+    // Plex's add/remove tag-directive convention, not a whole-object
+    // replace like Jellyfin's — verified against python-plexapi's actual
+    // production implementation (github.com/pkkid/python-plexapi,
+    // plexapi/mixins/edit.py: EditTagsMixin/_tagHelper) rather than
+    // guessed: `{tag}[i].tag.tag` sets/adds an entry at that index,
+    // `{tag}[].tag.tag-` (comma-joined, URL-escaped) removes specific
+    // entries — there is no single "replace the whole list" directive. To
+    // get writeback's "set to exactly this list" semantics, the live
+    // current tags are fetched fresh right here (a stale local copy could
+    // miss something a user just changed in Plex itself) and diffed
+    // against the desired list — appendTagEdit() sends both the removal
+    // directive for anything dropped and the full desired list as indices
+    // in the same request.
+    //
+    // Cast/actors is NOT sent, and isn't merely deferred — even
+    // python-plexapi, the reference client library every other tool in
+    // this space (Kometa included) is built on, has no Role/Actor edit
+    // mixin at all. There is no known-safe write mechanism to verify
+    // against.
+    //
+    // director/writer/country only apply to movies on Plex's side (its own
+    // ShowEditMixins has no Director/Writer/Country mixin) — Pantheon's own
+    // WritebackFields.director/writer are already movie-only by convention
+    // (only ever populated from ContentService::writebackMovie), so those
+    // two need no extra guard; countries is guarded explicitly below since
+    // WritebackFields.countries is populated for shows too.
+    const bool needs_current_tags =
+        !fields.genres.empty() || !fields.director.empty() || !fields.writer.empty() ||
+        !fields.countries.empty() || !fields.collections.empty();
+    if (needs_current_tags) {
+        auto cur_res = get("/library/metadata/" + external_id);
+        if (cur_res && cur_res->status == 200) {
+            try {
+                const json cur = json::parse(cur_res->body);
+                const auto& metadata = cur.value("MediaContainer", json::object()).value("Metadata", json::array());
+                if (!metadata.empty()) {
+                    const json& item = metadata[0];
+                    if (!fields.genres.empty())
+                        appendTagEdit(path, "genre", extractTagArray(item, "Genre"), parseJsonStringArray(fields.genres));
+                    if (!fields.director.empty())
+                        appendTagEdit(path, "director", extractTagArray(item, "Director"), {fields.director});
+                    if (!fields.writer.empty())
+                        appendTagEdit(path, "writer", extractTagArray(item, "Writer"), {fields.writer});
+                    if (item_type == "movie" && !fields.countries.empty())
+                        appendTagEdit(path, "country", extractTagArray(item, "Country"), parseJsonStringArray(fields.countries));
+                    if (!fields.collections.empty())
+                        appendTagEdit(path, "collection", extractTagArray(item, "Collection"), parseJsonStringArray(fields.collections));
+                }
+            } catch (const json::exception& e) {
+                std::cerr << "[plex:" << source_id_ << "] pushMetadata: couldn't parse current tags (id="
+                          << external_id << "): " << e.what() << " — tag fields skipped this push\n";
+            }
+        } else {
+            std::cerr << "[plex:" << source_id_ << "] pushMetadata: couldn't fetch current item for tag diff (id="
+                      << external_id << ") — tag fields skipped this push\n";
+        }
+    }
 
     auto res = client_.Put(path.c_str());
     if (!res) {

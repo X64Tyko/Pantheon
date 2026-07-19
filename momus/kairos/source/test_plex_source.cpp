@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #include <httplib.h>
 #include "source/PlexSource.h"
+#include "model/WritebackFields.h"
 #include <chrono>
 #include <memory>
 #include <string>
@@ -739,4 +740,160 @@ TEST(PlexMeta, SendsXPlexTokenHeader) {
     PlexSource src("s1", srv.url(), "my-plex-token");
     src.listAvailableLibraries();
     EXPECT_EQ(captured, "my-plex-token");
+}
+
+// ============================================================================
+// pushMetadata — writeback (tag-array diff: genre/director/writer/country/
+// collection). Each test gets its own dedicated TestServer (same pattern as
+// SendsXPlexTokenHeader above) since these need custom GET-current-item +
+// PUT-edit routes the shared fixture doesn't register.
+// ============================================================================
+
+namespace {
+
+// Registers the GET-current-item (for the diff's "what's already there"
+// read) / PUT-edit (captures the full raw query target) pair pushMetadata
+// needs. Baseline has one existing tag per field so tests can verify both
+// halves of a diff: an old entry that should be removed, and a field
+// (Writer) with no existing entries at all, so its add-only path is covered
+// too.
+void registerPlexPushMetadataRoutes(httplib::Server& s, std::string* capturedTarget) {
+    s.Get("/library/metadata/item1", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(R"({"MediaContainer":{"Metadata":[{
+            "ratingKey":"item1",
+            "Genre":[{"tag":"Old Genre"}],
+            "Director":[{"tag":"Old Director"}],
+            "Country":[{"tag":"Old Country"}],
+            "Collection":[{"tag":"Old Collection"}]
+        }]}})", "application/json");
+    });
+    s.Put("/library/sections/lib1/all", [capturedTarget](const httplib::Request& req, httplib::Response& res) {
+        *capturedTarget = req.target;
+        res.status = 200;
+    });
+}
+
+} // namespace
+
+TEST(PlexPushMetadata, GenresRemovesOldAndAddsNew) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.genres = R"(["New Genre"])";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    // Removal directive for the old genre, plus the new one added at index 0.
+    EXPECT_NE(captured.find("genre%5B%5D.tag.tag-=Old%20Genre"), std::string::npos);
+    EXPECT_NE(captured.find("genre%5B0%5D.tag.tag=New%20Genre"), std::string::npos);
+    EXPECT_NE(captured.find("genre.locked=1"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, GenresNoOpWhenDesiredMatchesCurrent) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.genres = R"(["Old Genre"])"; // exactly what the canned current item already has
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    EXPECT_EQ(captured.find("genre"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, DirectorReplacesExisting) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.director = "New Director";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    EXPECT_NE(captured.find("director%5B%5D.tag.tag-=Old%20Director"), std::string::npos);
+    EXPECT_NE(captured.find("director%5B0%5D.tag.tag=New%20Director"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, WriterAddedWithNoExistingEntriesNeedsNoRemoval) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.writer = "New Writer";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    // The canned item has no "Writer" key at all — pure add, no removal directive.
+    EXPECT_EQ(captured.find("writer%5B%5D.tag.tag-"), std::string::npos);
+    EXPECT_NE(captured.find("writer%5B0%5D.tag.tag=New%20Writer"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, CountryOnlySentForMoviesNotShows) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.countries = R"(["New Country"])";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "show", f));
+
+    // Plex's own ShowEditMixins has no Country mixin — must not be sent for a show.
+    EXPECT_EQ(captured.find("country"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, CountrySentForMovies) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.countries = R"(["New Country"])";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    EXPECT_NE(captured.find("country%5B%5D.tag.tag-=Old%20Country"), std::string::npos);
+    EXPECT_NE(captured.find("country%5B0%5D.tag.tag=New%20Country"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, CollectionsReplaced) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.collections = R"(["New Collection"])";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    EXPECT_NE(captured.find("collection%5B%5D.tag.tag-=Old%20Collection"), std::string::npos);
+    EXPECT_NE(captured.find("collection%5B0%5D.tag.tag=New%20Collection"), std::string::npos);
+}
+
+TEST(PlexPushMetadata, ActorsNeverSent) {
+    TestServer srv;
+    std::string captured;
+    registerPlexPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    WritebackFields f;
+    f.actors = R"(["Some Actor"])";
+    EXPECT_TRUE(src.pushMetadata("item1", "lib1", "movie", f));
+
+    // No known-safe write mechanism exists for Plex cast — must never be attempted.
+    EXPECT_EQ(captured.find("role"), std::string::npos);
+    EXPECT_EQ(captured.find("actor"), std::string::npos);
 }

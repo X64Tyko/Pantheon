@@ -28,6 +28,7 @@
 #include <ctime>
 #include <sys/stat.h>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -354,6 +355,88 @@ std::optional<WritebackImage> ContentService::fetchImageBytes(const std::string&
 		if (ct.empty()) ct = "image/jpeg";
 		return WritebackImage{std::move(img->body), std::move(ct)};
 	} catch (const std::exception&) { return std::nullopt; }
+}
+
+json ContentService::writebackShow(const ShowDetail& d, const std::string& source_id_filter) {
+	WritebackFields fields;
+	fields.title           = d.title;
+	fields.original_title  = d.original_title;
+	fields.overview        = d.overview;
+	fields.genres          = d.genres;
+	fields.content_rating  = d.content_rating;
+	fields.studio          = d.studio;
+	fields.network         = d.network;
+	fields.actors          = d.actors;
+	fields.countries       = d.countries;
+	fields.collections     = d.collections;
+	fields.release_date    = d.originally_available_at;
+	fields.thumb            = fetchImageBytes(d.thumb, d.source_id);
+	fields.art              = fetchImageBytes(d.art, d.source_id);
+
+	auto targets = SourceRepository(db_).getWritebackTargets("show", d.show_id);
+	json results = json::array();
+	for (const auto& t : targets) {
+		if (!source_id_filter.empty() && t.source_id != source_id_filter) continue;
+		auto* src = sync_.findSource(t.source_id);
+		bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "show", fields);
+		results.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"ok", ok}});
+	}
+	return results;
+}
+
+json ContentService::writebackMovie(const MovieDetail& d, const std::string& source_id_filter) {
+	WritebackFields fields;
+	fields.title           = d.title;
+	fields.original_title  = d.original_title;
+	fields.overview        = d.overview;
+	fields.genres          = d.genres;
+	fields.content_rating  = d.content_rating;
+	fields.studio          = d.studio;
+	fields.director        = d.director;
+	fields.writer          = d.writer;
+	fields.tagline         = d.tagline;
+	fields.actors          = d.actors;
+	fields.countries       = d.countries;
+	fields.collections     = d.collections;
+	fields.release_date    = d.release_date;
+	fields.thumb            = fetchImageBytes(d.thumb, d.source_id);
+	fields.art              = fetchImageBytes(d.art, d.source_id);
+
+	auto targets = SourceRepository(db_).getWritebackTargets("movie", d.movie_id);
+	json results = json::array();
+	for (const auto& t : targets) {
+		if (!source_id_filter.empty() && t.source_id != source_id_filter) continue;
+		auto* src = sync_.findSource(t.source_id);
+		bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "movie", fields);
+		results.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"ok", ok}});
+	}
+	return results;
+}
+
+void ContentService::runWritebackAll(const std::string& library_id, const std::string& source_id) {
+	ContentRepository repo(db_);
+	const auto show_ids  = repo.getWritebackEligibleShowIds(library_id, source_id);
+	const auto movie_ids = repo.getWritebackEligibleMovieIds(library_id, source_id);
+	std::cout << "[writeback] starting: " << show_ids.size() << " show(s), "
+	          << movie_ids.size() << " movie(s)"
+	          << (library_id.empty() ? "" : " (library=" + library_id + ")")
+	          << (source_id.empty()  ? "" : " (source="  + source_id  + ")") << std::endl;
+
+	int ok_count = 0, fail_count = 0;
+	for (const auto& id : show_ids) {
+		auto d = repo.getShowDetail(id);
+		if (!d) continue; // deleted mid-run — skip rather than fail the whole pass
+		for (const auto& r : writebackShow(*d, source_id))
+			(r.value("ok", false) ? ok_count : fail_count)++;
+	}
+	for (const auto& id : movie_ids) {
+		auto d = repo.getMovieDetail(id);
+		if (!d) continue;
+		for (const auto& r : writebackMovie(*d, source_id))
+			(r.value("ok", false) ? ok_count : fail_count)++;
+	}
+	std::cout << "[writeback] done: " << ok_count << " target(s) ok, "
+	          << fail_count << " failed" << std::endl;
 }
 
 void ContentService::registerRoutes(httplib::Server& svr) {
@@ -782,6 +865,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		json show;
 		show["show_id"]                 = d->show_id;
 		show["title"]                   = d->title;
+		show["original_title"]          = d->original_title;
 		show["content_rating"]          = d->content_rating;
 		show["overview"]                = d->overview;
 		show["studio"]                  = d->studio;
@@ -838,6 +922,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			std::vector<StrField> sf;
 			std::vector<IntField> intf;
 			if (b.contains("title"))                   sf.push_back({"title",                   b["title"].get<std::string>()});
+			if (b.contains("original_title"))          sf.push_back({"original_title",          b["original_title"].get<std::string>()});
 			if (b.contains("overview"))                sf.push_back({"overview",                b["overview"].get<std::string>()});
 			if (b.contains("studio"))                  sf.push_back({"studio",                  b["studio"].get<std::string>()});
 			if (b.contains("status"))                  sf.push_back({"status",                  b["status"].get<std::string>()});
@@ -888,28 +973,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			// one — see acceptCandidate() and the "Push to Sources" plan.
 			if (!d->match_confirmed) { route::err(res, 403, "match not confirmed"); return; }
 
-			WritebackFields fields;
-			fields.title           = d->title;
-			fields.overview        = d->overview;
-			fields.genres          = d->genres;
-			fields.content_rating  = d->content_rating;
-			fields.studio          = d->studio;
-			fields.network         = d->network;
-			fields.actors          = d->actors;
-			fields.countries       = d->countries;
-			fields.collections     = d->collections;
-			fields.release_date    = d->originally_available_at;
-			fields.thumb            = fetchImageBytes(d->thumb, d->source_id);
-			fields.art              = fetchImageBytes(d->art, d->source_id);
-
-			auto targets = SourceRepository(db_).getWritebackTargets("show", id);
-			json results = json::array();
-			for (const auto& t : targets) {
-				auto* src = sync_.findSource(t.source_id);
-				bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "show", fields);
-				results.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"ok", ok}});
-			}
-			route::ok(res, json{{"results", results}}.dump());
+			route::ok(res, json{{"results", writebackShow(*d, "")}}.dump());
 		} catch (const std::exception& e) { route::logErr("POST /api/shows/:id/writeback", e); route::err(res, 500, e.what()); }
 	});
 
@@ -995,6 +1059,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		json movie;
 		movie["movie_id"]        = d->movie_id;
 		movie["title"]           = d->title;
+		movie["original_title"]  = d->original_title;
 		movie["content_rating"]  = d->content_rating;
 		movie["duration_ms"]     = d->duration_ms;
 		if (d->year)            movie["year"]            = *d->year;
@@ -1004,6 +1069,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		movie["tagline"]         = d->tagline;
 		movie["studio"]          = d->studio;
 		movie["director"]        = d->director;
+		movie["writer"]          = d->writer;
 		movie["genres"]          = parseArr(d->genres);
 		movie["thumb"]           = d->thumb;
 		movie["art"]             = d->art;
@@ -1046,10 +1112,12 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			std::vector<StrField> sf;
 			std::vector<IntField> intf;
 			if (b.contains("title"))          sf.push_back({"title",          b["title"].get<std::string>()});
+			if (b.contains("original_title")) sf.push_back({"original_title", b["original_title"].get<std::string>()});
 			if (b.contains("overview"))       sf.push_back({"overview",       b["overview"].get<std::string>()});
 			if (b.contains("tagline"))        sf.push_back({"tagline",        b["tagline"].get<std::string>()});
 			if (b.contains("studio"))         sf.push_back({"studio",         b["studio"].get<std::string>()});
 			if (b.contains("director"))       sf.push_back({"director",       b["director"].get<std::string>()});
+			if (b.contains("writer"))         sf.push_back({"writer",         b["writer"].get<std::string>()});
 			if (b.contains("content_rating")) sf.push_back({"content_rating", b["content_rating"].get<std::string>()});
 			if (b.contains("imdb_id"))        sf.push_back({"imdb_id",        b["imdb_id"].get<std::string>()});
 			if (b.contains("tmdb_id"))        sf.push_back({"tmdb_id",        b["tmdb_id"].get<std::string>()});
@@ -1094,30 +1162,50 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			// one — see acceptCandidate() and the "Push to Sources" plan.
 			if (!d->match_confirmed) { route::err(res, 403, "match not confirmed"); return; }
 
-			WritebackFields fields;
-			fields.title           = d->title;
-			fields.overview        = d->overview;
-			fields.genres          = d->genres;
-			fields.content_rating  = d->content_rating;
-			fields.studio          = d->studio;
-			fields.director        = d->director;
-			fields.tagline         = d->tagline;
-			fields.actors          = d->actors;
-			fields.countries       = d->countries;
-			fields.collections     = d->collections;
-			fields.release_date    = d->release_date;
-			fields.thumb            = fetchImageBytes(d->thumb, d->source_id);
-			fields.art              = fetchImageBytes(d->art, d->source_id);
-
-			auto targets = SourceRepository(db_).getWritebackTargets("movie", id);
-			json results = json::array();
-			for (const auto& t : targets) {
-				auto* src = sync_.findSource(t.source_id);
-				bool ok = src && src->pushMetadata(t.external_id, t.external_lib_id, "movie", fields);
-				results.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"ok", ok}});
-			}
-			route::ok(res, json{{"results", results}}.dump());
+			route::ok(res, json{{"results", writebackMovie(*d, "")}}.dump());
 		} catch (const std::exception& e) { route::logErr("POST /api/movies/:id/writeback", e); route::err(res, 500, e.what()); }
+	});
+
+	// Fires "Writeback All" as a detached background pass, same
+	// trigger-then-202-immediately shape as POST /api/sync/all — a full
+	// library push is exactly the kind of thing that can run long, and
+	// there's already a convention (Activity page log stream) for surfacing
+	// that kind of progress without the caller blocking on it. Body is
+	// optional; library_id/source_id absent or "" = unfiltered (every
+	// match-confirmed show and movie, pushed to every one of its targets).
+	svr.Post("/api/writeback/all", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		bool expected = false;
+		if (!writeback_running_.compare_exchange_strong(expected, true)) {
+			route::err(res, 409, "writeback already running");
+			return;
+		}
+		std::string library_id, source_id;
+		try {
+			auto b = req.body.empty() ? json::object() : json::parse(req.body);
+			library_id = b.value("library_id", "");
+			source_id  = b.value("source_id", "");
+		} catch (const json::exception&) { /* malformed body — fall through unfiltered, same as an empty body */ }
+
+		std::thread([this, library_id, source_id]() {
+			try {
+				runWritebackAll(library_id, source_id);
+			} catch (const std::exception& e) {
+				std::cerr << "[writeback] error: " << e.what() << std::endl;
+			}
+			writeback_running_.store(false);
+		}).detach();
+
+		res.status = 202;
+		route::ok(res, json{{"status", "started"}}.dump());
+	});
+
+	// Polled by Hades (same shape/cadence as GET /api/sync/status) so the
+	// "Writeback in progress" indicator survives a page navigation/refresh
+	// instead of only reflecting the triggering tab's own local state.
+	svr.Get("/api/writeback/status", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		route::ok(res, json{{"running", writeback_running_.load()}}.dump());
 	});
 
 	// Link a duplicate movie onto this one — see the analogous show route above.

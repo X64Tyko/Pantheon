@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 #include "source/JellyfinSource.h"
 #include "source/EmbySource.h"
+#include "model/WritebackFields.h"
 #include <chrono>
 #include <memory>
 #include <string>
@@ -625,4 +626,178 @@ TEST(EmbyMeta, SendsXEmbyTokenHeader) {
     src.listAvailableLibraries();
     EXPECT_EQ(captured_name,  "X-Emby-Token");
     EXPECT_EQ(captured_value, "my-emby-token");
+}
+
+// ============================================================================
+// pushMetadata — writeback (genres/actors/original_title)
+//
+// Each test gets its own dedicated TestServer (same pattern as the
+// SendsX*TokenHeader tests above) rather than the shared fixture, since
+// these need custom GET-by-id + POST routes the shared fixture doesn't
+// register — keeps these fully isolated from the ~40 fetch/browse tests
+// sharing that server.
+// ============================================================================
+
+namespace {
+
+// Registers the GET-existing-item / POST-updated-item pair pushMetadata
+// needs, on the given server, capturing the POSTed body into *out.
+// existing_people/existing_genres seed a baseline with a non-Actor credit
+// (Director) already present, so tests can assert it survives an actors
+// writeback untouched.
+void registerPushMetadataRoutes(httplib::Server& s, json* out) {
+    s.Get("/Users/uid/Items/item1", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(json{
+            {"Id", "item1"}, {"Name", "Old Title"},
+            {"Genres", json::array({"Old Genre"})},
+            {"People", json::array({
+                json{{"Name","Old Director"},{"Type","Director"}},
+                json{{"Name","Old Actor"},{"Type","Actor"}},
+            })},
+        }.dump(), "application/json");
+    });
+    s.Post("/Items/item1", [out](const httplib::Request& req, httplib::Response& res) {
+        *out = json::parse(req.body);
+        res.status = 200;
+        res.set_content("{}", "application/json");
+    });
+}
+
+} // namespace
+
+TEST(JellyfinPushMetadata, GenresReplaced) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.genres = json::array({"New Genre A", "New Genre B"}).dump();
+    EXPECT_TRUE(src.pushMetadata("item1", "", "show", f));
+
+    ASSERT_TRUE(captured.contains("Genres"));
+    EXPECT_EQ(captured["Genres"], json::array({"New Genre A", "New Genre B"}));
+}
+
+TEST(JellyfinPushMetadata, ActorsMergedPreservingNonActorCredits) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.actors = json::array({"New Actor 1", "New Actor 2"}).dump();
+    EXPECT_TRUE(src.pushMetadata("item1", "", "movie", f));
+
+    ASSERT_TRUE(captured.contains("People"));
+    const auto& people = captured["People"];
+
+    // Director from the original fetch must survive untouched.
+    bool has_director = false;
+    for (const auto& p : people)
+        if (p.value("Type", "") == "Director" && p.value("Name", "") == "Old Director")
+            has_director = true;
+    EXPECT_TRUE(has_director);
+
+    // Old actor is gone, both new actors are present, nothing else snuck in.
+    int actor_count = 0;
+    bool has_old_actor = false;
+    for (const auto& p : people) {
+        if (p.value("Type", "") != "Actor") continue;
+        actor_count++;
+        if (p.value("Name", "") == "Old Actor") has_old_actor = true;
+    }
+    EXPECT_EQ(actor_count, 2);
+    EXPECT_FALSE(has_old_actor);
+}
+
+TEST(JellyfinPushMetadata, DirectorReplacesExistingDirectorPreservingActor) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.director = "New Director";
+    EXPECT_TRUE(src.pushMetadata("item1", "", "movie", f));
+
+    ASSERT_TRUE(captured.contains("People"));
+    const auto& people = captured["People"];
+
+    int director_count = 0;
+    bool has_new_director = false;
+    for (const auto& p : people) {
+        if (p.value("Type", "") != "Director") continue;
+        director_count++;
+        if (p.value("Name", "") == "New Director") has_new_director = true;
+    }
+    EXPECT_EQ(director_count, 1);
+    EXPECT_TRUE(has_new_director);
+
+    // The pre-existing Actor credit must survive untouched — only Director
+    // entries should have been replaced.
+    bool has_old_actor = false;
+    for (const auto& p : people)
+        if (p.value("Type", "") == "Actor" && p.value("Name", "") == "Old Actor")
+            has_old_actor = true;
+    EXPECT_TRUE(has_old_actor);
+}
+
+TEST(JellyfinPushMetadata, WriterAddsNewCreditWithoutDisturbingOthers) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.writer = "New Writer";
+    EXPECT_TRUE(src.pushMetadata("item1", "", "movie", f));
+
+    ASSERT_TRUE(captured.contains("People"));
+    const auto& people = captured["People"];
+
+    bool has_writer = false, has_old_director = false, has_old_actor = false;
+    for (const auto& p : people) {
+        const auto type = p.value("Type", ""), name = p.value("Name", "");
+        if (type == "Writer"   && name == "New Writer")   has_writer       = true;
+        if (type == "Director" && name == "Old Director") has_old_director = true;
+        if (type == "Actor"    && name == "Old Actor")    has_old_actor    = true;
+    }
+    EXPECT_TRUE(has_writer);
+    EXPECT_TRUE(has_old_director);
+    EXPECT_TRUE(has_old_actor);
+}
+
+TEST(JellyfinPushMetadata, OriginalTitleSent) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.original_title = "Some Original Name";
+    EXPECT_TRUE(src.pushMetadata("item1", "", "show", f));
+
+    EXPECT_EQ(captured.value("OriginalTitle", ""), "Some Original Name");
+}
+
+TEST(JellyfinPushMetadata, EmptyGenresAndActorsLeaveExistingUntouched) {
+    TestServer srv;
+    json captured;
+    registerPushMetadataRoutes(srv.svr, &captured);
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    WritebackFields f;
+    f.title = "New Title Only"; // genres/actors left default-empty
+    EXPECT_TRUE(src.pushMetadata("item1", "", "show", f));
+
+    EXPECT_EQ(captured.value("Name", ""), "New Title Only");
+    EXPECT_EQ(captured["Genres"], json::array({"Old Genre"}));
+    EXPECT_EQ(captured["People"].size(), 2u);
 }

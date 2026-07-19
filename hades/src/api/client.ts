@@ -247,6 +247,12 @@ export const api = {
   triggerHardSync:  (sourceId: string)                  => request<{status: string}>('POST', `/sources/${sourceId}/hard-sync`),
   syncAll:          ()                                  => request<{status: string}>('POST', '/sync/all'),
   syncAllHard:      ()                                  => request<{status: string}>('POST', '/sync/all-hard'),
+  // library_id/source_id both optional — omit either (or both) for an
+  // unfiltered run. 202 + {status:"started"} the same way syncAll does;
+  // progress shows up on the Activity log stream, not in this response.
+  writebackAll:     (opts?: {library_id?: string; source_id?: string}) =>
+                                                           request<{status: string}>('POST', '/writeback/all', opts ?? {}),
+  getWritebackStatus: ()                                => request<{running: boolean}>('GET', '/writeback/status'),
 
   // Media language catalog (probed from library sample via ffprobe, cached 1 h)
   getMediaLanguages: () => request<MediaLanguages>('GET', '/media/languages'),
@@ -525,7 +531,7 @@ export const api = {
                          request<{status: string}>('POST', '/scrapers/match', b ?? {}),
   getMatchStatus:      ()                                         => request<{running: boolean}>('GET', '/scrapers/match/status'),
   triggerRefreshAll:   ()                                         => request<{status: string}>('POST', '/scrapers/refresh-all', {}),
-  getRefreshAllStatus: ()                                         => request<{running: boolean}>('GET', '/scrapers/refresh-all/status'),
+  getRefreshAllStatus: ()                                         => request<{running: boolean; total: number; processed: number; refreshed: number; failed: number}>('GET', '/scrapers/refresh-all/status'),
   getScraperStats:     ()                                         => request<ScraperStats>('GET',    '/scrapers/stats'),
   getReviewQueue:      (p: { status?: string; limit?: number; offset?: number } = {}) =>
                          request<{items: ReviewQueueItem[]; total: number}>('GET', `/scrapers/queue?${qs(p)}`),

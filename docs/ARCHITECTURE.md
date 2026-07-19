@@ -11,7 +11,7 @@ Pantheon consists of four primary services, each with a focused responsibility, 
 ### 1. Kairos (Scheduling & Library Engine)
 Kairos is the "brain" of the system.
 *   **Library Sync:** Communicates with Plex, Jellyfin, Emby, and the local filesystem to index media. **Path mapping** is used during sync to unify media stored under different paths across sources, ensuring different source paths representing the same physical location are registered as a single item.
-*   **Metadata Scraping:** Aggregates metadata from TMDB, TVDB, and AniDB using a multi-source priority system.
+*   **Metadata Scraping:** Aggregates metadata from TMDB, TVDB, AniDB, TVMaze, Trakt, AniList, and Wikidata using a multi-source priority system.
 *   **EPG Materialization:** Resolves complex scheduling rules (sequential, shuffle, smart shuffle, reruns, and timeslots) into a deterministic linear timeline.
 *   **Timeslot Blocks:** Implements fixed-time scheduling for blocks matching classic programming blocks (e.g., Toonami, One Saturday Morning), with support for rotating shows, premiere dates, and specific pre-premiere behaviors.
 *   **State Management:** Tracks watch progress, channel cursors, and play records without persistent database writes during the projection flow.
@@ -40,8 +40,9 @@ A specialized FFmpeg wrapper for high-concurrency stream delivery.
 
 ### 5. Client Applications
 Native and semi-native surfaces that consume Hermes/Kairos over the network rather than embedding Hades. Each lives in its own repository outside this monorepo:
-*   **[pantheon-roku](https://github.com/X64Tyko/pantheon-roku):** A native BrightScript Roku channel with device pairing, a Hermes-driven command channel, and native HLS playback with watch-progress sync. Code-complete; not yet verified on physical hardware.
-*   **[pantheon-relay](https://github.com/X64Tyko/pantheon-relay):** A minimal HTTPS-hosted Chromecast receiver bootstrap, solving the problem that Cast senders require a secure context Hades' LAN-only HTTP address can't provide on its own (an alternative to the Cloudflare Tunnel path in the README).
+*   **[pantheon-roku](https://github.com/X64Tyko/pantheon-roku):** A native BrightScript Roku channel — Connect, Home, Library, Detail, a hand-rolled transposed time-grid Guide, Player (with track menu and Up Next), and device pairing/casting via Hermes's long-poll command channel. Feature-complete and the most battle-tested client: multiple real-hardware debugging rounds (D-pad focus, keyboard component, pagination) plus a pass through Roku's own certification checklist. HDR/codec capability signaling is still hardcoded false.
+*   **[pantheon-android](https://github.com/X64Tyko/pantheon-android):** A fully native Kotlin/Jetpack Compose app (no WebView) built against a Kairos-served UI manifest (`GET /api/tv/manifest`) that both this app and Hades' own `/tv` route consume identically. Gradle flavor matrix `store`(google/amazon) × `formFactor`(mobile/tv) → 4 variants; Home/Library/Detail/Guide/Player all built for both form factors, using Media3/ExoPlayer and Paging3. Verified end-to-end on emulator against the live dev stack; the Amazon/Fire TV flavor compiles and assembles in CI but has never run on real Fire OS hardware.
+*   **[pantheon-relay](https://github.com/X64Tyko/pantheon-relay):** A minimal HTTPS-hosted Chromecast receiver bootstrap, solving the problem that Cast senders require a secure context Hades' LAN-only HTTP address can't provide on its own (an alternative to the Cloudflare Tunnel path in the README). Its planned role as a connection broker for self-hosted/managed relay modes (see the client apps design in project history) is not yet built — `/api/*` is currently a stub.
 
 ## Technical Principles
 

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { sourceStore, systemStore, statusStore, metricsStore } from '../stores'
 import type { LogEntry } from '../stores'
+import type { LibraryWithSource } from '../api/types'
 import { NowPlayingPanel } from '../components/activity/NowPlayingPanel'
 import { DeviceConnectionsPanel } from '../components/activity/DeviceConnectionsPanel'
 import { Sparkline } from '../components/activity/Sparkline'
@@ -10,6 +11,7 @@ import { Sparkline } from '../components/activity/Sparkline'
 function tagColor(line: string): string {
   if (/^\[error\]/i.test(line)) return 'text-red-400'
   if (/\[sync/.test(line))      return 'text-amber-400'
+  if (/\[writeback/.test(line)) return 'text-amber-400'
   if (/\[plex/.test(line))      return 'text-sky-400'
   if (/\[conf/.test(line))      return 'text-violet-400'
   if (/\[kairos/.test(line))    return 'text-emerald-400'
@@ -90,6 +92,32 @@ export default observer(function ActivityPage() {
   const syncAllHard = async () => {
     setConfirmHardSyncAll(false)
     try { await api.syncAllHard() } catch {}
+  }
+
+  // Writeback All — pushes every match-confirmed show/movie's metadata to
+  // its linked source(s), optionally scoped to one library and/or one
+  // source. Fires-and-returns like syncAll; progress/errors show up on the
+  // log stream below (tagged [writeback]), not in this response.
+  const [allLibraries,       setAllLibraries]       = useState<LibraryWithSource[]>([])
+  const [writebackLibraryId, setWritebackLibraryId] = useState('')
+  const [writebackSourceId,  setWritebackSourceId]  = useState('')
+  const [confirmWritebackAll, setConfirmWritebackAll] = useState(false)
+  const [writebackError,      setWritebackError]      = useState<string | null>(null)
+  useEffect(() => { api.getAllLibraries().then(setAllLibraries).catch(() => {}) }, [])
+  const writebackAll = async () => {
+    setConfirmWritebackAll(false)
+    setWritebackError(null)
+    try {
+      await api.writebackAll({
+        library_id: writebackLibraryId || undefined,
+        source_id:  writebackSourceId  || undefined,
+      })
+      statusStore.markWritebackStarted()
+    } catch (e) {
+      // Most likely a 409 (one's already running) — real progress/failures
+      // for a run that did start are on the [writeback]-tagged log stream.
+      setWritebackError(e instanceof Error ? e.message : 'Failed to start writeback.')
+    }
   }
 
   const liveColors = {
@@ -191,6 +219,79 @@ export default observer(function ActivityPage() {
             })}
           </div>
         )}
+      </div>
+
+      {/* Writeback status + trigger */}
+      <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4 shrink-0">
+        <h2 className="section-label mb-3">Writeback</h2>
+        <div className="flex items-center gap-2.5 mb-3">
+          {statusStore.writingBack ? (
+            <>
+              <Spinner className="text-amber-400" />
+              <span className="text-sm text-amber-300">Writeback in progress… (see log below, tagged [writeback])</span>
+            </>
+          ) : (
+            <>
+              <span className="w-2 h-2 rounded-full bg-zinc-600" />
+              <span className="text-sm text-zinc-500">Idle</span>
+            </>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={writebackLibraryId}
+            onChange={e => setWritebackLibraryId(e.target.value)}
+            disabled={statusStore.writingBack}
+            className="px-2 py-1.5 rounded bg-zinc-950/60 border border-zinc-800/60 text-xs text-zinc-300 disabled:opacity-40"
+          >
+            <option value="">All libraries</option>
+            {allLibraries.map(l => (
+              <option key={l.library_id} value={l.library_id}>{l.display_name} ({l.source_name})</option>
+            ))}
+          </select>
+          <select
+            value={writebackSourceId}
+            onChange={e => setWritebackSourceId(e.target.value)}
+            disabled={statusStore.writingBack}
+            className="px-2 py-1.5 rounded bg-zinc-950/60 border border-zinc-800/60 text-xs text-zinc-300 disabled:opacity-40"
+          >
+            <option value="">All sources</option>
+            {sourceStore.sources.map(s => (
+              <option key={s.source_id} value={s.source_id}>{s.display_name}</option>
+            ))}
+          </select>
+
+          {confirmWritebackAll ? (
+            <span className="flex items-center gap-1.5 text-xs">
+              <span className="text-orange-400">
+                Pushes confirmed metadata to {writebackSourceId ? 'the selected source' : 'every linked source'} for
+                {writebackLibraryId ? ' the selected library' : ' every match-confirmed item'}. Continue?
+              </span>
+              <button
+                onClick={writebackAll}
+                className="px-2 py-1 rounded bg-orange-900/60 border border-orange-700/50 text-orange-200 hover:bg-orange-800/60 transition-colors"
+              >Yes</button>
+              <button
+                onClick={() => setConfirmWritebackAll(false)}
+                className="px-2 py-1 rounded bg-zinc-800 border border-zinc-700/50 text-zinc-400 hover:bg-zinc-700 transition-colors"
+              >No</button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmWritebackAll(true)}
+              disabled={statusStore.anyBusy}
+              title="Pushes confirmed metadata (title, genres, cast, artwork, etc.) to every linked Plex/Jellyfin source"
+              className="flex items-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400
+                         disabled:bg-amber-500/40 text-black text-sm rounded font-medium transition-colors"
+            >
+              {statusStore.writingBack
+                ? <><Spinner className="text-black/70" /> Writing back…</>
+                : '▶ Writeback All'}
+            </button>
+          )}
+        </div>
+        {writebackError && <p className="text-xs text-red-400 mt-2">{writebackError}</p>}
       </div>
 
       <NowPlayingPanel />

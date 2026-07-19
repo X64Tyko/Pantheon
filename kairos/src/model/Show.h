@@ -18,6 +18,7 @@ struct ScraperInfo
 struct Show {
     std::string show_id;
     std::string title;
+    std::string original_title; // title in the show's original language, when a source distinguishes it
     std::string content_rating;
     std::string overview;
 	std::string tagline;

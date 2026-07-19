@@ -39,7 +39,7 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] **Security Audit:** Full review of the Hermes gateway and authentication flow.
 - [ ] **Public Plugin API:** Allow community-developed scrapers and source providers.
 - [ ] **Stable API:** Versioned REST API for third-party integrations.
-- [ ] **Client Ecosystem:** Native applications for TV and mobile. A native Roku channel (`pantheon-roku`) is code-complete but not yet verified on physical hardware, and a Chromecast HTTPS relay (`pantheon-relay`) is live; Android TV, Apple TV, and mobile remain future work.
+- [ ] **Client Ecosystem:** Native applications for TV and mobile. A native Roku channel (`pantheon-roku`) is feature-complete and verified across multiple real-hardware rounds; a native Android/Fire TV app (`pantheon-android`, 4 build flavors) is verified on emulator with the Amazon/Fire TV flavor still unverified on real hardware; a Chromecast HTTPS relay (`pantheon-relay`) is live. Apple TV and a self-hosted/managed relay connection-broker mode remain future work. None of the three client repos are public yet — distribution today is login-gated CI sideload artifacts only.
 
 ---
 

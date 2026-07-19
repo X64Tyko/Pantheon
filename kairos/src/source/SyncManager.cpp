@@ -770,8 +770,8 @@ void SyncManager::syncShows(IMediaSource& src,
                           genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
                           originally_available_at, year, audience_rating,
                           labels, network, actors, countries, collections, folder_path,
-                          added_at, added_at_source, primary_source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          added_at, added_at_source, primary_source, original_title)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(show_id) DO UPDATE SET
             title                   = CASE WHEN locked THEN title                   WHEN ? AND excluded.title<>''                   THEN excluded.title                   WHEN title=''                   THEN excluded.title                   ELSE title                   END,
             content_rating          = CASE WHEN locked THEN content_rating          WHEN ? AND excluded.content_rating<>''          THEN excluded.content_rating          WHEN content_rating=''          THEN excluded.content_rating          ELSE content_rating          END,
@@ -795,7 +795,8 @@ void SyncManager::syncShows(IMediaSource& src,
             folder_path             = CASE WHEN locked THEN folder_path             WHEN ? AND excluded.folder_path<>''             THEN excluded.folder_path             WHEN folder_path=''             THEN excluded.folder_path             ELSE folder_path             END,
             added_at                = CASE WHEN locked THEN added_at                WHEN ? AND excluded.added_at IS NOT NULL        THEN excluded.added_at                WHEN added_at IS NULL           THEN excluded.added_at                ELSE added_at                END,
             added_at_source         = CASE WHEN locked THEN added_at_source         WHEN ? AND excluded.added_at IS NOT NULL        THEN excluded.added_at_source         WHEN added_at_source=''         THEN excluded.added_at_source         ELSE added_at_source         END,
-            primary_source          = CASE WHEN locked THEN primary_source          WHEN ?                                                                              THEN excluded.primary_source                                                                                  ELSE primary_source          END
+            primary_source          = CASE WHEN locked THEN primary_source          WHEN ?                                                                              THEN excluded.primary_source                                                                                  ELSE primary_source          END,
+            original_title          = CASE WHEN locked THEN original_title          WHEN ? AND excluded.original_title<>''          THEN excluded.original_title          WHEN original_title=''          THEN excluded.original_title          ELSE original_title          END
         WHERE NOT locked AND (
             title                   != excluded.title                   OR
             content_rating          != excluded.content_rating          OR
@@ -819,7 +820,8 @@ void SyncManager::syncShows(IMediaSource& src,
             folder_path             != excluded.folder_path             OR
             COALESCE(added_at,       -1) != COALESCE(excluded.added_at,       -1) OR
             added_at_source         != excluded.added_at_source         OR
-            primary_source          != excluded.primary_source
+            primary_source          != excluded.primary_source                     OR
+            original_title          != excluded.original_title
         )
     )");
     SQLite::Statement s_show_mapping(sync_db_, R"(
@@ -877,7 +879,8 @@ void SyncManager::syncShows(IMediaSource& src,
                     else                            s_upsert_show.bind(22);
                     s_upsert_show.bind(23, show.added_at_source);
                     s_upsert_show.bind(24, source_id); // primary_source for a brand-new row
-                    for (int p = 25; p <= 47; ++p) s_upsert_show.bind(p, wins);
+                    s_upsert_show.bind(25, show.original_title);
+                    for (int p = 26; p <= 49; ++p) s_upsert_show.bind(p, wins);
                     s_upsert_show.exec();
                 }
                 s_show_mapping.reset();
@@ -1453,8 +1456,8 @@ void SyncManager::syncMovies(IMediaSource& src,
                            overview, tagline, studio, director, writer, genres, thumb, art,
                            imdb_id, tmdb_id, audience_rating,
                            labels, actors, countries, collections,
-                           added_at, added_at_source, resolution_label, primary_source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           added_at, added_at_source, resolution_label, primary_source, original_title)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(movie_id) DO UPDATE SET
             title            = CASE WHEN locked THEN title            WHEN ? AND excluded.title<>''            THEN excluded.title            WHEN title=''                     THEN excluded.title            ELSE title            END,
             content_rating   = CASE WHEN locked THEN content_rating   WHEN ? AND excluded.content_rating<>''   THEN excluded.content_rating   WHEN content_rating=''            THEN excluded.content_rating   ELSE content_rating   END,
@@ -1479,7 +1482,8 @@ void SyncManager::syncMovies(IMediaSource& src,
             added_at         = CASE WHEN locked THEN added_at         WHEN ? AND excluded.added_at IS NOT NULL THEN excluded.added_at         WHEN added_at IS NULL             THEN excluded.added_at         ELSE added_at         END,
             added_at_source  = CASE WHEN locked THEN added_at_source  WHEN ? AND excluded.added_at IS NOT NULL THEN excluded.added_at_source  WHEN added_at_source=''           THEN excluded.added_at_source  ELSE added_at_source  END,
             resolution_label = CASE WHEN locked THEN resolution_label WHEN ? AND excluded.resolution_label<>'' THEN excluded.resolution_label WHEN resolution_label=''          THEN excluded.resolution_label ELSE resolution_label END,
-            primary_source   = CASE WHEN locked THEN primary_source   WHEN ?                                   THEN excluded.primary_source                                                                     ELSE primary_source   END
+            primary_source   = CASE WHEN locked THEN primary_source   WHEN ?                                   THEN excluded.primary_source                                                                     ELSE primary_source   END,
+            original_title   = CASE WHEN locked THEN original_title   WHEN ? AND excluded.original_title<>''   THEN excluded.original_title   WHEN original_title=''            THEN excluded.original_title   ELSE original_title   END
         WHERE NOT locked AND (
             title           != excluded.title           OR
             content_rating  != excluded.content_rating  OR
@@ -1504,7 +1508,8 @@ void SyncManager::syncMovies(IMediaSource& src,
             COALESCE(added_at,       -1) != COALESCE(excluded.added_at,       -1) OR
             added_at_source != excluded.added_at_source OR
             resolution_label != excluded.resolution_label OR
-            primary_source  != excluded.primary_source
+            primary_source  != excluded.primary_source  OR
+            original_title  != excluded.original_title
         )
     )");
     SQLite::Statement s_movie_mapping(sync_db_, R"(
@@ -1584,7 +1589,8 @@ void SyncManager::syncMovies(IMediaSource& src,
                     s_upsert_movie.bind(23, movie.added_at_source);
                     s_upsert_movie.bind(24, movie.resolution_label);
                     s_upsert_movie.bind(25, source_id); // primary_source for a brand-new row
-                    for (int p = 26; p <= 49; ++p) s_upsert_movie.bind(p, wins);
+                    s_upsert_movie.bind(26, movie.original_title);
+                    for (int p = 27; p <= 50; ++p) s_upsert_movie.bind(p, wins);
                     s_upsert_movie.exec();
                 }
 

@@ -1944,6 +1944,18 @@ constexpr Migration kMigrations[] = {
     WHERE id = 'library-filter-pills';
 )SQL" }
 
+
+// ── v84: original_title — the title in a show/movie's original language,
+//         distinct from the (possibly localized/English) `title` field.
+//         Was never tracked anywhere: no column, no scraper population, no
+//         writeback mapping. TMDB's `original_name`/`original_title` are the
+//         only scraper source populating it for now (see TmdbScraper.cpp);
+//         other scrapers leave it blank rather than guess.
+,{ 84, R"SQL(
+    ALTER TABLE show  ADD COLUMN original_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE movie ADD COLUMN original_title TEXT NOT NULL DEFAULT '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

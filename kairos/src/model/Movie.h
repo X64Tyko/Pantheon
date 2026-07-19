@@ -6,6 +6,7 @@
 struct Movie {
     std::string    movie_id;
     std::string    title;
+    std::string    original_title; // title in the movie's original language, when a source distinguishes it
     std::string    content_rating;
     std::string    file_path;
     int64_t        duration_ms = 0;

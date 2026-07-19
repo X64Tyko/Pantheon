@@ -634,6 +634,9 @@ function EditSection({ detail, isShow, onSaved }: { detail: Detail; isShow: bool
         <Field label="Title" span={2}>
           <input style={inputStyle} value={draft.title ?? ''} onChange={e => patch('title', e.target.value)} />
         </Field>
+        <Field label="Original Title" span={2}>
+          <input style={inputStyle} value={draft.original_title ?? ''} onChange={e => patch('original_title', e.target.value)} />
+        </Field>
         <Field label="Year">
           <input style={inputStyle} type="number" value={draft.year ?? ''} onChange={e => patch('year', Number(e.target.value))} />
         </Field>
@@ -656,6 +659,9 @@ function EditSection({ detail, isShow, onSaved }: { detail: Detail; isShow: bool
           <>
             <Field label="Director">
               <input style={inputStyle} value={movie.director ?? ''} onChange={e => patch('director', e.target.value)} />
+            </Field>
+            <Field label="Writer">
+              <input style={inputStyle} value={movie.writer ?? ''} onChange={e => patch('writer', e.target.value)} />
             </Field>
             <Field label="Studio">
               <input style={inputStyle} value={movie.studio ?? ''} onChange={e => patch('studio', e.target.value)} />

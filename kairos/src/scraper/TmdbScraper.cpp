@@ -76,6 +76,7 @@ Show TmdbScraper::showFromJson(const json& j, bool is_detail) {
     Show s;
     s.tmdb_id = std::to_string(safeInt(j, "id"));
     s.title   = safeStr(j, "name");
+    s.original_title = safeStr(j, "original_name");
     s.overview = safeStr(j, "overview");
 
     std::string first_air = safeStr(j, "first_air_date");
@@ -126,6 +127,7 @@ Movie TmdbScraper::movieFromJson(const json& j, bool is_detail) {
     Movie m;
     m.tmdb_id  = std::to_string(safeInt(j, "id"));
     m.title    = safeStr(j, "title");
+    m.original_title = safeStr(j, "original_title");
     m.overview = safeStr(j, "overview");
     m.tagline  = safeStr(j, "tagline");
 

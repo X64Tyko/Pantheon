@@ -316,6 +316,7 @@ export interface MediaSourceRef {
 export interface ShowDetail {
   show_id:                 string
   title:                   string
+  original_title:          string
   content_rating:          string
   overview:                string
   year?:                   number
@@ -348,6 +349,7 @@ export interface ShowDetail {
 export interface MovieDetail {
   movie_id:         string
   title:            string
+  original_title:   string
   content_rating:   string
   duration_ms:      number
   year?:            number
@@ -356,6 +358,7 @@ export interface MovieDetail {
   tagline:          string
   studio:           string
   director:         string
+  writer:           string
   genres:           string[]
   thumb:            string
   art:              string

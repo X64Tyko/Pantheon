@@ -47,7 +47,7 @@ struct SeasonRow {
 };
 
 struct ShowDetail {
-    std::string show_id, title, content_rating, overview, studio, status;
+    std::string show_id, title, original_title, content_rating, overview, studio, status;
     std::string genres, thumb, art, imdb_id, tvdb_id, tmdb_id;
     std::string originally_available_at;
     std::optional<int>    year;
@@ -121,7 +121,7 @@ struct MovieDetail {
     std::optional<double> audience_rating;
     bool locked = false;
     bool skip_scraping = false;
-    std::string overview, tagline, studio, director, genres, thumb, art, imdb_id, tmdb_id;
+    std::string overview, tagline, studio, director, writer, genres, thumb, art, imdb_id, tmdb_id, original_title;
     std::string labels, actors, countries, collections;
     std::string external_id, source_id, source_base_url;
     std::string           file_path; // admin-facing "source file" display
@@ -274,6 +274,17 @@ public:
     // user_id populates MovieDetail::watched/view_count when non-empty (left
     // at their defaults otherwise) — see MovieSearchParams::user_id.
     std::optional<MovieDetail> getMovieDetail(const std::string& movie_id, const std::string& user_id = "");
+
+    // match_confirmed show/movie ids eligible for "Writeback All" — never
+    // includes an unconfirmed match, same gate as the single-item writeback
+    // routes. library_id/source_id empty = unfiltered; non-empty scopes to
+    // items with at least one source_mapping row in that library/source
+    // (an item can be linked to more than one via cross-source merge, so
+    // this is "belongs to," not "belongs only to").
+    std::vector<std::string> getWritebackEligibleShowIds(const std::string& library_id,
+                                                           const std::string& source_id);
+    std::vector<std::string> getWritebackEligibleMovieIds(const std::string& library_id,
+                                                            const std::string& source_id);
 
     // Strips the last path segment (filename) off a file path, e.g.
     // "/media/Movies/Foo (2020)/Foo.mkv" -> "/media/Movies/Foo (2020)".

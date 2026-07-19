@@ -17,6 +17,7 @@ add_executable(momus_kairos
     api/test_auth_service_routes.cpp
     api/test_restriction_access_check.cpp
     api/test_playback_and_channel_routes.cpp
+    api/test_writeback_all.cpp
     auth/test_auth_store.cpp
     conf/test_conf_store.cpp
     db/test_migrations.cpp
@@ -24,6 +25,7 @@ add_executable(momus_kairos
     db/test_chapter_repository.cpp
     db/test_block_repository.cpp
     db/test_source_repository.cpp
+    db/test_content_repository_writeback.cpp
     db/test_filter_expr.cpp
     detect/test_chapter_detector.cpp
     scheduler/test_cursor_state.cpp

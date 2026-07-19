@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include <openssl/evp.h>
 #include <unordered_map>
+#include <vector>
 
 #include "log/DebugLog.h"
 
@@ -171,7 +172,7 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
         "&IncludeItemTypes=Series&Recursive=true"
         "&Fields=Overview,Genres,Studios,People,ProviderIds,Tags,ProductionYear,"
         "OfficialRating,CommunityRating,Status,ImageTags,BackdropImageTags,"
-        "ProductionLocations,PremiereDate,Path,DateCreated"
+        "ProductionLocations,PremiereDate,Path,DateCreated,OriginalTitle"
         "&Limit=500";
 
     std::vector<Show> result;
@@ -195,6 +196,7 @@ std::vector<Show> JellyfinBaseSource::fetchShows(const std::string& external_lib
                 Show show;
                 show.show_id        = id;
                 show.title          = item.value("Name", "");
+                show.original_title = item.value("OriginalTitle", "");
                 show.content_rating = item.value("OfficialRating", "");
                 show.overview       = item.value("Overview", "");
                 show.status         = item.value("Status", "");
@@ -263,7 +265,7 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
         "&IncludeItemTypes=Movie&Recursive=true"
         "&Fields=Overview,Genres,Studios,People,ProviderIds,Tags,ProductionYear,"
         "OfficialRating,CommunityRating,Tagline,MediaSources,ImageTags,"
-        "BackdropImageTags,ProductionLocations,PremiereDate,UserData,DateCreated"
+        "BackdropImageTags,ProductionLocations,PremiereDate,UserData,DateCreated,OriginalTitle"
         "&Limit=500";
 
     std::vector<Movie> result;
@@ -292,6 +294,7 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
                 Movie movie;
                 movie.movie_id       = id;
                 movie.title          = item.value("Name", "");
+                movie.original_title = item.value("OriginalTitle", "");
                 movie.content_rating = item.value("OfficialRating", "");
                 movie.file_path      = std::move(file_path);
                 movie.overview       = item.value("Overview", "");
@@ -681,11 +684,20 @@ std::vector<ExternalWatchState> JellyfinBaseSource::fetchWatchState(const std::s
 // Jellyfin's update endpoint (POST /Items/{itemId}) takes a full BaseItemDto,
 // unlike Plex's per-field query-string PATCH (PlexSource::pushMetadata) — so
 // this fetches the existing item, merges in only the changed fields, and
-// posts the whole thing back. Array fields (genres/actors/countries/
-// collections/director) are deliberately NOT sent, mirroring Plex's own
-// deferral: Jellyfin's People/tag merge semantics need live verification
-// before it's safe to guess at, same reasoning as Plex's multi-value tag
-// convention.
+// posts the whole thing back. That whole-object-replace shape is exactly why
+// Genres and People (Actors) are safe to send here despite Plex deferring
+// its own equivalent fields: Plex's API is an additive/subtractive per-tag
+// directive language that needs live verification to get right, but this
+// function already fetches the live item and merges into it, so setting
+// Genres (a plain string[] on the DTO) is a straightforward replace, not a
+// guess at merge semantics. People needs one extra step — Jellyfin's People
+// entries carry a Type (Actor/Director/Writer/...), and naively replacing
+// the whole array with actor-only entries would silently wipe any existing
+// Director/Writer credits Jellyfin already has — so only the Actor-typed
+// entries are replaced; everything else in the existing People array is
+// preserved untouched. countries/collections/director are still deliberately
+// NOT sent — no user-reported need yet, and director in particular would hit
+// the same People-merge path and hasn't been exercised against a real server.
 bool JellyfinBaseSource::pushMetadata(const std::string& external_id,
                                        const std::string& /*external_lib_id*/,
                                        const std::string& item_type,
@@ -712,9 +724,45 @@ bool JellyfinBaseSource::pushMetadata(const std::string& external_id,
             ok = false;
         } else {
             if (!fields.title.empty())          item["Name"]           = fields.title;
+            if (!fields.original_title.empty()) item["OriginalTitle"]  = fields.original_title;
             if (!fields.overview.empty())       item["Overview"]       = fields.overview;
             if (!fields.content_rating.empty()) item["OfficialRating"] = fields.content_rating;
             if (!fields.tagline.empty())        item["Taglines"]       = json::array({fields.tagline});
+            if (!fields.genres.empty()) {
+                try { item["Genres"] = json::parse(fields.genres); }
+                catch (const json::exception&) { /* leave existing Genres untouched on parse failure */ }
+            }
+            // Replaces every People entry of `type` with `names`, leaving
+            // every other Type (and any Type not touched by this call at
+            // all this round) exactly as fetched. Applied once per People
+            // Type below rather than all at once so each field's presence
+            // is independent — e.g. a writeback that only sets actors
+            // doesn't also wipe an existing director just because this
+            // function ran.
+            auto replacePeopleOfType = [&](const std::string& type, const std::vector<std::string>& names) {
+                json existing_people = item.value("People", json::array());
+                json merged_people = json::array();
+                for (const auto& p : existing_people)
+                    if (p.value("Type", "") != type) merged_people.push_back(p);
+                for (const auto& name : names)
+                    if (!name.empty()) merged_people.push_back(json{{"Name", name}, {"Type", type}});
+                item["People"] = merged_people;
+            };
+            if (!fields.actors.empty()) {
+                try {
+                    std::vector<std::string> names;
+                    for (const auto& n : json::parse(fields.actors))
+                        if (n.is_string()) names.push_back(n.get<std::string>());
+                    replacePeopleOfType("Actor", names);
+                } catch (const json::exception&) { /* leave existing People untouched on parse failure */ }
+            }
+            // Single name, not an array — Pantheon only ever tracks one
+            // director/writer credit per movie (see Movie.h), so this
+            // replaces Jellyfin's Director/Writer entries with at most one
+            // each rather than trying to preserve multiple existing ones
+            // Pantheon has no record of.
+            if (!fields.director.empty()) replacePeopleOfType("Director", {fields.director});
+            if (!fields.writer.empty())   replacePeopleOfType("Writer",   {fields.writer});
             // Jellyfin has no separate "network" concept for shows — Studios
             // is the same field the read side maps a show's network from
             // (see fetchShows above) — so a show prefers the canonical

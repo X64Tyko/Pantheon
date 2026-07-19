@@ -723,7 +723,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
                COUNT(e.episode_id) AS episode_count,
                s.labels, s.network, s.actors, s.countries, s.collections,
                s.match_status, s.match_score, s.match_confirmed, s.skip_scraping,
-               s.find_specials, s.episode_display_order, s.folder_path
+               s.find_specials, s.episode_display_order, s.folder_path, s.original_title
         FROM show s
         LEFT JOIN episode e ON e.show_id = s.show_id
         WHERE s.show_id = ?
@@ -762,6 +762,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
     d.find_specials   = q.getColumn(26).getInt() != 0;
     d.episode_display_order = q.getColumn(27).getString();
     const std::string stored_folder_path = q.getColumn(28).getString();
+    d.original_title        = q.getColumn(29).getString();
 
     {
         SQLite::Statement sm(db_.get(), R"(
@@ -793,6 +794,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
     {
         auto ov = MetadataOverrideRepository(db_).getAll("show", show_id);
         applyStr(ov, "title",                   d.title);
+        applyStr(ov, "original_title",          d.original_title);
         applyStr(ov, "overview",                d.overview);
         applyStr(ov, "studio",                  d.studio);
         applyStr(ov, "status",                  d.status);
@@ -848,7 +850,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
                overview, tagline, studio, director, genres, thumb, art,
                imdb_id, tmdb_id, audience_rating, locked,
                labels, actors, countries, collections, release_date,
-               file_path, match_status, match_score, match_confirmed, skip_scraping
+               file_path, match_status, match_score, match_confirmed, skip_scraping, original_title, writer
         FROM movie WHERE movie_id = ?
     )");
     q.bind(1, movie_id);
@@ -882,6 +884,8 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
     d.match_confirmed = q.getColumn(24).getInt() != 0;
     d.skip_scraping   = q.getColumn(25).getInt() != 0;
+    d.original_title  = q.getColumn(26).getString();
+    d.writer          = q.getColumn(27).getString();
 
     SQLite::Statement sm(db_.get(), R"(
         SELECT sm.external_id, sm.source_id, ms.base_url
@@ -910,10 +914,12 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     {
         auto ov = MetadataOverrideRepository(db_).getAll("movie", movie_id);
         applyStr(ov, "title",          d.title);
+        applyStr(ov, "original_title", d.original_title);
         applyStr(ov, "overview",       d.overview);
         applyStr(ov, "tagline",        d.tagline);
         applyStr(ov, "studio",         d.studio);
         applyStr(ov, "director",       d.director);
+        applyStr(ov, "writer",         d.writer);
         applyStr(ov, "content_rating", d.content_rating);
         applyStr(ov, "imdb_id",        d.imdb_id);
         applyStr(ov, "tmdb_id",        d.tmdb_id);
@@ -928,6 +934,36 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     }
 
     return d;
+}
+
+std::vector<std::string> ContentRepository::getWritebackEligibleShowIds(
+        const std::string& library_id, const std::string& source_id) {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT s.show_id FROM show s
+        WHERE s.match_confirmed = 1
+          AND (? = '' OR EXISTS (SELECT 1 FROM source_mapping sm WHERE sm.item_type='show' AND sm.kairos_id=s.show_id AND sm.library_id=?))
+          AND (? = '' OR EXISTS (SELECT 1 FROM source_mapping sm WHERE sm.item_type='show' AND sm.kairos_id=s.show_id AND sm.source_id=?))
+    )");
+    q.bind(1, library_id); q.bind(2, library_id);
+    q.bind(3, source_id);  q.bind(4, source_id);
+    std::vector<std::string> out;
+    while (q.executeStep()) out.push_back(q.getColumn(0).getString());
+    return out;
+}
+
+std::vector<std::string> ContentRepository::getWritebackEligibleMovieIds(
+        const std::string& library_id, const std::string& source_id) {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT m.movie_id FROM movie m
+        WHERE m.match_confirmed = 1
+          AND (? = '' OR EXISTS (SELECT 1 FROM source_mapping sm WHERE sm.item_type='movie' AND sm.kairos_id=m.movie_id AND sm.library_id=?))
+          AND (? = '' OR EXISTS (SELECT 1 FROM source_mapping sm WHERE sm.item_type='movie' AND sm.kairos_id=m.movie_id AND sm.source_id=?))
+    )");
+    q.bind(1, library_id); q.bind(2, library_id);
+    q.bind(3, source_id);  q.bind(4, source_id);
+    std::vector<std::string> out;
+    while (q.executeStep()) out.push_back(q.getColumn(0).getString());
+    return out;
 }
 
 void ContentRepository::updateShow(const std::string& show_id,
