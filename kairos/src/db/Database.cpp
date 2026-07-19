@@ -1924,6 +1924,26 @@ constexpr Migration kMigrations[] = {
     WHERE id = 'library-filter-pills';
 )SQL" }
 
+// ── v83: filter-pills zone gains sortOptions — the native Android client had
+//         no sort control at all (unlike hades' own LibraryFilters.tsx,
+//         which has always had one, just hardcoded client-side). Rather than
+//         hardcode a second copy of that list in Kotlin, this follows the
+//         same v82 principle: *which* sort modes are offered is server-owned
+//         data a client renders, not something to hardcode per-platform.
+//         Values are exactly the backend sort vocabulary ContentRepository
+//         already implements (ContentRepository.h's ShowQueryParams/
+//         MovieQueryParams sort field, ContentRepository.cpp's dirFor/mdirFor
+//         ORDER BY switches) — "recently_released_or_aired" is the one
+//         client-side convenience alias (hades' LibraryStore.showSort()/
+//         movieSort() split it into recently_aired for shows vs
+//         recently_released for movies, since the two content types don't
+//         share a single backend sort mode for it).
+,{ 83, R"SQL(
+    UPDATE tv_zone
+    SET config_json = '{"filterFields":["genre","content_rating","studio","network","actor","director","country","collection","year","resolution","decade","audience_rating"],"sortOptions":["title","recently_added","year","audience_rating","duration","recently_released_or_aired","random"]}'
+    WHERE id = 'library-filter-pills';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

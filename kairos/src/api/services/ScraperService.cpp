@@ -129,10 +129,20 @@ void ScraperService::registerRoutes(httplib::Server& svr) {
         ok(res, json{{"status", "started"}});
     });
 
-    // GET /api/scrapers/refresh-all/status
+    // GET /api/scrapers/refresh-all/status — total/processed/refreshed/failed
+    // alongside running, so the client can render a real progress bar
+    // instead of a static "running" flag (see ScraperManager::
+    // RefreshAllProgress's own comment).
     svr.Get("/api/scrapers/refresh-all/status", [this](const Req&, Res& res) {
         if (!currentUser() || currentUser()->role != "admin") { err(res, 403, "Forbidden"); return; }
-        ok(res, json{{"running", scraper_.isRefreshingAll()}});
+        auto p = scraper_.refreshAllProgress();
+        ok(res, json{
+            {"running",   p.running},
+            {"total",     p.total},
+            {"processed", p.processed},
+            {"refreshed", p.refreshed},
+            {"failed",    p.failed},
+        });
     });
 
     // GET /api/scrapers/stats

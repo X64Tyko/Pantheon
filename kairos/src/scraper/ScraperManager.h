@@ -143,6 +143,26 @@ public:
     void triggerRefreshAll();
     bool isRefreshingAll() const { return refreshing_all_.load(); }
 
+    // Progress snapshot for the currently running (or just-finished)
+    // refresh-all pass — total/processed/refreshed/failed, so the client can
+    // render an actual progress bar instead of just a static "running" flag
+    // (real feedback: a library-wide refresh iterates every matched show/
+    // movie against rate-limited scraper APIs and can run for many minutes
+    // with the old boolean-only status giving zero indication of whether
+    // it's stuck, barely started, or nearly done). Reads are a handful of
+    // independent atomics (no lock) — a caller can see momentarily
+    // inconsistent numbers mid-increment (processed ticks up a beat before
+    // refreshed/failed does), which is fine for a progress display and
+    // never used for control flow.
+    struct RefreshAllProgress {
+        bool running   = false;
+        int  total     = 0;
+        int  processed = 0;
+        int  refreshed = 0;
+        int  failed    = 0;
+    };
+    RefreshAllProgress refreshAllProgress() const;
+
     // Settings
     ScraperSettings getSettings() const;
     void            updateSettings(const ScraperSettings& s);
@@ -338,4 +358,8 @@ private:
     std::unique_ptr<WikidataScraper> wikidata_;
     std::atomic<bool>            matching_{false};
     std::atomic<bool>            refreshing_all_{false};
+    std::atomic<int>             refresh_all_total_{0};
+    std::atomic<int>             refresh_all_processed_{0};
+    std::atomic<int>             refresh_all_refreshed_{0};
+    std::atomic<int>             refresh_all_failed_{0};
 };

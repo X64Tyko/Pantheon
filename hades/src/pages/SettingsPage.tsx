@@ -156,6 +156,7 @@ export default observer(function SettingsPage() {
   const matchPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [refreshingAll, setRefreshingAll] = useState(false)
+  const [refreshAllProgress, setRefreshAllProgress] = useState<{ total: number; processed: number; refreshed: number; failed: number } | null>(null)
   const refreshAllPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [confirmAllPending, setConfirmAllPending] = useState(false)
@@ -187,6 +188,7 @@ export default observer(function SettingsPage() {
   const pollRefreshAllStatus = () => {
     api.getRefreshAllStatus().then(s => {
       setRefreshingAll(s.running)
+      setRefreshAllProgress({ total: s.total, processed: s.processed, refreshed: s.refreshed, failed: s.failed })
       if (s.running) {
         refreshAllPollRef.current = setTimeout(pollRefreshAllStatus, 3000)
       } else if (wasRefreshingAllRef.current) {
@@ -198,6 +200,7 @@ export default observer(function SettingsPage() {
 
   const refreshAll = async () => {
     setRefreshingAll(true)
+    setRefreshAllProgress(null)
     wasRefreshingAllRef.current = true
     await api.triggerRefreshAll()
     if (refreshAllPollRef.current) clearTimeout(refreshAllPollRef.current)
@@ -794,6 +797,29 @@ const applyBuffer = () => {
                 {refreshingAll ? '● Refreshing metadata…' : 'Refresh All Metadata'}
               </NavButton>
             </div>
+
+            {/* Real progress instead of a static "Refreshing metadata…" button
+                label — a library-wide refresh iterates every matched show/
+                movie against rate-limited scraper APIs and can run for many
+                minutes, so a bar + counts is the difference between "working"
+                and "looks stuck." Stays visible with its final tally after
+                completion (running flips false, total/processed don't reset)
+                until the next run clears it back to null. */}
+            {refreshAllProgress && refreshAllProgress.total > 0 && (
+              <div className={styles.refreshProgressWrap}>
+                <div className={styles.refreshProgressTrack}>
+                  <div
+                    className={styles.refreshProgressFill}
+                    style={{ width: `${Math.min(100, (refreshAllProgress.processed / refreshAllProgress.total) * 100)}%` }}
+                  />
+                </div>
+                <div className={styles.refreshProgressLabel}>
+                  {refreshingAll ? 'Refreshing' : 'Finished'} {refreshAllProgress.processed} / {refreshAllProgress.total}
+                  {' — '}{refreshAllProgress.refreshed} refreshed
+                  {refreshAllProgress.failed > 0 && `, ${refreshAllProgress.failed} failed`}
+                </div>
+              </div>
+            )}
 
             <SettingRow
               label="Confirm All Matches"

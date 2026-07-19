@@ -701,6 +701,16 @@ void ScraperManager::triggerRefreshAll() {
     }).detach();
 }
 
+ScraperManager::RefreshAllProgress ScraperManager::refreshAllProgress() const {
+    return RefreshAllProgress{
+        refreshing_all_.load(),
+        refresh_all_total_.load(),
+        refresh_all_processed_.load(),
+        refresh_all_refreshed_.load(),
+        refresh_all_failed_.load(),
+    };
+}
+
 void ScraperManager::runRefreshAll() {
     std::vector<std::string> show_ids, movie_ids;
     {
@@ -714,18 +724,29 @@ void ScraperManager::runRefreshAll() {
     std::cout << "[scraper] refresh-all: " << show_ids.size() << " show(s), "
               << movie_ids.size() << " movie(s)\n";
 
+    refresh_all_total_.store(static_cast<int>(show_ids.size() + movie_ids.size()));
+    refresh_all_processed_.store(0);
+    refresh_all_refreshed_.store(0);
+    refresh_all_failed_.store(0);
+
     int refreshed = 0;
     for (const auto& id : show_ids) {
-        try { if (refreshMetadata(id, "show")) ++refreshed; }
-        catch (const std::exception& e) {
+        try {
+            if (refreshMetadata(id, "show")) { ++refreshed; refresh_all_refreshed_.fetch_add(1); }
+        } catch (const std::exception& e) {
             std::cerr << "[scraper] refresh-all: show " << id << " failed: " << e.what() << "\n";
+            refresh_all_failed_.fetch_add(1);
         }
+        refresh_all_processed_.fetch_add(1);
     }
     for (const auto& id : movie_ids) {
-        try { if (refreshMetadata(id, "movie")) ++refreshed; }
-        catch (const std::exception& e) {
+        try {
+            if (refreshMetadata(id, "movie")) { ++refreshed; refresh_all_refreshed_.fetch_add(1); }
+        } catch (const std::exception& e) {
             std::cerr << "[scraper] refresh-all: movie " << id << " failed: " << e.what() << "\n";
+            refresh_all_failed_.fetch_add(1);
         }
+        refresh_all_processed_.fetch_add(1);
     }
     std::cout << "[scraper] refresh-all done: " << refreshed << "/"
               << (show_ids.size() + movie_ids.size()) << " item(s) refreshed\n";

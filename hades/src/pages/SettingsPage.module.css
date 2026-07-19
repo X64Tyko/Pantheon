@@ -166,6 +166,11 @@
 
 .actionsRow { padding: 14px 0; display: flex; gap: var(--hds-space-tile-gap); align-items: center; flex-wrap: wrap; }
 
+.refreshProgressWrap  { padding: 0 0 14px; margin-top: -6px; }
+.refreshProgressTrack { height: 4px; border-radius: 2px; background: oklch(0.22 0.01 286); overflow: hidden; }
+.refreshProgressFill  { height: 100%; border-radius: 2px; background: var(--hds-gold); transition: width 0.4s ease; }
+.refreshProgressLabel { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-badge); color: var(--hds-txt-3); letter-spacing: 0.03em; margin-top: 5px; }
+
 .thresholdSlider { width: 110px; accent-color: var(--hds-violet); }
 .thresholdValue { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-meta); font-weight: 700; color: var(--hds-violet); min-width: 38px; text-align: right; }
 

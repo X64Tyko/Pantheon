@@ -120,7 +120,16 @@ void DownloadManager::runJob(std::string id) {
         return;
     }
 
-    std::string cmd = "yt-dlp --newline --paths " + shellQuote(dest) +
+    // url is frequently a playlist/channel link (DownloadPage.tsx's own
+    // placeholder invites that), which yt-dlp expands into one HTTP request
+    // per video with no pacing of its own — real usage feedback: that gets
+    // the source IP blocked around the ~400-video mark on a big playlist/
+    // channel. --sleep-requests paces the per-video metadata lookups during
+    // playlist expansion; --sleep-interval/--max-sleep-interval add a
+    // randomized 3–8s pause between each actual download, mimicking human
+    // pacing rather than a script hammering the API back-to-back. A single
+    // video URL just eats one harmless extra sleep before its one download.
+    std::string cmd = "yt-dlp --newline --sleep-requests 1 --sleep-interval 3 --max-sleep-interval 8 --paths " + shellQuote(dest) +
                       " --output '%(title)s.%(ext)s' " + shellQuote(url) + " 2>&1";
 
     std::cout << "[download] job " << id << " starting: " << url << "\n";
