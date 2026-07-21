@@ -82,6 +82,13 @@ public:
     void triggerPlexLinkSync();
     bool isPlexLinkSyncing() const { return plex_sync_running_.load(); }
 
+    // Recomputes every smart playlist's items from its stored filter_expr,
+    // without a full library scan — the bulk/background-thread analog of
+    // PlaylistRepository::refreshSmart (single-playlist, main-thread). Also
+    // runs automatically as the last phase of every syncAll() cycle.
+    void triggerSmartPlaylistRefresh();
+    bool isSmartPlaylistRefreshing() const { return smart_playlist_refresh_running_.load(); }
+
     // True while any sync/match/chapter phase is in progress.
     // Media mutations (PATCH show/movie, chapter edits) are blocked while locked.
     bool isMediaLocked() const { return media_locked_.load(); }
@@ -156,6 +163,11 @@ private:
     void syncContent(const std::string& source_id, SyncLiveIds& live,
                      const std::string& library_id = "");
     void syncPlexLinks(const std::string& source_id);
+
+    // Bulk pass, source-independent (unlike syncPlexLinks, which is called
+    // once per source) — see PlaylistRepository::refreshSmart for the
+    // per-playlist SQL this mirrors on the background sync_db_ connection.
+    void refreshSmartPlaylists();
     void clearSourceMapping(const std::string& source_id);
 
     // For every source_user row on this source with a local user linked
@@ -227,6 +239,7 @@ private:
     std::vector<std::unique_ptr<IMediaSource>> sources_;
     std::atomic<bool>                          sync_running_{false};
     std::atomic<bool>                          plex_sync_running_{false};
+    std::atomic<bool>                          smart_playlist_refresh_running_{false};
     mutable std::mutex                         current_source_mtx_;
     std::string                                current_source_id_;
     std::atomic<bool>                          media_locked_{false};

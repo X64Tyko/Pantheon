@@ -9,7 +9,7 @@ import type {
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
-  Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult,
+  Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult, HomePlaylistShelf,
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
@@ -425,8 +425,17 @@ export const api = {
   getPlaylists:      ()                                       => request<Playlist[]>    ('GET',    '/playlists'),
   createPlaylist:    (b: { title: string })                   => request<{playlist_id: string}>('POST', '/playlists', b),
   getPlaylist:       (id: string)                             => request<PlaylistDetail>('GET',    `/playlists/${id}`),
-  updatePlaylist:    (id: string, b: { title?: string; mode?: string }) => request<void>('PATCH',  `/playlists/${id}`, b),
+  updatePlaylist:    (id: string, b: {
+                       title?: string; mode?: string
+                       membership?: 'static'|'smart'; filter_expr?: string
+                       smart_type?: 'show'|'movie'; smart_sort?: string; smart_limit?: number
+                       show_on_home?: boolean; home_order?: number; home_tile_limit?: number
+                       home_active_start?: string; home_active_end?: string
+                     }) => request<void>('PATCH',  `/playlists/${id}`, b),
   deletePlaylist:    (id: string)                             => request<void>          ('DELETE', `/playlists/${id}`),
+  refreshSmartPlaylist: (id: string) => request<{synced: number}>('POST', `/playlists/${id}/refresh-smart`),
+  refreshAllSmartPlaylists: () => request<{status: string}>('POST', '/playlists/refresh-smart-all'),
+  getHomePlaylists:  () => request<HomePlaylistShelf[]>('GET', '/home-playlists'),
   addPlaylistItem:   (id: string, b: { item_type: 'episode'|'movie'; item_id: string }) =>
                        request<{id: number, position: number}>('POST',   `/playlists/${id}/items`, b),
   removePlaylistItem:(id: string, iid: number)                => request<void>          ('DELETE', `/playlists/${id}/items/${iid}`),
@@ -453,17 +462,21 @@ export const api = {
   bulkAddFillerListItems:  (id: string, items: { item_type: 'episode'|'movie'; item_id: string }[]) =>
                              request<{added: number}>('POST', `/filler-lists/${id}/items/bulk`, { items }),
 
-  // Plex-linked list sync
-  plexSyncPlaylist:        (id: string, b: { source_id: string; external_id: string; plex_type: 'playlist'|'collection' }) =>
-                             request<{synced: number; total: number}>('POST', `/playlists/${id}/plex-sync`, b),
+  // Source-linked list sync — /source-sync dispatches per the linked
+  // source's actual type (Plex/Jellyfin/Emby all work); the older /plex-sync
+  // route it replaces 400s on anything but a Plex source_id.
+  sourceSyncPlaylist:      (id: string, b: { source_id: string; external_id: string; list_kind: 'playlist'|'collection' }) =>
+                             request<{synced: number; total: number}>('POST', `/playlists/${id}/source-sync`, b),
   unlinkPlaylist:          (id: string) => request<void>('DELETE', `/playlists/${id}/plex-link`),
-  plexSyncAllPlaylists:    () => request<{status: string}>('POST', '/playlists/plex-sync-all'),
-  plexSyncFillerList:      (id: string, b: { source_id: string; external_id: string; plex_type: 'playlist'|'collection' }) =>
-                             request<{synced: number; total: number}>('POST', `/filler-lists/${id}/plex-sync`, b),
+  syncAllLinkedPlaylists:  () => request<{status: string}>('POST', '/playlists/source-sync-all'),
+  sourceSyncFillerList:    (id: string, b: { source_id: string; external_id: string; list_kind: 'playlist'|'collection' }) =>
+                             request<{synced: number; total: number}>('POST', `/filler-lists/${id}/source-sync`, b),
   unlinkFillerList:        (id: string) => request<void>('DELETE', `/filler-lists/${id}/plex-link`),
-  plexSyncAllFillerLists:  () => request<{status: string}>('POST', '/filler-lists/plex-sync-all'),
+  syncAllLinkedFillerLists: () => request<{status: string}>('POST', '/filler-lists/source-sync-all'),
 
-  // Plex browse — lists playlists / collections live from the Plex server
+  // Source browse — lists playlists / collections live from a Plex, Jellyfin,
+  // or Emby source (the route dispatches polymorphically server-side; naming
+  // here predates Jellyfin/Emby support but the endpoints were always generic).
   browsePlexPlaylists:         (sourceId: string)                   => request<PlexBrowseList[]>('GET', `/sources/${sourceId}/browse/playlists`),
   browsePlexPlaylistItems:     (sourceId: string, plid: string)     => request<PlexBrowseItem[]>('GET', `/sources/${sourceId}/browse/playlists/${plid}/items`),
   browsePlexCollections:       (sourceId: string, libraryId: string)=> request<PlexBrowseList[]>('GET', `/sources/${sourceId}/browse/collections?library_id=${encodeURIComponent(libraryId)}`),

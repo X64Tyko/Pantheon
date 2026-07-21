@@ -65,6 +65,10 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	// public-settings above. Consumed by /tv (unauthenticated on first paint,
 	// before any session exists) and eventually native clients.
 	if (method == "GET" && path == "/api/tv/manifest") return true;
+	// Home shelves (smart playlists with show_on_home=1) — same "structural,
+	// not per-user" reasoning as the TV manifest above, consumed by the web
+	// Home page on first paint the same way.
+	if (method == "GET" && path == "/api/home-playlists") return true;
 	// Hermes aggregating system metrics across services for the Activity page.
 	if (method == "GET" && path == "/api/system/metrics") return true;
 	// Log stream — relayed by Hermes into the unified Hades log view.

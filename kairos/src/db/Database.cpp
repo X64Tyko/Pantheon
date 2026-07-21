@@ -2015,6 +2015,44 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_subtitle_track_media ON subtitle_track(media_type, media_id);
 )SQL" }
 
+,{ 87, R"SQL(
+    -- Smart playlists: membership computed periodically from a stored canon
+    -- filter-syntax string (compileFilterExpr, FilterExpr.h) into real
+    -- playlist_item rows via the same replaceListItems() path source-linked
+    -- playlists already use (SyncManager::syncPlexLinks) — not a live
+    -- per-read query, so channel/block cursors (which point at
+    -- playlist_item.position) keep working completely unchanged; a smart
+    -- playlist is structurally "linked to a local filter" the same way a
+    -- Plex-linked playlist is "linked to a remote list."
+    -- 'shuffle' extends the mode CHECK in the same migration since both
+    -- touch playlist — a per-playlist shuffle option to match FillerList's
+    -- existing advancement:'shuffle'|'sequential'.
+    ALTER TABLE playlist ADD COLUMN membership  TEXT NOT NULL DEFAULT 'static' CHECK(membership IN ('static','smart'));
+    ALTER TABLE playlist ADD COLUMN filter_expr TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playlist ADD COLUMN smart_type  TEXT NOT NULL DEFAULT 'movie' CHECK(smart_type IN ('show','movie'));
+    ALTER TABLE playlist ADD COLUMN smart_sort  TEXT NOT NULL DEFAULT 'title';
+    ALTER TABLE playlist ADD COLUMN smart_limit INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playlist ADD COLUMN last_smart_refresh_at INTEGER;
+)SQL" }
+
+// Home shelves are just playlists with show_on_home=1 — reusing a playlist's
+// existing title/membership/filter_expr/smart_type/smart_sort (migration 87)
+// as the shelf's definition instead of a separate shelf-definition table/CRUD
+// surface. home_tile_limit is a *display* cap (how many tiles before the
+// "Continue in Library" end tile on the Home page) — independent of
+// smart_limit, which caps actual playlist membership/scheduling; a playlist
+// can have 200 members and still only show 16 on its home shelf.
+// home_active_start/end (MM-DD, both empty = always shown) gate a shelf to a
+// date window — e.g. a Halloween shelf only appearing Oct 1-31 — checked in
+// C++ (wraparound-safe for a Dec-to-Jan window) rather than in SQL.
+,{ 88, R"SQL(
+    ALTER TABLE playlist ADD COLUMN show_on_home      INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playlist ADD COLUMN home_order        INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE playlist ADD COLUMN home_tile_limit   INTEGER NOT NULL DEFAULT 16;
+    ALTER TABLE playlist ADD COLUMN home_active_start TEXT NOT NULL DEFAULT '';
+    ALTER TABLE playlist ADD COLUMN home_active_end   TEXT NOT NULL DEFAULT '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

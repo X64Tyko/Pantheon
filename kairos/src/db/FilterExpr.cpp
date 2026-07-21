@@ -15,6 +15,7 @@ struct FieldSpec { std::vector<std::string> ops; };
 
 const std::unordered_map<std::string, FieldSpec>& fieldRegistry() {
     static const std::unordered_map<std::string, FieldSpec> reg = {
+        {"library",         {{"is"}}},
         {"source",          {{"is", "is_not"}}},
         {"title",           {{"contains", "does_not_contain", "begins_with", "ends_with", "is", "is_not"}}},
         {"genre",           {{"is", "is_not", "contains", "does_not_contain"}}},
@@ -339,6 +340,23 @@ struct Compiler {
             if (op == "is_not")           { binds.push_back(n.value); return c + " != ?"; }
             if (op == "contains")         { binds.push_back(n.value); return c + " LIKE '%' || ? || '%'"; }
             if (op == "does_not_contain") { binds.push_back(n.value); return "(" + c + " IS NULL OR " + c + " NOT LIKE '%' || ? || '%')"; }
+        }
+
+        if (f == "library") {
+            // Which library (by library_id) an item is mapped from — same
+            // EXISTS-over-source_mapping pattern as 'source' just below,
+            // keyed on library_id instead of source_id. Composes fine
+            // alongside the separate library_ids multi-select scoping
+            // (SourceSwitcher.tsx pills, ShowSearchParams/MovieSearchParams::
+            // library_ids) — that's "which libraries are visible at all",
+            // this is a normal rule-builder/search-bar clause like any other
+            // field, not a replacement for it.
+            std::string kairos_id_col = entity == FilterEntity::Show ? col("show_id") : col("movie_id");
+            std::string item_type_lit = entity == FilterEntity::Show ? "'show'" : "'movie'";
+            std::string sub = "SELECT 1 FROM source_mapping sm_lib WHERE sm_lib.kairos_id = " + kairos_id_col +
+                               " AND sm_lib.item_type = " + item_type_lit + " AND sm_lib.library_id = ?";
+            binds.push_back(n.value);
+            return "EXISTS (" + sub + ")";
         }
 
         if (f == "source") {

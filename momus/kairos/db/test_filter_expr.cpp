@@ -322,6 +322,24 @@ TEST_F(FilterExprIntegrationTest, SourceFilterMatchesMappedSource) {
     EXPECT_EQ(searchShows("source:jf1").total, 1);
 }
 
+// Regression: 'library' was recognized by the frontend's FIELD_DEFS/
+// filterSyntax.ts (rule builder offered it, search-bar syntax parsed it) but
+// had no matching entry in fieldRegistry()/compileClause() here, so a typed
+// `library:X` or a rule-builder "Library" rule silently degraded into a
+// fuzzy free-text word search instead of actually scoping by library.
+TEST_F(FilterExprIntegrationTest, LibraryFilterMatchesMappedLibrary) {
+    insertSource("plex1", "plex");
+    insertLibrary("lib-a", "plex1", "show");
+    insertLibrary("lib-b", "plex1", "show");
+    insertShow("s1", "Library A Show", "[]", 2020);
+    insertShow("s2", "Library B Show", "[]", 2020);
+    mapToSourceLib("show", "s1", "plex1", "lib-a");
+    mapToSourceLib("show", "s2", "plex1", "lib-b");
+
+    EXPECT_EQ(searchShows("library:lib-a").total, 1);
+    EXPECT_EQ(searchShows("library:lib-b").total, 1);
+}
+
 // Regression: a movie cross-source-merged into one canonical row but mapped
 // to more than one library (one source_mapping row per source it's mapped
 // to — see source_mapping's PRIMARY KEY) used to come back once *per

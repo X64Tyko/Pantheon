@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pantheon — Filter Syntax</title>
+<style>
+  :root {
+    --bg: oklch(0.152 0.016 286);
+    --bg2: oklch(0.19 0.018 286);
+    --bg3: oklch(0.21 0.026 290 / 0.6);
+    --line: oklch(0.45 0.05 290 / 0.32);
+    --txt: oklch(0.94 0.008 90);
+    --txt2: oklch(0.68 0.02 288);
+    --txt3: oklch(0.54 0.025 290);
+    --gold: oklch(0.83 0.13 84);
+    --violet: oklch(0.72 0.15 290);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 60px 24px 100px;
+  }
+  main { width: 100%; max-width: 920px; }
+  a { color: var(--violet); }
+  .back { display: inline-block; font-size: 13px; color: var(--txt3); text-decoration: none; margin-bottom: 24px; }
+  .back:hover { color: var(--txt2); }
+  h1 { font-weight: 800; font-size: 34px; letter-spacing: 0.01em; margin: 0 0 6px; }
+  .sub { color: var(--txt2); font-size: 15px; line-height: 1.55; margin: 0 0 28px; max-width: 680px; }
+  .note {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 14px 16px; border-radius: 10px; margin: 0 0 32px;
+    border: 1px solid oklch(0.72 0.15 290 / 0.35);
+    background: oklch(0.72 0.15 290 / 0.08);
+    font-size: 13px; line-height: 1.6; color: var(--txt2);
+  }
+  .note b { color: var(--txt); }
+
+  code {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    background: oklch(0.1 0.016 285 / 0.6); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 6px; color: oklch(0.9 0.05 90);
+  }
+  pre {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    background: oklch(0.1 0.016 285 / 0.7); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; color: oklch(0.9 0.05 90);
+    overflow-x: auto; margin: 0 0 12px; line-height: 1.75;
+  }
+  pre code { background: none; border: none; padding: 0; white-space: pre; }
+  pre .cm { color: var(--txt3); }
+
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 44px; }
+  .toc a {
+    font-size: 12.5px; font-weight: 600; text-decoration: none; color: var(--txt2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px;
+    background: var(--bg3);
+  }
+  .toc a:hover { color: var(--txt); border-color: var(--violet); }
+
+  section { margin-bottom: 40px; scroll-margin-top: 20px; }
+  h2 {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 18px; font-weight: 700; color: var(--txt); margin: 0 0 6px;
+  }
+  h2 a.hash { font-size: 13px; color: var(--txt3); text-decoration: none; font-weight: 400; }
+  .group-desc { color: var(--txt3); font-size: 13px; margin: 0 0 14px; line-height: 1.5; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  th { color: var(--txt3); font-weight: 600; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; background: var(--bg2); }
+  td { color: var(--txt2); }
+  td.field code { color: var(--gold); white-space: nowrap; }
+  td.small { font-size: 11.5px; color: var(--txt3); }
+
+  .exwrap { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 4px; }
+  .ex { display: flex; gap: 16px; align-items: flex-start; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .ex:last-child { border-bottom: none; }
+  .ex:nth-child(odd) { background: var(--bg2); }
+  .ex code { flex: 0 0 auto; }
+  .ex span { color: var(--txt2); font-size: 12.5px; line-height: 1.6; padding-top: 2px; }
+
+  footer { margin-top: 20px; font-size: 11px; color: var(--txt3); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  footer a { color: var(--txt3); }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="index.html">← Docs</a>
+  <h1>Filter Syntax</h1>
+  <p class="sub">One grammar, three faces: type it straight into the Library search bar, build it visually with the "Filters" rule builder, or (Playlists / Filler Lists / the channel content picker) use the same panel there. The visual builder is a structured editor over this exact syntax — anything you build with it round-trips through the same text form.</p>
+
+  <div class="note">
+    💡 <span><b>Rule builder vs. typing.</b> Anything below works typed directly into a search bar. The rule builder covers the same ground with dropdowns/pickers instead of memorizing field names — reach for typing when you want something faster than clicking, or something the one-level-deep visual builder can't express (deeper nesting, see <a href="#grouping">Grouping</a>).</span>
+  </div>
+
+  <nav class="toc">
+    <a href="#basics">Basics</a>
+    <a href="#fields">Fields</a>
+    <a href="#operators">Operators &amp; Comparators</a>
+    <a href="#wildcards">Wildcards</a>
+    <a href="#dates">Date Filters</a>
+    <a href="#grouping">Combining &amp; Grouping</a>
+    <a href="#examples">Examples</a>
+  </nav>
+
+  <section id="basics">
+    <h2>Basics <a class="hash" href="#basics">#</a></h2>
+    <p class="group-desc">A query is a sequence of space-separated terms. Each term is either a <code>field:value</code> clause or a bare word.</p>
+    <div class="exwrap">
+      <div class="ex"><code>horror</code><span>Bare word — fuzzy free-text match against title, genre, actor, studio, network, and a few other searchable columns.</span></div>
+      <div class="ex"><code>genre:horror</code><span>A clause — <code>genre</code> exactly matches "Horror".</span></div>
+      <div class="ex"><code>genre:horror 2020</code><span>Clauses and bare words freely mix in the same query — genre is Horror <i>and</i> the title/etc. fuzzy-matches "2020".</span></div>
+    </div>
+  </section>
+
+  <section id="fields">
+    <h2>Fields <a class="hash" href="#fields">#</a></h2>
+    <p class="group-desc">An unrecognized <code>something:value</code> prefix isn't an error — it just falls back to a plain fuzzy word (typing <code>foo:bar</code> searches for the literal text "foo:bar"). <code>rating</code> is an alias for <code>content_rating</code>.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Field</th><th>Matches</th><th>Value</th></tr>
+      <tr><td class="field"><code>title</code></td><td>Title text</td><td>text</td></tr>
+      <tr><td class="field"><code>genre</code></td><td>Genre tags</td><td>text</td></tr>
+      <tr><td class="field"><code>year</code></td><td>Release year</td><td>number</td></tr>
+      <tr><td class="field"><code>decade</code></td><td>Release decade</td><td><code>2020s</code>, <code>2010s</code>, … <code>1930s</code></td></tr>
+      <tr><td class="field"><code>content_rating</code> <span class="small">(alias: <code>rating</code>)</span></td><td>Content rating (PG-13, TV-MA, …)</td><td>text</td></tr>
+      <tr><td class="field"><code>audience_rating</code></td><td>Audience score</td><td>number, 0–10</td></tr>
+      <tr><td class="field"><code>duration</code></td><td>Runtime</td><td>number, minutes</td></tr>
+      <tr><td class="field"><code>studio</code></td><td>Studio</td><td>text</td></tr>
+      <tr><td class="field"><code>network</code></td><td>Network (shows only — movies never match)</td><td>text</td></tr>
+      <tr><td class="field"><code>director</code></td><td>Director (movies only — shows never match)</td><td>text</td></tr>
+      <tr><td class="field"><code>writer</code></td><td>Writer (movies only — shows never match)</td><td>text</td></tr>
+      <tr><td class="field"><code>actor</code></td><td>Cast</td><td>text</td></tr>
+      <tr><td class="field"><code>country</code></td><td>Production country</td><td>text</td></tr>
+      <tr><td class="field"><code>collection</code></td><td>Collection membership</td><td>text</td></tr>
+      <tr><td class="field"><code>label</code></td><td>User-applied labels</td><td>text</td></tr>
+      <tr><td class="field"><code>resolution</code></td><td>Video resolution</td><td><code>4K</code>, <code>1080p</code>, <code>720p</code>, <code>SD</code></td></tr>
+      <tr><td class="field"><code>audio_language</code></td><td>Embedded audio track language</td><td>text (e.g. <code>eng</code>, <code>jpn</code>)</td></tr>
+      <tr><td class="field"><code>subtitle_language</code></td><td>Embedded or external-sidecar subtitle language</td><td>text</td></tr>
+      <tr><td class="field"><code>added</code></td><td>Date added to the library</td><td>see <a href="#dates">Date Filters</a></td></tr>
+      <tr><td class="field"><code>source</code></td><td>Which media source (by ID) an item is mapped from</td><td>source ID</td></tr>
+      <tr><td class="field"><code>library</code></td><td>Which library (by ID) an item belongs to</td><td>library ID</td></tr>
+    </table></div>
+    <p class="group-desc" style="margin-top:10px">
+      <code>source</code> and <code>library</code> take internal IDs, not display names — typing them by hand is impractical.
+      Use the rule builder's "Source"/"Library" dropdowns to pick one visually; it fills in the right ID underneath, and the
+      resulting rule is exactly the same <code>source:…</code> / <code>library:…</code> clause described here.
+      (<code>library</code> composes fine alongside the Library page's separate multi-select source/library pills — one is
+      "which libraries are visible at all," the other is a normal, AND/OR-able filter clause like any other field.)
+    </p>
+  </section>
+
+  <section id="operators">
+    <h2>Operators &amp; Comparators <a class="hash" href="#operators">#</a></h2>
+    <p class="group-desc">Most text fields default to <code>is</code> (exact match) when no comparator is given. Numeric fields support <code>&gt;</code>/<code>&gt;=</code>/<code>&lt;</code>/<code>&lt;=</code> prefixes directly on the value; not every field supports every operator (e.g. <code>duration</code> has no exact-match <code>is</code>, only comparisons).</p>
+    <div class="tablewrap"><table>
+      <tr><th>Write it as</th><th>Means</th><th>Applies to</th></tr>
+      <tr><td><code>field:value</code></td><td>is / equals</td><td>most text + number fields</td></tr>
+      <tr><td><code>-field:value</code></td><td>is not</td><td>same fields as <code>is</code></td></tr>
+      <tr><td><code>field:&gt;value</code></td><td>greater than</td><td><code>year</code>, <code>audience_rating</code>, <code>duration</code></td></tr>
+      <tr><td><code>field:&gt;=value</code></td><td>at least</td><td><code>audience_rating</code>, <code>duration</code></td></tr>
+      <tr><td><code>field:&lt;value</code></td><td>less than</td><td><code>year</code>, <code>audience_rating</code>, <code>duration</code></td></tr>
+      <tr><td><code>field:&lt;=value</code></td><td>at most</td><td><code>audience_rating</code>, <code>duration</code></td></tr>
+    </table></div>
+  </section>
+
+  <section id="wildcards">
+    <h2>Wildcards <a class="hash" href="#wildcards">#</a></h2>
+    <p class="group-desc">For text fields that support substring matching. A leading/trailing <code>*</code> is a wildcard marker, not a literal asterisk — wrap the value in quotes to search for a literal <code>*</code>.</p>
+    <div class="exwrap">
+      <div class="ex"><code>studio:*Bros*</code><span>contains — substring match anywhere.</span></div>
+      <div class="ex"><code>studio:Warner*</code><span>begins with.</span></div>
+      <div class="ex"><code>studio:*Studios</code><span>ends with.</span></div>
+      <div class="ex"><code>-studio:*Bros*</code><span>does not contain.</span></div>
+      <div class="ex"><code>title:"3*"</code><span>Quoted — an exact/literal match for the value <code>3*</code>, asterisk included, rather than a "begins with 3" wildcard.</span></div>
+    </div>
+  </section>
+
+  <section id="dates">
+    <h2>Date Filters — <code>added</code> <a class="hash" href="#dates">#</a></h2>
+    <p class="group-desc">Date-added has its own comparator set (<code>in_last</code> / <code>before</code> / <code>after</code>) instead of the generic <code>&gt;</code>/<code>&lt;</code> ones.</p>
+    <div class="exwrap">
+      <div class="ex"><code>added:30</code><span>Added in the last 30 days (unit-less number = days).</span></div>
+      <div class="ex"><code>added:2w</code><span>Added in the last 2 weeks. Units: <code>d</code> days, <code>w</code> weeks, <code>m</code> months (×30 days), <code>y</code> years (×365 days).</span></div>
+      <div class="ex"><code>added:&gt;2024-01-01</code><span>Added after Jan 1, 2024.</span></div>
+      <div class="ex"><code>added:&lt;2024-01-01</code><span>Added before Jan 1, 2024.</span></div>
+    </div>
+  </section>
+
+  <section id="grouping">
+    <h2>Combining &amp; Grouping <a class="hash" href="#grouping">#</a></h2>
+    <p class="group-desc">Terms are implicitly AND'd together — no need to write <code>AND</code> between every clause. <code>OR</code>/<code>||</code>, <code>NOT</code>/<code>-</code>, and parentheses all work, and nest arbitrarily deep. The visual rule builder is deliberately bounded to <b>one level</b> of grouping ("match all/any of these, optionally with one nested match-all/any group") — deeper nesting is only reachable by typing.</p>
+    <div class="exwrap">
+      <div class="ex"><code>genre:horror year:&gt;2015</code><span>Implicit AND: Horror <i>and</i> after 2015.</span></div>
+      <div class="ex"><code>genre:horror OR genre:thriller</code><span><code>||</code> also works.</span></div>
+      <div class="ex"><code>NOT genre:horror</code><span><code>-genre:horror</code> is equivalent and folds into a plain "is not" clause.</span></div>
+      <div class="ex"><code>(genre:horror AND year:&gt;2015) OR studio:A24</code><span>Parenthesized group OR'd with a third clause — exactly what the rule builder's "match all/any within this group" produces.</span></div>
+    </div>
+  </section>
+
+  <section id="examples">
+    <h2>Examples <a class="hash" href="#examples">#</a></h2>
+    <div class="exwrap">
+      <div class="ex"><code>genre:animation decade:2010s</code><span>Animated titles from the 2010s.</span></div>
+      <div class="ex"><code>resolution:4K audience_rating:&gt;=7</code><span>4K titles rated 7 or higher.</span></div>
+      <div class="ex"><code>studio:*A24* -content_rating:R</code><span>A24-produced, excluding R-rated.</span></div>
+      <div class="ex"><code>added:&lt;30 -genre:documentary</code><span>Added in the last 30 days, excluding documentaries.</span></div>
+      <div class="ex"><code>audio_language:jpn subtitle_language:eng</code><span>Japanese audio with English subtitles available.</span></div>
+    </div>
+  </section>
+
+  <footer>Source of truth: <code>hades/src/components/media/filterSyntax.ts</code> (parser/serializer) and <code>kairos/src/db/FilterExpr.cpp</code> (the matching backend compiler) — if this page and the code ever disagree, the code wins.</footer>
+</main>
+</body>
+</html>

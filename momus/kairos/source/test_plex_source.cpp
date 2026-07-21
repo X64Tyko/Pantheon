@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 #include <httplib.h>
+#include <nlohmann/json.hpp>
 #include "source/PlexSource.h"
 #include "model/WritebackFields.h"
 #include <chrono>
@@ -298,6 +299,37 @@ static void registerRoutes(httplib::Server& s) {
     // ── fetchListItems empty result ───────────────────────────────────────
     s.Get("/playlists/empty/items", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(R"({"MediaContainer":{"Metadata":[]}})", "application/json");
+    });
+
+    // ── Paginated playlist — page 1 is a full kPageSize (200) page, page 2
+    // is a short final page, so a caller that only reads the first response
+    // (the pre-fix bug) sees 200 items instead of the real 205.
+    s.Get("/playlists/paged/items", [](const httplib::Request& req, httplib::Response& res) {
+        const int start = req.has_param("X-Plex-Container-Start")
+            ? std::stoi(req.get_param_value("X-Plex-Container-Start")) : 0;
+        nlohmann::json items = nlohmann::json::array();
+        const int page_size = (start == 0) ? 200 : 5;
+        for (int i = 0; i < page_size; ++i) {
+            items.push_back({{"ratingKey", "pg" + std::to_string(start + i)},
+                              {"type", "movie"}, {"title", "Movie " + std::to_string(start + i)}});
+        }
+        nlohmann::json body = {{"MediaContainer", {{"Metadata", items}}}};
+        res.set_content(body.dump(), "application/json");
+    });
+
+    // ── One malformed item (missing ratingKey) sandwiched between two valid
+    // ones — a per-item parse failure should skip just that entry, not
+    // truncate everything after it.
+    s.Get("/playlists/malformed/items", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(R"({
+            "MediaContainer": {
+                "Metadata": [
+                    {"ratingKey":"good1","type":"movie","title":"Good One"},
+                    {"type":"movie","title":"Missing ratingKey"},
+                    {"ratingKey":"good2","type":"movie","title":"Good Two"}
+                ]
+            }
+        })", "application/json");
     });
 
     // ── Error paths ───────────────────────────────────────────────────────
@@ -671,6 +703,33 @@ TEST_F(PlexSourceTest, FetchListItems_EmptyVectorOnEmptyResponse) {
 
 TEST_F(PlexSourceTest, FetchListItems_NulloptOnServerError) {
     EXPECT_FALSE(src_->fetchListItems("err", "playlist").has_value());
+}
+
+// Regression: playlist/collection item fetching never got the same
+// X-Plex-Container-Start/Size paging fetchShows/fetchMovies/fetchEpisodes
+// did — a playlist bigger than one page's worth (200) silently synced only
+// its first page with zero indication anything was missing.
+TEST_F(PlexSourceTest, FetchListItems_FetchesAllPagesNotJustTheFirst) {
+    const auto result = src_->fetchListItems("paged", "playlist");
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->size(), 205u);
+    EXPECT_EQ((*result)[0].external_id,   "pg0");
+    EXPECT_EQ((*result)[204].external_id, "pg204");
+}
+
+TEST_F(PlexSourceTest, BrowsePlaylistItems_FetchesAllPagesNotJustTheFirst) {
+    const auto result = src_->browsePlaylistItems("paged");
+    EXPECT_EQ(result.size(), 205u);
+}
+
+// Regression: parseBrowseItems used to wrap its whole per-item loop in one
+// try/catch — a single malformed item (missing ratingKey) threw partway
+// through and silently discarded every item after it, not just the bad one.
+TEST_F(PlexSourceTest, BrowsePlaylistItems_SkipsMalformedItemInsteadOfTruncating) {
+    const auto result = src_->browsePlaylistItems("malformed");
+    ASSERT_EQ(result.size(), 2u);
+    EXPECT_EQ(result[0].external_id, "good1");
+    EXPECT_EQ(result[1].external_id, "good2");
 }
 
 // ============================================================================

@@ -14,7 +14,7 @@ import { toFilterString } from '../components/media/filterQuery'
 
 let searchDebounce: ReturnType<typeof setTimeout>
 
-type PickerTab = 'episodes' | 'movies' | 'shows' | 'plex_playlists' | 'plex_collections'
+type PickerTab = 'episodes' | 'movies' | 'shows' | 'source_playlists' | 'source_collections'
 
 class FillerPageStore {
   lists:        FillerList[]       = []
@@ -46,13 +46,13 @@ class FillerPageStore {
   importing:          boolean       = false
   importLabel:        string        = ''
 
-  // Plex browse
-  plexSources:         Source[]         = []
-  plexSelectedSource:  string           = ''
-  plexLists:           PlexBrowseList[] = []
-  plexBrowseLoading:   boolean          = false
-  plexBrowseLibraryId: string           = ''
-  plexImportingId:     string           = ''
+  // Remote browse (Plex/Jellyfin/Emby — any source with a playlist/collection API)
+  browseSources:       Source[]         = []
+  selectedSource:      string           = ''
+  browseLists:         PlexBrowseList[] = []
+  browseLoading:       boolean          = false
+  browseLibraryId:     string           = ''
+  importingListId:     string           = ''
 
   constructor() {
     makeAutoObservable(this)
@@ -133,7 +133,7 @@ class FillerPageStore {
     this.pickerOpen = true; this.pickerTab = 'episodes'; this.pickerQuery = ''
     this.filterTree.reset()
     this.pickerMovies = []; this.pickerEpisodes = []; this.pickerShows = []
-    this.expandedShowId = null; this.plexLists = []
+    this.expandedShowId = null; this.browseLists = []
     if (this.allLibraries.length === 0)
       api.getAllLibraries().then(libs => runInAction(() => { this.allLibraries = libs }))
     this.searchPicker()
@@ -144,13 +144,13 @@ class FillerPageStore {
     this.pickerOpen = false; this.pickerQuery = ''
     this.filterTree.reset()
     this.pickerMovies = []; this.pickerEpisodes = []; this.pickerShows = []
-    this.expandedShowId = null; this.plexLists = []
+    this.expandedShowId = null; this.browseLists = []
   }
 
   setPickerTab(t: PickerTab) {
     this.pickerTab = t; this.pickerQuery = ''; this.expandedShowId = null
     this.filterTree.reset()
-    this.plexLists = []; this.plexBrowseLibraryId = ''
+    this.browseLists = []; this.browseLibraryId = ''
     this.searchPicker()
   }
 
@@ -184,55 +184,57 @@ class FillerPageStore {
         const r = await api.getShows({ limit: 100, q, library_id: lib, filter })
         runInAction(() => { this.pickerShows = r.items; this.pickerShowsLoading = false })
       } catch { runInAction(() => { this.pickerShowsLoading = false }) }
-    } else if (this.pickerTab === 'plex_playlists') {
-      await this.loadPlexSources()
-      if (this.plexSelectedSource) await this.loadPlexPlaylists()
-    } else if (this.pickerTab === 'plex_collections') {
-      await this.loadPlexSources()
+    } else if (this.pickerTab === 'source_playlists') {
+      await this.loadBrowseSources()
+      if (this.selectedSource) await this.loadBrowsePlaylists()
+    } else if (this.pickerTab === 'source_collections') {
+      await this.loadBrowseSources()
     }
   }
 
-  async loadPlexSources() {
-    if (this.plexSources.length > 0) return
+  async loadBrowseSources() {
+    if (this.browseSources.length > 0) return
     try {
       const sources = await api.getSources()
       runInAction(() => {
-        this.plexSources = sources.filter(s => s.source_type === 'plex' && s.enabled)
-        if (this.plexSources.length === 1) this.plexSelectedSource = this.plexSources[0].source_id
+        // Any source with a remote playlist/collection API — Plex, Jellyfin,
+        // and Emby all implement it; Local has no remote server to browse.
+        this.browseSources = sources.filter(s => s.source_type !== 'local' && s.enabled)
+        if (this.browseSources.length === 1) this.selectedSource = this.browseSources[0].source_id
       })
     } catch {}
   }
 
-  async loadPlexPlaylists() {
-    if (!this.plexSelectedSource) return
-    this.plexBrowseLoading = true
+  async loadBrowsePlaylists() {
+    if (!this.selectedSource) return
+    this.browseLoading = true
     try {
-      const lists = await api.browsePlexPlaylists(this.plexSelectedSource)
-      runInAction(() => { this.plexLists = lists; this.plexBrowseLoading = false })
+      const lists = await api.browsePlexPlaylists(this.selectedSource)
+      runInAction(() => { this.browseLists = lists; this.browseLoading = false })
     } catch (e: any) {
-      runInAction(() => { this.error = e.message; this.plexBrowseLoading = false })
+      runInAction(() => { this.error = e.message; this.browseLoading = false })
     }
   }
 
-  async loadPlexCollections() {
-    if (!this.plexSelectedSource || !this.plexBrowseLibraryId) return
-    this.plexBrowseLoading = true
+  async loadBrowseCollections() {
+    if (!this.selectedSource || !this.browseLibraryId) return
+    this.browseLoading = true
     try {
-      const lists = await api.browsePlexCollections(this.plexSelectedSource, this.plexBrowseLibraryId)
-      runInAction(() => { this.plexLists = lists; this.plexBrowseLoading = false })
+      const lists = await api.browsePlexCollections(this.selectedSource, this.browseLibraryId)
+      runInAction(() => { this.browseLists = lists; this.browseLoading = false })
     } catch (e: any) {
-      runInAction(() => { this.error = e.message; this.plexBrowseLoading = false })
+      runInAction(() => { this.error = e.message; this.browseLoading = false })
     }
   }
 
-  setPlexSource(id: string) {
-    this.plexSelectedSource = id; this.plexLists = []; this.plexBrowseLibraryId = ''
-    if (this.pickerTab === 'plex_playlists') this.loadPlexPlaylists()
+  setBrowseSource(id: string) {
+    this.selectedSource = id; this.browseLists = []; this.browseLibraryId = ''
+    if (this.pickerTab === 'source_playlists') this.loadBrowsePlaylists()
   }
 
-  setPlexLibrary(id: string) {
-    this.plexBrowseLibraryId = id; this.plexLists = []
-    this.loadPlexCollections()
+  setBrowseLibrary(id: string) {
+    this.browseLibraryId = id; this.browseLists = []
+    this.loadBrowseCollections()
   }
 
   async expandShow(showId: string) {
@@ -259,10 +261,10 @@ class FillerPageStore {
     }
   }
 
-  async importPlexItems(listId: string, plexItems: PlexBrowseItem[]) {
+  async importSourceItems(listId: string, browseItems: PlexBrowseItem[]) {
     this.importing = true; this.importLabel = 'Importing…'
     try {
-      const items = plexItems.filter(i => i.available).map(i => ({ item_type: i.item_type, item_id: i.kairos_id }))
+      const items = browseItems.filter(i => i.available).map(i => ({ item_type: i.item_type, item_id: i.kairos_id }))
       await api.bulkAddFillerListItems(listId, items)
       const d = await api.getFillerList(listId)
       runInAction(() => { this.detail = d; this.importing = false; this.importLabel = '' })
@@ -272,19 +274,19 @@ class FillerPageStore {
     }
   }
 
-  async importPlexList(listId: string, plexListId: string, kind: 'playlist' | 'collection') {
-    if (!this.plexSelectedSource) return
-    this.plexImportingId = plexListId; this.importLabel = 'Syncing from Plex…'
+  async importSourceList(listId: string, browseListId: string, kind: 'playlist' | 'collection') {
+    if (!this.selectedSource) return
+    this.importingListId = browseListId; this.importLabel = 'Syncing from source…'
     try {
-      await api.plexSyncFillerList(listId, {
-        source_id: this.plexSelectedSource, external_id: plexListId, plex_type: kind,
+      await api.sourceSyncFillerList(listId, {
+        source_id: this.selectedSource, external_id: browseListId, list_kind: kind,
       })
       const [d] = await Promise.all([api.getFillerList(listId), this.load()])
       runInAction(() => { this.detail = d; this.importing = false; this.importLabel = '' })
     } catch (e: any) {
       runInAction(() => { this.error = e.message })
     } finally {
-      runInAction(() => { this.plexImportingId = '' })
+      runInAction(() => { this.importingListId = '' })
     }
   }
 
@@ -292,10 +294,10 @@ class FillerPageStore {
     if (!list.plex_link) return
     this.importing = true; this.importLabel = 'Syncing…'
     try {
-      await api.plexSyncFillerList(list.filler_list_id, {
+      await api.sourceSyncFillerList(list.filler_list_id, {
         source_id: list.plex_link.source_id,
         external_id: list.plex_link.external_id,
-        plex_type: list.plex_link.plex_type,
+        list_kind: list.plex_link.plex_type,
       })
       const [d] = await Promise.all([api.getFillerList(list.filler_list_id), this.load()])
       runInAction(() => { if (this.expanded === list.filler_list_id) this.detail = d })
@@ -315,9 +317,9 @@ class FillerPageStore {
     }
   }
 
-  async syncAllPlexLinks() {
+  async syncAllLinkedLists() {
     try {
-      await api.plexSyncAllFillerLists()
+      await api.syncAllLinkedFillerLists()
       setTimeout(() => this.load(), 2500)
     } catch (e: any) {
       runInAction(() => { this.error = e.message })
@@ -336,6 +338,14 @@ const store = new FillerPageStore()
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+// See PlaylistPage.tsx's identical helper — plex_link only stores source_id,
+// so the badge's actual source type/name is resolved via allLibraries rather
+// than hardcoded, since a link can point at Plex, Jellyfin, or Emby now.
+function sourceBadgeLabel(sourceId: string, libs: LibraryWithSource[]): string {
+  const lib = libs.find(l => l.source_id === sourceId)
+  return lib ? lib.source_type.toUpperCase() : 'SOURCE'
+}
+
 function fmtSyncAge(ts: number | null): string {
   if (!ts) return 'never synced'
   const s = Math.floor(Date.now() / 1000) - ts
@@ -346,9 +356,16 @@ function fmtSyncAge(ts: number | null): string {
 }
 
 export default observer(function FillerPage() {
-  useEffect(() => { store.load() }, [])
+  useEffect(() => {
+    store.load()
+    // Loaded eagerly so FillerListCard's source badge can resolve a linked
+    // source's real type/name on first render (see PlaylistPage's identical
+    // reasoning), not just once someone happens to open the item picker.
+    if (store.allLibraries.length === 0)
+      api.getAllLibraries().then(libs => runInAction(() => { store.allLibraries = libs }))
+  }, [])
 
-  const hasPlexLinks = store.lists.some(l => l.plex_link)
+  const hasLinks = store.lists.some(l => l.plex_link)
 
   return (
     <div className="space-y-5">
@@ -358,10 +375,10 @@ export default observer(function FillerPage() {
           <p className="text-xs text-zinc-600 mt-0.5">Pools of short content used by filler blocks to pad gaps</p>
         </div>
         <div className="flex gap-2">
-          {hasPlexLinks && (
-            <button onClick={() => store.syncAllPlexLinks()}
+          {hasLinks && (
+            <button onClick={() => store.syncAllLinkedLists()}
               className="btn-ghost text-xs text-violet-400 border-violet-800 hover:bg-violet-950/40">
-              ↺ Sync all Plex links
+              ↺ Sync all linked lists
             </button>
           )}
           <button onClick={() => runInAction(() => { store.creating = !store.creating })}
@@ -411,7 +428,8 @@ const FillerListCard = observer(function FillerListCard({ list }: { list: Filler
               {list.plex_link && (
                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded
                                   bg-violet-900/50 text-violet-300 border border-violet-700/40 shrink-0">
-                  {list.plex_link.plex_type === 'collection' ? 'PLEX COLLECTION' : 'PLEX PLAYLIST'}
+                  {sourceBadgeLabel(list.plex_link.source_id, store.allLibraries)}{' '}
+                  {list.plex_link.plex_type === 'collection' ? 'COLLECTION' : 'PLAYLIST'}
                 </span>
               )}
             </div>
@@ -504,11 +522,11 @@ function FillerItemRow({ item, listId }: { item: FillerListItem; listId: string 
 // ─── Filler item picker ───────────────────────────────────────────────────────
 
 const TABS: { id: PickerTab; label: string }[] = [
-  { id: 'episodes',         label: 'Episodes' },
-  { id: 'movies',           label: 'Movies' },
-  { id: 'shows',            label: 'Shows' },
-  { id: 'plex_playlists',   label: 'Plex Playlists' },
-  { id: 'plex_collections', label: 'Plex Collections' },
+  { id: 'episodes',            label: 'Episodes' },
+  { id: 'movies',              label: 'Movies' },
+  { id: 'shows',                label: 'Shows' },
+  { id: 'source_playlists',    label: 'Playlists' },
+  { id: 'source_collections',  label: 'Collections' },
 ]
 
 const FillerItemPicker = observer(function FillerItemPicker({ listId }: { listId: string }) {
@@ -545,21 +563,21 @@ const FillerItemPicker = observer(function FillerItemPicker({ listId }: { listId
         <FilterSection tree={store.filterTree} filteredLibs={filteredLibs} />
       )}
 
-      {/* Plex header row */}
-      {(store.pickerTab === 'plex_playlists' || store.pickerTab === 'plex_collections') && (
+      {/* Source header row */}
+      {(store.pickerTab === 'source_playlists' || store.pickerTab === 'source_collections') && (
         <div className="flex items-center gap-2 p-2 border-t border-zinc-800/60 flex-wrap">
-          {store.plexSources.length > 1 && (
+          {store.browseSources.length > 1 && (
             <select className="input text-xs py-1 flex-1"
-              value={store.plexSelectedSource} onChange={e => store.setPlexSource(e.target.value)}>
-              <option value="">Select Plex source…</option>
-              {store.plexSources.map(s => <option key={s.source_id} value={s.source_id}>{s.display_name}</option>)}
+              value={store.selectedSource} onChange={e => store.setBrowseSource(e.target.value)}>
+              <option value="">Select source…</option>
+              {store.browseSources.map(s => <option key={s.source_id} value={s.source_id}>{s.display_name}</option>)}
             </select>
           )}
-          {store.pickerTab === 'plex_collections' && store.plexSelectedSource && (
+          {store.pickerTab === 'source_collections' && store.selectedSource && (
             <select className="input text-xs py-1 flex-1"
-              value={store.plexBrowseLibraryId} onChange={e => store.setPlexLibrary(e.target.value)}>
+              value={store.browseLibraryId} onChange={e => store.setBrowseLibrary(e.target.value)}>
               <option value="">Select library…</option>
-              {store.allLibraries.filter(l => l.source_id === store.plexSelectedSource).map(l =>
+              {store.allLibraries.filter(l => l.source_id === store.selectedSource).map(l =>
                 <option key={l.library_id} value={l.library_id}>{l.display_name}</option>
               )}
             </select>
@@ -573,8 +591,8 @@ const FillerItemPicker = observer(function FillerItemPicker({ listId }: { listId
         {store.pickerTab === 'episodes' && <EpisodeList listId={listId} />}
         {store.pickerTab === 'movies' && <MovieList listId={listId} />}
         {store.pickerTab === 'shows' && <ShowList listId={listId} />}
-        {(store.pickerTab === 'plex_playlists' || store.pickerTab === 'plex_collections') && (
-          <PlexBrowsePane listId={listId} kind={store.pickerTab === 'plex_playlists' ? 'playlist' : 'collection'} />
+        {(store.pickerTab === 'source_playlists' || store.pickerTab === 'source_collections') && (
+          <SourceBrowsePane listId={listId} kind={store.pickerTab === 'source_playlists' ? 'playlist' : 'collection'} />
         )}
       </div>
     </div>
@@ -668,26 +686,26 @@ const ShowList = observer(function ShowList({ listId }: { listId: string }) {
   )
 })
 
-const PlexBrowsePane = observer(function PlexBrowsePane({ listId, kind }: { listId: string; kind: 'playlist' | 'collection' }) {
-  if (!store.plexSelectedSource || (kind === 'collection' && !store.plexBrowseLibraryId)) {
-    return <Empty msg={store.plexSources.length === 0 ? 'No Plex sources configured.' : kind === 'collection' ? 'Select a library above.' : 'Select a source above.'} />
+const SourceBrowsePane = observer(function SourceBrowsePane({ listId, kind }: { listId: string; kind: 'playlist' | 'collection' }) {
+  if (!store.selectedSource || (kind === 'collection' && !store.browseLibraryId)) {
+    return <Empty msg={store.browseSources.length === 0 ? 'No Plex/Jellyfin/Emby sources configured.' : kind === 'collection' ? 'Select a library above.' : 'Select a source above.'} />
   }
-  if (store.plexBrowseLoading) return <Spinner />
-  if (store.plexLists.length === 0) return <Empty msg={`No ${kind}s found.`} />
+  if (store.browseLoading) return <Spinner />
+  if (store.browseLists.length === 0) return <Empty msg={`No ${kind}s found.`} />
   return (
     <>
-      {store.plexLists.map(list => (
+      {store.browseLists.map(list => (
         <div key={list.id} className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800/40">
           <div className="flex-1 min-w-0">
             <div className="text-sm text-zinc-300 truncate">{list.title}</div>
             <div className="text-[10px] text-zinc-600">{list.item_count} items</div>
           </div>
-          {store.plexImportingId === list.id ? (
+          {store.importingListId === list.id ? (
             <span className="text-violet-400 text-xs flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />importing
             </span>
           ) : (
-            <button onClick={() => store.importPlexList(listId, list.id, kind)}
+            <button onClick={() => store.importSourceList(listId, list.id, kind)}
               className="text-xs text-violet-400 hover:text-violet-200 shrink-0 px-1">Import</button>
           )}
         </div>

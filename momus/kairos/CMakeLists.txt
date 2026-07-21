@@ -28,6 +28,7 @@ add_executable(momus_kairos
     db/test_source_repository.cpp
     db/test_content_repository_writeback.cpp
     db/test_filter_expr.cpp
+    db/test_playlist_repository.cpp
     detect/test_chapter_detector.cpp
     scheduler/test_cursor_state.cpp
     scheduler/test_rule_engine.cpp

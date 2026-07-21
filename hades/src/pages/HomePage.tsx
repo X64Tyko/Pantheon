@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, mediaUrl } from '../api/client'
-import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress } from '../api/types'
+import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress, HomePlaylistShelf } from '../api/types'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
 import { MediaDetailHero } from '../components/media/MediaDetailHero'
 import { LibraryDetailActions, PlayAction } from '../components/media/LibraryDetailActions'
@@ -21,6 +21,30 @@ const HOME_FOCUS_KEY = 'HOME'
 const GuidePage = lazy(() => import('../guide/GuidePage').then(m => ({ default: m.GuidePage })))
 
 const SCROLL_KEY = 'home'
+
+// ── Shelf definitions ────────────────────────────────────────────────────────
+// One shelf = one filter-set (contentType + sort + an optional canon filter
+// string — see components/media/filterSyntax.ts) plus a tile cap. "Continue
+// in Library" (ShelfEndTile, via Shelves' continueInLibrary) applies this
+// exact same filter-set to the Library page instead of just contentType/sort,
+// so the tile always reproduces what the shelf itself was built from. None of
+// today's shelves need extra criteria beyond contentType/sort (filter: ''),
+// but a future shelf variant (e.g. genre- or library-scoped) is just adding a
+// def here rather than new state + a bespoke fetch + bespoke tile wiring.
+interface HomeShelfDef {
+  title:       string
+  contentType: 'show' | 'movie' | 'all'
+  sort:        string
+  filter:      string
+  limit:       number
+}
+
+const HOME_SHELVES: Record<'recentShows' | 'recentMovies' | 'recentlyReleased' | 'recentlyAired', HomeShelfDef> = {
+  recentShows:      { title: 'Recently Added Shows',  contentType: 'show',  sort: 'recently_added',    filter: '', limit: 24 },
+  recentMovies:     { title: 'Recently Added Movies', contentType: 'movie', sort: 'recently_added',    filter: '', limit: 16 },
+  recentlyReleased: { title: 'Recently Released',     contentType: 'movie', sort: 'recently_released', filter: '', limit: 16 },
+  recentlyAired:    { title: 'Recently Aired',        contentType: 'show',  sort: 'recently_aired',    filter: '', limit: 16 },
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -55,6 +79,11 @@ export default function HomePage() {
   const [stats,            setStats]            = useState<ScraperStats | null>(null)
   const [loading,          setLoading]          = useState(true)
   const [libraryNames,     setLibraryNames]     = useState<Map<string, string>>(new Map())
+  // User-defined shelves (smart playlists with show_on_home=true) — see the
+  // data-load effect's second fetch wave below for why this is separate from
+  // the built-in shelves' state (variable count, not known until the first
+  // /api/home-playlists round trip resolves).
+  const [customShelves, setCustomShelves] = useState<{ shelf: HomePlaylistShelf; items: (Show | Movie)[] }[]>([])
 
   // Hero
   const heroCandidates    = useRef<(Show | Movie)[]>([])
@@ -113,14 +142,15 @@ export default function HomePage() {
   useEffect(() => {
     setLoading(true)
     Promise.all([
-      api.getShows({ limit: 24, sort: 'recently_added', home: true, hideEmpty: true }),
-      api.getMovies({ limit: 16, sort: 'recently_added', home: true, hideEmpty: true }),
-      api.getMovies({ limit: 16, sort: 'recently_released', home: true, hideEmpty: true }).catch(() => ({ items: [] as Movie[], total: 0 })),
-      api.getShows({ limit: 16, sort: 'recently_aired', home: true, hideEmpty: true }).catch(() => ({ items: [] as Show[], total: 0 })),
+      api.getShows({ limit: HOME_SHELVES.recentShows.limit, sort: HOME_SHELVES.recentShows.sort, home: true, hideEmpty: true }),
+      api.getMovies({ limit: HOME_SHELVES.recentMovies.limit, sort: HOME_SHELVES.recentMovies.sort, home: true, hideEmpty: true }),
+      api.getMovies({ limit: HOME_SHELVES.recentlyReleased.limit, sort: HOME_SHELVES.recentlyReleased.sort, home: true, hideEmpty: true }).catch(() => ({ items: [] as Movie[], total: 0 })),
+      api.getShows({ limit: HOME_SHELVES.recentlyAired.limit, sort: HOME_SHELVES.recentlyAired.sort, home: true, hideEmpty: true }).catch(() => ({ items: [] as Show[], total: 0 })),
       api.getScraperStats().catch(() => null),
       api.getWatchProgress().catch(() => []),
       api.getAllLibraries().catch(() => []),
-    ]).then(([sr, mr, rr, ra, st, cw, libs]) => {
+      api.getHomePlaylists().catch(() => [] as HomePlaylistShelf[]),
+    ]).then(([sr, mr, rr, ra, st, cw, libs, homeShelves]) => {
       setRecentShows(sr.items)
       setRecentMovies(mr.items)
       setRecentlyReleased(rr.items)
@@ -138,6 +168,19 @@ export default function HomePage() {
       heroCandidates.current = withArt
       const first = withArt[0] ?? sr.items[0]
       if (first) { heroIdx.current = 0; setHeroItem(first); loadHeroDetail(first) }
+
+      // Second wave: each custom shelf's items, fetched the same way the
+      // built-in shelves above are (getShows/getMovies with a filter+sort+
+      // limit) — not known until the home-playlists list itself resolves.
+      Promise.all(homeShelves.map(shelf => {
+        const params = { limit: shelf.home_tile_limit, sort: shelf.smart_sort, filter: shelf.filter_expr, home: true, hideEmpty: true }
+        const req = shelf.smart_type === 'show' ? api.getShows(params) : api.getMovies(params)
+        return req.then(r => ({ shelf, items: r.items as (Show | Movie)[] })).catch(() => ({ shelf, items: [] as (Show | Movie)[] }))
+      })).then(results => {
+        const nonEmpty = results.filter(r => r.items.length > 0)
+        setCustomShelves(nonEmpty)
+        nonEmpty.forEach(r => r.items.forEach(item => allItemsRef.current.set(isShow(item) ? item.show_id : item.movie_id, item)))
+      })
     }).finally(() => {
       setLoading(false)
       if (!restoredScrollRef.current) {
@@ -372,6 +415,7 @@ export default function HomePage() {
                 recentlyReleased={recentlyReleased}
                 recentlyAired={recentlyAired}
                 continueWatching={continueWatching}
+                customShelves={customShelves}
                 onItemClick={openDetail}
                 onNavigate={navigate}
                 onItemHover={handleShelfHover}
@@ -594,6 +638,7 @@ function QuickActionsRow({ onGuideClick }: { onGuideClick: () => void }) {
 
 function Shelves({
   loading, recentShows, recentMovies, recentlyReleased, recentlyAired, continueWatching,
+  customShelves,
   onItemClick, onNavigate, onItemHover, onRowLeave,
   onContinueWatchingHover, onContinueWatchingHoverEnd,
   libraryNames, onHideLibrary,
@@ -604,6 +649,11 @@ function Shelves({
   recentlyReleased: Movie[]
   recentlyAired:    Show[]
   continueWatching: WatchProgress[]
+  // User-defined shelves — each one *is* a smart playlist with
+  // show_on_home=true (see PlaylistPage.tsx's "Show on Home" toggle); there's
+  // no separate shelf-definition concept. Variable length, fetched as a
+  // second wave once HomePage knows how many exist (see its data-load effect).
+  customShelves:    { shelf: HomePlaylistShelf; items: (Show | Movie)[] }[]
   onItemClick:      (id: string, type: 'show' | 'movie') => void
   onNavigate:       (path: string) => void
   onItemHover:      (id: string) => void
@@ -613,14 +663,15 @@ function Shelves({
   libraryNames:     Map<string, string>
   onHideLibrary:    (libraryId: string) => void
 }) {
-  // Applies a shelf's implicit filter/sort to the Library page before
-  // navigating there — e.g. "Recently Added Movies" lands on Library showing
-  // movies only, sorted by date added. Mutating the store synchronously
+  // Applies a shelf's own filter-set (contentType + sort + filter — see
+  // HOME_SHELVES) to the Library page before navigating there — e.g.
+  // "Recently Added Movies" lands on Library showing movies only, sorted by
+  // date added, with any of the shelf's own filter criteria already applied
+  // and visible in the rule-builder panel. Mutating the store synchronously
   // before navigate() is safe: LibraryPage's mount effect (loadLibraries().
   // then(() => store.fetch())) reads store state fresh on arrival.
-  const continueInLibrary = (contentType: 'show' | 'movie' | 'all', sort: string) => () => {
-    libraryStore.setContentType(contentType)
-    libraryStore.setSort(sort)
+  const continueInLibrary = (shelf: HomeShelfDef) => () => {
+    libraryStore.presetFilterFromString(shelf.contentType, shelf.sort, shelf.filter)
     onNavigate('/library')
   }
 
@@ -639,14 +690,14 @@ function Shelves({
           )}
           {recentShows.length > 0 && (
             <Shelf
-              title="Recently Added Shows"
+              title={HOME_SHELVES.recentShows.title}
               items={recentShows.map(s => ({
                 id: s.show_id, title: s.title, year: s.year,
                 thumb_url: proxyThumb(s), rating: s.audience_rating,
                 content_type: 'show' as const, library_id: s.library_id,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
-              onViewAll={continueInLibrary('show', 'recently_added')}
+              onViewAll={continueInLibrary(HOME_SHELVES.recentShows)}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
               libraryNames={libraryNames}
@@ -655,14 +706,14 @@ function Shelves({
           )}
           {recentMovies.length > 0 && (
             <Shelf
-              title="Recently Added Movies"
+              title={HOME_SHELVES.recentMovies.title}
               items={recentMovies.map(m => ({
                 id: m.movie_id, title: m.title, year: m.year,
                 thumb_url: proxyThumb(m), rating: m.audience_rating,
                 content_type: 'movie' as const, library_id: m.library_id,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
-              onViewAll={continueInLibrary('movie', 'recently_added')}
+              onViewAll={continueInLibrary(HOME_SHELVES.recentMovies)}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
               libraryNames={libraryNames}
@@ -671,14 +722,14 @@ function Shelves({
           )}
           {recentlyReleased.length > 0 && (
             <Shelf
-              title="Recently Released"
+              title={HOME_SHELVES.recentlyReleased.title}
               items={recentlyReleased.map(m => ({
                 id: m.movie_id, title: m.title, year: m.year,
                 thumb_url: proxyThumb(m), rating: m.audience_rating,
                 content_type: 'movie' as const, library_id: m.library_id,
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
-              onViewAll={continueInLibrary('movie', 'recently_released')}
+              onViewAll={continueInLibrary(HOME_SHELVES.recentlyReleased)}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
               libraryNames={libraryNames}
@@ -691,7 +742,7 @@ function Shelves({
               "select it and it starts playing" behavior to do. */}
           {recentlyAired.filter(s => s.latest_episode).length > 0 && (
             <Shelf
-              title="Recently Aired"
+              title={HOME_SHELVES.recentlyAired.title}
               items={recentlyAired.filter(s => s.latest_episode).map(s => ({
                 id: s.show_id, title: s.title, year: s.year,
                 thumb_url: proxyThumb(s), rating: s.audience_rating,
@@ -700,13 +751,34 @@ function Shelves({
               }))}
               onItemClick={(id, type) => onItemClick(id, type)}
               onNavigate={onNavigate}
-              onViewAll={continueInLibrary('show', 'recently_aired')}
+              onViewAll={continueInLibrary(HOME_SHELVES.recentlyAired)}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
               libraryNames={libraryNames}
               onHideLibrary={onHideLibrary}
             />
           )}
+          {customShelves.map(({ shelf, items }) => (
+            <Shelf
+              key={shelf.playlist_id}
+              title={shelf.title}
+              items={items.map(item => ({
+                id: isShow(item) ? item.show_id : item.movie_id, title: item.title, year: item.year,
+                thumb_url: proxyThumb(item), rating: item.audience_rating,
+                content_type: isShow(item) ? ('show' as const) : ('movie' as const),
+                library_id: item.library_id,
+              }))}
+              onItemClick={(id, type) => onItemClick(id, type)}
+              onViewAll={continueInLibrary({
+                title: shelf.title, contentType: shelf.smart_type, sort: shelf.smart_sort,
+                filter: shelf.filter_expr, limit: shelf.home_tile_limit,
+              })}
+              onItemHover={onItemHover}
+              onRowLeave={onRowLeave}
+              libraryNames={libraryNames}
+              onHideLibrary={onHideLibrary}
+            />
+          ))}
         </>
       )}
     </div>

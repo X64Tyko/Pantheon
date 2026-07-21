@@ -7,6 +7,7 @@
 #include "conf/ConfStore.h"
 #include "db/ChapterRepository.h"
 #include "db/Database.h"
+#include "db/FilterExpr.h"
 #include "db/SubtitleTrackRepository.h"
 #include "detect/ChapterDetectionManager.h"
 #include "log/DebugLog.h"
@@ -202,6 +203,13 @@ void SyncManager::syncAll() {
         if (src->isSupported())
             syncMediaProbeFromFiles(src->sourceId());
     }
+
+    // Phase 5: smart playlist refresh — once per full cycle (not per-source,
+    // unlike syncPlexLinks: a smart playlist isn't tied to any one source),
+    // after every source's content is freshly ingested/matched so filters
+    // see up-to-date data.
+    DLOG << "[sync] === phase 5: smart playlist refresh ===\n";
+    refreshSmartPlaylists();
 
     std::cout << "[sync] all sources done (total "
               << elapsedMs(t_total, std::chrono::steady_clock::now()) << "ms)" << std::endl;
@@ -1817,6 +1825,22 @@ void SyncManager::triggerPlexLinkSync() {
     }).detach();
 }
 
+void SyncManager::triggerSmartPlaylistRefresh() {
+    bool expected = false;
+    if (!smart_playlist_refresh_running_.compare_exchange_strong(expected, true)) {
+        std::cout << "[sync] smart playlist refresh already running — ignoring trigger" << std::endl;
+        return;
+    }
+    std::thread([this]() {
+        try {
+            refreshSmartPlaylists();
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] smart playlist refresh error: " << e.what() << std::endl;
+        }
+        smart_playlist_refresh_running_.store(false);
+    }).detach();
+}
+
 void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string& source_id) {
     struct LinkedUser { std::string external_user_id, local_user_id; };
     std::vector<LinkedUser> linked;
@@ -1876,19 +1900,16 @@ void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string&
 }
 
 void SyncManager::syncPlexLinks(const std::string& source_id) {
-    std::string base_url, source_type;
-    {
-        SQLite::Statement sq(sync_db_,
-            "SELECT base_url, source_type FROM media_source WHERE source_id = ? AND enabled = 1");
-        sq.bind(1, source_id);
-        if (!sq.executeStep()) return;
-        base_url    = sq.getColumn(0).getString();
-        source_type = sq.getColumn(1).getString();
-    }
-    if (source_type != "plex" || base_url.empty()) return;
-
-    std::string token = conf_.token(source_id);
-    if (token.empty()) return;
+    // Dispatched through IMediaSource (browsePlaylistItems/browseCollectionItems)
+    // rather than a hand-rolled Plex-only httplib::Client — works for Plex,
+    // Jellyfin, and Emby alike (all three implement the same browse methods),
+    // instead of silently no-op'ing for every non-Plex source (the old
+    // `if (source_type != "plex") return;` guard) and re-duplicating Plex's
+    // own pagination fix a third time in this one file. sources_/findSource
+    // only ever holds already-loaded, enabled sources (see loadSources()), so
+    // no separate enabled/base_url check is needed here.
+    IMediaSource* src = findSource(source_id);
+    if (!src) return;
 
     struct LinkRow { std::string list_type, list_id, external_id, plex_type; };
     std::vector<LinkRow> links;
@@ -1906,41 +1927,22 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
     }
     if (links.empty()) return;
 
-    std::cout << "[sync] re-syncing " << links.size() << " Plex-linked list(s)" << std::endl;
-
-    httplib::Client client(base_url);
-    client.set_default_headers({{"X-Plex-Token", token}, {"Accept", "application/json"}});
-    client.set_connection_timeout(10);
-    client.set_read_timeout(120); // see PlexSource's client_ setup for why 30s wasn't enough
+    std::cout << "[sync] re-syncing " << links.size() << " linked list(s) (source=" << source_id << ")" << std::endl;
 
     for (const auto& link : links) {
         try {
-            std::string path = (link.plex_type == "playlist")
-                ? "/playlists/" + link.external_id + "/items"
-                : "/library/metadata/" + link.external_id + "/children";
-
-            auto r = client.Get(path.c_str());
-            if (!r || r->status != 200) {
-                std::cerr << "[sync] failed to fetch Plex items for list "
-                          << link.list_id << " (HTTP " << (r ? r->status : 0) << ")" << std::endl;
-                continue;
-            }
+            auto raw = (link.plex_type == "collection")
+                ? src->browseCollectionItems(link.external_id)
+                : src->browsePlaylistItems(link.external_id);
 
             struct Item { std::string item_type; std::string kairos_id; };
             std::vector<Item> items;
-            auto j = json::parse(r->body);
-            const auto& md = j["MediaContainer"];
-            if (md.contains("Metadata")) {
-                for (const auto& item : md["Metadata"]) {
-                    std::string pt = item.value("type", "");
-                    std::string it = (pt == "movie") ? "movie" : "episode";
-                    std::string rk = item["ratingKey"].get<std::string>();
-                    SQLite::Statement lk(sync_db_,
-                        "SELECT kairos_id FROM source_mapping "
-                        "WHERE source_id=? AND external_id=? AND item_type=?");
-                    lk.bind(1, source_id); lk.bind(2, rk); lk.bind(3, it);
-                    if (lk.executeStep()) items.push_back({ it, lk.getColumn(0).getString() });
-                }
+            for (const auto& ri : raw) {
+                SQLite::Statement lk(sync_db_,
+                    "SELECT kairos_id FROM source_mapping "
+                    "WHERE source_id=? AND external_id=? AND item_type=?");
+                lk.bind(1, source_id); lk.bind(2, ri.external_id); lk.bind(3, ri.item_type);
+                if (lk.executeStep()) items.push_back({ri.item_type, lk.getColumn(0).getString()});
             }
 
             const std::string fk_col   = (link.list_type == "playlist") ? "playlist_id"    : "filler_list_id";
@@ -1972,6 +1974,100 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
                       << items.size() << " item(s)" << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "[sync] error syncing list " << link.list_id
+                      << ": " << e.what() << std::endl;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Smart playlist refresh
+// ---------------------------------------------------------------------------
+
+namespace {
+// Mirrors PlaylistRepository.cpp's identical (private) helper — duplicated
+// rather than shared because this runs against sync_db_ (a raw background-
+// thread connection) while PlaylistRepository is bound to the main-thread
+// Database&; same reasoning as syncPlexLinks/syncSourceListItems's existing
+// main-thread-vs-background-thread duplication.
+std::string smartOrderBySql(const std::string& sort, const std::string& alias) {
+    if (sort == "recently_added")  return " ORDER BY " + alias + ".added_at DESC";
+    if (sort == "year")            return " ORDER BY " + alias + ".year DESC";
+    if (sort == "audience_rating") return " ORDER BY " + alias + ".audience_rating DESC";
+    if (sort == "random")          return " ORDER BY RANDOM()";
+    return " ORDER BY " + alias + ".title ASC";
+}
+}
+
+void SyncManager::refreshSmartPlaylists() {
+    struct SmartDef { std::string playlist_id, filter_expr, smart_type, smart_sort; int smart_limit; };
+    std::vector<SmartDef> defs;
+    {
+        SQLite::Statement q(sync_db_,
+            "SELECT playlist_id, filter_expr, smart_type, smart_sort, smart_limit "
+            "FROM playlist WHERE membership = 'smart'");
+        while (q.executeStep()) {
+            defs.push_back({
+                q.getColumn(0).getString(), q.getColumn(1).getString(),
+                q.getColumn(2).getString(), q.getColumn(3).getString(),
+                q.getColumn(4).getInt()
+            });
+        }
+    }
+    if (defs.empty()) return;
+
+    std::cout << "[sync] refreshing " << defs.size() << " smart playlist(s)" << std::endl;
+
+    for (const auto& def : defs) {
+        try {
+            const std::string limit_clause = def.smart_limit > 0 ? " LIMIT " + std::to_string(def.smart_limit) : "";
+            struct Item { std::string item_type, item_id; };
+            std::vector<Item> items;
+
+            if (def.smart_type == "movie") {
+                auto compiled = compileFilterExpr(def.filter_expr, FilterEntity::Movie, "m");
+                SQLite::Statement q(sync_db_,
+                    "SELECT m.movie_id FROM movie m WHERE (" + compiled.sql + ")" +
+                    smartOrderBySql(def.smart_sort, "m") + limit_clause);
+                for (size_t i = 0; i < compiled.binds.size(); ++i) q.bind(static_cast<int>(i) + 1, compiled.binds[i]);
+                while (q.executeStep()) items.push_back({"movie", q.getColumn(0).getString()});
+            } else {
+                auto compiled = compileFilterExpr(def.filter_expr, FilterEntity::Show, "s");
+                SQLite::Statement q(sync_db_,
+                    "SELECT s.show_id FROM show s WHERE (" + compiled.sql + ")" +
+                    smartOrderBySql(def.smart_sort, "s") + limit_clause);
+                for (size_t i = 0; i < compiled.binds.size(); ++i) q.bind(static_cast<int>(i) + 1, compiled.binds[i]);
+                std::vector<std::string> show_ids;
+                while (q.executeStep()) show_ids.push_back(q.getColumn(0).getString());
+
+                for (const auto& show_id : show_ids) {
+                    SQLite::Statement eq(sync_db_,
+                        "SELECT episode_id FROM episode WHERE show_id = ? AND season > 0 ORDER BY season, episode");
+                    eq.bind(1, show_id);
+                    while (eq.executeStep()) items.push_back({"episode", eq.getColumn(0).getString()});
+                }
+            }
+
+            SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
+            SQLite::Statement del(sync_db_, "DELETE FROM playlist_item WHERE playlist_id = ?");
+            del.bind(1, def.playlist_id); del.exec();
+
+            int pos = 0;
+            for (const auto& item : items) {
+                SQLite::Statement ins(sync_db_,
+                    "INSERT OR IGNORE INTO playlist_item (playlist_id, position, item_type, item_id) VALUES (?,?,?,?)");
+                ins.bind(1, def.playlist_id); ins.bind(2, pos++);
+                ins.bind(3, item.item_type); ins.bind(4, item.item_id);
+                ins.exec();
+            }
+
+            SQLite::Statement ts(sync_db_, "UPDATE playlist SET last_smart_refresh_at = ? WHERE playlist_id = ?");
+            ts.bind(1, static_cast<int64_t>(std::time(nullptr))); ts.bind(2, def.playlist_id);
+            ts.exec();
+
+            txn.commit();
+            std::cout << "[sync]   \"" << def.playlist_id << "\": " << items.size() << " item(s)" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[sync] error refreshing smart playlist " << def.playlist_id
                       << ": " << e.what() << std::endl;
         }
     }

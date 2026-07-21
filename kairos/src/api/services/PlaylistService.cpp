@@ -2,6 +2,7 @@
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "PlexSyncHelper.h"
+#include "../../db/Database.h"
 #include "../../db/PlaylistRepository.h"
 #include "../../db/PlaylistSerializer.h"
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -11,6 +12,19 @@
 using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
+
+namespace {
+// "MM-DD", loosely validated (no per-month day-count check — "02-30" passes,
+// same tolerance the rest of this codebase gives user-typed date fragments).
+bool isValidMonthDay(const std::string& s) {
+	if (s.size() != 5 || s[2] != '-') return false;
+	if (!isdigit((unsigned char)s[0]) || !isdigit((unsigned char)s[1]) ||
+	    !isdigit((unsigned char)s[3]) || !isdigit((unsigned char)s[4])) return false;
+	int month = (s[0]-'0')*10 + (s[1]-'0');
+	int day   = (s[3]-'0')*10 + (s[4]-'0');
+	return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+}
 
 PlaylistService::PlaylistService(const ServiceContext& ctx)
 	: db_(ctx.db), sync_(ctx.sync) {}
@@ -28,6 +42,18 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 					{"mode",        r.mode},
 					{"item_count",  r.item_count},
 					{"total_ms",    r.total_ms},
+					{"membership",  r.membership},
+					{"filter_expr", r.filter_expr},
+					{"smart_type",  r.smart_type},
+					{"smart_sort",  r.smart_sort},
+					{"smart_limit", r.smart_limit},
+					{"last_smart_refresh_at", r.last_smart_refresh_at
+						? json(*r.last_smart_refresh_at) : json(nullptr)},
+					{"show_on_home",       r.show_on_home},
+					{"home_order",         r.home_order},
+					{"home_tile_limit",    r.home_tile_limit},
+					{"home_active_start",  r.home_active_start},
+					{"home_active_end",    r.home_active_end},
 				};
 				if (r.plex_link) {
 					entry["plex_link"] = {
@@ -44,6 +70,28 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 		} catch (const std::exception& e) { route::logErr("GET /api/playlists", e); route::err(res, 500, e.what()); }
 	});
 
+	// Home shelves — every smart playlist with show_on_home=1 whose active
+	// window (if any) includes today (see PlaylistRepository::
+	// listHomeShelves). Public/unauthenticated: structural Home-page
+	// composition data, not per-user — same reasoning as /api/tv/manifest
+	// and /api/config/public-settings (see Router.cpp's isPublicPath).
+	svr.Get("/api/home-playlists", [this](const Req&, Res& res) {
+		try {
+			json result = json::array();
+			for (const auto& r : PlaylistRepository(db_).listHomeShelves()) {
+				result.push_back({
+					{"playlist_id",     r.playlist_id},
+					{"title",           r.title},
+					{"smart_type",      r.smart_type},
+					{"filter_expr",     r.filter_expr},
+					{"smart_sort",      r.smart_sort},
+					{"home_tile_limit", r.home_tile_limit},
+				});
+			}
+			route::ok(res, result.dump());
+		} catch (const std::exception& e) { route::logErr("GET /api/home-playlists", e); route::err(res, 500, e.what()); }
+	});
+
 	// Must register before /:id routes
 	svr.Post("/api/playlists/plex-sync-all", [this](const Req&, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
@@ -55,6 +103,13 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 	svr.Post("/api/playlists/source-sync-all", [this](const Req&, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		sync_.triggerPlexLinkSync();
+		res.status = 202;
+		route::ok(res, json{{"status","accepted"}}.dump());
+	});
+
+	svr.Post("/api/playlists/refresh-smart-all", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		sync_.triggerSmartPlaylistRefresh();
 		res.status = 202;
 		route::ok(res, json{{"status","accepted"}}.dump());
 	});
@@ -95,7 +150,20 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 				{"playlist_id", d->playlist_id},
 				{"title",       d->title},
 				{"mode",        d->mode},
-				{"items",       items}}.dump());
+				{"items",       items},
+				{"membership",  d->membership},
+				{"filter_expr", d->filter_expr},
+				{"smart_type",  d->smart_type},
+				{"smart_sort",  d->smart_sort},
+				{"smart_limit", d->smart_limit},
+				{"last_smart_refresh_at", d->last_smart_refresh_at
+					? json(*d->last_smart_refresh_at) : json(nullptr)},
+				{"show_on_home",       d->show_on_home},
+				{"home_order",         d->home_order},
+				{"home_tile_limit",    d->home_tile_limit},
+				{"home_active_start",  d->home_active_start},
+				{"home_active_end",    d->home_active_end},
+			}.dump());
 		} catch (const std::exception& e) { route::logErr("GET /api/playlists/:id", e); route::err(res, 500, e.what()); }
 	});
 
@@ -174,6 +242,20 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
 	});
 
+	// Recomputes a smart playlist's items from its stored filter_expr — the
+	// per-playlist analog of plex-sync/source-sync, just against a locally
+	// stored filter instead of a remote list. See SyncManager::
+	// refreshSmartPlaylists for the bulk/background-thread equivalent that
+	// runs automatically at the end of every full sync cycle.
+	svr.Post("/api/playlists/:id/refresh-smart", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			int synced = PlaylistRepository(db_).refreshSmart(id);
+			route::ok(res, json{{"synced", synced}}.dump());
+		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
+	});
+
 	svr.Delete("/api/playlists/:id/plex-link", [this](const Req& req, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		auto id = req.path_params.at("id");
@@ -209,10 +291,68 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 			if (b.contains("title")) repo.updateField(id, "title", b["title"].get<std::string>());
 			if (b.contains("mode")) {
 				std::string mode = b["mode"].get<std::string>();
-				if (mode != "sequential" && mode != "show_collection") {
-					route::err(res, 400, "mode must be 'sequential' or 'show_collection'"); return;
+				if (mode != "sequential" && mode != "show_collection" && mode != "shuffle") {
+					route::err(res, 400, "mode must be 'sequential', 'show_collection', or 'shuffle'"); return;
 				}
 				repo.updateField(id, "mode", mode);
+			}
+			// Smart-membership fields (Database.cpp migration 87) — setting
+			// membership='smart' just marks the definition; the frontend
+			// calls POST .../refresh-smart separately to actually populate
+			// playlist_item from it (same "define, then sync" two-step the
+			// Plex/Jellyfin/Emby link flow already uses).
+			if (b.contains("membership")) {
+				std::string membership = b["membership"].get<std::string>();
+				if (membership != "static" && membership != "smart") {
+					route::err(res, 400, "membership must be 'static' or 'smart'"); return;
+				}
+				repo.updateField(id, "membership", membership);
+			}
+			if (b.contains("filter_expr")) repo.updateField(id, "filter_expr", b["filter_expr"].get<std::string>());
+			if (b.contains("smart_type")) {
+				std::string smart_type = b["smart_type"].get<std::string>();
+				if (smart_type != "show" && smart_type != "movie") {
+					route::err(res, 400, "smart_type must be 'show' or 'movie'"); return;
+				}
+				repo.updateField(id, "smart_type", smart_type);
+			}
+			if (b.contains("smart_sort")) repo.updateField(id, "smart_sort", b["smart_sort"].get<std::string>());
+			if (b.contains("smart_limit")) repo.updateField(id, "smart_limit", std::to_string(b["smart_limit"].get<int>()));
+
+			// Home-shelf fields (Database.cpp migration 88) — a shelf is
+			// just a smart playlist with show_on_home=1 (see
+			// PlaylistRepository::listHomeShelves, which only ever reads
+			// smart playlists — static ones have no filter to hand
+			// getShows/getMovies the way the Home page's shelves need).
+			if (b.contains("show_on_home")) {
+				bool show_on_home = b["show_on_home"].get<bool>();
+				if (show_on_home) {
+					std::string membership = b.contains("membership")
+						? b["membership"].get<std::string>()
+						: [&] { SQLite::Statement q(db_.get(), "SELECT membership FROM playlist WHERE playlist_id = ?");
+						        q.bind(1, id); return q.executeStep() ? q.getColumn(0).getString() : std::string(); }();
+					if (membership != "smart") {
+						route::err(res, 400, "only a smart playlist (membership='smart') can be shown on Home"); return;
+					}
+				}
+				repo.updateField(id, "show_on_home", show_on_home ? "1" : "0");
+			}
+			if (b.contains("home_order"))       repo.updateField(id, "home_order",      std::to_string(b["home_order"].get<int>()));
+			if (b.contains("home_tile_limit")) {
+				int limit = b["home_tile_limit"].get<int>();
+				if (limit < 1) { route::err(res, 400, "home_tile_limit must be at least 1"); return; }
+				repo.updateField(id, "home_tile_limit", std::to_string(limit));
+			}
+			if (b.contains("home_active_start") || b.contains("home_active_end")) {
+				std::string start = b.value("home_active_start", "");
+				std::string end   = b.value("home_active_end", "");
+				// Both empty (no window = always shown) or both a valid MM-DD —
+				// one set without the other is an ambiguous half-window.
+				if (!(start.empty() && end.empty()) && !(isValidMonthDay(start) && isValidMonthDay(end))) {
+					route::err(res, 400, "home_active_start/home_active_end must both be 'MM-DD' or both empty"); return;
+				}
+				repo.updateField(id, "home_active_start", start);
+				repo.updateField(id, "home_active_end",   end);
 			}
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) { route::logErr("PATCH /api/playlists/:id", e); route::err(res, 400, e.what()); }

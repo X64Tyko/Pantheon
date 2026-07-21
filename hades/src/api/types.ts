@@ -736,7 +736,9 @@ export interface PlexLink {
 
 // ── Playlists ────────────────────────────────────────────────────────────────
 
-export type PlaylistMode = 'sequential' | 'show_collection'
+export type PlaylistMode       = 'sequential' | 'show_collection' | 'shuffle'
+export type PlaylistMembership = 'static' | 'smart'
+export type SmartPlaylistType  = 'show' | 'movie'
 
 export interface Playlist {
   playlist_id: string
@@ -745,6 +747,37 @@ export interface Playlist {
   item_count:  number
   total_ms:    number
   plex_link?:  PlexLink
+  // Smart-membership fields (see kairos/src/db/Database.cpp migration 87) —
+  // membership==='smart' means item_count/total_ms reflect the last
+  // refresh-smart run, not a live count; filter_expr is the canon
+  // filter-syntax string (components/media/filterSyntax.ts) driving it.
+  membership:  PlaylistMembership
+  filter_expr: string
+  smart_type:  SmartPlaylistType
+  smart_sort:  string
+  smart_limit: number
+  last_smart_refresh_at: number | null
+  // Home-shelf fields (Database.cpp migration 88) — a Home shelf is just a
+  // smart playlist with show_on_home=true; there's no separate shelf entity.
+  // home_tile_limit is a *display* cap (how many tiles before "Continue in
+  // Library"), independent of smart_limit which caps actual membership.
+  // home_active_start/end are 'MM-DD' or '' (both empty = always shown).
+  show_on_home:      boolean
+  home_order:        number
+  home_tile_limit:   number
+  home_active_start: string
+  home_active_end:   string
+}
+
+// GET /api/home-playlists — the subset of fields the Home page actually
+// needs to render a shelf (see PlaylistRepository::HomeShelfRow/listHomeShelves).
+export interface HomePlaylistShelf {
+  playlist_id:     string
+  title:           string
+  smart_type:      SmartPlaylistType
+  filter_expr:     string
+  smart_sort:      string
+  home_tile_limit: number
 }
 
 export interface PlaylistItem {

@@ -1,5 +1,6 @@
 import { makeAutoObservable } from 'mobx'
 import { FIELD_DEFS, type FilterField, type FilterOp } from './filterFields'
+import { parseFilterSyntax, type ClauseNode, type FilterNode } from './filterSyntax'
 
 let _id = 0
 const nextId = () => String(++_id)
@@ -14,6 +15,30 @@ export type FilterItem = FilterRuleItem | FilterGroupItem
 
 function blankRule(): FilterRuleItem {
   return { kind: 'rule', id: nextId(), field: 'genre', op: 'is', value: '' }
+}
+
+function clauseToRule(c: ClauseNode): FilterRuleItem {
+  return { kind: 'rule', id: nextId(), field: c.field, op: c.op, value: c.value }
+}
+
+// Reverse of toFilterString (filterQuery.ts) — converts a parsed canon-syntax
+// AST back into rule-builder items. Bounded to what the visual builder can
+// actually represent (one level of grouping, clauses only): bare fuzzy words
+// and negated groups have no rule-builder equivalent and are dropped rather
+// than approximated. Used to seed the panel from a Home shelf's own `filter`
+// string (see HomePage.tsx's shelf defs) so "Continue in Library" lands with
+// the shelf's criteria visibly editable, not just silently applied.
+function astToItems(node: FilterNode): FilterItem[] {
+  const top = node.type === 'group' && !node.negate ? node.children : [node]
+  const items: FilterItem[] = []
+  for (const child of top) {
+    if (child.type === 'clause') items.push(clauseToRule(child))
+    else if (child.type === 'group' && !child.negate) {
+      const rules = child.children.filter((c): c is ClauseNode => c.type === 'clause').map(clauseToRule)
+      if (rules.length > 0) items.push({ kind: 'group', id: nextId(), match: child.match, rules })
+    }
+  }
+  return items
 }
 
 // Shared filter rule-builder state — one instance per page that embeds
@@ -79,6 +104,18 @@ export class FilterTreeStore {
   // rule, opens the panel so it's immediately visible/editable.
   setSingleRule(field: FilterField, value: string) {
     this.items = [{ kind: 'rule', id: nextId(), field, op: 'is', value }]
+    this.open  = true
+  }
+
+  // Same idea as setSingleRule, but for a whole canon filter-syntax string
+  // (see astToItems above) — a Home shelf's `filter` def can express more
+  // than one field/AND-group, not just a single field:value pair. A no-op on
+  // an empty string (nothing to seed, tree stays whatever it already was).
+  setFromFilterString(text: string) {
+    if (!text.trim()) return
+    const ast = parseFilterSyntax(text)
+    this.match = ast.type === 'group' && !ast.negate ? ast.match : 'all'
+    this.items = astToItems(ast)
     this.open  = true
   }
 }

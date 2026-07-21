@@ -99,10 +99,11 @@ export class LibraryStore {
   private searchParams(page: number) {
     // Every rule/operator the rule-builder can produce now round-trips
     // through toFilterString (see components/media/filterQuery.ts) — this
-    // used to only read 'is' rules for 6 of 16 fields. 'library' is still
-    // deliberately excluded from the filter string itself: the multi-select
-    // library pills (SourceSwitcher.tsx) own library scoping on this page,
-    // and letting both drive the same thing would just fight each other.
+    // used to only read 'is' rules for 6 of 16 fields, and used to silently
+    // drop 'library' rules entirely (the multi-select library pills below
+    // still own "which libraries are visible at all" via library_ids, but a
+    // 'library' rule in the panel is now a real, additional AND'd
+    // constraint instead of a no-op).
     const hasGenreRule = this.filterTree.allRules.some(r => r.field === 'genre' && r.value.trim())
     const filter = (hasGenreRule || !this.filterGenre
       ? toFilterString(this.filterTree)
@@ -250,6 +251,23 @@ export class LibraryStore {
     this.filterTree.setSingleRule(field, value)
     this.sidebarOpen = true
     localStorage.setItem(SIDEBAR_KEY, 'true')
+    this.page = 0
+  }
+
+  // Same landing pattern as presetFilter, but for a Home shelf def's full
+  // filter-set (contentType + sort + canon filter string — see HomePage.tsx's
+  // HOME_SHELVES) rather than a single field/value pair, so "Continue in
+  // Library" reproduces exactly what the shelf itself was built from instead
+  // of just its contentType/sort. An empty filter string is a no-op on the
+  // panel (setFromFilterString), same as a shelf with no extra criteria today.
+  presetFilterFromString(contentType: 'show' | 'movie' | 'all', sort: string, filter: string) {
+    this.contentType = contentType
+    this.sort = sort
+    if (filter) {
+      this.filterTree.setFromFilterString(filter)
+      this.sidebarOpen = true
+      localStorage.setItem(SIDEBAR_KEY, 'true')
+    }
     this.page = 0
   }
 

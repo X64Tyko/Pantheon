@@ -8,24 +8,23 @@ import type { FilterTreeStore, FilterRuleItem } from './filterTree'
 // channel/store.ts, PlaylistPage.tsx, and FillerPage.tsx (only 6 of 16
 // fields, only the 'is' operator, filterMatch/group nesting never read).
 // Every rule/op/group the rule-builder can produce now round-trips through
-// here.
+// here, including 'library' (see FilterExpr.cpp's matching compileClause
+// branch) — it composes fine alongside the separate library_ids multi-select
+// scoping (SourceSwitcher.tsx pills), rather than needing to be excluded in
+// favor of it.
 //
 // Rules with an empty value are skipped (an in-progress, not-yet-filled-in
-// row shouldn't affect the query). 'library' rules are deliberately excluded
-// too — library scoping is owned by the separate multi-select library-pill
-// UI (SourceSwitcher.tsx / library_ids param), not the canon filter syntax;
-// letting both drive the same thing would just fight each other. An empty
-// tree serializes to ''.
+// row shouldn't affect the query). An empty tree serializes to ''.
 export function toFilterString(tree: Pick<FilterTreeStore, 'items' | 'match'>): string {
   const ruleNode = (r: FilterRuleItem): FilterNode => ({ type: 'clause', field: r.field, op: r.op, value: r.value })
 
   const children: FilterNode[] = []
   for (const item of tree.items) {
     if (item.kind === 'rule') {
-      if (item.field === 'library' || item.value.trim() === '') continue
+      if (item.value.trim() === '') continue
       children.push(ruleNode(item))
     } else {
-      const groupRules = item.rules.filter(r => r.field !== 'library' && r.value.trim() !== '')
+      const groupRules = item.rules.filter(r => r.value.trim() !== '')
       if (groupRules.length === 0) continue
       children.push({ type: 'group', match: item.match, children: groupRules.map(ruleNode) })
     }

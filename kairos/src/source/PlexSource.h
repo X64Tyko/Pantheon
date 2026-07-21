@@ -47,6 +47,15 @@ public:
 private:
     httplib::Result get(const std::string& path);
 
+    // Paginated GET across a playlist/collection-items endpoint (same
+    // X-Plex-Container-Start/Size chunking as fetchShows/fetchMovies/
+    // fetchEpisodes) — shared by browsePlaylistItems/browseCollectionItems/
+    // fetchListItems so the pagination fix only has to exist once. nullopt
+    // only when the *first* page request fails outright; a later page
+    // failing mid-fetch just stops pagination and keeps whatever was
+    // already collected.
+    std::optional<std::vector<BrowseContentItem>> fetchAllBrowseItems(const std::string& basePath);
+
     std::string     source_id_;
     std::string     base_url_;
     std::string     token_;

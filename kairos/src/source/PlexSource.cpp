@@ -455,17 +455,28 @@ std::vector<Playlist> PlexSource::fetchPlaylists(const std::string& /*external_l
 
 // Shared parser for playlist/collection item responses.
 // Returns BrowseContentItems with external_id populated; kairos_id resolution
-// is left to the Router (DB lookup against source_mapping).
+// is left to the Router (DB lookup against source_mapping). Each item is
+// parsed independently — one malformed entry (e.g. missing ratingKey) used
+// to be caught by one try/catch wrapping the whole loop, which silently
+// discarded every item after the bad one instead of just that one.
 static std::vector<BrowseContentItem> parseBrowseItems(const std::string& body) {
     std::vector<BrowseContentItem> result;
-    try {
-        auto j = json::parse(body);
-        const auto& md = j["MediaContainer"];
-        if (!md.contains("Metadata")) return result;
-        for (const auto& item : md["Metadata"]) {
+    json j;
+    try { j = json::parse(body); } catch (...) { return result; }
+    if (!j.contains("MediaContainer")) return result;
+    const auto& md = j["MediaContainer"];
+    if (!md.contains("Metadata")) return result;
+    for (const auto& item : md["Metadata"]) {
+        try {
+            // .value(), not operator[] — operator[] on a *const* json object
+            // asserts (aborts, uncatchably) rather than throwing when the key
+            // is missing, which would defeat this try/catch entirely.
+            std::string rating_key = item.value("ratingKey", "");
+            if (rating_key.empty()) continue; // no stable id — nothing to resolve against source_mapping
+
             std::string plex_type = item.value("type", "");
             BrowseContentItem entry;
-            entry.external_id  = item["ratingKey"].get<std::string>();
+            entry.external_id  = rating_key;
             entry.item_type    = (plex_type == "movie") ? "movie" : "episode";
             entry.title        = item.value("title", "");
             entry.duration_ms  = item.value("duration", int64_t{0});
@@ -477,8 +488,32 @@ static std::vector<BrowseContentItem> parseBrowseItems(const std::string& body) 
                     entry.episode = item["index"].get<int>();
             }
             result.push_back(std::move(entry));
+        } catch (...) { continue; }
+    }
+    return result;
+}
+
+std::optional<std::vector<BrowseContentItem>> PlexSource::fetchAllBrowseItems(const std::string& basePath) {
+    constexpr int kPageSize = 200;
+    std::vector<BrowseContentItem> result;
+    int start = 0;
+    bool first = true;
+    while (true) {
+        const std::string sep = basePath.find('?') != std::string::npos ? "&" : "?";
+        const std::string path = basePath + sep +
+            "X-Plex-Container-Start=" + std::to_string(start) +
+            "&X-Plex-Container-Size=" + std::to_string(kPageSize);
+        auto res = get(path);
+        if (!res || res->status != 200) {
+            if (first) return std::nullopt;
+            break;
         }
-    } catch (...) {}
+        first = false;
+        auto page = parseBrowseItems(res->body);
+        result.insert(result.end(), page.begin(), page.end());
+        if (static_cast<int>(page.size()) < kPageSize) break;
+        start += kPageSize;
+    }
     return result;
 }
 
@@ -505,9 +540,7 @@ std::vector<BrowseListItem> PlexSource::browsePlaylists() {
 }
 
 std::vector<BrowseContentItem> PlexSource::browsePlaylistItems(const std::string& id) {
-    auto res = get("/playlists/" + id + "/items");
-    if (!res || res->status != 200) return {};
-    return parseBrowseItems(res->body);
+    return fetchAllBrowseItems("/playlists/" + id + "/items").value_or(std::vector<BrowseContentItem>{});
 }
 
 std::vector<BrowseListItem> PlexSource::browseCollections(const std::string& ext_lib_id) {
@@ -533,28 +566,21 @@ std::vector<BrowseListItem> PlexSource::browseCollections(const std::string& ext
 }
 
 std::vector<BrowseContentItem> PlexSource::browseCollectionItems(const std::string& id) {
-    auto res = get("/library/metadata/" + id + "/children");
-    if (!res || res->status != 200) return {};
-    return parseBrowseItems(res->body);
+    return fetchAllBrowseItems("/library/metadata/" + id + "/children").value_or(std::vector<BrowseContentItem>{});
 }
 
 std::optional<std::vector<PlexListItem>> PlexSource::fetchListItems(
     const std::string& id, const std::string& plex_type) {
-    std::string path = (plex_type == "playlist")
+    const std::string basePath = (plex_type == "playlist")
         ? "/playlists/" + id + "/items"
         : "/library/metadata/" + id + "/children";
-    auto res = get(path);
-    if (!res || res->status != 200) return std::nullopt;
-    try {
-        auto raw = parseBrowseItems(res->body);
-        std::vector<PlexListItem> result;
-        result.reserve(raw.size());
-        for (auto& item : raw)
-            result.push_back({item.item_type, item.external_id});
-        return result;
-    } catch (...) {
-        return std::nullopt;
-    }
+    auto raw = fetchAllBrowseItems(basePath);
+    if (!raw) return std::nullopt;
+    std::vector<PlexListItem> result;
+    result.reserve(raw->size());
+    for (auto& item : *raw)
+        result.push_back({item.item_type, item.external_id});
+    return result;
 }
 
 // ---------------------------------------------------------------------------
