@@ -94,23 +94,22 @@ private:
     size_t                          bytes_written_ = 0;
     uint64_t                        seq_ = 1;  // 0 is the "nothing seen yet" sentinel
 
-    void openFile() {
-        if (path_.empty()) return;
-        // The parent directory not existing yet (e.g. a fresh appdata mount,
-        // or ./data/ never created outside Docker) used to make this fail
-        // silently — every line just quietly stopped reaching the file with
-        // no further retry, since nothing calls openFile() again afterward.
-        std::error_code ec;
-        auto parent = std::filesystem::path(path_).parent_path();
-        if (!parent.empty()) std::filesystem::create_directories(parent, ec);
-        file_.open(path_, std::ios::app);
-        if (file_) {
-            file_.seekp(0, std::ios::end);
-            bytes_written_ = static_cast<size_t>(file_.tellp());
-        } else {
-            std::cerr << "[log] failed to open log file: " << path_ << "\n";
-        }
-    }
+	void openFile() {
+		if (path_.empty()) return;
+		// The parent directory not existing yet used to make this fail
+		// silently — every line just quietly stopped reaching the file with
+		// no further retry, since nothing calls openFile() again afterward.
+		std::error_code ec;
+		auto parent = std::filesystem::path(path_).parent_path();
+		if (!parent.empty()) std::filesystem::create_directories(parent, ec);
+		file_.open(path_, std::ios::app);
+		if (file_) {
+			file_.seekp(0, std::ios::end);
+			bytes_written_ = static_cast<size_t>(file_.tellp());
+		} else {
+			std::cerr << "[log] failed to open log file: " << path_ << "\n";
+		}
+	}
 
     void rotateFile() {
         file_.close();
