@@ -44,13 +44,25 @@
   top: 0;
   z-index: 2;
   padding: 0 48px 24px;
-  /* Same fix as TvLibraryDetail.module.css's .header — .backdrop's own
-     scrims are sized/tuned to the *unscrolled* hero height and stay weak
-     over roughly the top quarter of a collapsed backdrop (.backdropScrimV's
-     46% stop), so title/overview text sitting there on a tall header (long
-     overview, many genre chips) can read straight off the raw image. This
-     scrim is part of the header itself, so it holds regardless of
-     collapsed height or what's actually in the image. */
+}
+
+/* Same fix as TvLibraryDetail.module.css's .header — .backdrop's own scrims
+   are sized/tuned to the *unscrolled* hero height and stay weak over
+   roughly the top quarter of a collapsed backdrop (.backdropScrimV's 46%
+   stop), so title/overview text sitting there on a tall header (long
+   overview, many genre chips) can read straight off the raw image. Scoped
+   to the collapsed state only (`.stickyHeader` gets the global
+   `hds-media-detail-hero-collapsed` modifier once useScrollCollapse's
+   sentinel reports the header actually stuck) — the header is only ever
+   fully overlaid on the backdrop in that state (the rest of the time only
+   its top ~40px overlaps, which .backdropScrimH/.backdropScrimV already
+   cover). Applying this unconditionally used to paint a second, opaque-ish
+   gradient the full size of the header at all times, which — once
+   collapsed, when the header exactly matches the shrunk backdrop's bounds —
+   completely eclipsed the real backdrop image instead of just tinting it,
+   reading as a duplicate flat banner rather than the same image shrinking
+   in place. */
+.stickyHeader:global(.hds-media-detail-hero-collapsed) {
   background: linear-gradient(to bottom,
     oklch(0 0 0 / 0.2) 0%,
     oklch(0 0 0 / 0.5) 50%,

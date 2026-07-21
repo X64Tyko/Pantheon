@@ -71,16 +71,27 @@
   top: 0;
   z-index: 2;
   padding: 40px 48px;
-  /* .backdrop's own scrims are sized/tuned to the *unscrolled* hero height
-     (percentage-based, so they do rescale once the backdrop shrinks to
-     match this header's collapsed height, but .backdropScrimV's gradient
-     stays weak over roughly its own top 25% — see that rule's comment) —
-     wide enough that title/meta text sitting in that region on a tall
-     header (long overview, several genre chips) was reading straight off
-     the raw backdrop image. This is a second scrim that's part of the
-     header itself, so it holds regardless of collapsed height or what's
-     actually in the image. rgba, not oklch-alpha — see .filterOverlay's
-     own comment on TV browsers dropping oklch(... / alpha) entirely. */
+}
+
+/* .backdrop's own scrims are sized/tuned to the *unscrolled* hero height
+   (percentage-based, so they do rescale once the backdrop shrinks to match
+   this header's collapsed height, but .backdropScrimV's gradient stays
+   weak over roughly its own top 25% — see that rule's comment) — wide
+   enough that title/meta text sitting in that region on a tall header
+   (long overview, several genre chips) was reading straight off the raw
+   backdrop image. Scoped to .headerCollapsed (applied by TvLibraryDetail.tsx
+   once useScrollCollapse's sentinel reports the header actually stuck) —
+   the header is only ever fully overlaid on the backdrop in that state (the
+   rest of the time only its top ~40px overlaps, already covered by
+   .backdropScrimH/.backdropScrimV). Applying this unconditionally used to
+   paint a second, opaque-ish gradient the full size of the header at all
+   times, which — once collapsed, when the header exactly matches the
+   shrunk backdrop's bounds — completely eclipsed the real backdrop image
+   instead of just tinting it, reading as a duplicate flat banner rather
+   than the same image shrinking in place. rgba, not oklch-alpha — see
+   .filterOverlay's own comment on TV browsers dropping oklch(... / alpha)
+   entirely. */
+.header.headerCollapsed {
   background: linear-gradient(to bottom,
     rgba(0, 0, 0, 0.25) 0%,
     rgba(0, 0, 0, 0.55) 50%,

@@ -125,7 +125,7 @@ export function TvLibraryDetail() {
             focusedEpisode) is still visible either way — the reason the
             hero used to be fully fixed no longer requires that, since the
             locked header serves the same purpose. */}
-        <div ref={headerRef} className={styles.header}>
+        <div ref={headerRef} className={`${styles.header}${collapsed ? ` ${styles.headerCollapsed}` : ''}`}>
           <div className={styles.headerRow}>
             <div className={styles.poster}>
               {posterUrl && <img src={posterUrl} alt={title} className={styles.posterImg} />}
