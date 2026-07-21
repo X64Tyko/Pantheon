@@ -61,7 +61,7 @@ find_package(OpenSSL REQUIRED)
 # the target exists for the executable to link against unconditionally.
 if(ALL_SOURCES)
     add_library(kairos_core STATIC ${ALL_SOURCES})
-    target_include_directories(kairos_core PUBLIC src)
+    target_include_directories(kairos_core PUBLIC src "${CMAKE_SOURCE_DIR}/shared")
     target_link_libraries(kairos_core
         PUBLIC
         nlohmann_json::nlohmann_json
@@ -76,7 +76,7 @@ if(ALL_SOURCES)
     target_compile_definitions(kairos_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
 else()
     add_library(kairos_core INTERFACE)
-    target_include_directories(kairos_core INTERFACE src)
+    target_include_directories(kairos_core INTERFACE src "${CMAKE_SOURCE_DIR}/shared")
     target_link_libraries(kairos_core
         INTERFACE
         nlohmann_json::nlohmann_json

@@ -93,6 +93,7 @@ TEST(LogBufferTest, SetFileWritesEveryLineRegardlessOfCategoryFilter) {
 
     LogBuffer buf;
     buf.setFile(path);
+    buf.setFilter(hephaestusLogFilter);
     buf.push("[hephaestus] startup");
     buf.push("[ffmpeg] spawning: ...");   // gated category, flag off
     buf.push("[sessions] channel started"); // gated category, flag off
@@ -109,6 +110,7 @@ TEST(LogBufferTest, VerboseCategoriesHiddenFromRecentWhenFlagOff) {
     g_verbose_transcode_logs.store(false);
 
     LogBuffer buf;
+    buf.setFilter(hephaestusLogFilter);
     buf.push("[hephaestus] startup");
     buf.push("[ffmpeg] spawning: ...");
     buf.push("[sessions] channel started");
@@ -123,6 +125,7 @@ TEST(LogBufferTest, VerboseCategoriesVisibleInRecentWhenFlagOn) {
     g_verbose_transcode_logs.store(true);
 
     LogBuffer buf;
+    buf.setFilter(hephaestusLogFilter);
     buf.push("[hephaestus] startup");
     buf.push("[ffmpeg] spawning: ...");
     buf.push("[sessions] channel started");
@@ -136,6 +139,7 @@ TEST(LogBufferTest, NonVerboseCategoriesAlwaysVisibleRegardlessOfFlag) {
     g_verbose_transcode_logs.store(false);
 
     LogBuffer buf;
+    buf.setFilter(hephaestusLogFilter);
     buf.push("[hwprobe] decode ok");
     buf.push("[kairos] GET /api/channels -> 200");
     buf.push("[probe] checking vaapi");

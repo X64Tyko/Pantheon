@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - "hephaestus/**"
+      - "shared/**"
       - "momus/hephaestus/**"
       - "momus/CMakeLists.txt"
       - ".github/workflows/docker-hephaestus.yml"
@@ -73,7 +74,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./hephaestus
+          context: .
+          file: hephaestus/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true

@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - "kairos/**"
+      - "shared/**"
       - "momus/kairos/**"
       - "momus/CMakeLists.txt"
       - ".github/workflows/docker-kairos.yml"
@@ -70,12 +71,12 @@ jobs:
         with:
           node-version: 20
 
-      # Docker's build context below is scoped to ./kairos (can't reach
-      # hades/public/ directly), so the token file this writes to
-      # kairos/assets/ has to exist before the build step runs. A committed
-      # copy already ships in the repo (see hades/scripts/
-      # generate-tv-tokens.mjs's own comment) — this just guarantees the
-      # image always gets a fresh one, not a possibly-stale commit.
+      # kairos/assets/tv-tokens.json has to exist before the build step runs
+      # (the Dockerfile COPYs it in explicitly rather than generating it, to
+      # keep that stage dependency-free). A committed copy already ships in
+      # the repo (see hades/scripts/generate-tv-tokens.mjs's own comment) —
+      # this just guarantees the image always gets a fresh one, not a
+      # possibly-stale commit.
       - name: Generate design tokens
         run: node hades/scripts/generate-tv-tokens.mjs
 
@@ -93,7 +94,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./kairos
+          context: .
+          file: kairos/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true

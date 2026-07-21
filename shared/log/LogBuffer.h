@@ -4,12 +4,18 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <ostream>
 #include <string>
 #include <vector>
-#include "RuntimeFlags.h"
+
+// Shared by kairos, hermes and hephaestus (see shared/README.md). Mechanics
+// (ring buffer, file rotation, tee-streambuf) live here; each service's own
+// category-prefix filtering policy over its own runtime flags is supplied
+// via setFilter() rather than baked in, since that policy differs per
+// service and depends on globals this header has no business knowing about.
 
 // ─── Ring buffer ──────────────────────────────────────────────────────────────
 
@@ -24,6 +30,25 @@ public:
         openFile();
     }
 
+    // Decides which lines reach the in-memory ring buffer (and therefore the
+    // Hades /api/logs/stream UI, and any forward target — see setForward).
+    // The file always gets every line regardless. No filter set means
+    // everything passes. Set once at startup, before any push() call, so it
+    // needs no locking of its own.
+    void setFilter(std::function<bool(const std::string&)> filter) {
+        filter_ = std::move(filter);
+    }
+
+    // Lines that pass this buffer's own filter are also pushed into fwd (if
+    // set). Hermes uses this to keep a file-backed, locally-scoped LogBuffer
+    // (its own [hermes]/[roku-ecp]/etc lines) separate from the no-file
+    // "combined" LogBuffer that /api/logs/stream actually serves to Hades —
+    // which also receives Kairos's and Hephaestus's relayed streams — so
+    // relaying someone else's already-logged lines through Hermes doesn't
+    // also duplicate them into hermes.log. Set once at startup, before any
+    // push() call, so it needs no locking of its own.
+    void setForward(LogBuffer* fwd) { fwd_ = fwd; }
+
     void push(std::string line) {
         {
             std::lock_guard lock(mu_);
@@ -35,12 +60,10 @@ public:
                 }
             }
 
-            bool should_push = true;
-            if (line.starts_with("[ffmpeg]") || line.starts_with("[sessions]")) {
-                if (!g_verbose_transcode_logs.load(std::memory_order_relaxed)) should_push = false;
-            }
+            bool should_push = !filter_ || filter_(line);
 
             if (should_push) {
+                if (fwd_) fwd_->push(line); // copy — line is moved-from just below
                 entries_.push_back({seq_++, std::move(line)});
                 if (entries_.size() > kMax) entries_.pop_front();
             }
@@ -87,6 +110,8 @@ private:
     std::string                     path_;
     size_t                          bytes_written_ = 0;
     uint64_t                        seq_ = 1;  // 0 is the "nothing seen yet" sentinel
+    std::function<bool(const std::string&)> filter_;
+    LogBuffer*                      fwd_ = nullptr;
 
     void openFile() {
         if (path_.empty()) return;

@@ -31,6 +31,7 @@ int main(int argc, char* argv[]) {
 	LogTee    tee_cout(std::cout, log_buffer);
 	LogTee    tee_cerr(std::cerr, log_buffer);
 	log_buffer.setFile("./data/kairos.log");
+	log_buffer.setFilter(kairosLogFilter);
 
     int port = 8080;
     std::string db_path    = "./data/kairos.db";
@@ -108,6 +109,7 @@ int main(int argc, char* argv[]) {
     loadFlag("epg_debug",  g_epg_debug);
     loadFlag("verbose_transcode_logs", g_verbose_transcode_logs);
     loadFlag("verbose_gateway_logs",   g_verbose_gateway_logs);
+    loadFlag("hades_debug",            g_hades_debug);
 
     // KAIROS_API_THREADS lets operators reserve HTTP capacity independently of
     // the sync worker pool (KAIROS_SYNC_THREADS). Lower sync threads in Docker

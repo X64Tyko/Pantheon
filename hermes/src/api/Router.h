@@ -2,7 +2,7 @@
 #include "../broadcast/BroadcasterManager.h"
 #include "../devices/DeviceSessionManager.h"
 #include "../kairos/KairosClient.h"
-#include "../log/LogBuffer.h"
+#include "log/LogBuffer.h"
 #include "../Config.h"
 #include <httplib.h>
 

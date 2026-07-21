@@ -27,6 +27,7 @@ interface Settings {
   image_cache_ttl_hours:  number
   verbose_transcode_logs: boolean
   verbose_gateway_logs:   boolean
+  hades_debug:            boolean
   cast_app_id:            string
 }
 
@@ -310,8 +311,12 @@ export default observer(function SettingsPage() {
       setBufferSize(String(next.stream_buffer_size))
       setCastAppId(next.cast_app_id)
       // Keep statusStore in sync immediately so the debug banner reflects the change.
-      if ('sync_debug' in update) statusStore.syncDebug = next.sync_debug
-      if ('epg_debug'  in update) statusStore.epgDebug  = next.epg_debug
+      if ('sync_debug'  in update) statusStore.syncDebug  = next.sync_debug
+      if ('epg_debug'   in update) statusStore.epgDebug   = next.epg_debug
+      // remoteLog.ts reads this directly to decide whether to forward
+      // console.error calls — update it now rather than waiting for the
+      // next statusStore poll.
+      if ('hades_debug' in update) statusStore.hadesDebug = next.hades_debug
     } catch (e: any) {
       setError(e.message ?? 'Save failed')
     } finally {
@@ -1165,6 +1170,17 @@ const applyBuffer = () => {
                 checked={settings?.verbose_gateway_logs ?? false}
                 disabled={!settings || saving}
                 onChange={v => patch({ verbose_gateway_logs: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Hades Console Error Logging"
+              hint="Forwards this browser's console.error() calls to the server log (as [hades] lines) in addition to uncaught errors, which always forward. Enable when reproducing a UI bug you need in the server-side log alongside backend activity."
+            >
+              <Toggle
+                id="hades_debug"
+                checked={settings?.hades_debug ?? false}
+                disabled={!settings || saving}
+                onChange={v => patch({ hades_debug: v })}
               />
             </SettingRow>
             <SettingRow

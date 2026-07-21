@@ -8,12 +8,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
-COPY CMakeLists.txt .
+# Build context is the repo root (see docker-hermes.yml) so this stage can
+# also reach shared/ — hermes/CMakeLists.txt and src/ are copied in below
+# flattened to the same /src layout as before, so CMAKE_SOURCE_DIR still
+# resolves shared/ the same way a monorepo build (dev.sh) does.
+COPY hermes/CMakeLists.txt .
 RUN cmake -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DFETCHCONTENT_QUIET=OFF
 
-COPY src/ src/
+COPY shared/ shared/
+COPY hermes/src/ src/
 RUN cmake --build build --parallel
 
 # Stage 2: runtime

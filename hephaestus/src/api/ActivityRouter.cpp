@@ -1,5 +1,5 @@
 #include "ActivityRouter.h"
-#include "../log/LogBuffer.h"
+#include "log/LogBuffer.h"
 #include "../stream/EncoderArgs.h" // hwAccelName
 #include "../stream/GpuMetrics.h"
 #include "../stream/SessionManager.h"

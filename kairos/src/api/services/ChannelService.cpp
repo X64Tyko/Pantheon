@@ -6,7 +6,7 @@
 #include "../../db/ChannelRepository.h"
 #include "../../db/ChannelSerializer.h"
 #include "../../db/RestrictionRepository.h"
-#include "../../log/LogBuffer.h"
+#include "log/LogBuffer.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <chrono>

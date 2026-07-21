@@ -7,6 +7,11 @@ export class StatusStore {
   writingBack  = false
   syncDebug    = false
   epgDebug     = false
+  // Read by remoteLog.ts to decide whether console.error calls get
+  // forwarded to the server log; kept fresh here the same way sync/epg
+  // debug are, so a toggle flipped in another tab/session takes effect
+  // without a reload.
+  hadesDebug   = false
   // Which source's content-ingestion phase is running right now — undefined
   // when idle, or during phases that aren't per-source (orphan cleanup,
   // scraper matching, chapter sync). Drives the Activity page's per-source
@@ -68,6 +73,7 @@ export class StatusStore {
         this.writingBack     = writeback.running
         this.syncDebug       = settings.sync_debug
         this.epgDebug        = settings.epg_debug
+        this.hadesDebug      = settings.hades_debug
         this.currentSourceId = sync.current_source_id
       })
     } catch {}

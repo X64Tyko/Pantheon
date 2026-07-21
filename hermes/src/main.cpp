@@ -57,6 +57,7 @@ int main(int argc, char* argv[]) {
 	LogTee    tee_cout(std::cout, local_log);
 	LogTee    tee_cerr(std::cerr, local_log);
     local_log.setFile("./data/hermes.log");
+    local_log.setFilter(hermesLogFilter);
 
     Config cfg = parseConfig(argc, argv);
 

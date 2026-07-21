@@ -6,7 +6,7 @@
 #include "../../db/ContentRepository.h"
 #include "../../db/SourceRepository.h"
 #include "../../email/EmailService.h"
-#include "../../log/LogBuffer.h"
+#include "log/LogBuffer.h"
 #include "../../source/SyncManager.h"
 #include "../../source/IMediaSource.h"
 #include "../../source/LocalSource.h"

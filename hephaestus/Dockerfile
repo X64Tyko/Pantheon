@@ -8,12 +8,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
-COPY CMakeLists.txt .
+# Build context is the repo root (see docker-hephaestus.yml) so this stage
+# can also reach shared/ — hephaestus/CMakeLists.txt and src/ are copied in
+# below flattened to the same /src layout as before, so CMAKE_SOURCE_DIR
+# still resolves shared/ the same way a monorepo build (dev.sh) does.
+COPY hephaestus/CMakeLists.txt .
 RUN cmake -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DFETCHCONTENT_QUIET=OFF
 
-COPY src/ src/
+COPY shared/ shared/
+COPY hephaestus/src/ src/
 RUN cmake --build build --parallel
 
 # Stage 2: runtime
@@ -28,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/hephaestus /usr/local/bin/hephaestus
-COPY assets/default_logo.png /usr/local/share/hephaestus/assets/default_logo.png
+COPY hephaestus/assets/default_logo.png /usr/local/share/hephaestus/assets/default_logo.png
 
 # Tiny sample clips for HwProbe's decode smoke-test (see
 # src/stream/HwProbe.cpp) -- one per (codec, bit depth) combination that

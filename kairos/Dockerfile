@@ -8,15 +8,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
+# Build context is the repo root (see docker-kairos.yml) so this stage can
+# also reach shared/ — kairos/CMakeLists.txt and src/ are copied in below
+# flattened to the same /src layout as before, so CMAKE_SOURCE_DIR still
+# resolves shared/ the same way a monorepo build (dev.sh) does.
+#
 # Copy only the build manifest first. CMake configure fetches all FetchContent
 # dependencies here — this layer is cached until CMakeLists.txt changes.
-COPY CMakeLists.txt .
+COPY kairos/CMakeLists.txt .
 RUN cmake -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DFETCHCONTENT_QUIET=OFF
 
 # Source changes only rebuild from this point.
-COPY src/ src/
+COPY shared/ shared/
+COPY kairos/src/ src/
 RUN cmake --build build --parallel
 
 # Stage 2: runtime
@@ -51,9 +57,13 @@ COPY --from=builder /src/build/kairos /usr/local/bin/kairos
 # time by TvManifestService, served as the manifest's "theme" key. Default
 # path native clients' theme lives at; KAIROS_TV_TOKENS_PATH overrides it for
 # local dev (see dev.sh/dev.ps1), same pattern as hephaestus's default_logo_path.
-COPY assets/tv-tokens.json /usr/local/share/kairos/assets/tv-tokens.json
+COPY kairos/assets/tv-tokens.json /usr/local/share/kairos/assets/tv-tokens.json
 
-WORKDIR /app
+# No WORKDIR here (matches hermes/hephaestus) — main.cpp's log path is a
+# relative "./data/kairos.log" default, and a WORKDIR of /app previously made
+# it resolve to /app/data/kairos.log instead of the /data volume mount below,
+# so the log silently never reached appdata while --db/--conf (passed as
+# absolute paths in CMD) did.
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/kairos"]
 CMD ["--db", "/data/kairos.db", "--conf", "/data/kairos.conf", "--port", "8080"]

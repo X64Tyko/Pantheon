@@ -74,6 +74,7 @@ services:
       # - HEPH_VAAPI_DEV=/dev/dri/renderD128   # override if your render node differs
     # runtime: nvidia   # NVIDIA — requires NVIDIA Container Toolkit on the host
     volumes:
+      - /mnt/user/appdata/kairos:/data
       - /mnt/user/Media:/media:ro
     # devices:          # AMD — expose the GPU render node
     #   - /dev/dri/renderD128:/dev/dri/renderD128
@@ -97,6 +98,8 @@ services:
       - KAIROS_URL=http://kairos:8080
       - HEPHAESTUS_URL=http://hephaestus:8082
       - HADES_URL=http://hades:3000
+    volumes:
+      - /mnt/user/appdata/kairos:/data
     depends_on:
       - kairos
       - hephaestus

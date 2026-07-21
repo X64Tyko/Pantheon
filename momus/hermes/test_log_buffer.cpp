@@ -93,6 +93,7 @@ TEST(LogBufferTest, SetFileWritesEveryLineRegardlessOfCategoryFilter) {
 
     LogBuffer buf;
     buf.setFile(path);
+    buf.setFilter(hermesLogFilter);
     buf.push("[hermes] listening on :8000");
     buf.push("[hermes] GET /foo -> 404");     // gated category, flag off
     buf.push("[roku-ecp] launch 10.0.0.5 unreachable"); // gated category, flag off
@@ -109,6 +110,7 @@ TEST(LogBufferTest, GatewayCategoriesHiddenFromRecentWhenFlagOff) {
     g_verbose_gateway_logs.store(false);
 
     LogBuffer buf;
+    buf.setFilter(hermesLogFilter);
     buf.push("[hermes] GET /foo -> 404");
     buf.push("[roku-ecp] launch 10.0.0.5 unreachable");
 
@@ -121,6 +123,7 @@ TEST(LogBufferTest, GatewayCategoriesVisibleInRecentWhenFlagOn) {
     g_verbose_gateway_logs.store(true);
 
     LogBuffer buf;
+    buf.setFilter(hermesLogFilter);
     buf.push("[hermes] GET /foo -> 404");
     buf.push("[roku-ecp] launch 10.0.0.5 unreachable");
 
@@ -133,6 +136,7 @@ TEST(LogBufferTest, NonGatewayCategoryAlwaysVisibleRegardlessOfFlag) {
     g_verbose_gateway_logs.store(false);
 
     LogBuffer buf;
+    buf.setFilter(hermesLogFilter);
     buf.push("[kairos] GET /api/channels -> 200");
 
     auto [lines, seq] = buf.recent(10);
@@ -155,6 +159,7 @@ TEST(LogBufferTest, ForwardedLinesReachCombinedBufferButNotItsOwnFile) {
     LogBuffer local;
     local.setFile(local_path);
     local.setForward(&combined);
+    local.setFilter(hermesLogFilter);
 
     local.push("[hermes] listening on :8000");
     // Simulates relayUpstreamLogs pushing a line from Kairos directly into
@@ -180,6 +185,7 @@ TEST(LogBufferTest, ForwardRespectsLocalFilterBeforeReachingCombined) {
     LogBuffer combined;
     LogBuffer local;
     local.setForward(&combined);
+    local.setFilter(hermesLogFilter);
 
     local.push("[hermes] GET /foo -> 404"); // gated off locally — must not forward
 

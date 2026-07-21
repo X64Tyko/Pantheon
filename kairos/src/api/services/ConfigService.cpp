@@ -54,6 +54,7 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
 			{"verbose_transcode_logs", g_verbose_transcode_logs.load()},
 			{"verbose_gateway_logs",   g_verbose_gateway_logs.load()},
+			{"hades_debug",            g_hades_debug.load()},
 			{"cast_app_id",            castAppId()},
 		};
 	};
@@ -121,6 +122,11 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 				bool v = b["verbose_gateway_logs"].get<bool>();
 				g_verbose_gateway_logs.store(v);
 				persistFlag("verbose_gateway_logs", v);
+			}
+			if (b.contains("hades_debug") && b["hades_debug"].is_boolean()) {
+				bool v = b["hades_debug"].get<bool>();
+				g_hades_debug.store(v);
+				persistFlag("hades_debug", v);
 			}
 			if (b.contains("cast_app_id") && b["cast_app_id"].is_string()) {
 				ConfigRepository(db_).setValue("cast_app_id", b["cast_app_id"].get<std::string>());

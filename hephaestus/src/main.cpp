@@ -4,6 +4,7 @@
 #include "api/Router.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
+#include "log/RuntimeFlags.h"
 #include "stream/ClientCapabilities.h"
 #include "stream/EncoderArgs.h" // hwAccelName
 #include "stream/HwProbe.h"
@@ -19,6 +20,7 @@ int main(int argc, char* argv[]) {
 	LogTee    tee_cout(std::cout, log_buffer);
 	LogTee    tee_cerr(std::cerr, log_buffer);
     log_buffer.setFile("./data/hephaestus.log");
+    log_buffer.setFilter(hephaestusLogFilter);
 
     Config cfg = parseConfig(argc, argv);
 

@@ -1,7 +1,7 @@
 #include "ActivityService.h"
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
-#include "../../log/LogBuffer.h"
+#include "log/LogBuffer.h"
 #include "../../source/SyncManager.h"
 #include "../../util/MetricsGatherer.h"
 #include <nlohmann/json.hpp>
