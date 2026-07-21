@@ -31,6 +31,11 @@ struct Movie {
     // Bucketed ffprobe resolution ("4K"/"1080p"/"720p"/"SD"), probed once at
     // sync time alongside duration validation — see MediaProbe::probeVideoInfo.
     std::string    resolution_label;
+    // JSON arrays of ISO 639-2 language codes — see Episode.h's identical
+    // fields (including why the default is "[]", not "") for the full
+    // rationale.
+    std::string    audio_languages = "[]";
+    std::string    embedded_subtitle_languages = "[]";
     // When this item was first added to the library, from the source's own
     // signal (Plex addedAt / Jellyfin DateCreated / Local file mtime as a
     // last resort) — see the library_source_priority merge for what wins

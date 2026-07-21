@@ -1975,6 +1975,46 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE media_source ADD COLUMN writeback_update_collections INTEGER NOT NULL DEFAULT 1;
 )SQL" }
 
+,
+
+// ── v86: persisted audio/subtitle language filter fields + external subtitle
+//         sidecar cataloging. audio_languages/embedded_subtitle_languages
+//         mirror the genres/labels JSON-array convention (default '[]', not
+//         ''), probed once at sync time via a single combined ffprobe call
+//         — see MediaProbe::probeFileInfo and SyncManager::
+//         syncMediaProbeFromFiles. embedded_subtitle_languages deliberately
+//         holds only what's embedded in the container — the filterable
+//         "subtitle_language" field (FilterExpr.cpp, ContentRepository::
+//         getMetadataValues) unions this with subtitle_track.language at
+//         query time rather than maintaining a pre-merged column, since
+//         embedded probing (conditional/cached) and the external sidecar
+//         scan (unconditional every sync) fire independently and a
+//         denormalized union can't reliably stay in sync across the two.
+//         subtitle_track holds only external sidecar files (.srt/.ass/.ssa/
+//         .vtt next to the video) — embedded tracks stay ephemeral/probe-
+//         time-only in Hephaestus's own MediaProbe, same as before this
+//         migration. No `locked` column: no manual-edit UI exists for these
+//         rows yet.
+{ 86, R"SQL(
+    ALTER TABLE episode ADD COLUMN audio_languages             TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE episode ADD COLUMN embedded_subtitle_languages TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE movie   ADD COLUMN audio_languages             TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE movie   ADD COLUMN embedded_subtitle_languages TEXT NOT NULL DEFAULT '[]';
+
+    CREATE TABLE subtitle_track (
+        subtitle_id TEXT    PRIMARY KEY,
+        media_type  TEXT    NOT NULL,
+        media_id    TEXT    NOT NULL,
+        file_path   TEXT    NOT NULL,
+        language    TEXT    NOT NULL DEFAULT '',
+        forced      INTEGER NOT NULL DEFAULT 0,
+        sdh         INTEGER NOT NULL DEFAULT 0,
+        title       TEXT    NOT NULL DEFAULT '',
+        source      TEXT    NOT NULL DEFAULT 'file'
+    );
+    CREATE INDEX idx_subtitle_track_media ON subtitle_track(media_type, media_id);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

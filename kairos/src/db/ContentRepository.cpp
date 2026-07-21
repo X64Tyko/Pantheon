@@ -430,6 +430,13 @@ std::vector<std::string> ContentRepository::getMetadataValues(const std::string&
         " AND EXISTS (SELECT 1 FROM source_mapping sm"
         " WHERE sm.kairos_id = m.movie_id AND sm.item_type = 'movie'"
         " AND sm.library_id = ?)";
+    // audio_language/subtitle_language live on episode, not show (a show's
+    // episodes can carry different language sets per-file) — same library
+    // check as show_lib, just correlated against e.show_id instead of s.show_id.
+    std::string episode_lib = library_id.empty() ? "" :
+        " AND EXISTS (SELECT 1 FROM source_mapping sm"
+        " WHERE sm.kairos_id = e.show_id AND sm.item_type = 'show'"
+        " AND sm.library_id = ?)";
 
     std::vector<std::string> lib;
     if (!library_id.empty()) lib.push_back(library_id);
@@ -468,6 +475,22 @@ std::vector<std::string> ContentRepository::getMetadataValues(const std::string&
     } else if (field == "collection") {
         if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(NULLIF(s.collections,'')) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
         if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.collections,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+    } else if (field == "audio_language") {
+        // Embedded only — no external-file concept for audio.
+        if (type != "movie") collect("SELECT DISTINCT je.value FROM episode e, json_each(NULLIF(e.audio_languages,'')) je WHERE je.value != ''" + episode_lib + " ORDER BY je.value", lib);
+        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.audio_languages,'')) je WHERE je.value != ''" + movie_lib   + " ORDER BY je.value", lib);
+    } else if (field == "subtitle_language") {
+        // Union of embedded-stream languages and external sidecar-file
+        // languages (subtitle_track) — collect() dedupes across all calls
+        // via its shared `seen` set, so no SQL-level UNION is needed.
+        if (type != "movie") {
+            collect("SELECT DISTINCT je.value FROM episode e, json_each(NULLIF(e.embedded_subtitle_languages,'')) je WHERE je.value != ''" + episode_lib + " ORDER BY je.value", lib);
+            collect("SELECT DISTINCT st.language FROM subtitle_track st JOIN episode e ON e.episode_id = st.media_id WHERE st.media_type='episode' AND st.language != ''" + episode_lib + " ORDER BY st.language", lib);
+        }
+        if (type != "show") {
+            collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.embedded_subtitle_languages,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+            collect("SELECT DISTINCT st.language FROM subtitle_track st JOIN movie m ON m.movie_id = st.media_id WHERE st.media_type='movie' AND st.language != ''" + movie_lib + " ORDER BY st.language", lib);
+        }
     }
 
     std::sort(values.begin(), values.end());

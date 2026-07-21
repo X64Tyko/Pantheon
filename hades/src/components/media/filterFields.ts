@@ -8,6 +8,7 @@ export type FilterField =
   | 'director' | 'actor' | 'writer' | 'country'
   | 'collection' | 'network' | 'label' | 'resolution' | 'decade'
   | 'audience_rating' | 'duration' | 'added'
+  | 'audio_language' | 'subtitle_language'
 
 export type FilterOp =
   | 'is' | 'is_not'
@@ -57,6 +58,8 @@ export const FIELD_DEFS: Record<FilterField, FieldDef> = {
   collection:      { label: 'Collection',      valueType: 'text',       ops: TEXT_OPS },
   network:         { label: 'Network',         valueType: 'text',       ops: TEXT_OPS },
   label:           { label: 'Label',           valueType: 'text',       ops: TEXT_OPS },
+  audio_language:    { label: 'Audio Language',    valueType: 'text', ops: TEXT_OPS },
+  subtitle_language: { label: 'Subtitle Language', valueType: 'text', ops: TEXT_OPS },
   resolution:      { label: 'Resolution',      valueType: 'resolution', ops: [{ id: 'is', label: 'is' }, { id: 'is_not', label: 'is not' }] },
   decade:          { label: 'Decade',          valueType: 'decade',     ops: [{ id: 'is', label: 'is' }] },
   audience_rating: { label: 'Audience Rating', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },

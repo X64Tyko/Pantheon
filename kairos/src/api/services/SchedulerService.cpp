@@ -4,18 +4,15 @@
 #include "../ServiceContext.h"
 #include "../../conf/ConfStore.h"
 #include "../../db/ChannelRepository.h"
+#include "../../db/ContentRepository.h"
 #include "../../db/ScheduleRepository.h"
 #include "../../db/SourceRepository.h"
 #include "../../scheduler/EPGDivergenceChecker.h"
 #include "../../scheduler/EPGMaterializer.h"
 #include "../../scheduler/RuleEngine.h"
-#include "../../source/MediaProbe.h"
 #include <nlohmann/json.hpp>
 #include <SQLiteCpp/SQLiteCpp.h>
-#include <chrono>
 #include <ctime>
-#include <mutex>
-#include <set>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -28,14 +25,6 @@ SchedulerService::SchedulerService(const ServiceContext& ctx)
 {}
 
 namespace {
-
-struct LangCache {
-    std::mutex                          mtx;
-    json                                data;
-    std::chrono::steady_clock::time_point expires{};
-};
-
-LangCache g_lang_cache;
 
 // How far out an "offline" gap-filler response's wall_clock_end_ms reaches —
 // Hephaestus's ChannelSession bounds the offline slate's encode to roughly
@@ -55,51 +44,21 @@ void SchedulerService::registerRoutes(httplib::Server& svr) {
 	});
 
 	// ── Media language catalog ─────────────────────────────────────────────────
-	// Probes a random sample of media files via ffprobe and returns the distinct
-	// audio and subtitle language codes present in the library.
-	// Result is cached for 1 hour to avoid repeated ffprobe calls.
+	// Real per-item persisted data (episode/movie.audio_languages, unioned with
+	// subtitle_track for subtitles) — see ContentRepository::getMetadataValues.
+	// Used to be a random-sample-of-40-files live ffprobe with a 1hr cache;
+	// now a plain DB read, so no caching needed here either.
 	svr.Get("/api/media/languages", [this](const Req&, Res& res) {
-		{
-			std::lock_guard<std::mutex> lk(g_lang_cache.mtx);
-			if (!g_lang_cache.data.is_null() &&
-			    std::chrono::steady_clock::now() < g_lang_cache.expires) {
-				route::ok(res, g_lang_cache.data.dump());
-				return;
-			}
-		}
-
-		std::set<std::string> audio_set, sub_set;
-		auto probe = [&](const std::string& raw_path) {
-			const std::string path = conf_.applyPathMap(raw_path);
-			auto langs = probeStreamLanguages(path);
-			for (auto& l : langs.audio)    audio_set.insert(l);
-			for (auto& l : langs.subtitle) sub_set.insert(l);
-		};
-
 		try {
-			SQLite::Statement qe(db_.get(),
-				"SELECT file_path FROM episode "
-				"WHERE file_path != '' ORDER BY RANDOM() LIMIT 30");
-			while (qe.executeStep()) probe(qe.getColumn(0).getString());
-
-			SQLite::Statement qm(db_.get(),
-				"SELECT file_path FROM movie "
-				"WHERE file_path != '' ORDER BY RANDOM() LIMIT 10");
-			while (qm.executeStep()) probe(qm.getColumn(0).getString());
+			ContentRepository repo(db_);
+			json result = {{"audio", json::array()}, {"subtitle", json::array()}};
+			for (const auto& l : repo.getMetadataValues("audio_language", "", ""))    result["audio"].push_back(l);
+			for (const auto& l : repo.getMetadataValues("subtitle_language", "", "")) result["subtitle"].push_back(l);
+			route::ok(res, result.dump());
 		} catch (const std::exception& e) {
 			route::logErr("GET /api/media/languages", e);
+			route::err(res, 500, e.what());
 		}
-
-		json result = {{"audio", json::array()}, {"subtitle", json::array()}};
-		for (const auto& l : audio_set) result["audio"].push_back(l);
-		for (const auto& l : sub_set)   result["subtitle"].push_back(l);
-
-		{
-			std::lock_guard<std::mutex> lk(g_lang_cache.mtx);
-			g_lang_cache.data    = result;
-			g_lang_cache.expires = std::chrono::steady_clock::now() + std::chrono::hours(1);
-		}
-		route::ok(res, result.dump());
 	});
 
 	auto xmltvHandler = [this](const Req& req, Res& res) {

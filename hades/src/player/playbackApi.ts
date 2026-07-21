@@ -9,7 +9,16 @@ export interface VodTrackAudio { index: number; codec: string; language: string;
 // sidecar (subtitle_url below). burn_in: bitmap-based (PGS/DVD/DVB) —
 // composited directly into the video stream, no separate URL, can't be
 // toggled off without restarting playback on a different track.
-export interface VodTrackSubtitle { index: number; codec: string; language: string; title: string; extractable: boolean; burn_in: boolean }
+// source: 'embedded' (container stream, index is its -map 0:s:N position) or
+// 'external' (a sidecar .srt/.ass/.ssa/.vtt file, index is negative starting
+// at -2 — see Hephaestus's Router.cpp for where that scheme is assigned).
+// forced/sdh are only ever populated for external entries today — embedded
+// tracks have no such disposition data available, not a bug.
+export interface VodTrackSubtitle {
+  index: number; codec: string; language: string; title: string
+  extractable: boolean; burn_in: boolean; source: 'embedded' | 'external'
+  forced?: boolean; sdh?: boolean
+}
 export interface VodTracks { video: VodTrackVideo[]; audio: VodTrackAudio[]; subtitles: VodTrackSubtitle[] }
 
 export interface VodStartResponse {

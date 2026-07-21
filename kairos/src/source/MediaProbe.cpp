@@ -12,6 +12,12 @@ namespace {
 constexpr int64_t kMinMs =        1'000; // 1 second
 constexpr int64_t kMaxMs = 86'400'000;   // 24 hours
 
+} // namespace
+
+bool durationLooksValid(int64_t ms) { return ms >= kMinMs && ms <= kMaxMs; }
+
+namespace {
+
 // Wrap s in single quotes, escaping any interior single quotes.
 std::string shellQuote(const std::string& s) {
     std::string r = "'";
@@ -253,6 +259,89 @@ VideoInfo probeVideoInfo(const std::string& file_path) {
     return result;
 }
 
+FileProbeInfo probeFileInfo(const std::string& file_path) {
+    const std::string cmd =
+        "timeout -k 2 15 ffprobe -v quiet -print_format json -show_format -show_streams "
+        + shellQuote(file_path) + " 2>/dev/null";
+    DLOG << "[probe] fileinfo cmd: " << cmd << '\n';
+    const auto t0 = std::chrono::steady_clock::now();
+    FILE* pipe = popen(cmd.c_str(), "r");
+    FileProbeInfo result;
+    if (!pipe) {
+        DLOG << "[probe] fileinfo popen failed: " << file_path << '\n';
+        return result;
+    }
+    std::string out;
+    char buf[8192];
+    while (fgets(buf, sizeof(buf), pipe))
+        out += buf;
+    pclose(pipe);
+    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
+    if (out.empty()) {
+        DLOG << "[probe] fileinfo done in " << ms << "ms → no output: " << file_path << '\n';
+        return result;
+    }
+
+    try {
+        auto j = json::parse(out);
+
+        // Duration: format-level first (fast, matches probeFormatDurationMs
+        // above), falling back to the longest per-stream duration (matches
+        // probeStreamDurationMs — some Blu-ray MKV encodes only have this) —
+        // both drawn from this same single parsed response, no second spawn.
+        if (j.contains("format") && j["format"].contains("duration")) {
+            try {
+                const double secs = std::stod(j["format"]["duration"].get<std::string>());
+                if (secs > 0.0) result.duration_ms = static_cast<int64_t>(secs * 1000.0);
+            } catch (...) {}
+        }
+
+        if (j.contains("streams")) {
+            int64_t longest_stream_ms = 0;
+            bool got_video = false;
+            for (const auto& s : j["streams"]) {
+                const std::string type = s.value("codec_type", "");
+
+                if (result.duration_ms <= 0 && s.contains("duration")) {
+                    try {
+                        const double secs = std::stod(s["duration"].get<std::string>());
+                        const int64_t sms = static_cast<int64_t>(secs * 1000.0);
+                        if (sms > longest_stream_ms) longest_stream_ms = sms;
+                    } catch (...) {}
+                }
+
+                if (type == "video" && !got_video) {
+                    result.video.codec     = s.value("codec_name", "");
+                    result.video.width     = s.value("width", 0);
+                    result.video.height    = s.value("height", 0);
+                    result.video.bit_depth = parseBitDepth(s);
+                    got_video = true;
+                }
+
+                std::string lang;
+                if (s.contains("tags") && s["tags"].is_object()) {
+                    auto& t = s["tags"];
+                    if      (t.contains("language"))  lang = t["language"].get<std::string>();
+                    else if (t.contains("LANGUAGE"))  lang = t["LANGUAGE"].get<std::string>();
+                }
+                if (!lang.empty() && lang != "und") {
+                    if      (type == "audio")    result.langs.audio.push_back(lang);
+                    else if (type == "subtitle") result.langs.subtitle.push_back(lang);
+                }
+            }
+            if (result.duration_ms <= 0) result.duration_ms = longest_stream_ms;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[probe] fileinfo parse error for " << file_path << ": " << e.what() << '\n';
+    }
+
+    DLOG << "[probe] fileinfo done in " << ms << "ms → duration=" << result.duration_ms
+         << "ms " << result.video.width << "x" << result.video.height
+         << " audio=" << result.langs.audio.size() << " subtitle=" << result.langs.subtitle.size()
+         << ": " << file_path << '\n';
+    return result;
+}
+
 std::string bucketResolutionLabel(int height) {
     if (height >= 2000) return "4K";
     if (height >= 900)  return "1080p";
@@ -262,7 +351,7 @@ std::string bucketResolutionLabel(int height) {
 }
 
 int64_t validateDurationMs(int64_t dur, const std::string& file_path) {
-    if (dur >= kMinMs && dur <= kMaxMs)
+    if (durationLooksValid(dur))
         return dur;
 
     if (dur != 0) {
@@ -271,7 +360,7 @@ int64_t validateDurationMs(int64_t dur, const std::string& file_path) {
     }
 
     const int64_t probed = probeDurationMs(file_path);
-    if (probed >= kMinMs && probed <= kMaxMs) {
+    if (durationLooksValid(probed)) {
         std::cout << "[probe] " << file_path
                   << " — ffprobe duration: " << probed << " ms\n";
         return probed;

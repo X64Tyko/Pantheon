@@ -46,7 +46,8 @@ export function TrackMenu({
           <div className={styles.liveRow}>{liveSubtitleLang ? langLabel(liveSubtitleLang) : 'Off'}</div>
         ) : (
           <div className={styles.optionList}>
-            <button onClick={() => onSelectSubtitle(-1)} className={`${styles.option} ${currentSubtitle < 0 ? styles.optionActive : ''}`}>Off</button>
+            {/* -1 is the only "off" value — external tracks are negative too (<= -2), so this can't be `currentSubtitle < 0`. */}
+            <button onClick={() => onSelectSubtitle(-1)} className={`${styles.option} ${currentSubtitle === -1 ? styles.optionActive : ''}`}>Off</button>
             {(tracks?.subtitles ?? []).map(t => {
               const selectable = t.extractable || t.burn_in
               return (
@@ -59,6 +60,7 @@ export function TrackMenu({
                 >
                   {t.title || langLabel(t.language)}
                   {t.burn_in && <span className={styles.metaSpan}>burned-in</span>}
+                  {t.source === 'external' && <span className={styles.metaSpan}>external</span>}
                 </button>
               )
             })}

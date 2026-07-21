@@ -5,6 +5,7 @@
 #include "../../db/Database.h"
 #include "../../db/WatchProgressRepository.h"
 #include "../../db/ContentRepository.h"
+#include "../../db/SubtitleTrackRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -40,11 +41,12 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 			// must live-resolve through the movie it's linked to, never a stale
 			// copy, so a re-scanned/moved movie file is always reflected here.
 			const char* sql = content_type == "movie"
-				? "SELECT file_path, duration_ms, title FROM movie WHERE movie_id = ?"
+				? "SELECT file_path, duration_ms, title, '' FROM movie WHERE movie_id = ?"
 				: R"(
 					SELECT COALESCE(m.file_path, e.file_path),
 					       COALESCE(m.duration_ms, e.duration_ms),
-					       e.title
+					       e.title,
+					       COALESCE(e.linked_movie_id, '')
 					FROM episode e LEFT JOIN movie m ON m.movie_id = e.linked_movie_id
 					WHERE e.episode_id = ?
 				)";
@@ -55,10 +57,31 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 			auto file_path = q.getColumn(0).getString();
 			if (file_path.empty()) { route::err(res, 404, "no file for this item"); return; }
 
+			// subtitle_track rows don't share a column across movie/episode the
+			// way file_path/duration_ms do above (COALESCE works there because
+			// both sides read the same column name) — this is a key switch
+			// instead: a linked special's external subtitles live under the
+			// movie it's linked to, not the episode row itself.
+			const auto linked_movie_id = q.getColumn(3).getString();
+			const std::string sub_media_type = (content_type == "movie" || !linked_movie_id.empty()) ? "movie" : "episode";
+			const std::string sub_media_id    = content_type == "movie" ? id : (!linked_movie_id.empty() ? linked_movie_id : id);
+
+			json external_subtitles = json::array();
+			for (const auto& t : SubtitleTrackRepository(db_).get(sub_media_type, sub_media_id)) {
+				external_subtitles.push_back({
+					{"file_path", conf_.applyPathMap(t.file_path)},
+					{"language",  t.language},
+					{"forced",    t.forced},
+					{"sdh",       t.sdh},
+					{"title",     t.title},
+				});
+			}
+
 			route::ok(res, json{
-				{"file_path",   conf_.applyPathMap(file_path)},
-				{"duration_ms", q.getColumn(1).getInt64()},
-				{"title",       q.getColumn(2).getString()},
+				{"file_path",          conf_.applyPathMap(file_path)},
+				{"duration_ms",        q.getColumn(1).getInt64()},
+				{"title",              q.getColumn(2).getString()},
+				{"external_subtitles", external_subtitles},
 			}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("GET /api/playback/:content_type/:id", e); route::err(res, 500, e.what());

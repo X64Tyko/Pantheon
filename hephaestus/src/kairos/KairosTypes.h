@@ -1,7 +1,9 @@
 #pragma once
+#include "model/ExternalSubtitle.h"
 #include <string>
 #include <optional>
 #include <cstdint>
+#include <vector>
 
 struct KairosNowResponse {
     std::string item_type;
@@ -29,6 +31,7 @@ struct PlaybackInfo {
     std::string file_path;
     std::string title;
     int64_t     duration_ms = 0;
+    std::vector<ExternalSubtitle> external_subtitles;
 };
 
 struct KairosChannel {

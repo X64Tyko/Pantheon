@@ -316,7 +316,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         auto token = extractBearerToken(req);
         if (!token.empty()) client_caps = capabilityCache.get(token);
 
-        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable, client_caps);
+        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable, client_caps, info->external_subtitles);
         if (!session) {
             res.status = 500; res.set_content(json{{"error","failed to start playback"}}.dump(), "application/json"); return;
         }
@@ -337,7 +337,20 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             // VodSession.cpp's isBitmapSubtitleCodec/subtitleBurnIn.
             bool burnIn = t.codec == "hdmv_pgs_subtitle" || t.codec == "dvd_subtitle" || t.codec == "dvb_subtitle";
             tracks["subtitles"].push_back({{"index", t.relative_index}, {"codec", t.codec}, {"language", t.language}, {"title", t.title},
-                                            {"extractable", extractable}, {"burn_in", burnIn}});
+                                            {"extractable", extractable}, {"burn_in", burnIn}, {"source", "embedded"}});
+        }
+        // External sidecar files get negative indices starting at -2 (-1 is
+        // already "no subtitle" on the wire — see usePlaybackSession.ts/
+        // TrackMenu.tsx) — assigned here, once, in catalog order; VodSession::
+        // start()'s subtitle_track<=-2 branch reverses this exact formula to
+        // resolve a selection back to the right file. Nothing but this
+        // shared convention keeps the two in sync, so don't reorder either
+        // side independently.
+        int ext_index = -2;
+        for (auto& t : session->externalSubtitles()) {
+            tracks["subtitles"].push_back({{"index", ext_index--}, {"codec", ""}, {"language", t.language}, {"title", t.title},
+                                            {"extractable", true}, {"burn_in", false}, {"source", "external"},
+                                            {"forced", t.forced}, {"sdh", t.sdh}});
         }
 
         json out = {

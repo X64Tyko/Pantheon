@@ -126,6 +126,17 @@ std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& con
         info.file_path   = j.value("file_path",   "");
         info.title       = j.value("title",       "");
         info.duration_ms = j.value("duration_ms", int64_t(0));
+        if (j.contains("external_subtitles") && j["external_subtitles"].is_array()) {
+            for (const auto& s : j["external_subtitles"]) {
+                ExternalSubtitle sub;
+                sub.file_path = s.value("file_path", "");
+                sub.language  = s.value("language",  "");
+                sub.forced    = s.value("forced",    false);
+                sub.sdh       = s.value("sdh",       false);
+                sub.title     = s.value("title",     "");
+                if (!sub.file_path.empty()) info.external_subtitles.push_back(std::move(sub));
+            }
+        }
         return info;
     } catch (const std::exception& e) {
         std::cerr << "[kairos] getPlaybackInfo JSON parse error: " << e.what() << "\n";

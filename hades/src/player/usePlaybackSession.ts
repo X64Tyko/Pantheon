@@ -95,7 +95,10 @@ export function usePlaybackSession(target: PlaybackTarget, initialPositionMs = 0
       content_type:    target.kind,
       content_id:      target.id,
       audio_track:     aTrack >= 0 ? aTrack : undefined,
-      subtitle_track:  sTrack >= 0 ? sTrack : undefined,
+      // -1 is "off"; external subtitle tracks are negative (<= -2, see
+      // playbackApi.ts's VodTrackSubtitle doc) so "any negative means off"
+      // would wrongly collapse a real external-track selection to none.
+      subtitle_track:  sTrack !== -1 ? sTrack : undefined,
       position_ms:     positionMs,
     }).then(res => {
       if (genRef.current !== gen) { stopVodPlayback(res.session_id); return } // superseded while in flight

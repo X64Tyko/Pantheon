@@ -7,9 +7,11 @@
 #include "conf/ConfStore.h"
 #include "db/ChapterRepository.h"
 #include "db/Database.h"
+#include "db/SubtitleTrackRepository.h"
 #include "detect/ChapterDetectionManager.h"
 #include "log/DebugLog.h"
 #include "scraper/ScraperManager.h"
+#include "SubtitleSidecar.h"
 #include "util/PathMatch.h"
 #include "util/TitleMatch.h"
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -194,6 +196,13 @@ void SyncManager::syncAll() {
             syncChaptersFromFiles(src->sourceId());
     }
 
+    // Phase 4: media probe (duration/resolution/languages) + subtitle sidecar scan.
+    DLOG << "[sync] === phase 4: media probe ===\n";
+    for (const auto& src : sources_) {
+        if (src->isSupported())
+            syncMediaProbeFromFiles(src->sourceId());
+    }
+
     std::cout << "[sync] all sources done (total "
               << elapsedMs(t_total, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }
@@ -339,6 +348,7 @@ void SyncManager::syncSource(const std::string& source_id) {
     if (scraper_) scraper_->runMatchSync();
     scanSpecialsForEligibleShows();
     syncChaptersFromFiles(source_id);
+    syncMediaProbeFromFiles(source_id);
     std::cout << "[sync] done: " << source_id << std::endl;
 }
 
@@ -581,17 +591,16 @@ void SyncManager::syncShows(IMediaSource& src,
             ep_ext_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
     }
 
-    // Already-probed resolution, keyed by (mapped) file path rather than
-    // episode id — a file's resolution never changes, so this avoids
-    // re-running ffprobe every sync (unlike duration, probeVideoInfo() isn't
-    // gated on a "does this look wrong" check, so it must be cache-gated
-    // here instead or every sync would ffprobe every file unconditionally).
-    std::unordered_map<std::string, std::string> path_to_resolution;
-    {
-        SQLite::Statement q(sync_db_, "SELECT file_path, resolution_label FROM episode WHERE resolution_label != ''");
-        while (q.executeStep())
-            path_to_resolution[q.getColumn(0).getString()] = q.getColumn(1).getString();
-    }
+    // Note: duration validation, resolution, and embedded audio/subtitle
+    // language probing all used to happen inline here (each its own ffprobe
+    // spawn). They've moved to syncMediaProbeFromFiles — a dedicated
+    // post-pass (like chapter probing already was) that runs one combined
+    // ffprobe call per file needing any of the three, instead of up to
+    // three separate spawns per file in this loop. The upsert below writes
+    // whatever the source itself reported for duration_ms verbatim, and
+    // leaves resolution_label/audio_languages/embedded_subtitle_languages
+    // untouched (COALESCE'd against the existing DB value) for that pass to
+    // fill in.
 
     // Cross-source episode dedup: mapped(file_path) → kairos_ep_id
     std::unordered_map<std::string, std::string> ep_path_to_id;
@@ -938,29 +947,16 @@ void SyncManager::syncShows(IMediaSource& src,
                     auto& eps = episodes_by_show[i] = src.fetchEpisodes(ext_show_ids[i]);
                     const long long fetch_ms = elapsedMs(t_fetch, std::chrono::steady_clock::now());
 
-                    const auto t_validate = std::chrono::steady_clock::now();
-                    for (auto& ep : eps) {
-                        const std::string mapped = conf_.applyPathMap(ep.file_path);
-                        const int64_t before = ep.duration_ms;
-                        ep.duration_ms = validateDurationMs(ep.duration_ms, mapped);
-                        if (g_debug_logging && ep.duration_ms != before) {
-                            std::lock_guard lock(s_log_mu);
-                            DLOG << "[sync]       duration corrected: "
-                                 << before << " → " << ep.duration_ms << "ms  "
-                                 << ep.file_path << '\n';
-                        }
-                        if (auto it = path_to_resolution.find(mapped); it != path_to_resolution.end()) {
-                            ep.resolution_label = it->second;
-                        } else if (!mapped.empty()) {
-                            ep.resolution_label = bucketResolutionLabel(probeVideoInfo(mapped).height);
-                        }
-                    }
-                    const long long validate_ms = elapsedMs(t_validate, std::chrono::steady_clock::now());
+                    // duration_ms is written verbatim as the source reported it —
+                    // validation, resolution, and embedded language probing all
+                    // moved to syncMediaProbeFromFiles (see that function's
+                    // comment for why this is now a dedicated post-pass instead
+                    // of inline here).
 
                     std::lock_guard lock(s_log_mu);
                     std::cout << "[sync]     \"" << shows[i].title << "\": "
                               << eps.size() << " episode(s)" << std::endl;
-                    DLOG << "[sync]       fetch=" << fetch_ms << "ms validate=" << validate_ms
+                    DLOG << "[sync]       fetch=" << fetch_ms
                          << "ms  ext_id=" << ext_show_ids[i]
                          << "  kairos_id=" << shows[i].show_id << '\n';
                 }
@@ -992,8 +988,9 @@ void SyncManager::syncShows(IMediaSource& src,
     SQLite::Statement s_upsert_ep(sync_db_, R"(
         INSERT INTO episode (episode_id, show_id, season, episode, title,
                              file_path, duration_ms, overview, air_date,
-                             thumb, absolute_index, resolution_label)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                             thumb, absolute_index, resolution_label,
+                             audio_languages, embedded_subtitle_languages)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(episode_id) DO UPDATE SET
             show_id        = excluded.show_id,
             season         = excluded.season,
@@ -1005,7 +1002,9 @@ void SyncManager::syncShows(IMediaSource& src,
             air_date       = excluded.air_date,
             thumb          = CASE WHEN locked THEN thumb    ELSE excluded.thumb    END,
             absolute_index = excluded.absolute_index,
-            resolution_label = COALESCE(NULLIF(excluded.resolution_label, ''), resolution_label)
+            resolution_label            = COALESCE(NULLIF(excluded.resolution_label, ''), resolution_label),
+            audio_languages             = COALESCE(NULLIF(excluded.audio_languages, '[]'), audio_languages),
+            embedded_subtitle_languages = COALESCE(NULLIF(excluded.embedded_subtitle_languages, '[]'), embedded_subtitle_languages)
         WHERE (
             show_id        != excluded.show_id        OR
             season         != excluded.season         OR
@@ -1015,6 +1014,8 @@ void SyncManager::syncShows(IMediaSource& src,
             air_date       != excluded.air_date       OR
             COALESCE(absolute_index, -1) != COALESCE(excluded.absolute_index, -1) OR
             (excluded.resolution_label != '' AND resolution_label != excluded.resolution_label) OR
+            (excluded.audio_languages             != '[]' AND audio_languages             != excluded.audio_languages) OR
+            (excluded.embedded_subtitle_languages  != '[]' AND embedded_subtitle_languages != excluded.embedded_subtitle_languages) OR
             (NOT locked AND (
                 title    != excluded.title    OR
                 overview != excluded.overview OR
@@ -1109,6 +1110,8 @@ void SyncManager::syncShows(IMediaSource& src,
                         if (ep.absolute_index.has_value()) s_upsert_ep.bind(11, ep.absolute_index.value());
                         else                               s_upsert_ep.bind(11);
                         s_upsert_ep.bind(12, ep.resolution_label);
+                        s_upsert_ep.bind(13, ep.audio_languages);
+                        s_upsert_ep.bind(14, ep.embedded_subtitle_languages);
                         s_upsert_ep.exec();
                     }
                     s_ep_mapping.reset();
@@ -1192,14 +1195,9 @@ void SyncManager::syncMovies(IMediaSource& src,
         }
     }
 
-    // See syncShows()'s identical path_to_resolution — cache-gates the
-    // resolution probe by file path so it only ever runs once per file.
-    std::unordered_map<std::string, std::string> path_to_resolution;
-    {
-        SQLite::Statement q(sync_db_, "SELECT file_path, resolution_label FROM movie WHERE resolution_label != ''");
-        while (q.executeStep())
-            path_to_resolution[q.getColumn(0).getString()] = q.getColumn(1).getString();
-    }
+    // Note: duration validation, resolution, and embedded audio/subtitle
+    // language probing all moved to syncMediaProbeFromFiles — see
+    // syncShows()'s identical comment for the full reasoning.
 
     // Cross-source movie dedup: lowercase title + year. Title alone isn't
     // safe to merge on — remakes share a title across different years (e.g.
@@ -1290,28 +1288,9 @@ void SyncManager::syncMovies(IMediaSource& src,
     if (movies.empty()) return;
     std::vector<std::optional<PendingDup>> pending_dup(movies.size());
 
-    // ── Parallel duration probe ───────────────────────────────────────────────
-    {
-        std::atomic<size_t> next{0};
-        const int worker_count = std::min<int>(getThreadCount(),
-                                                static_cast<int>(movies.size()));
-        std::vector<std::thread> workers;
-        workers.reserve(static_cast<size_t>(worker_count));
-        for (int w = 0; w < worker_count; ++w) {
-            workers.emplace_back([&]() {
-                for (size_t i = next.fetch_add(1); i < movies.size(); i = next.fetch_add(1)) {
-                    const std::string mapped = conf_.applyPathMap(movies[i].file_path);
-                    movies[i].duration_ms = validateDurationMs(movies[i].duration_ms, mapped);
-                    if (auto it = path_to_resolution.find(mapped); it != path_to_resolution.end()) {
-                        movies[i].resolution_label = it->second;
-                    } else if (!mapped.empty()) {
-                        movies[i].resolution_label = bucketResolutionLabel(probeVideoInfo(mapped).height);
-                    }
-                }
-            });
-        }
-        for (auto& t : workers) t.join();
-    }
+    // duration_ms is written verbatim as the source reported it — validation,
+    // resolution, and embedded language probing all moved to
+    // syncMediaProbeFromFiles (see syncShows()'s identical comment).
 
     // ── ID resolution in memory ──────────────────────────────────────────────
     struct ResolvedMovie { std::string kairos_id, ext_id; bool is_cross_ref; };
@@ -1456,8 +1435,9 @@ void SyncManager::syncMovies(IMediaSource& src,
                            overview, tagline, studio, director, writer, genres, thumb, art,
                            imdb_id, tmdb_id, audience_rating,
                            labels, actors, countries, collections,
-                           added_at, added_at_source, resolution_label, primary_source, original_title)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           added_at, added_at_source, resolution_label, primary_source, original_title,
+                           audio_languages, embedded_subtitle_languages)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(movie_id) DO UPDATE SET
             title            = CASE WHEN locked THEN title            WHEN ? AND excluded.title<>''            THEN excluded.title            WHEN title=''                     THEN excluded.title            ELSE title            END,
             content_rating   = CASE WHEN locked THEN content_rating   WHEN ? AND excluded.content_rating<>''   THEN excluded.content_rating   WHEN content_rating=''            THEN excluded.content_rating   ELSE content_rating   END,
@@ -1483,7 +1463,9 @@ void SyncManager::syncMovies(IMediaSource& src,
             added_at_source  = CASE WHEN locked THEN added_at_source  WHEN ? AND excluded.added_at IS NOT NULL THEN excluded.added_at_source  WHEN added_at_source=''           THEN excluded.added_at_source  ELSE added_at_source  END,
             resolution_label = CASE WHEN locked THEN resolution_label WHEN ? AND excluded.resolution_label<>'' THEN excluded.resolution_label WHEN resolution_label=''          THEN excluded.resolution_label ELSE resolution_label END,
             primary_source   = CASE WHEN locked THEN primary_source   WHEN ?                                   THEN excluded.primary_source                                                                     ELSE primary_source   END,
-            original_title   = CASE WHEN locked THEN original_title   WHEN ? AND excluded.original_title<>''   THEN excluded.original_title   WHEN original_title=''            THEN excluded.original_title   ELSE original_title   END
+            original_title   = CASE WHEN locked THEN original_title   WHEN ? AND excluded.original_title<>''   THEN excluded.original_title   WHEN original_title=''            THEN excluded.original_title   ELSE original_title   END,
+            audio_languages             = CASE WHEN locked THEN audio_languages             WHEN ? AND excluded.audio_languages<>'' AND excluded.audio_languages<>'[]'                         THEN excluded.audio_languages             WHEN audio_languages=''             OR audio_languages='[]'             THEN excluded.audio_languages             ELSE audio_languages             END,
+            embedded_subtitle_languages = CASE WHEN locked THEN embedded_subtitle_languages WHEN ? AND excluded.embedded_subtitle_languages<>'' AND excluded.embedded_subtitle_languages<>'[]' THEN excluded.embedded_subtitle_languages WHEN embedded_subtitle_languages='' OR embedded_subtitle_languages='[]' THEN excluded.embedded_subtitle_languages ELSE embedded_subtitle_languages END
         WHERE NOT locked AND (
             title           != excluded.title           OR
             content_rating  != excluded.content_rating  OR
@@ -1509,7 +1491,9 @@ void SyncManager::syncMovies(IMediaSource& src,
             added_at_source != excluded.added_at_source OR
             resolution_label != excluded.resolution_label OR
             primary_source  != excluded.primary_source  OR
-            original_title  != excluded.original_title
+            original_title  != excluded.original_title  OR
+            audio_languages             != excluded.audio_languages             OR
+            embedded_subtitle_languages != excluded.embedded_subtitle_languages
         )
     )");
     SQLite::Statement s_movie_mapping(sync_db_, R"(
@@ -1590,7 +1574,16 @@ void SyncManager::syncMovies(IMediaSource& src,
                     s_upsert_movie.bind(24, movie.resolution_label);
                     s_upsert_movie.bind(25, source_id); // primary_source for a brand-new row
                     s_upsert_movie.bind(26, movie.original_title);
-                    for (int p = 27; p <= 50; ++p) s_upsert_movie.bind(p, wins);
+                    s_upsert_movie.bind(27, movie.audio_languages);
+                    s_upsert_movie.bind(28, movie.embedded_subtitle_languages);
+                    // 27 wins-flag placeholders (one per SET column above) at
+                    // positions 29..55. Was previously 27..50 (24 of the then
+                    // 25 needed binds) — off by one, leaving the last column's
+                    // (original_title's) wins-flag permanently unbound/NULL,
+                    // so original_title could never be won over by a higher-
+                    // priority source, only backfilled when blank. Fixed here
+                    // while extending this statement for the 2 new columns.
+                    for (int p = 29; p <= 55; ++p) s_upsert_movie.bind(p, wins);
                     s_upsert_movie.exec();
                 }
 
@@ -2191,4 +2184,179 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
             if (chapter_detect_->triggerShowDetect(it.show_id)) break; // one per sync pass
         }
     }
+}
+
+// See SyncManager.h's declaration for the full rationale (combined ffprobe +
+// subtitle sidecar cataloging in one pass over the same item set).
+void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
+    const auto t_start = std::chrono::steady_clock::now();
+    std::cout << "[sync] media probe + subtitle sidecar scan: " << source_id << std::endl;
+
+    struct ScanItem {
+        std::string kairos_id;
+        std::string media_type;      // "episode" | "movie"
+        std::string unmapped_path;
+        std::string mapped_path;
+        std::string mapped_dir;
+        std::string video_stem;
+        std::string resolution_label;    // current DB value — empty means never probed
+        int64_t     duration_ms = 0;     // current DB value
+    };
+    std::vector<ScanItem> items;
+
+    {
+        SQLite::Statement q(sync_db_, R"(
+            SELECT sm.kairos_id, e.file_path, e.resolution_label, e.duration_ms
+            FROM source_mapping sm
+            JOIN episode e ON e.episode_id = sm.kairos_id
+            WHERE sm.item_type='episode' AND sm.source_id=?
+        )");
+        q.bind(1, source_id);
+        while (q.executeStep()) {
+            const std::string file_path = q.getColumn(1).getString();
+            if (file_path.empty()) continue;
+            const std::string mapped = conf_.applyPathMap(file_path);
+            if (!std::filesystem::exists(mapped)) continue;
+            std::filesystem::path mp(mapped);
+            items.push_back({
+                q.getColumn(0).getString(), "episode", file_path, mapped,
+                mp.parent_path().string(), mp.filename().stem().string(),
+                q.getColumn(2).getString(), q.getColumn(3).getInt64()
+            });
+        }
+    }
+    {
+        SQLite::Statement q(sync_db_, R"(
+            SELECT sm.kairos_id, m.file_path, m.resolution_label, m.duration_ms
+            FROM source_mapping sm
+            JOIN movie m ON m.movie_id = sm.kairos_id
+            WHERE sm.item_type='movie' AND sm.source_id=?
+        )");
+        q.bind(1, source_id);
+        while (q.executeStep()) {
+            const std::string file_path = q.getColumn(1).getString();
+            if (file_path.empty()) continue;
+            const std::string mapped = conf_.applyPathMap(file_path);
+            if (!std::filesystem::exists(mapped)) continue;
+            std::filesystem::path mp(mapped);
+            items.push_back({
+                q.getColumn(0).getString(), "movie", file_path, mapped,
+                mp.parent_path().string(), mp.filename().stem().string(),
+                q.getColumn(2).getString(), q.getColumn(3).getInt64()
+            });
+        }
+    }
+
+    if (items.empty()) {
+        std::cout << "[sync] media probe done: " << source_id << " (nothing to scan)" << std::endl;
+        return;
+    }
+
+    // ── Subtitle sidecar scan — group by directory, list each exactly once ──
+    std::unordered_map<std::string, std::vector<std::string>> dir_to_stems;
+    for (const auto& it : items) dir_to_stems[it.mapped_dir].push_back(it.video_stem);
+
+    std::vector<std::string> dirs;
+    dirs.reserve(dir_to_stems.size());
+    for (auto& [dir, stems] : dir_to_stems) dirs.push_back(dir);
+
+    std::vector<std::unordered_map<std::string, std::vector<ExternalSubtitle>>> dir_results(dirs.size());
+    {
+        std::atomic<size_t> next{0};
+        const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(dirs.size()));
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<size_t>(worker_count));
+        for (int w = 0; w < worker_count; ++w) {
+            workers.emplace_back([&]() {
+                for (size_t d = next.fetch_add(1); d < dirs.size(); d = next.fetch_add(1))
+                    dir_results[d] = scanDirectoryForSubtitles(dirs[d], dir_to_stems.at(dirs[d]));
+            });
+        }
+        for (auto& t : workers) t.join();
+    }
+    std::unordered_map<std::string, size_t> dir_index;
+    for (size_t d = 0; d < dirs.size(); ++d) dir_index[dirs[d]] = d;
+
+    // ── Media-info probe — one combined ffprobe call per file that needs it ──
+    // (resolution never probed, or the current duration looks implausible).
+    std::vector<std::optional<FileProbeInfo>> probe_results(items.size());
+    {
+        std::atomic<size_t> next{0};
+        const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(items.size()));
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<size_t>(worker_count));
+        for (int w = 0; w < worker_count; ++w) {
+            workers.emplace_back([&]() {
+                for (size_t i = next.fetch_add(1); i < items.size(); i = next.fetch_add(1)) {
+                    const auto& it = items[i];
+                    const bool needs_probe = it.resolution_label.empty() || !durationLooksValid(it.duration_ms);
+                    if (needs_probe) probe_results[i] = probeFileInfo(it.mapped_path);
+                }
+            });
+        }
+        for (auto& t : workers) t.join();
+    }
+
+    // ── Write ────────────────────────────────────────────────────────────────
+    SubtitleTrackRepository sub_repo(db_);
+    int with_ext_subs = 0, media_probed = 0;
+    for (size_t i = 0; i < items.size(); ++i) {
+        const auto& it = items[i];
+
+        std::vector<SubtitleTrack> tracks;
+        const auto& dir_result = dir_results[dir_index.at(it.mapped_dir)];
+        if (auto match = dir_result.find(it.video_stem); match != dir_result.end()) {
+            const std::string unmapped_dir = pathutil::parentDir(it.unmapped_path);
+            for (auto& ext : match->second) {
+                SubtitleTrack t;
+                t.media_type = it.media_type;
+                t.media_id   = it.kairos_id;
+                t.file_path  = unmapped_dir + "/" + std::filesystem::path(ext.file_path).filename().string();
+                t.language   = ext.language;
+                t.forced     = ext.forced;
+                t.sdh        = ext.sdh;
+                t.title      = ext.title;
+                tracks.push_back(std::move(t));
+            }
+        }
+        sub_repo.syncSubtitleTracks(it.media_type, it.kairos_id, "file", tracks);
+        if (!tracks.empty()) ++with_ext_subs;
+
+        if (!probe_results[i]) continue; // not re-probed this pass
+        ++media_probed;
+        const auto& probed = *probe_results[i];
+
+        const std::string new_resolution_label = bucketResolutionLabel(probed.video.height);
+        const std::string new_audio_languages  = nlohmann::json(probed.langs.audio).dump();
+        const std::string new_embedded_subs     = nlohmann::json(probed.langs.subtitle).dump();
+
+        int64_t new_duration_ms = it.duration_ms;
+        if (!durationLooksValid(new_duration_ms)) {
+            if (durationLooksValid(probed.duration_ms)) {
+                new_duration_ms = probed.duration_ms;
+            } else {
+                std::cerr << "[sync] WARNING: could not determine valid duration for "
+                          << it.mapped_path << " (source=" << it.duration_ms
+                          << " ffprobe=" << probed.duration_ms << ")\n";
+                new_duration_ms = 0;
+            }
+        }
+
+        const char* table = it.media_type == "movie" ? "movie" : "episode";
+        const char* idcol = it.media_type == "movie" ? "movie_id" : "episode_id";
+        SQLite::Statement upd(sync_db_, std::string("UPDATE ") + table +
+            " SET duration_ms = ?, resolution_label = ?, audio_languages = ?, embedded_subtitle_languages = ? "
+            "WHERE " + idcol + " = ?");
+        upd.bind(1, new_duration_ms);
+        upd.bind(2, new_resolution_label);
+        upd.bind(3, new_audio_languages);
+        upd.bind(4, new_embedded_subs);
+        upd.bind(5, it.kairos_id);
+        upd.exec();
+    }
+
+    std::cout << "[sync] media probe done: " << source_id
+              << " (" << media_probed << "/" << items.size() << " file(s) ffprobed, "
+              << with_ext_subs << " with external subtitles, "
+              << elapsedMs(t_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }

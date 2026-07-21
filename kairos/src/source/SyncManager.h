@@ -197,6 +197,24 @@ private:
 
     void syncChaptersFromFiles(const std::string& source_id);
 
+    // Does two jobs over the same per-source item set, since both need to
+    // walk every episode/movie's file/folder anyway:
+    //  1. Media-info probing (duration/resolution/embedded audio+subtitle
+    //     languages) via one combined MediaProbe::probeFileInfo() ffprobe
+    //     call per file that needs it — resolution_label still empty (never
+    //     probed) or the current duration_ms looks implausible (see
+    //     MediaProbe::durationLooksValid). Replaces what used to be inline,
+    //     separately-ffprobed work in syncShows()/syncMovies() (validateDurationMs,
+    //     probeVideoInfo, probeStreamLanguages).
+    //  2. External subtitle sidecar detection (.srt/.ass/.ssa/.vtt — see
+    //     SubtitleSidecar.h) into the subtitle_track table. Unlike (1), this
+    //     re-scans unconditionally every sync (not gated on "already has a
+    //     value") — a directory listing is cheap, unlike ffprobe, so it's
+    //     the only way a sidecar file the user adds later actually gets
+    //     picked up. Directories are listed once and shared across every
+    //     video in that folder, not once per video.
+    void syncMediaProbeFromFiles(const std::string& source_id);
+
     std::unique_ptr<IMediaSource> buildSource(const std::string& source_id,
                                              const std::string& source_type,
                                              const std::string& base_url) const;

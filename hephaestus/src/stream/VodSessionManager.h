@@ -26,7 +26,8 @@ public:
     // decode capability if any (see VodSession::start).
     std::shared_ptr<VodSession> create(const std::string& file_path, int64_t position_ms,
                                         int audio_track, int subtitle_track, bool hdr_capable,
-                                        const std::optional<ClientCapabilities>& client_caps);
+                                        const std::optional<ClientCapabilities>& client_caps,
+                                        const std::vector<ExternalSubtitle>& external_subtitles = {});
     std::shared_ptr<VodSession> get(const std::string& sessionId);
     void stop(const std::string& sessionId);
 

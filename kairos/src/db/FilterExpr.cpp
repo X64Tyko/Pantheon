@@ -28,6 +28,8 @@ const std::unordered_map<std::string, FieldSpec>& fieldRegistry() {
         {"collection",      {{"is", "is_not", "contains", "does_not_contain"}}},
         {"network",         {{"is", "is_not", "contains", "does_not_contain"}}},
         {"label",           {{"is", "is_not", "contains", "does_not_contain"}}},
+        {"audio_language",    {{"is", "is_not", "contains", "does_not_contain"}}},
+        {"subtitle_language", {{"is", "is_not", "contains", "does_not_contain"}}},
         {"resolution",      {{"is", "is_not"}}},
         {"decade",          {{"is"}}},
         {"audience_rating", {{"gte", "lte", "gt", "lt"}}},
@@ -430,6 +432,65 @@ struct Compiler {
             binds.push_back(n.value);
             std::string c = col("year");
             return "(" + c + " >= CAST(? AS INTEGER) AND " + c + " < CAST(? AS INTEGER) + 10)";
+        }
+
+        if (f == "audio_language") {
+            // Embedded-stream languages only — no external-file concept for
+            // audio. Column only exists on episode/movie, not show (a show's
+            // episodes can carry different language sets per-file), same
+            // reasoning as resolution's Show-EXISTS-into-episode branch
+            // below, combined with genre's json_each (a file can have
+            // multiple audio tracks, unlike resolution's single bucket).
+            bool neg           = (op == "is_not" || op == "does_not_contain");
+            bool like          = (op == "contains" || op == "does_not_contain");
+            std::string prefix = neg ? "NOT EXISTS (" : "EXISTS (";
+            if (entity == FilterEntity::Movie) {
+                std::string c   = col("audio_languages");
+                std::string tag = "fx_" + std::to_string(binds.size());
+                binds.push_back(n.value);
+                std::string cmp = like ? tag + ".value LIKE '%' || ? || '%'" : tag + ".value = ?";
+                return prefix +
+                       "SELECT 1 FROM json_each(NULLIF(" + c + ",'')) " + tag + " WHERE " + cmp + ")";
+            }
+            std::string cmp = like ? "je_lang.value LIKE '%' || ? || '%'" : "je_lang.value = ?";
+            binds.push_back(n.value);
+            return prefix +
+                   "SELECT 1 FROM episode e_lang, json_each(NULLIF(e_lang.audio_languages,'')) je_lang "
+                   "WHERE e_lang.show_id = " + col("show_id") + " AND " + cmp + ")";
+        }
+
+        if (f == "subtitle_language") {
+            // A subtitle in this language can come from the embedded stream
+            // OR an external sidecar file (subtitle_track) — unioned at
+            // query time rather than a pre-merged column, since embedded
+            // probing (conditional/cached) and the sidecar scan
+            // (unconditional every sync) fire independently — see
+            // Database.cpp's v86 migration comment.
+            bool neg  = (op == "is_not" || op == "does_not_contain");
+            bool like = (op == "contains" || op == "does_not_contain");
+            std::string combined;
+            if (entity == FilterEntity::Movie) {
+                std::string c   = col("embedded_subtitle_languages");
+                std::string mid = col("movie_id");
+                std::string tag = "fx_" + std::to_string(binds.size());
+                binds.push_back(n.value);
+                std::string cmp1 = like ? tag + ".value LIKE '%' || ? || '%'" : tag + ".value = ?";
+                binds.push_back(n.value);
+                std::string cmp2 = like ? "st.language LIKE '%' || ? || '%'" : "st.language = ?";
+                combined = "(EXISTS (SELECT 1 FROM json_each(NULLIF(" + c + ",'')) " + tag + " WHERE " + cmp1 + ") OR "
+                           "EXISTS (SELECT 1 FROM subtitle_track st WHERE st.media_type='movie' AND st.media_id=" + mid + " AND " + cmp2 + "))";
+            } else {
+                std::string sid = col("show_id");
+                binds.push_back(n.value);
+                std::string cmp1 = like ? "je_lang.value LIKE '%' || ? || '%'" : "je_lang.value = ?";
+                binds.push_back(n.value);
+                std::string cmp2 = like ? "st.language LIKE '%' || ? || '%'" : "st.language = ?";
+                combined = "(EXISTS (SELECT 1 FROM episode e_lang, json_each(NULLIF(e_lang.embedded_subtitle_languages,'')) je_lang "
+                           "WHERE e_lang.show_id = " + sid + " AND " + cmp1 + ") OR "
+                           "EXISTS (SELECT 1 FROM subtitle_track st JOIN episode e_st ON e_st.episode_id = st.media_id "
+                           "WHERE st.media_type='episode' AND e_st.show_id = " + sid + " AND " + cmp2 + "))";
+            }
+            return neg ? "NOT " + combined : combined;
         }
 
         if (f == "resolution") {

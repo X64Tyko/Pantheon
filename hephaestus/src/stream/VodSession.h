@@ -3,12 +3,14 @@
 #include "ClientCapabilities.h"
 #include "FfmpegProcess.h"
 #include "MediaProbe.h"
+#include "model/ExternalSubtitle.h" // shared/ — see that header for why
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 struct VodStreamOptions {
     std::string ffprobe_path = "ffprobe";
@@ -53,9 +55,17 @@ public:
     // ClientCapabilities.h) — nullopt when the requesting token never
     // declared one (or Hephaestus restarted since), in which case
     // isDirectPlayable() falls back to the conservative h264/aac allowlist.
+    // external_subtitles is the full catalog for this item (from Kairos's
+    // playback-info response) — subtitle_track <= -2 selects
+    // external_subtitles[-(subtitle_track)-2] (see Router.cpp's
+    // /stream/vod/start handler for where that negative-index scheme is
+    // assigned; both sides must stay in sync since nothing else enforces
+    // it). >= 0 still means an embedded track's relative_index; -1 means no
+    // subtitle at all.
     bool start(const std::string& file_path, int64_t position_ms,
                int audio_track, int subtitle_track, bool hdr_capable,
-               const std::optional<ClientCapabilities>& client_caps);
+               const std::optional<ClientCapabilities>& client_caps,
+               const std::vector<ExternalSubtitle>& external_subtitles = {});
 
     void stop();
     // Called by the HTTP handler on every playlist/segment GET.
@@ -74,6 +84,10 @@ public:
     // subtitle_url) — no separate subtitle URL exists for this case, it's
     // baked into the HLS video segments themselves.
     bool subtitleBurnedIn() const { return subtitle_burn_in; }
+    // The full external-subtitle catalog this session was started with (not
+    // just whichever one is selected) — Router.cpp lists all of them in
+    // tracks.subtitles[] alongside the embedded ones.
+    const std::vector<ExternalSubtitle>& externalSubtitles() const { return external_subtitles_; }
 
     // For the activity/debugging view (ActivityRouter).
     const std::string& filePath() const { return file_path; }
@@ -97,6 +111,7 @@ private:
     MediaInfo     media_info;
     std::string   file_path;
     int64_t       started_at_ms = 0;
+    std::vector<ExternalSubtitle> external_subtitles_;
 
     void onExit(int code);
 };

@@ -70,7 +70,8 @@ static std::vector<std::string> buildVodArgs(
     const VideoTrack* source_video,
     bool hdr_capable,
     bool verbose_transcode_logs,
-    const std::string& dir)
+    const std::string& dir,
+    const std::string& externalSubtitlePath)
 {
     std::vector<std::string> a;
     a.push_back(ffmpeg_path);
@@ -148,10 +149,28 @@ static std::vector<std::string> buildVodArgs(
     });
 
     // Second output group in the same ffmpeg process: the selected text
-    // subtitle track, transcoded to a WebVTT sidecar.
-    if (subtitleOutput)
+    // subtitle track, transcoded to a WebVTT sidecar. An external sidecar
+    // file (not one of the container's own streams) needs its own extra
+    // -i — added here, after the primary input's own args are fully set up,
+    // so it doesn't disturb any of the -map 0:... references above (all of
+    // which only ever address input 0). Its -ss is separate from the
+    // primary input's own -ss above (an ffmpeg input-seek only applies to
+    // the input it directly precedes) — without duplicating it here, the
+    // extracted subs.vtt would start at t=0 of the *file* while the video
+    // starts at positionMs, drifting the subtitle timing out of sync with
+    // playback after any non-zero seek/resume.
+    if (!externalSubtitlePath.empty()) {
+        if (positionMs > 0) {
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(3) << (positionMs / 1000.0);
+            a.push_back("-ss"); a.push_back(ss.str());
+        }
+        a.push_back("-i"); a.push_back(externalSubtitlePath);
+        a.insert(a.end(), {"-map", "1:s:0", "-c:s", "webvtt", dir + "/subs.vtt"});
+    } else if (subtitleOutput) {
         a.insert(a.end(), {"-map", "0:s:" + std::to_string(subtitleTrack), "-c:s", "webvtt",
                             dir + "/subs.vtt"});
+    }
 
     return a;
 }
@@ -163,7 +182,9 @@ VodSession::~VodSession() { stop(); }
 
 bool VodSession::start(const std::string& file_path, int64_t position_ms,
                         int audio_track, int subtitle_track, bool hdr_capable,
-                        const std::optional<ClientCapabilities>& client_caps) {
+                        const std::optional<ClientCapabilities>& client_caps,
+                        const std::vector<ExternalSubtitle>& external_subtitles) {
+    external_subtitles_ = external_subtitles;
     auto info = probeMediaCached(opts.ffprobe_path, file_path);
     if (!info) {
         std::cerr << "[vod:" << session_id << "] probe failed for \"" << file_path << "\"\n";
@@ -201,7 +222,17 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 
     subtitle_output  = false;
     subtitle_burn_in = false;
-    if (subtitle_track >= 0) {
+    std::string external_subtitle_path;
+    if (subtitle_track <= -2) {
+        // Negative-index scheme for external sidecar files — see the
+        // header's start() comment. Always text, never burn-in, and never
+        // affects direct-play (no decode of video/audio involved).
+        const size_t idx = static_cast<size_t>(-(subtitle_track) - 2);
+        if (idx < external_subtitles_.size()) {
+            external_subtitle_path = external_subtitles_[idx].file_path;
+            subtitle_output = true;
+        }
+    } else if (subtitle_track >= 0) {
         auto it = std::find_if(media_info.subtitles.begin(), media_info.subtitles.end(),
             [&](const SubtitleTrack& t) { return t.relative_index == subtitle_track; });
         if (it != media_info.subtitles.end()) {
@@ -225,7 +256,7 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
     auto args = buildVodArgs(ffmpeg_path, file_path, position_ms, audio_track, subtitle_track,
                               direct_play, subtitle_output, subtitle_burn_in, opts.hw_accel, opts.vaapi_device,
                               opts.decode_hw_accel, opts.decodable_codecs, source_codec, source_video, hdr_capable,
-                              opts.verbose_transcode_logs, d);
+                              opts.verbose_transcode_logs, d, external_subtitle_path);
 
     std::cerr << "[vod:" << session_id << "] spawning ffmpeg: \"" << file_path << "\""
               << " offset=" << position_ms << "ms direct_play=" << (direct_play ? "yes" : "no") << "\n";
