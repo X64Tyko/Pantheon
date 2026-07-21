@@ -480,12 +480,23 @@ export class ChannelDetailStore {
   }
 
   openNew() {
+    const maxP = this.resetNewState()
+    this.draft = { ...BLANK_DRAFT, priority: maxP + 1 }
+  }
+
+  // Opens a fresh block draft pre-filled from a click-and-drag range on the
+  // week grid — single day, exact start/end from the drag.
+  openNewAt(dayIdx: number, startMin: number, endMin: number) {
+    const maxP = this.resetNewState()
+    this.draft = { ...BLANK_DRAFT, priority: maxP + 1, day_mask: DAY_BITS[dayIdx], start_time: m2t(startMin), end_time: m2t(endMin) }
+  }
+
+  private resetNewState(): number {
     const maxP                 = Math.max(0, ...this.blocks.map(b => b.priority))
     this.selectedId            = null
     this.editing               = null
     this.isNewMode             = true
     this.editingSlotId         = null
-    this.draft                 = { ...BLANK_DRAFT, priority: maxP + 1 }
     this.draftContent          = []
     this.draftFillerEntries    = []
     this.draftSlots            = []
@@ -495,6 +506,7 @@ export class ChannelDetailStore {
     this.selectedContentItemId = null
     this.selectedFillerItemId  = null
     this.selectedBumperSlot    = null
+    return maxP
   }
 
   closeEditor() {

@@ -202,7 +202,7 @@ export default observer(function ChannelDetailPage() {
                         ))}
                       </div>
                       {DAYS.map(([, long], di) => (
-                        <DayColumn key={long} dayIdx={di} blocks={store.blocks} pph={pph} selectedId={store.selectedId} store={store} channelId={id} />
+                        <DayColumn key={long} dayIdx={di} blocks={store.blocks} pph={pph} selectedId={store.selectedId} store={store} channelId={id} enableCreate />
                       ))}
                     </div>
 

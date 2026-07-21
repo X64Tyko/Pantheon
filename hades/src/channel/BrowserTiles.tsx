@@ -290,6 +290,17 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
 }) {
   const add = (params: AddContentParams) => { onAdd(params); onBack() }
 
+  // Season/specials buttons stay in the panel after adding (rather than
+  // bouncing back to the grid) so multiple seasons of the same show can be
+  // added in one visit. Give a transient "Added" flash for feedback since
+  // there's no navigation to signal success.
+  const [justAdded, setJustAdded] = useState<string | null>(null)
+  const addAndStay = (key: string, params: AddContentParams) => {
+    onAdd(params)
+    setJustAdded(key)
+    window.setTimeout(() => setJustAdded(cur => cur === key ? null : cur), 1100)
+  }
+
   return (
     <div className={styles.infoPanelRoot}>
       <div className={styles.infoPanelHeader}>
@@ -329,12 +340,12 @@ export function MediaInfoPanel({ item, detail, seasons, detailLoading, onAdd, on
                   <div className={styles.addBtnRow}>
                     <AddBtn onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: null, title: s.title, include_specials: true })}>Add All</AddBtn>
                     {seasons.some(sn => sn.number === 0) && <>
-                      <AddBtn onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: null, title: s.title, include_specials: false })}>No S00</AddBtn>
-                      <AddBtn gold onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: 0, title: `${s.title} S00`, include_specials: true })}>S00</AddBtn>
+                      <AddBtn onClick={() => addAndStay('no-s00', { content_type: 'show', content_id: s.show_id, season_filter: null, title: s.title, include_specials: false })}>{justAdded === 'no-s00' ? '✓ Added' : 'No S00'}</AddBtn>
+                      <AddBtn gold onClick={() => addAndStay('s00', { content_type: 'show', content_id: s.show_id, season_filter: 0, title: `${s.title} S00`, include_specials: true })}>{justAdded === 's00' ? '✓ Added' : 'S00'}</AddBtn>
                     </>}
                     {seasons.filter(sn => sn.number !== 0).map(sn => (
-                      <AddBtn key={sn.number} onClick={() => add({ content_type: 'show', content_id: s.show_id, season_filter: sn.number, title: `${s.title} ${seasonLabel(sn)}` })}>
-                        {seasonLabel(sn)}
+                      <AddBtn key={sn.number} onClick={() => addAndStay(`s${sn.number}`, { content_type: 'show', content_id: s.show_id, season_filter: sn.number, title: `${s.title} ${seasonLabel(sn)}` })}>
+                        {justAdded === `s${sn.number}` ? '✓ Added' : seasonLabel(sn)}
                       </AddBtn>
                     ))}
                     {detailLoading && seasons.length === 0 && (

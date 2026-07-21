@@ -24,10 +24,20 @@
   display: flex;
   align-items: center;
   gap: var(--hds-space-2);
+  align-self: stretch;
   color: var(--hds-txt-2);
   text-decoration: none;
-  padding: var(--hds-space-2) 9px;
+  padding: 0 var(--hds-space-4);
+  margin: -14px 0;
   border-radius: 7px;
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-3);
+  transition: 0.12s;
+}
+.backLink:hover {
+  color: var(--hds-txt);
+  border-color: var(--hds-violet);
+  background: oklch(0.38 0.09 287 / 0.25);
 }
 .backArrow { font-size: var(--hds-font-size-tv-title); }
 
