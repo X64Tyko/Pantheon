@@ -860,3 +860,108 @@ TEST(JellyfinPushMetadata, EmptyGenresAndActorsLeaveExistingUntouched) {
     EXPECT_EQ(captured["Genres"], json::array({"Old Genre"}));
     EXPECT_EQ(captured["People"].size(), 2u);
 }
+
+// ============================================================================
+// createRemoteList / addRemoteListItems / removeRemoteListItems (list push)
+//
+// Own dedicated TestServer per test, same reasoning as the pushMetadata
+// tests above.
+// ============================================================================
+
+TEST(JellyfinListPush, CreatePlaylistPostsNameIdsUserIdMediaType) {
+    TestServer srv;
+    json captured;
+    srv.svr.Post("/Playlists", [&](const httplib::Request& req, httplib::Response& res) {
+        captured = json::parse(req.body);
+        res.set_content(json{{"Id", "newpl1"}}.dump(), "application/json");
+    });
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    auto id = src.createRemoteList("My Playlist", "playlist",
+        {{"movie", "ext1"}, {"episode", "ext2"}}, "");
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(*id, "newpl1");
+
+    EXPECT_EQ(captured.value("Name", ""), "My Playlist");
+    EXPECT_EQ(captured.value("UserId", ""), "uid");
+    EXPECT_EQ(captured["Ids"], json::array({"ext1", "ext2"}));
+}
+
+TEST(JellyfinListPush, CreateCollectionUsesQueryParamsNotBody) {
+    TestServer srv;
+    std::string captured_target;
+    srv.svr.Post("/Collections", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_target = req.target;
+        res.set_content(json{{"Id", "newcol1"}}.dump(), "application/json");
+    });
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    auto id = src.createRemoteList("My Collection", "collection", {{"movie", "ext1"}}, "");
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(*id, "newcol1");
+    EXPECT_NE(captured_target.find("ids=ext1"), std::string::npos);
+}
+
+TEST(JellyfinListPush, CreateRemoteListReturnsNulloptOnServerError) {
+    TestServer srv;
+    srv.svr.Post("/Playlists", [](const httplib::Request&, httplib::Response& res) { res.status = 500; });
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    EXPECT_FALSE(src.createRemoteList("Title", "playlist", {{"movie", "ext1"}}, "").has_value());
+}
+
+TEST(JellyfinListPush, AddPlaylistItemsPostsIdsAndUserId) {
+    TestServer srv;
+    std::string captured_target;
+    srv.svr.Post("/Playlists/pl1/Items", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_target = req.target;
+        res.status = 204;
+    });
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    EXPECT_TRUE(src.addRemoteListItems("pl1", "playlist", {{"movie", "ext3"}}));
+    EXPECT_NE(captured_target.find("ids=ext3"), std::string::npos);
+    EXPECT_NE(captured_target.find("userId=uid"), std::string::npos);
+}
+
+TEST(JellyfinListPush, RemoveCollectionItemsDeletesByIdsDirectly) {
+    TestServer srv;
+    std::string captured_target;
+    srv.svr.Delete("/Collections/col1/Items", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_target = req.target;
+        res.status = 204;
+    });
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    EXPECT_TRUE(src.removeRemoteListItems("col1", "collection", {{"movie", "ext1"}}));
+    EXPECT_NE(captured_target.find("ids=ext1"), std::string::npos);
+}
+
+// Playlists have no remove-by-id form — removeRemoteListItems must fetch the
+// playlist's current items first to resolve each one's distinct
+// PlaylistItemId (not its own Id), then delete by that.
+TEST(JellyfinListPush, RemovePlaylistItemsResolvesEntryIdFirst) {
+    TestServer srv;
+    std::string captured_target;
+    srv.svr.Get("/Playlists/pl1/Items", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(json{{"Items", json::array({
+            json{{"Id", "ext1"}, {"PlaylistItemId", "entry-aaa"}},
+            json{{"Id", "ext2"}, {"PlaylistItemId", "entry-bbb"}},
+        })}}.dump(), "application/json");
+    });
+    srv.svr.Delete("/Playlists/pl1/Items", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_target = req.target;
+        res.status = 204;
+    });
+    srv.start();
+
+    JellyfinSource src("s1", srv.url(), "tok", "uid");
+    EXPECT_TRUE(src.removeRemoteListItems("pl1", "playlist", {{"movie", "ext2"}}));
+    EXPECT_NE(captured_target.find("entryIds=entry-bbb"), std::string::npos);
+    EXPECT_EQ(captured_target.find("entry-aaa"), std::string::npos); // only the removed item's entry id
+}

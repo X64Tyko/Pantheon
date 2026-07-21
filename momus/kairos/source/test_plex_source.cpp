@@ -1009,3 +1009,124 @@ TEST(PlexPushMetadata, ActorsNeverSent) {
     EXPECT_EQ(captured.find("role"), std::string::npos);
     EXPECT_EQ(captured.find("actor"), std::string::npos);
 }
+
+// ============================================================================
+// createRemoteList / addRemoteListItems / removeRemoteListItems (list push)
+//
+// Own dedicated TestServer per test, same reasoning as the pushMetadata
+// tests above. Every push call fetches /identity first to resolve
+// machineIdentifier — registered on every server in this section.
+// ============================================================================
+
+namespace {
+void registerIdentity(httplib::Server& s, const std::string& machine_id = "machine-abc") {
+    s.Get("/identity", [machine_id](const httplib::Request&, httplib::Response& res) {
+        res.set_content(nlohmann::json{{"MediaContainer", {{"machineIdentifier", machine_id}}}}.dump(), "application/json");
+    });
+}
+}
+
+TEST(PlexListPush, CreatePlaylistBuildsServerUriAndReturnsRatingKey) {
+    TestServer srv;
+    registerIdentity(srv.svr);
+    std::string captured_target;
+    srv.svr.Post("/playlists", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_target = req.target;
+        res.set_content(nlohmann::json{{"MediaContainer", {{"Metadata", nlohmann::json::array({nlohmann::json{{"ratingKey","newpl1"}}})}}}}.dump(),
+                         "application/json");
+    });
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    auto id = src.createRemoteList("My Playlist", "playlist", {{"movie", "rk1"}, {"episode", "rk2"}}, "");
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(*id, "newpl1");
+
+    EXPECT_NE(captured_target.find("title=My%20Playlist"), std::string::npos);
+    EXPECT_NE(captured_target.find("smart=0"), std::string::npos);
+    // uri= is percent-encoded, so check for the encoded server:// prefix and
+    // the encoded comma-joined ratingKeys rather than the raw string.
+    EXPECT_NE(captured_target.find("server%3A%2F%2Fmachine-abc"), std::string::npos);
+    EXPECT_NE(captured_target.find("rk1%2Crk2"), std::string::npos);
+}
+
+TEST(PlexListPush, CreateCollectionIncludesSectionId) {
+    TestServer srv;
+    registerIdentity(srv.svr);
+    std::string captured_target;
+    srv.svr.Post("/library/collections", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_target = req.target;
+        res.set_content(nlohmann::json{{"MediaContainer", {{"Metadata", nlohmann::json::array({nlohmann::json{{"ratingKey","newcol1"}}})}}}}.dump(),
+                         "application/json");
+    });
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    auto id = src.createRemoteList("My Collection", "collection", {{"movie", "rk1"}}, "sec5");
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(*id, "newcol1");
+    EXPECT_NE(captured_target.find("sectionId=sec5"), std::string::npos);
+}
+
+TEST(PlexListPush, CreateRemoteListReturnsNulloptWhenIdentityFails) {
+    TestServer srv;
+    srv.svr.Get("/identity", [](const httplib::Request&, httplib::Response& res) { res.status = 500; });
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    EXPECT_FALSE(src.createRemoteList("Title", "playlist", {{"movie", "rk1"}}, "").has_value());
+}
+
+TEST(PlexListPush, AddItemsPutsUriToItemsPath) {
+    TestServer srv;
+    registerIdentity(srv.svr);
+    std::string captured_method, captured_target;
+    srv.svr.Put("/playlists/pl1/items", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_target = req.target;
+        res.status = 200;
+    });
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    EXPECT_TRUE(src.addRemoteListItems("pl1", "playlist", {{"movie", "rk9"}}));
+    EXPECT_NE(captured_target.find("rk9"), std::string::npos);
+}
+
+// Collections remove by the item's own ratingKey directly — no per-entry id
+// involved, unlike playlists below.
+TEST(PlexListPush, RemoveCollectionItemDeletesByRatingKeyDirectly) {
+    TestServer srv;
+    std::string captured_target;
+    srv.svr.Delete("/library/collections/col1/items/rk1", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_target = req.target;
+        res.status = 200;
+    });
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    EXPECT_TRUE(src.removeRemoteListItems("col1", "collection", {{"movie", "rk1"}}));
+    EXPECT_NE(captured_target.find("rk1"), std::string::npos);
+}
+
+// Playlists have no remove-by-ratingKey form — removeRemoteListItems must
+// fetch the playlist's current items first to resolve each one's distinct
+// playlistItemID, then delete by that.
+TEST(PlexListPush, RemovePlaylistItemResolvesPlaylistItemIdFirst) {
+    TestServer srv;
+    srv.svr.Get("/playlists/pl1/items", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(nlohmann::json{{"MediaContainer", {{"Metadata", nlohmann::json::array({
+            nlohmann::json{{"ratingKey","rk1"},{"playlistItemID","entry-aaa"},{"type","movie"}},
+            nlohmann::json{{"ratingKey","rk2"},{"playlistItemID","entry-bbb"},{"type","movie"}},
+        })}}}}.dump(), "application/json");
+    });
+    std::string captured_deleted_path;
+    srv.svr.Delete("/playlists/pl1/items/entry-bbb", [&](const httplib::Request& req, httplib::Response& res) {
+        captured_deleted_path = req.path;
+        res.status = 200;
+    });
+    srv.start();
+
+    PlexSource src("s1", srv.url(), "tok");
+    EXPECT_TRUE(src.removeRemoteListItems("pl1", "playlist", {{"movie", "rk2"}}));
+    EXPECT_EQ(captured_deleted_path, "/playlists/pl1/items/entry-bbb");
+}

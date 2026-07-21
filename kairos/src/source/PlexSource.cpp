@@ -1024,3 +1024,147 @@ bool PlexSource::pushMetadata(const std::string& external_id,
 
     return ok;
 }
+
+// ---------------------------------------------------------------------------
+// List push (write)
+// ---------------------------------------------------------------------------
+
+std::string PlexSource::machineIdentifier() {
+    if (machine_identifier_) return *machine_identifier_;
+    std::string id;
+    auto res = get("/identity");
+    if (res && res->status == 200) {
+        try {
+            auto j = json::parse(res->body);
+            id = j["MediaContainer"].value("machineIdentifier", "");
+        } catch (const json::exception&) {}
+    }
+    if (id.empty())
+        std::cerr << "[plex:" << source_id_ << "] failed to fetch machineIdentifier — list push unavailable\n";
+    machine_identifier_ = id;
+    return id;
+}
+
+namespace {
+// server://{machineId}/com.plexapp.plugins.library/library/metadata/{ratingKey1,ratingKey2,...}
+// — the URI scheme Plex's own playlist/collection create+add endpoints take
+// to reference existing library items (confirmed against python-plexapi's
+// actual request construction, not just prose docs).
+std::string plexItemsUri(const std::string& machine_id, const std::vector<IMediaSource::PushListItem>& items) {
+    std::string keys;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (i) keys += ",";
+        keys += items[i].external_id;
+    }
+    return "server://" + machine_id + "/com.plexapp.plugins.library/library/metadata/" + keys;
+}
+} // namespace
+
+std::optional<std::string> PlexSource::createRemoteList(
+    const std::string& title, const std::string& kind,
+    const std::vector<IMediaSource::PushListItem>& items,
+    const std::string& external_lib_id) {
+    if (items.empty()) return std::nullopt;
+    const std::string machine_id = machineIdentifier();
+    if (machine_id.empty()) return std::nullopt;
+
+    const std::string uri = plexUrlEncode(plexItemsUri(machine_id, items));
+    // Collections are scoped to a library section (sectionId); playlists are
+    // server-wide, no section needed — see IMediaSource::createRemoteList's
+    // doc comment on external_lib_id.
+    const std::string path = (kind == "collection")
+        ? "/library/collections?uri=" + uri + "&type=video&title=" + plexUrlEncode(title)
+              + "&smart=0&sectionId=" + plexUrlEncode(external_lib_id)
+        : "/playlists?uri=" + uri + "&type=video&title=" + plexUrlEncode(title) + "&smart=0";
+
+    auto res = client_.Post(path.c_str());
+    if (!res || (res->status != 200 && res->status != 201)) {
+        std::cerr << "[plex:" << source_id_ << "] createRemoteList failed (" << kind << " \"" << title << "\"): "
+                  << (res ? "HTTP " + std::to_string(res->status) : httplib::to_string(res.error())) << '\n';
+        return std::nullopt;
+    }
+    try {
+        auto j = json::parse(res->body);
+        const auto& md = j["MediaContainer"]["Metadata"];
+        if (!md.empty()) return md[0].value("ratingKey", "");
+    } catch (const json::exception& e) {
+        std::cerr << "[plex:" << source_id_ << "] createRemoteList: couldn't parse response: " << e.what() << '\n';
+    }
+    return std::nullopt;
+}
+
+bool PlexSource::addRemoteListItems(const std::string& list_external_id, const std::string& kind,
+                                     const std::vector<IMediaSource::PushListItem>& items) {
+    if (items.empty()) return true;
+    const std::string machine_id = machineIdentifier();
+    if (machine_id.empty()) return false;
+
+    const std::string uri  = plexUrlEncode(plexItemsUri(machine_id, items));
+    const std::string base = (kind == "collection") ? "/library/collections/" + list_external_id
+                                                     : "/playlists/" + list_external_id;
+    auto res = client_.Put((base + "/items?uri=" + uri).c_str());
+    if (!res || (res->status != 200 && res->status != 201)) {
+        std::cerr << "[plex:" << source_id_ << "] addRemoteListItems failed (" << kind << " " << list_external_id << ")\n";
+        return false;
+    }
+    return true;
+}
+
+bool PlexSource::removeRemoteListItems(const std::string& list_external_id, const std::string& kind,
+                                        const std::vector<IMediaSource::PushListItem>& items) {
+    if (items.empty()) return true;
+
+    // Collections remove by the item's own ratingKey directly — unlike
+    // playlists, items can't repeat in a collection, so there's no separate
+    // per-entry id to resolve first.
+    if (kind == "collection") {
+        bool ok = true;
+        for (const auto& item : items) {
+            auto res = client_.Delete(("/library/collections/" + list_external_id + "/items/" + item.external_id).c_str());
+            if (!res || (res->status != 200 && res->status != 204)) {
+                std::cerr << "[plex:" << source_id_ << "] removeRemoteListItems: failed to remove " << item.external_id
+                          << " from collection " << list_external_id << '\n';
+                ok = false;
+            }
+        }
+        return ok;
+    }
+
+    // Playlists have no remove-by-ratingKey form — each entry's distinct
+    // playlistItemID (separate from the underlying media's ratingKey) is
+    // only obtainable by fetching the playlist's current items first.
+    auto res = get("/playlists/" + list_external_id + "/items");
+    if (!res || res->status != 200) {
+        std::cerr << "[plex:" << source_id_ << "] removeRemoteListItems: couldn't fetch playlist items for "
+                  << list_external_id << '\n';
+        return false;
+    }
+    std::unordered_map<std::string, std::string> entryIdByRatingKey;
+    try {
+        auto j = json::parse(res->body);
+        const auto& md = j["MediaContainer"];
+        if (md.contains("Metadata")) {
+            for (const auto& entry : md["Metadata"]) {
+                std::string rk       = entry.value("ratingKey", "");
+                std::string entry_id = entry.value("playlistItemID", "");
+                if (!rk.empty() && !entry_id.empty()) entryIdByRatingKey[rk] = entry_id;
+            }
+        }
+    } catch (const json::exception& e) {
+        std::cerr << "[plex:" << source_id_ << "] removeRemoteListItems: parse error: " << e.what() << '\n';
+        return false;
+    }
+
+    bool ok = true;
+    for (const auto& item : items) {
+        auto it = entryIdByRatingKey.find(item.external_id);
+        if (it == entryIdByRatingKey.end()) { ok = false; continue; }
+        auto del = client_.Delete(("/playlists/" + list_external_id + "/items/" + it->second).c_str());
+        if (!del || (del->status != 200 && del->status != 204)) {
+            std::cerr << "[plex:" << source_id_ << "] removeRemoteListItems: failed to remove entry " << it->second
+                      << " from playlist " << list_external_id << '\n';
+            ok = false;
+        }
+    }
+    return ok;
+}

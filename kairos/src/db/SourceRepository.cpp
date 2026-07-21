@@ -252,6 +252,16 @@ std::string SourceRepository::resolveKairosId(const std::string& source_id,
     return q.executeStep() ? q.getColumn(0).getString() : "";
 }
 
+std::string SourceRepository::resolveExternalId(const std::string& source_id,
+                                                  const std::string& kairos_id,
+                                                  const std::string& item_type) {
+    SQLite::Statement q(db_.get(),
+        "SELECT external_id FROM source_mapping "
+        "WHERE source_id = ? AND kairos_id = ? AND item_type = ?");
+    q.bind(1, source_id); q.bind(2, kairos_id); q.bind(3, item_type);
+    return q.executeStep() ? q.getColumn(0).getString() : "";
+}
+
 std::optional<std::string> SourceRepository::samplePath(const std::string& source_id) {
     SQLite::Statement q(db_.get(), R"(
         SELECT e.file_path FROM episode e

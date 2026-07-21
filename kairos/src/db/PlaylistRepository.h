@@ -116,6 +116,12 @@ public:
                         const std::string& source_id, const std::string& external_id,
                         const std::string& plex_type);
 
+    // Looks up an existing link (pull *or* push both go through the same
+    // plex_list_link row — see PlaylistPushHelper.cpp) so a push knows
+    // whether to create a brand-new remote list or reconcile an already-
+    // linked one. nullopt if this list has never been linked to anything.
+    std::optional<PlexLinkRow> getLink(const std::string& list_type, const std::string& list_id);
+
     // Replace all items in a list (playlist or filler_list) with the given set.
     // list_type must be "playlist" or "filler_list".
     void replaceListItems(const std::string& list_type,

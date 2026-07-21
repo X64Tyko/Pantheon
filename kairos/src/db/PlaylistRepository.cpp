@@ -335,6 +335,20 @@ void PlaylistRepository::upsertPlexLink(const std::string& list_type,
     s.exec();
 }
 
+std::optional<PlexLinkRow> PlaylistRepository::getLink(const std::string& list_type, const std::string& list_id) {
+    SQLite::Statement q(db_.get(),
+        "SELECT source_id, external_id, plex_type, last_synced_at FROM plex_list_link "
+        "WHERE list_type = ? AND list_id = ?");
+    q.bind(1, list_type); q.bind(2, list_id);
+    if (!q.executeStep()) return std::nullopt;
+    PlexLinkRow r;
+    r.source_id   = q.getColumn(0).getString();
+    r.external_id = q.getColumn(1).getString();
+    r.plex_type   = q.getColumn(2).getString();
+    if (!q.getColumn(3).isNull()) r.last_synced_at = q.getColumn(3).getInt64();
+    return r;
+}
+
 int PlaylistRepository::refreshSmart(const std::string& playlist_id) {
     SmartPlaylistFields f;
     {

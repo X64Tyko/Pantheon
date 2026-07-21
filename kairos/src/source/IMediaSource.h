@@ -126,4 +126,46 @@ public:
                                const WritebackFields& /*fields*/) {
         return false;
     }
+
+    // ── List push (write) ────────────────────────────────────────────────────
+    // Creating/updating a remote playlist or collection FROM a local Pantheon
+    // playlist — the opposite direction from browsePlaylists/browseListItems
+    // above. Every item here must already exist in the target source's
+    // library (external_id resolved via SourceRepository::resolveExternalId
+    // by the caller) — none of these calls can create a library item, only
+    // reference one. Default: unsupported, same discipline as pushMetadata.
+    //
+    // A single item to push — external_id is the *target source's* id for
+    // this item (not Pantheon's kairos_id), already resolved by the caller.
+    struct PushListItem { std::string item_type; std::string external_id; };
+
+    // Creates a brand-new remote playlist or collection containing `items`
+    // (in order), returning its external_id — nullopt on failure or if this
+    // source/kind combination isn't supported for push. external_lib_id is
+    // only meaningful for kind="collection" (Plex collections are scoped to
+    // a library section); ignored otherwise.
+    virtual std::optional<std::string> createRemoteList(
+        const std::string& /*title*/, const std::string& /*kind*/,
+        const std::vector<PushListItem>& /*items*/,
+        const std::string& /*external_lib_id*/) {
+        return std::nullopt;
+    }
+
+    // Adds items to an already-existing remote list (by its external_id).
+    virtual bool addRemoteListItems(const std::string& /*list_external_id*/,
+                                     const std::string& /*kind*/,
+                                     const std::vector<PushListItem>& /*items*/) {
+        return false;
+    }
+
+    // Removes items from an already-existing remote list. Implementations
+    // that need a per-entry id to remove by (Jellyfin/Emby/Plex playlists —
+    // see PlexSource.cpp's comment on playlistItemID) resolve it internally
+    // by fetching the list's current items first; callers only ever deal in
+    // the same external_id used everywhere else.
+    virtual bool removeRemoteListItems(const std::string& /*list_external_id*/,
+                                        const std::string& /*kind*/,
+                                        const std::vector<PushListItem>& /*items*/) {
+        return false;
+    }
 };

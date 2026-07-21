@@ -111,6 +111,21 @@ std::string personNames(const json& people, const std::string& role) {
     return out.dump();
 }
 
+// Query-param encoding for list-push (createRemoteList etc.) — every other
+// write in this file either has no query params with unsafe characters
+// (item ids are plain GUIDs) or sends a JSON body instead, but a playlist/
+// collection title is free text and needs real encoding. Mirrors PlexSource
+// .cpp's identical plexUrlEncode rather than reaching into httplib::detail.
+std::string urlEncode(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+            out += static_cast<char>(c);
+        else { char buf[4]; snprintf(buf, sizeof(buf), "%%%02X", c); out += buf; }
+    }
+    return out;
+}
+
 // Jellyfin's image-upload endpoint (pushMetadata below) takes raw image
 // bytes base64-encoded in the request body, unlike every other write in this
 // file which POSTs plain JSON.
@@ -888,4 +903,119 @@ std::vector<BrowseContentItem> JellyfinBaseSource::browseCollectionItems(const s
                   << "] parse error (browse collection items): " << e.what() << '\n';
     }
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// List push (write)
+// ---------------------------------------------------------------------------
+
+std::optional<std::string> JellyfinBaseSource::createRemoteList(
+    const std::string& title, const std::string& kind,
+    const std::vector<IMediaSource::PushListItem>& items,
+    const std::string& /*external_lib_id*/) {
+    if (items.empty()) return std::nullopt;
+
+    std::string ids;
+    for (size_t i = 0; i < items.size(); ++i) { if (i) ids += ","; ids += items[i].external_id; }
+
+    httplib::Result res;
+    if (kind == "collection") {
+        res = client_.Post(("/Collections?name=" + urlEncode(title) + "&ids=" + ids).c_str());
+    } else {
+        json body = {{"Name", title}, {"Ids", json::array()}, {"UserId", user_id_}, {"MediaType", "Video"}};
+        for (const auto& item : items) body["Ids"].push_back(item.external_id);
+        res = client_.Post("/Playlists", body.dump(), "application/json");
+    }
+    if (!res || (res->status != 200 && res->status != 204)) {
+        std::cerr << "[" << sourceType() << ":" << source_id_ << "] createRemoteList failed (" << kind
+                  << " \"" << title << "\"): "
+                  << (res ? "HTTP " + std::to_string(res->status) : httplib::to_string(res.error())) << '\n';
+        return std::nullopt;
+    }
+    try {
+        auto j = json::parse(res->body);
+        std::string id = j.value("Id", "");
+        if (!id.empty()) return id;
+    } catch (const json::exception& e) {
+        std::cerr << "[" << sourceType() << ":" << source_id_
+                  << "] createRemoteList: couldn't parse response: " << e.what() << '\n';
+    }
+    return std::nullopt;
+}
+
+bool JellyfinBaseSource::addRemoteListItems(const std::string& list_external_id, const std::string& kind,
+                                             const std::vector<IMediaSource::PushListItem>& items) {
+    if (items.empty()) return true;
+    std::string ids;
+    for (size_t i = 0; i < items.size(); ++i) { if (i) ids += ","; ids += items[i].external_id; }
+
+    const std::string path = (kind == "collection")
+        ? "/Collections/" + list_external_id + "/Items?ids=" + ids
+        : "/Playlists/"   + list_external_id + "/Items?ids=" + ids + "&userId=" + user_id_;
+    auto res = client_.Post(path.c_str());
+    if (!res || (res->status != 200 && res->status != 204)) {
+        std::cerr << "[" << sourceType() << ":" << source_id_ << "] addRemoteListItems failed (" << kind
+                  << " " << list_external_id << ")\n";
+        return false;
+    }
+    return true;
+}
+
+bool JellyfinBaseSource::removeRemoteListItems(const std::string& list_external_id, const std::string& kind,
+                                                const std::vector<IMediaSource::PushListItem>& items) {
+    if (items.empty()) return true;
+
+    // Collections remove by the item's own id directly.
+    if (kind == "collection") {
+        std::string ids;
+        for (size_t i = 0; i < items.size(); ++i) { if (i) ids += ","; ids += items[i].external_id; }
+        auto res = client_.Delete(("/Collections/" + list_external_id + "/Items?ids=" + ids).c_str());
+        if (!res || (res->status != 200 && res->status != 204)) {
+            std::cerr << "[" << sourceType() << ":" << source_id_ << "] removeRemoteListItems failed (collection "
+                      << list_external_id << ")\n";
+            return false;
+        }
+        return true;
+    }
+
+    // Playlists need each item's distinct PlaylistItemId (not its own Id) to
+    // remove — only obtainable by fetching the playlist's current items
+    // first (see IMediaSource::removeRemoteListItems's doc comment).
+    auto res = get("/Playlists/" + list_external_id + "/Items?userId=" + user_id_);
+    if (!res || res->status != 200) {
+        std::cerr << "[" << sourceType() << ":" << source_id_
+                  << "] removeRemoteListItems: couldn't fetch playlist items for " << list_external_id << '\n';
+        return false;
+    }
+    std::unordered_map<std::string, std::string> entryIdById;
+    try {
+        auto j = json::parse(res->body);
+        for (const auto& entry : j.value("Items", json::array())) {
+            std::string id       = entry.value("Id", "");
+            std::string entry_id = entry.value("PlaylistItemId", "");
+            if (!id.empty() && !entry_id.empty()) entryIdById[id] = entry_id;
+        }
+    } catch (const json::exception& e) {
+        std::cerr << "[" << sourceType() << ":" << source_id_
+                  << "] removeRemoteListItems: parse error: " << e.what() << '\n';
+        return false;
+    }
+
+    std::string entryIds;
+    bool ok = true;
+    for (const auto& item : items) {
+        auto it = entryIdById.find(item.external_id);
+        if (it == entryIdById.end()) { ok = false; continue; }
+        if (!entryIds.empty()) entryIds += ",";
+        entryIds += it->second;
+    }
+    if (entryIds.empty()) return ok;
+
+    auto del = client_.Delete(("/Playlists/" + list_external_id + "/Items?entryIds=" + entryIds).c_str());
+    if (!del || (del->status != 200 && del->status != 204)) {
+        std::cerr << "[" << sourceType() << ":" << source_id_ << "] removeRemoteListItems failed (playlist "
+                  << list_external_id << ")\n";
+        ok = false;
+    }
+    return ok;
 }

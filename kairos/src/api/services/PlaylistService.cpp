@@ -2,6 +2,7 @@
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "PlexSyncHelper.h"
+#include "ListPushHelper.h"
 #include "../../db/Database.h"
 #include "../../db/PlaylistRepository.h"
 #include "../../db/PlaylistSerializer.h"
@@ -253,6 +254,27 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 		try {
 			int synced = PlaylistRepository(db_).refreshSmart(id);
 			route::ok(res, json{{"synced", synced}}.dump());
+		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
+	});
+
+	// Pushes this playlist's items TO a remote Plex/Jellyfin/Emby playlist or
+	// collection — the write direction, symmetric with plex-sync/source-sync
+	// above (see ListPushHelper.cpp). Creates a new remote list the first
+	// time, reconciles (add/remove diff) on subsequent pushes to the same
+	// linked target.
+	svr.Post("/api/playlists/:id/push", [this](const Req& req, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			auto b = json::parse(req.body);
+			std::string source_id       = b.value("source_id", "");
+			std::string kind            = b.value("kind", "");
+			std::string title           = b.value("title", "");
+			std::string external_lib_id = b.value("external_lib_id", "");
+			if (source_id.empty() || (kind != "playlist" && kind != "collection")) {
+				route::err(res, 400, "source_id and kind ('playlist'|'collection') required"); return;
+			}
+			pushListToSource(res, id, source_id, kind, title, external_lib_id, db_, sync_);
 		} catch (const std::exception& e) { route::err(res, 400, e.what()); }
 	});
 

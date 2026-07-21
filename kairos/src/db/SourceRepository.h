@@ -78,6 +78,14 @@ public:
                                 const std::string& external_id,
                                 const std::string& item_type);
 
+    // Reverse of the above — resolve a Kairos internal ID to its source-
+    // native external_id, for pushing a local item to a specific remote
+    // source (see PlaylistPushService). Empty string if this item was never
+    // mapped from that source (nothing to push it as).
+    std::string resolveExternalId(const std::string& source_id,
+                                  const std::string& kairos_id,
+                                  const std::string& item_type);
+
     // Sample a raw file path for a given source (for path-mapping UI).
     std::optional<std::string> samplePath(const std::string& source_id);
 
