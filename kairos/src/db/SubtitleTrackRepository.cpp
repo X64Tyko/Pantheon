@@ -2,6 +2,7 @@
 #include "Database.h"
 #include "DbHelpers.h"
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <nlohmann/json.hpp>
 
 SubtitleTrackRepository::SubtitleTrackRepository(Database& db) : db_(db) {}
 
@@ -53,6 +54,46 @@ void SubtitleTrackRepository::syncSubtitleTracks(const std::string& media_type,
         ins.bind(1, t.subtitle_id);
         ins.bind(2, media_type);
         ins.bind(3, media_id);
+        ins.bind(4, t.file_path);
+        ins.bind(5, t.language);
+        ins.bind(6, t.forced ? 1 : 0);
+        ins.bind(7, t.sdh ? 1 : 0);
+        ins.bind(8, t.title);
+        ins.bind(9, source);
+        ins.exec();
+        ins.reset();
+    }
+    txn.commit();
+}
+
+void SubtitleTrackRepository::syncSubtitleTracksBatch(const std::string& media_type,
+                                                        const std::vector<std::string>& media_ids,
+                                                        const std::string& source,
+                                                        std::vector<SubtitleTrack> tracks) {
+    if (media_ids.empty()) return;
+
+    SQLite::Transaction txn(db_.get());
+
+    { SQLite::Statement d(db_.get(), R"(
+          DELETE FROM subtitle_track
+          WHERE media_type = ? AND source = ?
+            AND media_id IN (SELECT value FROM json_each(?))
+      )");
+      d.bind(1, media_type);
+      d.bind(2, source);
+      d.bind(3, nlohmann::json(media_ids).dump());
+      d.exec(); }
+
+    SQLite::Statement ins(db_.get(), R"(
+        INSERT INTO subtitle_track (subtitle_id, media_type, media_id, file_path,
+                                     language, forced, sdh, title, source)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    )");
+    for (auto& t : tracks) {
+        if (t.subtitle_id.empty()) t.subtitle_id = db::generateId();
+        ins.bind(1, t.subtitle_id);
+        ins.bind(2, media_type);
+        ins.bind(3, t.media_id);
         ins.bind(4, t.file_path);
         ins.bind(5, t.language);
         ins.bind(6, t.forced ? 1 : 0);

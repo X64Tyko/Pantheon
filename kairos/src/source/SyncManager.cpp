@@ -2393,15 +2393,27 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
         for (auto& t : workers) t.join();
     }
 
-    // ── Write ────────────────────────────────────────────────────────────────
-    SubtitleTrackRepository sub_repo(db_);
+    // ── Compute (in memory, no DB I/O) ─────────────────────────────────────────
+    struct ProbeUpdate {
+        std::string kairos_id;
+        std::string resolution_label;
+        std::string audio_languages;
+        std::string embedded_subs;
+        int64_t     duration_ms;
+    };
+    std::vector<std::string> episode_ids, movie_ids;
+    std::vector<SubtitleTrack> episode_tracks, movie_tracks;
+    std::vector<ProbeUpdate> episode_updates, movie_updates;
     int with_ext_subs = 0, media_probed = 0;
+
     for (size_t i = 0; i < items.size(); ++i) {
         const auto& it = items[i];
+        auto& id_list = it.media_type == "movie" ? movie_ids : episode_ids;
+        id_list.push_back(it.kairos_id);
 
-        std::vector<SubtitleTrack> tracks;
         const auto& dir_result = dir_results[dir_index.at(it.mapped_dir)];
         if (auto match = dir_result.find(it.video_stem); match != dir_result.end()) {
+            auto& track_list = it.media_type == "movie" ? movie_tracks : episode_tracks;
             const std::string unmapped_dir = pathutil::parentDir(it.unmapped_path);
             for (auto& ext : match->second) {
                 SubtitleTrack t;
@@ -2412,19 +2424,14 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
                 t.forced     = ext.forced;
                 t.sdh        = ext.sdh;
                 t.title      = ext.title;
-                tracks.push_back(std::move(t));
+                track_list.push_back(std::move(t));
             }
+            ++with_ext_subs;
         }
-        sub_repo.syncSubtitleTracks(it.media_type, it.kairos_id, "file", tracks);
-        if (!tracks.empty()) ++with_ext_subs;
 
         if (!probe_results[i]) continue; // not re-probed this pass
         ++media_probed;
         const auto& probed = *probe_results[i];
-
-        const std::string new_resolution_label = bucketResolutionLabel(probed.video.height);
-        const std::string new_audio_languages  = nlohmann::json(probed.langs.audio).dump();
-        const std::string new_embedded_subs     = nlohmann::json(probed.langs.subtitle).dump();
 
         int64_t new_duration_ms = it.duration_ms;
         if (!durationLooksValid(new_duration_ms)) {
@@ -2438,17 +2445,60 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             }
         }
 
-        const char* table = it.media_type == "movie" ? "movie" : "episode";
-        const char* idcol = it.media_type == "movie" ? "movie_id" : "episode_id";
-        SQLite::Statement upd(sync_db_, std::string("UPDATE ") + table +
-            " SET duration_ms = ?, resolution_label = ?, audio_languages = ?, embedded_subtitle_languages = ? "
-            "WHERE " + idcol + " = ?");
-        upd.bind(1, new_duration_ms);
-        upd.bind(2, new_resolution_label);
-        upd.bind(3, new_audio_languages);
-        upd.bind(4, new_embedded_subs);
-        upd.bind(5, it.kairos_id);
-        upd.exec();
+        auto& updates = it.media_type == "movie" ? movie_updates : episode_updates;
+        updates.push_back(ProbeUpdate{
+            it.kairos_id,
+            bucketResolutionLabel(probed.video.height),
+            nlohmann::json(probed.langs.audio).dump(),
+            nlohmann::json(probed.langs.subtitle).dump(),
+            new_duration_ms,
+        });
+    }
+
+    // ── Write (two batched transactions instead of thousands of tiny ones) ────
+    // Previously this issued one autocommit UPDATE per file on sync_db_ plus
+    // one delete+insert transaction per file on the primary connection — on a
+    // large library, thousands of individual write-lock acquisitions ping-
+    // ponging between two connections, which made "database is locked" far
+    // more likely under any concurrent write (e.g. an API-triggered scraper
+    // refresh) and made this pass slow in its own right.
+    SubtitleTrackRepository sub_repo(db_);
+    if (!episode_ids.empty())
+        sub_repo.syncSubtitleTracksBatch("episode", episode_ids, "file", std::move(episode_tracks));
+    if (!movie_ids.empty())
+        sub_repo.syncSubtitleTracksBatch("movie", movie_ids, "file", std::move(movie_tracks));
+
+    {
+        SQLite::Transaction probe_txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
+        if (!episode_updates.empty()) {
+            SQLite::Statement upd(sync_db_,
+                "UPDATE episode SET duration_ms = ?, resolution_label = ?, "
+                "audio_languages = ?, embedded_subtitle_languages = ? WHERE episode_id = ?");
+            for (auto& u : episode_updates) {
+                upd.bind(1, u.duration_ms);
+                upd.bind(2, u.resolution_label);
+                upd.bind(3, u.audio_languages);
+                upd.bind(4, u.embedded_subs);
+                upd.bind(5, u.kairos_id);
+                upd.exec();
+                upd.reset();
+            }
+        }
+        if (!movie_updates.empty()) {
+            SQLite::Statement upd(sync_db_,
+                "UPDATE movie SET duration_ms = ?, resolution_label = ?, "
+                "audio_languages = ?, embedded_subtitle_languages = ? WHERE movie_id = ?");
+            for (auto& u : movie_updates) {
+                upd.bind(1, u.duration_ms);
+                upd.bind(2, u.resolution_label);
+                upd.bind(3, u.audio_languages);
+                upd.bind(4, u.embedded_subs);
+                upd.bind(5, u.kairos_id);
+                upd.exec();
+                upd.reset();
+            }
+        }
+        probe_txn.commit();
     }
 
     std::cout << "[sync] media probe done: " << source_id

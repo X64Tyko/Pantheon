@@ -2080,7 +2080,11 @@ void Database::configure(SQLite::Database& db) const {
     db.exec("PRAGMA foreign_keys = ON");
     db.exec("PRAGMA synchronous  = NORMAL");
     db.exec("PRAGMA cache_size   = -8000");
-    db.exec("PRAGMA busy_timeout = 5000");
+    // Long-running sync writes many rows on its own connection (see
+    // openConnection's 60s timeout) while API-triggered writers (scraper
+    // match/refresh, etc.) share this connection — 5s was too tight and
+    // sync's post-pass would throw "database is locked" under contention.
+    db.exec("PRAGMA busy_timeout = 20000");
 }
 
 SQLite::Database Database::openConnection(int busy_timeout_ms) const {

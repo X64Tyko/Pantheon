@@ -23,6 +23,19 @@ public:
                              const std::string& source,
                              std::vector<SubtitleTrack> tracks);
 
+    // Same replace-semantics as syncSubtitleTracks, batched across every id
+    // in media_ids in a single transaction — one bulk DELETE (via json_each)
+    // plus one bulk INSERT instead of one transaction per id. Used by
+    // SyncManager's post-pass so a full library scan doesn't open a write
+    // transaction per file. `tracks` holds only the ids that currently have
+    // sidecar tracks; every id in media_ids is still cleared first, so ids
+    // with none simply end up with no rows (same as calling
+    // syncSubtitleTracks(..., {}) for them individually).
+    void syncSubtitleTracksBatch(const std::string& media_type,
+                                  const std::vector<std::string>& media_ids,
+                                  const std::string& source,
+                                  std::vector<SubtitleTrack> tracks);
+
 private:
     Database& db_;
 };
