@@ -3,6 +3,11 @@ name: Kairos CI
 on:
   push:
     branches: [master]
+    # GitHub ignores `paths` entirely for tag pushes (it only applies to
+    # branch pushes), so a `vX.Y.Z` release tag always builds+publishes a
+    # versioned image regardless of what changed — this is what lets a
+    # user's compose.yml pin to a stable release instead of just `:latest`.
+    tags: ["v*.*.*"]
     paths:
       - "kairos/**"
       - "shared/**"
@@ -16,6 +21,11 @@ on:
       - "hades/src/index.css"
       - "hades/scripts/generate-tv-tokens.mjs"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional version tag to also publish (e.g. v0.2.0) — for backfilling a release whose tag push predates a CI fix"
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -147,6 +157,12 @@ jobs:
           TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA::7}"
           if [ "${{ github.ref }}" = "refs/heads/master" ]; then
             TAGS="$TAGS ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          fi
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAGS="$TAGS ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          fi
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            TAGS="$TAGS ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.release_tag }}"
           fi
           echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
 

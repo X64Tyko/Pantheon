@@ -3,10 +3,20 @@ name: Build & publish Hades image
 on:
   push:
     branches: [master]
+    # GitHub ignores `paths` entirely for tag pushes (it only applies to
+    # branch pushes), so a `vX.Y.Z` release tag always builds+publishes a
+    # versioned image regardless of what changed — this is what lets a
+    # user's compose.yml pin to a stable release instead of just `:latest`.
+    tags: ["v*.*.*"]
     paths:
       - "hades/**"
       - ".github/workflows/docker-hades.yml"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional version tag to also publish (e.g. v0.2.0) — for backfilling a release whose tag push predates a CI fix"
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -99,6 +109,8 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
+            type=ref,event=tag
+            type=raw,value=${{ inputs.release_tag }},enable=${{ inputs.release_tag != '' }}
 
       - name: Create and push manifest
         working-directory: /tmp/digests
