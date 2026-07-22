@@ -27,7 +27,7 @@ More in the full gallery — chapter review, per-account sync, multi-user & pare
 
 ## Alpha Release Notice
 
-Pantheon is currently in **Alpha**. This is a source-available engineering artifact. We do not accept unsolicited pull requests. If you encounter an issue, please read our [Contributing Guidelines](CONTRIBUTING.md), check the [Roadmap](docs/ROADMAP.md), and use the [Issue Template](.github/ISSUE_TEMPLATE/bug_report.yml).
+Pantheon is currently **Alpha Complete**. This is a source-available engineering artifact. We do not accept unsolicited pull requests. If you encounter an issue, please read our [Contributing Guidelines](CONTRIBUTING.md), check the [Roadmap](docs/ROADMAP.md), and use the [Issue Template](.github/ISSUE_TEMPLATE/bug_report.yml).
 
 ---
 
@@ -286,7 +286,7 @@ Full endpoint-by-endpoint reference: **[x64tyko.github.io/Pantheon/API.html](htt
 
 ## Status
 
-Alpha.
+Alpha Complete.
 
 | Area | State   |
 |---|---------|
@@ -307,7 +307,7 @@ Alpha.
 | Media player | Working |
 | Chromecast (browser) | Working <experimental> |
 | Chromecast relay (pantheon-relay) | Working |
-| Roku native app (pantheon-roku) | Code-complete, untested on hardware |
+| Roku native app (pantheon-roku) | Verified functional on real hardware; pending capability-manifest update + retest before public release |
 | Multi-User & Parental Controls | Working <experimental> |
 | HDHomeRun emulation | Working |
 | Log Centralization | Working |

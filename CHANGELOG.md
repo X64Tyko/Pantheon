@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-22
+
+*Alpha complete — every Phase 1 item in [docs/ROADMAP.md](docs/ROADMAP.md) is now checked off.*
+
 ### Added
 - **API Reference**: Published a full endpoint-by-endpoint reference for the Kairos admin/management API at [docs/API.html](https://x64tyko.github.io/Pantheon/API.html), covering all ~185 routes across sources, libraries, channels, scheduling, scrapers, and more.
 - **Cross-Source Merge**: Manual link/merge for duplicate shows and movies discovered across Plex/Jellyfin/local sources; the detail panel now shows all linked sources.

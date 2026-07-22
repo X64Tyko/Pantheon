@@ -191,29 +191,29 @@ void SyncManager::syncAll() {
     DLOG << "[sync] === phase 2b: specials scan ===\n";
     scanSpecialsForEligibleShows();
 
-    // Phase 3: chapter sync.
-    DLOG << "[sync] === phase 3: chapter sync ===\n";
-    for (const auto& src : sources_) {
-        if (src->isSupported())
-            syncChaptersFromFiles(src->sourceId());
-    }
-
-    // Phase 4: media probe (duration/resolution/languages) + subtitle sidecar scan.
-    DLOG << "[sync] === phase 4: media probe ===\n";
+    // Phase 3: media probe (duration/resolution/languages) + subtitle sidecar scan.
+    DLOG << "[sync] === phase 3: media probe ===\n";
     for (const auto& src : sources_) {
         if (src->isSupported())
             syncMediaProbeFromFiles(src->sourceId());
     }
 
-    // Phase 5: smart playlist refresh — once per full cycle (not per-source,
+    // Phase 4: smart playlist refresh — once per full cycle (not per-source,
     // unlike syncPlexLinks: a smart playlist isn't tied to any one source),
     // after every source's content is freshly ingested/matched so filters
     // see up-to-date data.
-    DLOG << "[sync] === phase 5: smart playlist refresh ===\n";
+    DLOG << "[sync] === phase 4: smart playlist refresh ===\n";
     refreshSmartPlaylists();
 
     std::cout << "[sync] all sources done (total "
               << elapsedMs(t_total, std::chrono::steady_clock::now()) << "ms)" << std::endl;
+	
+	// Phase 5: chapter sync last because it's going to be the most time consuming.
+	DLOG << "[sync] === phase 5: chapter sync ===\n";
+	for (const auto& src : sources_) {
+		if (src->isSupported())
+			syncChaptersFromFiles(src->sourceId());
+	}
 }
 
 void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live,
