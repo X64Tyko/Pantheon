@@ -142,7 +142,7 @@ std::vector<Episode> ContentRepository::getEpisodes(const std::string& show_id,
 std::optional<Movie> ContentRepository::getMovie(const std::string& movie_id) {
     SQLite::Statement q(db_.get(), R"(
         SELECT movie_id, title, content_rating, file_path, duration_ms, year,
-               overview, tagline, studio, director, genres, thumb, art, imdb_id, tmdb_id
+               overview, tagline, studio, director, genres, tags, thumb, art, imdb_id, tmdb_id
         FROM movie WHERE movie_id = ?
     )");
     q.bind(1, movie_id);
@@ -160,10 +160,11 @@ std::optional<Movie> ContentRepository::getMovie(const std::string& movie_id) {
     m.studio    = q.getColumn(8).getString();
     m.director  = q.getColumn(9).getString();
     m.genres    = q.getColumn(10).getString();
-    m.thumb     = q.getColumn(11).getString();
-    m.art       = q.getColumn(12).getString();
-    m.imdb_id   = q.getColumn(13).getString();
-    m.tmdb_id   = q.getColumn(14).getString();
+    m.tags      = q.getColumn(11).getString();
+    m.thumb     = q.getColumn(12).getString();
+    m.art       = q.getColumn(13).getString();
+    m.imdb_id   = q.getColumn(14).getString();
+    m.tmdb_id   = q.getColumn(15).getString();
     return m;
 }
 
@@ -453,6 +454,9 @@ std::vector<std::string> ContentRepository::getMetadataValues(const std::string&
     if (field == "genre") {
         if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(NULLIF(s.genres,'')) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
         if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.genres,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
+    } else if (field == "tag") {
+        if (type != "movie") collect("SELECT DISTINCT je.value FROM show s, json_each(NULLIF(s.tags,'')) je WHERE je.value != ''" + show_lib  + " ORDER BY je.value", lib);
+        if (type != "show")  collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.tags,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
     } else if (field == "studio") {
         if (type != "movie") collect("SELECT DISTINCT studio FROM show s WHERE studio != ''"  + show_lib  + " ORDER BY studio", lib);
         if (type != "show")  collect("SELECT DISTINCT studio FROM movie m WHERE studio != ''" + movie_lib + " ORDER BY studio", lib);
@@ -767,7 +771,8 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
                COUNT(e.episode_id) AS episode_count,
                s.labels, s.network, s.actors, s.countries, s.collections,
                s.match_status, s.match_score, s.match_confirmed, s.skip_scraping,
-               s.find_specials, s.episode_display_order, s.folder_path, s.original_title
+               s.find_specials, s.episode_display_order, s.folder_path, s.original_title,
+               s.tags
         FROM show s
         LEFT JOIN episode e ON e.show_id = s.show_id
         WHERE s.show_id = ?
@@ -807,6 +812,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
     d.episode_display_order = q.getColumn(27).getString();
     const std::string stored_folder_path = q.getColumn(28).getString();
     d.original_title        = q.getColumn(29).getString();
+    d.tags                  = q.getColumn(30).getString();
 
     {
         SQLite::Statement sm(db_.get(), R"(
@@ -850,6 +856,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
         applyStr(ov, "thumb",                   d.thumb);
         applyStr(ov, "art",                     d.art);
         applyStr(ov, "genres",                  d.genres);
+        applyStr(ov, "tags",                    d.tags);
         applyStr(ov, "labels",                  d.labels);
         applyStr(ov, "network",                 d.network);
         applyStr(ov, "actors",                  d.actors);
@@ -894,7 +901,8 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
                overview, tagline, studio, director, genres, thumb, art,
                imdb_id, tmdb_id, audience_rating, locked,
                labels, actors, countries, collections, release_date,
-               file_path, match_status, match_score, match_confirmed, skip_scraping, original_title, writer
+               file_path, match_status, match_score, match_confirmed, skip_scraping, original_title, writer,
+               tags
         FROM movie WHERE movie_id = ?
     )");
     q.bind(1, movie_id);
@@ -930,6 +938,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
     d.skip_scraping   = q.getColumn(25).getInt() != 0;
     d.original_title  = q.getColumn(26).getString();
     d.writer          = q.getColumn(27).getString();
+    d.tags            = q.getColumn(28).getString();
 
     SQLite::Statement sm(db_.get(), R"(
         SELECT sm.external_id, sm.source_id, ms.base_url
@@ -970,6 +979,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
         applyStr(ov, "thumb",          d.thumb);
         applyStr(ov, "art",            d.art);
         applyStr(ov, "genres",         d.genres);
+        applyStr(ov, "tags",           d.tags);
         applyStr(ov, "labels",         d.labels);
         applyStr(ov, "actors",         d.actors);
         applyStr(ov, "countries",      d.countries);

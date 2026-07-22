@@ -19,6 +19,7 @@ struct Movie {
     std::string    director;
     std::string    writer;          // first TMDB crew credit with job "Writer" (fallback "Screenplay")
     std::string    genres;          // JSON array string
+    std::string    tags = "[]";     // JSON array: scraper-derived keywords/themes — see Show.h's identical field
     std::string    thumb;
     std::string    art;
     std::string    imdb_id;

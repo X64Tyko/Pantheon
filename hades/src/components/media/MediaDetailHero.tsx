@@ -63,7 +63,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, play
   const media = useMediaDetail({ id, content_type, discoverResult })
   const {
     show, movie, loading, detail, contentType,
-    posterUrl, backdropUrl, title, year, overview, genres, rating,
+    posterUrl, backdropUrl, title, year, overview, genres, tags, rating,
     seasonsWithEpisodes, languages, videoInfo, folderName, fileName,
     setFocusedEpisode,
   } = media
@@ -131,6 +131,18 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, play
         <div className={styles.genreRow}>
           {genres.map(g => (
             <span key={g} className={styles.genreChip}>{g}</span>
+          ))}
+        </div>
+      )}
+
+      {/* Tags — scraper-derived keywords/themes (TMDB keywords, AniList tags,
+          Wikidata main subject), distinct from genres: more numerous and more
+          specific (e.g. "Christmas", "time travel"), so a lighter/smaller
+          chip style keeps them from competing visually with genres. */}
+      {tags.length > 0 && (
+        <div className={styles.tagRow}>
+          {tags.map(t => (
+            <span key={t} className={styles.tagChip}>{t}</span>
           ))}
         </div>
       )}

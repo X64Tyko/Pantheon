@@ -159,6 +159,18 @@
   letter-spacing: 0.05em;
 }
 
+.tagRow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.tagChip {
+  font-family: var(--hds-font-mono-brand);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: var(--hds-radius-chip-sm);
+  background: transparent;
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt-3, var(--hds-txt-2));
+  letter-spacing: 0.04em;
+}
+
 .overview {
   font-family: var(--hds-font-mono-brand);
   font-size: 11.5px;

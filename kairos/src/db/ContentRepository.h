@@ -48,7 +48,7 @@ struct SeasonRow {
 
 struct ShowDetail {
     std::string show_id, title, original_title, content_rating, overview, studio, status;
-    std::string genres, thumb, art, imdb_id, tvdb_id, tmdb_id;
+    std::string genres, tags, thumb, art, imdb_id, tvdb_id, tmdb_id;
     std::string originally_available_at;
     std::optional<int>    year;
     std::optional<double> audience_rating;
@@ -144,7 +144,7 @@ struct MovieDetail {
     std::optional<double> audience_rating;
     bool locked = false;
     bool skip_scraping = false;
-    std::string overview, tagline, studio, director, writer, genres, thumb, art, imdb_id, tmdb_id, original_title;
+    std::string overview, tagline, studio, director, writer, genres, tags, thumb, art, imdb_id, tmdb_id, original_title;
     std::string labels, actors, countries, collections;
     std::string external_id, source_id, source_base_url;
     std::string           file_path; // admin-facing "source file" display

@@ -20,6 +20,7 @@ const std::unordered_map<std::string, FieldSpec>& fieldRegistry() {
         {"source",          {{"is", "is_not"}}},
         {"title",           {{"contains", "does_not_contain", "begins_with", "ends_with", "is", "is_not"}}},
         {"genre",           {{"is", "is_not", "contains", "does_not_contain"}}},
+        {"tag",             {{"is", "is_not", "contains", "does_not_contain"}}},
         {"year",            {{"is", "lt", "gt"}}},
         {"content_rating",  {{"is", "is_not", "contains", "does_not_contain"}}},
         {"studio",          {{"contains", "does_not_contain", "begins_with", "ends_with", "is", "is_not"}}},
@@ -314,16 +315,16 @@ struct Compiler {
 
     std::string col(const std::string& name) const { return alias + "." + name; }
 
-    // JSON-array fields: genre/label/actor/country/collection.
+    // JSON-array fields: genre/tag/label/actor/country/collection.
     std::string jsonCol(const std::string& field) const {
         static const std::unordered_map<std::string, std::string> map = {
-            {"genre", "genres"}, {"label", "labels"}, {"actor", "actors"},
+            {"genre", "genres"}, {"tag", "tags"}, {"label", "labels"}, {"actor", "actors"},
             {"country", "countries"}, {"collection", "collections"},
         };
         return map.at(field);
     }
     bool isJsonField(const std::string& field) const {
-        return field == "genre" || field == "label" || field == "actor" || field == "country" || field == "collection";
+        return field == "genre" || field == "tag" || field == "label" || field == "actor" || field == "country" || field == "collection";
     }
 
     // Every fragment returned here is wrapped in its own parens by the
@@ -562,7 +563,7 @@ struct Compiler {
             parts.push_back(col("director") + " LIKE '%' || ? || '%'");
             parts.push_back(col("writer") + " LIKE '%' || ? || '%'");
         }
-        for (const char* jc : {"labels", "genres", "actors", "countries", "collections"}) {
+        for (const char* jc : {"labels", "genres", "tags", "actors", "countries", "collections"}) {
             std::string tag = std::string("fw_") + jc;
             parts.push_back("EXISTS (SELECT 1 FROM json_each(NULLIF(" + col(jc) + ",'')) " + tag +
                              " WHERE " + tag + ".value LIKE '%' || ? || '%')");

@@ -334,6 +334,7 @@ export interface ShowDetail {
   studio:                  string
   status:                  string
   genres:                  string[]
+  tags:                    string[]
   thumb:                   string
   art:                     string
   imdb_id:                 string
@@ -371,6 +372,7 @@ export interface MovieDetail {
   director:         string
   writer:           string
   genres:           string[]
+  tags:             string[]
   thumb:            string
   art:              string
   imdb_id:          string

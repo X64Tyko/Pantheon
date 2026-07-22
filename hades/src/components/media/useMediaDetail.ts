@@ -105,6 +105,7 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   const showOverview = discoverResult?.overview ?? detail?.overview ?? ''
   const overview      = focusedEpisode ? focusedEpisode.overview : showOverview
   const genres   = detail?.genres ?? []
+  const tags     = detail?.tags ?? []
   const rating   = detail?.audience_rating
 
   // 'season' (default): unchanged — one shelf per show.seasons entry, season 0
@@ -154,7 +155,7 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   return {
     show, movie, loading, episodes, languages, videoInfo,
     detail, contentType, posterUrl, backdropUrl,
-    title, year, overview, genres, rating, seasonsWithEpisodes,
+    title, year, overview, genres, tags, rating, seasonsWithEpisodes,
     folderName, fileName, matchStatus, matchScore, refetch,
     focusedEpisode, setFocusedEpisode,
   }

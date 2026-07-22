@@ -129,6 +129,7 @@
       <tr><th>Field</th><th>Matches</th><th>Value</th></tr>
       <tr><td class="field"><code>title</code></td><td>Title text</td><td>text</td></tr>
       <tr><td class="field"><code>genre</code></td><td>Genre tags</td><td>text</td></tr>
+      <tr><td class="field"><code>tag</code></td><td>Scraper-derived keywords/themes (TMDB keywords, AniList tags, Wikidata main subject — e.g. "christmas", "time travel")</td><td>text</td></tr>
       <tr><td class="field"><code>year</code></td><td>Release year</td><td>number</td></tr>
       <tr><td class="field"><code>decade</code></td><td>Release decade</td><td><code>2020s</code>, <code>2010s</code>, … <code>1930s</code></td></tr>
       <tr><td class="field"><code>content_rating</code> <span class="small">(alias: <code>rating</code>)</span></td><td>Content rating (PG-13, TV-MA, …)</td><td>text</td></tr>
@@ -214,6 +215,7 @@
       <div class="ex"><code>studio:*A24* -content_rating:R</code><span>A24-produced, excluding R-rated.</span></div>
       <div class="ex"><code>added:&lt;30 -genre:documentary</code><span>Added in the last 30 days, excluding documentaries.</span></div>
       <div class="ex"><code>audio_language:jpn subtitle_language:eng</code><span>Japanese audio with English subtitles available.</span></div>
+      <div class="ex"><code>tag:christmas</code><span>A seasonal shelf that auto-populates from scraper-tagged content — no manual per-item labeling needed. Wire it into a smart playlist's filter and set an active window (Home shelf settings) to only show it in December.</span></div>
     </div>
   </section>
 

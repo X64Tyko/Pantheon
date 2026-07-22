@@ -2062,6 +2062,16 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE playlist ADD COLUMN poster_source TEXT NOT NULL DEFAULT '';
 )SQL" }
 
+// ── v90: scraper-derived tags (TMDB keywords, AniList tags, etc.) — a JSON
+//         array column mirroring `genres`, but distinct from `labels`
+//         (source-synced Plex/Jellyfin user tags). Owned by ScraperManager's
+//         applyShowMetadata/applyMovieMetadata like genres, filterable via
+//         the generic isJsonField() path in FilterExpr.cpp.
+,{ 90, R"SQL(
+    ALTER TABLE show  ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE movie ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

@@ -115,6 +115,7 @@ void applyShowMetadata(SQLite::Database& db, const std::string& kairos_id, const
             overview                = CASE WHEN locked THEN overview                ELSE COALESCE(NULLIF(?, ''), overview)                END,
             status                  = CASE WHEN locked THEN status                  ELSE COALESCE(NULLIF(?, ''), status)                  END,
             genres                  = CASE WHEN locked THEN genres                  ELSE COALESCE(NULLIF(?, '[]'), genres)                END,
+            tags                    = CASE WHEN locked THEN tags                    ELSE COALESCE(NULLIF(?, '[]'), tags)                  END,
             network                 = CASE WHEN locked THEN network                 ELSE COALESCE(NULLIF(?, ''), network)                 END,
             studio                  = CASE WHEN locked THEN studio                  ELSE COALESCE(NULLIF(?, ''), studio)                  END,
             content_rating          = CASE WHEN locked THEN content_rating          ELSE COALESCE(NULLIF(?, ''), content_rating)          END,
@@ -133,6 +134,7 @@ void applyShowMetadata(SQLite::Database& db, const std::string& kairos_id, const
     app.bind(i++, s.overview);
     app.bind(i++, s.status);
     app.bind(i++, s.genres);
+    app.bind(i++, s.tags);
     app.bind(i++, s.network);
     app.bind(i++, s.studio);
     app.bind(i++, s.content_rating);
@@ -154,6 +156,7 @@ void applyMovieMetadata(SQLite::Database& db, const std::string& kairos_id, cons
             overview        = CASE WHEN locked THEN overview        ELSE COALESCE(NULLIF(?, ''), overview)        END,
             tagline         = CASE WHEN locked THEN tagline         ELSE COALESCE(NULLIF(?, ''), tagline)         END,
             genres          = CASE WHEN locked THEN genres          ELSE COALESCE(NULLIF(?, '[]'), genres)        END,
+            tags            = CASE WHEN locked THEN tags            ELSE COALESCE(NULLIF(?, '[]'), tags)          END,
             studio          = CASE WHEN locked THEN studio          ELSE COALESCE(NULLIF(?, ''), studio)          END,
             director        = CASE WHEN locked THEN director        ELSE COALESCE(NULLIF(?, ''), director)        END,
             writer          = CASE WHEN locked THEN writer          ELSE COALESCE(NULLIF(?, ''), writer)          END,
@@ -172,6 +175,7 @@ void applyMovieMetadata(SQLite::Database& db, const std::string& kairos_id, cons
     app.bind(i++, m.overview);
     app.bind(i++, m.tagline);
     app.bind(i++, m.genres);
+    app.bind(i++, m.tags);
     app.bind(i++, m.studio);
     app.bind(i++, m.director);
     app.bind(i++, m.writer);

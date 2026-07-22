@@ -25,6 +25,7 @@ struct Show {
     std::string studio;
     std::string status;           // e.g. "Continuing", "Ended"
     std::string genres;           // JSON array string: ["Drama","Sci-Fi"]
+    std::string tags = "[]";      // JSON array: scraper-derived keywords/themes (TMDB keywords, AniList tags, Wikidata main subject) — distinct from `labels` (source-synced user tags)
     std::string thumb;            // Plex relative path or custom URL
     std::string art;              // backdrop
     std::string imdb_id;

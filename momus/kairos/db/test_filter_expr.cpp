@@ -118,17 +118,17 @@ protected:
     void insertMovie(const std::string& id, const std::string& title, const std::string& genres,
                       int year, double audience_rating, int64_t duration_ms,
                       const std::string& resolution_label = "", int64_t added_at = 0,
-                      const std::string& director = "") {
+                      const std::string& director = "", const std::string& tags = "[]") {
         SQLite::Statement s(db.get(), R"(
             INSERT INTO movie (movie_id, title, content_rating, file_path, duration_ms, year,
-                                genres, audience_rating, resolution_label, added_at, added_at_source, director)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                                genres, audience_rating, resolution_label, added_at, added_at_source, director, tags)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         )");
         s.bind(1, id); s.bind(2, title); s.bind(3, std::string(""));
         s.bind(4, std::string("/x/") + id + ".mkv"); s.bind(5, duration_ms); s.bind(6, year);
         s.bind(7, genres); s.bind(8, audience_rating); s.bind(9, resolution_label);
         if (added_at > 0) s.bind(10, added_at); else s.bind(10);
-        s.bind(11, std::string("local")); s.bind(12, director);
+        s.bind(11, std::string("local")); s.bind(12, director); s.bind(13, tags);
         s.exec();
     }
 
@@ -214,6 +214,17 @@ TEST_F(FilterExprIntegrationTest, GenreIsAndIsNotAreExactComplements) {
     insertMovie("m2", "B", R"(["Drama"])",  2020, 5, 6000000);
     EXPECT_EQ(searchMovies("genre:Comedy").total, 1);
     EXPECT_EQ(searchMovies("-genre:Comedy").total, 1);
+}
+
+// Regression: `tag` is a scraper-derived sibling of `genre` (TMDB keywords,
+// AniList tags, Wikidata main subject) stored in its own `tags` JSON-array
+// column — must compile through the same isJsonField() EXISTS/json_each
+// path genre uses, not silently fall back to the fuzzy-word 1=0/LIKE branch.
+TEST_F(FilterExprIntegrationTest, TagIsAndIsNotAreExactComplements) {
+    insertMovie("m1", "A", "[]", 2020, 5, 6000000, "", 0, "", R"(["Christmas"])");
+    insertMovie("m2", "B", "[]", 2020, 5, 6000000, "", 0, "", R"(["Halloween"])");
+    EXPECT_EQ(searchMovies("tag:Christmas").total, 1);
+    EXPECT_EQ(searchMovies("-tag:Christmas").total, 1);
 }
 
 TEST_F(FilterExprIntegrationTest, YearComparisonOperators) {

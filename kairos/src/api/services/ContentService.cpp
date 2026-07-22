@@ -911,6 +911,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		show["studio"]                  = d->studio;
 		show["status"]                  = d->status;
 		show["genres"]                  = parseArr(d->genres);
+		show["tags"]                    = parseArr(d->tags);
 		show["thumb"]                   = d->thumb;
 		show["art"]                     = d->art;
 		show["imdb_id"]                 = d->imdb_id;
@@ -982,6 +983,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 				sf.push_back({"art", v});
 			}
 			if (b.contains("genres"))                  sf.push_back({"genres",                  jsonStr(b["genres"])});
+			if (b.contains("tags"))                    sf.push_back({"tags",                    jsonStr(b["tags"])});
 			if (b.contains("labels"))                  sf.push_back({"labels",                  jsonStr(b["labels"])});
 			if (b.contains("network"))                 sf.push_back({"network",                 b["network"].get<std::string>()});
 			if (b.contains("actors"))                  sf.push_back({"actors",                  jsonStr(b["actors"])});
@@ -1111,6 +1113,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		movie["director"]        = d->director;
 		movie["writer"]          = d->writer;
 		movie["genres"]          = parseArr(d->genres);
+		movie["tags"]            = parseArr(d->tags);
 		movie["thumb"]           = d->thumb;
 		movie["art"]             = d->art;
 		movie["imdb_id"]         = d->imdb_id;
@@ -1172,6 +1175,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 				sf.push_back({"art", v});
 			}
 			if (b.contains("genres"))         sf.push_back({"genres",         jsonStr(b["genres"])});
+			if (b.contains("tags"))           sf.push_back({"tags",           jsonStr(b["tags"])});
 			if (b.contains("labels"))         sf.push_back({"labels",         jsonStr(b["labels"])});
 			if (b.contains("actors"))         sf.push_back({"actors",         jsonStr(b["actors"])});
 			if (b.contains("countries"))      sf.push_back({"countries",      jsonStr(b["countries"])});

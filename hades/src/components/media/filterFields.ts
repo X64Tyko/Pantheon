@@ -4,7 +4,7 @@
 // circular dependency.
 
 export type FilterField =
-  | 'library' | 'playlist' | 'source' | 'title' | 'genre' | 'year' | 'content_rating' | 'studio'
+  | 'library' | 'playlist' | 'source' | 'title' | 'genre' | 'tag' | 'year' | 'content_rating' | 'studio'
   | 'director' | 'actor' | 'writer' | 'country'
   | 'collection' | 'network' | 'label' | 'resolution' | 'decade'
   | 'audience_rating' | 'duration' | 'added'
@@ -49,6 +49,7 @@ export const FIELD_DEFS: Record<FilterField, FieldDef> = {
   source:          { label: 'Source',          valueType: 'source',     ops: [{ id: 'is', label: 'is' }, { id: 'is_not', label: 'is not' }] },
   title:           { label: 'Title',           valueType: 'text',       ops: FULL_TEXT_OPS },
   genre:           { label: 'Genre',           valueType: 'text',       ops: TEXT_OPS },
+  tag:             { label: 'Tag',              valueType: 'text',       ops: TEXT_OPS },
   year:            { label: 'Year',            valueType: 'number',     ops: [{ id: 'is', label: 'is' }, { id: 'lt', label: 'is before' }, { id: 'gt', label: 'is after' }] },
   content_rating:  { label: 'Content Rating',  valueType: 'text',       ops: TEXT_OPS },
   studio:          { label: 'Studio',          valueType: 'text',       ops: FULL_TEXT_OPS },

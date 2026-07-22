@@ -678,6 +678,14 @@ function EditSection({ detail, isShow, onSaved }: { detail: Detail; isShow: bool
             onChange={e => patch('genres', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
           />
         </Field>
+        <Field label="Tags (comma-separated)" span={2}>
+          <input
+            style={inputStyle}
+            placeholder="scraper-derived keywords — e.g. christmas, time travel"
+            value={Array.isArray(draft.tags) ? draft.tags.join(', ') : ''}
+            onChange={e => patch('tags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+          />
+        </Field>
         <Field label="IMDb ID">
           <input style={inputStyle} placeholder="tt0000000" value={draft.imdb_id ?? ''} onChange={e => patch('imdb_id', e.target.value)} />
         </Field>

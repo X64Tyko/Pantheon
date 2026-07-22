@@ -72,6 +72,20 @@ static std::string genreArray(const json& genres_j) {
     return arr.dump();
 }
 
+// TMDB's keywords sub-object nests its array under a different key for
+// movies ("keywords") vs TV ("results") — a well-known API inconsistency.
+// `array_key` picks the right one per caller.
+static std::string keywordArray(const json& keywords_j, const std::string& array_key) {
+    if (!keywords_j.is_object() || !keywords_j.contains(array_key)) return "[]";
+    const auto& arr_j = keywords_j[array_key];
+    if (!arr_j.is_array()) return "[]";
+    json arr = json::array();
+    for (const auto& k : arr_j) {
+        if (k.contains("name")) arr.push_back(k["name"].get<std::string>());
+    }
+    return arr.dump();
+}
+
 Show TmdbScraper::showFromJson(const json& j, bool is_detail) {
     Show s;
     s.tmdb_id = std::to_string(safeInt(j, "id"));
@@ -93,6 +107,7 @@ Show TmdbScraper::showFromJson(const json& j, bool is_detail) {
     if (is_detail) {
         s.status = safeStr(j, "status");
         s.genres = genreArray(j.value("genres", json::array()));
+        s.tags   = keywordArray(j.value("keywords", json::object()), "results");
 
         if (j.contains("networks") && j["networks"].is_array() && !j["networks"].empty())
             s.network = safeStr(j["networks"][0], "name");
@@ -146,6 +161,7 @@ Movie TmdbScraper::movieFromJson(const json& j, bool is_detail) {
         int runtime = safeInt(j, "runtime");
         m.duration_ms = static_cast<int64_t>(runtime) * 60 * 1000;
         m.genres = genreArray(j.value("genres", json::array()));
+        m.tags   = keywordArray(j.value("keywords", json::object()), "keywords");
 
         if (j.contains("production_companies") && j["production_companies"].is_array()
                 && !j["production_companies"].empty())
@@ -234,7 +250,7 @@ std::optional<Show> TmdbScraper::fetchShow(const std::string& external_id, const
     std::string path = "/3/tv/" + external_id
         + "?api_key=" + api_key_
         + "&language=" + (lang.empty() ? language_ : lang)
-        + "&append_to_response=external_ids,content_ratings";
+        + "&append_to_response=external_ids,content_ratings,keywords";
 
     auto res = get(path);
     if (!res || res->status != 200) {
@@ -319,7 +335,7 @@ std::optional<Movie> TmdbScraper::fetchMovie(const std::string& external_id, con
     std::string path = "/3/movie/" + external_id
         + "?api_key=" + api_key_
         + "&language=" + (lang.empty() ? language_ : lang)
-        + "&append_to_response=external_ids,release_dates,credits";
+        + "&append_to_response=external_ids,release_dates,credits,keywords";
 
     auto res = get(path);
     if (!res || res->status != 200) {

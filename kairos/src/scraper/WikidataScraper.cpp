@@ -267,17 +267,20 @@ Show WikidataScraper::buildShow(const json& entity, bool full_detail) {
     if (claimEarliestDate(entity, "P582")) s.status = "Ended";
 
     auto genre_ids   = claimEntityIds(entity, "P136");
+    auto subject_ids = claimEntityIds(entity, "P921"); // main subject — thematic tags (e.g. "time travel", "Christmas")
     auto country_ids = claimEntityIds(entity, "P495");
     auto network_ids = claimEntityIds(entity, "P449");           // original network
     if (network_ids.empty()) network_ids = claimEntityIds(entity, "P272"); // fall back to production company
 
     if (full_detail) {
         std::set<std::string> to_resolve(genre_ids.begin(), genre_ids.end());
+        to_resolve.insert(subject_ids.begin(), subject_ids.end());
         to_resolve.insert(country_ids.begin(), country_ids.end());
         if (!network_ids.empty()) to_resolve.insert(network_ids.front());
         auto labels = resolveLabels(to_resolve);
 
         s.genres    = labelArray(genre_ids, labels);
+        s.tags      = labelArray(subject_ids, labels);
         s.countries = labelArray(country_ids, labels);
         if (!network_ids.empty()) {
             auto it = labels.find(network_ids.front());
@@ -304,18 +307,21 @@ Movie WikidataScraper::buildMovie(const json& entity, bool full_detail) {
     if (date) { m.year = date->year; m.release_date = date->iso; }
 
     auto genre_ids   = claimEntityIds(entity, "P136");
+    auto subject_ids = claimEntityIds(entity, "P921"); // main subject — thematic tags (see buildShow)
     auto country_ids = claimEntityIds(entity, "P495");
     auto studio_ids  = claimEntityIds(entity, "P272"); // production company
     auto rating_ids  = claimEntityIds(entity, "P1657"); // MPA film rating
 
     if (full_detail) {
         std::set<std::string> to_resolve(genre_ids.begin(), genre_ids.end());
+        to_resolve.insert(subject_ids.begin(), subject_ids.end());
         to_resolve.insert(country_ids.begin(), country_ids.end());
         if (!studio_ids.empty()) to_resolve.insert(studio_ids.front());
         if (!rating_ids.empty()) to_resolve.insert(rating_ids.front());
         auto labels = resolveLabels(to_resolve);
 
         m.genres    = labelArray(genre_ids, labels);
+        m.tags      = labelArray(subject_ids, labels);
         m.countries = labelArray(country_ids, labels);
         if (!studio_ids.empty()) {
             auto it = labels.find(studio_ids.front());

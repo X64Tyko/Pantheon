@@ -68,6 +68,22 @@ static std::string genreArray(const json& genres_j) {
     return arr.dump();
 }
 
+// AniList's tag system is the richest thematic taxonomy of the scrapers here
+// (e.g. "Time Travel", "Isekai", "Christmas") — but some tags are flagged as
+// spoilers (isGeneralSpoiler for the whole tag, isMediaSpoiler for this
+// specific media), and these chips render on browse/detail pages, so spoiler
+// tags are dropped rather than surfaced.
+static std::string tagArray(const json& tags_j) {
+    if (!tags_j.is_array()) return "[]";
+    json arr = json::array();
+    for (const auto& t : tags_j) {
+        if (t.value("isGeneralSpoiler", false) || t.value("isMediaSpoiler", false)) continue;
+        std::string name = safeStr(t, "name");
+        if (!name.empty()) arr.push_back(name);
+    }
+    return arr.dump();
+}
+
 static std::string titleFromJson(const json& j) {
     if (!j.contains("title") || !j["title"].is_object()) return "";
     std::string en = safeStr(j["title"], "english");
@@ -118,6 +134,7 @@ Show AnilistScraper::showFromJson(const json& j) {
     s.originally_available_at = start;
 
     if (j.contains("genres")) s.genres = genreArray(j["genres"]);
+    if (j.contains("tags"))   s.tags   = tagArray(j["tags"]);
     // AniList scores 0-100 — normalize to the 0-10 scale every other
     // scraper in this codebase uses for audience_rating.
     if (hasNum(j, "averageScore")) s.audience_rating = j["averageScore"].get<float>() / 10.0f;
@@ -144,6 +161,7 @@ Movie AnilistScraper::movieFromJson(const json& j) {
     if (duration > 0) m.duration_ms = static_cast<int64_t>(duration) * 60 * 1000;
 
     if (j.contains("genres")) m.genres = genreArray(j["genres"]);
+    if (j.contains("tags"))   m.tags   = tagArray(j["tags"]);
     if (hasNum(j, "averageScore")) m.audience_rating = j["averageScore"].get<float>() / 10.0f;
 
     return m;
@@ -153,6 +171,7 @@ Movie AnilistScraper::movieFromJson(const json& j) {
 
 static constexpr const char* kMediaFields =
     "id title { romaji english } startDate { year month day } status genres "
+    "tags { name isGeneralSpoiler isMediaSpoiler } "
     "coverImage { extraLarge large } bannerImage description(asHtml: false) "
     "averageScore studios(isMain: true) { nodes { name } } duration";
 
