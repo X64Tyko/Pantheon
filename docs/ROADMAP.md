@@ -21,6 +21,10 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [x] **Show Specials Linking:** Link a show's OVA/special episode to a movie-library file so it plays via live join while the movie stays independently scheduled.
 - [x] **Sync Controls:** Per-library scraper priority, per-item "Skip Scraping" exemption, and "Hard Sync" / "Hard Sync All" to force a full re-sync.
 - [x] **Admin Tooling:** Downloadable debug dump and a metrics dashboard on the Activity page.
+- [x] **Playlists & Home Shelves:** Static or filter-driven ("smart") named lists, two-way sync + writeback to Plex/Jellyfin/Emby playlists and Plex collections, portable export/import, and Home page shelves (a smart playlist flagged to show on Home, with an optional seasonal `MM-DD` active window).
+- [x] **Scraper-Derived Tags:** TMDB keywords, AniList tags, and Wikidata's main-subject claim surfaced as a filterable `tag:` field, usable directly in smart playlists and Home shelves (e.g. an auto-populating `tag:christmas` seasonal shelf).
+- [x] **Audio/Subtitle Language Filtering:** Embedded track languages plus external subtitle sidecar files (`.srt`/`.ass`/`.ssa`/`.vtt`) are both filterable and browsable in the player's track menu.
+- [x] **Per-Client Direct-Play Capability:** Clients (currently pantheon-android) can declare their real decode capabilities so Hephaestus can direct-play more than the previous fixed h264/aac allowlist.
 - [ ] **Hardware Acceleration Polish:** Broaden support for VAAPI and QuickSync profiles.
 
 ## Phase 2: Beta (Q3 2026)

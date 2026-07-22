@@ -2,7 +2,7 @@
 
 A media platform built around three pillars:
 
-- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections, fix incorrect matches, enrich metadata, and write back to original libraries.
+- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections and playlists (static or smart/filter-driven, synced and written back to source playlists), fix incorrect matches, enrich metadata, and write back to original libraries.
 - **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, dedicated premiere timeslots, and live EPG. Connect any IPTV client.
 - **Media player** — direct playback within Hades and native client applications.
 
@@ -39,12 +39,12 @@ Pantheon is currently in **Alpha**. This is a source-available engineering artif
 
 | Component | Status | Test Suite | Tests | Coverage (Target) |
 |---|---|---|---|---|
-| **Kairos** | Alpha | `momus_kairos` | 429 | ~85% (Core / Scheduler) |
-| **Hades** | Alpha | `vitest` | 135 | ~40% (API / Stores) |
-| **Hermes** | Alpha | `momus_hermes` | 19 | ~45% (Gateway — security surface covered via Kairos) |
-| **Hephaestus** | Alpha | `momus_hephaestus` | 26 | ~35% (Transcoder — Kairos-facing routes covered via Kairos) |
+| **Kairos** | Alpha | `momus_kairos` | 569 | ~85% (Core / Scheduler) |
+| **Hades** | Alpha | `vitest` | 133 | ~40% (API / Stores) |
+| **Hermes** | Alpha | `momus_hermes` | 25 | ~45% (Gateway — security surface covered via Kairos) |
+| **Hephaestus** | Alpha | `momus_hephaestus` | 30 | ~35% (Transcoder — Kairos-facing routes covered via Kairos) |
 
-*Pantheon currently runs **609 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+*Pantheon currently runs **757 automated tests** across the stack using the **Momus** framework and **Vitest**.*
 
 Kairos's suite includes endpoint-level security regression tests (`momus/kairos/api/test_content_service_security.cpp`) that spin up a real `Router` against a throwaway database and fire actual attack payloads at the running server — e.g. confirming an admin can't forge the locally-cached-poster path sentinel into an arbitrary local file read via `PATCH /api/shows/:id` or the public `/api/images/proxy` endpoint, and that no secret content ever appears in a response when the attack is (correctly) rejected.
 
@@ -294,6 +294,10 @@ Alpha.
 | Cross-source merge & canonical settings | Working |
 | Metadata scraping (TMDB, TVDB, AniDB) | Working <experimental> |
 | Metadata writeback (Plex, Jellyfin) | Working <experimental> |
+| Playlists (static + smart/filter-driven, source sync + writeback) | Working |
+| Home page shelves (incl. seasonal/tag-driven) | Working |
+| Audio/subtitle language filtering + external subtitles | Working |
+| Per-client direct-play capability declaration | Working |
 | Discovery & Requests (*arr stack integration) | Working <experimental> |
 | Chapter detection & review | Working <experimental> |
 | Series continuation (skip intro/credits, up next, auto-advance) | Code-complete, untested against a real library |
