@@ -1,4 +1,5 @@
 #include "FfmpegProcess.h"
+#include "thread/TaskRegistry.h"
 #include <iostream>
 #include <csignal>
 #include <unistd.h>
@@ -138,7 +139,7 @@ bool FfmpegProcess::start() {
         // would race with stop() and could spawn a new ffmpeg after cleanup.
         if (on_exit && !killed.load()) {
             auto cb = on_exit;
-            std::thread([cb, code] { cb(code); }).detach();
+            TaskRegistry::global().spawn([cb, code] { cb(code); });
         }
     });
 

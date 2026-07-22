@@ -56,7 +56,13 @@ struct StreamOptions {
     std::string hls_root;
 };
 
-class ChannelSession {
+// shared_ptr-owned by SessionManager, whose map entry can be overwritten with
+// a fresh instance once this one goes inactive (see SessionManager.cpp) —
+// enable_shared_from_this lets the background helper threads below
+// (start()'s /now lookup, spawnOffline/transition re-dispatch, scheduleStop's
+// linger) keep the session alive for as long as they run instead of touching
+// a freed `this`.
+class ChannelSession : public std::enable_shared_from_this<ChannelSession> {
     std::string   channel_id;  // Kairos channel UUID
     KairosClient& kairos;
     std::string   ffmpeg_path;

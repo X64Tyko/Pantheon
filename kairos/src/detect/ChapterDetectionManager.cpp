@@ -5,6 +5,7 @@
 #include "db/ContentRepository.h"
 #include "db/SourceRepository.h"
 #include "source/SyncManager.h"
+#include "thread/TaskRegistry.h"
 #include <atomic>
 #include <iostream>
 #include <thread>
@@ -16,20 +17,20 @@ ChapterDetectionManager::ChapterDetectionManager(Database& db, ConfStore& conf, 
 bool ChapterDetectionManager::triggerShowDetect(const std::string& show_id) {
     bool expected = false;
     if (!detecting_.compare_exchange_strong(expected, true)) return false;
-    std::thread([this, show_id]() {
+    TaskRegistry::global().spawn([this, show_id]() {
         runShowDetect(show_id);
         detecting_.store(false);
-    }).detach();
+    });
     return true;
 }
 
 bool ChapterDetectionManager::triggerMovieDetect(const std::string& movie_id) {
     bool expected = false;
     if (!detecting_.compare_exchange_strong(expected, true)) return false;
-    std::thread([this, movie_id]() {
+    TaskRegistry::global().spawn([this, movie_id]() {
         runMovieDetect(movie_id);
         detecting_.store(false);
-    }).detach();
+    });
     return true;
 }
 

@@ -12,6 +12,7 @@
 #include "db/SourceRepository.h"
 #include "log/DebugLog.h"
 #include "util/TitleMatch.h"
+#include "thread/TaskRegistry.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <cctype>
@@ -24,7 +25,6 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <set>
-#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -665,13 +665,13 @@ void ScraperManager::triggerMatch(const std::string& target_id,
         std::cout << "[scraper] match already running — ignoring trigger\n";
         return;
     }
-    std::thread([this, target_id, item_type]() {
+    TaskRegistry::global().spawn([this, target_id, item_type]() {
         try { runMatch(target_id, item_type); }
         catch (const std::exception& e) {
             std::cerr << "[scraper] match error: " << e.what() << "\n";
         }
         matching_.store(false);
-    }).detach();
+    });
 }
 
 void ScraperManager::runMatchSync(const std::string& target_id,
@@ -696,13 +696,13 @@ void ScraperManager::triggerRefreshAll() {
         std::cout << "[scraper] metadata refresh already running — ignoring trigger\n";
         return;
     }
-    std::thread([this]() {
+    TaskRegistry::global().spawn([this]() {
         try { runRefreshAll(); }
         catch (const std::exception& e) {
             std::cerr << "[scraper] refresh-all error: " << e.what() << "\n";
         }
         refreshing_all_.store(false);
-    }).detach();
+    });
 }
 
 ScraperManager::RefreshAllProgress ScraperManager::refreshAllProgress() const {

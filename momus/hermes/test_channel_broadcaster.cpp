@@ -48,7 +48,10 @@ TEST(ChannelBroadcasterTest, FanOutData) {
     MockHephaestus mock;
     mock.start();
 
-    ChannelBroadcaster bc("test-ch", mock.url, 1);
+    // shared_ptr-owned: matches production (BroadcasterManager), and
+    // required by scheduleStop()'s shared_from_this() capture.
+    auto bcp = std::make_shared<ChannelBroadcaster>("test-ch", mock.url, 1);
+    auto& bc = *bcp;
     auto sink1 = bc.addClient();
     auto sink2 = bc.addClient();
 
@@ -80,8 +83,11 @@ TEST(ChannelBroadcasterTest, LingerAndStop) {
     MockHephaestus mock;
     mock.start();
 
-    // 1 second linger
-    ChannelBroadcaster bc("test-ch", mock.url, 1);
+    // 1 second linger. shared_ptr-owned: matches production
+    // (BroadcasterManager), and required by scheduleStop()'s
+    // shared_from_this() capture.
+    auto bcp = std::make_shared<ChannelBroadcaster>("test-ch", mock.url, 1);
+    auto& bc = *bcp;
     auto sink = bc.addClient();
     
     // Wait for start
@@ -110,7 +116,10 @@ TEST(ChannelBroadcasterTest, CancelLingerOnNewClient) {
     MockHephaestus mock;
     mock.start();
 
-    ChannelBroadcaster bc("test-ch", mock.url, 1);
+    // shared_ptr-owned: matches production (BroadcasterManager), and
+    // required by scheduleStop()'s shared_from_this() capture.
+    auto bcp = std::make_shared<ChannelBroadcaster>("test-ch", mock.url, 1);
+    auto& bc = *bcp;
     auto sink1 = bc.addClient();
     bc.removeClient(sink1);
     

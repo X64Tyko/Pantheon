@@ -16,6 +16,7 @@
 #include "../../source/MediaProbe.h"
 #include "../../source/SyncManager.h"
 #include "../../util/PathMatch.h"
+#include "thread/TaskRegistry.h"
 #include <nlohmann/json.hpp>
 #include <httplib.h>
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -28,7 +29,6 @@
 #include <ctime>
 #include <sys/stat.h>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -1231,14 +1231,14 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			source_id  = b.value("source_id", "");
 		} catch (const json::exception&) { /* malformed body — fall through unfiltered, same as an empty body */ }
 
-		std::thread([this, library_id, source_id]() {
+		TaskRegistry::global().spawn([this, library_id, source_id]() {
 			try {
 				runWritebackAll(library_id, source_id);
 			} catch (const std::exception& e) {
 				std::cerr << "[writeback] error: " << e.what() << std::endl;
 			}
 			writeback_running_.store(false);
-		}).detach();
+		});
 
 		res.status = 202;
 		route::ok(res, json{{"status", "started"}}.dump());

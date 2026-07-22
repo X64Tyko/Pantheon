@@ -1,13 +1,13 @@
 #include "EPGDivergenceChecker.h"
 #include "EPGMaterializer.h"
 #include "Rng.h"
+#include "thread/TaskRegistry.h"
 #include <chrono>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
 #include <random>
 #include <sstream>
-#include <thread>
 
 namespace {
 
@@ -65,7 +65,7 @@ std::string EPGDivergenceChecker::startCheck(const std::string& channel_id) {
         job.started_at = nowIso();
         jobs_.push_back(std::move(job));
     }
-    std::thread([this, id]{ runCheck(id); }).detach();
+    TaskRegistry::global().spawn([this, id]{ runCheck(id); });
     return id;
 }
 

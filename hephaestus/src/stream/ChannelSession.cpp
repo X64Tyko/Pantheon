@@ -1,6 +1,7 @@
 #include "ChannelSession.h"
 #include "EncoderArgs.h"
 #include "MediaProbe.h"
+#include "thread/TaskRegistry.h"
 #include <iostream>
 #include <chrono>
 #include <thread>
@@ -405,9 +406,9 @@ bool ChannelSession::start() {
     int64_t at = nowMs();
     auto prom = std::make_shared<std::promise<std::optional<KairosNowResponse>>>();
     std::future<std::optional<KairosNowResponse>> fut = prom->get_future();
-    std::thread([this, prom, at] {
-        prom->set_value(kairos.getNow(channel_id, at));
-    }).detach();
+    TaskRegistry::global().spawn([self = shared_from_this(), prom, at] {
+        prom->set_value(self->kairos.getNow(self->channel_id, at));
+    });
 
     if (fut.wait_for(kFastPathBudget) == std::future_status::ready) {
         // Fast path (the common case): apply the already-resolved item directly,
@@ -419,9 +420,9 @@ bool ChannelSession::start() {
         // the lookup (still in flight on its own thread) finally completes.
         in_splash = true;
         spawnOffline(KairosNowResponse{});
-        std::thread([this, fut = std::move(fut), at]() mutable {
-            applyResolvedItem(fut.get(), at);
-        }).detach();
+        TaskRegistry::global().spawn([self = shared_from_this(), fut = std::move(fut), at]() mutable {
+            self->applyResolvedItem(fut.get(), at);
+        });
     }
 
     return active.load();
@@ -524,13 +525,13 @@ void ChannelSession::onExit(int code) {
         // The splash loops forever and should never exit on its own; if it
         // does, just respawn it — the background /now lookup from start() is
         // still running independently and will swap over once it's ready.
-        std::thread([this] { spawnOffline(KairosNowResponse{}); }).detach();
+        TaskRegistry::global().spawn([self = shared_from_this()] { self->spawnOffline(KairosNowResponse{}); });
         return;
     }
 
     // Natural exit (code 0): item finished cleanly → transition.
     // Unexpected exit (code != 0): also transition to avoid black-screen.
-    std::thread([this] { transition(); }).detach();
+    TaskRegistry::global().spawn([self = shared_from_this()] { self->transition(); });
 }
 
 void ChannelSession::transition() {
@@ -632,7 +633,7 @@ void ChannelSession::transition() {
         std::cerr << "[session:" << channel_id << "] transition offset " << startOffset
                   << "ms >= duration " << next->duration_ms << "ms for \""
                   << next->file_path << "\", skipping to next item\n";
-        std::thread([this] { transition(); }).detach();
+        TaskRegistry::global().spawn([self = shared_from_this()] { self->transition(); });
         return;
     }
 
@@ -778,11 +779,11 @@ void ChannelSession::broadcastDone() {
 void ChannelSession::scheduleStop() {
     int token = ++stop_token;
     int linger = opts.linger_secs;
-    std::thread([this, token, linger] {
+    TaskRegistry::global().spawn([self = shared_from_this(), token, linger] {
         std::this_thread::sleep_for(std::chrono::seconds(linger));
-        if (stop_token.load() == token && client_count.load() == 0 && hlsIdle()) {
-            std::cerr << "[session:" << channel_id << "] linger expired, stopping\n";
-            stop();
+        if (self->stop_token.load() == token && self->client_count.load() == 0 && self->hlsIdle()) {
+            std::cerr << "[session:" << self->channel_id << "] linger expired, stopping\n";
+            self->stop();
         }
-    }).detach();
+    });
 }

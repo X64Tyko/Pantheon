@@ -1,5 +1,6 @@
 #include "DownloadManager.h"
 #include "../scheduler/Rng.h"
+#include "thread/TaskRegistry.h"
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -8,7 +9,6 @@
 #include <iostream>
 #include <random>
 #include <sstream>
-#include <thread>
 
 namespace {
 
@@ -82,7 +82,7 @@ std::string DownloadManager::startJob(const std::string& url,
         job.started_at = nowIso();
         jobs_.push_back(std::move(job));
     }
-    std::thread([this, id]{ runJob(id); }).detach();
+    TaskRegistry::global().spawn([this, id]{ runJob(id); });
     return id;
 }
 

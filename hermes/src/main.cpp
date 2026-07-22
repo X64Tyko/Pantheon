@@ -5,15 +5,17 @@
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
 #include "log/RuntimeFlags.h"
+#include "thread/TaskRegistry.h"
 #include <httplib.h>
 #include <iostream>
-#include <thread>
+#include <stop_token>
 #include <chrono>
 
 // Subscribe to an upstream SSE log stream and push lines into LogBuffer.
-// Reconnects indefinitely on disconnect. Intended to be run on a detached thread.
-static void relayUpstreamLogs(const std::string& upstream_url, LogBuffer& dest) {
-    while (true) {
+// Reconnects indefinitely on disconnect (until `st` is stop-requested).
+// Intended to be run via TaskRegistry's stop_token overload.
+static void relayUpstreamLogs(std::stop_token st, const std::string& upstream_url, LogBuffer& dest) {
+    while (!st.stop_requested()) {
         httplib::Client cli(upstream_url);
         cli.set_connection_timeout(5);
         cli.set_read_timeout(60);
@@ -37,7 +39,7 @@ static void relayUpstreamLogs(const std::string& upstream_url, LogBuffer& dest) 
                 return true;
             });
 
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        stopTokenSleep(st, std::chrono::seconds(5));
     }
 }
 
@@ -90,45 +92,43 @@ int main(int argc, char* argv[]) {
 
     // Relay upstream log streams so the Hades UI sees all service logs via
     // a single /api/logs/stream endpoint on Hermes.
-    std::thread([&combined_log, url = cfg.kairos_url] {
-        relayUpstreamLogs(url, combined_log);
-    }).detach();
-    std::thread([&combined_log, url = cfg.hephaestus_url] {
-        relayUpstreamLogs(url, combined_log);
-    }).detach();
+    TaskRegistry::global().spawn([&combined_log, url = cfg.kairos_url](std::stop_token st) {
+        relayUpstreamLogs(st, url, combined_log);
+    });
+    TaskRegistry::global().spawn([&combined_log, url = cfg.hephaestus_url](std::stop_token st) {
+        relayUpstreamLogs(st, url, combined_log);
+    });
 
     // Keep g_verbose_gateway_logs fresh from Kairos's persisted setting —
     // same polling idea as Hephaestus's SessionManager::refreshCache() for
     // its own verbose flag, just not worth a whole cache class here for one
     // bool. Gates local_log's [hermes]/[roku-ecp] push-to-Hades filtering;
     // hermes.log itself always gets everything regardless.
-    std::thread([&kairos, &svr] {
-        while (svr.is_running()) {
+    TaskRegistry::global().spawn([&kairos, &svr](std::stop_token st) {
+        while (svr.is_running() && !st.stop_requested()) {
             if (auto v = kairos.getVerboseGatewayLogs())
                 g_verbose_gateway_logs.store(*v, std::memory_order_relaxed);
-            std::this_thread::sleep_for(std::chrono::seconds(15));
+            stopTokenSleep(st, std::chrono::seconds(15));
         }
-    }).detach();
+    });
 
     // Periodic reap of dead broadcasters (every 60s).
-    std::thread reaper([&broadcasters, &svr] {
-        while (svr.is_running()) {
-            std::this_thread::sleep_for(std::chrono::seconds(60));
+    TaskRegistry::global().spawn([&broadcasters, &svr](std::stop_token st) {
+        while (svr.is_running() && !st.stop_requested()) {
+            stopTokenSleep(st, std::chrono::seconds(60));
             broadcasters.reap();
         }
     });
-    reaper.detach();
 
     // Periodic reap of device sessions whose long-poll/state-post hasn't
     // reconnected in 45s — comfortably past the 25s long-poll timeout plus
     // a connection hiccup, so a healthy channel is never reaped mid-cycle.
-    std::thread device_reaper([&devices, &svr] {
-        while (svr.is_running()) {
-            std::this_thread::sleep_for(std::chrono::seconds(30));
+    TaskRegistry::global().spawn([&devices, &svr](std::stop_token st) {
+        while (svr.is_running() && !st.stop_requested()) {
+            stopTokenSleep(st, std::chrono::seconds(30));
             devices.reap(45'000);
         }
     });
-    device_reaper.detach();
 
     std::cout << "[hermes] listening on :" << cfg.port
               << "  hephaestus=" << cfg.hephaestus_url
