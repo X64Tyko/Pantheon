@@ -16,12 +16,18 @@ const SORT_OPTIONS: { value: string; label: string; dirless?: boolean }[] = [
   { value: 'duration',                    label: 'Duration' },
   { value: 'recently_released_or_aired',  label: 'Recently Aired/Released' },
   { value: 'random',                      label: 'Random', dirless: true },
+  // Only offered once a `playlist:<id>` clause is active in the filter tree
+  // (see the filter below) — meaningless otherwise, there's no playlist to
+  // order by.
+  { value: 'playlist_order',              label: 'Playlist Order' },
 ]
 
 export const LibraryFilters = observer(function LibraryFilters() {
   const [typeOpen, setTypeOpen] = useState(true)
   const [sortOpen, setSortOpen] = useState(true)
 
+  const hasActivePlaylist = !!libraryStore.activePlaylistId
+  const visibleSortOptions = SORT_OPTIONS.filter(o => o.value !== 'playlist_order' || hasActivePlaylist)
   const dirless = SORT_OPTIONS.find(o => o.value === libraryStore.sort)?.dirless ?? false
 
   return (
@@ -51,6 +57,15 @@ export const LibraryFilters = observer(function LibraryFilters() {
               {t === 'all' ? 'All' : t === 'show' ? 'Shows' : 'Movies'}
             </label>
           ))}
+          <label className={styles.typeLabel} style={{ marginTop: '0.5rem' }}>
+            <input
+              type="checkbox"
+              checked={libraryStore.includeEpisodes}
+              onChange={e => libraryStore.setIncludeEpisodes(e.target.checked)}
+              className={styles.typeRadio}
+            />
+            Include Episodes
+          </label>
         </div>
       </AccordionSection>
 
@@ -65,7 +80,7 @@ export const LibraryFilters = observer(function LibraryFilters() {
             onChange={e => libraryStore.setSort(e.target.value)}
             className={styles.selectInput}
           >
-            {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {visibleSortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
           {!dirless && (
             <div className={styles.dirRow}>

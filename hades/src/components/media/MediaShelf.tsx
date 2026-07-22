@@ -46,7 +46,11 @@ export function MediaShelf({ title, items, density = 'standard', onItemClick, on
               {...item}
               density={density}
               selected={false}
-              onClick={() => onItemClick(item.id, item.content_type)}
+              // MediaShelf is never handed episode items today (MediaCard's
+              // content_type widened to include 'episode' for the Library
+              // grid's own direct rendering — see MediaGrid.tsx) — this
+              // narrows back since onItemClick here is show/movie only.
+              onClick={() => onItemClick(item.id, item.content_type as 'show' | 'movie')}
             />
           </div>
         ))}

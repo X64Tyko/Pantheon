@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { observer } from 'mobx-react-lite'
 import { api } from '../api/client'
-import type { LibraryWithSource } from '../api/types'
+import type { LibraryWithSource, PlaylistBrowseEntry } from '../api/types'
 import type { FilterTreeStore, FilterRuleItem } from './media/filterTree'
 import styles from './PickerFilters.module.css'
 
@@ -129,9 +129,10 @@ function FilterTagInput({ field, value, onChange }: {
 
 // ─── FilterRuleRow ────────────────────────────────────────────────────────────
 
-const FilterRuleRow = observer(function FilterRuleRow({ rule, filteredLibs, onUpdate, onRemove }: {
+const FilterRuleRow = observer(function FilterRuleRow({ rule, filteredLibs, playlists = [], onUpdate, onRemove }: {
   rule:         FilterRuleItem
   filteredLibs: LibraryWithSource[]
+  playlists?:   PlaylistBrowseEntry[]
   onUpdate:     (id: string, patch: Partial<Pick<FilterRuleItem, 'field' | 'op' | 'value'>>) => void
   onRemove:     (id: string) => void
 }) {
@@ -155,6 +156,13 @@ const FilterRuleRow = observer(function FilterRuleRow({ rule, filteredLibs, onUp
           className={`${styles.input} ${styles.valueFlex}`}>
           <option value="">Any</option>
           {filteredLibs.map(l => <option key={l.library_id} value={l.library_id}>{libLabel(l, filteredLibs)}</option>)}
+        </select>
+      )}
+      {def.valueType === 'playlist' && (
+        <select value={rule.value} onChange={e => set({ value: e.target.value })}
+          className={`${styles.input} ${styles.valueFlex}`}>
+          <option value="">Any</option>
+          {playlists.map(p => <option key={p.playlist_id} value={p.playlist_id}>{p.title}</option>)}
         </select>
       )}
       {def.valueType === 'source' && (
@@ -229,9 +237,10 @@ function MatchSelect({ value, onChange }: { value: 'all' | 'any'; onChange: (m: 
 // sits in a full-width bar above the library pills rather than a narrow
 // sidebar (a sidebar the rule list would otherwise grow to fill and force
 // into its own awkward internal scroll as rules/groups are added).
-export const FilterSection = observer(function FilterSection({ tree, filteredLibs, layout = 'vertical' }: {
+export const FilterSection = observer(function FilterSection({ tree, filteredLibs, playlists = [], layout = 'vertical' }: {
   tree:         FilterTreeStore
   filteredLibs: LibraryWithSource[]
+  playlists?:   PlaylistBrowseEntry[]
   layout?:      'vertical' | 'horizontal'
 }) {
   const ruleCount = tree.items.reduce((n, it) => n + (it.kind === 'rule' ? 1 : it.rules.length), 0)
@@ -261,7 +270,7 @@ export const FilterSection = observer(function FilterSection({ tree, filteredLib
             {tree.items.map(item => item.kind === 'rule' ? (
               <div key={item.id} className={horizontal ? styles.itemBoxFixed : undefined}>
                 <FilterRuleRow
-                  rule={item} filteredLibs={filteredLibs}
+                  rule={item} filteredLibs={filteredLibs} playlists={playlists}
                   onUpdate={(id, patch) => tree.updateRule(id, patch)}
                   onRemove={id => tree.removeItem(id)}
                 />
@@ -278,7 +287,7 @@ export const FilterSection = observer(function FilterSection({ tree, filteredLib
                 </div>
                 {item.rules.map(rule => (
                   <FilterRuleRow
-                    key={rule.id} rule={rule} filteredLibs={filteredLibs}
+                    key={rule.id} rule={rule} filteredLibs={filteredLibs} playlists={playlists}
                     onUpdate={(id, patch) => tree.updateRule(id, patch)}
                     onRemove={id => tree.removeRuleFromGroup(item.id, id)}
                   />

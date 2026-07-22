@@ -14,7 +14,7 @@ export interface MediaCardProps {
   // "?token=X?token=X" and 401'd every card's image on the Library page.
   poster_url?:       string
   thumb_url?:        string
-  content_type:      'show' | 'movie'
+  content_type:      'show' | 'movie' | 'episode'
   genres?:           string[]
   rating?:           number
   locked?:           boolean

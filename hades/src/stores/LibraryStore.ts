@@ -1,6 +1,6 @@
 import { makeAutoObservable, reaction, runInAction } from 'mobx'
 import { api } from '../api/client'
-import type { LibraryWithSource, Show, Movie, ScraperSearchResult } from '../api/types'
+import type { LibraryWithSource, Show, Movie, ScraperSearchResult, EpisodeSearchResult, PlaylistBrowseEntry } from '../api/types'
 import type { LibraryDensity } from '../api/types'
 import type { FilterField } from '../components/PickerFilters'
 import { FilterTreeStore } from '../components/media/filterTree'
@@ -9,6 +9,7 @@ import { toFilterString } from '../components/media/filterQuery'
 const DENSITY_KEY = 'hds-library-density'
 const SIDEBAR_KEY = 'hds-library-sidebar'
 const HIDE_EMPTY_KEY = 'hds-library-hide-empty'
+const PLAYLISTS_SECTION_KEY = 'hds-library-playlists-open'
 const PAGE_SIZE = 48
 
 let _filterDebounce: ReturnType<typeof setTimeout>
@@ -17,6 +18,22 @@ export class LibraryStore {
   libraries:    LibraryWithSource[] = []
   shows:        Show[] = []
   movies:       Movie[] = []
+  // Library's "Include Episodes" toggle (default off/hidden) — a 3rd,
+  // independent bucket alongside shows/movies rather than a 4th exclusive
+  // contentType, so a mixed movie+episode playlist can render both kinds at
+  // once when viewing it (see MediaGrid.tsx). v1 scope deliberately doesn't
+  // extend the full rule-builder field set to episodes — see
+  // ContentRepository.h's EpisodeSearchParams comment.
+  includeEpisodes: boolean = false
+  episodes:     EpisodeSearchResult[] = []
+  // Library's new "Playlists" section tiles (any-authenticated-user browse
+  // summary, not the admin-only full list — see PlaylistRepository::listBrowse).
+  playlists:    PlaylistBrowseEntry[] = []
+  // Collapsible, not a hard show/hide — the section header stays put either
+  // way so it's still discoverable once there are enough playlists that
+  // always showing the tile row would crowd out the actual library grid.
+  // Persisted like density/sidebarOpen/hideEmpty below.
+  playlistsSectionOpen: boolean = localStorage.getItem(PLAYLISTS_SECTION_KEY) !== 'false'
   total:        number = 0
   loading:      boolean = false
   loadingMore:  boolean = false
@@ -84,6 +101,50 @@ export class LibraryStore {
     })
   }
 
+  // Derived, not a separate field — a "playlist:<id>" rule in the filter
+  // tree (added by enterPlaylist(), removable/addable like any other rule)
+  // IS the active-playlist state, single source of truth. This is also what
+  // makes "further filtering still works" free: the user can add more rules
+  // alongside it, or remove the playlist rule itself to exit, through the
+  // exact same rule-builder UI as any other field.
+  get activePlaylistId(): string | null {
+    const rule = this.filterTree.allRules.find(r => r.field === 'playlist' && r.value.trim())
+    return rule ? rule.value : null
+  }
+
+  async loadPlaylists() {
+    const playlists = await api.getPlaylistsBrowse()
+    runInAction(() => { this.playlists = playlists })
+  }
+
+  // Library "Playlists" section tile click — turns it into a normal filter
+  // (see activePlaylistId above) and defaults sort/Include Episodes to
+  // whatever best shows the playlist's actual contents; both stay
+  // user-changeable afterward (e.g. switch back to Title sort, or hide
+  // episodes again) without losing the playlist scoping itself.
+  enterPlaylist(playlistId: string) {
+    this.filterTree.setSingleRule('playlist', playlistId)
+    this.sort = 'playlist_order'
+    this.includeEpisodes = true
+    this.sidebarOpen = true
+    localStorage.setItem(SIDEBAR_KEY, 'true')
+    this.page = 0
+    this.fetch()
+  }
+
+  // Dismissing the "Viewing: <title> ×" chip — just removes the playlist
+  // rule (dropping back to whatever other rules were alongside it, if any),
+  // no other state forced back (respects whatever sort/Include Episodes the
+  // user has now, rather than assuming they want the pre-playlist values).
+  exitPlaylist() {
+    this.filterTree.items = this.filterTree.items.filter(it => !(it.kind === 'rule' && it.field === 'playlist'))
+    if (this.sort === 'playlist_order') this.sort = 'recently_added'
+    this.page = 0
+    this.fetch()
+  }
+
+  setIncludeEpisodes(v: boolean) { this.includeEpisodes = v; this.page = 0; this.fetch() }
+
   async loadLibraries() {
     const libs = await api.getAllLibraries()
     runInAction(() => {
@@ -125,6 +186,22 @@ export class LibraryStore {
       sort_dir: this.sortDir || undefined,
       seed: this.sort === 'random' ? this.randomSeed : undefined,
       hideEmpty: this.hideEmpty || undefined,
+      // Orthogonal to `filter`'s own `playlist:<id>` clause (which handles
+      // inclusion) — this drives playlist_order's ORDER BY and, for
+      // episodes, membership scoping too (see EpisodeSearchParams' comment
+      // for why episodes don't get the full canon filter field set).
+      playlist_id: this.activePlaylistId ?? undefined,
+    }
+  }
+
+  private episodeSearchParams(page: number) {
+    return {
+      q: this.query || undefined,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+      sort: (this.sort === 'playlist_order' ? 'playlist_order' : 'title') as 'title' | 'playlist_order',
+      sort_dir: this.sortDir || undefined,
+      playlist_id: this.activePlaylistId ?? undefined,
     }
   }
 
@@ -146,20 +223,22 @@ export class LibraryStore {
 
   async fetch() {
     if (this.noLibrariesSelected) {
-      runInAction(() => { this.shows = []; this.movies = []; this.total = 0; this.loading = false; this.error = null })
+      runInAction(() => { this.shows = []; this.movies = []; this.episodes = []; this.total = 0; this.loading = false; this.error = null })
       return
     }
     runInAction(() => { this.loading = true })
     const base = this.searchParams(this.page)
     try {
-      const [showRes, movieRes] = await Promise.all([
+      const [showRes, movieRes, episodeRes] = await Promise.all([
         this.contentType !== 'movie' ? api.getShows({ ...base, sort: this.showSort() }) : Promise.resolve({ items: [] as Show[], total: 0 }),
         this.contentType !== 'show'  ? api.getMovies({ ...base, sort: this.movieSort() }) : Promise.resolve({ items: [] as Movie[], total: 0 }),
+        this.includeEpisodes ? api.searchEpisodes(this.episodeSearchParams(this.page)) : Promise.resolve({ items: [] as EpisodeSearchResult[], total: 0 }),
       ])
       runInAction(() => {
-        this.shows  = showRes.items
-        this.movies = movieRes.items
-        this.total  = showRes.total + movieRes.total
+        this.shows    = showRes.items
+        this.movies   = movieRes.items
+        this.episodes = episodeRes.items
+        this.total    = showRes.total + movieRes.total + episodeRes.total
         this.loading = false
         this.error = null
       })
@@ -168,7 +247,7 @@ export class LibraryStore {
       // leave whatever was on screen before, which reads exactly like "the
       // filter did nothing" instead of "this request failed."
       runInAction(() => {
-        this.shows = []; this.movies = []; this.total = 0
+        this.shows = []; this.movies = []; this.episodes = []; this.total = 0
         this.loading = false
         this.error = e?.message ?? 'Failed to load library'
       })
@@ -177,18 +256,20 @@ export class LibraryStore {
 
   async loadMore() {
     if (this.loading || this.loadingMore || this.noLibrariesSelected) return
-    if (this.shows.length + this.movies.length >= this.total) return
+    if (this.shows.length + this.movies.length + this.episodes.length >= this.total) return
     runInAction(() => { this.loadingMore = true })
     const nextPage = this.page + 1
     const base = this.searchParams(nextPage)
     try {
-      const [showRes, movieRes] = await Promise.all([
+      const [showRes, movieRes, episodeRes] = await Promise.all([
         this.contentType !== 'movie' ? api.getShows({ ...base, sort: this.showSort() }) : Promise.resolve({ items: [] as Show[], total: 0 }),
         this.contentType !== 'show'  ? api.getMovies({ ...base, sort: this.movieSort() }) : Promise.resolve({ items: [] as Movie[], total: 0 }),
+        this.includeEpisodes ? api.searchEpisodes(this.episodeSearchParams(nextPage)) : Promise.resolve({ items: [] as EpisodeSearchResult[], total: 0 }),
       ])
       runInAction(() => {
         this.shows      = [...this.shows, ...showRes.items]
         this.movies     = [...this.movies, ...movieRes.items]
+        this.episodes   = [...this.episodes, ...episodeRes.items]
         this.page       = nextPage
         this.loadingMore = false
         this.error = null
@@ -281,6 +362,11 @@ export class LibraryStore {
   setDensity(d: LibraryDensity) {
     this.density = d
     localStorage.setItem(DENSITY_KEY, d)
+  }
+
+  togglePlaylistsSection() {
+    this.playlistsSectionOpen = !this.playlistsSectionOpen
+    localStorage.setItem(PLAYLISTS_SECTION_KEY, String(this.playlistsSectionOpen))
   }
 
   toggleSidebar() {

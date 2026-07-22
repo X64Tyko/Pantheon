@@ -45,14 +45,22 @@ struct HomeShelfFields {
     std::string home_active_start, home_active_end;
 };
 
-struct PlaylistRow : SmartPlaylistFields, HomeShelfFields {
+// Library "Playlists" section tile — a pasted URL, same override convention
+// shows/movies already use (served via the existing generic
+// /api/images/proxy, no new upload infra). Empty = frontend falls back to a
+// client-side collage of the first few items' own posters.
+struct PlaylistPosterFields {
+    std::string poster_source;
+};
+
+struct PlaylistRow : SmartPlaylistFields, HomeShelfFields, PlaylistPosterFields {
     std::string playlist_id, title, mode;
     int item_count = 0;
     int64_t total_ms = 0;
     std::optional<PlexLinkRow> plex_link;
 };
 
-struct PlaylistDetail : SmartPlaylistFields, HomeShelfFields {
+struct PlaylistDetail : SmartPlaylistFields, HomeShelfFields, PlaylistPosterFields {
     std::string playlist_id, title, mode;
     std::vector<PlaylistItemRow> items;
 };
@@ -75,6 +83,20 @@ public:
 
     std::vector<PlaylistRow>      listAll();
     std::optional<PlaylistDetail> getDetail(const std::string& playlist_id);
+
+    // Lightweight, any-authenticated-user summary for the Library's
+    // Playlists section tiles — unlike listAll()/getDetail() (admin-only,
+    // full editing internals), this is just the tile-rendering fields plus
+    // the first few items (by position) for the client-side poster-collage
+    // fallback when poster_source is empty.
+    struct BrowseItemRef { std::string item_type, item_id; };
+    struct BrowseEntry {
+        std::string playlist_id, title, mode, poster_source;
+        int item_count = 0;
+        int64_t total_ms = 0;
+        std::vector<BrowseItemRef> preview_items;
+    };
+    std::vector<BrowseEntry> listBrowse();
 
     // Home shelf definitions — every smart playlist with show_on_home=1
     // whose active window (if any) includes today, ordered by home_order.

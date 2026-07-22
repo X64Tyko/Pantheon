@@ -652,6 +652,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("sort"))           p.sort          = req.get_param_value("sort");
 		if (req.has_param("sort_dir"))       p.sort_dir      = req.get_param_value("sort_dir");
 		if (req.has_param("seed"))           p.random_seed   = std::stoll(req.get_param_value("seed"));
+		if (req.has_param("playlist_id"))    p.playlist_id   = req.get_param_value("playlist_id");
 		if (req.has_param("home"))           p.home_only     = req.get_param_value("home") == "1";
 		if (req.has_param("hide_empty"))     p.hide_empty    = req.get_param_value("hide_empty") == "1";
 		p.restriction = restrictionFor("show");
@@ -813,18 +814,20 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/episodes", [this](const Req& req, Res& res) {
-		int         limit   = 50, offset = 0, season_v = -1;
-		std::string show_id, search_q;
-		if (req.has_param("limit"))   limit    = std::stoi(req.get_param_value("limit"));
-		if (req.has_param("offset"))  offset   = std::stoi(req.get_param_value("offset"));
-		if (req.has_param("show_id")) show_id  = req.get_param_value("show_id");
-		if (req.has_param("q"))       search_q = req.get_param_value("q");
-		if (req.has_param("season"))  season_v = std::stoi(req.get_param_value("season"));
+		EpisodeSearchParams p;
+		if (req.has_param("limit"))       p.limit       = std::stoi(req.get_param_value("limit"));
+		if (req.has_param("offset"))      p.offset      = std::stoi(req.get_param_value("offset"));
+		if (req.has_param("show_id"))     p.show_id     = req.get_param_value("show_id");
+		if (req.has_param("q"))           p.q           = req.get_param_value("q");
+		if (req.has_param("season"))      p.season      = std::stoi(req.get_param_value("season"));
+		if (req.has_param("sort"))        p.sort        = req.get_param_value("sort");
+		if (req.has_param("sort_dir"))    p.sort_dir    = req.get_param_value("sort_dir");
+		if (req.has_param("playlist_id")) p.playlist_id = req.get_param_value("playlist_id");
 
 		ContentRepository repo(db_);
-		auto rows = repo.searchEpisodes(show_id, search_q, season_v, limit, offset);
+		auto result = repo.searchEpisodes(p);
 		json items = json::array();
-		for (const auto& r : rows) {
+		for (const auto& r : result.items) {
 			items.push_back({
 				{"episode_id",  r.episode_id},
 				{"season",      r.season},
@@ -835,7 +838,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 				{"show_title",  r.show_title},
 			});
 		}
-		route::ok(res, json{{"items", items}}.dump());
+		route::ok(res, json{{"items", items}, {"total", result.total}}.dump());
 	});
 
 	// ── Movies ────────────────────────────────────────────────────────────────
@@ -850,6 +853,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("sort"))           p.sort          = req.get_param_value("sort");
 		if (req.has_param("sort_dir"))       p.sort_dir      = req.get_param_value("sort_dir");
 		if (req.has_param("seed"))           p.random_seed   = std::stoll(req.get_param_value("seed"));
+		if (req.has_param("playlist_id"))    p.playlist_id   = req.get_param_value("playlist_id");
 		if (req.has_param("home"))           p.home_only     = req.get_param_value("home") == "1";
 		if (req.has_param("hide_empty"))     p.hide_empty    = req.get_param_value("hide_empty") == "1";
 		p.restriction = restrictionFor("movie");

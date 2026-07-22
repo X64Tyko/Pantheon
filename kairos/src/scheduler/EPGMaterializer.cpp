@@ -285,7 +285,12 @@ void EPGMaterializer::commit(
                           << ": " << e.what() << '\n';
                 ++skipped;
             }
-            ins.reset();
+            // tryReset(), not reset() — after a failed exec(), sqlite3_reset()
+            // re-surfaces that same error code, and Statement::reset() throws
+            // on a non-OK code, which would silently defeat the catch above
+            // by re-throwing right past it once every loop iteration hit a
+            // real constraint violation instead of just resetting cleanly.
+            ins.tryReset();
         }
         CursorRepository(db_).apply(channel_id, result.cursor_state);
 

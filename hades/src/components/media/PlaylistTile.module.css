@@ -1,0 +1,88 @@
+.tile {
+  width: 160px;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: var(--hds-radius-md);
+  overflow: hidden;
+  transform: scale(1);
+  transition: transform var(--hds-transition-fast) cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+.tileActive { transform: scale(1.03); }
+
+.posterWrap {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  background: linear-gradient(135deg, var(--hds-poster-bg-1), var(--hds-poster-bg-2));
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--hds-line);
+}
+
+.tileActive .posterWrap { border-color: var(--hds-line-s); }
+
+.posterImg { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.collage {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  width: 100%;
+  height: 100%;
+  gap: 1px;
+}
+
+.collageImg { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.actionOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--hds-space-2);
+  background: var(--hds-scrim-light);
+}
+
+.actionBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.9);
+  color: oklch(0.15 0.02 285);
+  font-size: var(--hds-font-size-tv-caption);
+  transition: transform .12s;
+}
+.actionBtn:hover  { transform: scale(1.1); }
+.actionBtn:disabled { opacity: 0.5; }
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--hds-font-size-tv-h2);
+  color: var(--hds-violet);
+  opacity: 0.5;
+}
+
+.title {
+  margin-top: var(--hds-space-2);
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-small-title);
+  font-weight: 600;
+  color: var(--hds-txt);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+}

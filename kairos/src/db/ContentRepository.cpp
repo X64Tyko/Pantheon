@@ -539,6 +539,18 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         (p.sort == "random")              ? (p.random_seed.has_value()
                                                 ? " ORDER BY ((s.rowid + ?) * 2654435761) % 2147483647"
                                                 : " ORDER BY RANDOM()") :
+        // Guarded on playlist_id too, not just sort=="playlist_order" — the
+        // ORDER BY's `?` placeholder is only ever bound (below) when
+        // playlist_id is actually present; without this guard, a
+        // sort=playlist_order request that's missing playlist_id (e.g. a
+        // stale/racy client request) would leave that placeholder unbound
+        // once the real bind calls run, throwing a SQLite parameter-count
+        // mismatch instead of just falling back to the default sort.
+        (p.sort == "playlist_order" && p.playlist_id) ? std::string(R"( ORDER BY (
+                                             SELECT MIN(pi.position) FROM playlist_item pi
+                                             WHERE pi.playlist_id = ? AND pi.item_type = 'episode'
+                                               AND pi.item_id IN (SELECT episode_id FROM episode WHERE show_id = s.show_id)
+                                           ) )") + dirFor("ASC") :
                                             std::string(" ORDER BY s.title ") + dirFor("ASC");
     const std::string show_select = R"(
             SELECT s.show_id, s.title, s.content_rating,
@@ -590,6 +602,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
             WHERE 1=1)" + extras + home_exclude + hide_empty_clause + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
         idx = 1; bindExtras(q, idx);
         if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
+        if (p.sort == "playlist_order" && p.playlist_id) q.bind(idx++, *p.playlist_id);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseShowRow(q));
     } else {
@@ -614,6 +627,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         for (const auto& lid : p.library_ids) q.bind(idx++, lid);
         bindExtras(q, idx);
         if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
+        if (p.sort == "playlist_order" && p.playlist_id) q.bind(idx++, *p.playlist_id);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseShowRow(q));
     }
@@ -657,6 +671,11 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         (p.sort == "random")             ? (p.random_seed.has_value()
                                                 ? " ORDER BY ((m.rowid + ?) * 2654435761) % 2147483647"
                                                 : " ORDER BY RANDOM()") :
+        // See searchShows()'s identical guard comment above.
+        (p.sort == "playlist_order" && p.playlist_id) ? std::string(R"( ORDER BY (
+                                             SELECT MIN(pi.position) FROM playlist_item pi
+                                             WHERE pi.playlist_id = ? AND pi.item_type = 'movie' AND pi.item_id = m.movie_id
+                                           ) )") + mdirFor("ASC") :
                                           std::string(" ORDER BY m.title ") + mdirFor("ASC");
     // watch_progress.completed is the rewatch count directly (see its column
     // comment) — view_count IS that count, watched is just view_count > 0.
@@ -709,6 +728,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
             movie_select + " FROM movie m" + watch_join + " WHERE 1=1" + extras + home_exclude + hide_empty_clause + morder + " LIMIT ? OFFSET ?");
         idx = 1; q.bind(idx++, p.user_id); bindExtras(q, idx);
         if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
+        if (p.sort == "playlist_order" && p.playlist_id) q.bind(idx++, *p.playlist_id);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));
     } else {
@@ -732,6 +752,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
         for (const auto& lid : p.library_ids) q.bind(idx++, lid);
         q.bind(idx++, p.user_id); bindExtras(q, idx);
         if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
+        if (p.sort == "playlist_order" && p.playlist_id) q.bind(idx++, *p.playlist_id);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
         while (q.executeStep()) result.items.push_back(parseMovieRow(q));
     }
@@ -1385,26 +1406,51 @@ std::vector<SeasonRow> ContentRepository::listSeasons(const std::string& show_id
     return rows;
 }
 
-std::vector<EpisodeSearchRow> ContentRepository::searchEpisodes(const std::string& show_id,
-                                                                  const std::string& q_str,
-                                                                  int season, int limit, int offset) {
+EpisodeListResult ContentRepository::searchEpisodes(const EpisodeSearchParams& p) {
     std::string where = " WHERE 1=1";
-    if (!show_id.empty())  where += " AND e.show_id = ?";
-    if (season >= 0)       where += " AND e.season = ?";
-    if (!q_str.empty())    where += " AND (e.title LIKE '%' || ? || '%' OR s.title LIKE '%' || ? || '%')";
+    if (!p.show_id.empty()) where += " AND e.show_id = ?";
+    if (p.season >= 0)      where += " AND e.season = ?";
+    if (!p.q.empty())       where += " AND (e.title LIKE '%' || ? || '%' OR s.title LIKE '%' || ? || '%')";
+    // Episode-side equivalent of FilterExpr's `playlist:<id>` field — matches
+    // item_id directly (playlist_item has no per-episode indirection to
+    // worry about, unlike the Show entity's join-through-episode branch).
+    if (p.playlist_id) where += " AND EXISTS (SELECT 1 FROM playlist_item pi "
+                                 "WHERE pi.playlist_id = ? AND pi.item_type = 'episode' AND pi.item_id = e.episode_id)";
+
+    auto dirFor = [&](const char* natural) { return p.sort_dir.empty() ? natural : (p.sort_dir == "desc" ? "DESC" : "ASC"); };
+    // Guarded on playlist_id too — see searchShows()'s identical comment.
+    const std::string order_clause =
+        (p.sort == "playlist_order" && p.playlist_id) ? std::string(R"( ORDER BY (
+                                          SELECT position FROM playlist_item pi2
+                                          WHERE pi2.playlist_id = ? AND pi2.item_type = 'episode' AND pi2.item_id = e.episode_id
+                                        ) )") + dirFor("ASC") :
+                                        std::string(" ORDER BY s.title ") + dirFor("ASC") + ", e.season " + dirFor("ASC") + ", e.episode " + dirFor("ASC");
+
+    auto bindWhere = [&](SQLite::Statement& q, int& idx) {
+        if (!p.show_id.empty()) q.bind(idx++, p.show_id);
+        if (p.season >= 0)      q.bind(idx++, p.season);
+        if (!p.q.empty())       { q.bind(idx++, p.q); q.bind(idx++, p.q); }
+        if (p.playlist_id)      q.bind(idx++, *p.playlist_id);
+    };
+
+    EpisodeListResult result;
+    {
+        SQLite::Statement cnt(db_.get(),
+            "SELECT COUNT(*) FROM episode e JOIN show s ON s.show_id = e.show_id" + where);
+        int idx = 1; bindWhere(cnt, idx);
+        if (cnt.executeStep()) result.total = cnt.getColumn(0).getInt();
+    }
 
     SQLite::Statement q(db_.get(), R"(
         SELECT e.episode_id, e.season, e.episode, e.title, e.duration_ms,
                s.show_id, s.title AS show_title
         FROM episode e JOIN show s ON s.show_id = e.show_id
-    )" + where + " ORDER BY s.title, e.season, e.episode LIMIT ? OFFSET ?");
+    )" + where + order_clause + " LIMIT ? OFFSET ?");
     int idx = 1;
-    if (!show_id.empty()) q.bind(idx++, show_id);
-    if (season >= 0)      q.bind(idx++, season);
-    if (!q_str.empty())   { q.bind(idx++, q_str); q.bind(idx++, q_str); }
-    q.bind(idx++, limit); q.bind(idx++, offset);
+    bindWhere(q, idx);
+    if (p.sort == "playlist_order" && p.playlist_id) q.bind(idx++, *p.playlist_id);
+    q.bind(idx++, p.limit); q.bind(idx++, p.offset);
 
-    std::vector<EpisodeSearchRow> rows;
     while (q.executeStep()) {
         EpisodeSearchRow r;
         r.episode_id  = q.getColumn(0).getString();
@@ -1414,9 +1460,9 @@ std::vector<EpisodeSearchRow> ContentRepository::searchEpisodes(const std::strin
         r.duration_ms = q.getColumn(4).getInt64();
         r.show_id     = q.getColumn(5).getString();
         r.show_title  = q.getColumn(6).getString();
-        rows.push_back(std::move(r));
+        result.items.push_back(std::move(r));
     }
-    return rows;
+    return result;
 }
 
 std::optional<EpisodeSearchRow> ContentRepository::getEpisode(const std::string& episode_id) {

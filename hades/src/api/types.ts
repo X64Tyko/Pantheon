@@ -767,6 +767,27 @@ export interface Playlist {
   home_tile_limit:   number
   home_active_start: string
   home_active_end:   string
+  // Library "Playlists" section tile poster — a pasted URL (same override
+  // convention as shows/movies' custom poster). Empty = the frontend falls
+  // back to a collage of the first few items' own posters (see
+  // PlaylistBrowseEntry.preview_items).
+  poster_source: string
+}
+
+// GET /api/playlists/browse — any-authenticated-user tile-rendering summary
+// for the Library's Playlists section (see PlaylistRepository::listBrowse).
+// Deliberately excludes membership/filter_expr/sync internals GET
+// /api/playlists exposes for editing — this is browse-only.
+export interface PlaylistBrowseEntry {
+  playlist_id:   string
+  title:         string
+  mode:          PlaylistMode
+  poster_source: string
+  item_count:    number
+  total_ms:      number
+  // First 4 items by position — only meaningful when poster_source is empty
+  // (client-side collage fallback).
+  preview_items: { item_type: 'episode' | 'movie'; item_id: string }[]
 }
 
 // A remote playlist/collection item that couldn't be resolved against this

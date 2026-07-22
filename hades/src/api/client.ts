@@ -9,7 +9,7 @@ import type {
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
-  Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult, HomePlaylistShelf, UnresolvedSyncItem,
+  Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult, HomePlaylistShelf, UnresolvedSyncItem, PlaylistBrowseEntry, PlaylistItem,
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
@@ -329,10 +329,10 @@ export const api = {
   // builder (via components/media/filterQuery.ts) passes `filter`; either
   // or both together concatenate (bare words in the syntax mean "fuzzy
   // free-text match", same as `q` always did).
-  getShows:       (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean } = {}) =>
+  getShows:       (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean; playlist_id?: string } = {}) =>
                     request<PagedResult<Show>>('GET', `/shows?${qs({ ...withCombinedFilter(p), hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
   getEpisodes:    (showId: string, season?: number)     => request<Episode[]>('GET', `/shows/${showId}/episodes${season != null ? '?season=' + season : ''}`),
-  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean } = {}) =>
+  getMovies:      (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean; playlist_id?: string } = {}) =>
                     request<PagedResult<Movie>>('GET', `/movies?${qs({ ...withCombinedFilter(p), hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
 
   // Watch progress
@@ -418,20 +418,34 @@ export const api = {
 
   // Episode search
   getShowSeasons:    (showId: string)                                             => request<{seasons: {number: number; name: string}[]}>('GET', `/shows/${showId}/seasons`),
-  searchEpisodes:    (p: { q?: string; show_id?: string; season?: number; limit?: number; offset?: number } = {}) =>
-                       request<{items: EpisodeSearchResult[]}>('GET', `/episodes?${qs(p)}`),
+  searchEpisodes:    (p: {
+                       q?: string; show_id?: string; season?: number; limit?: number; offset?: number
+                       // 'playlist_order' only meaningful (and only offered by the UI) together with playlist_id —
+                       // see LibraryFilters.tsx's conditional sort option.
+                       sort?: 'title' | 'playlist_order'; sort_dir?: 'asc' | 'desc'; playlist_id?: string
+                     } = {}) =>
+                       request<PagedResult<EpisodeSearchResult>>('GET', `/episodes?${qs(p)}`),
 
   // Playlists
   getPlaylists:      ()                                       => request<Playlist[]>    ('GET',    '/playlists'),
+  // Any-authenticated-user tile summary for the Library's Playlists section
+  // (see PlaylistRepository::listBrowse) — deliberately separate from the
+  // admin-only getPlaylists() above, which carries full editing internals.
+  getPlaylistsBrowse: ()                                      => request<PlaylistBrowseEntry[]>('GET', '/playlists/browse'),
   createPlaylist:    (b: { title: string })                   => request<{playlist_id: string}>('POST', '/playlists', b),
   getPlaylist:       (id: string)                             => request<PlaylistDetail>('GET',    `/playlists/${id}`),
   getPlaylistPlayTarget: (id: string)                         => request<ResolvedPlayTarget | null>('GET', `/playlists/${id}/resolve-play-target`),
+  // Any-authenticated-user ordered item list for Play/Restart/Shuffle (see
+  // resolvePlayTarget.ts) — deliberately separate from the admin-only
+  // getPlaylist() above, same split as getPlaylistsBrowse().
+  getPlaylistItems: (id: string)                              => request<{items: PlaylistItem[]}>('GET', `/playlists/${id}/items`),
   updatePlaylist:    (id: string, b: {
                        title?: string; mode?: string
                        membership?: 'static'|'smart'; filter_expr?: string
                        smart_type?: 'show'|'movie'; smart_sort?: string; smart_limit?: number
                        show_on_home?: boolean; home_order?: number; home_tile_limit?: number
                        home_active_start?: string; home_active_end?: string
+                       poster_source?: string
                      }) => request<void>('PATCH',  `/playlists/${id}`, b),
   deletePlaylist:    (id: string)                             => request<void>          ('DELETE', `/playlists/${id}`),
   refreshSmartPlaylist: (id: string) => request<{synced: number}>('POST', `/playlists/${id}/refresh-smart`),

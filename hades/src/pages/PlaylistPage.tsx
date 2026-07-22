@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { makeAutoObservable, reaction, runInAction } from 'mobx'
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type {
   EpisodeSearchResult, LibraryWithSource, Movie, Playlist, PlexBrowseItem, PlexBrowseList,
@@ -513,6 +513,21 @@ class PlaylistPageStore {
     }
   }
 
+  // Library "Playlists" section tile poster (see PlaylistTile.tsx) — a
+  // pasted URL, same override convention as shows/movies' custom poster.
+  // Empty clears it back to the client-side collage fallback.
+  async setPosterSource(id: string, poster_source: string) {
+    try {
+      await api.updatePlaylist(id, { poster_source })
+      runInAction(() => {
+        this.playlists = this.playlists.map(p => p.playlist_id === id ? { ...p, poster_source } : p)
+        if (this.detail?.playlist_id === id) this.detail = { ...this.detail, poster_source }
+      })
+    } catch (e: any) {
+      runInAction(() => { this.error = e.message })
+    }
+  }
+
   async syncAllLinkedPlaylists() {
     try {
       await api.syncAllLinkedPlaylists()
@@ -616,6 +631,8 @@ function fmtSyncAge(ts: number | null): string {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default observer(function PlaylistPage() {
+  const [searchParams] = useSearchParams()
+
   useEffect(() => {
     store.load()
     // Loaded eagerly (not lazily on first picker-open) so PlaylistCard's
@@ -623,6 +640,17 @@ export default observer(function PlaylistPage() {
     // render, not just once someone happens to open the item picker.
     if (store.allLibraries.length === 0)
       api.getAllLibraries().then(libs => runInAction(() => { store.allLibraries = libs }))
+
+    // Deep-link from the Library page's admin-only "✎ Edit" affordance
+    // (see LibraryStore/LibraryPage.tsx) — lands here with that playlist
+    // already expanded, instead of requiring a second manual click.
+    // expand() is a toggle (collapses if already open), so this guards
+    // against calling it a 2nd time — React StrictMode's dev-mode double
+    // effect invocation would otherwise immediately collapse what the
+    // first invocation just opened.
+    const openId = searchParams.get('open')
+    if (openId && store.expanded !== openId) store.expand(openId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const hasLinks = store.playlists.some(p => p.plex_link)
@@ -770,6 +798,28 @@ const ImportPreviewPanel = observer(function ImportPreviewPanel({
   )
 })
 
+// Library "Playlists" section tile poster (see PlaylistTile.tsx) — a pasted
+// URL, same override convention as shows/movies' Custom Poster URL field
+// (LibraryAdminPanel.tsx). Local draft + commit-on-blur, like the mode/
+// membership toggles this sits alongside, rather than a batched save form.
+const PosterUrlField = observer(function PosterUrlField({ playlist }: { playlist: Playlist }) {
+  const [draft, setDraft] = useState(playlist.poster_source)
+  useEffect(() => setDraft(playlist.poster_source), [playlist.poster_source])
+
+  return (
+    <div className="flex flex-col gap-1.5 pb-1 border-b border-zinc-800/50">
+      <div className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">Poster URL</div>
+      <input
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => { if (draft !== playlist.poster_source) store.setPosterSource(playlist.playlist_id, draft.trim()) }}
+        placeholder="https://… (blank = collage of the first few items' posters)"
+        className="input w-full text-xs"
+      />
+    </div>
+  )
+})
+
 const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Playlist }) {
   const isOpen = store.expanded === playlist.playlist_id
   const navigate = useNavigate()
@@ -882,6 +932,9 @@ const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Pl
                     : 'In-Order: items play sequentially as a flat list, ignoring the block\'s advancement setting.'}
                 </div>
               </div>
+
+              {/* Library "Playlists" section tile poster */}
+              <PosterUrlField playlist={playlist} />
 
               {/* Membership toggle */}
               <div className="flex flex-col gap-1.5 pb-1 border-b border-zinc-800/50">

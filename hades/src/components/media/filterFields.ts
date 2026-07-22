@@ -4,7 +4,7 @@
 // circular dependency.
 
 export type FilterField =
-  | 'library' | 'source' | 'title' | 'genre' | 'year' | 'content_rating' | 'studio'
+  | 'library' | 'playlist' | 'source' | 'title' | 'genre' | 'year' | 'content_rating' | 'studio'
   | 'director' | 'actor' | 'writer' | 'country'
   | 'collection' | 'network' | 'label' | 'resolution' | 'decade'
   | 'audience_rating' | 'duration' | 'added'
@@ -16,7 +16,7 @@ export type FilterOp =
   | 'gt' | 'gte' | 'lt' | 'lte'
   | 'before' | 'after' | 'in_last'
 
-export type ValueType = 'text' | 'number' | 'days' | 'resolution' | 'decade' | 'library' | 'source'
+export type ValueType = 'text' | 'number' | 'days' | 'resolution' | 'decade' | 'library' | 'source' | 'playlist'
 
 export const RESOLUTIONS = ['4K', '1080p', '720p', 'SD']
 export const DECADES     = ['2020s', '2010s', '2000s', '1990s', '1980s', '1970s', '1960s', '1950s', '1940s', '1930s']
@@ -45,6 +45,7 @@ const FULL_TEXT_OPS: { id: FilterOp; label: string }[] = [
 // Metacritic/etc.) is a separate future scraper, not something to fake here.
 export const FIELD_DEFS: Record<FilterField, FieldDef> = {
   library:         { label: 'Library',         valueType: 'library',    ops: [{ id: 'is',      label: 'is' }] },
+  playlist:        { label: 'Playlist',        valueType: 'playlist',   ops: [{ id: 'is',      label: 'is' }] },
   source:          { label: 'Source',          valueType: 'source',     ops: [{ id: 'is', label: 'is' }, { id: 'is_not', label: 'is not' }] },
   title:           { label: 'Title',           valueType: 'text',       ops: FULL_TEXT_OPS },
   genre:           { label: 'Genre',           valueType: 'text',       ops: TEXT_OPS },

@@ -2053,6 +2053,15 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE playlist ADD COLUMN home_active_end   TEXT NOT NULL DEFAULT '';
 )SQL" }
 
+// Playlist tile poster for the Library's new Playlists section — a plain
+// pasted URL (same "Custom Poster URL" override convention shows/movies
+// already use, served through the existing generic /api/images/proxy, no
+// new upload infra). Empty = the frontend falls back to a client-side
+// collage of the playlist's first few items' own posters.
+,{ 89, R"SQL(
+    ALTER TABLE playlist ADD COLUMN poster_source TEXT NOT NULL DEFAULT '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

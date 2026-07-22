@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
+import { useNavigate } from 'react-router-dom'
 import { libraryStore } from '../stores/LibraryStore'
+import { useAuth } from '../auth/AuthContext'
 import { useDebounce } from '../hooks/useDebounce'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { SourceSwitcher } from '../components/media/SourceSwitcher'
@@ -8,9 +10,11 @@ import { LibraryFilters } from '../components/media/LibraryFilters'
 import { FilterSection } from '../components/PickerFilters'
 import { MediaGrid } from '../components/media/MediaGrid'
 import { MediaDetail } from '../components/media/MediaDetail'
+import { PlaylistTile } from '../components/media/PlaylistTile'
 import { LoadMoreSentinel } from '../channel/BrowserTiles'
 import { filterInputStyle } from '../channel/styles'
 import type { LibraryDensity, ScraperSearchResult } from '../api/types'
+import { runPlaylistPlayAction, type PlaylistPlayAction } from '../player/resolvePlayTarget'
 import { useFocusable } from '../nav/useFocusable'
 import { parseFilterSyntax, countClauses } from '../components/media/filterSyntax'
 import styles from './LibraryPage.module.css'
@@ -20,6 +24,8 @@ const SCROLL_KEY = 'library-grid'
 
 export default observer(function LibraryPage() {
   const store = libraryStore
+  const { user } = useAuth()
+  const navigate = useNavigate()
   const [selectedDiscover, setSelectedDiscover] = useState<ScraperSearchResult | null>(null)
   const [rawQ, setRawQ] = useState(store.query)
   const debouncedQ = useDebounce(rawQ, 300)
@@ -30,6 +36,19 @@ export default observer(function LibraryPage() {
   const [transitioning, setTransitioning] = useState(false)
 
   const detailOpen = !!(store.selectedId || selectedDiscover)
+  const activePlaylist = store.playlists.find(p => p.playlist_id === store.activePlaylistId)
+  const [playBusy, setPlayBusy] = useState(false)
+
+  const runChipPlayAction = async (action: PlaylistPlayAction) => {
+    if (!activePlaylist || playBusy) return
+    setPlayBusy(true)
+    try {
+      const path = await runPlaylistPlayAction(activePlaylist.playlist_id, activePlaylist.mode, action)
+      if (path) navigate(path)
+    } finally {
+      setPlayBusy(false)
+    }
+  }
 
   useEffect(() => {
     store.loadLibraries().then(() => store.fetch()).then(() => {
@@ -37,6 +56,7 @@ export default observer(function LibraryPage() {
       restoredRef.current = true
       setTimeout(() => gridScrollRef.current?.scrollTo({ top: getScrollPos(SCROLL_KEY) }), 32)
     })
+    store.loadPlaylists()
   }, [])
 
   useEffect(() => { store.setQuery(debouncedQ) }, [debouncedQ])
@@ -100,7 +120,34 @@ export default observer(function LibraryPage() {
               them in the narrow sidebar (LibraryFilters.tsx) — that sidebar
               used to hold this too, but it grows unbounded as rules/groups
               are added and forced an awkward internal scroll. */}
-          {!store.discoverMode && <FilterSection tree={store.filterTree} filteredLibs={store.libraries} layout="horizontal" />}
+          {!store.discoverMode && <FilterSection tree={store.filterTree} filteredLibs={store.libraries} playlists={store.playlists} layout="horizontal" />}
+
+          {/* Clicking a Playlists-section tile below turns it into exactly
+              this — a `playlist:<id>` rule in the filter tree (see
+              LibraryStore.enterPlaylist) — so dismissing it here is just
+              removing that rule, not a separate "mode" to track. */}
+          {!store.discoverMode && activePlaylist && (
+            <div className={styles.playlistChipRow}>
+              <span className={styles.playlistChip}>
+                Viewing: {activePlaylist.title}
+                <button onClick={() => store.exitPlaylist()} className={styles.playlistChipClose} title="Stop viewing this playlist">✕</button>
+              </span>
+              {activePlaylist.item_count > 0 && (
+                <>
+                  <button onClick={() => runChipPlayAction('play')} disabled={playBusy} className={styles.playlistActionBtn} title="Play (resumes where you left off)">▶ Play</button>
+                  <button onClick={() => runChipPlayAction('restart')} disabled={playBusy} className={styles.playlistActionBtn} title="Restart from the beginning">↻ Restart</button>
+                  <button onClick={() => runChipPlayAction('shuffle')} disabled={playBusy} className={styles.playlistActionBtn} title="Shuffle play">🔀 Shuffle</button>
+                </>
+              )}
+              {user?.role === 'admin' && (
+                <button
+                  onClick={() => navigate(`/playlists?open=${activePlaylist.playlist_id}`)}
+                  className={styles.playlistEditLink}
+                  title="Edit this playlist"
+                >✎ Edit</button>
+              )}
+            </div>
+          )}
 
           {!store.discoverMode && <SourceSwitcher libraries={store.libraries} />}
 
@@ -153,14 +200,36 @@ export default observer(function LibraryPage() {
             </div>
           ) : (
             <>
+              {/* Library's "Playlists" section — browsable tiles, hidden once
+                  you've clicked into one (the chip above takes its place).
+                  Collapsible (not just always-on) so a growing playlist
+                  count doesn't crowd out the actual library grid below —
+                  the header stays put either way so it's still one click
+                  to get back. */}
+              {!activePlaylist && store.playlists.length > 0 && (
+                <div className={styles.playlistSectionWrap}>
+                  <button onClick={() => store.togglePlaylistsSection()} className={styles.playlistSectionToggle}>
+                    <span>{store.playlistsSectionOpen ? '▼' : '▶'}</span> Playlists ({store.playlists.length})
+                  </button>
+                  {store.playlistsSectionOpen && (
+                    <div className={styles.playlistSectionRow}>
+                      {store.playlists.map(p => (
+                        <PlaylistTile key={p.playlist_id} playlist={p} onClick={() => store.enterPlaylist(p.playlist_id)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <MediaGrid
                 shows={store.shows}
                 movies={store.movies}
+                episodes={store.episodes}
                 density={store.density}
                 selectedId={null}
                 onItemClick={(id, type) => openDetail(() => store.selectItem(id, type))}
+                onEpisodeClick={id => navigate(`/player/episode/${id}`)}
               />
-              {store.shows.length + store.movies.length < store.total && (
+              {store.shows.length + store.movies.length + store.episodes.length < store.total && (
                 <LoadMoreSentinel loading={store.loadingMore} onVisible={() => store.loadMore()} />
               )}
             </>

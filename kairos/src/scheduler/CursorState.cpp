@@ -2,6 +2,7 @@
 #include "../db/Database.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
+#include <iostream>
 #include <sstream>
 
 using json = nlohmann::json;
@@ -302,8 +303,34 @@ void CursorState::applyToDB(Database& db, const std::string& channel_id) const {
         ins.bind(6, entry.position);
         if (entry.episode_id.empty()) ins.bind(7); else ins.bind(7, entry.episode_id);
         ins.bind(8, json(entry.ahead).dump());
-        ins.exec();
-        ins.reset();
+        try {
+            ins.exec();
+        } catch (const std::exception& e) {
+            // entry.episode_id is a stale watermark — it pointed at an episode
+            // that's since been deleted (orphan cleanup nulls *live*
+            // media_cursor rows when that happens, see SyncManager::
+            // cleanupOrphans, but never scrubs a channel's anchor_hashes
+            // snapshot or block_content itself, so a stale id can resurface
+            // here months later once deserialized back out of an anchor blob).
+            // Same "skip just this one, don't abort the whole channel's EPG"
+            // reasoning as commit()'s scheduled_program insert loop just
+            // above this call in EPGMaterializer.cpp — this INSERT sits
+            // inside that same sp_commit savepoint, so an uncaught throw
+            // here previously rolled back the *entire* commit (including
+            // every already-inserted scheduled_program row) and 500'd
+            // GET /api/channels/:id/epg for the whole channel over one
+            // dangling reference. Logged so a missing-media gap is visible
+            // (surfaced in Hades' log viewer) rather than silently dropped.
+            std::cerr << "[epg] WARNING: dropping stale cursor content=" << entry.content_type << ":" << entry.content_id
+                      << " scope=" << entry.cursor_scope << ":" << entry.scope_id
+                      << " episode_id=" << entry.episode_id << " (no longer exists): " << e.what() << '\n';
+        }
+        // tryReset(), not reset() — after a failed exec(), sqlite3_reset()
+        // returns that same error code again (SQLite re-surfaces the last
+        // step's failure), and Statement::reset() throws on a non-OK code —
+        // which would silently defeat the catch above by re-throwing right
+        // past it. tryReset() is the noexcept variant for exactly this.
+        ins.tryReset();
     }
 
     // Block state: delete-then-reinsert.

@@ -40,6 +40,14 @@ export async function resolvePlayPath(contentType: 'show' | 'movie', id: string)
     : `/player/${target.kind}/${target.id}`
 }
 
+function playlistQueueItems(items: PlaylistItem[]): QueueItem[] {
+  return items.map(it => ({
+    kind: it.item_type, id: it.item_id, title: it.title,
+    season: it.season, episode: it.episode, duration_ms: it.duration_ms,
+    thumb: it.item_type === 'episode' ? '1' : undefined,
+  }))
+}
+
 // Playlist "Play" button — resolves the resume point (server-side, same
 // fresh position-vs-duration logic as the show endpoint — see
 // PlaylistPlayTargetHelper.cpp) and stashes the playlist's full ordered item
@@ -47,15 +55,13 @@ export async function resolvePlayPath(contentType: 'show' | 'movie', id: string)
 // through it without a bespoke "playlist session" API. `mode: 'shuffle'`
 // keeps the resume item first (so resuming a shuffled playlist doesn't jump
 // somewhere random) and shuffles only the remaining order after it.
+// Doubles as "Continue" — there's no separate label/branch for it, resuming
+// mid-playlist vs starting fresh from the top is the same resolved target.
 export async function resolvePlaylistPlayPath(playlistId: string, items: PlaylistItem[], mode: string): Promise<string | null> {
   const target = await api.getPlaylistPlayTarget(playlistId)
   if (!target || items.length === 0) return null
 
-  let queue: QueueItem[] = items.map(it => ({
-    kind: it.item_type, id: it.item_id, title: it.title,
-    season: it.season, episode: it.episode, duration_ms: it.duration_ms,
-    thumb: it.item_type === 'episode' ? '1' : undefined,
-  }))
+  let queue = playlistQueueItems(items)
   if (mode === 'shuffle') {
     const idx = queue.findIndex(q => q.kind === target.kind && q.id === target.id)
     const current = idx >= 0 ? queue[idx] : queue[0]
@@ -66,4 +72,42 @@ export async function resolvePlaylistPlayPath(playlistId: string, items: Playlis
   return target.position_ms > 0
     ? `/player/${target.kind}/${target.id}?queue=${token}&t=${target.position_ms}`
     : `/player/${target.kind}/${target.id}?queue=${token}`
+}
+
+// "Restart" — ignores saved progress entirely and starts at the first item,
+// in the playlist's own stored/native order (still shuffled if mode is
+// 'shuffle', same as a fresh resume would be, just no resume-point lookup —
+// no need to hit resolve-play-target at all for this one).
+export function restartPlaylistPath(items: PlaylistItem[], mode: string): string | null {
+  if (items.length === 0) return null
+  let queue = playlistQueueItems(items)
+  if (mode === 'shuffle') queue = shuffleArray(queue)
+  const token = storeQueue(queue)
+  return `/player/${queue[0].kind}/${queue[0].id}?queue=${token}`
+}
+
+// "Shuffle" — an explicit ad-hoc shuffle-play-now, regardless of the
+// playlist's own configured mode (unlike Restart, which only shuffles if the
+// playlist is already set to shuffle). Same "always start a fresh random
+// run" philosophy as the show/season shuffle buttons (EpisodeShelf.tsx) —
+// never resume-aware, no saved-position lookup.
+export function shufflePlaylistPath(items: PlaylistItem[]): string | null {
+  if (items.length === 0) return null
+  const queue = shuffleArray(playlistQueueItems(items))
+  const token = storeQueue(queue)
+  return `/player/${queue[0].kind}/${queue[0].id}?queue=${token}`
+}
+
+export type PlaylistPlayAction = 'play' | 'restart' | 'shuffle'
+
+// Shared by every playlist Play/Restart/Shuffle affordance (Library page's
+// tiles and its "Viewing: <title>" chip — see PlaylistTile.tsx/LibraryPage.tsx)
+// — fetches the ordered item list via the any-user GET /api/playlists/:id/items
+// (not the admin-only detail route a viewer can't call) and resolves to
+// whichever of the 3 paths above applies.
+export async function runPlaylistPlayAction(playlistId: string, mode: string, action: PlaylistPlayAction): Promise<string | null> {
+  const { items } = await api.getPlaylistItems(playlistId)
+  if (action === 'play')    return resolvePlaylistPlayPath(playlistId, items, mode)
+  if (action === 'restart') return restartPlaylistPath(items, mode)
+  return shufflePlaylistPath(items)
 }

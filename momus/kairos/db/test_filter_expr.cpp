@@ -186,6 +186,21 @@ protected:
         s.exec();
     }
 
+    void insertPlaylist(const std::string& playlist_id) {
+        SQLite::Statement s(db.get(),
+            "INSERT INTO playlist (playlist_id, title, source, mode) VALUES (?,?,'custom','sequential')");
+        s.bind(1, playlist_id); s.bind(2, playlist_id);
+        s.exec();
+    }
+
+    void insertPlaylistItem(const std::string& playlist_id, int position,
+                             const std::string& item_type, const std::string& item_id) {
+        SQLite::Statement s(db.get(),
+            "INSERT INTO playlist_item (playlist_id, position, item_type, item_id) VALUES (?,?,?,?)");
+        s.bind(1, playlist_id); s.bind(2, position); s.bind(3, item_type); s.bind(4, item_id);
+        s.exec();
+    }
+
     ShowListResult  searchShows(const std::string& filter, const std::string& match = "all") {
         ShowSearchParams p; p.filter = filter; p.limit = 50; return repo.searchShows(p);
     }
@@ -340,6 +355,40 @@ TEST_F(FilterExprIntegrationTest, LibraryFilterMatchesMappedLibrary) {
     EXPECT_EQ(searchShows("library:lib-b").total, 1);
 }
 
+// The Library page's "click a playlist tile" affordance compiles down to
+// this clause (see LibraryStore.ts) — movie membership matches item_id
+// directly.
+TEST_F(FilterExprIntegrationTest, PlaylistFilterMatchesMovieMember) {
+    insertMovie("m1", "In Playlist", "[]", 2020, 5, 6000000);
+    insertMovie("m2", "Not In Playlist", "[]", 2020, 5, 6000000);
+    insertPlaylist("pl1");
+    insertPlaylistItem("pl1", 0, "movie", "m1");
+
+    auto r = searchMovies("playlist:pl1");
+    ASSERT_EQ(r.total, 1);
+    EXPECT_EQ(r.items[0].movie_id, "m1");
+}
+
+// playlist_item has no 'show' item_type (only episode/movie), so a Show
+// match has to join through episode.show_id — this is the regression case
+// that distinguishes "compiles" from "compiles correctly".
+TEST_F(FilterExprIntegrationTest, PlaylistFilterMatchesShowViaEpisodeMember) {
+    insertShow("s1", "In Playlist", "[]", 2020);
+    insertShow("s2", "Not In Playlist", "[]", 2020);
+    insertEpisode("e1", "s1", "");
+    insertPlaylist("pl1");
+    insertPlaylistItem("pl1", 0, "episode", "e1");
+
+    auto r = searchShows("playlist:pl1");
+    ASSERT_EQ(r.total, 1);
+    EXPECT_EQ(r.items[0].show_id, "s1");
+}
+
+TEST_F(FilterExprIntegrationTest, PlaylistFilterExcludesEverythingForAnUnknownPlaylistId) {
+    insertMovie("m1", "Some Movie", "[]", 2020, 5, 6000000);
+    EXPECT_EQ(searchMovies("playlist:no-such-playlist").total, 0);
+}
+
 // Regression: a movie cross-source-merged into one canonical row but mapped
 // to more than one library (one source_mapping row per source it's mapped
 // to — see source_mapping's PRIMARY KEY) used to come back once *per
@@ -387,4 +436,68 @@ TEST_F(FilterExprIntegrationTest, SeededRandomSortIsStablePerSeedAndReshufflesOn
 
     EXPECT_EQ(a1, a2) << "same seed must produce the same order every call";
     EXPECT_NE(a1, b)  << "a different seed must produce a different order";
+}
+
+// "Playlist Order" sort (Library page, only offered once a `playlist:<id>`
+// filter clause is active) — movies sort directly by their own
+// playlist_item.position.
+TEST_F(FilterExprIntegrationTest, PlaylistOrderSortsMoviesByPlaylistPosition) {
+    insertMovie("m1", "Third",  "[]", 2020, 5, 6000000);
+    insertMovie("m2", "First",  "[]", 2020, 5, 6000000);
+    insertMovie("m3", "Second", "[]", 2020, 5, 6000000);
+    insertPlaylist("pl1");
+    insertPlaylistItem("pl1", 0, "movie", "m2");
+    insertPlaylistItem("pl1", 1, "movie", "m3");
+    insertPlaylistItem("pl1", 2, "movie", "m1");
+
+    MovieSearchParams p;
+    p.filter = "playlist:pl1"; p.sort = "playlist_order"; p.playlist_id = "pl1"; p.limit = 50;
+    auto r = repo.searchMovies(p);
+
+    ASSERT_EQ(r.items.size(), 3u);
+    EXPECT_EQ(r.items[0].movie_id, "m2");
+    EXPECT_EQ(r.items[1].movie_id, "m3");
+    EXPECT_EQ(r.items[2].movie_id, "m1");
+}
+
+// Shows sort by the MIN position among their own episode members (playlist_item
+// has no 'show' item_type — see PlaylistFilterMatchesShowViaEpisodeMember).
+TEST_F(FilterExprIntegrationTest, PlaylistOrderSortsShowsByEarliestEpisodePosition) {
+    insertShow("s1", "Third",  "[]", 2020);
+    insertShow("s2", "First",  "[]", 2020);
+    insertEpisode("e1-1", "s1", "");
+    insertEpisode("e2-1", "s2", "");
+    insertPlaylist("pl1");
+    insertPlaylistItem("pl1", 0, "episode", "e2-1");
+    insertPlaylistItem("pl1", 1, "episode", "e1-1");
+
+    ShowSearchParams p;
+    p.filter = "playlist:pl1"; p.sort = "playlist_order"; p.playlist_id = "pl1"; p.limit = 50;
+    auto r = repo.searchShows(p);
+
+    ASSERT_EQ(r.items.size(), 2u);
+    EXPECT_EQ(r.items[0].show_id, "s2");
+    EXPECT_EQ(r.items[1].show_id, "s1");
+}
+
+// Regression: sort=="playlist_order" with no playlist_id (e.g. a stale/racy
+// client request that dropped it) used to leave the ORDER BY subquery's `?`
+// placeholder unbound once limit/offset were bound after it, throwing a
+// SQLite parameter-count mismatch instead of just falling back to title
+// sort — reproduced live via Playwright against the Library page's
+// enter/exit-playlist flow.
+TEST_F(FilterExprIntegrationTest, PlaylistOrderSortWithoutPlaylistIdFallsBackInsteadOfThrowing) {
+    insertMovie("m2", "Second Movie", "[]", 2020, 5, 6000000);
+    insertMovie("m1", "First Movie",  "[]", 2020, 5, 6000000);
+
+    MovieSearchParams p;
+    p.sort = "playlist_order"; p.limit = 50; // no playlist_id set
+    EXPECT_NO_THROW({
+        auto r = repo.searchMovies(p);
+        EXPECT_EQ(r.items.size(), 2u);
+    });
+
+    ShowSearchParams sp;
+    sp.sort = "playlist_order"; sp.limit = 50;
+    EXPECT_NO_THROW(repo.searchShows(sp));
 }

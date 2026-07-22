@@ -136,7 +136,8 @@ std::vector<PlaylistRow> PlaylistRepository::listAll() {
                    WHEN 'movie'   THEN m.duration_ms ELSE 0 END), 0) AS total_ms,
                pll.source_id, pll.external_id, pll.plex_type, pll.last_synced_at,
                p.membership, p.filter_expr, p.smart_type, p.smart_sort, p.smart_limit, p.last_smart_refresh_at,
-               p.show_on_home, p.home_order, p.home_tile_limit, p.home_active_start, p.home_active_end
+               p.show_on_home, p.home_order, p.home_tile_limit, p.home_active_start, p.home_active_end,
+               p.poster_source
         FROM playlist p
         LEFT JOIN playlist_item pi ON pi.playlist_id = p.playlist_id
         LEFT JOIN episode e ON pi.item_type = 'episode' AND pi.item_id = e.episode_id
@@ -171,6 +172,7 @@ std::vector<PlaylistRow> PlaylistRepository::listAll() {
         r.home_tile_limit   = q.getColumn(17).getInt();
         r.home_active_start = q.getColumn(18).getString();
         r.home_active_end   = q.getColumn(19).getString();
+        r.poster_source     = q.getColumn(20).getString();
         rows.push_back(std::move(r));
     }
     return rows;
@@ -179,7 +181,7 @@ std::vector<PlaylistRow> PlaylistRepository::listAll() {
 std::optional<PlaylistDetail> PlaylistRepository::getDetail(const std::string& playlist_id) {
     SQLite::Statement ph(db_.get(),
         "SELECT playlist_id, title, mode, membership, filter_expr, smart_type, smart_sort, smart_limit, last_smart_refresh_at, "
-        "show_on_home, home_order, home_tile_limit, home_active_start, home_active_end "
+        "show_on_home, home_order, home_tile_limit, home_active_start, home_active_end, poster_source "
         "FROM playlist WHERE playlist_id = ?");
     ph.bind(1, playlist_id);
     if (!ph.executeStep()) return std::nullopt;
@@ -199,6 +201,7 @@ std::optional<PlaylistDetail> PlaylistRepository::getDetail(const std::string& p
     d.home_tile_limit   = ph.getColumn(11).getInt();
     d.home_active_start = ph.getColumn(12).getString();
     d.home_active_end   = ph.getColumn(13).getString();
+    d.poster_source     = ph.getColumn(14).getString();
 
     SQLite::Statement q(db_.get(), R"(
         SELECT pi.id, pi.position, pi.item_type, pi.item_id,
@@ -403,6 +406,45 @@ int PlaylistRepository::refreshSmart(const std::string& playlist_id) {
     ts.exec();
 
     return static_cast<int>(items.size());
+}
+
+std::vector<PlaylistRepository::BrowseEntry> PlaylistRepository::listBrowse() {
+    SQLite::Statement q(db_.get(), R"(
+        SELECT p.playlist_id, p.title, p.mode, p.poster_source,
+               COUNT(pi.id) AS item_count,
+               COALESCE(SUM(CASE pi.item_type
+                   WHEN 'episode' THEN e.duration_ms
+                   WHEN 'movie'   THEN m.duration_ms ELSE 0 END), 0) AS total_ms
+        FROM playlist p
+        LEFT JOIN playlist_item pi ON pi.playlist_id = p.playlist_id
+        LEFT JOIN episode e ON pi.item_type = 'episode' AND pi.item_id = e.episode_id
+        LEFT JOIN movie   m ON pi.item_type = 'movie'   AND pi.item_id = m.movie_id
+        GROUP BY p.playlist_id ORDER BY p.title
+    )");
+    std::vector<BrowseEntry> rows;
+    while (q.executeStep()) {
+        BrowseEntry r;
+        r.playlist_id   = q.getColumn(0).getString();
+        r.title         = q.getColumn(1).getString();
+        r.mode          = q.getColumn(2).getString();
+        r.poster_source = q.getColumn(3).getString();
+        r.item_count    = q.getColumn(4).getInt();
+        r.total_ms      = q.getColumn(5).getInt64();
+        rows.push_back(std::move(r));
+    }
+
+    // Preview items (first 4 by position) — only needed for the client-side
+    // collage fallback when poster_source is empty, so skip the lookup
+    // otherwise.
+    for (auto& r : rows) {
+        if (!r.poster_source.empty()) continue;
+        SQLite::Statement pq(db_.get(),
+            "SELECT item_type, item_id FROM playlist_item WHERE playlist_id = ? ORDER BY position LIMIT 4");
+        pq.bind(1, r.playlist_id);
+        while (pq.executeStep())
+            r.preview_items.push_back({pq.getColumn(0).getString(), pq.getColumn(1).getString()});
+    }
+    return rows;
 }
 
 std::vector<PlaylistRepository::HomeShelfRow> PlaylistRepository::listHomeShelves() {

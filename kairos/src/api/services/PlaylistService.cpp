@@ -56,6 +56,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 					{"home_tile_limit",    r.home_tile_limit},
 					{"home_active_start",  r.home_active_start},
 					{"home_active_end",    r.home_active_end},
+					{"poster_source",      r.poster_source},
 				};
 				if (r.plex_link) {
 					entry["plex_link"] = {
@@ -92,6 +93,34 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 			}
 			route::ok(res, result.dump());
 		} catch (const std::exception& e) { route::logErr("GET /api/home-playlists", e); route::err(res, 500, e.what()); }
+	});
+
+	// Any authenticated user (not admin-only like the rest of this file) —
+	// tile-rendering summary for the Library's new Playlists section, same
+	// "playback affordance, not management" reasoning as resolve-play-target
+	// below. Deliberately excludes membership/filter_expr/sync internals that
+	// GET /api/playlists exposes for editing — this is browse-only.
+	svr.Get("/api/playlists/browse", [this](const Req&, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		try {
+			json result = json::array();
+			for (const auto& r : PlaylistRepository(db_).listBrowse()) {
+				json preview = json::array();
+				for (const auto& it : r.preview_items)
+					preview.push_back({{"item_type", it.item_type}, {"item_id", it.item_id}});
+				result.push_back({
+					{"playlist_id",    r.playlist_id},
+					{"title",          r.title},
+					{"mode",           r.mode},
+					{"poster_source",  r.poster_source},
+					{"item_count",     r.item_count},
+					{"total_ms",       r.total_ms},
+					{"preview_items",  preview},
+				});
+			}
+			route::ok(res, result.dump());
+		} catch (const std::exception& e) { route::logErr("GET /api/playlists/browse", e); route::err(res, 500, e.what()); }
 	});
 
 	// Must register before /:id routes
@@ -165,8 +194,41 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 				{"home_tile_limit",    d->home_tile_limit},
 				{"home_active_start",  d->home_active_start},
 				{"home_active_end",    d->home_active_end},
+				{"poster_source",      d->poster_source},
 			}.dump());
 		} catch (const std::exception& e) { route::logErr("GET /api/playlists/:id", e); route::err(res, 500, e.what()); }
+	});
+
+	// Any authenticated user (not admin-only like GET /api/playlists/:id
+	// above) — the Library page's Play/Restart/Shuffle actions (see
+	// LibraryPage.tsx/resolvePlayTarget.ts) need the ordered item list to
+	// build a client-side playback queue, but a viewer has no business
+	// seeing membership/filter_expr/sync internals the admin detail route
+	// exposes. Same "browse/playback, not management" split as
+	// /api/playlists/browse and resolve-play-target below.
+	svr.Get("/api/playlists/:id/items", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		try {
+			auto id = req.path_params.at("id");
+			auto d = PlaylistRepository(db_).getDetail(id);
+			if (!d) { route::err(res, 404, "playlist not found"); return; }
+			json items = json::array();
+			for (const auto& r : d->items) {
+				json item = {
+					{"id",          r.id},
+					{"position",    r.position},
+					{"item_type",   r.item_type},
+					{"item_id",     r.item_id},
+					{"title",       r.title},
+					{"duration_ms", r.duration_ms},
+				};
+				if (r.season)  item["season"]  = *r.season;
+				if (r.episode) item["episode"] = *r.episode;
+				items.push_back(item);
+			}
+			route::ok(res, json{{"items", items}}.dump());
+		} catch (const std::exception& e) { route::logErr("GET /api/playlists/:id/items", e); route::err(res, 500, e.what()); }
 	});
 
 	// Any authenticated user (not admin-only like the routes above) — this is
@@ -392,6 +454,7 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 				repo.updateField(id, "home_active_start", start);
 				repo.updateField(id, "home_active_end",   end);
 			}
+			if (b.contains("poster_source")) repo.updateField(id, "poster_source", b["poster_source"].get<std::string>());
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) { route::logErr("PATCH /api/playlists/:id", e); route::err(res, 400, e.what()); }
 	});

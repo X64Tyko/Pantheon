@@ -93,6 +93,29 @@ struct EpisodeSearchRow {
     std::string overview; // getEpisode() only — searchEpisodes() leaves this blank, no caller needs it there
 };
 
+// Library page's "Include Episodes" toggle (see LibraryStore.ts) — v1 scope
+// deliberately does NOT extend the full canon rule-builder field set
+// (genre/actor/studio/etc.) to episodes; see the FilterExpr.h comment for
+// why. `q` is the existing fuzzy title/show-title search; `playlist_id`
+// scopes to (and, with sort=="playlist_order", orders by) one playlist's
+// episode members — the episode-side equivalent of the `playlist:<id>`
+// FilterExpr field used for Show/Movie. No "recently_added" sort: episode
+// has no added_at column (only show/movie do).
+struct EpisodeSearchParams {
+    std::string show_id;
+    std::string q;
+    int season = -1; // -1 = unfiltered
+    int limit = 50, offset = 0;
+    std::string sort;     // "title" (default, show/season/episode order) | "playlist_order"
+    std::string sort_dir; // "" = natural direction for the sort mode; ignored by playlist_order (always position ASC)
+    std::optional<std::string> playlist_id;
+};
+
+struct EpisodeListResult {
+    std::vector<EpisodeSearchRow> items;
+    int total = 0;
+};
+
 struct MovieRow {
     std::string movie_id, title, content_rating;
     int64_t duration_ms = 0;
@@ -175,6 +198,13 @@ struct ShowSearchParams {
     // a "Random" sorted browse doesn't reshuffle out from under the user;
     // the Library page's die/reroll button just picks a new seed.
     std::optional<int64_t> random_seed;
+    // Only used when sort == "playlist_order" — which playlist's item
+    // positions to sort by (see FilterExpr.cpp's separate `playlist:<id>`
+    // filter field for *inclusion*; this is the orthogonal *ordering*
+    // concern, since a compiled filter_expr string is opaque to the sort
+    // builder). The Library page sends both together whenever a playlist
+    // clause is active and Playlist Order is the selected sort.
+    std::optional<std::string> playlist_id;
     RestrictionContext restriction;
     // Set only by the actual Home-page/Roku-home shelf loaders. Without it,
     // an unscoped (no library_id) search — the channel content picker,
@@ -203,6 +233,7 @@ struct MovieSearchParams {
     // "asc"/"desc" explicitly overrides it. Ignored by "random".
     std::string sort_dir;
     std::optional<int64_t> random_seed; // see ShowSearchParams::random_seed
+    std::optional<std::string> playlist_id; // see ShowSearchParams::playlist_id
     RestrictionContext restriction;
     bool home_only = false;   // see ShowSearchParams::home_only
     bool hide_empty = false;  // see ShowSearchParams::hide_empty (movies: excludes a blank file_path)
@@ -344,9 +375,7 @@ public:
     // episode of a show — used by Home's Recently Aired shelf.
     std::optional<EpisodeRow>     getLatestAiredEpisode(const std::string& show_id);
     std::vector<SeasonRow>        listSeasons(const std::string& show_id);
-    std::vector<EpisodeSearchRow> searchEpisodes(const std::string& show_id,
-                                                  const std::string& q,
-                                                  int season, int limit, int offset);
+    EpisodeListResult searchEpisodes(const EpisodeSearchParams& p);
     // Single episode by id, with its show's title and overview — nullopt if
     // it doesn't exist. EpisodeSearchRow (not EpisodeRow) specifically for
     // the show_id/show_title fields; used by admin-facing "what's this

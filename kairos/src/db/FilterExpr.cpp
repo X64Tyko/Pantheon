@@ -16,6 +16,7 @@ struct FieldSpec { std::vector<std::string> ops; };
 const std::unordered_map<std::string, FieldSpec>& fieldRegistry() {
     static const std::unordered_map<std::string, FieldSpec> reg = {
         {"library",         {{"is"}}},
+        {"playlist",        {{"is"}}},
         {"source",          {{"is", "is_not"}}},
         {"title",           {{"contains", "does_not_contain", "begins_with", "ends_with", "is", "is_not"}}},
         {"genre",           {{"is", "is_not", "contains", "does_not_contain"}}},
@@ -355,6 +356,24 @@ struct Compiler {
             std::string item_type_lit = entity == FilterEntity::Show ? "'show'" : "'movie'";
             std::string sub = "SELECT 1 FROM source_mapping sm_lib WHERE sm_lib.kairos_id = " + kairos_id_col +
                                " AND sm_lib.item_type = " + item_type_lit + " AND sm_lib.library_id = ?";
+            binds.push_back(n.value);
+            return "EXISTS (" + sub + ")";
+        }
+
+        if (f == "playlist") {
+            // Membership in a specific playlist, by playlist_id — the Library
+            // page's "click a playlist tile" affordance turns into exactly
+            // this clause (see LibraryStore.ts), so it composes with every
+            // other rule-builder/search-bar field like any normal filter.
+            // playlist_item has no 'show' item_type (only episode/movie —
+            // see Database.cpp's CHECK constraint and PlaylistRepository::
+            // refreshSmart's show-type expansion), so a Show match has to
+            // join through episode.show_id rather than matching item_id
+            // directly the way Movie can.
+            std::string sub = entity == FilterEntity::Show
+                ? "SELECT 1 FROM playlist_item pi JOIN episode ep ON ep.episode_id = pi.item_id "
+                  "WHERE pi.playlist_id = ? AND pi.item_type = 'episode' AND ep.show_id = " + col("show_id")
+                : "SELECT 1 FROM playlist_item pi WHERE pi.playlist_id = ? AND pi.item_type = 'movie' AND pi.item_id = " + col("movie_id");
             binds.push_back(n.value);
             return "EXISTS (" + sub + ")";
         }
