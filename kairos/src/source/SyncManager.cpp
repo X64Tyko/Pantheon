@@ -1942,7 +1942,19 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
                     "SELECT kairos_id FROM source_mapping "
                     "WHERE source_id=? AND external_id=? AND item_type=?");
                 lk.bind(1, source_id); lk.bind(2, ri.external_id); lk.bind(3, ri.item_type);
-                if (lk.executeStep()) items.push_back({ri.item_type, lk.getColumn(0).getString()});
+                if (!lk.executeStep()) continue;
+                const std::string kairos_id = lk.getColumn(0).getString();
+                if (ri.item_type != "show") { items.push_back({ri.item_type, kairos_id}); continue; }
+                // A collection can contain whole shows (a common Plex/
+                // Jellyfin use case), but playlist_item only supports
+                // 'episode'/'movie' — expand to every episode instead of
+                // adding the show directly, same as PlexSyncHelper.cpp's
+                // resolveAndExpand (duplicated here for the same main-
+                // thread-vs-background-thread reason as syncPlexLinks itself).
+                SQLite::Statement eq(sync_db_,
+                    "SELECT episode_id FROM episode WHERE show_id = ? AND season > 0 ORDER BY season, episode");
+                eq.bind(1, kairos_id);
+                while (eq.executeStep()) items.push_back({"episode", eq.getColumn(0).getString()});
             }
 
             const std::string fk_col   = (link.list_type == "playlist") ? "playlist_id"    : "filler_list_id";

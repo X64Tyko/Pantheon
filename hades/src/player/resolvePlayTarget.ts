@@ -1,4 +1,6 @@
 import { api } from '../api/client'
+import type { PlaylistItem } from '../api/types'
+import { type QueueItem, shuffleArray, storeQueue } from './playQueue'
 
 export interface PlayTarget {
   kind:       'movie' | 'episode'
@@ -36,4 +38,32 @@ export async function resolvePlayPath(contentType: 'show' | 'movie', id: string)
   return target.positionMs > 0
     ? `/player/${target.kind}/${target.id}?t=${target.positionMs}`
     : `/player/${target.kind}/${target.id}`
+}
+
+// Playlist "Play" button — resolves the resume point (server-side, same
+// fresh position-vs-duration logic as the show endpoint — see
+// PlaylistPlayTargetHelper.cpp) and stashes the playlist's full ordered item
+// list as a client-side queue (see playQueue.ts) so PlayerPage can advance
+// through it without a bespoke "playlist session" API. `mode: 'shuffle'`
+// keeps the resume item first (so resuming a shuffled playlist doesn't jump
+// somewhere random) and shuffles only the remaining order after it.
+export async function resolvePlaylistPlayPath(playlistId: string, items: PlaylistItem[], mode: string): Promise<string | null> {
+  const target = await api.getPlaylistPlayTarget(playlistId)
+  if (!target || items.length === 0) return null
+
+  let queue: QueueItem[] = items.map(it => ({
+    kind: it.item_type, id: it.item_id, title: it.title,
+    season: it.season, episode: it.episode, duration_ms: it.duration_ms,
+    thumb: it.item_type === 'episode' ? '1' : undefined,
+  }))
+  if (mode === 'shuffle') {
+    const idx = queue.findIndex(q => q.kind === target.kind && q.id === target.id)
+    const current = idx >= 0 ? queue[idx] : queue[0]
+    const rest = queue.filter((_, i) => i !== idx)
+    queue = [current, ...shuffleArray(rest)]
+  }
+  const token = storeQueue(queue)
+  return target.position_ms > 0
+    ? `/player/${target.kind}/${target.id}?queue=${token}&t=${target.position_ms}`
+    : `/player/${target.kind}/${target.id}?queue=${token}`
 }

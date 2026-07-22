@@ -570,7 +570,9 @@ std::vector<BrowseContentItem> JellyfinBaseSource::browsePlaylistItems(const std
             const std::string type = item.value("Type", "");
             BrowseContentItem entry;
             entry.external_id = item["Id"].get<std::string>();
-            entry.item_type   = (type == "Movie") ? "movie" : "episode";
+            entry.item_type   = (type == "Movie")  ? "movie"
+                              : (type == "Series") ? "show"
+                                                    : "episode";
             entry.title       = item.value("Name", "");
             entry.duration_ms =
                 item.value("RunTimeTicks", int64_t{0}) / 10000;
@@ -887,7 +889,9 @@ std::vector<BrowseContentItem> JellyfinBaseSource::browseCollectionItems(const s
             const std::string type = item.value("Type", "");
             BrowseContentItem entry;
             entry.external_id = item["Id"].get<std::string>();
-            entry.item_type   = (type == "Movie") ? "movie" : "episode";
+            entry.item_type   = (type == "Movie")  ? "movie"
+                              : (type == "Series") ? "show"
+                                                    : "episode";
             entry.title       = item.value("Name", "");
             entry.duration_ms =
                 item.value("RunTimeTicks", int64_t{0}) / 10000;

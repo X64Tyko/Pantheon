@@ -1,15 +1,18 @@
 import { observer } from 'mobx-react-lite'
 import { makeAutoObservable, reaction, runInAction } from 'mobx'
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type {
   EpisodeSearchResult, LibraryWithSource, Movie, Playlist, PlexBrowseItem, PlexBrowseList,
   PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult,
-  PlaylistItem, PlaylistMembership, PlaylistMode, Show, SmartPlaylistType, Source,
+  PlaylistItem, PlaylistMembership, PlaylistMode, Show, SmartPlaylistType, Source, UnresolvedSyncItem,
 } from '../api/types'
 import { FilterSection } from '../components/PickerFilters'
 import { FilterTreeStore } from '../components/media/filterTree'
 import { toFilterString } from '../components/media/filterQuery'
+import { parseFilterSyntax, countClauses } from '../components/media/filterSyntax'
+import { resolvePlaylistPlayPath } from '../player/resolvePlayTarget'
 
 function triggerJsonDownload(data: object, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -56,6 +59,13 @@ class PlaylistPageStore {
   smartSort:    string = 'title'
   smartLimit:   string = '' // '' = unlimited
   smartSaving:  boolean = false
+  // Free-text companion to smartFilterTree — typed canon filter syntax that
+  // combines with the rule builder's own output at save time (same "q +
+  // filter combine" pattern the Library search bar already uses alongside
+  // its own Filters panel). Holds whatever the rule builder can't represent
+  // (bare fuzzy words, negated groups) so round-tripping an existing
+  // filter_expr through the editor never silently drops part of it.
+  smartFreeText: string = ''
 
   // Home-shelf fields — only meaningful (and only shown in the UI) once
   // showOnHome is on; homeActiveStart/End are 'MM-DD' or '' (both empty =
@@ -65,6 +75,18 @@ class PlaylistPageStore {
   homeActiveStart:  string  = ''
   homeActiveEnd:    string  = ''
 
+  // Push panel — writes this playlist's current items TO a remote Plex/
+  // Jellyfin/Emby playlist or collection (the opposite direction from the
+  // item picker's import). Tied to whichever playlist is expanded, same
+  // convention as the smart-editor fields above. Reuses browseSources (the
+  // item picker's own source list) rather than fetching a second copy.
+  pushOpen:      boolean = false
+  pushSource:    string  = ''
+  pushKind:      'playlist' | 'collection' = 'playlist'
+  pushLibraryId: string  = ''
+  pushBusy:      boolean = false
+  pushMessage:   string | null = null
+
   // Shows tab
   pickerShows:          Show[]       = []
   pickerShowsLoading:   boolean      = false
@@ -73,6 +95,11 @@ class PlaylistPageStore {
   seasonsLoading:       boolean      = false
   importing:            boolean      = false
   importLabel:          string       = ''
+  // Items from the most recent import/resync that couldn't be matched
+  // against this library — e.g. a hand-curated cross-source watch order
+  // (a "Gundam Unicorn order" mixing movies/OVAs/specials) referencing
+  // content not yet synced. Cleared at the start of each new sync attempt.
+  unresolvedItems:      UnresolvedSyncItem[] = []
 
   // Remote browse (Plex/Jellyfin/Emby — any source with a playlist/collection API)
   browseSources:        Source[]         = []
@@ -132,10 +159,12 @@ class PlaylistPageStore {
   }
 
   // Seeds the smart-definition editor from a playlist's stored fields —
-  // called whenever a playlist expands, so the rule builder round-trips the
-  // same filter_expr string it would serialize back to (setFromFilterString
-  // is a no-op on an empty string, leaving a fresh/empty tree for a playlist
-  // that hasn't been given a filter yet).
+  // called whenever a playlist expands, so the editor round-trips the same
+  // filter_expr string it would serialize back to. splitFromFilterString
+  // (unlike plain setFromFilterString) also recovers whatever the rule
+  // builder can't represent into smartFreeText, so nothing typed directly
+  // gets silently dropped on the next Save (a no-op on an empty string,
+  // leaving a fresh/empty tree+text for a playlist with no filter yet).
   loadSmartEditor(p: Pick<Playlist,
     'smart_type' | 'smart_sort' | 'smart_limit' | 'filter_expr'
     | 'show_on_home' | 'home_tile_limit' | 'home_active_start' | 'home_active_end'>
@@ -144,7 +173,7 @@ class PlaylistPageStore {
     this.smartSort  = p.smart_sort
     this.smartLimit = p.smart_limit > 0 ? String(p.smart_limit) : ''
     this.smartFilterTree.reset()
-    this.smartFilterTree.setFromFilterString(p.filter_expr)
+    this.smartFreeText = this.smartFilterTree.splitFromFilterString(p.filter_expr)
     this.showOnHome      = p.show_on_home
     this.homeTileLimit   = String(p.home_tile_limit)
     this.homeActiveStart = p.home_active_start
@@ -183,11 +212,15 @@ class PlaylistPageStore {
   // showOnHome) the home-shelf display settings, then immediately
   // recomputes membership (PlaylistRepository::refreshSmart) — a "Save"
   // that doesn't also refresh would leave the playlist's actual items stale
-  // until the next full sync cycle picks it up.
+  // until the next full sync cycle picks it up. filter_expr combines the
+  // rule builder's own output with smartFreeText's typed text — same "q +
+  // filter combine" convention the Library search bar uses (see
+  // api/client.ts's withCombinedFilter), not a replacement for either.
   async saveSmartDef(playlistId: string) {
     this.smartSaving = true
     try {
-      const filter_expr = toFilterString(this.smartFilterTree)
+      const filter_expr = [toFilterString(this.smartFilterTree), this.smartFreeText.trim()]
+        .filter(Boolean).join(' ')
       await api.updatePlaylist(playlistId, {
         smart_type:  this.smartType,
         smart_sort:  this.smartSort,
@@ -360,7 +393,13 @@ class PlaylistPageStore {
   async importSourceItems(playlistId: string, browseItems: PlexBrowseItem[]) {
     this.importing = true; this.importLabel = 'Importing…'
     try {
-      const items = browseItems.filter(i => i.available).map(i => ({ item_type: i.item_type, item_id: i.kairos_id }))
+      // 'show' items have no single playlist_item representation of their
+      // own (episode/movie only) — the source-sync import path expands them
+      // to episodes server-side (see PlexSyncHelper.cpp's resolveAndExpand);
+      // this per-item add path has no such expansion, so shows are skipped.
+      const items = browseItems
+        .filter((i): i is PlexBrowseItem & { item_type: 'movie' | 'episode' } => i.available && i.item_type !== 'show')
+        .map(i => ({ item_type: i.item_type, item_id: i.kairos_id }))
       await api.bulkAddPlaylistItems(playlistId, items)
       const d = await api.getPlaylist(playlistId)
       runInAction(() => { this.detail = d; this.importing = false; this.importLabel = '' })
@@ -373,12 +412,16 @@ class PlaylistPageStore {
   async importSourceList(playlistId: string, listId: string, kind: 'playlist' | 'collection') {
     if (!this.selectedSource) return
     this.importingListId = listId; this.importLabel = 'Syncing from source…'
+    this.unresolvedItems = []
     try {
-      await api.sourceSyncPlaylist(playlistId, {
+      const result = await api.sourceSyncPlaylist(playlistId, {
         source_id: this.selectedSource, external_id: listId, list_kind: kind,
       })
       const [d] = await Promise.all([api.getPlaylist(playlistId), this.load()])
-      runInAction(() => { this.detail = d; this.importing = false; this.importLabel = '' })
+      runInAction(() => {
+        this.detail = d; this.importing = false; this.importLabel = ''
+        this.unresolvedItems = result.unresolved
+      })
     } catch (e: any) {
       runInAction(() => { this.error = e.message })
     } finally {
@@ -389,18 +432,64 @@ class PlaylistPageStore {
   async resyncPlaylist(playlist: Playlist) {
     if (!playlist.plex_link) return
     this.importing = true; this.importLabel = 'Syncing…'
+    this.unresolvedItems = []
     try {
-      await api.sourceSyncPlaylist(playlist.playlist_id, {
+      const result = await api.sourceSyncPlaylist(playlist.playlist_id, {
         source_id: playlist.plex_link.source_id,
         external_id: playlist.plex_link.external_id,
         list_kind: playlist.plex_link.plex_type,
       })
       const [d] = await Promise.all([api.getPlaylist(playlist.playlist_id), this.load()])
-      runInAction(() => { if (this.expanded === playlist.playlist_id) this.detail = d })
+      runInAction(() => {
+        if (this.expanded === playlist.playlist_id) this.detail = d
+        this.unresolvedItems = result.unresolved
+      })
     } catch (e: any) {
       runInAction(() => { this.error = e.message })
     } finally {
       runInAction(() => { this.importing = false; this.importLabel = '' })
+    }
+  }
+
+  // Opens (or focuses, if already open on this playlist) the push panel,
+  // expanding the card first if needed — the panel lives in the expanded
+  // body, same as the smart-def editor. Pre-fills source/kind from an
+  // existing link so "push again" doesn't require re-picking them.
+  async openPushPanel(playlist: Playlist) {
+    this.pushMessage = null
+    if (this.expanded !== playlist.playlist_id) await this.expand(playlist.playlist_id)
+    runInAction(() => {
+      this.pushOpen = true
+      if (playlist.plex_link) {
+        this.pushSource = playlist.plex_link.source_id
+        this.pushKind   = playlist.plex_link.plex_type
+      }
+    })
+    if (this.browseSources.length === 0) await this.loadBrowseSources()
+  }
+
+  closePushPanel() {
+    this.pushOpen = false
+  }
+
+  async pushPlaylist(playlist: Playlist) {
+    if (!this.pushSource) return
+    this.pushBusy = true; this.pushMessage = null
+    try {
+      const result = await api.pushPlaylist(playlist.playlist_id, {
+        source_id: this.pushSource, kind: this.pushKind,
+        title: playlist.title, external_lib_id: this.pushLibraryId,
+      })
+      const parts = result.created
+        ? [`Created new ${this.pushKind} — ${result.pushed ?? 0} item(s) pushed`]
+        : [`Updated existing ${this.pushKind} — ${result.added ?? 0} added, ${result.removed ?? 0} removed`]
+      if (result.unresolved) parts.push(`${result.unresolved} item(s) skipped (not synced from that source)`)
+      runInAction(() => { this.pushMessage = parts.join(' · ') })
+      await this.load()
+    } catch (e: any) {
+      runInAction(() => { this.pushMessage = `Push failed: ${e.message}` })
+    } finally {
+      runInAction(() => { this.pushBusy = false })
     }
   }
 
@@ -683,6 +772,19 @@ const ImportPreviewPanel = observer(function ImportPreviewPanel({
 
 const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Playlist }) {
   const isOpen = store.expanded === playlist.playlist_id
+  const navigate = useNavigate()
+  const [playLoading, setPlayLoading] = useState(false)
+
+  const handlePlay = async () => {
+    setPlayLoading(true)
+    try {
+      const detail = await api.getPlaylist(playlist.playlist_id)
+      const path = await resolvePlaylistPlayPath(playlist.playlist_id, detail.items, playlist.mode)
+      if (path) navigate(path)
+    } finally {
+      setPlayLoading(false)
+    }
+  }
 
   return (
     <div className="card overflow-hidden">
@@ -711,6 +813,19 @@ const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Pl
             </div>
           </div>
         </button>
+        <button
+          onClick={handlePlay}
+          disabled={playLoading || playlist.item_count === 0}
+          title="Play this playlist"
+          className="text-xs text-violet-400 hover:text-violet-200 transition-colors shrink-0 disabled:opacity-40">
+          ▶ Play
+        </button>
+        <button
+          onClick={() => store.openPushPanel(playlist)}
+          title="Push this playlist's items to a remote Plex/Jellyfin/Emby playlist or collection"
+          className="text-xs text-violet-400 hover:text-violet-200 transition-colors shrink-0">
+          ⇪ Push
+        </button>
         {playlist.plex_link && (
           <>
             <button
@@ -738,6 +853,10 @@ const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Pl
             <p className="text-zinc-600 text-xs">Loading…</p>
           ) : (
             <>
+              {store.unresolvedItems.length > 0 && (
+                <UnresolvedItemsNotice items={store.unresolvedItems} onDismiss={() => runInAction(() => { store.unresolvedItems = [] })} />
+              )}
+
               {/* Mode toggle */}
               <div className="flex flex-col gap-1.5 pb-1 border-b border-zinc-800/50">
                 <div className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">Scheduling Mode</div>
@@ -784,6 +903,10 @@ const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Pl
                 </div>
               </div>
 
+              {store.pushOpen && store.expanded === playlist.playlist_id && (
+                <PushPanel playlist={playlist} />
+              )}
+
               {playlist.membership === 'smart' ? (
                 <SmartPlaylistEditor playlist={playlist} />
               ) : (
@@ -824,6 +947,33 @@ const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Pl
     </div>
   )
 })
+
+// Items from the most recent import/resync that couldn't be matched against
+// this library — e.g. a hand-curated cross-source watch order (a "Gundam
+// Unicorn order" mixing movies/OVAs/specials) referencing content not yet
+// synced. Grouped by item_type so "3 movies, 2 shows missing" reads clearly
+// rather than one flat undifferentiated list.
+function UnresolvedItemsNotice({ items, onDismiss }: { items: UnresolvedSyncItem[]; onDismiss: () => void }) {
+  const icon = (t: UnresolvedSyncItem['item_type']) => t === 'movie' ? '▣' : t === 'show' ? '◆' : '◈'
+  return (
+    <div className="rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-amber-400">
+          {items.length} item{items.length !== 1 ? 's' : ''} couldn't be matched — not yet synced from that source
+        </div>
+        <button onClick={onDismiss} className="text-zinc-600 hover:text-zinc-400 text-xs shrink-0">Dismiss</button>
+      </div>
+      <div className="max-h-32 overflow-y-auto scrollbar-dark space-y-1">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-2 text-xs text-zinc-400">
+            <span className="text-zinc-600 shrink-0">{icon(item.item_type)}</span>
+            <span className="truncate">{item.title}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function PlaylistItemRow({ item, idx, playlistId, readOnly }: {
   item: PlaylistItem; idx: number; playlistId: string
@@ -891,6 +1041,27 @@ const SmartPlaylistEditor = observer(function SmartPlaylistEditor({ playlist }: 
         />
       </div>
 
+      {/* Free-text companion to the rule builder below — same "type it
+          directly, or build it visually, both combine" pattern as the
+          Library page's search bar + Filters panel. Bare words fold into
+          fuzzy free-text matching; field:value clauses AND with whatever
+          the rule builder has. */}
+      <div className="space-y-1">
+        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Filter (type directly, or build below)</label>
+        <input
+          value={store.smartFreeText}
+          onChange={e => runInAction(() => { store.smartFreeText = e.target.value })}
+          placeholder='e.g. genre:Horror year:>2015 or a fuzzy title word'
+          className="input text-xs py-1.5 w-full"
+        />
+        {store.smartFreeText.trim() && (() => {
+          const n = countClauses(parseFilterSyntax(store.smartFreeText))
+          return n > 0 ? (
+            <div className="text-[10px] text-zinc-600">{n} filter{n !== 1 ? 's' : ''} parsed from this text</div>
+          ) : null
+        })()}
+      </div>
+
       <FilterSection tree={store.smartFilterTree} filteredLibs={filteredLibs} />
 
       <div className="pt-2 border-t border-zinc-800/50 space-y-2">
@@ -938,6 +1109,74 @@ const SmartPlaylistEditor = observer(function SmartPlaylistEditor({ playlist }: 
           {store.smartSaving ? 'Saving…' : 'Save & Refresh'}
         </button>
         <span className="text-[10px] text-zinc-600">{fmtSyncAge(playlist.last_smart_refresh_at)}</span>
+      </div>
+    </div>
+  )
+})
+
+// ─── Push panel ─────────────────────────────────────────────────────────────
+
+// Writes this playlist's current items TO a remote Plex/Jellyfin/Emby
+// playlist or collection — opposite direction from the item picker below.
+// Every item must already be mapped from the target source (via a prior
+// sync) to push; unresolved ones are skipped and counted, not fatal.
+const PushPanel = observer(function PushPanel({ playlist }: { playlist: Playlist }) {
+  const librariesForSource = store.allLibraries.filter(l => l.source_id === store.pushSource)
+
+  return (
+    <div className="rounded-lg border border-violet-900/30 bg-zinc-950/60 p-3 space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Push to</label>
+        <select
+          value={store.pushSource}
+          onChange={e => runInAction(() => { store.pushSource = e.target.value; store.pushLibraryId = '' })}
+          className="input text-xs py-1 flex-1"
+        >
+          <option value="">Select source…</option>
+          {store.browseSources.map(s => <option key={s.source_id} value={s.source_id}>{s.display_name}</option>)}
+        </select>
+
+        <label className="text-[10px] text-zinc-500 uppercase tracking-widest ml-2">As</label>
+        <select
+          value={store.pushKind}
+          onChange={e => runInAction(() => { store.pushKind = e.target.value as 'playlist' | 'collection' })}
+          className="input text-xs py-1"
+        >
+          <option value="playlist">Playlist</option>
+          <option value="collection">Collection</option>
+        </select>
+      </div>
+
+      {store.pushKind === 'collection' && store.pushSource && (
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Library</label>
+          <select
+            value={store.pushLibraryId}
+            onChange={e => runInAction(() => { store.pushLibraryId = e.target.value })}
+            className="input text-xs py-1 flex-1"
+          >
+            <option value="">Select library…</option>
+            {librariesForSource.map(l => <option key={l.library_id} value={l.library_id}>{l.display_name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {playlist.plex_link && playlist.plex_link.source_id === store.pushSource && playlist.plex_link.plex_type === store.pushKind && (
+        <div className="text-[10px] text-zinc-500">
+          Already linked to this target — pushing will reconcile (add new items, remove ones no longer here) instead of creating a new one.
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => store.pushPlaylist(playlist)}
+          disabled={store.pushBusy || !store.pushSource || (store.pushKind === 'collection' && !store.pushLibraryId)}
+          className="btn-primary text-xs disabled:opacity-40"
+        >
+          {store.pushBusy ? 'Pushing…' : 'Push Now'}
+        </button>
+        <button onClick={() => store.closePushPanel()} className="btn-ghost text-xs">Close</button>
+        {store.pushMessage && <span className="text-[10px] text-zinc-400">{store.pushMessage}</span>}
       </div>
     </div>
   )

@@ -264,7 +264,13 @@ class FillerPageStore {
   async importSourceItems(listId: string, browseItems: PlexBrowseItem[]) {
     this.importing = true; this.importLabel = 'Importing…'
     try {
-      const items = browseItems.filter(i => i.available).map(i => ({ item_type: i.item_type, item_id: i.kairos_id }))
+      // 'show' items have no single filler_list_item representation of their
+      // own (episode/movie only) — the source-sync import path expands them
+      // to episodes server-side (see PlexSyncHelper.cpp's resolveAndExpand);
+      // this per-item add path has no such expansion, so shows are skipped.
+      const items = browseItems
+        .filter((i): i is PlexBrowseItem & { item_type: 'movie' | 'episode' } => i.available && i.item_type !== 'show')
+        .map(i => ({ item_type: i.item_type, item_id: i.kairos_id }))
       await api.bulkAddFillerListItems(listId, items)
       const d = await api.getFillerList(listId)
       runInAction(() => { this.detail = d; this.importing = false; this.importLabel = '' })

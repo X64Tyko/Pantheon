@@ -2,6 +2,9 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 class Database;
 
@@ -16,6 +19,21 @@ struct ShowWatchStateRow {
     bool        completed   = false;
     int64_t     updated_at  = 0;
 };
+
+// One item's watch state for PlaylistRepository::getStates' batch lookup —
+// `completed` is the same fresh position-vs-duration derivation as
+// ShowWatchStateRow.completed, not the stored rewatch-count column.
+struct WatchStateRow {
+    int64_t position_ms = 0;
+    int64_t duration_ms = 0;
+    bool    completed   = false;
+};
+
+// Shared key builder so getStates' caller can look up the same map it
+// populates without duplicating the "\x1f"-join convention.
+inline std::string watchStateKey(const std::string& content_type, const std::string& content_id) {
+    return content_type + "\x1f" + content_id;
+}
 
 class WatchProgressRepository {
 public:
@@ -52,6 +70,16 @@ public:
     // belonging to show_id, completed or not.
     std::optional<ShowWatchStateRow> getLatestForShow(const std::string& user_id,
                                                        const std::string& show_id);
+
+    // Batch lookup for playlist resume (PlaylistService's resolve-play-target)
+    // — one query instead of one round-trip per item. `items` is
+    // {content_type, content_id} pairs; keyed in the result by
+    // "content_type\x1f content_id" since a movie and an episode could in
+    // principle share the same raw id string across their separate tables.
+    // Items with no watch_progress row at all are simply absent from the map.
+    std::unordered_map<std::string, WatchStateRow> getStates(
+        const std::string& user_id,
+        const std::vector<std::pair<std::string, std::string>>& items);
 
 private:
     Database& db_;

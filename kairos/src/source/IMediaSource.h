@@ -20,15 +20,20 @@ struct BrowseListItem {
 
 // Minimal item for plex-sync: external_id + type only.
 struct PlexListItem {
-    std::string item_type;   // "movie" | "episode"
+    std::string item_type;   // "movie" | "episode" | "show"
     std::string external_id; // source-native ratingKey
 };
 
 // A content item returned by browsePlaylistItems / browseCollectionItems.
 // kairos_id resolution is left to the caller (Router → DB lookup).
+// item_type "show" shows up in collections (a common Plex/Jellyfin use case —
+// grouping a whole series, not just movies/episodes) — playlist_item has no
+// 'show' item_type of its own (episode/movie only), so a resolved show gets
+// expanded to all its episodes by the caller (see PlexSyncHelper.cpp's
+// resolveAndExpand) rather than added directly.
 struct BrowseContentItem {
     std::string external_id;  // source-native key — caller resolves to kairos_id
-    std::string item_type;    // "movie" | "episode"
+    std::string item_type;    // "movie" | "episode" | "show"
     std::string title;
     int64_t     duration_ms = 0;
     // Episode-only fields (empty/−1 for movies).

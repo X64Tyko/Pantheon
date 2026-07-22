@@ -4,13 +4,14 @@ import { api } from '@/api/client'
 
 vi.mock('@/api/client', () => ({
   api: {
-    getSyncStatus:  vi.fn(),
-    getMatchStatus: vi.fn(),
-    getSettings:    vi.fn(),
+    getSyncStatus:      vi.fn(),
+    getMatchStatus:     vi.fn(),
+    getWritebackStatus: vi.fn(),
+    getSettings:        vi.fn(),
   },
 }))
 
-const mockApi = api as Record<'getSyncStatus' | 'getMatchStatus' | 'getSettings', ReturnType<typeof vi.fn>>
+const mockApi = api as Record<'getSyncStatus' | 'getMatchStatus' | 'getWritebackStatus' | 'getSettings', ReturnType<typeof vi.fn>>
 
 const SETTINGS = {
   epg_debug: false, sync_debug: false, sync_threads: 6, stream_buffer_size: 65536,
@@ -32,6 +33,7 @@ describe('StatusStore', () => {
     vi.resetAllMocks()
     mockApi.getSyncStatus.mockResolvedValue({ running: false })
     mockApi.getMatchStatus.mockResolvedValue({ running: false })
+    mockApi.getWritebackStatus.mockResolvedValue({ running: false })
     mockApi.getSettings.mockResolvedValue(SETTINGS)
     store = new StatusStore()
   })
@@ -52,10 +54,11 @@ describe('StatusStore', () => {
   // ── startPolling ──────────────────────────────────────────────────────────
 
   describe('startPolling', () => {
-    it('calls getSyncStatus/getMatchStatus/getSettings immediately on first poll', () => {
+    it('calls getSyncStatus/getMatchStatus/getWritebackStatus/getSettings immediately on first poll', () => {
       store.startPolling()
       expect(mockApi.getSyncStatus).toHaveBeenCalledTimes(1)
       expect(mockApi.getMatchStatus).toHaveBeenCalledTimes(1)
+      expect(mockApi.getWritebackStatus).toHaveBeenCalledTimes(1)
       expect(mockApi.getSettings).toHaveBeenCalledTimes(1)
     })
 

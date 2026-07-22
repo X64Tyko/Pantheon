@@ -3,6 +3,7 @@
 #include "../RouteHelpers.h"
 #include "PlexSyncHelper.h"
 #include "ListPushHelper.h"
+#include "PlaylistPlayTargetHelper.h"
 #include "../../db/Database.h"
 #include "../../db/PlaylistRepository.h"
 #include "../../db/PlaylistSerializer.h"
@@ -166,6 +167,21 @@ void PlaylistService::registerRoutes(httplib::Server& svr) {
 				{"home_active_end",    d->home_active_end},
 			}.dump());
 		} catch (const std::exception& e) { route::logErr("GET /api/playlists/:id", e); route::err(res, 500, e.what()); }
+	});
+
+	// Any authenticated user (not admin-only like the routes above) — this is
+	// a playback affordance, not playlist management, same reasoning as
+	// PlaybackService's /api/shows/:id/resolve-play-target. Algorithm lives in
+	// PlaylistPlayTargetHelper.cpp, unit-tested directly there.
+	svr.Get("/api/playlists/:id/resolve-play-target", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		auto id = req.path_params.at("id");
+		try {
+			resolvePlaylistPlayTarget(res, id, user->user_id, db_);
+		} catch (const std::exception& e) {
+			route::logErr("GET /api/playlists/:id/resolve-play-target", e); route::err(res, 500, e.what());
+		}
 	});
 
 	// Portable JSON export/import — same pattern as channel export/import, lets

@@ -769,6 +769,17 @@ export interface Playlist {
   home_active_end:   string
 }
 
+// A remote playlist/collection item that couldn't be resolved against this
+// library during an import/resync (see PlexSyncHelper.cpp's
+// syncSourceListItems) — reported by title so a hand-curated cross-source
+// watch order (e.g. a "Gundam Unicorn order" mixing movies/OVAs/specials)
+// shows exactly what's still missing, not just an unexplained item-count
+// shortfall.
+export interface UnresolvedSyncItem {
+  title:     string
+  item_type: 'movie' | 'episode' | 'show'
+}
+
 // GET /api/home-playlists — the subset of fields the Home page actually
 // needs to render a shelf (see PlaylistRepository::HomeShelfRow/listHomeShelves).
 export interface HomePlaylistShelf {
@@ -857,7 +868,11 @@ export interface PlexBrowseList {
 }
 
 export interface PlexBrowseItem {
-  item_type:   'episode' | 'movie'
+  // A collection can contain whole shows, not just movies/episodes — see
+  // kairos/src/api/services/PlexSyncHelper.cpp's resolveAndExpand, which
+  // expands a resolved show into all its episodes when actually importing
+  // (playlist_item has no 'show' item_type of its own).
+  item_type:   'episode' | 'movie' | 'show'
   kairos_id:   string
   title:       string
   duration_ms: number

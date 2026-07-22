@@ -9,7 +9,7 @@ import type {
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
-  Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult, HomePlaylistShelf,
+  Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult, HomePlaylistShelf, UnresolvedSyncItem,
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
@@ -425,6 +425,7 @@ export const api = {
   getPlaylists:      ()                                       => request<Playlist[]>    ('GET',    '/playlists'),
   createPlaylist:    (b: { title: string })                   => request<{playlist_id: string}>('POST', '/playlists', b),
   getPlaylist:       (id: string)                             => request<PlaylistDetail>('GET',    `/playlists/${id}`),
+  getPlaylistPlayTarget: (id: string)                         => request<ResolvedPlayTarget | null>('GET', `/playlists/${id}/resolve-play-target`),
   updatePlaylist:    (id: string, b: {
                        title?: string; mode?: string
                        membership?: 'static'|'smart'; filter_expr?: string
@@ -435,6 +436,14 @@ export const api = {
   deletePlaylist:    (id: string)                             => request<void>          ('DELETE', `/playlists/${id}`),
   refreshSmartPlaylist: (id: string) => request<{synced: number}>('POST', `/playlists/${id}/refresh-smart`),
   refreshAllSmartPlaylists: () => request<{status: string}>('POST', '/playlists/refresh-smart-all'),
+  // Pushes this playlist's current items TO a remote Plex/Jellyfin/Emby
+  // playlist or collection — opposite direction from sourceSyncPlaylist's
+  // pull. Creates a new remote list the first time; reconciles (add/remove
+  // diff) on later pushes to the same linked target — see
+  // kairos/src/api/services/ListPushHelper.cpp.
+  pushPlaylist: (id: string, b: { source_id: string; kind: 'playlist'|'collection'; title?: string; external_lib_id?: string }) =>
+    request<{ created: boolean; external_id: string; pushed?: number; added?: number; removed?: number; unresolved: number }>(
+      'POST', `/playlists/${id}/push`, b),
   getHomePlaylists:  () => request<HomePlaylistShelf[]>('GET', '/home-playlists'),
   addPlaylistItem:   (id: string, b: { item_type: 'episode'|'movie'; item_id: string }) =>
                        request<{id: number, position: number}>('POST',   `/playlists/${id}/items`, b),
@@ -466,11 +475,11 @@ export const api = {
   // source's actual type (Plex/Jellyfin/Emby all work); the older /plex-sync
   // route it replaces 400s on anything but a Plex source_id.
   sourceSyncPlaylist:      (id: string, b: { source_id: string; external_id: string; list_kind: 'playlist'|'collection' }) =>
-                             request<{synced: number; total: number}>('POST', `/playlists/${id}/source-sync`, b),
+                             request<{synced: number; total: number; unresolved: UnresolvedSyncItem[]}>('POST', `/playlists/${id}/source-sync`, b),
   unlinkPlaylist:          (id: string) => request<void>('DELETE', `/playlists/${id}/plex-link`),
   syncAllLinkedPlaylists:  () => request<{status: string}>('POST', '/playlists/source-sync-all'),
   sourceSyncFillerList:    (id: string, b: { source_id: string; external_id: string; list_kind: 'playlist'|'collection' }) =>
-                             request<{synced: number; total: number}>('POST', `/filler-lists/${id}/source-sync`, b),
+                             request<{synced: number; total: number; unresolved: UnresolvedSyncItem[]}>('POST', `/filler-lists/${id}/source-sync`, b),
   unlinkFillerList:        (id: string) => request<void>('DELETE', `/filler-lists/${id}/plex-link`),
   syncAllLinkedFillerLists: () => request<{status: string}>('POST', '/filler-lists/source-sync-all'),
 

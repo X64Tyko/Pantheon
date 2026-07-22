@@ -186,6 +186,17 @@ static void registerRoutes(httplib::Server& s) {
             return;
         }
 
+        // Regression: Jellyfin/Emby collections commonly group whole shows
+        // (a BoxSet's items can be Series, not just Movie/Episode) — must
+        // classify as "show", not silently fall into the "anything
+        // non-Movie is an episode" bucket.
+        if (parent == "col-with-show") {
+            res.set_content(json{{"Items", {
+                {{"Id","show1"},{"Type","Series"},{"Name","Whole Show Collected"}}
+            }}}.dump(), "application/json");
+            return;
+        }
+
         res.status = 400;
     });
 
@@ -564,6 +575,13 @@ TEST_F(JellyfinSourceTest, BrowseCollectionItems_TypeDispatchAndDuration) {
     EXPECT_EQ(items[1].show_title,  "Show B");
     EXPECT_EQ(items[1].season,      2);
     EXPECT_EQ(items[1].episode,     3);
+}
+
+TEST_F(JellyfinSourceTest, BrowseCollectionItems_SeriesTypeClassifiedAsShowNotEpisode) {
+    const auto items = src_->browseCollectionItems("col-with-show");
+    ASSERT_EQ(items.size(), 1u);
+    EXPECT_EQ(items[0].external_id, "show1");
+    EXPECT_EQ(items[0].item_type,   "show");
 }
 
 // ============================================================================

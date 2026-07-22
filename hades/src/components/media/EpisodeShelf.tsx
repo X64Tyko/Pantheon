@@ -5,7 +5,15 @@ import { useFocusable } from '../../nav/useFocusable'
 import { useDebounce } from '../../hooks/useDebounce'
 import { mediaUrl } from '../../api/client'
 import type { Episode } from '../../api/types'
+import { shuffleArray, storeQueue, type QueueItem } from '../../player/playQueue'
 import styles from './EpisodeShelf.module.css'
+
+function toQueueItems(episodes: Episode[]): QueueItem[] {
+  return episodes.map(e => ({
+    kind: 'episode', id: e.episode_id, title: e.title,
+    season: e.season, episode: e.episode, duration_ms: e.duration_ms, thumb: e.thumb,
+  }))
+}
 
 // Debounces both directions of the expand/collapse trigger — sweeping the
 // mouse across several collapsed season tiles on the way to somewhere else
@@ -24,10 +32,21 @@ interface EpisodeShelfProps {
 
 export function EpisodeShelf({ seasonNumber, seasonName, episodes, onEpisodeHover, onEpisodeHoverEnd }: EpisodeShelfProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
   const [showArrows, setShowArrows] = useState(false)
   const [hovered, setHovered] = useState(false)
   const scroll = (d: 'left' | 'right') =>
     scrollRef.current?.scrollBy({ left: d === 'right' ? 300 : -300, behavior: 'smooth' })
+
+  // Fresh shuffle every time — no resume semantics (unlike playlist
+  // playback, see resolvePlaylistPlayPath), since "shuffle play this season"
+  // means "start a new randomized run now", not "continue a previous one".
+  const handleShuffle = () => {
+    if (episodes.length === 0) return
+    const shuffled = shuffleArray(toQueueItems(episodes))
+    const token = storeQueue(shuffled)
+    navigate(`/player/episode/${shuffled[0].id}?queue=${token}`)
+  }
 
   const title = seasonName || (seasonNumber === 0 ? 'Specials' : `Season ${seasonNumber}`)
 
@@ -52,7 +71,7 @@ export function EpisodeShelf({ seasonNumber, seasonName, episodes, onEpisodeHove
       <FocusContext.Provider value={containerFocusKey}>
         <SeasonHeaderTile
           focusKey={`season-header-${seasonNumber}-${episodes[0]?.episode_id ?? ''}`}
-          title={title} count={episodes.length} expanded={expanded}
+          title={title} count={episodes.length} expanded={expanded} onShuffle={handleShuffle}
         />
 
         {/* Grid-rows 0fr/1fr trick animates height without ever measuring it —
@@ -75,10 +94,19 @@ export function EpisodeShelf({ seasonNumber, seasonName, episodes, onEpisodeHove
   )
 }
 
-function SeasonHeaderTile({ focusKey, title, count, expanded }: { focusKey: string; title: string; count: number; expanded: boolean }) {
+function SeasonHeaderTile({ focusKey, title, count, expanded, onShuffle }: {
+  focusKey: string; title: string; count: number; expanded: boolean; onShuffle: () => void
+}) {
   const [hovered, setHovered] = useState(false)
   const { ref, focused } = useFocusable<object, HTMLDivElement>({ focusKey })
   const active = hovered || focused
+
+  const [shuffleHovered, setShuffleHovered] = useState(false)
+  const shuffle = useFocusable<object, HTMLButtonElement>({
+    focusKey: `${focusKey}-shuffle`,
+    onEnterPress: onShuffle,
+  })
+  const shuffleActive = shuffleHovered || shuffle.focused
 
   return (
     <div
@@ -89,6 +117,16 @@ function SeasonHeaderTile({ focusKey, title, count, expanded }: { focusKey: stri
     >
       <span className={styles.seasonTitle}>{title}</span>
       <span className={styles.seasonCount}>{count} episode{count === 1 ? '' : 's'}</span>
+      <button
+        ref={shuffle.ref} data-tv-focused={shuffle.focused}
+        onMouseEnter={() => setShuffleHovered(true)}
+        onMouseLeave={() => setShuffleHovered(false)}
+        onClick={e => { e.stopPropagation(); onShuffle() }}
+        title="Shuffle play this season"
+        className={`${styles.shuffleBtn} ${shuffleActive ? styles.shuffleBtnActive : ''}`}
+      >
+        🔀 Shuffle
+      </button>
       <span className={`${styles.chevron} ${expanded ? styles.chevronExpanded : ''}`}>›</span>
     </div>
   )

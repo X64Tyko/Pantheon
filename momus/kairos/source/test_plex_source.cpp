@@ -296,6 +296,19 @@ static void registerRoutes(httplib::Server& s) {
         })", "application/json");
     });
 
+    // Regression: Plex collections commonly group whole shows (e.g. an
+    // entire series), not just movies/episodes — must classify as "show",
+    // not silently fall into the "anything non-movie is an episode" bucket.
+    s.Get("/library/metadata/col-with-show/children", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(R"({
+            "MediaContainer": {
+                "Metadata": [
+                    {"ratingKey":"show1","type":"show","title":"Whole Show Collected"}
+                ]
+            }
+        })", "application/json");
+    });
+
     // ── fetchListItems empty result ───────────────────────────────────────
     s.Get("/playlists/empty/items", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(R"({"MediaContainer":{"Metadata":[]}})", "application/json");
@@ -775,6 +788,13 @@ TEST_F(PlexSourceTest, BrowseCollectionItems_FieldsForMovieAndEpisode) {
     EXPECT_EQ(items[1].show_title,  "Show B");
     EXPECT_EQ(items[1].season,      2);
     EXPECT_EQ(items[1].episode,     4);
+}
+
+TEST_F(PlexSourceTest, BrowseCollectionItems_ShowTypeClassifiedAsShowNotEpisode) {
+    const auto items = src_->browseCollectionItems("col-with-show");
+    ASSERT_EQ(items.size(), 1u);
+    EXPECT_EQ(items[0].external_id, "show1");
+    EXPECT_EQ(items[0].item_type,   "show");
 }
 
 // ============================================================================

@@ -477,7 +477,9 @@ static std::vector<BrowseContentItem> parseBrowseItems(const std::string& body) 
             std::string plex_type = item.value("type", "");
             BrowseContentItem entry;
             entry.external_id  = rating_key;
-            entry.item_type    = (plex_type == "movie") ? "movie" : "episode";
+            entry.item_type    = (plex_type == "movie") ? "movie"
+                                : (plex_type == "show")  ? "show"
+                                : "episode";
             entry.title        = item.value("title", "");
             entry.duration_ms  = item.value("duration", int64_t{0});
             if (plex_type == "episode") {

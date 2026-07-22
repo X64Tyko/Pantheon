@@ -149,9 +149,12 @@ describe('api client — query string builder (qs)', () => {
 
   it('encodes special characters', async () => {
     respondOk({ items: [], total: 0 })
+    // q gets folded into the canon `filter` query string (withCombinedFilter
+    // in client.ts) rather than sent as its own q= param — see the
+    // library-filter-syntax work this predates.
     await api.getShows({ q: 'Sci Fi & Fantasy' })
     const [url] = mockFetch.mock.calls[0]
-    expect(url).toContain('q=Sci%20Fi%20%26%20Fantasy')
+    expect(url).toContain('filter=Sci%20Fi%20%26%20Fantasy')
   })
 })
 

@@ -60,8 +60,24 @@
   color: var(--hds-txt-3);
 }
 
-.chevron {
+.shuffleBtn {
   margin-left: auto;
+  color: var(--hds-txt-3);
+  font-size: var(--hds-font-size-tv-caption);
+  padding: 3px 8px;
+  border-radius: var(--hds-radius-xs);
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+
+.shuffleBtnActive {
+  color: var(--hds-txt);
+  border-color: var(--hds-line-s);
+}
+
+.chevron {
   color: var(--hds-txt-3);
   font-size: var(--hds-font-size-tv-small-title);
   transform: none;

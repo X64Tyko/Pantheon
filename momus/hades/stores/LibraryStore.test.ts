@@ -102,10 +102,13 @@ describe('LibraryStore', () => {
       expect(store.page).toBe(0)
     })
 
-    it('setFilterGenre updates genre and is included in fetch params', async () => {
+    it('setFilterGenre updates genre and is folded into the canon filter string', async () => {
+      // filterGenre isn't sent as its own param — fetch() merges it into the
+      // filter-tree-derived canon filter string (genre:Horror), same as any
+      // other rule-builder clause. See LibraryStore.fetch's `filter` build.
       store.setFilterGenre('Horror')
       await Promise.resolve()
-      expect(mockApi.getShows).toHaveBeenCalledWith(expect.objectContaining({ genre: 'Horror' }))
+      expect(mockApi.getShows).toHaveBeenCalledWith(expect.objectContaining({ filter: 'genre:Horror' }))
     })
   })
 

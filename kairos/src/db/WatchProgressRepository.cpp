@@ -93,3 +93,35 @@ std::optional<ShowWatchStateRow> WatchProgressRepository::getLatestForShow(
     r.updated_at  = q.getColumn(4).getInt64();
     return r;
 }
+
+std::unordered_map<std::string, WatchStateRow> WatchProgressRepository::getStates(
+        const std::string& user_id,
+        const std::vector<std::pair<std::string, std::string>>& items) {
+    std::unordered_map<std::string, WatchStateRow> out;
+    if (items.empty()) return out;
+
+    // Row-value IN (VALUES ...) matches each (content_type, content_id) pair
+    // as a unit — plain "content_type IN (...) AND content_id IN (...)" would
+    // cross-match a movie id against an episode's type or vice versa.
+    std::string sql = R"SQL(
+        SELECT content_type, content_id, position_ms, duration_ms,
+               (duration_ms > 0 AND position_ms >= duration_ms) AS completed
+        FROM watch_progress
+        WHERE user_id = ? AND (content_type, content_id) IN (VALUES )SQL";
+    for (size_t i = 0; i < items.size(); ++i) sql += (i ? ",(?,?)" : "(?,?)");
+    sql += ")";
+
+    SQLite::Statement q(db_.get(), sql);
+    q.bind(1, user_id);
+    int idx = 2;
+    for (const auto& [type, id] : items) { q.bind(idx++, type); q.bind(idx++, id); }
+
+    while (q.executeStep()) {
+        WatchStateRow r;
+        r.position_ms = q.getColumn(2).getInt64();
+        r.duration_ms = q.getColumn(3).getInt64();
+        r.completed   = q.getColumn(4).getInt() != 0;
+        out[watchStateKey(q.getColumn(0).getString(), q.getColumn(1).getString())] = r;
+    }
+    return out;
+}

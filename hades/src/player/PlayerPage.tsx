@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, mediaUrl, channelLogoUrl } from '../api/client'
 import type { Channel, ChannelNow, Chapter, NextEpisode } from '../api/types'
+import { nextInQueue, type QueueItem } from './playQueue'
 import { usePlaybackSession, type PlaybackTarget } from './usePlaybackSession'
 import { VideoPlayer } from './VideoPlayer'
 import { PlayerControls } from './PlayerControls'
@@ -34,6 +35,18 @@ const CHANNEL_NOW_POLL_MS = 7_000
 
 function isCreditsType(t: Chapter['chapter_type']) { return t === 'credits' || t === 'outro' }
 
+// Only an episode-kind queue item has enough fields to drive the Up Next
+// preview card (season/episode number) — a movie-typed next item still
+// drives auto-advance (see handleAdvanceToNext/onEnded below), just without
+// a preview or countdown, same as a channel schedule just cutting over.
+function queueItemToNextEpisode(item: QueueItem): NextEpisode | null {
+  if (item.kind !== 'episode') return null
+  return {
+    episode_id: item.id, season: item.season ?? 0, episode: item.episode ?? 0,
+    title: item.title, duration_ms: item.duration_ms ?? 0, overview: '', air_date: '', thumb: item.thumb ?? '',
+  }
+}
+
 export function PlayerPage({ kind }: PlayerPageProps) {
   const { id, channelId } = useParams<{ id: string; channelId: string }>()
   const [searchParams] = useSearchParams()
@@ -41,6 +54,17 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
   const targetId = (kind === 'channel' ? channelId : id) ?? ''
   const initialPositionMs = Number(searchParams.get('t') ?? 0) || 0
+
+  // Playlist / shuffle-play queue (see playQueue.ts) — takes priority over
+  // the default same-show "next episode" continuation below whenever one is
+  // present, since a queue can walk across shows/movies (playlists) or a
+  // deliberately randomized order (shuffle-play) that the default logic
+  // knows nothing about.
+  const queueToken = searchParams.get('queue')
+  const queueNextItem = useMemo(
+    () => (queueToken && kind !== 'channel') ? nextInQueue(queueToken, kind, targetId) : null,
+    [queueToken, kind, targetId],
+  )
 
   const target: PlaybackTarget = kind === 'channel'
     ? { kind: 'channel', id: targetId }
@@ -145,21 +169,26 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   // Chapters + next-episode info for series continuation. PlayerPage doesn't
   // remount when advancing episode-to-episode (same route, just a new :id),
   // so targetId changing is also what resets currentMs/upNextDismissed below.
+  // A queue-driven movie leg still runs this (queueNextItem can exist while
+  // kind==='movie') purely to resolve what's next — chapters are never
+  // fetched for movies, unchanged from before queues existed.
   useEffect(() => {
-    if (kind !== 'episode') { setChapters([]); setNextEpisode(null); return }
+    const relevant = kind === 'episode' || (kind === 'movie' && !!queueNextItem)
+    if (!relevant) { setChapters([]); setNextEpisode(null); return }
     let cancelled = false
     setChapters([])
     setNextEpisode(null)
-    Promise.all([
-      api.getEpisodeChapters(targetId).catch(() => []),
-      api.getNextEpisode(targetId).catch(() => null),
-    ]).then(([ch, next]) => {
+    const chaptersPromise = kind === 'episode' ? api.getEpisodeChapters(targetId).catch(() => []) : Promise.resolve<Chapter[]>([])
+    const nextPromise = queueToken
+      ? Promise.resolve(queueNextItem ? queueItemToNextEpisode(queueNextItem) : null)
+      : kind === 'episode' ? api.getNextEpisode(targetId).catch(() => null) : Promise.resolve<NextEpisode | null>(null)
+    Promise.all([chaptersPromise, nextPromise]).then(([ch, next]) => {
       if (cancelled) return
       setChapters(ch)
       setNextEpisode(next)
     })
     return () => { cancelled = true }
-  }, [kind, targetId])
+  }, [kind, targetId, queueToken, queueNextItem])
 
   useEffect(() => {
     setCurrentMs(initialPositionMs)
@@ -323,25 +352,28 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const showUpNext = !isRemoteActive && !!nextEpisode && !upNextDismissed &&
     (inCreditsChapter || (!hasCreditsChapterData && nearEnd))
 
-  // Marks the episode being left as played (regardless of its actual
-  // position — the whole point of skipping/auto-advancing is doing this
-  // before naturally reaching the 95% threshold) and moves on.
+  // Marks the item being left as played (regardless of its actual position —
+  // the whole point of skipping/auto-advancing is doing this before
+  // naturally reaching the 95% threshold) and moves on. queueNextItem (any
+  // kind) takes priority over nextEpisode (only ever populated for a
+  // same-show episode-to-episode continuation, or a queue's episode-typed
+  // next item — see the effect above), since a queue is the more specific
+  // "what's actually next" source whenever one is active.
   const handleAdvanceToNext = useCallback(() => {
-    if (!nextEpisode) return
+    const next = queueNextItem ?? (nextEpisode ? { kind: 'episode' as const, id: nextEpisode.episode_id } : null)
+    if (!next || kind === 'channel') return
     skipCleanupPingRef.current = true
-    // nextEpisode is only ever populated while kind === 'episode' (see the
-    // chapters/next-episode fetch effect above), so the outgoing item here
-    // is always an episode too.
-    api.putWatchProgress('episode', targetId, {
+    api.putWatchProgress(kind, targetId, {
       position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
     }).catch(() => {})
     // replace, not push: this is a continuation of the same viewing session,
     // not a new navigation the viewer chose — pushing would leave the
-    // just-finished episode's route on the history stack, so Back after an
+    // just-finished item's route on the history stack, so Back after an
     // auto-advance stepped into it instead of leaving the player entirely.
-    navigate(`/player/episode/${nextEpisode.episode_id}`, { replace: true })
+    const qs = queueToken ? `?queue=${queueToken}` : ''
+    navigate(`/player/${next.kind}/${next.id}${qs}`, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextEpisode, targetId, session.durationMs, navigate])
+  }, [queueNextItem, nextEpisode, kind, targetId, session.durationMs, navigate, queueToken])
 
   // Movie, or last episode of a series: nothing to auto-advance into, so
   // (unlike handleAdvanceToNext) explicitly mark this item completed rather
@@ -422,7 +454,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                   // finale; the next episode stays reachable from Continue
                   // Watching (see Kairos's up_next synthesis) instead of
                   // auto-playing.
-                  onEnded={() => { if (nextEpisode && !upNextDismissed) handleAdvanceToNext(); else handleNaturalEnd() }}
+                  onEnded={() => { if ((queueNextItem || nextEpisode) && !upNextDismissed) handleAdvanceToNext(); else handleNaturalEnd() }}
                   onError={setPlayerError}
                 />
               </div>

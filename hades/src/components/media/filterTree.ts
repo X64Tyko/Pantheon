@@ -1,6 +1,6 @@
 import { makeAutoObservable } from 'mobx'
 import { FIELD_DEFS, type FilterField, type FilterOp } from './filterFields'
-import { parseFilterSyntax, type ClauseNode, type FilterNode } from './filterSyntax'
+import { parseFilterSyntax, serializeFilterSyntax, type ClauseNode, type FilterNode } from './filterSyntax'
 
 let _id = 0
 const nextId = () => String(++_id)
@@ -117,5 +117,31 @@ export class FilterTreeStore {
     this.match = ast.type === 'group' && !ast.negate ? ast.match : 'all'
     this.items = astToItems(ast)
     this.open  = true
+  }
+
+  // Same idea as setFromFilterString, but for a "rule builder + companion
+  // free-text box, in tandem" editor (see PlaylistPage.tsx's smart-playlist
+  // editor) — the part the rule builder can represent (clauses, one level of
+  // grouping) is loaded into the tree as usual; whatever it can't (bare
+  // fuzzy words, negated groups) is re-serialized and returned as leftover
+  // text instead of silently dropped, so re-saving never loses what the
+  // user had typed directly. A no-op (returns '') on an empty string.
+  splitFromFilterString(text: string): string {
+    if (!text.trim()) return ''
+    const ast = parseFilterSyntax(text)
+    const top: FilterNode[] = ast.type === 'group' && !ast.negate ? ast.children : [ast]
+    const structured: FilterNode[] = []
+    const leftover: FilterNode[] = []
+    for (const child of top) {
+      if (child.type === 'clause') structured.push(child)
+      else if (child.type === 'group' && !child.negate) structured.push(child)
+      else leftover.push(child)
+    }
+    const match = ast.type === 'group' && !ast.negate ? ast.match : 'all'
+    this.match = match
+    this.items = astToItems({ type: 'group', match, children: structured })
+    this.open  = true
+    if (leftover.length === 0) return ''
+    return serializeFilterSyntax(leftover.length === 1 ? leftover[0] : { type: 'group', match, children: leftover })
   }
 }
