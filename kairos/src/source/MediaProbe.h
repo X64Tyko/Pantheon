@@ -30,11 +30,14 @@ bool durationLooksValid(int64_t ms);
 // Returns empty vector if ffprobe fails or the file has no chapters.
 std::vector<Chapter> probeChapters(const std::string& file_path);
 
-// Returns the distinct audio and subtitle language codes found in a file.
-// Language codes are ISO 639-2 strings (e.g. "eng", "jpn"). "und" is excluded.
-// Returns empty lists if ffprobe fails or the file has no tagged streams.
+// Distinct audio and subtitle language codes found in a file (ISO 639-2,
+// e.g. "eng", "jpn"; "und" excluded) — populated only via probeFileInfo's
+// combined probe below, there's no standalone per-field prober for this one
+// (unlike VideoInfo/probeVideoInfo, still probed on-demand by
+// ContentService.cpp's /videoinfo endpoint since resolution/codec/bit-depth
+// aren't persisted columns the way audio_languages/embedded_subtitle_
+// languages are — see Database.cpp's v86 migration comment).
 struct StreamLanguages { std::vector<std::string> audio, subtitle; };
-StreamLanguages probeStreamLanguages(const std::string& file_path);
 
 // Video codec/resolution/bit-depth of the first video stream, for display on
 // library detail panels (distinct from Hephaestus's own MediaProbe, which
@@ -51,9 +54,12 @@ VideoInfo probeVideoInfo(const std::string& file_path);
 // falling back to the longest per-stream duration exactly like
 // validateDurationMs's own two-tier fallback), video codec/resolution/bit-
 // depth, and audio/subtitle stream languages — instead of separately
-// spawning ffprobe for each (validateDurationMs/probeVideoInfo/
-// probeStreamLanguages, which remain available as-is for other callers,
-// e.g. ContentService.cpp's on-demand per-item detail-panel endpoints).
+// spawning ffprobe for each. validateDurationMs/probeVideoInfo remain
+// available as-is for other callers (e.g. ContentService.cpp's on-demand
+// /videoinfo endpoint); the language half has no such standalone caller
+// anymore — SyncManager::syncMediaProbeFromFiles persists this probe's
+// langs into audio_languages/embedded_subtitle_languages, and
+// ContentService.cpp's /languages endpoints just read those columns.
 // duration_ms is 0 if undeterminable.
 struct FileProbeInfo {
     int64_t         duration_ms = 0;
