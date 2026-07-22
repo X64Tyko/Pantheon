@@ -288,6 +288,11 @@ export function TvHome() {
                     seriesTitle: isShow(heroItem) ? heroItem.title : undefined,
                   },
                   route: { contentType: target.kind, contentId: target.id },
+                  // No track-selection UI on this quick-cast path (unlike
+                  // PlayerPage's TrackMenu) — vod.session already started
+                  // with server defaults, so just carry those through as-is.
+                  audioTrack:    vod.tracks?.audio[0]?.index ?? -1,
+                  subtitleTrack: -1,
                 })
                 return
               }

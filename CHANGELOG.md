@@ -6,8 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Release images**: `docker-{kairos,hermes,hephaestus,hades}.yml` only ever triggered on pushes to `master`, so cutting a `vX.Y.Z` release tag never built or published a matching image — only the always-moving `:latest` and opaque `:sha-<hash>` tags existed, with no way to pin a compose file to a specific stable release. All four now also trigger on `v*.*.*` tag pushes and publish a `:vX.Y.Z` image tag matching the release.
+
 ### Added
 - **Hades**: Activity page's System Resources card now plots per-component RAM usage (Kairos/Hermes/Hephaestus) alongside CPU, in the same slot style as the GPU row. Data was already collected/normalized (`ram_bytes` on each component's metrics); this was a frontend-only addition.
+
+### Fixed
+- **Roku**: `TrackMenu.brs` was marking "Off" as the active subtitle row whenever an *external* sidecar subtitle track was actually selected (external tracks use negative indices ≤ -2, same scheme as embedded tracks use ≥ 0, and the check was `currentSubtitle < 0` instead of `= -1`). Selection itself was unaffected — only the highlighted row was wrong. Same bug class already fixed on the web client (`TrackMenu.tsx`, commit `bbf7708`) but never ported to Roku; ported the identical fix.
+- **Casting**: Selecting a non-default audio or subtitle track before casting to a Chromecast or Roku device was silently dropped — the cast payload only ever carried content identity/position, so the receiver's fresh session always opened with server defaults (audio auto-select, subtitles off) regardless of what was selected on the sending tab. `CastCustomData`/`CastMediaArgs` now carry the sender's current `audioTrack`/`subtitleTrack`; the Cast receiver's `/player/*` re-navigation and the Roku "load" device command (which `PlayerScreen.brs`'s `startPlayback` already read these fields from, just never received them) both now seed the new session with the same tracks. Mid-cast track switching is still out of scope, unchanged from before.
+- **Sync status**: `"[sync] all sources done"` printed before chapter sync (the last and by far longest-running phase) actually ran, so the Activity log claimed sync had finished while the slowest part was still in progress, and the reported total time excluded it. Moved to print after chapter sync instead.
+
+### Changed
+- **Sync logging**: The media-probe phase now logs a running `probed N/M: <path> (resolution, audio tracks, external subtitles found)` line per file instead of a plain per-file line with a misleadingly-cumulative subtitle counter, and smart-playlist refresh now logs a "nothing to refresh" line instead of going silent when no smart playlists exist, plus a final done/elapsed-time summary — so the Activity log reflects what each phase is actually doing, not just that "sync" is running somewhere.
+- **Sync log tiers**: `[sync]` is now always visible on the Activity log (previously the entire tag was gated behind debug logging, so effectively none of it reached a normal user by default); the per-item/per-batch detail that would otherwise flood the log at that visibility (per-show/per-episode/per-file lines, batch-write progress ticks) moved to a new `[sync-advanced]` tag, gated behind debug logging same as before. The phase-boundary banners (`=== phase N: ... ===`) are also no longer debug-gated, so users can see which phase is actually running. Errors/warnings stayed at `[sync]` regardless of volume.
 
 ## [0.2.0] - 2026-07-22
 

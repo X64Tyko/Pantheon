@@ -54,6 +54,11 @@ export function PlayerPage({ kind }: PlayerPageProps) {
 
   const targetId = (kind === 'channel' ? channelId : id) ?? ''
   const initialPositionMs = Number(searchParams.get('t') ?? 0) || 0
+  // Only ever populated by the Cast receiver's LOAD interceptor
+  // (CastReceiverProvider.tsx), carrying the sender's selected tracks into
+  // this fresh session — see usePlaybackSession's initialAudioTrack param.
+  const initialAudioTrack = searchParams.has('audio') ? Number(searchParams.get('audio')) : -1
+  const initialSubtitleTrack = searchParams.has('subtitle') ? Number(searchParams.get('subtitle')) : -1
 
   // Playlist / shuffle-play queue (see playQueue.ts) — takes priority over
   // the default same-show "next episode" continuation below whenever one is
@@ -70,7 +75,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     ? { kind: 'channel', id: targetId }
     : { kind, id: targetId }
 
-  const session = usePlaybackSession(target, initialPositionMs)
+  const session = usePlaybackSession(target, initialPositionMs, initialAudioTrack, initialSubtitleTrack)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const [currentMs,   setCurrentMs]   = useState(initialPositionMs)
@@ -264,8 +269,10 @@ export function PlayerPage({ kind }: PlayerPageProps) {
               : undefined, // episode: no cheap thumb URL without an extra fetch — v1 scope
     },
     route: { contentType: kind, contentId: targetId },
+    audioTrack:    session.audioTrack,
+    subtitleTrack: session.subtitleTrack,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [session.manifestUrl, session.isLive, currentMs, title, kind, targetId])
+  }), [session.manifestUrl, session.isLive, currentMs, title, kind, targetId, session.audioTrack, session.subtitleTrack])
 
   // Fires once per connect, not on every manifestUrl change — casting mid-
   // track-switch isn't supported in v1 (see castMedia.ts), so there's no

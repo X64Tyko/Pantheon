@@ -32,10 +32,10 @@ inline bool hadesDebug()           { return g_hades_debug.load(std::memory_order
 // hephaestus's equivalents are — a single source of truth a unit test could
 // exercise directly if kairos ever grows a LogBuffer test like theirs.
 inline bool kairosLogFilter(const std::string& line) {
-    if (line.starts_with("[scraper]")) return true;
+    if (line.starts_with("[scraper]") || line.starts_with("[sync]")) return true;
     if (line.starts_with("[epg]") || line.starts_with("[materializer]"))
         return g_epg_debug.load(std::memory_order_relaxed);
-    if (line.starts_with("[sync]") || line.starts_with("[probe]") || line.starts_with("[scraper-match]"))
+    if (line.starts_with("[sync-advanced]") || line.starts_with("[probe]") || line.starts_with("[scraper-match]"))
         return g_debug_logging.load(std::memory_order_relaxed);
     if (line.starts_with("[hls]") || line.starts_with("[session]"))
         return g_verbose_transcode_logs.load(std::memory_order_relaxed);

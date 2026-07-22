@@ -166,7 +166,7 @@ void SyncManager::syncAll() {
     // Phase 1: ingest content from every source.
     // All DB reads happen up front per library (snapshot); fetch and write
     // phases do not interleave reads and writes on sync_db_.
-    DLOG << "[sync] === phase 1: content ingestion ===\n";
+    std::cout << "[sync] === phase 1: content ingestion ===\n";
     SyncLiveIds live;
     for (const auto& src : sources_) {
         if (!src->isSupported()) {
@@ -180,19 +180,19 @@ void SyncManager::syncAll() {
 
     // Phase 1b: orphan cleanup — runs after ALL sources are known so a show
     // present in source B is never deleted because source A dropped it.
-    DLOG << "[sync] === phase 1b: orphan cleanup ===\n";
+    std::cout << "[sync] === phase 1b: orphan cleanup ===\n";
     runOrphanCleanup(live);
 
     // Phase 2: scraper matching — blocking so chapters don't race against it.
-    DLOG << "[sync] === phase 2: scraper match ===\n";
+    std::cout << "[sync] === phase 2: scraper match ===\n";
     if (scraper_) scraper_->runMatchSync();
 
     // Phase 2b: specials scan — opt-in per show, only for shows already matched.
-    DLOG << "[sync] === phase 2b: specials scan ===\n";
+    std::cout << "[sync] === phase 2b: specials scan ===\n";
     scanSpecialsForEligibleShows();
 
     // Phase 3: media probe (duration/resolution/languages) + subtitle sidecar scan.
-    DLOG << "[sync] === phase 3: media probe ===\n";
+    std::cout << "[sync] === phase 3: media probe ===\n";
     for (const auto& src : sources_) {
         if (src->isSupported())
             syncMediaProbeFromFiles(src->sourceId());
@@ -202,18 +202,23 @@ void SyncManager::syncAll() {
     // unlike syncPlexLinks: a smart playlist isn't tied to any one source),
     // after every source's content is freshly ingested/matched so filters
     // see up-to-date data.
-    DLOG << "[sync] === phase 4: smart playlist refresh ===\n";
+    std::cout << "[sync] === phase 4: smart playlist refresh ===\n";
     refreshSmartPlaylists();
 
+    // Phase 5: chapter sync last because it's going to be the most time consuming.
+    std::cout << "[sync] === phase 5: chapter sync ===\n";
+    for (const auto& src : sources_) {
+        if (src->isSupported())
+            syncChaptersFromFiles(src->sourceId());
+    }
+
+    // Printed last, not after phase 4 — chapter sync (phase 5) is the
+    // longest-running phase by far (see this function's own comment above),
+    // so reporting "done" before it ran told users sync had finished while
+    // the slowest part was still grinding, and excluded its time from the
+    // total.
     std::cout << "[sync] all sources done (total "
               << elapsedMs(t_total, std::chrono::steady_clock::now()) << "ms)" << std::endl;
-	
-	// Phase 5: chapter sync last because it's going to be the most time consuming.
-	DLOG << "[sync] === phase 5: chapter sync ===\n";
-	for (const auto& src : sources_) {
-		if (src->isSupported())
-			syncChaptersFromFiles(src->sourceId());
-	}
 }
 
 void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live,
@@ -317,7 +322,7 @@ void SyncManager::syncContent(const std::string& source_id, SyncLiveIds& live,
             }
         }
     	
-    	DLOG << "[sync] user discovery: " << source_id << " / " << users.size() << " users" << std::endl;
+    	DLOG << "[sync-advanced] user discovery: " << source_id << " / " << users.size() << " users" << std::endl;
 
         // See IMediaSource::lastUserDiscoveryError() — surfaces a real
         // permission/auth failure (vs. "this server genuinely has no other
@@ -925,7 +930,7 @@ void SyncManager::syncShows(IMediaSource& src,
                 }
             }
             txn.commit();
-            std::cout << "[sync]   wrote show metadata: "
+            std::cout << "[sync-advanced]   wrote show metadata: "
                       << batch_end << "/" << shows.size() << std::endl;
         } catch (const SQLite::Exception& e) {
             std::cerr << "[sync] error writing show metadata batch "
@@ -963,9 +968,9 @@ void SyncManager::syncShows(IMediaSource& src,
                     // of inline here).
 
                     std::lock_guard lock(s_log_mu);
-                    std::cout << "[sync]     \"" << shows[i].title << "\": "
+                    std::cout << "[sync-advanced]     \"" << shows[i].title << "\": "
                               << eps.size() << " episode(s)" << std::endl;
-                    DLOG << "[sync]       fetch=" << fetch_ms
+                    DLOG << "[sync-advanced]       fetch=" << fetch_ms
                          << "ms  ext_id=" << ext_show_ids[i]
                          << "  kairos_id=" << shows[i].show_id << '\n';
                 }
@@ -1154,7 +1159,7 @@ void SyncManager::syncShows(IMediaSource& src,
             }
 
             txn.commit();
-            std::cout << "[sync]   wrote series: \"" << show.title << "\" ("
+            std::cout << "[sync-advanced]   wrote series: \"" << show.title << "\" ("
                       << episodes.size() << " episode(s))" << std::endl;
         } catch (const SQLite::Exception& e) {
             std::cerr << "[sync] error syncing show \"" << show.title
@@ -1625,7 +1630,7 @@ void SyncManager::syncMovies(IMediaSource& src,
                                  movie.src_watched, movie.src_view_count, movie.src_position_ms, movie.src_watched_at, movie.duration_ms);
             }
             txn.commit();
-            std::cout << "[sync]   wrote movies: "
+            std::cout << "[sync-advanced]   wrote movies: "
                       << batch_end << "/" << movies.size() << std::endl;
         } catch (const SQLite::Exception& e) {
             std::cerr << "[sync] error writing movie batch "
@@ -1800,7 +1805,7 @@ std::vector<std::string> SyncManager::sourceIds() const {
 
 void SyncManager::yieldIfRequested() {
     if (!yield_requested_.load(std::memory_order_relaxed)) return;
-    DLOG << "[sync] yielding — coordinator requested DB write window\n";
+    DLOG << "[sync-advanced] yielding — coordinator requested DB write window\n";
     while (yield_requested_.load(std::memory_order_relaxed))
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
 }
@@ -1876,7 +1881,7 @@ void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string&
                 s_resolve.bind(3, e.external_id);
                 if (!s_resolve.executeStep())
                 {
-                	DLOG << "[sync] linked user " << lu.external_user_id << " has no mapping for " << e.item_type << " " << e.external_id << '\n';
+                	DLOG << "[sync-advanced] linked user " << lu.external_user_id << " has no mapping for " << e.item_type << " " << e.external_id << '\n';
 	                continue; // not in an enabled library
                 }
                 const std::string kairos_id = s_resolve.getColumn(0).getString();
@@ -1887,7 +1892,7 @@ void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string&
                 s_duration.bind(1, kairos_id);
                 if (s_duration.executeStep()) duration_ms = s_duration.getColumn(0).getInt64();
 
-            	DLOG << "[sync] syncing linked user watch state for " << e.title << " " << kairos_id << '\n';
+            	DLOG << "[sync-advanced] syncing linked user watch state for " << e.title << " " << kairos_id << '\n';
                 SyncManager::applyWatchState(s_watch_get, s_watch_upsert_progress, s_watch_upsert_watched,
                                  lu.local_user_id, e.item_type, kairos_id,
                                  e.watched, e.view_count, e.position_ms, e.watched_at, duration_ms);
@@ -2012,6 +2017,7 @@ std::string smartOrderBySql(const std::string& sort, const std::string& alias) {
 }
 
 void SyncManager::refreshSmartPlaylists() {
+    const auto t_start = std::chrono::steady_clock::now();
     struct SmartDef { std::string playlist_id, filter_expr, smart_type, smart_sort; int smart_limit; };
     std::vector<SmartDef> defs;
     {
@@ -2026,7 +2032,10 @@ void SyncManager::refreshSmartPlaylists() {
             });
         }
     }
-    if (defs.empty()) return;
+    if (defs.empty()) {
+        std::cout << "[sync] smart playlist refresh: nothing to refresh (no smart playlists defined)" << std::endl;
+        return;
+    }
 
     std::cout << "[sync] refreshing " << defs.size() << " smart playlist(s)" << std::endl;
 
@@ -2084,6 +2093,8 @@ void SyncManager::refreshSmartPlaylists() {
                       << ": " << e.what() << std::endl;
         }
     }
+    std::cout << "[sync] smart playlist refresh done: " << defs.size() << " playlist(s) ("
+              << elapsedMs(t_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }
 
 // ---------------------------------------------------------------------------
@@ -2418,6 +2429,11 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
     std::vector<SubtitleTrack> episode_tracks, movie_tracks;
     std::vector<ProbeUpdate> episode_updates, movie_updates;
     int with_ext_subs = 0, media_probed = 0;
+    // How many items will actually get an ffprobe this pass — for the "N/M"
+    // progress prefix below, so a user watching the Activity log can tell how
+    // much of this phase is left, not just that it's running.
+    const size_t to_probe = static_cast<size_t>(std::count_if(
+        probe_results.begin(), probe_results.end(), [](const auto& o) { return o.has_value(); }));
 
     for (size_t i = 0; i < items.size(); ++i) {
         const auto& it = items[i];
@@ -2425,7 +2441,9 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
         id_list.push_back(it.kairos_id);
 
         const auto& dir_result = dir_results[dir_index.at(it.mapped_dir)];
+        bool has_ext_subs_this_item = false;
         if (auto match = dir_result.find(it.video_stem); match != dir_result.end()) {
+            has_ext_subs_this_item = true;
             auto& track_list = it.media_type == "movie" ? movie_tracks : episode_tracks;
             const std::string unmapped_dir = pathutil::parentDir(it.unmapped_path);
             for (auto& ext : match->second) {
@@ -2458,14 +2476,21 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             }
         }
 
+        const std::string resolution_label = bucketResolutionLabel(probed.video.height);
         auto& updates = it.media_type == "movie" ? movie_updates : episode_updates;
         updates.push_back(ProbeUpdate{
             it.kairos_id,
-            bucketResolutionLabel(probed.video.height),
+            resolution_label,
             nlohmann::json(probed.langs.audio).dump(),
             nlohmann::json(probed.langs.subtitle).dump(),
             new_duration_ms,
         });
+
+        std::cout << "[sync-advanced]   probed " << media_probed << "/" << to_probe << ": "
+                  << it.mapped_path << " (" << resolution_label
+                  << ", " << probed.langs.audio.size() << " audio track(s)"
+                  << (has_ext_subs_this_item ? ", external subtitles found" : "")
+                  << ")" << std::endl;
     }
 
     // ── Write (two batched transactions instead of thousands of tiny ones) ────

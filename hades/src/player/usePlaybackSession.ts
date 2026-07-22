@@ -36,7 +36,17 @@ export interface PlaybackSession {
 
 // Position pings land on the *previous* session id, since stop() races with
 // the reload — this ref lets callers stop the right one on unmount too.
-export function usePlaybackSession(target: PlaybackTarget, initialPositionMs = 0): PlaybackSession {
+export function usePlaybackSession(
+  target: PlaybackTarget,
+  initialPositionMs = 0,
+  // Seeds the very first /stream/vod/start call — used by the Cast receiver
+  // (see CastReceiverProvider's LOAD interceptor) to open a fresh session
+  // with whatever the sender had selected, instead of always defaulting to
+  // audio-auto/subtitles-off. -1 means "unset"/"off", same as reload()'s own
+  // convention.
+  initialAudioTrack = -1,
+  initialSubtitleTrack = -1,
+): PlaybackSession {
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState<string | null>(null)
   const [manifestUrl,   setManifestUrl]   = useState<string | null>(null)
@@ -121,13 +131,14 @@ export function usePlaybackSession(target: PlaybackTarget, initialPositionMs = 0
   }, [target.kind, target.id, isLive])
 
   useEffect(() => {
-    load(initialPositionMs, -1, -1)
+    load(initialPositionMs, initialAudioTrack, initialSubtitleTrack)
     return () => {
       genRef.current++
       if (sessionIdRef.current) stopVodPlayback(sessionIdRef.current)
     }
-    // Only re-run when the target itself changes — initialPositionMs is a
-    // mount-time seed, not a reactive dependency (reload() owns position after that).
+    // Only re-run when the target itself changes — initialPositionMs/
+    // initialAudioTrack/initialSubtitleTrack are mount-time seeds, not
+    // reactive dependencies (reload() owns track/position state after that).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.kind, target.id])
 
