@@ -342,6 +342,30 @@ export default observer(function ActivityPage() {
             </div>
         </div>
 
+        <div className="flex flex-wrap gap-6 pt-4 mt-4 border-t border-zinc-800/60">
+            <Sparkline
+                label="Kairos RAM"
+                unit=" MB"
+                width={120}
+                data={metricsStore.history.map(h => h.kairos.ram_bytes / 1024 / 1024)}
+                color="#34D399"
+            />
+            <Sparkline
+                label="Hermes RAM"
+                unit=" MB"
+                width={120}
+                data={metricsStore.history.map(h => h.hermes.ram_bytes / 1024 / 1024)}
+                color="#60A5FA"
+            />
+            <Sparkline
+                label="Hephaestus RAM"
+                unit=" MB"
+                width={120}
+                data={metricsStore.history.map(h => h.hephaestus.ram_bytes / 1024 / 1024)}
+                color="#FB7185"
+            />
+        </div>
+
         {latestGpu && (
           <div className="flex flex-wrap items-end gap-6 pt-4 mt-4 border-t border-zinc-800/60">
             <Sparkline

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Hades**: Activity page's System Resources card now plots per-component RAM usage (Kairos/Hermes/Hephaestus) alongside CPU, in the same slot style as the GPU row. Data was already collected/normalized (`ram_bytes` on each component's metrics); this was a frontend-only addition.
+
 ## [0.2.0] - 2026-07-22
 
 *Alpha complete — every Phase 1 item in [docs/ROADMAP.md](docs/ROADMAP.md) is now checked off.*
