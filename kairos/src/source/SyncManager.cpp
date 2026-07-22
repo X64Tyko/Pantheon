@@ -15,6 +15,7 @@
 #include "SubtitleSidecar.h"
 #include "util/PathMatch.h"
 #include "util/TitleMatch.h"
+#include "thread/TaskRegistry.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <atomic>
@@ -100,7 +101,7 @@ void SyncManager::triggerSync(const std::string& source_id, const std::string& l
         std::cout << "[sync] already running — ignoring trigger" << std::endl;
         return;
     }
-    std::thread([this, source_id, library_id]() {
+    TaskRegistry::global().spawn([this, source_id, library_id]() {
         try {
             if (!library_id.empty())
                 syncLibrary(source_id, library_id);
@@ -113,7 +114,7 @@ void SyncManager::triggerSync(const std::string& source_id, const std::string& l
         }
         { std::lock_guard<std::mutex> lock(current_source_mtx_); current_source_id_.clear(); }
         sync_running_.store(false);
-    }).detach();
+    });
 }
 
 void SyncManager::triggerHardSync(const std::string& source_id) {
@@ -122,7 +123,7 @@ void SyncManager::triggerHardSync(const std::string& source_id) {
         std::cout << "[sync] already running — ignoring hard-sync trigger" << std::endl;
         return;
     }
-    std::thread([this, source_id]() {
+    TaskRegistry::global().spawn([this, source_id]() {
         try {
             clearSourceMapping(source_id);
             if (source_id.empty())
@@ -134,7 +135,7 @@ void SyncManager::triggerHardSync(const std::string& source_id) {
         }
         { std::lock_guard<std::mutex> lock(current_source_mtx_); current_source_id_.clear(); }
         sync_running_.store(false);
-    }).detach();
+    });
 }
 
 // Wipes source_mapping (this source only, or every row when source_id is
@@ -1814,7 +1815,7 @@ void SyncManager::triggerPlexLinkSync() {
         std::cout << "[sync] plex-link sync already running — ignoring trigger" << std::endl;
         return;
     }
-    std::thread([this]() {
+    TaskRegistry::global().spawn([this]() {
         try {
             for (const auto& src : sources_)
                 syncPlexLinks(src->sourceId());
@@ -1822,7 +1823,7 @@ void SyncManager::triggerPlexLinkSync() {
             std::cerr << "[sync] plex-link sync error: " << e.what() << std::endl;
         }
         plex_sync_running_.store(false);
-    }).detach();
+    });
 }
 
 void SyncManager::triggerSmartPlaylistRefresh() {
@@ -1831,14 +1832,14 @@ void SyncManager::triggerSmartPlaylistRefresh() {
         std::cout << "[sync] smart playlist refresh already running — ignoring trigger" << std::endl;
         return;
     }
-    std::thread([this]() {
+    TaskRegistry::global().spawn([this]() {
         try {
             refreshSmartPlaylists();
         } catch (const std::exception& e) {
             std::cerr << "[sync] smart playlist refresh error: " << e.what() << std::endl;
         }
         smart_playlist_refresh_running_.store(false);
-    }).detach();
+    });
 }
 
 void SyncManager::syncLinkedUserWatchState(IMediaSource& src, const std::string& source_id) {

@@ -51,8 +51,9 @@ export async function startVodPlayback(params: VodStartParams): Promise<VodStart
     throw new Error((body as { error?: string }).error ?? res.statusText)
   }
   const data = await res.json()
-  if (data.manifest_url && typeof window !== 'undefined' && (window.location.protocol === 'https:' || window.location.hostname !== 'localhost')) {
-    data.manifest_url = window.location.origin + data.manifest_url
+  if (typeof window !== 'undefined' && (window.location.protocol === 'https:' || window.location.hostname !== 'localhost')) {
+    if (data.manifest_url) data.manifest_url = window.location.origin + data.manifest_url
+    if (data.subtitle_url) data.subtitle_url = window.location.origin + data.subtitle_url
   }
   return data
 }

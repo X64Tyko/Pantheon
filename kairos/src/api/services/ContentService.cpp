@@ -9,6 +9,7 @@
 #include "../../db/MetadataOverrideRepository.h"
 #include "../../db/RestrictionRepository.h"
 #include "../../db/SourceRepository.h"
+#include "../../db/SubtitleTrackRepository.h"
 #include "../../model/WritebackFields.h"
 #include "../../scraper/RatingSeverity.h"
 #include "../../scraper/ScraperManager.h"
@@ -24,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <iomanip>
 #include <ctime>
@@ -98,14 +100,6 @@ bool startsWithCI(const std::string& v, const std::string& prefix) {
 // file read for any logged-in user.
 bool isLocalSentinel(const std::string& v) { return startsWithCI(v, "local:"); }
 
-// Per-item language probe results are cached in-memory since ffprobe is
-// relatively expensive and a given file's language tracks never change.
-struct ItemLangCache {
-	std::mutex mtx;
-	std::unordered_map<std::string, nlohmann::json> data;
-};
-ItemLangCache g_item_lang_cache;
-
 // Builds the parental-controls context for the current request's user, for
 // ContentRepository's search methods (see RestrictionContext) — the service
 // layer owns "what does restricted mean for this user," the repository just
@@ -121,22 +115,84 @@ RestrictionContext restrictionFor(const std::string& entity_type) {
 	return ctx;
 }
 
-nlohmann::json probeLanguagesCached(const std::string& cacheKey, const std::string& filePath, ConfStore& conf) {
-	{
-		std::lock_guard<std::mutex> lk(g_item_lang_cache.mtx);
-		auto it = g_item_lang_cache.data.find(cacheKey);
-		if (it != g_item_lang_cache.data.end()) return it->second;
+// External sidecar subtitle files (subtitle_track table) are a separate
+// source from the embedded_subtitle_languages column and have to be merged
+// in on top — same "union, don't denormalize" reasoning as
+// ContentRepository::getMetadataValues's subtitle_language filter facet.
+void addExternalSubtitleLanguages(nlohmann::json& result, const std::vector<SubtitleTrack>& tracks) {
+	std::set<std::string> seen(result["subtitle"].begin(), result["subtitle"].end());
+	for (const auto& t : tracks) {
+		if (!t.language.empty() && seen.insert(t.language).second) result["subtitle"].push_back(t.language);
 	}
+}
 
+// Shows have no single subtitle_track owner the way a movie does — sidecar
+// files are attached per-episode, so this aggregates across every episode of
+// the show rather than a single file.
+void addExternalSubtitleLanguagesForShow(nlohmann::json& result, const std::string& show_id, Database& db) {
+	std::set<std::string> seen(result["subtitle"].begin(), result["subtitle"].end());
+	try {
+		SQLite::Statement q(db.get(),
+			"SELECT DISTINCT st.language FROM subtitle_track st "
+			"JOIN episode e ON e.episode_id = st.media_id "
+			"WHERE st.media_type = 'episode' AND e.show_id = ? AND st.language != ''");
+		q.bind(1, show_id);
+		while (q.executeStep()) {
+			auto lang = q.getColumn(0).getString();
+			if (seen.insert(lang).second) result["subtitle"].push_back(lang);
+		}
+	} catch (const std::exception& e) {
+		route::logErr("addExternalSubtitleLanguagesForShow", e);
+	}
+}
+
+// audio_languages/embedded_subtitle_languages are persisted at sync time
+// (SyncManager::syncMediaProbeFromFiles) — no need to re-run ffprobe
+// on-demand per detail-page view the way this endpoint used to (that
+// predates the v86 migration; see Database.cpp's schema-history comment for
+// it). Plain DB reads, same json_each pattern as ContentRepository::
+// getMetadataValues's audio_language/subtitle_language filter facets, just
+// scoped to one id instead of the whole library.
+nlohmann::json movieLanguagesFromDb(Database& db, const std::string& id) {
 	nlohmann::json result = {{"audio", nlohmann::json::array()}, {"subtitle", nlohmann::json::array()}};
-	if (!filePath.empty()) {
-		auto langs = probeStreamLanguages(conf.applyPathMap(filePath));
-		for (auto& l : langs.audio)    result["audio"].push_back(l);
-		for (auto& l : langs.subtitle) result["subtitle"].push_back(l);
-	}
+	try {
+		SQLite::Statement q(db.get(),
+			"SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.audio_languages,'')) je "
+			"WHERE m.movie_id = ? AND je.value != ''");
+		q.bind(1, id);
+		while (q.executeStep()) result["audio"].push_back(q.getColumn(0).getString());
+	} catch (const std::exception& e) { route::logErr("movieLanguagesFromDb (audio)", e); }
+	try {
+		SQLite::Statement q(db.get(),
+			"SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.embedded_subtitle_languages,'')) je "
+			"WHERE m.movie_id = ? AND je.value != ''");
+		q.bind(1, id);
+		while (q.executeStep()) result["subtitle"].push_back(q.getColumn(0).getString());
+	} catch (const std::exception& e) { route::logErr("movieLanguagesFromDb (subtitle)", e); }
+	addExternalSubtitleLanguages(result, SubtitleTrackRepository(db).get("movie", id));
+	return result;
+}
 
-	std::lock_guard<std::mutex> lk(g_item_lang_cache.mtx);
-	g_item_lang_cache.data[cacheKey] = result;
+// Same as movieLanguagesFromDb but aggregated (DISTINCT) across every
+// episode of the show, same reasoning addExternalSubtitleLanguagesForShow
+// already documents for the external-subtitle half.
+nlohmann::json showLanguagesFromDb(Database& db, const std::string& id) {
+	nlohmann::json result = {{"audio", nlohmann::json::array()}, {"subtitle", nlohmann::json::array()}};
+	try {
+		SQLite::Statement q(db.get(),
+			"SELECT DISTINCT je.value FROM episode e, json_each(NULLIF(e.audio_languages,'')) je "
+			"WHERE e.show_id = ? AND je.value != ''");
+		q.bind(1, id);
+		while (q.executeStep()) result["audio"].push_back(q.getColumn(0).getString());
+	} catch (const std::exception& e) { route::logErr("showLanguagesFromDb (audio)", e); }
+	try {
+		SQLite::Statement q(db.get(),
+			"SELECT DISTINCT je.value FROM episode e, json_each(NULLIF(e.embedded_subtitle_languages,'')) je "
+			"WHERE e.show_id = ? AND je.value != ''");
+		q.bind(1, id);
+		while (q.executeStep()) result["subtitle"].push_back(q.getColumn(0).getString());
+	} catch (const std::exception& e) { route::logErr("showLanguagesFromDb (subtitle)", e); }
+	addExternalSubtitleLanguagesForShow(result, id, db);
 	return result;
 }
 
@@ -779,21 +835,9 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, json{{"seasons", seasons}}.dump());
 	});
 
-	// Audio/subtitle languages, probed from one representative episode file
-	// and cached in-memory (ffprobe is too slow to run per list render).
+	// Audio/subtitle languages — see movieLanguagesFromDb/showLanguagesFromDb.
 	svr.Get("/api/shows/:id/languages", [this](const Req& req, Res& res) {
-		auto id = req.path_params.at("id");
-		std::string path;
-		try {
-			SQLite::Statement q(db_.get(),
-				"SELECT file_path FROM episode WHERE show_id = ? AND file_path != '' "
-				"ORDER BY season, episode LIMIT 1");
-			q.bind(1, id);
-			if (q.executeStep()) path = q.getColumn(0).getString();
-		} catch (const std::exception& e) {
-			route::logErr("GET /api/shows/" + id + "/languages", e);
-		}
-		route::ok(res, probeLanguagesCached("show:" + id, path, conf_).dump());
+		route::ok(res, showLanguagesFromDb(db_, req.path_params.at("id")).dump());
 	});
 
 	// Codec/resolution/bit-depth, probed from the same representative
@@ -1303,16 +1347,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	});
 
 	svr.Get("/api/movies/:id/languages", [this](const Req& req, Res& res) {
-		auto id = req.path_params.at("id");
-		std::string path;
-		try {
-			SQLite::Statement q(db_.get(), "SELECT file_path FROM movie WHERE movie_id = ?");
-			q.bind(1, id);
-			if (q.executeStep()) path = q.getColumn(0).getString();
-		} catch (const std::exception& e) {
-			route::logErr("GET /api/movies/" + id + "/languages", e);
-		}
-		route::ok(res, probeLanguagesCached("movie:" + id, path, conf_).dump());
+		route::ok(res, movieLanguagesFromDb(db_, req.path_params.at("id")).dump());
 	});
 
 	svr.Get("/api/movies/:id/videoinfo", [this](const Req& req, Res& res) {
