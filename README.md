@@ -2,8 +2,8 @@
 
 A media platform built around three pillars:
 
-- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections, and content catalogues across sources.
-- **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, and live EPG. Connect any IPTV client or route through XTeve into Plex DVR.
+- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections, fix incorrect matches, enrich metadata, and write back to original libraries.
+- **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, dedicated premiere timeslots, and live EPG. Connect any IPTV client.
 - **Media player** — direct playback within Hades and native client applications.
 
 ## Screenshots
