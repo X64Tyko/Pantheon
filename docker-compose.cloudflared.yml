@@ -135,18 +135,18 @@ services:
   # (not unless-stopped) means that clean exit leaves the container quietly
   # sitting at "Exited (0)" instead of crash-looping forever if you uncomment
   # this without setting a token.
-  # cloudflared:
-  #   image: cloudflare/cloudflared:latest
-  #   environment:
-  #     - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
-  #   entrypoint: ["/bin/sh", "-c"]
-  #   command:
-  #     - |
-  #       if [ -z "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
-  #         echo "cloudflared: CLOUDFLARE_TUNNEL_TOKEN not set in .env — skipping (see the note near the top of docker-compose.yml)"
-  #         exit 0
-  #       fi
-  #       exec cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
-  #   depends_on:
-  #     - hermes
-  #   restart: on-failure
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    environment:
+      - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+          echo "cloudflared: CLOUDFLARE_TUNNEL_TOKEN not set in .env — skipping (see the note near the top of docker-compose.yml)"
+          exit 0
+        fi
+        exec cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
+    depends_on:
+      - hermes
+    restart: on-failure

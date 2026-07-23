@@ -69,6 +69,8 @@ curl -O https://raw.githubusercontent.com/X64Tyko/Pantheon/master/docker-compose
 
 (Or point Unraid's Compose Manager at that same URL.)
 
+This is the plain CPU-only, no-Cloudflare-Tunnel variant. If you know you want NVENC/VAAPI hardware transcoding and/or a Cloudflare Tunnel already, grab the matching pre-toggled variant instead from the [latest release's assets](https://github.com/X64Tyko/Pantheon/releases/latest) (`docker-compose.nvenc.yml`, `docker-compose.vaapi.yml`, or either with a `.cloudflared` suffix) — same file, just with the relevant lines below already uncommented, so you can skip steps 3 and the Remote Access section. All variants are otherwise identical, so switching later just means copying the toggled block into your own already-customized file.
+
 **2. Set your paths**
 
 Open `docker-compose.yml` and update the volume lines under `kairos` to point at your own directories:
@@ -84,7 +86,7 @@ These are Unraid-style example paths — any absolute host path works (e.g. `/ho
 
 **3. Pick your transcoding hardware** *(optional)*
 
-The `hephaestus` service transcodes on CPU by default. If you have a GPU, uncomment the matching block in its `environment`/`devices`/`runtime` lines:
+The `hephaestus` service transcodes on CPU by default. If you have a GPU, either grab `docker-compose.nvenc.yml` / `docker-compose.vaapi.yml` from the [latest release's assets](https://github.com/X64Tyko/Pantheon/releases/latest) instead of the plain file, or uncomment the matching block in its `environment`/`devices`/`runtime` lines yourself:
 
 | Hardware | What to uncomment |
 |---|---|
@@ -104,7 +106,7 @@ docker compose up -d
 docker compose ps
 ```
 
-All services should show `Up` — except `cloudflared`, which exits cleanly (`Exited (0)`) unless you've set up the optional [Cloudflare Tunnel](#remote-access-optional) token. That's expected, not a failure.
+All services should show `Up`. (If you're using a `.cloudflared` variant, that one service is the exception — it exits cleanly (`Exited (0)`) unless you've set up the optional [Cloudflare Tunnel](#remote-access-optional) token. That's expected, not a failure.)
 
 Open **http://your-server:8000** — that's the Hades management UI, served through Hermes.
 
@@ -116,7 +118,7 @@ Direct Kairos access (API, debugging) is on **:8081**.
 
 LAN-only `http://your-server:8000` works fine for local use, but some features — notably Chromecast sending from Hades — need a secure (HTTPS) context, which plain HTTP over a LAN address never satisfies.
 
-The compose file ships with an optional `cloudflared` service for exactly this, off by default:
+There's an optional `cloudflared` service for exactly this. It's commented out in the plain `docker-compose.yml` (nothing extra gets pulled if you don't need it) — either grab a `docker-compose.*.cloudflared.yml` variant from the [latest release's assets](https://github.com/X64Tyko/Pantheon/releases/latest) instead, or uncomment the `cloudflared:` block near the bottom of your own file yourself:
 
 1. In [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → **Networks → Tunnels → Create a tunnel** → connector type **Docker** → copy the token.
 2. In the same wizard, add a **Public Hostname** (e.g. `pantheon.yourdomain.com`) → service type **HTTP** → URL `hermes:8000`.

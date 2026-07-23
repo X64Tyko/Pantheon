@@ -77,13 +77,13 @@ services:
     environment:
       - KAIROS_URL=http://kairos:8080
       # ── NVIDIA: uncomment these three lines and add `runtime: nvidia` below ──
-      # - HEPH_HW_ACCEL=nvidia
-      # - NVIDIA_VISIBLE_DEVICES=all
-      # - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
+      - HEPH_HW_ACCEL=nvidia
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
       # ── AMD / Intel VAAPI: uncomment these two lines and add `devices` below ─
       # - HEPH_HW_ACCEL=amd
       # - HEPH_VAAPI_DEV=/dev/dri/renderD128   # override if your render node differs
-    # runtime: nvidia   # NVIDIA — requires NVIDIA Container Toolkit on the host
+    runtime: nvidia   # NVIDIA — requires NVIDIA Container Toolkit on the host
     volumes:
       - /mnt/user/appdata/kairos:/data
       - /mnt/user/Media:/media:ro
@@ -135,18 +135,18 @@ services:
   # (not unless-stopped) means that clean exit leaves the container quietly
   # sitting at "Exited (0)" instead of crash-looping forever if you uncomment
   # this without setting a token.
-  # cloudflared:
-  #   image: cloudflare/cloudflared:latest
-  #   environment:
-  #     - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
-  #   entrypoint: ["/bin/sh", "-c"]
-  #   command:
-  #     - |
-  #       if [ -z "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
-  #         echo "cloudflared: CLOUDFLARE_TUNNEL_TOKEN not set in .env — skipping (see the note near the top of docker-compose.yml)"
-  #         exit 0
-  #       fi
-  #       exec cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
-  #   depends_on:
-  #     - hermes
-  #   restart: on-failure
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    environment:
+      - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+          echo "cloudflared: CLOUDFLARE_TUNNEL_TOKEN not set in .env — skipping (see the note near the top of docker-compose.yml)"
+          exit 0
+        fi
+        exec cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
+    depends_on:
+      - hermes
+    restart: on-failure

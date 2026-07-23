@@ -81,14 +81,14 @@ services:
       # - NVIDIA_VISIBLE_DEVICES=all
       # - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
       # ── AMD / Intel VAAPI: uncomment these two lines and add `devices` below ─
-      # - HEPH_HW_ACCEL=amd
-      # - HEPH_VAAPI_DEV=/dev/dri/renderD128   # override if your render node differs
+      - HEPH_HW_ACCEL=amd
+      - HEPH_VAAPI_DEV=/dev/dri/renderD128   # override if your render node differs
     # runtime: nvidia   # NVIDIA — requires NVIDIA Container Toolkit on the host
     volumes:
       - /mnt/user/appdata/kairos:/data
       - /mnt/user/Media:/media:ro
-    # devices:          # AMD — expose the GPU render node
-    #   - /dev/dri/renderD128:/dev/dri/renderD128
+    devices:          # AMD — expose the GPU render node
+      - /dev/dri/renderD128:/dev/dri/renderD128
     depends_on:
       - kairos
     restart: unless-stopped

@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Release images**: `docker-{kairos,hermes,hephaestus,hades}.yml` only ever triggered on pushes to `master`, so cutting a `vX.Y.Z` release tag never built or published a matching image — only the always-moving `:latest` and opaque `:sha-<hash>` tags existed, with no way to pin a compose file to a specific stable release. All four now also trigger on `v*.*.*` tag pushes and publish a `:vX.Y.Z` image tag matching the release.
 
 ### Added
+- **Docker Compose variants**: `docker-compose.yml` (plain CPU-only) is joined by five ready-to-use variants — `docker-compose.{nvenc,vaapi}.yml` for NVIDIA/AMD-VAAPI hardware transcoding and a `.cloudflared` version of each (plus the plain one) for Cloudflare Tunnel remote access — so users don't have to hand-edit comments to get a working config for their setup. All six differ only in which lines are commented out (generated from `docker-compose.yml` via `scripts/generate-compose-variants.py`), so switching later is a matter of copying the toggled block into your own already-customized file rather than re-fetching a different one.
+
+### Added
 - **Hades**: Activity page's System Resources card now plots per-component RAM usage (Kairos/Hermes/Hephaestus) alongside CPU, in the same slot style as the GPU row. Data was already collected/normalized (`ram_bytes` on each component's metrics); this was a frontend-only addition.
 
 ### Fixed
