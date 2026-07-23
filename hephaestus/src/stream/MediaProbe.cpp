@@ -1,6 +1,7 @@
 #include "MediaProbe.h"
 #include <nlohmann/json.hpp>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <memory>
@@ -40,6 +41,27 @@ static int parseBitDepth(const json& s) {
 
 bool isHdrTransfer(const std::string& color_transfer) {
 	return color_transfer == "smpte2084" || color_transfer == "arib-std-b67";
+}
+
+// ffprobe reports frame rates as "num/den" (e.g. "30000/1001"), occasionally
+// a bare integer, or "0/0" when it has no basis to compute one.
+static double parseFrameRateFraction(const std::string& s) {
+	auto slash = s.find('/');
+	if (slash == std::string::npos) {
+		try { return std::stod(s); } catch (...) { return 0.0; }
+	}
+	try {
+		double num = std::stod(s.substr(0, slash));
+		double den = std::stod(s.substr(slash + 1));
+		return den != 0.0 ? num / den : 0.0;
+	} catch (...) { return 0.0; }
+}
+
+bool isLikelyVfr(const VideoTrack& v) {
+	double r_fps   = parseFrameRateFraction(v.r_frame_rate);
+	double avg_fps = parseFrameRateFraction(v.avg_frame_rate);
+	if (r_fps <= 0.0 || avg_fps <= 0.0) return false; // insufficient data — don't guess
+	return std::abs(r_fps - avg_fps) > 0.05; // well beyond simple rounding noise
 }
 
 // Shell-escape a path by wrapping in single quotes (works for paths without
@@ -89,6 +111,9 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 				v.color_transfer  = s.value("color_transfer",  "");
 				v.color_primaries = s.value("color_primaries", "");
 				v.color_space     = s.value("color_space",     "");
+				v.r_frame_rate    = s.value("r_frame_rate",   "");
+				v.avg_frame_rate  = s.value("avg_frame_rate", "");
+				v.field_order     = s.value("field_order",    "");
 				info.video.push_back(v);
 			} else if (codec_type == "audio") {
 				AudioTrack a;

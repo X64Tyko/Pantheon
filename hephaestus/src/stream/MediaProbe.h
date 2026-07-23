@@ -22,11 +22,28 @@ struct VideoTrack {
 	std::string color_transfer;    // e.g. "smpte2084" (PQ), "arib-std-b67" (HLG), "bt709"
 	std::string color_primaries;   // e.g. "bt2020", "bt709"
 	std::string color_space;       // e.g. "bt2020nc", "bt709"
+	// ffprobe's container-declared frame rate (e.g. "25/1") vs its actual
+	// average derived from frame-count/duration (e.g. "24975/1000") — these
+	// diverging is the standard signal for variable frame rate content (see
+	// isLikelyVfr below). Raw "num/den" strings, or empty if unreported.
+	std::string r_frame_rate;
+	std::string avg_frame_rate;
+	// "progressive", "tt"/"bb"/"tb"/"bt" (interlaced field order), "unknown",
+	// or empty if ffprobe didn't report one.
+	std::string field_order;
 };
 
 // True for the two HDR transfer functions ffprobe reports (PQ/HDR10(+) and
 // HLG) — anything else (bt709, empty/"unknown", gamma22, etc.) is SDR.
 bool isHdrTransfer(const std::string& color_transfer);
+
+// True when r_frame_rate and avg_frame_rate diverge by more than simple
+// rounding noise — the standard ffprobe-based signal for variable frame rate
+// content (duplicate/dropped frames baked into an old telecine/pulldown-era
+// encode, common on syndicated TV masters). False (not just "unknown") when
+// either field is missing/unparseable — this is a detection aid, not
+// something to gate correctness-critical behavior on.
+bool isLikelyVfr(const VideoTrack& v);
 
 // Internal parser exposed for testing.
 int parseBitDepthForTest(const std::string& json_str);

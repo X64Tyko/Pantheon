@@ -152,6 +152,19 @@ static std::vector<std::string> buildArgs(
     // No data streams, no chapter metadata in output
     a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
 
+    // Force constant output frame rate. Without this, ffmpeg's per-version/
+    // per-input default fps_mode behavior governs how a source with
+    // irregular/variable frame timestamps (common on older syndicated TV
+    // masters — duplicate/dropped frames baked in from a telecine/pulldown-
+    // era encode) gets handled, feeding directly into -re's real-time
+    // pacing and -force_key_frames' segment-cutting decisions below —
+    // uncorrected irregular timing there means uneven segment durations
+    // against this channel's tight kLiveHlsSegmentSecs window, which shows
+    // up to viewers as stutter/rebuffering. Live channels always transcode
+    // (no direct-play path the way VOD has), so this is safe to apply
+    // unconditionally rather than needing per-source VFR detection first.
+    a.insert(a.end(), {"-fps_mode", "cfr"});
+
     // Video encoder
     std::vector<std::string> vfParts;
     // Scale down to the configured max resolution — never upscales.

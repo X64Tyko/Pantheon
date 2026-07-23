@@ -183,17 +183,6 @@ private:
         return 0;
     }
 
-    static int readThreadCount() {
-        std::ifstream status("/proc/self/status");
-        std::string line;
-        while (std::getline(status, line)) {
-            if (line.rfind("Threads:", 0) == 0) {
-                try { return std::stoi(line.substr(8)); } catch (...) { return 0; }
-            }
-        }
-        return 0;
-    }
-
     void sampleOnce() {
         long utime, stime, total_time;
         readCpuTicks(utime, stime, total_time);
@@ -206,12 +195,13 @@ private:
         last_utime_ = utime; last_stime_ = stime; last_total_time_ = total_time;
 
         const long ram = readRamBytes();
-        const int  threads = readThreadCount();
 
         std::lock_guard<std::mutex> lock(stats_mtx_);
         cpu_sum_ += cpu; cpu_n_++; if (cpu > cpu_max_) cpu_max_ = cpu;
         ram_sum_ += ram; ram_n_++; if (ram > ram_max_) ram_max_ = ram;
-        if (threads > threads_max_) threads_max_ = threads;
+        // threads_max_ is intentionally NOT touched here — see reportThreads()'s
+        // own comment on why whole-process /proc sampling was removed from this
+        // path entirely, not just supplemented.
     }
 
     std::string name_;
@@ -221,7 +211,9 @@ private:
     std::mutex stats_mtx_;
     double cpu_sum_ = 0.0; long cpu_n_ = 0; double cpu_max_ = 0.0;
     long   ram_sum_ = 0;   long ram_n_ = 0; long   ram_max_ = 0;
-    int    threads_max_ = 0;
+    // Default 1: just the calling thread — the truth for any operation that
+    // never calls reportThreads() (most of them spawn no worker pool at all).
+    int    threads_max_ = 1;
 
     long last_utime_ = 0, last_stime_ = 0, last_total_time_ = 0;
 };
