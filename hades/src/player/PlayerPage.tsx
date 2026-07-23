@@ -225,13 +225,13 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     if (kind === 'channel') return
     const interval = setInterval(() => {
       if (!isRemoteActiveRef.current && currentMsRef.current > 0 && session.durationMs > 0)
-        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMsRef.current), duration_ms: Math.round(session.durationMs) }).catch(() => {})
+        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMsRef.current), duration_ms: Math.round(session.durationMs), device_type: 'web', direct_play: session.directPlay ?? undefined }).catch(() => {})
     }, PROGRESS_PING_MS)
     return () => {
       clearInterval(interval)
       if (skipCleanupPingRef.current) { skipCleanupPingRef.current = false; return }
       if (!isRemoteActiveRef.current && currentMsRef.current > 0 && session.durationMs > 0)
-        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMsRef.current), duration_ms: Math.round(session.durationMs) }).catch(() => {})
+        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMsRef.current), duration_ms: Math.round(session.durationMs), device_type: 'web', direct_play: session.directPlay ?? undefined }).catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, targetId, session.durationMs])
@@ -300,7 +300,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const handleStopCast = useCallback(() => {
     if (kind !== 'channel' && castSession.currentMs > 0 && castSession.durationMs > 0)
       api.putWatchProgress(kind, targetId, {
-        position_ms: Math.round(castSession.currentMs), duration_ms: Math.round(castSession.durationMs),
+        position_ms: Math.round(castSession.currentMs), duration_ms: Math.round(castSession.durationMs), device_type: 'cast',
       }).catch(() => {})
     castSession.endSession()
   }, [kind, targetId, castSession])
@@ -308,7 +308,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const handleStopRoku = useCallback(() => {
     if (kind !== 'channel' && rokuSession.currentMs > 0 && rokuSession.durationMs > 0)
       api.putWatchProgress(kind, targetId, {
-        position_ms: Math.round(rokuSession.currentMs), duration_ms: Math.round(rokuSession.durationMs),
+        position_ms: Math.round(rokuSession.currentMs), duration_ms: Math.round(rokuSession.durationMs), device_type: 'roku',
       }).catch(() => {})
     rokuSession.endSession()
   }, [kind, targetId, rokuSession])
@@ -371,6 +371,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     skipCleanupPingRef.current = true
     api.putWatchProgress(kind, targetId, {
       position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
+      device_type: 'web', direct_play: session.directPlay ?? undefined,
     }).catch(() => {})
     // replace, not push: this is a continuation of the same viewing session,
     // not a new navigation the viewer chose — pushing would leave the
@@ -389,6 +390,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     if (kind !== 'channel' && session.durationMs > 0) {
       api.putWatchProgress(kind, targetId, {
         position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
+        device_type: 'web', direct_play: session.directPlay ?? undefined,
       }).catch(() => {})
     }
     navigate(-1)

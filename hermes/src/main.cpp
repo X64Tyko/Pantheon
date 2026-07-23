@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "api/Router.h"
 #include "broadcast/BroadcasterManager.h"
+#include "crash/CrashHandler.h"
 #include "devices/DeviceSessionManager.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
@@ -60,6 +61,11 @@ int main(int argc, char* argv[]) {
 	LogTee    tee_cerr(std::cerr, local_log);
     local_log.setFile("./data/hermes.log");
     local_log.setFilter(hermesLogFilter);
+    // combined_log, not local_log — it's what /api/logs/stream actually
+    // serves (Hermes's own lines plus the relayed Kairos/Hephaestus
+    // streams), more useful context for a crash dump than Hermes's own
+    // lines alone.
+    installCrashHandlers("hermes", "./data", &combined_log);
 
     Config cfg = parseConfig(argc, argv);
 

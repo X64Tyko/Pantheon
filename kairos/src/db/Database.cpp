@@ -2072,6 +2072,39 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE movie ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
 )SQL" }
 
+// ── v91: local-only play history (see PlaybackHistoryRepository) — the
+//         backbone of the Tautulli-style Activity tab. Extends the existing
+//         PUT /api/watch-progress ping path rather than a new event
+//         pipeline: each ping either extends the most recent "session" for
+//         this (user, content) if it was touched within kSessionGapMs, or
+//         starts a new one. Deliberately separate from watch_progress (which
+//         stays exactly what it's always been — one row per (user,content),
+//         upserted in place for resume/continue-watching) since this is an
+//         append-only history, not current state. Never sent anywhere but
+//         this server's own Activity tab — consistent with Pantheon's
+//         no-third-party-telemetry commitment.
+,{ 91, R"SQL(
+    CREATE TABLE playback_history (
+        event_id             TEXT    PRIMARY KEY,
+        user_id              TEXT    NOT NULL REFERENCES user(user_id),
+        content_type         TEXT    NOT NULL,
+        content_id           TEXT    NOT NULL,
+        title                TEXT    NOT NULL DEFAULT '',
+        device_type          TEXT    NOT NULL DEFAULT '',
+        direct_play          INTEGER NOT NULL DEFAULT 0,
+        started_at_ms        INTEGER NOT NULL,
+        ended_at_ms          INTEGER NOT NULL,
+        started_position_ms  INTEGER NOT NULL DEFAULT 0,
+        last_position_ms     INTEGER NOT NULL DEFAULT 0,
+        duration_ms          INTEGER NOT NULL DEFAULT 0,
+        completed            INTEGER NOT NULL DEFAULT 0
+    );
+    -- Covers both the "extend an open session" lookup (user+content+recency)
+    -- and the history list view's own most-recent-first ordering.
+    CREATE INDEX idx_playback_history_lookup ON playback_history(user_id, content_type, content_id, ended_at_ms);
+    CREATE INDEX idx_playback_history_started ON playback_history(started_at_ms);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

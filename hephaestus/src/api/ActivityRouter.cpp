@@ -1,4 +1,5 @@
 #include "ActivityRouter.h"
+#include "crash/CrashHandler.h"
 #include "log/LogBuffer.h"
 #include "../stream/EncoderArgs.h" // hwAccelName
 #include "../stream/GpuMetrics.h"
@@ -175,6 +176,13 @@ void registerActivityRoutes(httplib::Server& svr, SessionManager& sessions,
             if (gpu->temp_c)           j_gpu["temp_c"]             = *gpu->temp_c;
             j["gpu"] = j_gpu;
         }
+        res.set_content(j.dump(), "application/json");
+    });
+
+    // Local-only crash marker — see shared/crash/CrashHandler.h. Empty
+    // string means no crash recorded. Never sent anywhere but this response.
+    svr.Get("/stream/activity/crash", [](const httplib::Request&, httplib::Response& res) {
+        json j = {{"crash", readCrashMarker("./data", "hephaestus")}};
         res.set_content(j.dump(), "application/json");
     });
 }

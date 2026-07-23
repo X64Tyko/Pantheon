@@ -4,6 +4,7 @@
 #include "../../conf/ConfStore.h"
 #include "../../db/Database.h"
 #include "../../db/WatchProgressRepository.h"
+#include "../../db/PlaybackHistoryRepository.h"
 #include "../../db/ContentRepository.h"
 #include "../../db/SubtitleTrackRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -21,6 +22,24 @@ PlaybackService::PlaybackService(const ServiceContext& ctx) : db_(ctx.db), conf_
 namespace {
 
 bool validContentType(const std::string& t) { return t == "movie" || t == "episode"; }
+
+// Best-effort title lookup for the playback_history row — kept a plain
+// inline query here (not a ContentRepository method) since it's only ever
+// needed by this one write path and movie/episode titles don't share a
+// column name the way GET /api/watch-progress's own two separate lookups
+// above already don't either. Empty on any failure; a missing title in the
+// history view is cosmetic, never worth failing the ping over.
+std::string lookupTitle(Database& db, const std::string& content_type, const std::string& content_id) {
+	try {
+		const char* sql = content_type == "movie"
+			? "SELECT title FROM movie WHERE movie_id = ?"
+			: "SELECT title FROM episode WHERE episode_id = ?";
+		SQLite::Statement q(db.get(), sql);
+		q.bind(1, content_id);
+		if (q.executeStep()) return q.getColumn(0).getString();
+	} catch (...) {}
+	return "";
+}
 
 } // namespace
 
@@ -210,6 +229,11 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// completed=1 and position clamped to duration, rather than deleted, so
 	// "played" survives as a durable fact (see migration v73). Ordinary pings
 	// with no "completed" field behave exactly as before.
+	//
+	// device_type/direct_play (both optional, client already knows both from
+	// its own session-start response) additionally feed PlaybackHistoryRepository
+	// — see migration v91's comment for why that's a separate append-only
+	// table rather than something bolted onto watch_progress itself.
 	svr.Put("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res) {
 		auto user = currentUser();
 		if (!user) { route::err(res, 401, "Unauthorized"); return; }
@@ -228,8 +252,15 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 				(duration_ms > 0 && position_ms >= static_cast<int64_t>(duration_ms * 0.95));
 			if (completed && duration_ms > 0) position_ms = duration_ms;
 
+			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
 			WatchProgressRepository(db_).upsert(user->user_id, content_type, content_id,
-				position_ms, duration_ms, static_cast<int64_t>(std::time(nullptr)), completed);
+				position_ms, duration_ms, now_ms / 1000, completed);
+
+			PlaybackHistoryRepository(db_).recordPing(
+				user->user_id, content_type, content_id,
+				lookupTitle(db_, content_type, content_id),
+				b.value("device_type", ""), b.value("direct_play", false),
+				position_ms, duration_ms, now_ms, completed);
 
 			route::ok(res, json{{"ok", true}, {"watched", completed}}.dump());
 		} catch (const std::exception& e) {

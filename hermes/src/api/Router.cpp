@@ -1,5 +1,6 @@
 #include "Router.h"
 #include "../devices/DeviceRouter.h"
+#include "crash/CrashHandler.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <string>
@@ -317,6 +318,36 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
             }}
         };
 
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_content(out.dump(), "application/json");
+    });
+
+    // ── Aggregated crash markers ──────────────────────────────────────────────
+    // Local-only, mirrors /api/system/metrics' fan-out pattern — see
+    // shared/crash/CrashHandler.h. Every field empty means nothing has
+    // crashed since its marker was last cleared/overwritten; nothing here is
+    // ever sent anywhere but this response.
+    svr.Get("/api/activity/crash", [cfg](const httplib::Request&, httplib::Response& res) {
+        auto fetch_crash = [](const std::string& url, const char* path) -> std::string {
+            httplib::Client cli(url);
+            cli.set_connection_timeout(1);
+            cli.set_read_timeout(1);
+            if (auto r = cli.Get(path)) {
+                if (r->status == 200) {
+                    try { return json::parse(r->body).value("crash", ""); } catch (...) {}
+                }
+            }
+            return "";
+        };
+
+        auto kairos_f = std::async(std::launch::async, fetch_crash, cfg.kairos_url, "/api/activity/crash");
+        auto heph_f   = std::async(std::launch::async, fetch_crash, cfg.hephaestus_url, "/stream/activity/crash");
+
+        json out = {
+            {"hermes",     readCrashMarker("./data", "hermes")},
+            {"kairos",     kairos_f.get()},
+            {"hephaestus", heph_f.get()},
+        };
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_content(out.dump(), "application/json");
     });

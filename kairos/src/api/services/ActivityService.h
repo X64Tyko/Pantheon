@@ -2,6 +2,7 @@
 #include "../IKairosService.h"
 #include "../ServiceContext.h"
 
+class Database;
 class LogBuffer;
 class SyncManager;
 
@@ -11,6 +12,7 @@ public:
 	void registerRoutes(httplib::Server& svr) override;
 
 private:
+	Database&    db_;
 	SyncManager& sync_;
 	LogBuffer&   logs_;
 };

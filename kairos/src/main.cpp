@@ -3,13 +3,16 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <string>
 #include <thread>
 #include "api/Router.h"
 #include "auth/AuthStore.h"
 #include "conf/ConfStore.h"
+#include "crash/CrashHandler.h"
 #include "db/Database.h"
+#include "db/PlaybackHistoryRepository.h"
 #include "download/DownloadManager.h"
 #include "email/EmailService.h"
 #include "log/LogBuffer.h"
@@ -32,6 +35,7 @@ int main(int argc, char* argv[]) {
 	LogTee    tee_cerr(std::cerr, log_buffer);
 	log_buffer.setFile("./data/kairos.log");
 	log_buffer.setFilter(kairosLogFilter);
+	installCrashHandlers("kairos", "./data", &log_buffer);
 
     int port = 8080;
     std::string db_path    = "./data/kairos.db";
@@ -158,6 +162,19 @@ int main(int argc, char* argv[]) {
             fflush(stdout);
             fflush(stderr);
             ++ticks;
+
+            // Once a day (starting shortly after boot, not waiting a full day
+            // for the first pass): prune play-history rows older than 180
+            // days so a long-running server doesn't grow this table forever
+            // (see migration v91's own comment). Unrelated to sync activity,
+            // so this runs before the sync-only `continue` below.
+            constexpr int kPruneEveryTicks = 24 * 60 * 60 * 2; // 500ms ticks -> 24h
+            if (ticks % kPruneEveryTicks == 1) {
+                constexpr int64_t kHistoryMaxAgeMs = 180LL * 24 * 60 * 60 * 1000;
+                auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
+                int pruned = PlaybackHistoryRepository(db).prune(kHistoryMaxAgeMs, now_ms);
+                if (pruned > 0) std::cout << "[kairos] pruned " << pruned << " old play-history row(s)" << std::endl;
+            }
 
             if (!sync.isSyncing()) continue;
 

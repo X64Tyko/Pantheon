@@ -55,8 +55,17 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+// Plain, non-React mutable holder for the logged-in user's id — mirrors the
+// statusStore pattern (stores/StatusStore.ts) since remoteLog.ts (called
+// once at app startup from main.tsx, outside the component tree) needs to
+// read this without a hook. Kept to just the id, not the full User, since
+// that's all any consumer so far needs; updated in lockstep with every
+// setUser call below via the small wrapper.
+export const currentUserRef: { id: string | null } = { id: null }
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user,          setUser]          = useState<User | null>(null)
+  const [user,          setUserState]     = useState<User | null>(null)
+  const setUser = (u: User | null) => { currentUserRef.id = u?.user_id ?? null; setUserState(u) }
   const [isLoading,     setIsLoading]     = useState(true)
   const [setupRequired, setSetupRequired] = useState(false)
   const [profiles,        setProfiles]        = useState<User[]>([])

@@ -148,14 +148,21 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 		}
 	});
 
-	// POST /api/logs/client — receive logs from the Hades frontend.
+	// POST /api/logs/client — receive logs from the Hades frontend. user_id
+	// (best-effort, see auth/AuthContext.tsx's currentUserRef) is folded into
+	// the printed line rather than given its own column/table — this stays a
+	// LogBuffer line like every other log source, just with attribution
+	// instead of none, not a new structured store.
 	svr.Post("/api/logs/client", [this](const Req& req, Res& res) {
 		try {
 			auto b = json::parse(req.body);
-			std::string level = b.value("level", "error");
-			std::string msg   = b.value("message", "");
+			std::string level   = b.value("level", "error");
+			std::string msg     = b.value("message", "");
+			std::string user_id = b.value("user_id", "");
 			if (!msg.empty()) {
-				std::cerr << "[hades] [" << level << "] " << msg << std::endl;
+				std::cerr << "[hades] [" << level << "]"
+				          << (user_id.empty() ? "" : " [user:" + user_id + "]")
+				          << " " << msg << std::endl;
 			}
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (...) {

@@ -338,7 +338,11 @@ export const api = {
 
   // Watch progress
   getWatchProgress:   (limit?: number)                                     => request<WatchProgress[]>('GET', `/watch-progress${limit != null ? '?limit=' + limit : ''}`),
-  putWatchProgress:   (contentType: 'movie' | 'episode', id: string, b: { position_ms: number; duration_ms: number; completed?: boolean }) =>
+  // device_type/direct_play (both optional) additionally feed the local
+  // play-history table (see kairos's PlaybackHistoryRepository) — nothing
+  // client-side reads them back, they're just piggybacked onto pings this
+  // call already sends.
+  putWatchProgress:   (contentType: 'movie' | 'episode', id: string, b: { position_ms: number; duration_ms: number; completed?: boolean; device_type?: string; direct_play?: boolean }) =>
                         request<{ ok: boolean; watched: boolean }>('PUT', `/watch-progress/${contentType}/${id}`, b),
   clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
   getShowWatchState:  (showId: string)                                     => request<ShowWatchState | null>('GET', `/shows/${showId}/watch-state`),
@@ -544,7 +548,12 @@ export const api = {
   // Public read-only subset for internal services (Hephaestus, Hermes) and
   // the Hades frontend (CastProvider, which needs cast_app_id regardless of role).
   getPublicSettings: ()                                                  => request<{ stream_buffer_size: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; cast_app_id: string }>('GET', '/config/public-settings'),
-  sendClientLog: (level: 'info' | 'warn' | 'error', message: string) => request<{ ok: boolean }>('POST', '/logs/client', { level, message }),
+  // user_id: best-effort attribution (see auth/AuthContext.tsx's
+  // currentUserRef) — the server just logs it alongside the message,
+  // nothing queries by it yet, but it means a future admin-facing view over
+  // these lines isn't starting from zero attribution.
+  sendClientLog: (level: 'info' | 'warn' | 'error', message: string, userId?: string | null) =>
+                   request<{ ok: boolean }>('POST', '/logs/client', { level, message, user_id: userId ?? undefined }),
   updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; hades_debug: boolean; cast_app_id: string }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; hades_debug: boolean; cast_app_id: string }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),

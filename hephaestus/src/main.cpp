@@ -2,6 +2,7 @@
 #include "api/ActivityRouter.h"
 #include "api/ClientCapabilitiesRouter.h"
 #include "api/Router.h"
+#include "crash/CrashHandler.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
 #include "log/RuntimeFlags.h"
@@ -21,6 +22,7 @@ int main(int argc, char* argv[]) {
 	LogTee    tee_cerr(std::cerr, log_buffer);
     log_buffer.setFile("./data/hephaestus.log");
     log_buffer.setFilter(hephaestusLogFilter);
+    installCrashHandlers("hephaestus", "./data", &log_buffer);
 
     Config cfg = parseConfig(argc, argv);
 
