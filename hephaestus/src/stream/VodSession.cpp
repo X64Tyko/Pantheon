@@ -504,7 +504,7 @@ std::string VodSession::buildMasterPlaylist() const {
 			<< (t.title.empty() ? (t.language.empty() ? "Subtitle " + std::to_string(t.relative_index) : t.language) : t.title)
 			<< "\",LANGUAGE=\"" << t.language << "\",DEFAULT="
 			<< (t.relative_index == subtitle_track_ ? "YES" : "NO")
-			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/subtitles/" << t.relative_index << "\"\n";
+			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/subtitles/" << t.relative_index << "/playlist.m3u8\"\n";
 	}
 	int ext_index = -2;
 	for (auto& t : external_subtitles_) {
@@ -513,7 +513,7 @@ std::string VodSession::buildMasterPlaylist() const {
 			<< (t.language.empty() ? "Subtitle " + std::to_string(ext_index) : t.language)
 			<< "\",LANGUAGE=\"" << t.language << "\",DEFAULT="
 			<< (ext_index == subtitle_track_ ? "YES" : "NO")
-			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/subtitles/" << ext_index << "\"\n";
+			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/subtitles/" << ext_index << "/playlist.m3u8\"\n";
 		--ext_index;
 	}
 
@@ -527,6 +527,22 @@ std::string VodSession::buildMasterPlaylist() const {
 		<< (media_info.audio.empty() ? "" : ",AUDIO=\"audio\"")
 		<< (has_subs ? ",SUBTITLES=\"subs\"" : "")
 		<< "\n/stream/vod/" << session_id << "/playlist.m3u8\n";
+	return out.str();
+}
+
+std::optional<std::string> VodSession::buildSubtitlePlaylist(int track) const {
+	if (!resolveSubtitleTrack(track).output) return std::nullopt;
+	int64_t duration_ms = effective_duration_ms > 0 ? effective_duration_ms : 1000;
+	int target_duration_secs = static_cast<int>(std::ceil(duration_ms / 1000.0));
+	std::ostringstream out;
+	out << std::fixed << std::setprecision(3);
+	out << "#EXTM3U\n"
+		<< "#EXT-X-VERSION:3\n"
+		<< "#EXT-X-TARGETDURATION:" << target_duration_secs << "\n"
+		<< "#EXT-X-PLAYLIST-TYPE:VOD\n"
+		<< "#EXTINF:" << (duration_ms / 1000.0) << ",\n"
+		<< "/stream/vod/" << session_id << "/subtitles/" << track << "\n"
+		<< "#EXT-X-ENDLIST\n";
 	return out.str();
 }
 

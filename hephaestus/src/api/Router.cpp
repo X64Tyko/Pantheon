@@ -512,13 +512,34 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         serveVodSegment(session, index, req.matches[3].str(), res);
     });
 
+    // Wraps the on-demand pipe below in a minimal single-segment VOD media
+    // playlist — an #EXT-X-MEDIA URI must reference a Media Playlist per the
+    // HLS spec, not a raw resource. Pointing the master manifest's
+    // SUBTITLES group straight at the pipe route made hls.js fail to parse
+    // it as a playlist and retry in a tight, un-backed-off loop (observed
+    // spawning the same extraction repeatedly within a fraction of a
+    // second). This route is fetched once; the one #EXTINF segment it
+    // declares is fetched once by the route below — same "fetched exactly
+    // once" shape /subs.vtt always had.
+    svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)/playlist\.m3u8$)", [&vodSessions](
+            const httplib::Request& req, httplib::Response& res) {
+        auto session = vodSessions.get(req.matches[1]);
+        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
+        session->touch();
+        int track = std::stoi(req.matches[2].str());
+        auto playlist = session->buildSubtitlePlaylist(track);
+        if (!playlist) { res.status = 404; res.set_content(json{{"error","subtitle track not available"}}.dump(), "application/json"); return; }
+        res.set_content(*playlist, "application/vnd.apple.mpegurl");
+    });
+
     // On-demand WebVTT pipe for any subtitle track (embedded relative_index
     // >= 0, external sidecar -2/-3/... — same convention as the `tracks`
-    // JSON below), used by the master manifest's SUBTITLES group. Streams
-    // ffmpeg's stdout straight to the client instead of extracting to disk
-    // first (buildVodSubtitleArgs' on_fly path) — no up-front wait for the
-    // whole extraction to finish the way /subs.vtt needs. Fully independent
-    // of audio track switching: never touches the main encoder.
+    // JSON below), referenced as the one segment in the playlist route
+    // above. Streams ffmpeg's stdout straight to the client instead of
+    // extracting to disk first (buildVodSubtitleArgs' on_fly path) — no
+    // up-front wait for the whole extraction to finish the way /subs.vtt
+    // needs. Fully independent of audio track switching: never touches the
+    // main encoder.
     svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
         auto session = vodSessions.get(req.matches[1]);
@@ -527,18 +548,29 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         int track = std::stoi(req.matches[2].str());
 
         auto sink = std::make_shared<ClientSink>();
-        std::shared_ptr<FfmpegProcess> proc = session->spawnSubtitlePipe(track,
-            [sink](const uint8_t* data, size_t len) {
-                std::lock_guard<std::mutex> lock(sink->mtx);
-                if (sink->queue.size() < ClientSink::MAX_QUEUE)
-                    sink->queue.emplace_back(data, data + len);
-                sink->cv.notify_one();
-            },
-            [sink](int) {
-                std::lock_guard<std::mutex> lock(sink->mtx);
-                sink->done.store(true);
-                sink->cv.notify_one();
-            });
+        std::shared_ptr<FfmpegProcess> proc;
+        try {
+            // spawnSubtitlePipe forks + starts two reader threads — under
+            // resource pressure (e.g. a client hammering this route) thread
+            // creation can throw std::system_error; letting that escape an
+            // httplib handler is fatal to the whole process, not just this
+            // request.
+            proc = session->spawnSubtitlePipe(track,
+                [sink](const uint8_t* data, size_t len) {
+                    std::lock_guard<std::mutex> lock(sink->mtx);
+                    if (sink->queue.size() < ClientSink::MAX_QUEUE)
+                        sink->queue.emplace_back(data, data + len);
+                    sink->cv.notify_one();
+                },
+                [sink](int) {
+                    std::lock_guard<std::mutex> lock(sink->mtx);
+                    sink->done.store(true);
+                    sink->cv.notify_one();
+                });
+        } catch (const std::exception& e) {
+            std::cerr << "[vod] failed to spawn subtitle pipe: " << e.what() << "\n";
+            res.status = 503; res.set_content(json{{"error","subtitle track temporarily unavailable"}}.dump(), "application/json"); return;
+        }
         if (!proc) {
             res.status = 404; res.set_content(json{{"error","subtitle track not available"}}.dump(), "application/json"); return;
         }

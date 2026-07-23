@@ -163,6 +163,17 @@ public:
 	// for how the per-track routes this references actually get served.
 	std::string buildMasterPlaylist() const;
 
+	// A minimal single-segment VOD media playlist wrapping the on-demand
+	// WebVTT pipe (see spawnSubtitlePipe) — required because an
+	// #EXT-X-MEDIA URI must reference a Media Playlist per the HLS spec, not
+	// a raw resource directly. Pointing SUBTITLES groups straight at the
+	// pipe endpoint made hls.js fail to parse it as a playlist and retry in
+	// a tight loop (observed spawning the same extraction repeatedly in
+	// rapid succession); wrapping it fetches the actual content exactly
+	// once, same as a normal VOD text track. nullopt if track doesn't
+	// resolve to anything extractable (same check spawnSubtitlePipe uses).
+	std::optional<std::string> buildSubtitlePlaylist(int track) const;
+
 	// Called by the /audio/{n}/... routes before serving the playlist/segment
 	// under them. No-op if `track` is already active. Otherwise re-resolves
 	// direct-play eligibility for the new track (different audio tracks can
