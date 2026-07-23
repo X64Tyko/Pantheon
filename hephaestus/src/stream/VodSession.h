@@ -155,6 +155,50 @@ public:
 	int lastRequestedSegment() const { return last_requested_segment.load(); }
 	bool isMainEncoderPaused() const;
 
+	// Synthesizes the multi-rendition HLS master manifest (#EXT-X-MEDIA
+	// AUDIO/SUBTITLES groups + a single #EXT-X-STREAM-INF variant pointing at
+	// the existing playlist.m3u8) — lets native players (ExoPlayer, TV
+	// browsers, hls.js) offer their own audio/subtitle-language picker
+	// instead of Hades' custom one. See ensureAudioTrack()/resolveSubtitleTrack()
+	// for how the per-track routes this references actually get served.
+	std::string buildMasterPlaylist() const;
+
+	// Called by the /audio/{n}/... routes before serving the playlist/segment
+	// under them. No-op if `track` is already active. Otherwise re-resolves
+	// direct-play eligibility for the new track (different audio tracks can
+	// differ in codec — e.g. a commentary track in AC3 vs. a default AAC
+	// track — so this can flip), recomputes segment boundaries if it did, and
+	// restarts the main encoder with the new -map, reusing restartAt()'s
+	// existing kill/respawn/discontinuity/playlist machinery. Same one-
+	// process-at-a-time model as a seek restart — no parallel per-track
+	// encodes.
+	bool ensureAudioTrack(int track);
+
+	// Resolution of an arbitrary subtitle track index (embedded relative_index
+	// >= 0, or the external-sidecar -2/-3/... scheme — see Router.cpp's
+	// /stream/vod/start handler, the sole owner of that convention) into
+	// what buildVodSubtitleArgs needs. Shared by start() (for the initially
+	// selected track) and the /subtitles/{n} route (for any track a native
+	// player asks for via the master manifest).
+	struct SubtitleResolution {
+		bool        output   = false; // extractable as a text sidecar
+		bool        burn_in  = false; // bitmap track — no sidecar, baked into video instead
+		std::string external_path;    // empty if embedded
+	};
+	SubtitleResolution resolveSubtitleTrack(int track) const;
+
+	// Spawns a one-shot, on-demand WebVTT extraction for an arbitrary
+	// subtitle track (any index resolveSubtitleTrack accepts), streaming
+	// output through on_data instead of writing to disk — see
+	// buildVodSubtitleArgs' on_fly parameter. Caller (Router's /subtitles/{n}
+	// route) owns the returned process and pipes on_data straight into the
+	// HTTP response; nullptr if the track doesn't resolve to anything
+	// extractable. Independent of spawnSubtitleProcess()/subs_ffmpeg (the
+	// start()-time extraction of the initially selected track) — this can
+	// run in parallel with that or with itself for a different track, and
+	// never touches audio_track_/the main encoder.
+	std::unique_ptr<FfmpegProcess> spawnSubtitlePipe(int track, DataCallback on_data, ExitCallback on_exit) const;
+
 	// For the activity/debugging view (ActivityRouter).
 	const std::string& filePath() const { return file_path; }
 	HwAccel hwAccel() const       { return opts.hw_accel; }
@@ -198,16 +242,22 @@ private:
 	int64_t effective_duration_ms = 0;
 	int     total_segments        = 0;
 	// Segment i spans [segment_start_ms[i], segment_start_ms[i+1] or
-	// effective_duration_ms for the last one). Computed once in start(),
-	// immutable for the session's whole life (every restartAt() reuses it —
-	// no re-probing per seek). For direct-play, these are the file's REAL
-	// keyframe-derived cut points (see MediaProbe::probeKeyframeTimestampsMs
-	// and simulateDirectPlaySegmentBoundaries in the .cpp) — stream copy
-	// can't force keyframes, so segments can only ever be cut where they
-	// already exist, and can run longer than kVodHlsSegmentSecs. For
-	// transcode/burn-in, these are the synthetic uniform kVodHlsSegmentSecs
-	// boundaries -force_key_frames actually produces.
+	// effective_duration_ms for the last one). Computed in start() and, on a
+	// track switch that flips direct-play eligibility (different audio
+	// tracks can differ in codec), recomputed by ensureAudioTrack() via
+	// computeSegmentBoundaries() — every restartAt() in between just reuses
+	// whatever's current, no re-probing per seek. For direct-play, these are
+	// the file's REAL keyframe-derived cut points (see
+	// MediaProbe::probeKeyframeTimestampsMs and
+	// simulateDirectPlaySegmentBoundaries in the .cpp) — stream copy can't
+	// force keyframes, so segments can only ever be cut where they already
+	// exist, and can run longer than kVodHlsSegmentSecs. For transcode/
+	// burn-in, these are the synthetic uniform kVodHlsSegmentSecs boundaries
+	// -force_key_frames actually produces.
 	std::vector<int64_t> segment_start_ms;
+	// Shared by start() and ensureAudioTrack() — (re)computes segment_start_ms/
+	// total_segments from the current direct_play/file_path/effective_duration_ms.
+	void computeSegmentBoundaries();
 
 	// Independent subtitle extraction — see class comment.
 	std::mutex    subs_mtx;
@@ -247,11 +297,17 @@ private:
 
 	// Resolved once in start(), reused by every restartAt() call — a seek
 	// restart keeps the same track/HDR selection, only the position changes.
+	// audio_track_ is the one exception: ensureAudioTrack() (a track switch
+	// via the master manifest's /audio/{n}/... routes) reassigns it.
 	int         audio_track_ = 0;
 	int         subtitle_track_ = -1;
 	bool        hdr_capable_ = false;
 	std::string source_codec_;
 	std::string external_subtitle_path_;
+	// The requesting client's declared decode capability from start() —
+	// stashed so ensureAudioTrack() can re-run isDirectPlayable() for a
+	// different audio track's codec without needing it passed in again.
+	std::optional<ClientCapabilities> client_caps_;
 
 	void onMainEncoderExit(int code);
 };

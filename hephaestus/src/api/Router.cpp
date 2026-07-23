@@ -76,6 +76,44 @@ static void serveHlsFile(const std::string& path, const std::string& content_typ
     res.set_file_content(path, content_type);
 }
 
+// Shared by the video variant's own playlist.m3u8 route and the master
+// manifest's per-audio-track alias (VodSession::ensureAudioTrack switches
+// the encoder onto the right track before either ever reaches here) — both
+// ultimately serve the exact same underlying file.
+static void serveVodPlaylist(const std::shared_ptr<VodSession>& session, httplib::Response& res) {
+    session->touch();
+    auto path = session->dir() + "/playlist.m3u8";
+    if (!std::filesystem::exists(path)) { res.status = 404; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
+    serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+}
+
+// Shared by the plain seg-NNNNN.ts route and the per-audio-track alias.
+// seg_suffix is the already zero-padded "NNNNN" component from the URL.
+static void serveVodSegment(const std::shared_ptr<VodSession>& session, int index,
+                             const std::string& seg_suffix, httplib::Response& res) {
+    session->touch();
+    auto path = session->dir() + "/seg-" + seg_suffix + ".ts";
+    switch (session->prepareSegment(index)) {
+        case VodSession::SegmentPrep::Ready:
+            break; // already on disk — serve immediately, no wait
+        case VodSession::SegmentPrep::WaitShort:
+            // Resuming an already-warm, already-initialized encoder —
+            // should be fast.
+            if (!waitForFile(path, 10000)) { res.status = 503; return; }
+            break;
+        case VodSession::SegmentPrep::WaitColdStart:
+            // A real restart just happened (seek beyond the generated
+            // range, or a track switch) — same NVENC/CUDA cold-start budget
+            // as before.
+            if (!waitForFile(path, 25000)) { res.status = 503; return; }
+            break;
+        case VodSession::SegmentPrep::Failed:
+            res.status = 404;
+            return;
+    }
+    serveHlsFile(path, "video/mp2t", res);
+}
+
 // Extracts "http://host:port" from a request, falling back to the Host header.
 static std::string baseUrl(const httplib::Request& req) {
     auto host = req.get_header_value("Host");
@@ -395,7 +433,14 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 
         json out = {
             {"session_id",   session->sessionId()},
-            {"manifest_url", "/stream/vod/" + session->sessionId() + "/playlist.m3u8"},
+            // The multi-rendition master manifest (AUDIO/SUBTITLES groups —
+            // see VodSession::buildMasterPlaylist), not the flat variant
+            // playlist directly. hls.js's loadSource() already handles both
+            // single- and multi-variant playlists transparently, so this is
+            // a no-op for Hades' existing player/track-switch code; native
+            // players (Android/TV) get the real groups to build their own
+            // language picker from.
+            {"manifest_url", "/stream/vod/" + session->sessionId() + "/master.m3u8"},
             {"direct_play",  session->directPlay()},
             // Prefer this session's own authoritative ffprobe duration —
             // Kairos's info->duration_ms is only the fallback VodSession uses
@@ -410,11 +455,18 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         res.set_content(out.dump(), "application/json");
     });
 
-    svr.Get(R"(/stream/vod/([^/]+)/playlist\.m3u8$)", [&vodSessions](
+    svr.Get(R"(/stream/vod/([^/]+)/master\.m3u8$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
         auto session = vodSessions.get(req.matches[1]);
         if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
         session->touch();
+        res.set_content(session->buildMasterPlaylist(), "application/vnd.apple.mpegurl");
+    });
+
+    svr.Get(R"(/stream/vod/([^/]+)/playlist\.m3u8$)", [&vodSessions](
+            const httplib::Request& req, httplib::Response& res) {
+        auto session = vodSessions.get(req.matches[1]);
+        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
         // No wait needed anymore: VodSession writes the complete, static
         // playlist.m3u8 synchronously inside start(), which itself runs
         // synchronously inside POST /stream/vod/start — before that response
@@ -422,36 +474,92 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         // client. The old 25s NVENC-cold-start-aware wait here is gone; only
         // a defensive existence check remains for the (should-be-rare) case
         // the session already vanished by the time this GET lands.
-        auto path = session->dir() + "/playlist.m3u8";
-        if (!std::filesystem::exists(path)) { res.status = 404; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
-        serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+        serveVodPlaylist(session, res);
     });
 
     svr.Get(R"(/stream/vod/([^/]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
         auto session = vodSessions.get(req.matches[1]);
         if (!session) { res.status = 404; return; }
-        session->touch();
         int index = std::stoi(req.matches[2].str());
-        auto path = session->dir() + "/seg-" + req.matches[2].str() + ".ts";
-        switch (session->prepareSegment(index)) {
-            case VodSession::SegmentPrep::Ready:
-                break; // already on disk — serve immediately, no wait
-            case VodSession::SegmentPrep::WaitShort:
-                // Resuming an already-warm, already-initialized encoder —
-                // should be fast.
-                if (!waitForFile(path, 10000)) { res.status = 503; return; }
-                break;
-            case VodSession::SegmentPrep::WaitColdStart:
-                // A real restart just happened (seek beyond the generated
-                // range) — same NVENC/CUDA cold-start budget as before.
-                if (!waitForFile(path, 25000)) { res.status = 503; return; }
-                break;
-            case VodSession::SegmentPrep::Failed:
-                res.status = 404;
-                return;
+        serveVodSegment(session, index, req.matches[2].str(), res);
+    });
+
+    // Per-audio-track alias for the master manifest's AUDIO group — see
+    // VodSession::ensureAudioTrack's comment. A native player picking a
+    // non-active language hits this before its own segments, which is what
+    // actually triggers the encoder restart onto the new -map; the segment
+    // route below is a defensive fallback for a cached URL fetched without
+    // re-fetching the playlist first.
+    svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/playlist\.m3u8$)", [&vodSessions](
+            const httplib::Request& req, httplib::Response& res) {
+        auto session = vodSessions.get(req.matches[1]);
+        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
+        int track = std::stoi(req.matches[2].str());
+        if (!session->ensureAudioTrack(track)) {
+            res.status = 500; res.set_content(json{{"error","failed to switch audio track"}}.dump(), "application/json"); return;
         }
-        serveHlsFile(path, "video/mp2t", res);
+        serveVodPlaylist(session, res);
+    });
+
+    svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
+            const httplib::Request& req, httplib::Response& res) {
+        auto session = vodSessions.get(req.matches[1]);
+        if (!session) { res.status = 404; return; }
+        int track = std::stoi(req.matches[2].str());
+        if (!session->ensureAudioTrack(track)) { res.status = 500; return; }
+        int index = std::stoi(req.matches[3].str());
+        serveVodSegment(session, index, req.matches[3].str(), res);
+    });
+
+    // On-demand WebVTT pipe for any subtitle track (embedded relative_index
+    // >= 0, external sidecar -2/-3/... — same convention as the `tracks`
+    // JSON below), used by the master manifest's SUBTITLES group. Streams
+    // ffmpeg's stdout straight to the client instead of extracting to disk
+    // first (buildVodSubtitleArgs' on_fly path) — no up-front wait for the
+    // whole extraction to finish the way /subs.vtt needs. Fully independent
+    // of audio track switching: never touches the main encoder.
+    svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)$)", [&vodSessions](
+            const httplib::Request& req, httplib::Response& res) {
+        auto session = vodSessions.get(req.matches[1]);
+        if (!session) { res.status = 404; return; }
+        session->touch();
+        int track = std::stoi(req.matches[2].str());
+
+        auto sink = std::make_shared<ClientSink>();
+        std::shared_ptr<FfmpegProcess> proc = session->spawnSubtitlePipe(track,
+            [sink](const uint8_t* data, size_t len) {
+                std::lock_guard<std::mutex> lock(sink->mtx);
+                if (sink->queue.size() < ClientSink::MAX_QUEUE)
+                    sink->queue.emplace_back(data, data + len);
+                sink->cv.notify_one();
+            },
+            [sink](int) {
+                std::lock_guard<std::mutex> lock(sink->mtx);
+                sink->done.store(true);
+                sink->cv.notify_one();
+            });
+        if (!proc) {
+            res.status = 404; res.set_content(json{{"error","subtitle track not available"}}.dump(), "application/json"); return;
+        }
+
+        res.set_chunked_content_provider(
+            "text/vtt",
+            [sink](size_t, httplib::DataSink& data_sink) -> bool {
+                std::unique_lock<std::mutex> lock(sink->mtx);
+                sink->cv.wait(lock, [&] { return !sink->queue.empty() || sink->done.load(); });
+                if (sink->queue.empty()) { data_sink.done(); return false; }
+                auto chunk = std::move(sink->queue.front());
+                sink->queue.pop_front();
+                lock.unlock();
+                return data_sink.write(reinterpret_cast<const char*>(chunk.data()), chunk.size());
+            },
+            [proc](bool) {
+                // proc (the last reference) is destroyed here, killing the
+                // ffmpeg process if the client disconnected before it
+                // finished on its own — see FfmpegProcess's destructor.
+            }
+        );
     });
 
     svr.Get(R"(/stream/vod/([^/]+)/subs\.vtt$)", [&vodSessions](

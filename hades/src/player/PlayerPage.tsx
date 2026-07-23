@@ -330,8 +330,21 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     setCurrentMs(ms)
   }
 
-  const handleSelectAudio    = (index: number) => session.reload({ positionMs: currentMs, audioTrack: index })
-  const handleSelectSubtitle = (index: number) => session.reload({ positionMs: currentMs, subtitleTrack: index })
+  // Plex-style sticky per-show preference — fire-and-forget, episodes only
+  // (movies have no show to carry a preference across). Kairos resolves
+  // episode_id -> show_id itself, so this never needs show_id client-side.
+  const saveTrackPreference = (b: { audio_lang?: string; subtitle_lang?: string }) => {
+    if (kind === 'episode') api.setEpisodeTrackPreference(targetId, b).catch(() => {})
+  }
+
+  const handleSelectAudio = (index: number) => {
+    session.reload({ positionMs: currentMs, audioTrack: index })
+    saveTrackPreference({ audio_lang: session.tracks?.audio.find(t => t.index === index)?.language ?? '' })
+  }
+  const handleSelectSubtitle = (index: number) => {
+    session.reload({ positionMs: currentMs, subtitleTrack: index })
+    saveTrackPreference({ subtitle_lang: session.tracks?.subtitles.find(t => t.index === index)?.language ?? '' })
+  }
 
   // Not shown while casting/Roku-mirroring — the sender tab's own navigate()
   // wouldn't affect what's actually playing on the receiver (queuing a new

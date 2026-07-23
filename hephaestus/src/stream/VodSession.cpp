@@ -66,6 +66,19 @@ static bool isTextSubtitleCodec(const std::string& codec) {
 		   codec == "mov_text" || codec == "webvtt" || codec == "text";
 }
 
+// Rough BANDWIDTH estimate for the master manifest's #EXT-X-STREAM-INF — HLS
+// spec requires this attribute but doesn't require it to be exact, and this
+// codebase doesn't track actual encoded bitrate anywhere (VBR/CRF-driven,
+// stream-copy for direct-play). A resolution-based ladder guess plus the
+// fixed 192kbps audio bitrate (pushAudioEncoderArgs) is good enough for
+// clients that only use it for initial ABR ordering — this manifest only
+// ever has the one variant anyway.
+static int64_t estimateBandwidthBps(const MediaInfo& info) {
+	int height = info.video.empty() ? 0 : info.video[0].height;
+	int64_t video_bps = height >= 2000 ? 20000000 : height >= 1000 ? 8000000 : height >= 700 ? 4000000 : 2000000;
+	return video_bps + 192000;
+}
+
 // Bitmap/graphic subtitle formats (Blu-ray/DVD/DVB) have no text to extract
 // into a sidecar — burn them directly into the video via ffmpeg's overlay
 // filter instead (see buildVodArgs' subtitleBurnIn branch). Mutually
@@ -255,22 +268,31 @@ static std::vector<std::string> buildVodSubtitleArgs(
 	int subtitleTrack,
 	const std::string& externalSubtitlePath,
 	bool verbose_transcode_logs,
-	const std::string& outPath)
+	const std::string& outPath,
+	bool on_fly = false)
 {
 	std::vector<std::string> a;
 	a.push_back(ffmpeg_path);
 	pushLogLevelArgs(a, verbose_transcode_logs);
-	a.push_back("-i"); a.push_back(file_path);
-	if (!externalSubtitlePath.empty()) {
-		// -sub_charenc is a per-input option — must precede THIS -i, not the
-		// primary video file's.
-		auto charenc = sniffSubCharenc(externalSubtitlePath);
-		if (!charenc.empty()) { a.push_back("-sub_charenc"); a.push_back(charenc); }
-		a.push_back("-i"); a.push_back(externalSubtitlePath);
-		a.insert(a.end(), {"-map", "1:s:0", "-c:s", "webvtt", outPath});
-	} else {
-		a.insert(a.end(), {"-map", "0:s:" + std::to_string(subtitleTrack), "-c:s", "webvtt", outPath});
+	// pull out embeded subtitle
+	if (externalSubtitlePath.empty())
+	{
+		a.push_back("-i");
+		a.push_back(file_path);
+		a.insert(a.end(), {"-map", "0:s:" + std::to_string(subtitleTrack)});
 	}
+	else
+	{
+		auto charenc = sniffSubCharenc(externalSubtitlePath);
+		a.insert(a.end(),{"-sub_charenc", charenc.empty() ? "utf-8" : charenc, "-i"});
+		a.push_back(externalSubtitlePath);
+		a.insert(a.end(), {"-map", "0:s:0"});
+	}
+	
+	if (on_fly)
+		a.insert(a.end(), {"-f", "webvtt", "pipe:1"});
+	else
+		a.insert(a.end(), {"-c:s", "webvtt", outPath});
 	return a;
 }
 
@@ -312,6 +334,7 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 	audio_track_    = audio_track;
 	subtitle_track_ = subtitle_track;
 	hdr_capable_    = hdr_capable;
+	client_caps_    = client_caps;
 	direct_play = isDirectPlayable(media_info, audio_track, client_caps);
 
 	{
@@ -335,26 +358,10 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 		std::cerr << " -> direct_play=" << (direct_play ? "yes" : "no") << "\n";
 	}
 
-	subtitle_output  = false;
-	subtitle_burn_in = false;
-	external_subtitle_path_.clear();
-	if (subtitle_track <= -2) {
-		// Negative-index scheme for external sidecar files — see the
-		// header's start() comment. Always text, never burn-in, and never
-		// affects direct-play (no decode of video/audio involved).
-		const size_t idx = static_cast<size_t>(-(subtitle_track) - 2);
-		if (idx < external_subtitles_.size()) {
-			external_subtitle_path_ = external_subtitles_[idx].file_path;
-			subtitle_output = true;
-		}
-	} else if (subtitle_track >= 0) {
-		auto it = std::find_if(media_info.subtitles.begin(), media_info.subtitles.end(),
-			[&](const SubtitleTrack& t) { return t.relative_index == subtitle_track; });
-		if (it != media_info.subtitles.end()) {
-			subtitle_output  = isTextSubtitleCodec(it->codec);
-			subtitle_burn_in = isBitmapSubtitleCodec(it->codec);
-		}
-	}
+	auto resolved = resolveSubtitleTrack(subtitle_track);
+	subtitle_output          = resolved.output;
+	subtitle_burn_in         = resolved.burn_in;
+	external_subtitle_path_  = resolved.external_path;
 	// Burning a subtitle onto the video means decoding and re-encoding it —
 	// direct play (a pure stream copy) is incompatible with that.
 	if (subtitle_burn_in) direct_play = false;
@@ -373,6 +380,39 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 		return false;
 	}
 
+	computeSegmentBoundaries();
+
+	if (subtitle_output) spawnSubtitleProcess();
+
+	active = true;
+	touch();
+
+	// Which segment covers position_ms — segment_start_ms is ascending, so
+	// the last entry not exceeding position_ms is the one. total_segments is
+	// small enough (hundreds at most, even for a very long file) that a
+	// linear scan done once at session start is not worth a binary search.
+	int start_segment = 0;
+	for (size_t i = 0; i < segment_start_ms.size(); ++i) {
+		if (segment_start_ms[i] <= position_ms) start_segment = static_cast<int>(i);
+		else break;
+	}
+	//initial_start_segment_ = start_segment;
+	//initial_target_reached.store(false);
+	if (!restartAt(start_segment)) {
+		active = false;
+		return false;
+	}
+
+	lookahead_stop = false;
+	lookahead_thread = std::thread([this] { lookaheadLoop(); });
+
+	std::cerr << "[vod:" << session_id << "] started: \"" << file_path << "\""
+			  << " duration=" << effective_duration_ms << "ms segments=" << total_segments
+			  << " direct_play=" << (direct_play ? "yes" : "no") << "\n";
+	return true;
+}
+
+void VodSession::computeSegmentBoundaries() {
 	segment_start_ms.clear();
 	if (direct_play) {
 		// Stream copy can only cut where a real keyframe already exists —
@@ -392,35 +432,102 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 		for (int i = 0; i < n; ++i) segment_start_ms.push_back(int64_t(i) * kVodHlsSegmentSecs * 1000);
 	}
 	total_segments = static_cast<int>(segment_start_ms.size());
+}
 
-	if (subtitle_output) spawnSubtitleProcess();
-
-	active = true;
-	touch();
-
-	// Which segment covers position_ms — segment_start_ms is ascending, so
-	// the last entry not exceeding position_ms is the one. total_segments is
-	// small enough (hundreds at most, even for a very long file) that a
-	// linear scan done once at session start is not worth a binary search.
-	int start_segment = 0;
-	for (size_t i = 0; i < segment_start_ms.size(); ++i) {
-		if (segment_start_ms[i] <= position_ms) start_segment = static_cast<int>(i);
-		else break;
+VodSession::SubtitleResolution VodSession::resolveSubtitleTrack(int track) const {
+	SubtitleResolution r;
+	if (track <= -2) {
+		// Negative-index scheme for external sidecar files — see the
+		// header's start() comment. Always text, never burn-in, and never
+		// affects direct-play (no decode of video/audio involved).
+		const size_t idx = static_cast<size_t>(-track - 2);
+		if (idx < external_subtitles_.size()) {
+			r.external_path = external_subtitles_[idx].file_path;
+			r.output = true;
+		}
+	} else if (track >= 0) {
+		auto it = std::find_if(media_info.subtitles.begin(), media_info.subtitles.end(),
+			[&](const SubtitleTrack& t) { return t.relative_index == track; });
+		if (it != media_info.subtitles.end()) {
+			r.output  = isTextSubtitleCodec(it->codec);
+			r.burn_in = isBitmapSubtitleCodec(it->codec);
+		}
 	}
-	initial_start_segment_ = start_segment;
-	initial_target_reached.store(false);
-	if (!restartAt(start_segment)) {
-		active = false;
-		return false;
+	return r;
+}
+
+bool VodSession::ensureAudioTrack(int track) {
+	{
+		std::lock_guard<std::mutex> lock(session_mtx);
+		if (!active.load()) return false;
+		if (track == audio_track_) return true;
+		audio_track_ = track;
+		// Different audio tracks can differ in codec (e.g. a DTS/AC3
+		// commentary track alongside a default AAC one) — direct-play
+		// eligibility, and therefore the segment table, can flip on a
+		// switch. subtitle_burn_in's own direct-play override (see start())
+		// stays in force regardless of the audio codec.
+		bool new_direct_play = subtitle_burn_in ? false : isDirectPlayable(media_info, audio_track_, client_caps_);
+		if (new_direct_play != direct_play) {
+			direct_play = new_direct_play;
+			computeSegmentBoundaries();
+		}
+	}
+	// restartAt() takes session_mtx itself — must not still hold it here.
+	int target_segment = std::clamp(last_requested_segment.load(), 0, total_segments - 1);
+	return restartAt(target_segment);
+}
+
+std::string VodSession::buildMasterPlaylist() const {
+	std::ostringstream out;
+	out << "#EXTM3U\n#EXT-X-VERSION:6\n";
+
+	for (auto& t : media_info.audio) {
+		out << "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\""
+			<< (t.title.empty() ? (t.language.empty() ? "Audio " + std::to_string(t.relative_index) : t.language) : t.title)
+			<< "\",LANGUAGE=\"" << t.language << "\",DEFAULT="
+			<< (t.relative_index == audio_track_ ? "YES" : "NO")
+			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/audio/" << t.relative_index << "/playlist.m3u8\"\n";
 	}
 
-	lookahead_stop = false;
-	lookahead_thread = std::thread([this] { lookaheadLoop(); });
+	// Embedded text tracks (bitmap/burn-in ones have no sidecar — same gate
+	// resolveSubtitleTrack()/isTextSubtitleCodec use) plus external sidecars,
+	// same index convention as Router.cpp's /stream/vod/start `tracks` JSON.
+	// Tracked separately from a raw emptiness check on the source lists
+	// below — a file with subtitles that are ALL bitmap-only would otherwise
+	// leave GROUP-ID="subs" referenced with no members, invalid per spec.
+	bool has_subs = false;
+	for (auto& t : media_info.subtitles) {
+		if (!isTextSubtitleCodec(t.codec)) continue;
+		has_subs = true;
+		out << "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\""
+			<< (t.title.empty() ? (t.language.empty() ? "Subtitle " + std::to_string(t.relative_index) : t.language) : t.title)
+			<< "\",LANGUAGE=\"" << t.language << "\",DEFAULT="
+			<< (t.relative_index == subtitle_track_ ? "YES" : "NO")
+			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/subtitles/" << t.relative_index << "\"\n";
+	}
+	int ext_index = -2;
+	for (auto& t : external_subtitles_) {
+		has_subs = true;
+		out << "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\""
+			<< (t.language.empty() ? "Subtitle " + std::to_string(ext_index) : t.language)
+			<< "\",LANGUAGE=\"" << t.language << "\",DEFAULT="
+			<< (ext_index == subtitle_track_ ? "YES" : "NO")
+			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/subtitles/" << ext_index << "\"\n";
+		--ext_index;
+	}
 
-	std::cerr << "[vod:" << session_id << "] started: \"" << file_path << "\""
-			  << " duration=" << effective_duration_ms << "ms segments=" << total_segments
-			  << " direct_play=" << (direct_play ? "yes" : "no") << "\n";
-	return true;
+	// Single variant — same combined-AV playlist.m3u8 already served today,
+	// now also referencing the AUDIO/SUBTITLES groups above so native
+	// players know they exist. No CODECS attribute: it's optional per spec,
+	// and this codebase has no RFC 6381 codec-string derivation to draw a
+	// correct one from (better to omit than guess wrong and have a strict
+	// player reject the manifest).
+	out << "#EXT-X-STREAM-INF:BANDWIDTH=" << estimateBandwidthBps(media_info)
+		<< (media_info.audio.empty() ? "" : ",AUDIO=\"audio\"")
+		<< (has_subs ? ",SUBTITLES=\"subs\"" : "")
+		<< "\n/stream/vod/" << session_id << "/playlist.m3u8\n";
+	return out.str();
 }
 
 bool VodSession::restartAt(int segment_index) {
@@ -493,6 +600,26 @@ void VodSession::spawnSubtitleProcess() {
 	}
 }
 
+std::unique_ptr<FfmpegProcess> VodSession::spawnSubtitlePipe(int track, DataCallback on_data, ExitCallback on_exit) const {
+	auto resolved = resolveSubtitleTrack(track);
+	if (!resolved.output) return nullptr;
+	// buildVodSubtitleArgs ignores subtitleTrack when externalSubtitlePath is
+	// set (the sidecar file becomes the sole -i, always mapped as 0:s:0) —
+	// track only means something for the embedded branch.
+	auto args = buildVodSubtitleArgs(ffmpeg_path, file_path, track,
+									  resolved.external_path, opts.verbose_transcode_logs,
+									  /*outPath=*/"", /*on_fly=*/true);
+	auto proc = std::make_unique<FfmpegProcess>(
+		std::move(args), std::move(on_data), std::move(on_exit),
+		opts.buffer_size, opts.ffmpeg_debug_logs, opts.verbose_transcode_logs
+	);
+	if (!proc->start()) {
+		std::cerr << "[vod:" << session_id << "] failed to spawn on-demand subtitle pipe for track " << track << "\n";
+		return nullptr;
+	}
+	return proc;
+}
+
 std::string VodSession::segmentPath(int index) const {
 	char buf[24];
 	std::snprintf(buf, sizeof(buf), "seg-%05d.ts", index);
@@ -552,7 +679,7 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 
 	last_requested_segment.store(segment_index);
 	// Reached the real start at least once — a hole before it now is a real seek.
-	if (segment_index >= initial_start_segment_) initial_target_reached.store(true);
+	// if (segment_index >= initial_start_segment_) initial_target_reached.store(true);
 
 	int run_start, generated;
 	bool run_exhausted;
@@ -606,9 +733,9 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 	// before honoring the real start position, and blindly restarting on
 	// that would reset the whole session to 0:00. Once the real target has
 	// been reached once (initial_target_reached), a hole really is a seek.
-	if (segment_index < run_start && !initial_target_reached.load()) {
-		return SegmentPrep::WaitShort; // times out to 503 if it never appears — never restarts here
-	}
+	//if (segment_index < run_start && !initial_target_reached.load()) {
+	//	return SegmentPrep::WaitShort; // times out to 503 if it never appears — never restarts here
+	//}
 
 	// Forward jump far beyond reach, or a genuine backward seek past this
 	// run's start — restarting there directly is cheaper than waiting for

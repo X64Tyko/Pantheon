@@ -347,6 +347,13 @@ export const api = {
   clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
   getShowWatchState:  (showId: string)                                     => request<ShowWatchState | null>('GET', `/shows/${showId}/watch-state`),
 
+  // Plex-style sticky per-show audio/subtitle language (see kairos's
+  // ShowTrackPreferenceRepository) — keyed by episode_id so the caller never
+  // needs to know show_id; Kairos resolves it server-side. A field left out
+  // of `b` leaves that side of the saved preference untouched.
+  setEpisodeTrackPreference: (episodeId: string, b: { audio_lang?: string; subtitle_lang?: string }) =>
+                        request<{ ok: boolean }>('PUT', `/episodes/${episodeId}/track-preference`, b),
+
   // Server-side resolvePlayTarget.ts (see hades/src/player/resolvePlayTarget.ts) —
   // one call instead of watch-state + conditionally next-episode/full-episode-list.
   getResolvedPlayTarget: (showId: string)                                  => request<ResolvedPlayTarget | null>('GET', `/shows/${showId}/resolve-play-target`),
