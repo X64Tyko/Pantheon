@@ -32,6 +32,11 @@ struct PlaybackInfo {
     std::string title;
     int64_t     duration_ms = 0;
     std::vector<ExternalSubtitle> external_subtitles;
+    // Sticky per-show track preference (Plex-style) — only populated when the
+    // original caller's bearer token was forwarded to this call. Empty when
+    // absent or when the item has no show (e.g. a movie).
+    std::string preferred_audio_lang;
+    std::string preferred_subtitle_lang;
 };
 
 struct KairosChannel {

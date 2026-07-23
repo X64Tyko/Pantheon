@@ -2105,6 +2105,26 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_playback_history_started ON playback_history(started_at_ms);
 )SQL" }
 
+// ── v92: per-show sticky audio/subtitle track preference (see
+//         ShowTrackPreferenceRepository) — mirrors Plex: switching tracks on
+//         one episode of a show should carry forward to the rest of that
+//         show, not reset each episode. Keyed by (user_id, show_id) rather
+//         than episode_id since that's the whole point. Read by Hephaestus's
+//         GET /api/playback/:content_type/:id (forwarded bearer token
+//         resolves currentUser()); written by PUT
+//         /api/episodes/:id/track-preference, which resolves episode->show_id
+//         server-side so neither client needs to know show_id at all.
+,{ 92, R"SQL(
+    CREATE TABLE show_track_preference (
+        user_id       TEXT    NOT NULL REFERENCES user(user_id),
+        show_id       TEXT    NOT NULL REFERENCES show(show_id),
+        audio_lang    TEXT    NOT NULL DEFAULT '',
+        subtitle_lang TEXT    NOT NULL DEFAULT '',
+        updated_at    INTEGER NOT NULL,
+        PRIMARY KEY (user_id, show_id)
+    );
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

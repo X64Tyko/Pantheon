@@ -91,11 +91,17 @@ public:
 	// subtitle at all. fallback_duration_ms is Kairos's own library-scan
 	// duration, used only when this file's own ffprobe -show_format run
 	// (MediaProbe's duration_ms) comes back 0 (raw/unusual containers).
+	// preferred_audio_lang/preferred_subtitle_lang are the caller's saved
+	// per-show preference (empty = none) — only consulted when
+	// audio_track/subtitle_track are left at their "unset" default (-1) by
+	// the client itself, which always wins if explicitly given.
 	bool start(const std::string& file_path, int64_t position_ms,
 			   int audio_track, int subtitle_track, bool hdr_capable,
 			   const std::optional<ClientCapabilities>& client_caps,
 			   const std::vector<ExternalSubtitle>& external_subtitles,
-			   int64_t fallback_duration_ms);
+			   int64_t fallback_duration_ms,
+			   const std::string& preferred_audio_lang = "",
+			   const std::string& preferred_subtitle_lang = "");
 
 	void stop();
 	// Called by the HTTP handler on every playlist/segment/subs.vtt GET.

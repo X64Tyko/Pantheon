@@ -55,7 +55,9 @@ std::shared_ptr<VodSession> VodSessionManager::create(const std::string& file_pa
 														int audio_track, int subtitle_track, bool hdr_capable,
 														const std::optional<ClientCapabilities>& client_caps,
 														const std::vector<ExternalSubtitle>& external_subtitles,
-														int64_t fallback_duration_ms) {
+														int64_t fallback_duration_ms,
+														const std::string& preferred_audio_lang,
+														const std::string& preferred_subtitle_lang) {
 	VodStreamOptions session_opts = opts;
 	{
 		std::lock_guard<std::mutex> lock(settings_mtx);
@@ -65,7 +67,8 @@ std::shared_ptr<VodSession> VodSessionManager::create(const std::string& file_pa
 
 	auto session = std::make_shared<VodSession>(generateSessionId(), ffmpeg_path, session_opts);
 	if (!session->start(file_path, position_ms, audio_track, subtitle_track, hdr_capable, client_caps,
-						 external_subtitles, fallback_duration_ms)) return nullptr;
+						 external_subtitles, fallback_duration_ms,
+						 preferred_audio_lang, preferred_subtitle_lang)) return nullptr;
 
 	std::lock_guard<std::mutex> lock(mtx);
 	sessions[session->sessionId()] = session;

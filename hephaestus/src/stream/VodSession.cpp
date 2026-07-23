@@ -74,6 +74,24 @@ static bool isBitmapSubtitleCodec(const std::string& codec) {
 	return codec == "hdmv_pgs_subtitle" || codec == "dvd_subtitle" || codec == "dvb_subtitle";
 }
 
+// pickSubtitleTrack (MediaProbe) only searches embedded tracks — a saved
+// preference also needs to match an external sidecar (e.g. Owl House, whose
+// subtitles are entirely external), returning the same negative-index
+// encoding start()'s subtitle_track<=-2 branch expects. Non-forced preferred
+// over forced when both match, since a saved "watch with English subs"
+// preference means the full dialogue track, not just a forced/signs one.
+static int pickExternalSubtitleTrack(const std::vector<ExternalSubtitle>& external_subtitles,
+									  const std::string& preferred_lang) {
+	if (preferred_lang.empty()) return -1;
+	int forced_match = -1;
+	for (size_t i = 0; i < external_subtitles.size(); ++i) {
+		if (external_subtitles[i].language.substr(0, 3) != preferred_lang.substr(0, 3)) continue;
+		if (!external_subtitles[i].forced) return -static_cast<int>(i) - 2;
+		if (forced_match == -1) forced_match = -static_cast<int>(i) - 2;
+	}
+	return forced_match;
+}
+
 // h264/aac is the conservative "every browser can play this without
 // transcoding" fallback for a client that hasn't declared its own decode
 // capability (see ClientCapabilities.h). When it has, direct-play is
@@ -265,7 +283,9 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 						int audio_track, int subtitle_track, bool hdr_capable,
 						const std::optional<ClientCapabilities>& client_caps,
 						const std::vector<ExternalSubtitle>& external_subtitles,
-						int64_t fallback_duration_ms) {
+						int64_t fallback_duration_ms,
+						const std::string& preferred_audio_lang,
+						const std::string& preferred_subtitle_lang) {
 	external_subtitles_ = external_subtitles;
 	auto info = probeMediaCached(opts.ffprobe_path, file_path);
 	if (!info) {
@@ -278,7 +298,17 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 	source_codec_ = media_info.video.empty() ? "" :
 		decodeCodecKey(media_info.video[0].codec, media_info.video[0].bit_depth);
 
-	if (audio_track < 0) audio_track = pickAudioTrack(media_info, "");
+	if (audio_track < 0) audio_track = pickAudioTrack(media_info, preferred_audio_lang);
+	// Only auto-pick a subtitle when the client left it fully unset (-1) —
+	// -1 is also "explicitly off", but there's no separate wire value for
+	// "off" vs "never chosen," so a saved preference always wins over -1.
+	// Embedded tracks take priority; falls back to an external sidecar match
+	// (see pickExternalSubtitleTrack) since either helper no-ops when
+	// preferred_subtitle_lang is empty.
+	if (subtitle_track == -1) {
+		subtitle_track = pickSubtitleTrack(media_info, preferred_subtitle_lang);
+		if (subtitle_track == -1) subtitle_track = pickExternalSubtitleTrack(external_subtitles, preferred_subtitle_lang);
+	}
 	audio_track_    = audio_track;
 	subtitle_track_ = subtitle_track;
 	hdr_capable_    = hdr_capable;

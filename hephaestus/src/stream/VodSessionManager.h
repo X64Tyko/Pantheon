@@ -31,11 +31,16 @@ public:
 	// client_caps its declared decode capability if any (see
 	// VodSession::start). fallback_duration_ms is Kairos's own library-scan
 	// duration, used only if this file's own ffprobe run doesn't report one.
+	// preferred_audio_lang/preferred_subtitle_lang are the caller's saved
+	// per-show preference (Kairos), used only when audio_track/subtitle_track
+	// are left unset (-1) by the client itself.
 	std::shared_ptr<VodSession> create(const std::string& file_path, int64_t position_ms,
 										int audio_track, int subtitle_track, bool hdr_capable,
 										const std::optional<ClientCapabilities>& client_caps,
 										const std::vector<ExternalSubtitle>& external_subtitles,
-										int64_t fallback_duration_ms);
+										int64_t fallback_duration_ms,
+										const std::string& preferred_audio_lang = "",
+										const std::string& preferred_subtitle_lang = "");
 	std::shared_ptr<VodSession> get(const std::string& sessionId);
 	void stop(const std::string& sessionId);
 

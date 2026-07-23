@@ -7,6 +7,7 @@
 #include "../../db/PlaybackHistoryRepository.h"
 #include "../../db/ContentRepository.h"
 #include "../../db/SubtitleTrackRepository.h"
+#include "../../db/ShowTrackPreferenceRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -48,7 +49,11 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// ── GET /api/playback/:content_type/:id ───────────────────────────────────
 	// Internal — called by Hephaestus (not the browser) to resolve a library
 	// item to a playable file. Exempted from auth in Router.cpp's isPublicPath,
-	// same bucket as /now and /played.
+	// same bucket as /now and /played, but if Hephaestus forwards the original
+	// caller's bearer token, currentUser() still resolves it (see Router.cpp's
+	// set_pre_routing_handler) — used below to surface this user's sticky
+	// per-show track preference (see migration v92), so a viewer's own client
+	// never has to pass show_id or a saved preference through itself.
 	svr.Get("/api/playback/:content_type/:id", [this](const Req& req, Res& res) {
 		auto content_type = req.path_params.at("content_type");
 		auto id            = req.path_params.at("id");
@@ -60,12 +65,13 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 			// must live-resolve through the movie it's linked to, never a stale
 			// copy, so a re-scanned/moved movie file is always reflected here.
 			const char* sql = content_type == "movie"
-				? "SELECT file_path, duration_ms, title, '' FROM movie WHERE movie_id = ?"
+				? "SELECT file_path, duration_ms, title, '', '' FROM movie WHERE movie_id = ?"
 				: R"(
 					SELECT COALESCE(m.file_path, e.file_path),
 					       COALESCE(m.duration_ms, e.duration_ms),
 					       e.title,
-					       COALESCE(e.linked_movie_id, '')
+					       COALESCE(e.linked_movie_id, ''),
+					       e.show_id
 					FROM episode e LEFT JOIN movie m ON m.movie_id = e.linked_movie_id
 					WHERE e.episode_id = ?
 				)";
@@ -96,14 +102,53 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 				});
 			}
 
+			std::string preferred_audio_lang, preferred_subtitle_lang;
+			const auto show_id = q.getColumn(4).getString();
+			if (auto user = currentUser(); user && !show_id.empty()) {
+				if (auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, show_id)) {
+					preferred_audio_lang    = pref->audio_lang;
+					preferred_subtitle_lang = pref->subtitle_lang;
+				}
+			}
+
 			route::ok(res, json{
-				{"file_path",          conf_.applyPathMap(file_path)},
-				{"duration_ms",        q.getColumn(1).getInt64()},
-				{"title",              q.getColumn(2).getString()},
-				{"external_subtitles", external_subtitles},
+				{"file_path",               conf_.applyPathMap(file_path)},
+				{"duration_ms",             q.getColumn(1).getInt64()},
+				{"title",                   q.getColumn(2).getString()},
+				{"external_subtitles",      external_subtitles},
+				{"preferred_audio_lang",    preferred_audio_lang},
+				{"preferred_subtitle_lang", preferred_subtitle_lang},
 			}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("GET /api/playback/:content_type/:id", e); route::err(res, 500, e.what());
+		}
+	});
+
+	// ── PUT /api/episodes/:id/track-preference ────────────────────────────────
+	// Saves a Plex-style sticky per-show audio/subtitle language — resolves
+	// episode->show_id server-side (see ContentRepository::getEpisode) so
+	// neither client needs to know or plumb show_id. Body: any of
+	// {"audio_lang": "eng", "subtitle_lang": "spa"} (a field absent/omitted
+	// leaves that side untouched — see ShowTrackPreferenceRepository::set).
+	svr.Put("/api/episodes/:id/track-preference", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+
+		try {
+			auto episode = ContentRepository(db_).getEpisode(req.path_params.at("id"));
+			if (!episode) { route::err(res, 404, "not found"); return; }
+
+			auto b = json::parse(req.body);
+			std::optional<std::string> audio_lang, subtitle_lang;
+			if (b.contains("audio_lang"))    audio_lang    = b.at("audio_lang").get<std::string>();
+			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
+
+			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
+			ShowTrackPreferenceRepository(db_).set(user->user_id, episode->show_id, audio_lang, subtitle_lang, now_ms);
+
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("PUT /api/episodes/:id/track-preference", e); route::err(res, 400, e.what());
 		}
 	});
 

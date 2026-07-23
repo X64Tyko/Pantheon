@@ -111,10 +111,13 @@ std::vector<KairosChannel> KairosClient::getChannels() {
 }
 
 std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& contentType,
-                                                            const std::string& contentId) {
+                                                            const std::string& contentId,
+                                                            const std::string& bearerToken) {
     auto cli = makeClient(base_url);
     std::string path = "/api/playback/" + contentType + "/" + contentId;
-    auto res = cli.Get(path);
+    httplib::Headers headers;
+    if (!bearerToken.empty()) headers.emplace("Authorization", "Bearer " + bearerToken);
+    auto res = cli.Get(path, headers);
     if (!res || res->status != 200) {
         std::cerr << "[kairos] GET " << path << " -> "
                   << (res ? std::to_string(res->status) : "no response") << "\n";
@@ -126,6 +129,8 @@ std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& con
         info.file_path   = j.value("file_path",   "");
         info.title       = j.value("title",       "");
         info.duration_ms = j.value("duration_ms", int64_t(0));
+        info.preferred_audio_lang    = j.value("preferred_audio_lang",    "");
+        info.preferred_subtitle_lang = j.value("preferred_subtitle_lang", "");
         if (j.contains("external_subtitles") && j["external_subtitles"].is_array()) {
             for (const auto& s : j["external_subtitles"]) {
                 ExternalSubtitle sub;

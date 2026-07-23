@@ -339,7 +339,8 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             res.status = 400; res.set_content(json{{"error","content_type must be movie or episode"}}.dump(), "application/json"); return;
         }
 
-        auto info = kairos.getPlaybackInfo(content_type, content_id);
+        auto token = extractBearerToken(req);
+        auto info = kairos.getPlaybackInfo(content_type, content_id, token);
         if (!info || info->file_path.empty()) {
             res.status = 404; res.set_content(json{{"error","content not found"}}.dump(), "application/json"); return;
         }
@@ -351,11 +352,11 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         bool hdr_capable = body.value("hdr_capable", false);
 
         std::optional<ClientCapabilities> client_caps;
-        auto token = extractBearerToken(req);
         if (!token.empty()) client_caps = capabilityCache.get(token);
 
         auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable,
-                                           client_caps, info->external_subtitles, info->duration_ms);
+                                           client_caps, info->external_subtitles, info->duration_ms,
+                                           info->preferred_audio_lang, info->preferred_subtitle_lang);
         if (!session) {
             res.status = 500; res.set_content(json{{"error","failed to start playback"}}.dump(), "application/json"); return;
         }
