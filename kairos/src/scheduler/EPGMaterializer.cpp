@@ -5,6 +5,7 @@
 #include "../db/CursorRepository.h"
 #include "../db/Database.h"
 #include "../db/ScheduleRepository.h"
+#include "metrics/OperationMetrics.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <ctime>
@@ -386,6 +387,11 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
         std::cout << "[epg] ensureScheduled channel=" << channel_id
                   << " from=" << from << " horizon_hours=" << horizon_hours << '\n';
 
+    // Only this branch — the actual regenerate — is worth structured timing.
+    // The horizon-covered fast path above (the common case, hit on every
+    // /now poll) returns before this point, so this recorder only ever fires
+    // on a genuine cache miss, never on the hot poll path.
+    OperationRecorder op_rec("epg.generate");
     auto result = generate(channel_id, from, horizon_hours, seed);
     if (result.items.empty()) {
         std::cout << "[epg] WARNING: generate() returned 0 items for channel="

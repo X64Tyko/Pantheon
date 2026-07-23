@@ -4,6 +4,7 @@
 #include "log/LogBuffer.h"
 #include "../../source/SyncManager.h"
 #include "../../util/MetricsGatherer.h"
+#include "metrics/OperationMetrics.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -85,5 +86,31 @@ void ActivityService::registerRoutes(httplib::Server& svr) {
 			}}
 		};
 		route::ok(res, j.dump());
+	});
+
+	// Structured per-operation timing/CPU/RAM/thread stats for the hot zones
+	// (full sync + its phases, EPG regeneration, scraper matching, chapter
+	// sync) — see shared/metrics/OperationMetrics.h. Distinct from the
+	// whole-process point-in-time gauge above: this is a bounded history of
+	// completed runs, most-recent-first, keyed by operation name.
+	svr.Get("/api/metrics/operations", [](const Req&, Res& res) {
+		json out = json::object();
+		for (const auto& [name, runs] : OperationMetricsStore::global().snapshot()) {
+			json arr = json::array();
+			for (const auto& r : runs) {
+				arr.push_back({
+					{"started_at_ms",  r.started_at_ms},
+					{"duration_ms",    r.duration_ms},
+					{"avg_cpu_pct",    r.avg_cpu_pct},
+					{"max_cpu_pct",    r.max_cpu_pct},
+					{"avg_ram_bytes",  r.avg_ram_bytes},
+					{"max_ram_bytes",  r.max_ram_bytes},
+					{"peak_threads",   r.peak_threads},
+					{"samples",        r.samples},
+				});
+			}
+			out[name] = arr;
+		}
+		route::ok(res, out.dump());
 	});
 }

@@ -1254,3 +1254,25 @@ export interface ScraperSearchResult {
   library_id?:      string // this library's show_id/movie_id when in_library
   request_status?:  'pending' | 'approved' | 'rejected' // set if ANYONE has already requested this, regardless of in_library
 }
+
+// One completed run of a named "hot zone" operation (full sync, a sync
+// phase, an EPG regenerate, a scraper match, chapter sync) — see
+// shared/metrics/OperationMetrics.h. Distinct from ComponentMetrics
+// (MetricsStore.ts), which is a continuous whole-process gauge; this is a
+// bounded history of discrete completed jobs.
+export interface OperationRun {
+  started_at_ms:  number
+  duration_ms:    number
+  avg_cpu_pct:    number
+  max_cpu_pct:    number
+  avg_ram_bytes:  number
+  max_ram_bytes:  number
+  peak_threads:   number
+  samples:        number
+}
+
+// Keyed by operation name (e.g. "sync.full", "sync.phase.chapters",
+// "epg.generate"), most-recent-first, absent entirely for a name with no
+// runs yet.
+export type OperationMetricsResponse = Record<string, OperationRun[]>
+

@@ -13,6 +13,7 @@
 #include "log/DebugLog.h"
 #include "util/TitleMatch.h"
 #include "thread/TaskRegistry.h"
+#include "metrics/OperationMetrics.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <cctype>
@@ -681,7 +682,10 @@ void ScraperManager::runMatchSync(const std::string& target_id,
         std::cout << "[scraper] match already running — skipping inline match\n";
         return;
     }
-    try { runMatch(target_id, item_type); }
+    try {
+        OperationRecorder op_rec("scraper.match");
+        runMatch(target_id, item_type);
+    }
     catch (const std::exception& e) {
         std::cerr << "[scraper] match error: " << e.what() << "\n";
     }

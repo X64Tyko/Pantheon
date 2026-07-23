@@ -15,6 +15,7 @@ import type {
   NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection,
   UnmappedSourceUser, SourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
+  OperationMetricsResponse,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -627,6 +628,12 @@ export const api = {
 
   // System
   getSystemMetrics: () => request<any>('GET', '/system/metrics'),
+  // Structured per-operation timing/CPU/RAM/thread history for the hot
+  // zones (sync, EPG regen, scraper match, chapter sync) — see
+  // shared/metrics/OperationMetrics.h. Hits Kairos directly (falls through
+  // Hermes's generic /api/* proxy, unlike /system/metrics which Hermes
+  // itself aggregates).
+  getOperationMetrics: () => request<OperationMetricsResponse>('GET', '/metrics/operations'),
 }
 
 export default api

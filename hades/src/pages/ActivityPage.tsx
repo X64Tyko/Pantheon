@@ -7,6 +7,7 @@ import type { LibraryWithSource } from '../api/types'
 import { NowPlayingPanel } from '../components/activity/NowPlayingPanel'
 import { DeviceConnectionsPanel } from '../components/activity/DeviceConnectionsPanel'
 import { Sparkline } from '../components/activity/Sparkline'
+import { OperationMetricsPanel } from '../components/activity/OperationMetricsPanel'
 
 function tagColor(line: string): string {
   if (/^\[error\]/i.test(line)) return 'text-red-400'
@@ -42,6 +43,10 @@ export default observer(function ActivityPage() {
   const atBottomRef = useRef(true)
   const logs        = systemStore.logs
   const liveStatus  = systemStore.liveStatus
+  // Splits the live status/gauge cards ("Monitor") from operator/diagnostic
+  // tooling ("Debugging": per-operation timing stats + the raw log stream) —
+  // keeps either tab from growing unboundedly tall as more cards get added.
+  const [tab, setTab] = useState<'monitor' | 'debugging'>('monitor')
 
   // Clear error badge while this page is visible.
   useEffect(() => {
@@ -132,7 +137,7 @@ export default observer(function ActivityPage() {
   }
 
   return (
-    <div className="flex flex-col h-full p-6 gap-5 overflow-y-auto scrollbar-dark">
+    <div className="flex flex-col h-full p-6 gap-5 overflow-hidden">
 
       {/* Header */}
       <div className="flex items-center justify-between shrink-0">
@@ -177,6 +182,26 @@ export default observer(function ActivityPage() {
           </button>
         </div>
       </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-4 shrink-0 border-b border-zinc-800/60">
+        {(['monitor', 'debugging'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`pb-2 px-1 text-sm font-medium capitalize border-b-2 -mb-px transition-colors ${
+              tab === t
+                ? 'text-amber-400 border-amber-400'
+                : 'text-zinc-500 border-transparent hover:text-zinc-300'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'monitor' && (
+      <div className="flex flex-col gap-5 overflow-y-auto scrollbar-dark flex-1 min-h-0">
 
       {/* Sync status */}
       <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4 shrink-0">
@@ -414,12 +439,17 @@ export default observer(function ActivityPage() {
         )}
       </div>
 
-      {/* Log viewer — fills remaining height, but never shrinks below a
-          readable floor. Without minHeight here, the page's other sections
-          (Sync Status, Now Playing, System Resources) push it down to
-          nothing on a short mobile viewport instead of the page scrolling. */}
+      </div>
+      )}
+
+      {tab === 'debugging' && (
+      <div className="flex flex-col gap-5 flex-1 min-h-0">
+
+      <OperationMetricsPanel />
+
+      {/* Log viewer fills whatever's left after Hot Zones above. */}
       <div className="rounded-lg border border-violet-900/50 bg-zinc-900 overflow-hidden
-                      flex-1 min-h-[320px] flex flex-col">
+                      flex-1 min-h-0 flex flex-col">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/80 shrink-0">
           <h2 className="section-label">Engine Logs</h2>
           <div className="flex items-center gap-4">
@@ -452,6 +482,9 @@ export default observer(function ActivityPage() {
           )}
         </div>
       </div>
+
+      </div>
+      )}
     </div>
   )
 })

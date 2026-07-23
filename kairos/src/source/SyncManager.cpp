@@ -16,6 +16,7 @@
 #include "util/PathMatch.h"
 #include "util/TitleMatch.h"
 #include "thread/TaskRegistry.h"
+#include "metrics/OperationMetrics.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
 #include <atomic>
@@ -161,6 +162,7 @@ void SyncManager::clearSourceMapping(const std::string& source_id) {
 void SyncManager::syncAll() {
     sync_db_ = db_.openConnection(60000);
     MediaLockGuard media_lock(media_locked_);
+    OperationRecorder full_rec("sync.full");
     const auto t_total = std::chrono::steady_clock::now();
 
     // Phase 1: ingest content from every source.
@@ -168,34 +170,40 @@ void SyncManager::syncAll() {
     // phases do not interleave reads and writes on sync_db_.
     std::cout << "[sync] === phase 1: content ingestion ===\n";
     SyncLiveIds live;
-    for (const auto& src : sources_) {
-        if (!src->isSupported()) {
-            std::cout << "[sync] " << src->sourceId()
-                      << " (" << src->sourceType() << ") not yet supported" << std::endl;
-            continue;
+    {
+        OperationRecorder phase_rec("sync.phase.content");
+        for (const auto& src : sources_) {
+            if (!src->isSupported()) {
+                std::cout << "[sync] " << src->sourceId()
+                          << " (" << src->sourceType() << ") not yet supported" << std::endl;
+                continue;
+            }
+            syncContent(src->sourceId(), live);
         }
-        syncContent(src->sourceId(), live);
     }
     { std::lock_guard<std::mutex> lock(current_source_mtx_); current_source_id_.clear(); }
 
     // Phase 1b: orphan cleanup — runs after ALL sources are known so a show
     // present in source B is never deleted because source A dropped it.
     std::cout << "[sync] === phase 1b: orphan cleanup ===\n";
-    runOrphanCleanup(live);
+    { OperationRecorder phase_rec("sync.phase.orphan_cleanup"); runOrphanCleanup(live); }
 
     // Phase 2: scraper matching — blocking so chapters don't race against it.
     std::cout << "[sync] === phase 2: scraper match ===\n";
-    if (scraper_) scraper_->runMatchSync();
+    { OperationRecorder phase_rec("sync.phase.scraper_match"); if (scraper_) scraper_->runMatchSync(); }
 
     // Phase 2b: specials scan — opt-in per show, only for shows already matched.
     std::cout << "[sync] === phase 2b: specials scan ===\n";
-    scanSpecialsForEligibleShows();
+    { OperationRecorder phase_rec("sync.phase.specials"); scanSpecialsForEligibleShows(); }
 
     // Phase 3: media probe (duration/resolution/languages) + subtitle sidecar scan.
     std::cout << "[sync] === phase 3: media probe ===\n";
-    for (const auto& src : sources_) {
-        if (src->isSupported())
-            syncMediaProbeFromFiles(src->sourceId());
+    {
+        OperationRecorder phase_rec("sync.phase.media_probe");
+        for (const auto& src : sources_) {
+            if (src->isSupported())
+                syncMediaProbeFromFiles(src->sourceId());
+        }
     }
 
     // Phase 4: smart playlist refresh — once per full cycle (not per-source,
@@ -203,13 +211,16 @@ void SyncManager::syncAll() {
     // after every source's content is freshly ingested/matched so filters
     // see up-to-date data.
     std::cout << "[sync] === phase 4: smart playlist refresh ===\n";
-    refreshSmartPlaylists();
+    { OperationRecorder phase_rec("sync.phase.smart_playlists"); refreshSmartPlaylists(); }
 
     // Phase 5: chapter sync last because it's going to be the most time consuming.
     std::cout << "[sync] === phase 5: chapter sync ===\n";
-    for (const auto& src : sources_) {
-        if (src->isSupported())
-            syncChaptersFromFiles(src->sourceId());
+    {
+        OperationRecorder phase_rec("sync.phase.chapters");
+        for (const auto& src : sources_) {
+            if (src->isSupported())
+                syncChaptersFromFiles(src->sourceId());
+        }
     }
 
     // Printed last, not after phase 4 — chapter sync (phase 5) is the
@@ -2171,6 +2182,7 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
         if (q.executeStep() && q.getColumn(0).getString() == "false") return;
     }
 
+    OperationRecorder op_rec("chapters.sync_from_files");
     const auto t_ch_start = std::chrono::steady_clock::now();
     std::cout << "[sync] chapter sync (file): " << source_id << std::endl;
 
