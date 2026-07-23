@@ -90,6 +90,14 @@ json vodSessionJson(const std::shared_ptr<VodSession>& s) {
         {"decode_hw_accel", hwAccelName(s->decodeHwAccel())},
         {"started_at_ms",   s->startedAtMs()},
         {"direct_play",     s->directPlay()},
+        // Sliding-window lookahead engine state — lets the debug panel
+        // confirm the encoder is actually pausing/resuming/restarting as
+        // expected rather than needing to shell into the box.
+        {"duration_ms",               s->durationMs()},
+        {"total_segments",            s->totalSegments()},
+        {"highest_generated_segment", s->highestGeneratedSegment()},
+        {"last_requested_segment",    s->lastRequestedSegment()},
+        {"main_encoder_paused",       s->isMainEncoderPaused()},
     };
 }
 

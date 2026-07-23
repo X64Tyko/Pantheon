@@ -313,22 +313,21 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     rokuSession.endSession()
   }, [kind, targetId, rokuSession])
 
+  // A plain seek stays on the same persistent VOD session/manifest now
+  // (Hephaestus's sliding-window engine transparently regenerates whatever
+  // segment range is needed — see VodSession::restartAt) — no more "seek
+  // outside the buffered range = tear down this session and start a new
+  // one." hls.js/the browser just requests whatever segment covers the
+  // target position from the one manifest that already describes the whole
+  // file; letting the request happen and briefly buffer is exactly the same
+  // experience a normal on-demand video seek already has everywhere else.
   const handleSeek = (ms: number) => {
     if (isCasting) { castSession.seek(ms); setCurrentMs(ms); return }
     if (isCastingRoku) { rokuSession.seek(ms); setCurrentMs(ms); return }
     const video = videoRef.current
     if (!video) return
-    const targetSec = ms / 1000
-    let withinBuffer = false
-    for (let i = 0; i < video.buffered.length; i++) {
-      if (targetSec >= video.buffered.start(i) && targetSec <= video.buffered.end(i)) { withinBuffer = true; break }
-    }
-    if (withinBuffer) {
-      video.currentTime = targetSec
-      setCurrentMs(ms)
-    } else {
-      session.reload({ positionMs: ms })
-    }
+    video.currentTime = ms / 1000
+    setCurrentMs(ms)
   }
 
   const handleSelectAudio    = (index: number) => session.reload({ positionMs: currentMs, audioTrack: index })
@@ -447,11 +446,12 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                   manifestUrl={session.manifestUrl}
                   subtitleUrl={session.subtitleUrl}
                   isLive={session.isLive}
-                  // ms is relative to the *current* manifest (which starts
-                  // its own timeline at 0 regardless of where in the source
-                  // file it begins) — add basePositionMs to get the true
-                  // absolute position. See usePlaybackSession's comment.
-                  onTimeUpdate={(ms) => setCurrentMs(session.basePositionMs + ms)}
+                  startPositionSec={session.startPositionMs / 1000}
+                  // The manifest's timeline is the file's real absolute
+                  // position now (see usePlaybackSession's startPositionMs
+                  // comment) — ms already is the true position, no offset
+                  // to add back anymore.
+                  onTimeUpdate={(ms) => setCurrentMs(ms)}
                   // Dismissing Up Next means "don't continue into the next
                   // episode" — without the upNextDismissed check here, simply
                   // letting playback run to the true end of the file would

@@ -20,17 +20,21 @@ export interface PlaybackSession {
   tracks:        VodTracks | null // null: loading, or n/a (live)
   audioTrack:    number
   subtitleTrack: number
-  // Absolute position (source-file ms) the *current* manifest's own t=0
-  // represents. Every (re)load — initial mount, a seek outside the buffered
-  // range, or a track switch — starts a brand new VOD encode/manifest whose
-  // internal HLS timeline begins at 0 regardless of where in the source file
-  // it actually starts (VideoPlayer forces hls.js startPosition:0 for VOD).
-  // Callers must add this to the <video> element's own currentTime to get
-  // the true position — see PlayerPage's onTimeUpdate.
-  basePositionMs: number
-  // VOD only — restarts the session at the given position/track selection.
-  // Both share one code path: a track switch is "seek to current position
-  // with a different track," a seek is "same tracks, different position."
+  // Where the *current* manifest/video element should start playback from.
+  // Hephaestus's VOD manifest now describes the WHOLE file's real absolute
+  // timeline from segment 0, for the session's entire life (a plain seek
+  // stays on the same session/manifest — see VideoPlayer.tsx/PlayerPage.tsx)
+  // — this is no longer an addend recovering true position from a
+  // manifest-relative one (see git history for the old basePositionMs if
+  // that's ever needed), just the one-time seek target for a freshly
+  // (re)loaded manifest (initial mount, or a NEW session from a track
+  // switch — reload() is still the only thing that changes this).
+  startPositionMs: number
+  // VOD only — restarts the session (a genuinely new encode/manifest) at
+  // the given position/track selection. Used for track switches, which
+  // still need a different ffmpeg -map selection; a plain seek does NOT
+  // call this anymore (see PlayerPage.tsx's handleSeek — it just seeks the
+  // existing persistent manifest directly).
   reload: (opts: { positionMs?: number; audioTrack?: number; subtitleTrack?: number }) => void
 }
 
@@ -57,7 +61,7 @@ export function usePlaybackSession(
   const [tracks,        setTracks]        = useState<VodTracks | null>(null)
   const [audioTrack,    setAudioTrack]    = useState(-1)
   const [subtitleTrack, setSubtitleTrack] = useState(-1)
-  const [basePositionMs, setBasePositionMs] = useState(initialPositionMs)
+  const [startPositionMs, setStartPositionMs] = useState(initialPositionMs)
 
   const sessionIdRef = useRef<string | null>(null)
   const genRef        = useRef(0) // guards against a stale reload's response landing after a newer one starts
@@ -72,9 +76,9 @@ export function usePlaybackSession(
     if (prevSession) stopVodPlayback(prevSession)
 
     // Set synchronously (not inside the .then() below) so it's already
-    // correct by the time the new manifest's first onTimeUpdate tick lands,
-    // rather than racing it.
-    setBasePositionMs(positionMs)
+    // correct by the time VideoPlayer's manifestUrl effect (re)creates its
+    // Hls instance and seeds startPosition from it, rather than racing it.
+    setStartPositionMs(positionMs)
 
     if (isLive) {
       setLoading(true)
@@ -148,6 +152,6 @@ export function usePlaybackSession(
 
   return {
     loading, error, manifestUrl, subtitleUrl, isLive, directPlay,
-    title, durationMs, tracks, audioTrack, subtitleTrack, reload, basePositionMs,
+    title, durationMs, tracks, audioTrack, subtitleTrack, reload, startPositionMs,
   }
 }
