@@ -1704,7 +1704,6 @@ function ChapterInspectorPanel({ item, onClose }: { item: ChapterReviewItem; onC
           <VideoPlayer
             videoRef={videoRef}
             manifestUrl={session.manifestUrl}
-            subtitleUrl={null}
             isLive={false}
             autoPlay={false}
             controls

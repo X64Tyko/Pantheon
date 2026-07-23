@@ -12,7 +12,6 @@ export interface PlaybackSession {
   loading:       boolean
   error:         string | null
   manifestUrl:   string | null
-  subtitleUrl:   string | null
   isLive:        boolean
   directPlay:    boolean | null // null: n/a (live)
   title:         string
@@ -31,11 +30,20 @@ export interface PlaybackSession {
   // switch — reload() is still the only thing that changes this).
   startPositionMs: number
   // VOD only — restarts the session (a genuinely new encode/manifest) at
-  // the given position/track selection. Used for track switches, which
-  // still need a different ffmpeg -map selection; a plain seek does NOT
-  // call this anymore (see PlayerPage.tsx's handleSeek — it just seeks the
-  // existing persistent manifest directly).
-  reload: (opts: { positionMs?: number; audioTrack?: number; subtitleTrack?: number }) => void
+  // the given position/audio selection. Audio still needs a different
+  // ffmpeg -map (VodSession::ensureAudioTrack does this in-place server-side,
+  // but Hades still switches audio the old way — see PlayerPage.tsx's
+  // handleSelectAudio); a plain seek does NOT call this (handleSeek just
+  // seeks the existing persistent manifest directly), and neither does a
+  // subtitle switch anymore — see selectSubtitleTrack.
+  reload: (opts: { positionMs?: number; audioTrack?: number }) => void
+  // Pure client-side selection against the master manifest's own SUBTITLES
+  // group (VodSession::buildMasterPlaylist) — VideoPlayer.tsx matches this
+  // index to hls.js's own subtitleTracks[] by URL and switches there
+  // directly. No network call, no session/encoder restart: unlike audio,
+  // subtitle extraction has been fully decoupled from the main encoder
+  // since the on-demand /subtitles/{n} pipe route landed.
+  selectSubtitleTrack: (index: number) => void
 }
 
 // Position pings land on the *previous* session id, since stop() races with
@@ -54,7 +62,6 @@ export function usePlaybackSession(
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState<string | null>(null)
   const [manifestUrl,   setManifestUrl]   = useState<string | null>(null)
-  const [subtitleUrl,   setSubtitleUrl]   = useState<string | null>(null)
   const [directPlay,    setDirectPlay]    = useState<boolean | null>(null)
   const [title,         setTitle]         = useState('')
   const [durationMs,    setDurationMs]    = useState(0)
@@ -91,7 +98,6 @@ export function usePlaybackSession(
           return
         }
         setManifestUrl(liveChannelManifestUrl(target.id))
-        setSubtitleUrl(null)
         setDirectPlay(null)
         setTracks(null)
         setLoading(false)
@@ -118,13 +124,17 @@ export function usePlaybackSession(
       if (genRef.current !== gen) { stopVodPlayback(res.session_id); return } // superseded while in flight
       sessionIdRef.current = res.session_id
       setManifestUrl(res.manifest_url)
-      setSubtitleUrl(res.subtitle_url ?? null)
       setDirectPlay(res.direct_play)
       setTitle(res.title)
       setDurationMs(res.duration_ms)
       setTracks(res.tracks)
-      setAudioTrack(aTrack >= 0 ? aTrack : (res.tracks.audio[0]?.index ?? 0))
-      setSubtitleTrack(sTrack)
+      // The server's own resolved selection (VodStartResponse's doc comment)
+      // — not just echoing back what was requested — since -1/"unset" can
+      // resolve to a saved preference or default track the client has no
+      // other way to learn, and the master manifest needs this to know
+      // which rendition is already DEFAULT="YES" (see VideoPlayer.tsx).
+      setAudioTrack(res.audio_track)
+      setSubtitleTrack(res.subtitle_track)
       setLoading(false)
     }).catch(err => {
       if (genRef.current !== gen) return
@@ -147,11 +157,19 @@ export function usePlaybackSession(
   }, [target.kind, target.id])
 
   const reload: PlaybackSession['reload'] = useCallback(opts => {
-    load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, opts.subtitleTrack ?? subtitleTrack)
+    // subtitleTrack still comes along as a request hint (not from opts —
+    // callers don't pass it anymore) purely so an audio-switch-driven
+    // restart resolves the SAME subtitle rather than falling back to
+    // whatever the fresh session would auto-pick on its own.
+    load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, subtitleTrack)
   }, [load, audioTrack, subtitleTrack])
 
+  const selectSubtitleTrack: PlaybackSession['selectSubtitleTrack'] = useCallback(index => {
+    setSubtitleTrack(index)
+  }, [])
+
   return {
-    loading, error, manifestUrl, subtitleUrl, isLive, directPlay,
-    title, durationMs, tracks, audioTrack, subtitleTrack, reload, startPositionMs,
+    loading, error, manifestUrl, isLive, directPlay,
+    title, durationMs, tracks, audioTrack, subtitleTrack, reload, selectSubtitleTrack, startPositionMs,
   }
 }

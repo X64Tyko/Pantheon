@@ -30,6 +30,13 @@ export interface VodStartResponse {
   title:         string
   tracks:        VodTracks
   subtitle_burned_in: boolean
+  // The actually-resolved selection (may differ from what was requested —
+  // -1/"unset" resolved to a saved preference or a default track). Nothing
+  // else says which master_url rendition is already active, so
+  // usePlaybackSession uses these to start its own selection state in sync
+  // with what's really playing instead of guessing.
+  audio_track:    number
+  subtitle_track: number
 }
 
 export interface VodStartParams {

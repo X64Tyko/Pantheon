@@ -125,6 +125,16 @@ public:
 	bool directPlay() const { return direct_play; }
 	const MediaInfo& tracks() const { return media_info; }
 	bool hasSubtitleOutput() const { return subtitle_output; }
+	// The actually-resolved selection — may differ from what the client
+	// requested (a saved preference, or -1/"unset" resolved to a real
+	// default; see start()'s pickAudioTrack/pickSubtitleTrack calls).
+	// Router.cpp echoes these back in /stream/vod/start's response so the
+	// client's own track-selection state starts in sync with what's really
+	// playing, since with the master manifest driving playback directly
+	// (buildMasterPlaylist) nothing else tells it which rendition is
+	// already DEFAULT="YES".
+	int audioTrack() const { return audio_track_; }
+	int subtitleTrack() const { return subtitle_track_; }
 	// True when the selected subtitle track is a bitmap format (PGS/DVD/DVB)
 	// being composited directly onto the video via ffmpeg's overlay filter,
 	// rather than extracted as a WebVTT sidecar (hasSubtitleOutput()/

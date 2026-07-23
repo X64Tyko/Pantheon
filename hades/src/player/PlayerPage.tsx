@@ -341,8 +341,13 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     session.reload({ positionMs: currentMs, audioTrack: index })
     saveTrackPreference({ audio_lang: session.tracks?.audio.find(t => t.index === index)?.language ?? '' })
   }
+  // No session.reload() — subtitles are fully decoupled from the main
+  // encoder now (VodSession's on-demand /subtitles/{n} pipe), so this is a
+  // pure client-side selection against the master manifest's SUBTITLES
+  // group; VideoPlayer picks it up via its subtitleTrack prop and switches
+  // hls.js directly, without touching video/audio at all.
   const handleSelectSubtitle = (index: number) => {
-    session.reload({ positionMs: currentMs, subtitleTrack: index })
+    session.selectSubtitleTrack(index)
     saveTrackPreference({ subtitle_lang: session.tracks?.subtitles.find(t => t.index === index)?.language ?? '' })
   }
 
@@ -459,7 +464,8 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                 <VideoPlayer
                   videoRef={videoRef}
                   manifestUrl={session.manifestUrl}
-                  subtitleUrl={session.subtitleUrl}
+                  subtitleTrack={session.subtitleTrack}
+                  subtitleLanguage={session.tracks?.subtitles.find(t => t.index === session.subtitleTrack)?.language ?? null}
                   isLive={session.isLive}
                   startPositionSec={session.startPositionMs / 1000}
                   // The manifest's timeline is the file's real absolute

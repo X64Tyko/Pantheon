@@ -6,13 +6,24 @@ import styles from './VideoPlayer.module.css'
 interface VideoPlayerProps {
   videoRef:        RefObject<HTMLVideoElement>
   manifestUrl:     string | null
-  subtitleUrl:     string | null
   isLive:          boolean
+  // Which subtitle track should be showing, in Hephaestus's own index scheme
+  // (embedded relative_index >= 0, external sidecar <= -2, -1 = off — same
+  // as VodTracks/TrackMenu's convention). VOD only; ignored for live. Now a
+  // controlled selection against the master manifest's own SUBTITLES group
+  // (see hephaestus's VodSession::buildMasterPlaylist) rather than a
+  // separately sideloaded <track> — switching this no longer touches
+  // manifestUrl/the video or audio at all.
+  subtitleTrack?:  number
+  // The selected track's language (BCP-47/ISO 639-2, e.g. "eng") — only
+  // needed for the Safari native-HLS fallback below, which has no URL to
+  // key off the way hls.js's own subtitleTracks[] does.
+  subtitleLanguage?: string | null
   // Where to seek to once this (freshly loaded) manifest is ready — VOD only.
   // Hephaestus's VOD manifest now describes the whole file's real absolute
   // timeline from segment 0 for the session's entire life, so this is just
   // the one-time seek target for THIS load (initial mount, or a new session
-  // from a track switch), not something forced to 0 the way it used to be.
+  // from an audio track switch), not something forced to 0 the way it used to be.
   startPositionSec?: number
   autoPlay?:    boolean
   controls?:    boolean // native scrub bar — used by the admin Chapters review panel, not the full player (which has its own PlayerControls)
@@ -21,42 +32,55 @@ interface VideoPlayerProps {
   onError:      (message: string) => void
 }
 
-export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, startPositionSec, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
-  const trackRef = useRef<HTMLTrackElement>(null)
+export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1, subtitleLanguage = null, startPositionSec, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
+  const hlsRef = useRef<Hls | null>(null)
 
-  // <track default> alone doesn't reliably show the track here: the element
-  // is only added to the DOM once subtitleUrl resolves from the (async)
-  // session-start response, well after the <video> itself has mounted and
-  // started playing. Browsers only honor the `default` content attribute
-  // reliably for tracks present at initial parse — one added later needs its
-  // TextTrack.mode set explicitly, same role ExoPlayer's
-  // SELECTION_FLAG_DEFAULT plays for the Android client's sideloaded track.
-  const activateSubtitleTrack = useCallback(() => {
-    const track = trackRef.current?.track
-    if (track) track.mode = 'showing'
-  }, [])
+  // Maps our subtitleTrack index onto whichever of hls.js's own
+  // subtitleTracks[] actually corresponds to it — hls.js assigns its own
+  // opaque sequential ids that don't otherwise carry our index, so this
+  // matches by URL instead: every /subtitles/{n}/playlist.m3u8 route
+  // Hephaestus generates embeds our index literally (see
+  // buildMasterPlaylist), so it round-trips exactly. -1 (off) just disables
+  // the active track. Safe to call before hls.js has parsed the manifest —
+  // subtitleTracks is empty until SUBTITLE_TRACKS_UPDATED, so this is a
+  // silent no-op until the listener below re-invokes it.
+  const applySubtitleTrack = useCallback(() => {
+    const hls = hlsRef.current
+    if (!hls) return
+    if (subtitleTrack < 0) { hls.subtitleTrack = -1; return }
+    const idx = hls.subtitleTracks.findIndex(t => t.url.includes(`/subtitles/${subtitleTrack}/playlist.m3u8`))
+    if (idx !== -1) hls.subtitleTrack = idx
+  }, [subtitleTrack])
 
-  useEffect(() => {
-    if (!subtitleUrl) return
-    activateSubtitleTrack()
-  }, [subtitleUrl, activateSubtitleTrack])
+  // Safari (native HLS, no hls.js — see the else-if branch below) parses
+  // SUBTITLES groups into the <video> element's own native textTracks
+  // itself; matched by language since TextTrack has no URL to key off the
+  // way hls.js's MediaPlaylist does. Imprecise if two tracks share a
+  // language (picks the first) — the old single-<track> sideload had the
+  // same limitation for Safari (only ever offered the one server-resolved
+  // track regardless of duplicates).
+  const applyNativeSubtitleTrack = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    for (const t of Array.from(video.textTracks)) t.mode = 'disabled'
+    if (subtitleTrack < 0 || !subtitleLanguage) return
+    const match = Array.from(video.textTracks).find(t => t.language === subtitleLanguage)
+    if (match) match.mode = 'showing'
+  }, [subtitleTrack, subtitleLanguage])
+
+  // Re-applies whenever the caller changes which track should show — the
+  // only trigger now, since a subtitle switch no longer reloads manifestUrl.
+  // Both are safe no-ops on the "other" playback path (hlsRef.current is
+  // null under Safari's native branch; textTracks is empty before hls.js
+  // has attached media under the MSE branch).
+  useEffect(() => { applySubtitleTrack() }, [applySubtitleTrack])
+  useEffect(() => { applyNativeSubtitleTrack() }, [applyNativeSubtitleTrack])
 
   useEffect(() => {
     const video = videoRef.current
     if (!video || !manifestUrl) return
 
     let hls: Hls | null = null
-
-    // manifestUrl and subtitleUrl always change together — every track
-    // switch/seek-outside-buffer is a brand new session (usePlaybackSession's
-    // reload()), which tears down and recreates the Hls instance below in the
-    // same render that updates subtitleUrl. Re-attaching media triggers the
-    // browser's own resource-load algorithm, which can reset/repopulate the
-    // <video>'s text tracks — racing the effect above if it happened to run
-    // first. Re-asserting here, on the video's own 'loadedmetadata' (fired
-    // once the new resource is actually attached and tracks are settled),
-    // guarantees this always wins regardless of hook/effect ordering.
-    video.addEventListener('loadedmetadata', activateSubtitleTrack)
 
     if (Hls.isSupported()) {
       // VOD sessions get a complete, #EXT-X-ENDLIST-terminated playlist from
@@ -68,6 +92,11 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, startP
       // keep hls.js's own default live-edge sync instead (that playlist is a
       // genuinely rolling/deleting window, not an append-only one).
       hls = new Hls(isLive ? {} : { startPosition: startPositionSec ?? 0 })
+      hlsRef.current = hls
+      // Fires once hls.js has parsed the manifest's SUBTITLES groups —
+      // applySubtitleTrack no-ops until then (subtitleTracks is empty), so
+      // this is what actually applies the initial selection.
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, applySubtitleTrack)
       hls.loadSource(manifestUrl)
       hls.attachMedia(video)
       registerReceiverVideoElement(video)
@@ -117,6 +146,10 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, startP
       console.log('[player] Using native HLS (Safari/iOS)')
       video.src = manifestUrl
       registerReceiverVideoElement(video)
+      // Safari populates video.textTracks from the manifest's SUBTITLES
+      // group only once metadata is actually loaded — same event the seek
+      // below already waits on.
+      video.addEventListener('loadedmetadata', applyNativeSubtitleTrack)
       if (!isLive && startPositionSec) {
         const seekOnce = () => { video.currentTime = startPositionSec; video.removeEventListener('loadedmetadata', seekOnce) }
         video.addEventListener('loadedmetadata', seekOnce)
@@ -127,11 +160,12 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, startP
     }
 
     return () => {
-      video.removeEventListener('loadedmetadata', activateSubtitleTrack)
+      video.removeEventListener('loadedmetadata', applyNativeSubtitleTrack)
+      hlsRef.current = null
       hls?.destroy()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifestUrl, activateSubtitleTrack])
+  }, [manifestUrl])
 
   return (
     <video
@@ -141,8 +175,6 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, startP
       className={styles.video}
       playsInline
       controls={controls}
-    >
-      {subtitleUrl && <track ref={trackRef} kind="subtitles" src={subtitleUrl} default label="Subtitles" />}
-    </video>
+    />
   )
 }

@@ -436,10 +436,11 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             // The multi-rendition master manifest (AUDIO/SUBTITLES groups —
             // see VodSession::buildMasterPlaylist), not the flat variant
             // playlist directly. hls.js's loadSource() already handles both
-            // single- and multi-variant playlists transparently, so this is
-            // a no-op for Hades' existing player/track-switch code; native
+            // single- and multi-variant playlists transparently. Native
             // players (Android/TV) get the real groups to build their own
-            // language picker from.
+            // language picker from; Hades drives its own TrackMenu against
+            // hls.js's subtitleTrack/audioTrack APIs instead (see
+            // VideoPlayer.tsx), matched against these renditions by URL.
             {"manifest_url", "/stream/vod/" + session->sessionId() + "/master.m3u8"},
             {"direct_play",  session->directPlay()},
             // Prefer this session's own authoritative ffprobe duration —
@@ -449,6 +450,15 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             {"title",        info->title},
             {"tracks",       tracks},
             {"subtitle_burned_in", session->subtitleBurnedIn()},
+            // The actually-resolved selection (VodSession::audioTrack()/
+            // subtitleTrack()'s own comment) — may differ from what the
+            // request asked for (e.g. -1/"unset" resolved to a saved
+            // preference or the first track), and nothing else in this
+            // response says which master-manifest rendition is already
+            // active, so callers driving the manifest directly need this to
+            // start their own selection state in sync with it.
+            {"audio_track",     session->audioTrack()},
+            {"subtitle_track",  session->subtitleTrack()},
         };
         if (session->hasSubtitleOutput())
             out["subtitle_url"] = "/stream/vod/" + session->sessionId() + "/subs.vtt";
