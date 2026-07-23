@@ -88,6 +88,15 @@ public:
     // just whichever one is selected) — Router.cpp lists all of them in
     // tracks.subtitles[] alongside the embedded ones.
     const std::vector<ExternalSubtitle>& externalSubtitles() const { return external_subtitles_; }
+    // ffmpeg writes subs.vtt as one flat file (no incremental HLS-style
+    // segmenting the way video/audio gets), so the file exists on disk
+    // almost immediately (avio_open2 happens before any cues are muxed) but
+    // isn't actually complete until the whole process closes it — see
+    // Router.cpp's /subs.vtt handler, which waits on this rather than mere
+    // file existence before serving (a <track> element fetches its VTT
+    // resource exactly once and never re-fetches, so serving it early means
+    // permanently missing every cue after that point).
+    bool hasFfmpegExited() const { return ffmpeg_exited.load(); }
 
     // For the activity/debugging view (ActivityRouter).
     const std::string& filePath() const { return file_path; }
@@ -104,6 +113,7 @@ private:
     std::unique_ptr<FfmpegProcess> ffmpeg;
 
     std::atomic<bool>    active{false};
+    std::atomic<bool>    ffmpeg_exited{false};
     std::atomic<int64_t> last_touch_ms{0};
     bool          direct_play     = false;
     bool          subtitle_output = false;

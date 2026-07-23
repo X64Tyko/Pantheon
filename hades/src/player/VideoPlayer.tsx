@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, type RefObject } from 'react'
 import Hls from 'hls.js'
 import { registerReceiverVideoElement } from '../cast/CastReceiverProvider'
 import styles from './VideoPlayer.module.css'
@@ -25,17 +25,32 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
   // reliably for tracks present at initial parse — one added later needs its
   // TextTrack.mode set explicitly, same role ExoPlayer's
   // SELECTION_FLAG_DEFAULT plays for the Android client's sideloaded track.
-  useEffect(() => {
-    if (!subtitleUrl) return
+  const activateSubtitleTrack = useCallback(() => {
     const track = trackRef.current?.track
     if (track) track.mode = 'showing'
-  }, [subtitleUrl])
+  }, [])
+
+  useEffect(() => {
+    if (!subtitleUrl) return
+    activateSubtitleTrack()
+  }, [subtitleUrl, activateSubtitleTrack])
 
   useEffect(() => {
     const video = videoRef.current
     if (!video || !manifestUrl) return
 
     let hls: Hls | null = null
+
+    // manifestUrl and subtitleUrl always change together — every track
+    // switch/seek-outside-buffer is a brand new session (usePlaybackSession's
+    // reload()), which tears down and recreates the Hls instance below in the
+    // same render that updates subtitleUrl. Re-attaching media triggers the
+    // browser's own resource-load algorithm, which can reset/repopulate the
+    // <video>'s text tracks — racing the effect above if it happened to run
+    // first. Re-asserting here, on the video's own 'loadedmetadata' (fired
+    // once the new resource is actually attached and tracks are settled),
+    // guarantees this always wins regardless of hook/effect ordering.
+    video.addEventListener('loadedmetadata', activateSubtitleTrack)
 
     if (Hls.isSupported()) {
       // VOD sessions (movies/episodes) are served as a growing HLS "event"
@@ -105,9 +120,12 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
       onError('This browser cannot play HLS video.')
     }
 
-    return () => { hls?.destroy() }
+    return () => {
+      video.removeEventListener('loadedmetadata', activateSubtitleTrack)
+      hls?.destroy()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifestUrl])
+  }, [manifestUrl, activateSubtitleTrack])
 
   return (
     <video

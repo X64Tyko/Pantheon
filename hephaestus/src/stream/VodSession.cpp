@@ -285,6 +285,7 @@ void VodSession::onExit(int code) {
     std::cerr << "[vod:" << session_id << "] ffmpeg exited (code=" << code << ")\n";
     // Natural completion or a crash both just end the session — VOD has no
     // "next item" to transition to the way a channel does.
+    ffmpeg_exited = true;
 }
 
 void VodSession::stop() {

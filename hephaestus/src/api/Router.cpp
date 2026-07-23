@@ -31,6 +31,23 @@ static bool waitForFile(const std::string& path, int maxWaitMs = 10000) {
     return std::filesystem::exists(path);
 }
 
+// subs.vtt is a single flat file, not incrementally segmented like the HLS
+// video/audio output — ffmpeg opens it (and so it "exists" on disk) almost
+// immediately, but it isn't actually complete until the whole process closes
+// it. A browser/ExoPlayer <track>/sidecar fetch happens exactly once and
+// never re-fetches, so serving it as soon as it merely exists means
+// permanently missing every cue ffmpeg hadn't gotten to yet. Poll for actual
+// completion instead. 2 minutes covers a slow non-direct-play transcode
+// (bound by the same demux/mux pass as the video encode) — direct-play
+// remux, the common case, finishes in a few seconds.
+static bool waitForFfmpegExit(const VodSession& session, int maxWaitMs = 120000) {
+    for (int waited = 0; waited < maxWaitMs; waited += 200) {
+        if (session.hasFfmpegExited()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    return session.hasFfmpegExited();
+}
+
 static void serveHlsFile(const std::string& path, const std::string& content_type,
                           httplib::Response& res) {
     if (!std::filesystem::exists(path)) {
@@ -398,6 +415,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         session->touch();
         auto path = session->dir() + "/subs.vtt";
         if (!waitForFile(path)) { res.status = 503; return; }
+        waitForFfmpegExit(*session); // see its own comment — existence alone isn't completeness
         serveHlsFile(path, "text/vtt", res);
     });
 
