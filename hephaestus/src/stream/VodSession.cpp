@@ -190,6 +190,40 @@ static std::vector<std::string> buildVodArgs(
 	return a;
 }
 
+// SRT files carry no charset declaration; ffmpeg's srt demuxer assumes UTF-8
+// with no fallback. Non-English sidecars are often Windows-1252 instead
+// (English ones are usually plain ASCII, which is valid UTF-8 by accident).
+static bool looksLikeValidUtf8(const std::string& bytes) {
+	size_t i = 0;
+	while (i < bytes.size()) {
+		unsigned char c = static_cast<unsigned char>(bytes[i]);
+		int extra;
+		if (c < 0x80) extra = 0;
+		else if ((c & 0xE0) == 0xC0) extra = 1;
+		else if ((c & 0xF0) == 0xE0) extra = 2;
+		else if ((c & 0xF8) == 0xF0) extra = 3;
+		else return false; // invalid leading byte
+		if (i + static_cast<size_t>(extra) >= bytes.size()) break; // truncated at buffer end — inconclusive, don't fail on it
+		for (int k = 1; k <= extra; ++k) {
+			unsigned char cc = static_cast<unsigned char>(bytes[i + static_cast<size_t>(k)]);
+			if ((cc & 0xC0) != 0x80) return false;
+		}
+		i += static_cast<size_t>(extra) + 1;
+	}
+	return true;
+}
+
+// "" (ffmpeg's own default) if the sidecar looks like valid UTF-8 or can't
+// be read; "CP1252" otherwise — covers most legacy Western-language .srt files.
+static std::string sniffSubCharenc(const std::string& path) {
+	std::ifstream f(path, std::ios::binary);
+	if (!f) return "";
+	std::string buf(65536, '\0');
+	f.read(buf.data(), static_cast<std::streamsize>(buf.size()));
+	buf.resize(static_cast<size_t>(f.gcount()));
+	return looksLikeValidUtf8(buf) ? "" : "CP1252";
+}
+
 // The independent, whole-file subtitle extraction process — see VodSession.h's
 // class comment for why this is a second, separate FfmpegProcess rather than
 // a second output group tacked onto the main encoder's own invocation. No
@@ -210,6 +244,10 @@ static std::vector<std::string> buildVodSubtitleArgs(
 	pushLogLevelArgs(a, verbose_transcode_logs);
 	a.push_back("-i"); a.push_back(file_path);
 	if (!externalSubtitlePath.empty()) {
+		// -sub_charenc is a per-input option — must precede THIS -i, not the
+		// primary video file's.
+		auto charenc = sniffSubCharenc(externalSubtitlePath);
+		if (!charenc.empty()) { a.push_back("-sub_charenc"); a.push_back(charenc); }
 		a.push_back("-i"); a.push_back(externalSubtitlePath);
 		a.insert(a.end(), {"-map", "1:s:0", "-c:s", "webvtt", outPath});
 	} else {
@@ -339,6 +377,8 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 		if (segment_start_ms[i] <= position_ms) start_segment = static_cast<int>(i);
 		else break;
 	}
+	initial_start_segment_ = start_segment;
+	initial_target_reached.store(false);
 	if (!restartAt(start_segment)) {
 		active = false;
 		return false;
@@ -411,7 +451,7 @@ void VodSession::spawnSubtitleProcess() {
 	std::lock_guard<std::mutex> lock(subs_mtx);
 	subs_ffmpeg = std::make_unique<FfmpegProcess>(
 		std::move(args), nullptr,
-		[this](int) { subs_exited.store(true); },
+		[this](int code) { if (code != 0) subs_failed.store(true); subs_exited.store(true); },
 		opts.buffer_size, opts.ffmpeg_debug_logs, opts.verbose_transcode_logs
 	);
 	// Best-effort — hasSubtitleOutput()/subtitle_url still get returned even
@@ -481,6 +521,8 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 	if (segment_index < 0 || segment_index >= total_segments) return SegmentPrep::Failed;
 
 	last_requested_segment.store(segment_index);
+	// Reached the real start at least once — a hole before it now is a real seek.
+	if (segment_index >= initial_start_segment_) initial_target_reached.store(true);
 
 	int run_start, generated;
 	bool run_exhausted;
@@ -492,13 +534,11 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 	}
 
 	if (segment_index >= run_start && segment_index <= generated) {
-		// Already on disk. Opportunistically resume a paused encoder if the
-		// viewer has caught back up close enough that the pause margin will
-		// need to shrink again soon — cheaper than waiting for the next
-		// lookahead tick to notice.
+		// Already on disk. Resume unconditionally on any request, not just
+		// near the frontier — cutting it close caused visible stutter.
+		// maybeAutoPause() re-pauses once genuinely idle again.
 		std::lock_guard<std::mutex> lock(session_mtx);
-		if (ffmpeg && ffmpeg->isPaused() && (generated - segment_index) < kVodCatchUpMarginSegments)
-			ffmpeg->resume();
+		if (ffmpeg && ffmpeg->isPaused()) ffmpeg->resume();
 		return SegmentPrep::Ready;
 	}
 
@@ -530,10 +570,20 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 		return SegmentPrep::WaitShort;
 	}
 
-	// A hole before this run's start (backward seek into never-generated
-	// territory) or a forward jump far beyond reach — either way, restarting
-	// there directly is cheaper than waiting for the encoder to churn there
-	// sequentially (or, for the backward case, it never would on its own).
+	// A hole before this run's start is usually a genuine backward seek —
+	// EXCEPT before the session has ever reached its real starting point
+	// (fresh resume/track-switch): some clients probe an early segment
+	// before honoring the real start position, and blindly restarting on
+	// that would reset the whole session to 0:00. Once the real target has
+	// been reached once (initial_target_reached), a hole really is a seek.
+	if (segment_index < run_start && !initial_target_reached.load()) {
+		return SegmentPrep::WaitShort; // times out to 503 if it never appears — never restarts here
+	}
+
+	// Forward jump far beyond reach, or a genuine backward seek past this
+	// run's start — restarting there directly is cheaper than waiting for
+	// the encoder to churn there sequentially (or, for the backward case, it
+	// never would on its own).
 	if (!restartAt(segment_index)) return SegmentPrep::Failed;
 	return SegmentPrep::WaitColdStart;
 }
@@ -555,10 +605,14 @@ void VodSession::maybeAutoPause() {
 
 	int floor = std::max(last_requested_segment.load(), current_run_start_segment.load());
 	int window_segments = std::max(1, opts.lookahead_secs / kVodHlsSegmentSecs);
-	bool should_pause = (generated - floor) >= window_segments;
+	// Hysteresis: pause at the full window, resume at half — gives the
+	// encoder real runway before the client could catch up to it.
+	int resume_threshold_segments = std::max(1, window_segments / 2);
+	bool should_pause  = (generated - floor) >= window_segments;
+	bool should_resume = (generated - floor) < resume_threshold_segments;
 
 	if (should_pause && !ffmpeg->isPaused()) ffmpeg->pause();
-	else if (!should_pause && ffmpeg->isPaused()) ffmpeg->resume();
+	else if (should_resume && ffmpeg->isPaused()) ffmpeg->resume();
 }
 
 void VodSession::lookaheadLoop() {

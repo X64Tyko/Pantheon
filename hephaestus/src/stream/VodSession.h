@@ -136,6 +136,10 @@ public:
 	// sideloaded-subtitle fetch happens exactly once and never re-fetches, so
 	// serving before the file is complete means permanently missing cues).
 	bool hasSubtitleExtractionExited() const { return subs_exited.load(); }
+	// True if the process exited non-zero (e.g. a charset ffmpeg couldn't
+	// decode) — Router.cpp's /subs.vtt handler 503s on this instead of
+	// serving the empty-but-valid file ffmpeg leaves behind on failure.
+	bool hasSubtitleExtractionFailed() const { return subs_failed.load(); }
 
 	// Authoritative duration (this session's own ffprobe run, or the
 	// fallback passed to start() if that came back empty).
@@ -169,6 +173,12 @@ private:
 	std::atomic<int> last_requested_segment{-1};
 	std::vector<int> discontinuity_boundaries; // guarded by session_mtx
 	bool has_spawned_once_ = false;            // guarded by session_mtx
+	// The segment start() originally resolved from the caller's position_ms
+	// — immutable, unlike current_run_start_segment. Distinguishes a real
+	// backward seek from a stray early request before this session ever
+	// reached its actual start — see prepareSegment().
+	int initial_start_segment_ = 0;
+	std::atomic<bool> initial_target_reached{false};
 	// True once the CURRENT run's encoder has exited on its own (reached
 	// real EOF or crashed) — reset every time restartAt() spawns a fresh
 	// one. Lets prepareSegment() notice a run that finished without ever
@@ -197,6 +207,7 @@ private:
 	std::mutex    subs_mtx;
 	std::unique_ptr<FfmpegProcess> subs_ffmpeg;
 	std::atomic<bool> subs_exited{false};
+	std::atomic<bool> subs_failed{false};
 
 	// Lookahead monitor — see lookaheadLoop().
 	std::thread       lookahead_thread;

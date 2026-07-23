@@ -33,14 +33,32 @@ static bool waitForFile(const std::string& path, int maxWaitMs = 10000) {
 
 // subs.vtt is written by its own small, independent, whole-file ffmpeg
 // process (see VodSession's class comment) — decoupled from the main
-// encoder, so unlike that process (which can now legitimately run, paused
-// and resumed, for the entire length of a long viewing session) this one
-// finishes quickly regardless: pure demux/convert of a text subtitle stream,
-// no video decode/encode involved. Bounded well under ExoPlayer's fixed 8s
-// HTTP timeout — waiting longer server-side than the pickiest known client
-// achieves nothing but tying up one of Hephaestus's limited shared worker
-// threads for a request whose client has already given up.
-static bool waitForSubtitleExtraction(const VodSession& session, int maxWaitMs = 6000) {
+// encoder's own pause/restart cycle, but NOT decoupled from the source
+// file's size the way an earlier version of this comment assumed. For an
+// EMBEDDED track (buildVodSubtitleArgs' `-map 0:s:N` branch, no external
+// sidecar `-i`), this is the file's only mapped input and there's no `-ss`
+// (it has to cover the whole runtime, since the sliding-window main encoder
+// can seek anywhere over the session's life) — ffmpeg's demuxer therefore
+// still has to sequentially read every interleaved video/audio packet in
+// the ENTIRE container to reach each subtitle packet, exactly as slow as a
+// full-file direct-play remux was, just without an encode on top. A real
+// movie/episode file (many GB, especially over network storage) can easily
+// take much longer than a few seconds for that — nothing here is actually
+// "small" for that case. An EXTERNAL sidecar (the `-map 1:s:0` branch) is
+// genuinely fast regardless of the source file's size: the video file is
+// still passed as input 0 so ffmpeg can probe it, but with no `-map`
+// referencing it, ffmpeg's demux loop never has anywhere to send its
+// packets and doesn't bother reading through it — only the tiny sidecar
+// file (input 1) actually gets demuxed. That asymmetry is exactly why
+// external subtitles kept working through this rearchitecture while
+// embedded ones stopped: this wait used to be bounded by the old
+// single-process design's OWN generous 120s budget (waitForFfmpegExit) and
+// was rarely hit in practice; shrinking it to look "safely" under
+// ExoPlayer's 8s client timeout also shrank it well below what a real
+// embedded extraction on a real file needs. Restored to the old budget —
+// blocking one shared worker thread for up to this long is the same
+// trade-off the old code already made.
+static bool waitForSubtitleExtraction(const VodSession& session, int maxWaitMs = 120000) {
     for (int waited = 0; waited < maxWaitMs; waited += 200) {
         if (session.hasSubtitleExtractionExited()) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -442,7 +460,20 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         session->touch();
         auto path = session->dir() + "/subs.vtt";
         if (!waitForFile(path, 3000)) { res.status = 503; return; } // existence — should already exist by request time
-        waitForSubtitleExtraction(*session); // completeness — see its own comment, now safely bounded
+        // Completeness — see waitForSubtitleExtraction's own comment. Must
+        // actually check the result: a <track>/ExoPlayer sideloaded fetch
+        // happens exactly once and never re-fetches, so serving whatever
+        // partial bytes ffmpeg has flushed so far (rather than 503ing and
+        // letting the client's own request logic decide whether to retry)
+        // means permanently truncated/no cues for the rest of the file, not
+        // a merely-late-but-eventually-correct one.
+        if (!waitForSubtitleExtraction(*session)) { res.status = 503; return; }
+        // Exited doesn't mean succeeded — ffmpeg can leave a syntactically
+        // valid but empty/truncated WebVTT file behind on failure (e.g. its
+        // srt demuxer rejecting non-UTF-8 input despite sniffSubCharenc's
+        // mitigation). Serving that as 200 reads to the client as "this
+        // title just has no subtitles," silently, instead of a real error.
+        if (session->hasSubtitleExtractionFailed()) { res.status = 500; res.set_content(json{{"error","subtitle extraction failed"}}.dump(), "application/json"); return; }
         serveHlsFile(path, "text/vtt", res);
     });
 
