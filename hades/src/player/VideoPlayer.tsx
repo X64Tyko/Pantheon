@@ -4,10 +4,16 @@ import { registerReceiverVideoElement } from '../cast/CastReceiverProvider'
 import styles from './VideoPlayer.module.css'
 
 interface VideoPlayerProps {
-  videoRef:     RefObject<HTMLVideoElement>
-  manifestUrl:  string | null
-  subtitleUrl:  string | null
-  isLive:       boolean
+  videoRef:        RefObject<HTMLVideoElement>
+  manifestUrl:     string | null
+  subtitleUrl:     string | null
+  isLive:          boolean
+  // Where to seek to once this (freshly loaded) manifest is ready — VOD only.
+  // Hephaestus's VOD manifest now describes the whole file's real absolute
+  // timeline from segment 0 for the session's entire life, so this is just
+  // the one-time seek target for THIS load (initial mount, or a new session
+  // from a track switch), not something forced to 0 the way it used to be.
+  startPositionSec?: number
   autoPlay?:    boolean
   controls?:    boolean // native scrub bar — used by the admin Chapters review panel, not the full player (which has its own PlayerControls)
   onTimeUpdate: (currentMs: number, durationMs: number) => void
@@ -15,7 +21,7 @@ interface VideoPlayerProps {
   onError:      (message: string) => void
 }
 
-export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
+export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, startPositionSec, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
   const trackRef = useRef<HTMLTrackElement>(null)
 
   // <track default> alone doesn't reliably show the track here: the element
@@ -53,22 +59,15 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
     video.addEventListener('loadedmetadata', activateSubtitleTrack)
 
     if (Hls.isSupported()) {
-      // VOD sessions (movies/episodes) are served as a growing HLS "event"
-      // playlist while Hephaestus is still transcoding (VodSession.cpp) —
-      // no #EXT-X-ENDLIST until the whole file finishes. hls.js decides
-      // "is this live" purely from ENDLIST absence, not the EVENT/live
-      // distinction the HLS spec itself makes, so without this it defaults
-      // to live-edge start behavior (liveSyncDurationCount segments back
-      // from whatever's newest). That's invisible for a fast transcode
-      // where segments arrive well ahead of playback, but for a slow one
-      // the player keeps chasing a moving target it can never quite catch
-      // and stalls indefinitely with no fatal error — "stuck on the
-      // throbber." Forcing startPosition 0 makes VOD always start from the
-      // beginning regardless of how far transcoding has progressed. True
-      // live channels keep hls.js's default (live-edge sync is correct
-      // there — that playlist is a genuinely rolling/deleting window, not
-      // an append-only one).
-      hls = new Hls(isLive ? {} : { startPosition: 0 })
+      // VOD sessions get a complete, #EXT-X-ENDLIST-terminated playlist from
+      // Hephaestus immediately (the whole file's segment list is known and
+      // declared upfront — see VodSession.cpp's sliding-window engine), so
+      // hls.js correctly treats it as on-demand rather than live from the
+      // very first fetch. startPosition seeds where in that (now-absolute,
+      // whole-file) timeline THIS load should begin — true live channels
+      // keep hls.js's own default live-edge sync instead (that playlist is a
+      // genuinely rolling/deleting window, not an append-only one).
+      hls = new Hls(isLive ? {} : { startPosition: startPositionSec ?? 0 })
       hls.loadSource(manifestUrl)
       hls.attachMedia(video)
       registerReceiverVideoElement(video)
@@ -111,10 +110,17 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
       })
       if (autoPlay) video.play().catch(() => {})
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari: native HLS, no hls.js needed.
+      // Safari: native HLS, no hls.js needed. Unlike hls.js there's no
+      // startPosition option — the manifest's own absolute timeline means
+      // native playback would otherwise just start at 0, so seek explicitly
+      // once metadata (duration/seekable range) is actually available.
       console.log('[player] Using native HLS (Safari/iOS)')
       video.src = manifestUrl
       registerReceiverVideoElement(video)
+      if (!isLive && startPositionSec) {
+        const seekOnce = () => { video.currentTime = startPositionSec; video.removeEventListener('loadedmetadata', seekOnce) }
+        video.addEventListener('loadedmetadata', seekOnce)
+      }
       if (autoPlay) video.play().catch(() => {})
     } else {
       onError('This browser cannot play HLS video.')

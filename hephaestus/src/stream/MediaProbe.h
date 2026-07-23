@@ -1,26 +1,27 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <optional>
 
 struct AudioTrack {
-    int         stream_index = 0;  // ffmpeg stream index within the file
-    int         relative_index = 0; // nth audio stream (for -map 0:a:N)
-    std::string codec;
-    std::string language;          // BCP-47 / ISO 639-2, e.g. "eng"
-    std::string title;
-    int         channels = 0;
+	int         stream_index = 0;  // ffmpeg stream index within the file
+	int         relative_index = 0; // nth audio stream (for -map 0:a:N)
+	std::string codec;
+	std::string language;          // BCP-47 / ISO 639-2, e.g. "eng"
+	std::string title;
+	int         channels = 0;
 };
 
 struct VideoTrack {
-    int         stream_index = 0;
-    std::string codec;             // e.g. "h264", "hevc", "av1"
-    int         width  = 0;
-    int         height = 0;
-    int         bit_depth = 8;
-    std::string color_transfer;    // e.g. "smpte2084" (PQ), "arib-std-b67" (HLG), "bt709"
-    std::string color_primaries;   // e.g. "bt2020", "bt709"
-    std::string color_space;       // e.g. "bt2020nc", "bt709"
+	int         stream_index = 0;
+	std::string codec;             // e.g. "h264", "hevc", "av1"
+	int         width  = 0;
+	int         height = 0;
+	int         bit_depth = 8;
+	std::string color_transfer;    // e.g. "smpte2084" (PQ), "arib-std-b67" (HLG), "bt709"
+	std::string color_primaries;   // e.g. "bt2020", "bt709"
+	std::string color_space;       // e.g. "bt2020nc", "bt709"
 };
 
 // True for the two HDR transfer functions ffprobe reports (PQ/HDR10(+) and
@@ -31,23 +32,42 @@ bool isHdrTransfer(const std::string& color_transfer);
 int parseBitDepthForTest(const std::string& json_str);
 
 struct SubtitleTrack {
-    int         stream_index = 0;
-    int         relative_index = 0;
-    std::string codec;
-    std::string language;
-    std::string title;
+	int         stream_index = 0;
+	int         relative_index = 0;
+	std::string codec;
+	std::string language;
+	std::string title;
 };
 
 struct MediaInfo {
-    std::vector<VideoTrack>    video;
-    std::vector<AudioTrack>    audio;
-    std::vector<SubtitleTrack> subtitles;
+	std::vector<VideoTrack>    video;
+	std::vector<AudioTrack>    audio;
+	std::vector<SubtitleTrack> subtitles;
+	// From ffprobe's format.duration (-show_format) — 0 if ffprobe didn't
+	// report one (raw/unusual containers, corrupt headers). Callers needing
+	// a duration to precompute an HLS playlist upfront must fall back to
+	// another source (e.g. Kairos's own library-scan duration) when this is 0.
+	int64_t duration_ms = 0;
 };
 
 // Runs ffprobe on file_path and returns stream info.
 // Returns nullopt if ffprobe fails or the file doesn't exist.
 std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
-                                     const std::string& file_path);
+									 const std::string& file_path);
+
+// Lists every keyframe's presentation timestamp in the primary video stream,
+// in ascending order (always starting at/near 0), by reading packet headers
+// only — no decode involved, fast even on long files. A direct-play (stream
+// copy) VOD session can only ever have its HLS segments cut at these exact
+// points (ffmpeg's -hls_time is a minimum, not an exact interval: it cuts at
+// the first keyframe at or after that many seconds have elapsed since the
+// last cut) — VodSession uses this to precompute the REAL segment boundaries
+// a direct-play session will produce, instead of assuming a uniform cadence
+// that only actually holds for the transcode paths (where -force_key_frames
+// controls keyframe placement directly). Returns an empty vector on probe
+// failure or a file with no video stream.
+std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
+												const std::string& file_path);
 
 // Thread-safe cache in front of probeMedia(), keyed by file_path. Preview
 // channel-flips re-probe the same handful of files as viewers cycle through
@@ -59,7 +79,7 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 // Failures are deliberately not cached (a transient issue — file mid-write,
 // share hiccup — shouldn't wedge a session into permanent failure).
 std::optional<MediaInfo> probeMediaCached(const std::string& ffprobe_path,
-                                           const std::string& file_path);
+										   const std::string& file_path);
 
 // Returns the relative audio index (for -map 0:a:N) of the best matching
 // track: prefers preferred_lang if non-empty, otherwise returns 0.

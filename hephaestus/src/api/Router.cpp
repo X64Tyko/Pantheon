@@ -31,21 +31,21 @@ static bool waitForFile(const std::string& path, int maxWaitMs = 10000) {
     return std::filesystem::exists(path);
 }
 
-// subs.vtt is a single flat file, not incrementally segmented like the HLS
-// video/audio output — ffmpeg opens it (and so it "exists" on disk) almost
-// immediately, but it isn't actually complete until the whole process closes
-// it. A browser/ExoPlayer <track>/sidecar fetch happens exactly once and
-// never re-fetches, so serving it as soon as it merely exists means
-// permanently missing every cue ffmpeg hadn't gotten to yet. Poll for actual
-// completion instead. 2 minutes covers a slow non-direct-play transcode
-// (bound by the same demux/mux pass as the video encode) — direct-play
-// remux, the common case, finishes in a few seconds.
-static bool waitForFfmpegExit(const VodSession& session, int maxWaitMs = 120000) {
+// subs.vtt is written by its own small, independent, whole-file ffmpeg
+// process (see VodSession's class comment) — decoupled from the main
+// encoder, so unlike that process (which can now legitimately run, paused
+// and resumed, for the entire length of a long viewing session) this one
+// finishes quickly regardless: pure demux/convert of a text subtitle stream,
+// no video decode/encode involved. Bounded well under ExoPlayer's fixed 8s
+// HTTP timeout — waiting longer server-side than the pickiest known client
+// achieves nothing but tying up one of Hephaestus's limited shared worker
+// threads for a request whose client has already given up.
+static bool waitForSubtitleExtraction(const VodSession& session, int maxWaitMs = 6000) {
     for (int waited = 0; waited < maxWaitMs; waited += 200) {
-        if (session.hasFfmpegExited()) return true;
+        if (session.hasSubtitleExtractionExited()) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
-    return session.hasFfmpegExited();
+    return session.hasSubtitleExtractionExited();
 }
 
 static void serveHlsFile(const std::string& path, const std::string& content_type,
@@ -303,9 +303,12 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
     });
 
     // ── VOD (on-demand library playback) ──────────────────────────────────────
-    // One session per viewer. Seek and track-switch are both "stop this
-    // session, start a fresh one at the new position/track" — see the plan's
-    // "seek is a new session" design note.
+    // One session per viewer, one session_id/manifest for its whole life. A
+    // TRACK SWITCH is still "stop this session, start a fresh one" (a
+    // different audio/subtitle selection needs genuinely different ffmpeg
+    // -map args). A plain SEEK is not — VodSession restarts its own internal
+    // encoder in place (see VodSession::restartAt/prepareSegment) and keeps
+    // serving the same manifest the whole time.
     svr.Post("/stream/vod/start", [&kairos, &vodSessions, &capabilityCache](
             const httplib::Request& req, httplib::Response& res) {
         json body;
@@ -333,7 +336,8 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         auto token = extractBearerToken(req);
         if (!token.empty()) client_caps = capabilityCache.get(token);
 
-        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable, client_caps, info->external_subtitles);
+        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable,
+                                           client_caps, info->external_subtitles, info->duration_ms);
         if (!session) {
             res.status = 500; res.set_content(json{{"error","failed to start playback"}}.dump(), "application/json"); return;
         }
@@ -374,7 +378,10 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             {"session_id",   session->sessionId()},
             {"manifest_url", "/stream/vod/" + session->sessionId() + "/playlist.m3u8"},
             {"direct_play",  session->directPlay()},
-            {"duration_ms",  info->duration_ms},
+            // Prefer this session's own authoritative ffprobe duration —
+            // Kairos's info->duration_ms is only the fallback VodSession uses
+            // when its own probe comes back empty (see durationMs()'s comment).
+            {"duration_ms",  session->durationMs() > 0 ? session->durationMs() : info->duration_ms},
             {"title",        info->title},
             {"tracks",       tracks},
             {"subtitle_burned_in", session->subtitleBurnedIn()},
@@ -389,23 +396,43 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         auto session = vodSessions.get(req.matches[1]);
         if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
         session->touch();
+        // No wait needed anymore: VodSession writes the complete, static
+        // playlist.m3u8 synchronously inside start(), which itself runs
+        // synchronously inside POST /stream/vod/start — before that response
+        // (and so the manifest_url it contains) can possibly reach the
+        // client. The old 25s NVENC-cold-start-aware wait here is gone; only
+        // a defensive existence check remains for the (should-be-rare) case
+        // the session already vanished by the time this GET lands.
         auto path = session->dir() + "/playlist.m3u8";
-        // VOD's first segment is kVodHlsSegmentSecs (6s) of real content to
-        // decode+encode, 3x live/preview's 2s segments — on top of the same
-        // fixed CUDA/NVENC cold-start cost they pay, that reliably blew past
-        // the shared 10s budget on real hardware (confirmed via the server
-        // actually finishing and writing the segment, just after the client
-        // had already given up and reported failure).
-        if (!waitForFile(path, 25000)) { res.status = 503; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
+        if (!std::filesystem::exists(path)) { res.status = 404; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
         serveHlsFile(path, "application/vnd.apple.mpegurl", res);
     });
 
-    svr.Get(R"(/stream/vod/([^/]+)/(seg-[0-9]+\.ts)$)", [&vodSessions](
+    svr.Get(R"(/stream/vod/([^/]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
         auto session = vodSessions.get(req.matches[1]);
         if (!session) { res.status = 404; return; }
         session->touch();
-        serveHlsFile(session->dir() + "/" + req.matches[2].str(), "video/mp2t", res);
+        int index = std::stoi(req.matches[2].str());
+        auto path = session->dir() + "/seg-" + req.matches[2].str() + ".ts";
+        switch (session->prepareSegment(index)) {
+            case VodSession::SegmentPrep::Ready:
+                break; // already on disk — serve immediately, no wait
+            case VodSession::SegmentPrep::WaitShort:
+                // Resuming an already-warm, already-initialized encoder —
+                // should be fast.
+                if (!waitForFile(path, 10000)) { res.status = 503; return; }
+                break;
+            case VodSession::SegmentPrep::WaitColdStart:
+                // A real restart just happened (seek beyond the generated
+                // range) — same NVENC/CUDA cold-start budget as before.
+                if (!waitForFile(path, 25000)) { res.status = 503; return; }
+                break;
+            case VodSession::SegmentPrep::Failed:
+                res.status = 404;
+                return;
+        }
+        serveHlsFile(path, "video/mp2t", res);
     });
 
     svr.Get(R"(/stream/vod/([^/]+)/subs\.vtt$)", [&vodSessions](
@@ -414,8 +441,8 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         if (!session) { res.status = 404; return; }
         session->touch();
         auto path = session->dir() + "/subs.vtt";
-        if (!waitForFile(path)) { res.status = 503; return; }
-        waitForFfmpegExit(*session); // see its own comment — existence alone isn't completeness
+        if (!waitForFile(path, 3000)) { res.status = 503; return; } // existence — should already exist by request time
+        waitForSubtitleExtraction(*session); // completeness — see its own comment, now safely bounded
         serveHlsFile(path, "text/vtt", res);
     });
 
