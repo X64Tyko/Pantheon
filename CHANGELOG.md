@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Subtitles not rendering (Hades + Android)**: A selected sidecar subtitle track (embedded-extracted or external `.srt`/`.ass`) was correctly generated as a WebVTT sidecar and attached to the player, but never actually appeared. On Hades, the `<track>` element is only added to the DOM once the async session-start response resolves `subtitleUrl` — well after the `<video>` has mounted — and browsers don't reliably honor the `default` attribute for a track added after initial parse, so its `TextTrack.mode` is now set to `'showing'` explicitly. On Android, ExoPlayer's `DefaultTrackSelector` treats a sideloaded `SubtitleConfiguration` as available-but-inactive unless it carries `C.SELECTION_FLAG_DEFAULT`, which was missing.
 - **Release images**: `docker-{kairos,hermes,hephaestus,hades}.yml` only ever triggered on pushes to `master`, so cutting a `vX.Y.Z` release tag never built or published a matching image — only the always-moving `:latest` and opaque `:sha-<hash>` tags existed, with no way to pin a compose file to a specific stable release. All four now also trigger on `v*.*.*` tag pushes and publish a `:vX.Y.Z` image tag matching the release.
 
 ### Added

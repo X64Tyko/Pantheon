@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import Hls from 'hls.js'
 import { registerReceiverVideoElement } from '../cast/CastReceiverProvider'
 import styles from './VideoPlayer.module.css'
@@ -16,6 +16,21 @@ interface VideoPlayerProps {
 }
 
 export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
+  const trackRef = useRef<HTMLTrackElement>(null)
+
+  // <track default> alone doesn't reliably show the track here: the element
+  // is only added to the DOM once subtitleUrl resolves from the (async)
+  // session-start response, well after the <video> itself has mounted and
+  // started playing. Browsers only honor the `default` content attribute
+  // reliably for tracks present at initial parse — one added later needs its
+  // TextTrack.mode set explicitly, same role ExoPlayer's
+  // SELECTION_FLAG_DEFAULT plays for the Android client's sideloaded track.
+  useEffect(() => {
+    if (!subtitleUrl) return
+    const track = trackRef.current?.track
+    if (track) track.mode = 'showing'
+  }, [subtitleUrl])
+
   useEffect(() => {
     const video = videoRef.current
     if (!video || !manifestUrl) return
@@ -103,7 +118,7 @@ export function VideoPlayer({ videoRef, manifestUrl, subtitleUrl, isLive, autoPl
       playsInline
       controls={controls}
     >
-      {subtitleUrl && <track kind="subtitles" src={subtitleUrl} default label="Subtitles" />}
+      {subtitleUrl && <track ref={trackRef} kind="subtitles" src={subtitleUrl} default label="Subtitles" />}
     </video>
   )
 }
