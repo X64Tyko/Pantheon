@@ -7,6 +7,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 #include <unistd.h>
 #include "thread/TaskRegistry.h" // stopTokenSleep
 
@@ -88,11 +89,15 @@ public:
                 sampleOnce();
             }
         });
+        stack().push_back(this);
     }
 
     ~OperationRecorder() {
         sampler_.request_stop();
         if (sampler_.joinable()) sampler_.join();
+
+        auto& s = stack();
+        if (!s.empty() && s.back() == this) s.pop_back();
 
         const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start_).count();
@@ -115,7 +120,40 @@ public:
     OperationRecorder(const OperationRecorder&)            = delete;
     OperationRecorder& operator=(const OperationRecorder&) = delete;
 
+    // Worker-pool call sites (the getThreadCount()-bounded std::thread spawns
+    // in SyncManager.cpp) call this right where they size their pool, to
+    // attribute those threads to whichever operation(s) are currently open on
+    // this same (orchestrating) thread — every entry on the stack gets it, so
+    // e.g. "sync.full" ends up reflecting the max across all its phases, not
+    // just whichever phase happens to be innermost.
+    //
+    // This is deliberately NOT derived from readThreadCount()'s passive
+    // /proc/self/status sampling below: that counts the whole process's OS
+    // threads (API thread pool, background TaskRegistry jobs, nested
+    // recorders' own sampler threads, ...), which has nothing to do with any
+    // one operation's actual concurrency — worker threads also come and go
+    // far faster than any sane poll interval reliably catches. Operations
+    // that never call this (most of them spawn no worker pool at all) keep
+    // the default of 1: just the calling thread, which is the truth.
+    static void reportThreads(int n) {
+        for (auto* rec : stack()) rec->noteThreads(n);
+    }
+
 private:
+    void noteThreads(int n) {
+        std::lock_guard<std::mutex> lock(stats_mtx_);
+        if (n > threads_max_) threads_max_ = n;
+    }
+
+    // Per-thread nesting stack (sync.full wraps sync.phase.* on the same
+    // orchestrating thread) — not shared across threads, since concurrent
+    // unrelated operations on different threads shouldn't attribute worker
+    // counts to each other.
+    static std::vector<OperationRecorder*>& stack() {
+        thread_local std::vector<OperationRecorder*> s;
+        return s;
+    }
+
     // First /proc/self/stat + /proc/stat read establishes this instance's own
     // delta baseline — without it the very first sampleOnce() call would
     // compute a bogus 100%-of-nothing delta the way MetricsGatherer's first

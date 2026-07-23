@@ -963,6 +963,7 @@ void SyncManager::syncShows(IMediaSource& src,
         std::atomic<size_t> next{0};
         const int worker_count = std::min<int>(getThreadCount(),
                                                 static_cast<int>(shows.size()));
+        OperationRecorder::reportThreads(worker_count);
         std::vector<std::thread> workers;
         workers.reserve(static_cast<size_t>(worker_count));
         for (int w = 0; w < worker_count; ++w) {
@@ -2263,6 +2264,7 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
         std::atomic<size_t> next{0};
         const int worker_count = std::min<int>(getThreadCount(),
                                                 static_cast<int>(items.size()));
+        OperationRecorder::reportThreads(worker_count);
         std::vector<std::thread> workers;
         workers.reserve(static_cast<size_t>(worker_count));
         for (int w = 0; w < worker_count; ++w) {
@@ -2396,6 +2398,7 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
     {
         std::atomic<size_t> next{0};
         const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(dirs.size()));
+        OperationRecorder::reportThreads(worker_count);
         std::vector<std::thread> workers;
         workers.reserve(static_cast<size_t>(worker_count));
         for (int w = 0; w < worker_count; ++w) {
@@ -2415,6 +2418,7 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
     {
         std::atomic<size_t> next{0};
         const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(items.size()));
+        OperationRecorder::reportThreads(worker_count);
         std::vector<std::thread> workers;
         workers.reserve(static_cast<size_t>(worker_count));
         for (int w = 0; w < worker_count; ++w) {
