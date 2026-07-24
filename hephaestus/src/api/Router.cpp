@@ -533,12 +533,20 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
     // once" shape /subs.vtt always had.
     svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)/playlist\.m3u8$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
-        auto session = vodSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
-        session->touch();
+        std::string sid = req.matches[1];
         int track = std::stoi(req.matches[2].str());
+        std::cerr << "[router] GET subtitles playlist.m3u8 session=" << sid << " track=" << track << "\n";
+        auto session = vodSessions.get(sid);
+        if (!session) {
+            std::cerr << "[router] subtitles playlist.m3u8 session=" << sid << " not found\n";
+            res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return;
+        }
+        session->touch();
         auto playlist = session->buildSubtitlePlaylist(track);
-        if (!playlist) { res.status = 404; res.set_content(json{{"error","subtitle track not available"}}.dump(), "application/json"); return; }
+        if (!playlist) {
+            std::cerr << "[router] subtitles playlist.m3u8 session=" << sid << " track=" << track << " unavailable (404)\n";
+            res.status = 404; res.set_content(json{{"error","subtitle track not available"}}.dump(), "application/json"); return;
+        }
         res.set_content(*playlist, "application/vnd.apple.mpegurl");
     });
 
@@ -552,10 +560,15 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
     // main encoder.
     svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
-        auto session = vodSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; return; }
-        session->touch();
+        std::string sid = req.matches[1];
         int track = std::stoi(req.matches[2].str());
+        std::cerr << "[router] GET subtitles pipe session=" << sid << " track=" << track << "\n";
+        auto session = vodSessions.get(sid);
+        if (!session) {
+            std::cerr << "[router] subtitles pipe session=" << sid << " not found\n";
+            res.status = 404; return;
+        }
+        session->touch();
 
         auto sink = std::make_shared<ClientSink>();
 
@@ -606,12 +619,16 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
                     sink->cv.notify_one();
                 });
         } catch (const std::exception& e) {
-            std::cerr << "[vod] failed to spawn subtitle pipe: " << e.what() << "\n";
+            std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
+                       << " spawn threw: " << e.what() << "\n";
             res.status = 503; res.set_content(json{{"error","subtitle track temporarily unavailable"}}.dump(), "application/json"); return;
         }
         if (!proc) {
+            std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track << " spawn returned null (404)\n";
             res.status = 404; res.set_content(json{{"error","subtitle track not available"}}.dump(), "application/json"); return;
         }
+        std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
+                   << " streaming response (chunked, text/vtt)\n";
 
         res.set_chunked_content_provider(
             "text/vtt",
@@ -624,10 +641,12 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
                 lock.unlock();
                 return data_sink.write(reinterpret_cast<const char*>(chunk.data()), chunk.size());
             },
-            [proc](bool) {
+            [proc, sid, track](bool success) {
                 // proc (the last reference) is destroyed here, killing the
                 // ffmpeg process if the client disconnected before it
                 // finished on its own — see FfmpegProcess's destructor.
+                std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
+                           << " response finished success=" << (success ? "yes" : "no") << "\n";
             }
         );
     });

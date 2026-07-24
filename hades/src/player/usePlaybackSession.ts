@@ -165,6 +165,7 @@ export function usePlaybackSession(
   }, [load, audioTrack, subtitleTrack])
 
   const selectSubtitleTrack: PlaybackSession['selectSubtitleTrack'] = useCallback(index => {
+    console.log('[player] selectSubtitleTrack called with index=', index)
     setSubtitleTrack(index)
   }, [])
 

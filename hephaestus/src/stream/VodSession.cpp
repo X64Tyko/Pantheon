@@ -543,7 +543,12 @@ std::string VodSession::buildMasterPlaylist() const {
 }
 
 std::optional<std::string> VodSession::buildSubtitlePlaylist(int track) const {
-	if (!resolveSubtitleTrack(track).output) return std::nullopt;
+	auto resolved = resolveSubtitleTrack(track);
+	std::cerr << "[vod:" << session_id << "] buildSubtitlePlaylist track=" << track
+			  << " output=" << (resolved.output ? "yes" : "no")
+			  << " burn_in=" << (resolved.burn_in ? "yes" : "no")
+			  << " external_path=" << (resolved.external_path.empty() ? "(embedded)" : resolved.external_path) << "\n";
+	if (!resolved.output) return std::nullopt;
 	int64_t duration_ms = effective_duration_ms > 0 ? effective_duration_ms : 1000;
 	int target_duration_secs = static_cast<int>(std::ceil(duration_ms / 1000.0));
 	std::ostringstream out;
@@ -632,7 +637,13 @@ void VodSession::spawnSubtitleProcess() {
 
 std::unique_ptr<FfmpegProcess> VodSession::spawnSubtitlePipe(int track, DataCallback on_data, ExitCallback on_exit) const {
 	auto resolved = resolveSubtitleTrack(track);
-	if (!resolved.output) return nullptr;
+	std::cerr << "[vod:" << session_id << "] spawnSubtitlePipe requested track=" << track
+			  << " resolved.output=" << (resolved.output ? "yes" : "no")
+			  << " resolved.external_path=" << (resolved.external_path.empty() ? "(embedded)" : resolved.external_path) << "\n";
+	if (!resolved.output) {
+		std::cerr << "[vod:" << session_id << "] spawnSubtitlePipe track=" << track << " has no text output — refusing\n";
+		return nullptr;
+	}
 	// buildVodSubtitleArgs ignores subtitleTrack when externalSubtitlePath is
 	// set (the sidecar file becomes the sole -i, always mapped as 0:s:0) —
 	// track only means something for the embedded branch.
@@ -647,6 +658,7 @@ std::unique_ptr<FfmpegProcess> VodSession::spawnSubtitlePipe(int track, DataCall
 		std::cerr << "[vod:" << session_id << "] failed to spawn on-demand subtitle pipe for track " << track << "\n";
 		return nullptr;
 	}
+	std::cerr << "[vod:" << session_id << "] spawned on-demand subtitle pipe ffmpeg for track " << track << "\n";
 	return proc;
 }
 

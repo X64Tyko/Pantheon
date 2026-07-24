@@ -49,10 +49,25 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
   // below re-invokes it.
   const applySubtitleTrack = useCallback(() => {
     const hls = hlsRef.current
-    if (!hls) return
-    if (subtitleTrack < 0) { hls.subtitleTrack = -1; return }
+    if (!hls) {
+      console.log('[player] applySubtitleTrack: no hls instance yet, skipping. subtitleTrack=', subtitleTrack)
+      return
+    }
+    console.log('[player] applySubtitleTrack: subtitleTrack prop =', subtitleTrack,
+      'hls.subtitleTracks =', hls.subtitleTracks.map(t => ({ id: t.id, name: t.name, panIdx: t.attrs['X-PANTHEON-INDEX'] })),
+      'current hls.subtitleTrack =', hls.subtitleTrack)
+    if (subtitleTrack < 0) {
+      console.log('[player] applySubtitleTrack: disabling subtitles (hls.subtitleTrack = -1)')
+      hls.subtitleTrack = -1
+      return
+    }
     const idx = hls.subtitleTracks.findIndex(t => t.attrs['X-PANTHEON-INDEX'] === String(subtitleTrack))
-    if (idx !== -1) hls.subtitleTrack = idx
+    if (idx !== -1) {
+      console.log('[player] applySubtitleTrack: matched X-PANTHEON-INDEX', subtitleTrack, '-> hls track idx', idx, '(was', hls.subtitleTrack, ')')
+      hls.subtitleTrack = idx
+    } else {
+      console.warn('[player] applySubtitleTrack: NO MATCH for X-PANTHEON-INDEX', subtitleTrack, 'in', hls.subtitleTracks.length, 'hls subtitleTracks — selection silently dropped')
+    }
   }, [subtitleTrack])
 
   // hls.js's SUBTITLE_TRACKS_UPDATED listener (registered once per manifest
@@ -116,7 +131,19 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       // possibly again later) — applySubtitleTrackRef.current() so this
       // always re-applies whatever's currently selected, not a stale
       // mount-time snapshot (see applySubtitleTrackRef's own comment).
-      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => applySubtitleTrackRef.current())
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_evt, data) => {
+        console.log('[player] hls SUBTITLE_TRACKS_UPDATED', data.subtitleTracks.map(t => ({ id: t.id, name: t.name, panIdx: t.attrs['X-PANTHEON-INDEX'], url: t.url })))
+        applySubtitleTrackRef.current()
+      })
+      hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (_evt, data) => {
+        console.log('[player] hls SUBTITLE_TRACK_SWITCH -> id', data.id)
+      })
+      hls.on(Hls.Events.SUBTITLE_TRACK_LOADED, (_evt, data) => {
+        console.log('[player] hls SUBTITLE_TRACK_LOADED', { id: data.id, url: data.details?.url, fragCount: data.details?.fragments?.length })
+      })
+      hls.on(Hls.Events.SUBTITLE_FRAG_PROCESSED, (_evt, data) => {
+        console.log('[player] hls SUBTITLE_FRAG_PROCESSED success=', data.success, 'frag=', data.frag?.url)
+      })
       hls.loadSource(manifestUrl)
       hls.attachMedia(video)
       registerReceiverVideoElement(video)
@@ -143,6 +170,9 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       const MAX_RETRIES  = 3
       hls.on(Hls.Events.FRAG_LOADED, () => { networkRetries = 0; mediaRetries = 0 })
       hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (data.type === Hls.ErrorTypes.OTHER_ERROR || data.details?.toLowerCase().includes('subtitle')) {
+          console.warn('[player] hls ERROR (subtitle-related or other) fatal=', data.fatal, 'type=', data.type, 'details=', data.details, 'url=', (data as { url?: string }).url, 'response=', data.response)
+        }
         if (!data.fatal) return
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
