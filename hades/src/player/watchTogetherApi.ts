@@ -1,4 +1,5 @@
 import { authHeaders, TOKEN_KEY } from '../api/client'
+import type {WatchTogetherSession} from '../api/types'
 
 // These hit Hermes's /watch-together/* routes directly (live playback
 // coordination — position/paused, who's host), not Kairos's /api/watch-together/*
@@ -37,6 +38,21 @@ export function subscribeWatchTogether(
     try { onEvent(JSON.parse(e.data) as WatchTogetherEvent) } catch { /* malformed/ping — ignore */ }
   }
   return es
+}
+
+// Forwards to Kairos's own join (the real membership write) and merges in
+// the live position/paused Kairos never tracks — one call instead of join +
+// a separate snapshot fetch, so the caller can seed a joining viewer's VOD
+// session at the real position (hls.js's own startPosition) instead of
+// starting at 0 and relying on a later raw currentTime nudge (unreliable,
+// see PlayerPage.tsx).
+export async function joinWatchTogether(sessionId: string): Promise<WatchTogetherSession & {
+    position_ms: number;
+    paused: boolean
+}> {
+    const res = await fetch(`/watch-together/${sessionId}/join`, {method: 'POST', headers: authHeaders()})
+    if (!res.ok) throw new Error(`watch-together join: ${res.statusText}`)
+    return res.json()
 }
 
 // Host-only — the caller (PlayerPage) is responsible for only ever calling

@@ -355,7 +355,10 @@ export const api = {
                         request<WatchTogetherSession>('POST', '/watch-together', { content_type: contentType, content_id: contentId }),
   getActiveWatchTogether: ()                                       => request<WatchTogetherSession[]>('GET', '/watch-together/active'),
   getWatchTogether:       (sessionId: string)                      => request<WatchTogetherSession>('GET', `/watch-together/${sessionId}`),
-  joinWatchTogether:      (sessionId: string)                      => request<WatchTogetherSession>('POST', `/watch-together/${sessionId}/join`),
+    // Joining goes through watchTogetherApi.ts's own joinWatchTogether
+    // (Hermes), not here — it forwards to this same Kairos route server-side
+    // but also merges in the live position/paused Kairos never tracks, saving
+    // the caller a second round trip.
   leaveWatchTogether:     (sessionId: string)                      => request<{ ok: boolean }>('POST', `/watch-together/${sessionId}/leave`),
   closeWatchTogether:     (sessionId: string)                      => request<{ ok: boolean }>('POST', `/watch-together/${sessionId}/close`),
 

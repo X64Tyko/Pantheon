@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Watch Together: a joining viewer's session didn't catch up to the host, and stayed paused (Hades + Hermes)**:
+  joining always started the follower's own VOD session at position 0 and relied on the SSE stream's first `sync` event
+  to nudge it into place via a raw `video.currentTime` assignment — which fights hls.js's own internal seek/buffering
+  state machine (the same one `startPosition` exists to drive correctly) instead of working with it, and could leave the
+  follower stuck fully-buffered-but-paused at the wrong position (pressing play would resume from that stale local
+  position). `POST /watch-together/:id/join` on Hermes now forwards the real join to Kairos and merges in the live
+  position/paused Kairos never tracks, so the one call the Home shelf was already making returns everything needed — the
+  client seeds the new VOD session's start position with it, letting hls.js's own `startPosition` mechanism handle it
+  the same reliable way a continue-watching resume already does.
+- **No way to end or leave a Watch Together (Hades)**: the close/leave API existed since Phase C/E but had no UI. The
+  player now shows a small "Watch Together — Hosting/Following" badge with an End/Leave button (strips `?wt=` from the
+  URL, which the existing session-cleanup effect already reacts to); the Home shelf card also gets a close (×) button,
+  visible to the host or an admin, for ending a session without needing to join it first.
+
 ### Added
 
 - **Guide is now its own page, with a real progress-aware EPG grid (Hades)**: previously embedded at the bottom of

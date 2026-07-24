@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { api, mediaUrl } from '../api/client'
 import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress, HomePlaylistShelf, WatchTogetherSession } from '../api/types'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
+import {joinWatchTogether} from '../player/watchTogetherApi'
 import { MediaDetailHero } from '../components/media/MediaDetailHero'
 import { LibraryDetailActions, PlayAction, WatchTogetherAction } from '../components/media/LibraryDetailActions'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
+import {useAuth} from '../auth/AuthContext'
 import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useFocusable } from '../nav/useFocusable'
@@ -417,6 +419,7 @@ export default function HomePage() {
                 recentlyAired={recentlyAired}
                 continueWatching={continueWatching}
                 watchTogether={watchTogether}
+                onCloseWatchTogether={id => setWatchTogether(prev => prev.filter(s => s.session_id !== id))}
                 customShelves={customShelves}
                 onItemClick={openDetail}
                 onNavigate={navigate}
@@ -614,7 +617,7 @@ function EmptyHero({ onGoToSources }: { onGoToSources: () => void }) {
 
 function Shelves({
   loading, recentShows, recentMovies, recentlyReleased, recentlyAired, continueWatching,
-  watchTogether,
+                     watchTogether, onCloseWatchTogether,
   customShelves,
   onItemClick, onNavigate, onItemHover, onRowLeave,
   onContinueWatchingHover, onContinueWatchingHoverEnd,
@@ -627,6 +630,7 @@ function Shelves({
   recentlyAired:    Show[]
   continueWatching: WatchProgress[]
   watchTogether:    WatchTogetherSession[]
+    onCloseWatchTogether: (sessionId: string) => void
   // User-defined shelves — each one *is* a smart playlist with
   // show_on_home=true (see PlaylistPage.tsx's "Show on Home" toggle); there's
   // no separate shelf-definition concept. Variable length, fetched as a
@@ -661,7 +665,7 @@ function Shelves({
       ) : (
         <>
           {watchTogether.length > 0 && (
-            <WatchTogetherShelf items={watchTogether} onNavigate={onNavigate} />
+              <WatchTogetherShelf items={watchTogether} onNavigate={onNavigate} onClose={onCloseWatchTogether}/>
           )}
           {continueWatching.length > 0 && (
             <ContinueWatchingShelf
@@ -1070,8 +1074,8 @@ function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate, onHo
 
 // ── Watch Together ───────────────────────────────────────────────────────────
 
-function WatchTogetherShelf({ items, onNavigate }: {
-  items: WatchTogetherSession[]; onNavigate: (path: string) => void
+function WatchTogetherShelf({items, onNavigate, onClose}: {
+    items: WatchTogetherSession[]; onNavigate: (path: string) => void; onClose: (sessionId: string) => void
 }) {
   const [showArrows, setShowArrows] = useState(false)
   const travel = useTravelingFocus()
@@ -1100,7 +1104,7 @@ function WatchTogetherShelf({ items, onNavigate }: {
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(s => (
           <WatchTogetherCard
-            key={s.session_id} item={s} onNavigate={onNavigate}
+              key={s.session_id} item={s} onNavigate={onNavigate} onClose={onClose}
             onActivate={travel.activate} onDeactivate={travel.deactivate}
           />
         ))}
@@ -1111,12 +1115,15 @@ function WatchTogetherShelf({ items, onNavigate }: {
   )
 }
 
-function WatchTogetherCard({ item, onNavigate, onActivate, onDeactivate }: {
-  item: WatchTogetherSession; onNavigate: (path: string) => void
+function WatchTogetherCard({item, onNavigate, onClose, onActivate, onDeactivate}: {
+    item: WatchTogetherSession; onNavigate: (path: string) => void; onClose: (sessionId: string) => void
   onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
 }) {
+    const {user} = useAuth()
+    const canClose = user?.user_id === item.host_user_id || user?.role === 'admin'
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
+    const [closing, setClosing] = useState(false)
   const thumbPath = item.content_type === 'movie'
     ? `/api/movies/${item.content_id}/thumb`
     : item.show_id ? `/api/shows/${item.show_id}/thumb` : ''
@@ -1124,13 +1131,30 @@ function WatchTogetherCard({ item, onNavigate, onActivate, onDeactivate }: {
     ? `S${String(item.season ?? 0).padStart(2, '0')}E${String(item.episode ?? 0).padStart(2, '0')}`
     : undefined
 
-  // Joins before navigating — fire-and-forget, same spirit as
-  // ContinueWatchingCard's plain navigate. PlayerPage's own GET
-  // /api/watch-together/:id (on mount) is what actually determines
-  // host-vs-follower; nothing here needs the join to have landed first.
-  const go = () => {
-    api.joinWatchTogether(item.session_id).catch(() => {})
-    onNavigate(`/player/${item.content_type}/${item.content_id}?wt=${item.session_id}`)
+    const close = async (e: React.MouseEvent) => {
+        e.stopPropagation()
+        setClosing(true)
+        try {
+            await api.closeWatchTogether(item.session_id);
+            onClose(item.session_id)
+        } catch {
+            setClosing(false)
+        }
+    }
+
+    // join() returns the host's current position along with the usual
+    // membership write, so the new VOD session can start there (via
+    // startPositionSec/hls.js's own startPosition) instead of at 0 and relying
+    // on a later sync correction, which doesn't reliably catch up (see
+    // PlayerPage.tsx).
+    const go = async () => {
+        let t = ''
+        try {
+            const joined = await joinWatchTogether(item.session_id)
+            if (joined.position_ms > 0) t = `&t=${Math.round(joined.position_ms)}`
+        } catch { /* fall back to position 0 — the SSE sync tick still corrects it, just slower */
+        }
+        onNavigate(`/player/${item.content_type}/${item.content_id}?wt=${item.session_id}${t}`)
   }
 
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
@@ -1147,6 +1171,13 @@ function WatchTogetherCard({ item, onNavigate, onActivate, onDeactivate }: {
       onMouseLeave={() => { setHovered(false); onDeactivate() }}
       className={`${styles.tileBase} ${styles.shelfCard} ${hovered || focused ? styles.shelfCardActive : ''}`}
     >
+        {canClose && (hovered || focused) && (
+            <button
+                onClick={close} disabled={closing}
+                title="End Watch Together for everyone"
+                className={styles.wtCloseBtn}
+            >×</button>
+        )}
       <div className={styles.shelfCardPoster}>
         {thumbPath && !imgErr ? (
           <img

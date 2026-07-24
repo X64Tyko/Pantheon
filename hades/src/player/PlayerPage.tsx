@@ -63,7 +63,7 @@ function queueItemToNextEpisode(item: QueueItem): NextEpisode | null {
 
 export function PlayerPage({ kind }: PlayerPageProps) {
   const { id, channelId } = useParams<{ id: string; channelId: string }>()
-  const [searchParams] = useSearchParams()
+    const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
 
   const targetId = (kind === 'channel' ? channelId : id) ?? ''
@@ -354,6 +354,18 @@ export function PlayerPage({ kind }: PlayerPageProps) {
       else                     api.leaveWatchTogether(wtSessionId).catch(() => {})
     }
   }, [wtSessionId])
+
+    // Explicit "End"/"Leave" control — strips ?wt= rather than calling the
+    // API directly, so the effect above (keyed on wtSessionId) runs its own
+    // cleanup exactly as if this were a real unmount. Stays in the player
+    // afterward, watching solo, instead of navigating away.
+    const handleLeaveWatchTogether = useCallback(() => {
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev)
+            next.delete('wt')
+            return next
+        }, {replace: true})
+    }, [setSearchParams])
 
   const resetIdleTimer = useCallback(() => {
     setControlsVisible(true)
@@ -667,6 +679,14 @@ export function PlayerPage({ kind }: PlayerPageProps) {
           {buffering && !isRemoteActive && (
             <div className={`${styles.overlay} ${styles.overlayNoPointer}`}>
               <LoadingThrobber percent={bufferPercent} />
+            </div>
+          )}
+            {wtSessionId && wtSession && (
+                <div className={styles.wtBadge}>
+                    Watch Together — {isWtHost ? 'Hosting' : 'Following'}
+                    <button onClick={handleLeaveWatchTogether} className={styles.wtBadgeBtn}>
+                        {isWtHost ? 'End' : 'Leave'}
+                    </button>
             </div>
           )}
           {showSkipIntro && (

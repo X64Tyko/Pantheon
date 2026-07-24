@@ -47,6 +47,35 @@
   font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-meta); font-weight: 600;
 }
 
+.wtBadge {
+    position: absolute;
+    left: 28px;
+    top: 28px;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: var(--hds-space-3);
+    padding: var(--hds-space-2) var(--hds-space-4);
+    border-radius: var(--hds-radius-tile);
+    border: 1px solid var(--hds-line);
+    background: oklch(0.15 0.02 285 / 0.75);
+    font-family: var(--hds-font-mono-brand);
+    font-size: var(--hds-font-size-tv-caption);
+    color: var(--hds-txt-2);
+}
+
+.wtBadgeBtn {
+    padding: 3px var(--hds-space-3);
+    border-radius: var(--hds-radius-xs);
+    cursor: pointer;
+    border: 1px solid var(--hds-line);
+    background: var(--hds-bg-3);
+    color: var(--hds-txt);
+    font-family: var(--hds-font-mono-brand);
+    font-size: var(--hds-font-size-tv-badge);
+    font-weight: 600;
+}
+
 .backBtn {
   padding: var(--hds-space-3) 18px; border-radius: var(--hds-radius-tile); cursor: pointer;
   border: 1px solid var(--hds-line); background: var(--hds-bg-3);

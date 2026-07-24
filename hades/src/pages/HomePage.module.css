@@ -234,6 +234,7 @@
 }
 
 .shelfCard {
+    position: relative;
   border-radius: var(--hds-radius-md);
   overflow: hidden;
   cursor: pointer;
@@ -353,6 +354,35 @@
 .cwProgressFill { height: 100%; background: var(--hds-violet); /* width set inline per-instance — live watch-progress percentage */ }
 
 /* ── Watch Together card ──────────────────────────────────────────────────── */
+
+.wtCloseBtn {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    z-index: 2;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: oklch(0.2 0.02 285);
+    border: 1px solid var(--hds-line);
+    color: var(--hds-txt-2);
+    cursor: pointer;
+    line-height: 1;
+    font-size: 15px;
+}
+
+.wtCloseBtn:hover {
+    background: var(--hds-bg-3);
+    color: var(--hds-txt);
+}
+
+.wtCloseBtn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
 
 .wtLiveBadge {
   position: absolute; top: var(--hds-space-2); right: var(--hds-space-2);
