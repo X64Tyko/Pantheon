@@ -37,18 +37,21 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
 
   // Maps our subtitleTrack index onto whichever of hls.js's own
   // subtitleTracks[] actually corresponds to it — hls.js assigns its own
-  // opaque sequential ids that don't otherwise carry our index, so this
-  // matches by URL instead: every /subtitles/{n}/playlist.m3u8 route
-  // Hephaestus generates embeds our index literally (see
-  // buildMasterPlaylist), so it round-trips exactly. -1 (off) just disables
-  // the active track. Safe to call before hls.js has parsed the manifest —
-  // subtitleTracks is empty until SUBTITLE_TRACKS_UPDATED, so this is a
-  // silent no-op until the listener below re-invokes it.
+  // opaque sequential ids that don't otherwise carry our index. Matched via
+  // the X-PANTHEON-INDEX custom attribute Hephaestus embeds on every
+  // #EXT-X-MEDIA entry (see buildMasterPlaylist) rather than the resolved
+  // playlist URL — hls.js exposes every EXT-X-MEDIA attribute generically
+  // (MediaPlaylist.attrs), so this round-trips our index exactly without
+  // depending on how hls.js happens to resolve/record the URI string.
+  // -1 (off) just disables the active track. Safe to call before hls.js has
+  // parsed the manifest — subtitleTracks is empty until
+  // SUBTITLE_TRACKS_UPDATED, so this is a silent no-op until the listener
+  // below re-invokes it.
   const applySubtitleTrack = useCallback(() => {
     const hls = hlsRef.current
     if (!hls) return
     if (subtitleTrack < 0) { hls.subtitleTrack = -1; return }
-    const idx = hls.subtitleTracks.findIndex(t => t.url.includes(`/subtitles/${subtitleTrack}/playlist.m3u8`))
+    const idx = hls.subtitleTracks.findIndex(t => t.attrs['X-PANTHEON-INDEX'] === String(subtitleTrack))
     if (idx !== -1) hls.subtitleTrack = idx
   }, [subtitleTrack])
 

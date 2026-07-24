@@ -558,6 +558,29 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         int track = std::stoi(req.matches[2].str());
 
         auto sink = std::make_shared<ClientSink>();
+
+        // HLS players anchor a WebVTT segment's cue clock onto the shared
+        // presentation timeline via X-TIMESTAMP-MAP — without it, a player
+        // can fall back to treating cue time 0 as "whenever this segment
+        // started loading" instead of the file's real absolute time, which
+        // is the domain buildVodSubtitleArgs' cues actually use (no -ss —
+        // always the whole file). Observed in practice as subtitles running
+        // from the episode's start regardless of where the video itself
+        // resumed. ffmpeg's webvtt muxer doesn't emit this header, so it's
+        // spliced in here: push our own as this response's first chunk, then
+        // strip ffmpeg's own literal "WEBVTT\n\n" signature (libavformat's
+        // webvttenc.c writes exactly that, unconditionally) off the front of
+        // its real output below so the result is one valid WEBVTT file, not
+        // two concatenated ones.
+        static const std::string kWebvttSignature = "WEBVTT\n\n";
+        static const std::string kWebvttHeader =
+            "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n";
+        {
+            std::lock_guard<std::mutex> lock(sink->mtx);
+            sink->queue.emplace_back(kWebvttHeader.begin(), kWebvttHeader.end());
+        }
+        auto skip_remaining = std::make_shared<size_t>(kWebvttSignature.size());
+
         std::shared_ptr<FfmpegProcess> proc;
         try {
             // spawnSubtitlePipe forks + starts two reader threads — under
@@ -566,7 +589,12 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             // httplib handler is fatal to the whole process, not just this
             // request.
             proc = session->spawnSubtitlePipe(track,
-                [sink](const uint8_t* data, size_t len) {
+                [sink, skip_remaining](const uint8_t* data, size_t len) {
+                    if (*skip_remaining > 0) {
+                        size_t skip = std::min(*skip_remaining, len);
+                        data += skip; len -= skip; *skip_remaining -= skip;
+                    }
+                    if (len == 0) return;
                     std::lock_guard<std::mutex> lock(sink->mtx);
                     if (sink->queue.size() < ClientSink::MAX_QUEUE)
                         sink->queue.emplace_back(data, data + len);
@@ -609,8 +637,14 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         auto session = vodSessions.get(req.matches[1]);
         if (!session) { res.status = 404; return; }
         session->touch();
+        // Lazy — see VodSession::spawnSubtitleProcess()'s own comment. No
+        // longer spawned unconditionally at session start, since nothing
+        // built against this codebase still uses this route (both Hades and
+        // Android moved to the per-track on-demand /subtitles/{n} pipe) —
+        // idempotent, so harmless if something else already triggered it.
+        session->spawnSubtitleProcess();
         auto path = session->dir() + "/subs.vtt";
-        if (!waitForFile(path, 3000)) { res.status = 503; return; } // existence — should already exist by request time
+        if (!waitForFile(path, 3000)) { res.status = 503; return; } // existence check, now that a first request just triggered the spawn above
         // Completeness — see waitForSubtitleExtraction's own comment. Must
         // actually check the result: a <track>/ExoPlayer sideloaded fetch
         // happens exactly once and never re-fetches, so serving whatever

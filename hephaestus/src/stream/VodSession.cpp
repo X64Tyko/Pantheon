@@ -382,7 +382,8 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 
 	computeSegmentBoundaries();
 
-	if (subtitle_output) spawnSubtitleProcess();
+	// Not spawned eagerly here anymore — see spawnSubtitleProcess()'s own
+	// comment. The /subs.vtt route triggers it lazily on first request.
 
 	active = true;
 	touch();
@@ -482,12 +483,21 @@ std::string VodSession::buildMasterPlaylist() const {
 	std::ostringstream out;
 	out << "#EXTM3U\n#EXT-X-VERSION:6\n";
 
+	// X-PANTHEON-INDEX carries our own track index (Router.cpp's `tracks`
+	// JSON / TrackMenu convention) as a custom HLS attribute, verbatim —
+	// HLS explicitly allows vendor "X-" attributes on EXT-X-MEDIA, and
+	// hls.js exposes ALL attributes generically (MediaPlaylist.attrs, a
+	// dictionary, not just the well-known ones). Client code (Hades'
+	// VideoPlayer.tsx) reads this back directly instead of matching the URI
+	// substring — the URI's own resolution (relative vs. absolute, exact
+	// string hls.js records after parsing) isn't something to depend on.
 	for (auto& t : media_info.audio) {
 		out << "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\""
 			<< (t.title.empty() ? (t.language.empty() ? "Audio " + std::to_string(t.relative_index) : t.language) : t.title)
 			<< "\",LANGUAGE=\"" << t.language << "\",DEFAULT="
 			<< (t.relative_index == audio_track_ ? "YES" : "NO")
-			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/audio/" << t.relative_index << "/playlist.m3u8\"\n";
+			<< ",AUTOSELECT=YES,X-PANTHEON-INDEX=\"" << t.relative_index
+			<< "\",URI=\"/stream/vod/" << session_id << "/audio/" << t.relative_index << "/playlist.m3u8\"\n";
 	}
 
 	// Embedded text tracks (bitmap/burn-in ones have no sidecar — same gate
@@ -504,7 +514,8 @@ std::string VodSession::buildMasterPlaylist() const {
 			<< (t.title.empty() ? (t.language.empty() ? "Subtitle " + std::to_string(t.relative_index) : t.language) : t.title)
 			<< "\",LANGUAGE=\"" << t.language << "\",DEFAULT="
 			<< (t.relative_index == subtitle_track_ ? "YES" : "NO")
-			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/subtitles/" << t.relative_index << "/playlist.m3u8\"\n";
+			<< ",AUTOSELECT=YES,X-PANTHEON-INDEX=\"" << t.relative_index
+			<< "\",URI=\"/stream/vod/" << session_id << "/subtitles/" << t.relative_index << "/playlist.m3u8\"\n";
 	}
 	int ext_index = -2;
 	for (auto& t : external_subtitles_) {
@@ -513,7 +524,8 @@ std::string VodSession::buildMasterPlaylist() const {
 			<< (t.language.empty() ? "Subtitle " + std::to_string(ext_index) : t.language)
 			<< "\",LANGUAGE=\"" << t.language << "\",DEFAULT="
 			<< (ext_index == subtitle_track_ ? "YES" : "NO")
-			<< ",AUTOSELECT=YES,URI=\"/stream/vod/" << session_id << "/subtitles/" << ext_index << "/playlist.m3u8\"\n";
+			<< ",AUTOSELECT=YES,X-PANTHEON-INDEX=\"" << ext_index
+			<< "\",URI=\"/stream/vod/" << session_id << "/subtitles/" << ext_index << "/playlist.m3u8\"\n";
 		--ext_index;
 	}
 
@@ -598,10 +610,12 @@ bool VodSession::restartAt(int segment_index) {
 }
 
 void VodSession::spawnSubtitleProcess() {
+	if (!subtitle_output) return;
+	std::lock_guard<std::mutex> lock(subs_mtx);
+	if (subs_ffmpeg) return; // already spawned — idempotent, callable from the lazy /subs.vtt route
 	auto args = buildVodSubtitleArgs(ffmpeg_path, file_path, subtitle_track_,
 									  external_subtitle_path_, opts.verbose_transcode_logs,
 									  dir() + "/subs.vtt");
-	std::lock_guard<std::mutex> lock(subs_mtx);
 	subs_ffmpeg = std::make_unique<FfmpegProcess>(
 		std::move(args), nullptr,
 		[this](int code) { if (code != 0) subs_failed.store(true); subs_exited.store(true); },

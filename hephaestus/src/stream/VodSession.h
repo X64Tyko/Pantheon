@@ -220,6 +220,17 @@ public:
 	// never touches audio_track_/the main encoder.
 	std::unique_ptr<FfmpegProcess> spawnSubtitlePipe(int track, DataCallback on_data, ExitCallback on_exit) const;
 
+	// Lazily spawns the whole-file /subs.vtt extraction (the initially-
+	// selected track only — see the class comment) on first request instead
+	// of unconditionally at start() — nothing built against this codebase
+	// today (Hades, Android) still reads subtitle_url/GET /subs.vtt, both
+	// having moved to spawnSubtitlePipe()'s per-track on-demand route, but
+	// other clients (e.g. a Roku receiver, not in this repo) may still rely
+	// on it, so the route stays rather than being removed outright — this
+	// just stops paying for it when nothing asks. Idempotent: a no-op if
+	// already spawned/finished, or if this session has no subtitle_output.
+	void spawnSubtitleProcess();
+
 	// For the activity/debugging view (ActivityRouter).
 	const std::string& filePath() const { return file_path; }
 	HwAccel hwAccel() const       { return opts.hw_accel; }
@@ -299,7 +310,6 @@ private:
 	// ONLY code path that ever spawns the main encoder — start() calls it
 	// too — which is what guarantees segment numbering always matches.
 	bool restartAt(int segment_index);
-	void spawnSubtitleProcess();
 	std::string segmentPath(int index) const;
 	// Both require session_mtx already held by the caller (only ever called
 	// from within restartAt()).
