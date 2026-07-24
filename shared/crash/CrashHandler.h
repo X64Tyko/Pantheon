@@ -1,4 +1,5 @@
 #pragma once
+#include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <ctime>
@@ -135,8 +136,7 @@ inline void installCrashHandlers(const std::string& service_name, const std::str
 // the activity/debugging endpoint. Returns empty string if none exists.
 // Deliberately does NOT delete the marker on read — an admin should be able
 // to reload the page and still see the last crash until they explicitly
-// acknowledge/clear it (not yet wired up as a UI affordance; for now the
-// marker just persists until the next crash overwrites it).
+// acknowledge/clear it via clearCrashMarker() below.
 inline std::string readCrashMarker(const std::string& data_dir, const std::string& service_name) {
 	std::string path = data_dir + "/crash-" + service_name + ".txt";
 	FILE* f = fopen(path.c_str(), "r");
@@ -147,4 +147,16 @@ inline std::string readCrashMarker(const std::string& data_dir, const std::strin
 	while ((n = fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
 	fclose(f);
 	return out;
+}
+
+// The explicit "I've seen this" acknowledgment readCrashMarker's own
+// comment always pointed at — an admin clears the marker once they've dealt
+// with (or confirmed non-issue) a crash, rather than it just silently
+// persisting until the next unrelated crash happens to overwrite it. A
+// missing file is not an error (already cleared, or never crashed) —
+// removing it either way is the whole point, so both cases return true.
+inline bool clearCrashMarker(const std::string& data_dir, const std::string& service_name) {
+	std::string path = data_dir + "/crash-" + service_name + ".txt";
+	if (std::remove(path.c_str()) == 0) return true;
+	return errno == ENOENT;
 }

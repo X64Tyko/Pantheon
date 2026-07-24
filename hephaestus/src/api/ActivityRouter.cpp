@@ -185,4 +185,12 @@ void registerActivityRoutes(httplib::Server& svr, SessionManager& sessions,
         json j = {{"crash", readCrashMarker("./data", "hephaestus")}};
         res.set_content(j.dump(), "application/json");
     });
+
+    // Explicit "I've seen this" acknowledgment — no auth check here (matches
+    // the rest of this router; Hermes' aggregated DELETE is the one that
+    // actually gates this on admin, same split as the GET above).
+    svr.Delete("/stream/activity/crash", [](const httplib::Request&, httplib::Response& res) {
+        json j = {{"ok", clearCrashMarker("./data", "hephaestus")}};
+        res.set_content(j.dump(), "application/json");
+    });
 }

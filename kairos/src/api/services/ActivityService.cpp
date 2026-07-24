@@ -153,6 +153,14 @@ void ActivityService::registerRoutes(httplib::Server& svr) {
 		route::ok(res, json{{"crash", readCrashMarker("./data", "kairos")}}.dump());
 	});
 
+	// Explicit "I've seen this" acknowledgment — admin-only (mutating,
+	// unlike the read above). Hermes' aggregated DELETE calls this directly
+	// alongside clearing its own and Hephaestus' markers.
+	svr.Delete("/api/activity/crash", [](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		route::ok(res, json{{"ok", clearCrashMarker("./data", "kairos")}}.dump());
+	});
+
 	// Play history for the Tautulli-style Activity tab — see
 	// PlaybackHistoryRepository / migration v91. A non-admin viewer only
 	// ever sees their own history regardless of the user_id query param

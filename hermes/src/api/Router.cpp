@@ -352,6 +352,53 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
         res.set_content(out.dump(), "application/json");
     });
 
+    // Explicit "I've seen this" acknowledgment across all three services at
+    // once — admin-gated here (checked against Kairos, same pattern as
+    // authedHephaestusProxy) since hermes's own marker-clear below doesn't
+    // otherwise pass through Kairos's own admin check the way the proxied
+    // ones do. The Authorization header is forwarded on to Kairos'/
+    // Hephaestus' own DELETE calls regardless, so their own gating (Kairos
+    // is admin-only; Hephaestus has none, matching its GET) still applies
+    // independently of this check.
+    svr.Delete("/api/activity/crash", [cfg](const httplib::Request& req, httplib::Response& res) {
+        auto auth = req.get_header_value("Authorization");
+        httplib::Result who;
+        if (!auth.empty()) {
+            httplib::Client cli(cfg.kairos_url);
+            cli.set_connection_timeout(5);
+            cli.set_read_timeout(5);
+            who = cli.Get("/api/auth/me", httplib::Headers{{"Authorization", auth}});
+        }
+        bool is_admin = false;
+        if (who && who->status == 200) {
+            try { is_admin = json::parse(who->body).value("role", "") == "admin"; } catch (...) {}
+        }
+        if (auth.empty() || !who || who->status != 200) {
+            res.status = 401; res.set_content(json{{"error", "Unauthorized"}}.dump(), "application/json"); return;
+        }
+        if (!is_admin) {
+            res.status = 403; res.set_content(json{{"error", "Forbidden"}}.dump(), "application/json"); return;
+        }
+
+        auto clear_remote = [&auth](const std::string& url, const char* path) -> bool {
+            httplib::Client cli(url);
+            cli.set_connection_timeout(2);
+            cli.set_read_timeout(2);
+            if (auto r = cli.Delete(path, httplib::Headers{{"Authorization", auth}})) {
+                return r->status == 200;
+            }
+            return false;
+        };
+
+        json out = {
+            {"hermes",     clearCrashMarker("./data", "hermes")},
+            {"kairos",     clear_remote(cfg.kairos_url, "/api/activity/crash")},
+            {"hephaestus", clear_remote(cfg.hephaestus_url, "/stream/activity/crash")},
+        };
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_content(out.dump(), "application/json");
+    });
+
     // ── HDHomeRun device emulation ────────────────────────────────────────────
     svr.Get("/discover.json", [&cfg](const httplib::Request& req, httplib::Response& res) {
         auto base = baseUrl(req);

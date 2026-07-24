@@ -680,6 +680,9 @@ export const api = {
   // Hermes's own aggregating route, not the generic /api/* proxy to Kairos —
   // combines all three services' local crash markers in one response.
   getCrashStatus: () => request<CrashStatus>('GET', '/activity/crash'),
+  // Explicit "I've seen this" acknowledgment — clears all three services'
+  // markers at once via Hermes' own aggregated DELETE. Admin-only.
+  clearCrashStatus: () => request<{ hermes: boolean; kairos: boolean; hephaestus: boolean }>('DELETE', '/activity/crash'),
 
   // System
   getSystemMetrics: () => request<any>('GET', '/system/metrics'),
