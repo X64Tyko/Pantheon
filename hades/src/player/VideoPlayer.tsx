@@ -52,6 +52,16 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
     if (idx !== -1) hls.subtitleTrack = idx
   }, [subtitleTrack])
 
+  // hls.js's SUBTITLE_TRACKS_UPDATED listener (registered once per manifest
+  // load, below) needs to always call the CURRENT applySubtitleTrack, not
+  // whatever closure existed when it was registered — otherwise, if that
+  // event ever refires after the user has since switched tracks, it
+  // re-invokes the stale closure and silently reasserts the manifest's
+  // original default, undoing the switch. This was the actual cause of a
+  // subtitle switch appearing to "revert" to the previously-active track.
+  const applySubtitleTrackRef = useRef(applySubtitleTrack)
+  useEffect(() => { applySubtitleTrackRef.current = applySubtitleTrack }, [applySubtitleTrack])
+
   // Safari (native HLS, no hls.js — see the else-if branch below) parses
   // SUBTITLES groups into the <video> element's own native textTracks
   // itself; matched by language since TextTrack has no URL to key off the
@@ -99,10 +109,11 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       // genuinely rolling/deleting window, not an append-only one).
       hls = new Hls(isLive ? {} : { startPosition: startPositionSec ?? 0 })
       hlsRef.current = hls
-      // Fires once hls.js has parsed the manifest's SUBTITLES groups —
-      // applySubtitleTrack no-ops until then (subtitleTracks is empty), so
-      // this is what actually applies the initial selection.
-      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, applySubtitleTrack)
+      // Fires once hls.js has parsed the manifest's SUBTITLES groups (and
+      // possibly again later) — applySubtitleTrackRef.current() so this
+      // always re-applies whatever's currently selected, not a stale
+      // mount-time snapshot (see applySubtitleTrackRef's own comment).
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => applySubtitleTrackRef.current())
       hls.loadSource(manifestUrl)
       hls.attachMedia(video)
       registerReceiverVideoElement(video)
