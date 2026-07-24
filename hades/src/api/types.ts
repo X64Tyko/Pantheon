@@ -490,6 +490,27 @@ export interface WatchProgress {
   up_next?:     boolean
 }
 
+// See Kairos's WatchTogetherService.cpp (describeSession) — Kairos owns
+// identity/discovery only (this shape), never live playback state
+// (position/paused), which lives on Hermes instead — see watchTogetherApi.ts.
+export interface WatchTogetherSession {
+  session_id:     string
+  host_user_id:   string
+  host_username:  string
+  content_type:   'movie' | 'episode'
+  content_id:     string
+  title:          string
+  // episode only — same shape as WatchProgress above, so a session card can
+  // build the same `/api/shows/{show_id}/thumb` art URL / "SxEy Show" label.
+  season?:        number
+  episode?:       number
+  show_id?:       string
+  show_title?:    string
+  member_count:   number
+  created_at:     number
+  closed_at:      number | null
+}
+
 export interface CredentialStatus {
   has_token:   boolean
   has_user_id: boolean

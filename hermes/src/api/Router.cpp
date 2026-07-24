@@ -1,5 +1,6 @@
 #include "Router.h"
 #include "../devices/DeviceRouter.h"
+#include "../watchtogether/WatchTogetherRouter.h"
 #include "crash/CrashHandler.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -229,7 +230,7 @@ static void proxyRequest(const std::string& upstream_base,
 
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
                     KairosClient& kairos, LogBuffer& logs, const Config& cfg,
-                    DeviceSessionManager& devices) {
+                    DeviceSessionManager& devices, WatchTogetherManager& watch_together) {
 
     // ── Health ────────────────────────────────────────────────────────────────
     svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
@@ -652,6 +653,16 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
     // handled here in Hermes (it owns the live, in-memory session state) and
     // never falls through to the Kairos catch-all proxy.
     registerDeviceRoutes(svr, devices, cfg);
+
+    // ── Watch Together live coordination ──────────────────────────────────────
+    // Deliberately NOT under /api/watch-together/* — that whole prefix
+    // (create/list/join/leave/close) is Kairos-owned persistence/discovery
+    // and already reaches Kairos untouched via the generic proxy below.
+    // These three routes are the live, in-memory half only (see
+    // WatchTogetherSession's class comment) — same /stream/-style path
+    // convention as the VOD/preview routes above, for the same reason: it
+    // needs to sit outside the /api/ namespace the Kairos proxy owns wholesale.
+    registerWatchTogetherRoutes(svr, watch_together, cfg);
 
     // ── Kairos API proxy (all methods) ────────────────────────────────────────
     // Registered before the Hades catch-all so /api/* routes never reach nginx.

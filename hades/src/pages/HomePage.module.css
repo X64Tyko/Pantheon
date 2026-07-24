@@ -378,6 +378,20 @@
 }
 .cwProgressFill { height: 100%; background: var(--hds-violet); /* width set inline per-instance — live watch-progress percentage */ }
 
+/* ── Watch Together card ──────────────────────────────────────────────────── */
+
+.wtLiveBadge {
+  position: absolute; top: var(--hds-space-2); right: var(--hds-space-2);
+  background: var(--hds-match-green);
+  border-radius: var(--hds-radius-xs);
+  padding: 2px 6px;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-badge);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: oklch(0.13 0.02 285);
+}
+
 /* ── Shared row chrome (Shelf + ContinueWatchingShelf) ───────────────────── */
 
 .shelfArrow {

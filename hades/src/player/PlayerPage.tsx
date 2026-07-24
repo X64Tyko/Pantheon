@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, mediaUrl, channelLogoUrl } from '../api/client'
-import type { Channel, ChannelNow, Chapter, NextEpisode } from '../api/types'
+import type { Channel, ChannelNow, Chapter, NextEpisode, WatchTogetherSession } from '../api/types'
 import { nextInQueue, type QueueItem } from './playQueue'
 import { usePlaybackSession, type PlaybackTarget } from './usePlaybackSession'
 import { VideoPlayer } from './VideoPlayer'
@@ -15,6 +15,8 @@ import { useNavBack } from '../nav/back'
 import { useCastSession } from '../cast/useCastSession'
 import { useRokuSession } from '../cast-roku/useRokuSession'
 import type { CastMediaArgs } from '../cast/castMedia'
+import { useAuth } from '../auth/AuthContext'
+import { subscribeWatchTogether, postWatchTogetherCommand, postWatchTogetherHeartbeat, type WatchTogetherEvent } from './watchTogetherApi'
 import styles from './PlayerPage.module.css'
 
 const TARGET_BUFFER_SECS = 6 // matches the HLS segment length — "fully buffered" for throbber purposes
@@ -32,6 +34,15 @@ const UP_NEXT_FALLBACK_WINDOW_MS = 30_000
 // How close currentMs must be to session.durationMs for a native `ended`
 // event to be trusted as real completion — see handleVideoEnded.
 const NATURAL_END_TOLERANCE_MS = 5_000
+// Watch Together: host heartbeat cadence — matches Hermes' own `sync` tick
+// interval (WatchTogetherManager::tickSync, main.cpp), so a follower's
+// authoritative position is never more than one tick stale.
+const WT_HEARTBEAT_MS = 4_000
+// Watch Together: how far a follower's local position must drift from a
+// periodic `sync` tick's authoritative one before snapping to it — small
+// clock/decode jitter shouldn't cause constant micro-seeking, but a stalled
+// rebuffer or a fresh join should correct promptly.
+const WT_SYNC_DRIFT_THRESHOLD_MS = 1_500
 // Live channels: how often to re-poll "what's on now" — a live schedule has
 // no scrubber to derive position from, so this also re-derives PiP state.
 const CHANNEL_NOW_POLL_MS = 7_000
@@ -73,6 +84,25 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     () => (queueToken && kind !== 'channel') ? nextInQueue(queueToken, kind, targetId) : null,
     [queueToken, kind, targetId],
   )
+
+  // Watch Together — present whenever this playback session was opened via
+  // the Home shelf's "join"/"host" action (see LibraryDetailActions.tsx and
+  // HomePage.tsx's WatchTogetherShelf). Kairos's own session detail (fetched
+  // below) is what actually decides host vs. follower — the query param
+  // alone only says "this is a watch-together session," never who's hosting.
+  const wtSessionId = searchParams.get('wt')
+  const { user } = useAuth()
+  const [wtSession, setWtSession] = useState<WatchTogetherSession | null>(null)
+  const isWtHost     = !!(wtSessionId && wtSession && user && wtSession.host_user_id === user.user_id)
+  const isWtFollower = !!(wtSessionId && wtSession && !isWtHost)
+  // Mirrors currentMsRef/isRemoteActiveRef above — the leave/close-on-unmount
+  // effect below only ever runs once (it must fire exactly once, on real
+  // unmount, not on every host/follower transition), so it needs to read
+  // whatever isWtHost resolves to LATER through a ref, not the value closed
+  // over at its own initial run (which is always false — wtSession hasn't
+  // loaded yet on first render).
+  const isWtHostRef = useRef(false)
+  useEffect(() => { isWtHostRef.current = isWtHost }, [isWtHost])
 
   const target: PlaybackTarget = kind === 'channel'
     ? { kind: 'channel', id: targetId }
@@ -239,6 +269,92 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, targetId, session.durationMs])
 
+  // ── Watch Together ───────────────────────────────────────────────────────────
+
+  // Session identity/host — Kairos-owned (see WatchTogetherService.cpp); this
+  // is the one round trip that decides host vs. follower for everything below.
+  useEffect(() => {
+    if (!wtSessionId) { setWtSession(null); return }
+    api.getWatchTogether(wtSessionId).then(setWtSession).catch(() => setWtSession(null))
+  }, [wtSessionId])
+
+  // Host heartbeat — cheap/frequent, updates Hermes' extrapolation baseline
+  // between explicit seek/pause/play commands (see WatchTogetherSession.h).
+  // Reads through the same currentMsRef the watch-progress ping above uses,
+  // for the same reason (survive the whole session without restarting the
+  // interval on every timeupdate tick).
+  useEffect(() => {
+    if (!wtSessionId || !isWtHost || kind === 'channel') return
+    const interval = setInterval(() => {
+      const video = videoRef.current
+      postWatchTogetherHeartbeat(wtSessionId, currentMsRef.current, video?.paused ?? true)
+    }, WT_HEARTBEAT_MS)
+    return () => clearInterval(interval)
+  }, [wtSessionId, isWtHost, kind])
+
+  // Host explicit play/pause commands — separate from PlayerControls' own
+  // internal play/pause listener (which only drives its own local button
+  // state), attached directly to the native <video> element so a keyboard
+  // shortcut/D-pad toggle is covered too, not just PlayerControls' button.
+  // Never double-fires as an "echo": only the host ever posts commands, and
+  // the host never applies an incoming remote command to its own element
+  // (that's the follower-only branch below), so there's no risk of a remote
+  // pause bouncing back out as a second local command.
+  useEffect(() => {
+    if (!wtSessionId || !isWtHost) return
+    const video = videoRef.current
+    if (!video) return
+    const onPlay  = () => postWatchTogetherCommand(wtSessionId, { type: 'play' })
+    const onPause = () => postWatchTogetherCommand(wtSessionId, { type: 'pause' })
+    video.addEventListener('play',  onPlay)
+    video.addEventListener('pause', onPause)
+    return () => {
+      video.removeEventListener('play',  onPlay)
+      video.removeEventListener('pause', onPause)
+    }
+  }, [wtSessionId, isWtHost, session.manifestUrl])
+
+  // Follower: apply every event exactly the same way regardless of type —
+  // paused-state always syncs (idempotent, safe even though explicit
+  // pause/play already covers most of it — this also catches a fresh join
+  // or a missed event), position only snaps immediately for an explicit
+  // seek/pause/play; a plain `sync` tick only corrects once drift exceeds
+  // WT_SYNC_DRIFT_THRESHOLD_MS so ordinary clock/decode jitter doesn't cause
+  // constant micro-seeking.
+  const applyWtEvent = useCallback((event: WatchTogetherEvent) => {
+    const video = videoRef.current
+    if (!video) return
+    if (typeof event.position_ms === 'number') {
+      const targetSec = event.position_ms / 1000
+      if (event.type !== 'sync' || Math.abs(targetSec - video.currentTime) * 1000 > WT_SYNC_DRIFT_THRESHOLD_MS) {
+        video.currentTime = targetSec
+        setCurrentMs(event.position_ms)
+      }
+    }
+    if (event.paused === true && !video.paused) video.pause()
+    else if (event.paused === false && video.paused) video.play().catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!wtSessionId || !isWtFollower) return
+    const es = subscribeWatchTogether(wtSessionId, applyWtEvent)
+    return () => es.close()
+  }, [wtSessionId, isWtFollower, applyWtEvent])
+
+  // Leave/close on the way out — best-effort, mirrors stopVodPlayback's own
+  // fire-and-forget teardown. The host ending it closes for everyone
+  // (Kairos's own host-only /close); a follower leaving only drops their own
+  // membership row. Either way this is also just a courtesy — Hermes' own
+  // heartbeat-gap reaper (Phase D) is what actually guarantees an abandoned
+  // session doesn't linger if this never fires (tab closed, not navigated).
+  useEffect(() => {
+    if (!wtSessionId) return
+    return () => {
+      if (isWtHostRef.current) api.closeWatchTogether(wtSessionId).catch(() => {})
+      else                     api.leaveWatchTogether(wtSessionId).catch(() => {})
+    }
+  }, [wtSessionId])
+
   const resetIdleTimer = useCallback(() => {
     setControlsVisible(true)
     if (idleTimer.current) clearTimeout(idleTimer.current)
@@ -325,12 +441,18 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   // file; letting the request happen and briefly buffer is exactly the same
   // experience a normal on-demand video seek already has everywhere else.
   const handleSeek = (ms: number) => {
+    // A follower's own scrub is pointless — the next sync tick (at most
+    // WT_HEARTBEAT_MS away) just corrects it back to the host's actual
+    // position anyway. No-op rather than letting it briefly "work" and then
+    // visibly snap back a moment later.
+    if (isWtFollower) return
     if (isCasting) { castSession.seek(ms); setCurrentMs(ms); return }
     if (isCastingRoku) { rokuSession.seek(ms); setCurrentMs(ms); return }
     const video = videoRef.current
     if (!video) return
     video.currentTime = ms / 1000
     setCurrentMs(ms)
+    if (wtSessionId && isWtHost) postWatchTogetherCommand(wtSessionId, { type: 'seek', position_ms: Math.round(ms) })
   }
 
   // Plex-style sticky per-show preference — fire-and-forget, episodes only
