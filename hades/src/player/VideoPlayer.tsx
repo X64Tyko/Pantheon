@@ -56,7 +56,7 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
     console.log('[player] applySubtitleTrack: subtitleTrack prop =', subtitleTrack,
       'hls.subtitleTracks =', hls.subtitleTracks.map(t => ({ id: t.id, name: t.name, panIdx: t.attrs['X-PANTHEON-INDEX'] })),
       'current hls.subtitleTrack =', hls.subtitleTrack)
-    if (subtitleTrack < 0) {
+    if (subtitleTrack === -1) {
       console.log('[player] applySubtitleTrack: disabling subtitles (hls.subtitleTrack = -1)')
       hls.subtitleTrack = -1
       return
@@ -100,7 +100,7 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
     const video = videoRef.current
     if (!video) return
     for (const t of Array.from(video.textTracks)) t.mode = 'disabled'
-    if (subtitleTrack < 0 || !subtitleLanguage) return
+    if (subtitleTrack === -1 || !subtitleLanguage) return
     const match = Array.from(video.textTracks).find(t => t.language === subtitleLanguage)
     if (match) match.mode = 'showing'
   }, [subtitleTrack, subtitleLanguage])
