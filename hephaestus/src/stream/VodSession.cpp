@@ -832,6 +832,10 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 		run_exhausted = current_run_exited_naturally.load();
 	}
 
+	std::cerr << "[vod:" << session_id << "] prepareSegment seg=" << segment_index
+			  << " run_start=" << run_start << " generated=" << generated
+			  << " run_exhausted=" << (run_exhausted ? "yes" : "no") << "\n";
+
 	if (segment_index >= run_start && segment_index <= generated) {
 		// Already on disk. Resume unconditionally on any request, not just
 		// near the frontier — cutting it close caused visible stutter.
@@ -849,6 +853,8 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 	// staleness for "this run is exhausted and will never produce it" and
 	// triggering a wasted restart below.
 	if (segment_index > generated && std::filesystem::exists(segmentPath(segment_index))) {
+		std::cerr << "[vod:" << session_id << "] prepareSegment seg=" << segment_index
+				  << " on disk despite stale highest_generated_segment — treating as Ready\n";
 		std::lock_guard<std::mutex> lock(session_mtx);
 		if (segment_index > highest_generated_segment.load()) highest_generated_segment.store(segment_index);
 		if (ffmpeg && ffmpeg->isPaused()) ffmpeg->resume();
@@ -864,6 +870,8 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 	// Restart there directly instead of burning a wait budget on a run
 	// that's already exhausted.
 	if (segment_index > generated && !run_exhausted && segment_index <= generated + kVodCatchUpMarginSegments) {
+		std::cerr << "[vod:" << session_id << "] prepareSegment seg=" << segment_index
+				  << " within catch-up margin of generated=" << generated << " — WaitShort\n";
 		std::lock_guard<std::mutex> lock(session_mtx);
 		if (ffmpeg && ffmpeg->isPaused()) ffmpeg->resume();
 		return SegmentPrep::WaitShort;
@@ -883,6 +891,8 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 	// run's start — restarting there directly is cheaper than waiting for
 	// the encoder to churn there sequentially (or, for the backward case, it
 	// never would on its own).
+	std::cerr << "[vod:" << session_id << "] prepareSegment seg=" << segment_index
+			  << " outside generated range and catch-up margin — restarting (WaitColdStart)\n";
 	if (!restartAt(segment_index)) return SegmentPrep::Failed;
 	return SegmentPrep::WaitColdStart;
 }

@@ -93,21 +93,35 @@ static void serveVodSegment(const std::shared_ptr<VodSession>& session, int inde
                              const std::string& seg_suffix, httplib::Response& res) {
     session->touch();
     auto path = session->dir() + "/seg-" + seg_suffix + ".ts";
-    switch (session->prepareSegment(index)) {
+    auto prep = session->prepareSegment(index);
+    std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
+               << " prep=" << (prep == VodSession::SegmentPrep::Ready ? "Ready"
+                              : prep == VodSession::SegmentPrep::WaitShort ? "WaitShort"
+                              : prep == VodSession::SegmentPrep::WaitColdStart ? "WaitColdStart" : "Failed") << "\n";
+    switch (prep) {
         case VodSession::SegmentPrep::Ready:
             break; // already on disk — serve immediately, no wait
         case VodSession::SegmentPrep::WaitShort:
             // Resuming an already-warm, already-initialized encoder —
             // should be fast.
-            if (!waitForFile(path, 10000)) { res.status = 503; return; }
+            if (!waitForFile(path, 10000)) {
+                std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
+                           << " WaitShort TIMED OUT after 10s (503)\n";
+                res.status = 503; return;
+            }
             break;
         case VodSession::SegmentPrep::WaitColdStart:
             // A real restart just happened (seek beyond the generated
             // range, or a track switch) — same NVENC/CUDA cold-start budget
             // as before.
-            if (!waitForFile(path, 25000)) { res.status = 503; return; }
+            if (!waitForFile(path, 25000)) {
+                std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
+                           << " WaitColdStart TIMED OUT after 25s (503)\n";
+                res.status = 503; return;
+            }
             break;
         case VodSession::SegmentPrep::Failed:
+            std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index << " Failed (404)\n";
             res.status = 404;
             return;
     }

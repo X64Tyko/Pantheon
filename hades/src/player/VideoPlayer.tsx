@@ -170,16 +170,17 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       const MAX_RETRIES  = 3
       hls.on(Hls.Events.FRAG_LOADED, () => { networkRetries = 0; mediaRetries = 0 })
       hls.on(Hls.Events.ERROR, (_evt, data) => {
-        if (data.type === Hls.ErrorTypes.OTHER_ERROR || data.details?.toLowerCase().includes('subtitle')) {
-          console.warn('[player] hls ERROR (subtitle-related or other) fatal=', data.fatal, 'type=', data.type, 'details=', data.details, 'url=', (data as { url?: string }).url, 'response=', data.response)
-        }
+        console.warn('[player] hls ERROR fatal=', data.fatal, 'type=', data.type, 'details=', data.details,
+          'url=', (data as { url?: string }).url, 'response=', data.response, 'frag=', data.frag?.url)
         if (!data.fatal) return
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
+            console.warn('[player] fatal NETWORK_ERROR, retry', networkRetries + 1, 'of', MAX_RETRIES)
             if (networkRetries++ < MAX_RETRIES) hls!.startLoad()
             else onError('Network error — the stream stopped responding.')
             break
           case Hls.ErrorTypes.MEDIA_ERROR:
+            console.warn('[player] fatal MEDIA_ERROR, retry', mediaRetries + 1, 'of', MAX_RETRIES)
             if (mediaRetries++ < MAX_RETRIES) hls!.recoverMediaError()
             else onError('Playback error — the stream could not be decoded.')
             break
@@ -187,6 +188,20 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
             onError('Playback failed.')
         }
       })
+      // Seek diagnostics — a seek beyond the already-generated segment range
+      // needs Hephaestus to actually restart its encoder there (VodSession's
+      // sliding-window engine), which can take real wall-clock time; these
+      // pin down whether a "stuck" seek is the browser waiting on a slow/
+      // hung backend response (network log will show a long-pending seg-*
+      // request) versus something purely client-side (hls.js never even
+      // issuing the request, or stuck buffering after receiving it).
+      video.addEventListener('seeking', () => console.log('[player] video seeking -> target', video.currentTime))
+      video.addEventListener('seeked',  () => console.log('[player] video seeked, now at', video.currentTime))
+      video.addEventListener('waiting', () => console.log('[player] video waiting (buffering) at', video.currentTime))
+      video.addEventListener('stalled', () => console.warn('[player] video stalled at', video.currentTime))
+      video.addEventListener('canplay', () => console.log('[player] video canplay at', video.currentTime))
+      hls.on(Hls.Events.FRAG_LOADING, (_evt, data) => console.log('[player] hls FRAG_LOADING', data.frag.type, data.frag.url))
+      hls.on(Hls.Events.FRAG_LOADED,  (_evt, data) => console.log('[player] hls FRAG_LOADED', data.frag.type, data.frag.url))
       if (autoPlay) video.play().catch(() => {})
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari: native HLS, no hls.js needed. Unlike hls.js there's no
