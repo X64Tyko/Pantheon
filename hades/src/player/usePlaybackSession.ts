@@ -29,18 +29,30 @@ export interface PlaybackSession {
   // (re)loaded manifest (initial mount, or a NEW session from a track
   // switch — reload() is still the only thing that changes this).
   startPositionMs: number
-  // VOD only — restarts the session (a genuinely new encode/manifest) at
-  // the given position/audio/subtitle selection. Audio still needs a
-  // different ffmpeg -map (VodSession::ensureAudioTrack does this in-place
-  // server-side, but Hades still switches audio the old way — see
-  // PlayerPage.tsx's handleSelectAudio); a plain seek does NOT call this
-  // (handleSeek just seeks the existing persistent manifest directly), and
-  // neither does a normal (extractable/text) subtitle switch — see
-  // selectSubtitleTrack. subtitleTrack here is only for burn-in: a bitmap
-  // subtitle is composited into the video itself (VodSession's subtitleBurnIn
-  // path), so selecting one is fundamentally a different video variant, not
-  // a manifest-level toggle — see PlayerPage.tsx's handleSelectBurnInSubtitle.
+  // VOD only — restarts the session (a genuinely new encode/manifest) at the
+  // given position. Now only needed for a burn-in subtitle switch (a bitmap
+  // subtitle is composited into the video itself, VodSession's subtitleBurnIn
+  // path, so selecting one is fundamentally a different video variant, not a
+  // manifest-level toggle — see PlayerPage.tsx's handleSelectSubtitle) or a
+  // genuine seek-driven restart; a plain seek does NOT call this (handleSeek
+  // just seeks the existing persistent manifest directly). Audio no longer
+  // goes through here — see selectAudioTrack below; the audioTrack option
+  // still exists since a burn-in reload needs to preserve whatever audio
+  // track was already selected across the new session.
   reload: (opts: { positionMs?: number; audioTrack?: number; subtitleTrack?: number }) => void
+  // Pure client-side selection against the master manifest's own AUDIO group
+  // (VodSession::buildMasterPlaylist) — VideoPlayer.tsx matches this index to
+  // hls.js's own audioTracks[] by the X-PANTHEON-INDEX attribute and switches
+  // there directly. No network call to Hephaestus's /stream/vod/start, no new
+  // session: audio has been its own independent VodEncodeStream server-side
+  // since the video/audio split landed, so a track switch only ever needs
+  // hls.js to point at a different already-declared AUDIO rendition — the
+  // existing /stream/vod/{id}/audio/{n}/playlist.m3u8 route Hephaestus
+  // already serves for exactly this. Previously this went through reload()
+  // (a full new session/manifest), which tore down and reloaded the whole
+  // player — visible as playback stopping and a loading spinner on every
+  // audio switch — for a change that no longer needs any of that.
+  selectAudioTrack: (index: number) => void
   // Pure client-side selection against the master manifest's own SUBTITLES
   // group (VodSession::buildMasterPlaylist) — VideoPlayer.tsx matches this
   // index to hls.js's own subtitleTracks[] by URL and switches there
@@ -162,13 +174,17 @@ export function usePlaybackSession(
   }, [target.kind, target.id])
 
   const reload: PlaybackSession['reload'] = useCallback(opts => {
-    // subtitleTrack defaults to the current one as a request hint when the
-    // caller doesn't pass it (e.g. an audio-switch-driven restart) — so that
-    // restart resolves the SAME subtitle rather than falling back to
-    // whatever the fresh session would auto-pick on its own. A burn-in
-    // selection is the one caller that DOES pass it explicitly.
+    // audioTrack defaults to the current one as a request hint when the
+    // caller doesn't pass it — so a burn-in-driven restart resolves the SAME
+    // audio track rather than falling back to whatever the fresh session
+    // would auto-pick on its own.
     load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, opts.subtitleTrack ?? subtitleTrack)
   }, [load, audioTrack, subtitleTrack])
+
+  const selectAudioTrack: PlaybackSession['selectAudioTrack'] = useCallback(index => {
+    console.log('[player] selectAudioTrack called with index=', index)
+    setAudioTrack(index)
+  }, [])
 
   const selectSubtitleTrack: PlaybackSession['selectSubtitleTrack'] = useCallback(index => {
     console.log('[player] selectSubtitleTrack called with index=', index)
@@ -177,6 +193,6 @@ export function usePlaybackSession(
 
   return {
     loading, error, manifestUrl, isLive, directPlay,
-    title, durationMs, tracks, audioTrack, subtitleTrack, reload, selectSubtitleTrack, startPositionMs,
+    title, durationMs, tracks, audioTrack, subtitleTrack, reload, selectAudioTrack, selectSubtitleTrack, startPositionMs,
   }
 }

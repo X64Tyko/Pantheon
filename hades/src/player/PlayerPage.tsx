@@ -340,8 +340,13 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     if (kind === 'episode') api.setEpisodeTrackPreference(targetId, b).catch(() => {})
   }
 
+  // No session.reload() — audio has been its own independent VodEncodeStream
+  // server-side since the video/audio split landed, so this is a pure
+  // client-side selection against the master manifest's AUDIO group;
+  // VideoPlayer picks it up via its audioTrack prop and switches hls.js
+  // directly, without touching video or restarting the session at all.
   const handleSelectAudio = (index: number) => {
-    session.reload({ positionMs: currentMs, audioTrack: index })
+    session.selectAudioTrack(index)
     saveTrackPreference({ audio_lang: session.tracks?.audio.find(t => t.index === index)?.language ?? '' })
   }
   // Burn-in (bitmap PGS/DVD/DVB) tracks are never in the master manifest's
@@ -349,9 +354,9 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   // which is what a burn-in pick actually is (VodSession composites it into
   // the frame itself). They only ever reach this component via the wire
   // tracks.subtitles[].burn_in flag, so route them through session.reload()
-  // (a real session-level reattach, same shape as handleSelectAudio) instead
-  // of the plain client-side toggle below, which has nothing to attach a
-  // burn-in selection to and would otherwise silently drop it.
+  // (a real session-level reattach) instead of the plain client-side toggle
+  // below, which has nothing to attach a burn-in selection to and would
+  // otherwise silently drop it.
   const handleSelectSubtitle = (index: number) => {
     const track = session.tracks?.subtitles.find(t => t.index === index)
     if (track?.burn_in) {
@@ -512,6 +517,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                   manifestUrl={session.manifestUrl}
                   subtitleTrack={session.subtitleTrack}
                   subtitleLanguage={session.tracks?.subtitles.find(t => t.index === session.subtitleTrack)?.language ?? null}
+                  audioTrack={session.audioTrack}
                   isLive={session.isLive}
                   startPositionSec={session.startPositionMs / 1000}
                   // The manifest's timeline is the file's real absolute

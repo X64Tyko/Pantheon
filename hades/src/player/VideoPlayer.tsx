@@ -19,6 +19,14 @@ interface VideoPlayerProps {
   // needed for the Safari native-HLS fallback below, which has no URL to
   // key off the way hls.js's own subtitleTracks[] does.
   subtitleLanguage?: string | null
+  // Which audio track should be playing, in Hephaestus's own relative_index
+  // scheme (VodTracks/TrackMenu convention) — VOD only; ignored for live.
+  // Now a controlled selection against the master manifest's own AUDIO group
+  // (audio is a fully independent VodEncodeStream server-side — see
+  // VodSession.h's class comment) rather than something that requires a new
+  // session: switching this just moves hls.js's own audioTrack pointer,
+  // without touching manifestUrl/video at all.
+  audioTrack?: number
   // Where to seek to once this (freshly loaded) manifest is ready — VOD only.
   // Hephaestus's VOD manifest now describes the whole file's real absolute
   // timeline from segment 0 for the session's entire life, so this is just
@@ -32,7 +40,7 @@ interface VideoPlayerProps {
   onError:      (message: string) => void
 }
 
-export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1, subtitleLanguage = null, startPositionSec, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
+export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1, subtitleLanguage = null, audioTrack = -1, startPositionSec, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
   const hlsRef = useRef<Hls | null>(null)
 
   // Maps our subtitleTrack index onto whichever of hls.js's own
@@ -80,6 +88,31 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
   const applySubtitleTrackRef = useRef(applySubtitleTrack)
   useEffect(() => { applySubtitleTrackRef.current = applySubtitleTrack }, [applySubtitleTrack])
 
+  // Same matching scheme as applySubtitleTrack, against hls.js's own
+  // audioTracks[]/audioTrack instead — no -1/"off" case here, an audio track
+  // is always active (unlike subtitles). Setting hls.audioTrack triggers
+  // hls.js's own internal AUDIO_TRACK_SWITCHING/SWITCHED flow (it buffers the
+  // new track and swaps in sync on its own), which is what fixed the
+  // "switching audio stops the video and shows a spinner" regression — that
+  // was PlayerPage's handleSelectAudio calling session.reload() (a brand new
+  // /stream/vod/start session, tearing down and reloading the whole player)
+  // for a change that, now that audio is its own independent stream
+  // server-side, only ever needed a client-side hls.js track switch.
+  const applyAudioTrack = useCallback(() => {
+    const hls = hlsRef.current
+    if (!hls) return
+    const idx = hls.audioTracks.findIndex(t => t.attrs['X-PANTHEON-INDEX'] === String(audioTrack))
+    if (idx !== -1 && idx !== hls.audioTrack) {
+      console.log('[player] applyAudioTrack: matched X-PANTHEON-INDEX', audioTrack, '-> hls track idx', idx, '(was', hls.audioTrack, ')')
+      hls.audioTrack = idx
+    } else if (idx === -1) {
+      console.warn('[player] applyAudioTrack: NO MATCH for X-PANTHEON-INDEX', audioTrack, 'in', hls.audioTracks.length, 'hls audioTracks — selection silently dropped')
+    }
+  }, [audioTrack])
+
+  const applyAudioTrackRef = useRef(applyAudioTrack)
+  useEffect(() => { applyAudioTrackRef.current = applyAudioTrack }, [applyAudioTrack])
+
   // Safari (native HLS, no hls.js — see the else-if branch below) parses
   // SUBTITLES groups into the <video> element's own native textTracks
   // itself; matched by language since TextTrack has no URL to key off the
@@ -109,6 +142,7 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
   // only trigger now, since a subtitle switch no longer reloads manifestUrl.
   useEffect(() => { applySubtitleTrack() }, [applySubtitleTrack])
   useEffect(() => { applyNativeSubtitleTrack() }, [applyNativeSubtitleTrack])
+  useEffect(() => { applyAudioTrack() }, [applyAudioTrack])
 
   useEffect(() => {
     const video = videoRef.current
@@ -134,6 +168,15 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_evt, data) => {
         console.log('[player] hls SUBTITLE_TRACKS_UPDATED', data.subtitleTracks.map(t => ({ id: t.id, name: t.name, panIdx: t.attrs['X-PANTHEON-INDEX'], url: t.url })))
         applySubtitleTrackRef.current()
+      })
+      // Same reasoning as SUBTITLE_TRACKS_UPDATED above — always re-applies
+      // whatever's currently selected via the ref, not a stale closure.
+      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_evt, data) => {
+        console.log('[player] hls AUDIO_TRACKS_UPDATED', data.audioTracks.map(t => ({ id: t.id, name: t.name, panIdx: t.attrs['X-PANTHEON-INDEX'], url: t.url })))
+        applyAudioTrackRef.current()
+      })
+      hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_evt, data) => {
+        console.log('[player] hls AUDIO_TRACK_SWITCHED -> id', data.id)
       })
       hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (_evt, data) => {
         console.log('[player] hls SUBTITLE_TRACK_SWITCH -> id', data.id)
