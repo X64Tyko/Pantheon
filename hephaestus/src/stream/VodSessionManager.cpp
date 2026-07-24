@@ -51,7 +51,8 @@ void VodSessionManager::refreshSettings() {
 	if (bs) cached_buffer_size = *bs * 1024; // KB -> bytes
 }
 
-std::shared_ptr<VodSession> VodSessionManager::create(const std::string& file_path, int64_t position_ms,
+std::shared_ptr<VodSession> VodSessionManager::create(const std::string& content_type, const std::string& content_id,
+														const std::string& file_path, int64_t position_ms,
 														int audio_track, int subtitle_track, bool hdr_capable,
 														const std::optional<ClientCapabilities>& client_caps,
 														const std::vector<ExternalSubtitle>& external_subtitles,
@@ -65,7 +66,7 @@ std::shared_ptr<VodSession> VodSessionManager::create(const std::string& file_pa
 		if (cached_buffer_size > 0) session_opts.buffer_size = cached_buffer_size;
 	}
 
-	auto session = std::make_shared<VodSession>(generateSessionId(), ffmpeg_path, session_opts);
+	auto session = std::make_shared<VodSession>(generateSessionId(), content_type, content_id, ffmpeg_path, session_opts, *this);
 	if (!session->start(file_path, position_ms, audio_track, subtitle_track, hdr_capable, client_caps,
 						 external_subtitles, fallback_duration_ms,
 						 preferred_audio_lang, preferred_subtitle_lang)) return nullptr;
@@ -73,6 +74,30 @@ std::shared_ptr<VodSession> VodSessionManager::create(const std::string& file_pa
 	std::lock_guard<std::mutex> lock(mtx);
 	sessions[session->sessionId()] = session;
 	return session;
+}
+
+std::shared_ptr<VodEncodeStream> VodSessionManager::getOrCreateVideoStream(
+		const VideoStreamKey& key, const std::function<std::shared_ptr<VodEncodeStream>()>& factory) {
+	std::lock_guard<std::mutex> lock(stream_mtx);
+	auto it = video_streams.find(key);
+	if (it != video_streams.end()) {
+		if (auto existing = it->second.lock()) return existing;
+	}
+	auto created = factory();
+	video_streams[key] = created;
+	return created;
+}
+
+std::shared_ptr<VodEncodeStream> VodSessionManager::getOrCreateAudioStream(
+		const AudioStreamKey& key, const std::function<std::shared_ptr<VodEncodeStream>()>& factory) {
+	std::lock_guard<std::mutex> lock(stream_mtx);
+	auto it = audio_streams.find(key);
+	if (it != audio_streams.end()) {
+		if (auto existing = it->second.lock()) return existing;
+	}
+	auto created = factory();
+	audio_streams[key] = created;
+	return created;
 }
 
 std::shared_ptr<VodSession> VodSessionManager::get(const std::string& sessionId) {
@@ -107,12 +132,25 @@ void VodSessionManager::reapLoop() {
 			std::this_thread::sleep_for(std::chrono::seconds(1));
 		if (stop_reaper.load()) break;
 
-		std::lock_guard<std::mutex> lock(mtx);
-		for (auto it = sessions.begin(); it != sessions.end(); ) {
-			if (!it->second->isActive() || it->second->isIdle()) {
-				it->second->stop();
-				it = sessions.erase(it);
-			} else ++it;
+		{
+			std::lock_guard<std::mutex> lock(mtx);
+			for (auto it = sessions.begin(); it != sessions.end(); ) {
+				if (!it->second->isActive() || it->second->isIdle()) {
+					it->second->stop();
+					it = sessions.erase(it);
+				} else ++it;
+			}
+		}
+		// Expired weak_ptr entries — the streams themselves already tore
+		// down (their last owning VodSession went away above, or on a track
+		// switch); this just stops video_streams/audio_streams from growing
+		// unbounded with dead keys over a long-running instance's lifetime.
+		{
+			std::lock_guard<std::mutex> lock(stream_mtx);
+			for (auto it = video_streams.begin(); it != video_streams.end(); )
+				it = it->second.expired() ? video_streams.erase(it) : std::next(it);
+			for (auto it = audio_streams.begin(); it != audio_streams.end(); )
+				it = it->second.expired() ? audio_streams.erase(it) : std::next(it);
 		}
 	}
 }

@@ -43,10 +43,15 @@ void registerClientCapabilitiesRoutes(httplib::Server& svr, ClientCapabilityCach
             if (c.is_string()) caps.video_codecs.insert(c.get<std::string>());
         for (auto& c : body.value("audio_codecs", json::array()))
             if (c.is_string()) caps.audio_codecs.insert(c.get<std::string>());
+        if (body.contains("max_height") && body["max_height"].is_number_integer()) {
+            int h = body["max_height"].get<int>();
+            if (h > 0) caps.max_height = h;
+        }
 
         std::cerr << "[client-caps] declared for token=" << shortToken(token)
                   << " video=[" << joinCodecs(caps.video_codecs) << "]"
-                  << " audio=[" << joinCodecs(caps.audio_codecs) << "]\n";
+                  << " audio=[" << joinCodecs(caps.audio_codecs) << "]"
+                  << " max_height=" << (caps.max_height ? std::to_string(*caps.max_height) : "(none)") << "\n";
 
         cache.declare(token, std::move(caps));
         res.status = 204;

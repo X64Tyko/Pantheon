@@ -74,14 +74,101 @@ std::string buildHdrToSdrTonemapFilter(const VideoTrack& source_video) {
            ",format=yuv420p";
 }
 
+const std::vector<VideoCodecOption>& videoCodecPriority() {
+    static const std::vector<VideoCodecOption> options = {
+        { "hevc", [](std::vector<std::string>& a, std::vector<std::string>& vfParts, HwAccel hw_accel) {
+            switch (hw_accel) {
+                case HwAccel::nvidia:
+                    a.insert(a.end(), {"-c:v", "hevc_nvenc", "-preset", "p4",
+                                        "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p",
+                                        "-forced-idr", "1"}); // see the h264 entry below for why
+                    break;
+                case HwAccel::amd:
+                    vfParts.push_back("format=nv12,hwupload");
+                    a.insert(a.end(), {"-c:v", "hevc_vaapi"});
+                    break;
+                default:
+                    a.insert(a.end(), {"-c:v", "libx265", "-preset", "veryfast",
+                                        "-crf", "23", "-pix_fmt", "yuv420p"});
+            }
+        }},
+        { "h264", [](std::vector<std::string>& a, std::vector<std::string>& vfParts, HwAccel hw_accel) {
+            switch (hw_accel) {
+                case HwAccel::nvidia:
+                    a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
+                                        "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p",
+                                        // Without this, h264_nvenc can silently treat a
+                                        // -force_key_frames request as an ordinary frame
+                                        // its own internal GOP logic is still free to
+                                        // reorder/skip, falling back to its default
+                                        // ~250-frame GOP instead of the caller's
+                                        // keyframeIntervalSecs -- HLS segments then land
+                                        // at that default interval (e.g. 10.4s at 24fps)
+                                        // instead of near -hls_time. Confirmed against a
+                                        // real VOD session: #EXTINF was landing at
+                                        // exactly 250 frames' worth of playback time.
+                                        // -forced-idr makes NVENC emit a true IDR frame
+                                        // for every forced keyframe instead.
+                                        "-forced-idr", "1"});
+                    break;
+                case HwAccel::amd:
+                    vfParts.push_back("format=nv12,hwupload");
+                    a.insert(a.end(), {"-c:v", "h264_vaapi"});
+                    break;
+                default:
+                    a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
+                                        "-crf", "23", "-pix_fmt", "yuv420p"});
+            }
+        }},
+    };
+    return options;
+}
+
+// Picks the best codec the client has actually declared support for,
+// bounded by the source's own position in the priority list — never more
+// "exotic"/modern than the source already is (e.g. a HEVC source never
+// transcodes to some hypothetical future AV1 target even if the client
+// supports it). Re-encoding UP a generation buys nothing real: the source
+// was never encoded with the extra quality/efficiency headroom a newer
+// codec offers, so all that changes is more encode time for zero benefit.
+// An unrecognized/legacy source (not in this list at all, e.g. mpeg2/vc1)
+// has no such bound — nothing suggests a modern target wouldn't help it, so
+// the full list is fair game. Falls back to the last (most universally
+// compatible) entry if client_caps is unset or matches nothing above the
+// bound — the same role the fixed H.264 target unconditionally played
+// before this existed.
+const VideoCodecOption& chooseVideoCodec(const std::string& source_codec,
+                                          const std::optional<ClientCapabilities>& client_caps) {
+    const auto& options = videoCodecPriority();
+    size_t source_tier = 0; // unrecognized source = no bound
+    for (size_t i = 0; i < options.size(); ++i) {
+        if (options[i].name == source_codec) { source_tier = i; break; }
+    }
+    if (client_caps) {
+        for (size_t i = source_tier; i < options.size(); ++i) {
+            if (client_caps->video_codecs.count(options[i].name)) return options[i];
+        }
+    }
+    return options.back();
+}
+
 void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
                            HwAccel hw_accel, int keyframeIntervalSecs,
-                           const VideoTrack* source_video, bool client_hdr_capable) {
+                           const VideoTrack* source_video, bool client_hdr_capable,
+                           const std::optional<ClientCapabilities>& client_caps) {
     bool source_hdr      = source_video && isHdrTransfer(source_video->color_transfer);
     bool passthrough_hdr = source_hdr && client_hdr_capable;
 
     if (source_hdr && !passthrough_hdr)
         vfParts.insert(vfParts.begin(), buildHdrToSdrTonemapFilter(*source_video));
+
+    // Client-declared resolution cap — already a plain pixel height, not the
+    // "1080p"-style string resolveMaxHeight parses (that's for a discrete
+    // settings dropdown; max_height here comes directly off the client's own
+    // declaration). No-op (min() inside the filter) if source is already
+    // at or under it.
+    if (client_caps && client_caps->max_height)
+        pushScaleFilter(vfParts, *client_caps->max_height);
 
     // Real HDR10 passthrough: re-encode at true 10-bit instead of downgrading
     // to 8-bit/BT.709, for a client that already told us (via
@@ -130,32 +217,11 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
         return;
     }
 
-    switch (hw_accel) {
-        case HwAccel::nvidia:
-            a.insert(a.end(), {"-c:v", "h264_nvenc", "-preset", "p4",
-                                "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p",
-                                // Without this, h264_nvenc can silently treat a
-                                // -force_key_frames request as an ordinary frame
-                                // its own internal GOP logic is still free to
-                                // reorder/skip, falling back to its default
-                                // ~250-frame GOP instead of the caller's
-                                // keyframeIntervalSecs -- HLS segments then land
-                                // at that default interval (e.g. 10.4s at 24fps)
-                                // instead of near -hls_time. Confirmed against a
-                                // real VOD session: #EXTINF was landing at
-                                // exactly 250 frames' worth of playback time.
-                                // -forced-idr makes NVENC emit a true IDR frame
-                                // for every forced keyframe instead.
-                                "-forced-idr", "1"});
-            break;
-        case HwAccel::amd:
-            vfParts.push_back("format=nv12,hwupload");
-            a.insert(a.end(), {"-c:v", "h264_vaapi"});
-            break;
-        default:
-            a.insert(a.end(), {"-c:v", "libx264", "-preset", "veryfast",
-                                "-crf", "23", "-pix_fmt", "yuv420p"});
-    }
+    // Smart mux — see chooseVideoCodec()'s own comment. This is NOT the
+    // HDR10 Main10 path above (that's real 10-bit HDR, always HEVC); this is
+    // still plain SDR content, only the transcode target varies now.
+    chooseVideoCodec(source_video ? source_video->codec : "", client_caps)
+        .buildArgs(a, vfParts, hw_accel);
     a.insert(a.end(), {"-force_key_frames",
                         "expr:gte(t,n_forced*" + std::to_string(keyframeIntervalSecs) + ")"});
 
@@ -181,8 +247,40 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
     a.insert(a.end(), {"-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"});
 }
 
+const std::vector<AudioCodecOption>& audioCodecPriority() {
+    static const std::vector<AudioCodecOption> options = {
+        // 384k: a standard AC3/EAC3 5.1 rate with real headroom even if the
+        // source is actually 7.1 — audio_bitrate_kbps isn't reused here
+        // since every caller tunes that specifically for stereo AAC.
+        { "eac3", true, 384 },
+        { "ac3",  true, 384 },
+        { "aac",  false, 0 }, // universal fallback — same role it played unconditionally before this existed
+    };
+    return options;
+}
+
+// Smart mux, bounded by the source the same way chooseVideoCodec() is —
+// here the bound is channel count, not codec generation: a surround-capable
+// codec buys nothing for a source that's already stereo/mono, so those
+// never enter the running regardless of what the client declares. Only once
+// there's real surround content to preserve does a client's eac3/ac3
+// support matter at all.
+const AudioCodecOption& chooseAudioCodec(const AudioTrack* source_audio,
+                                          const std::optional<ClientCapabilities>& client_caps) {
+    const auto& options = audioCodecPriority();
+    bool source_has_surround = source_audio && source_audio->channels > 2;
+    if (source_has_surround && client_caps) {
+        for (auto& opt : options) {
+            if (opt.preserve_channels && client_caps->audio_codecs.count(opt.name)) return opt;
+        }
+    }
+    return options.back(); // aac
+}
+
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
-                           int audio_bitrate_kbps) {
+                           int audio_bitrate_kbps,
+                           const std::optional<ClientCapabilities>& client_caps,
+                           const AudioTrack* source_audio) {
     std::vector<std::string> afParts;
     // dynaudnorm, not loudnorm: loudnorm's single-pass mode is a real-time
     // estimate with no knowledge of the whole stream, and ffmpeg's own docs
@@ -200,15 +298,32 @@ void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double spe
     if (loudnorm) afParts.push_back("dynaudnorm=m=15:r=0.2");
     if (speed != 1.0) afParts.push_back("atempo=" + fmtSpeed(speed));
 
-    // Force stereo: without an explicit -ac, ffmpeg preserves the source's
-    // channel count (e.g. a 5.1/7.1 theatrical mix), and browsers' MSE
-    // SourceBuffer support for multichannel AAC is far less reliable than
-    // for stereo -- if the audio SourceBuffer never successfully
-    // initializes, playback can stall entirely even though video decodes
-    // fine (MSE generally wants every active SourceBuffer ready before
-    // playback starts). Nothing watching through a browser tab does true
-    // surround passthrough anyway, so downmixing here costs nothing real.
-    a.insert(a.end(), {"-c:a", "aac", "-ac", "2", "-b:a", std::to_string(audio_bitrate_kbps) + "k"});
+    const auto& codec = chooseAudioCodec(source_audio, client_caps);
+    int bitrate_kbps = codec.bitrate_kbps > 0 ? codec.bitrate_kbps : audio_bitrate_kbps;
+    if (codec.preserve_channels) {
+        // Plain AC3 (Dolby Digital) is spec-capped at 5.1 (6 channels) — its
+        // bitstream format has no way to carry more. E-AC-3 (Dolby Digital
+        // Plus) is the one that actually supports up to 7.1 (8 channels);
+        // "preserve_channels" alone isn't enough for ac3 specifically, or a
+        // genuinely 7.1 source would hand ffmpeg's ac3 encoder more channels
+        // than the format allows. No cap for eac3 (or anything else in this
+        // list) — letting ffmpeg carry through whatever channel count the
+        // source decodes to is the entire point there.
+        if (codec.name == "ac3" && source_audio && source_audio->channels > 6)
+            a.insert(a.end(), {"-c:a", codec.name, "-ac", "6", "-b:a", std::to_string(bitrate_kbps) + "k"});
+        else
+            a.insert(a.end(), {"-c:a", codec.name, "-b:a", std::to_string(bitrate_kbps) + "k"});
+    } else {
+        // Force stereo: without an explicit -ac, ffmpeg preserves the source's
+        // channel count (e.g. a 5.1/7.1 theatrical mix), and browsers' MSE
+        // SourceBuffer support for multichannel AAC is far less reliable than
+        // for stereo -- if the audio SourceBuffer never successfully
+        // initializes, playback can stall entirely even though video decodes
+        // fine (MSE generally wants every active SourceBuffer ready before
+        // playback starts). Nothing watching through a browser tab does true
+        // surround passthrough anyway, so downmixing here costs nothing real.
+        a.insert(a.end(), {"-c:a", "aac", "-ac", "2", "-b:a", std::to_string(bitrate_kbps) + "k"});
+    }
     if (!afParts.empty()) {
         std::string af;
         for (size_t i = 0; i < afParts.size(); ++i) { if (i) af += ","; af += afParts[i]; }

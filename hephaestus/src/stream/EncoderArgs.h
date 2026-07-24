@@ -1,6 +1,8 @@
 #pragma once
-#include "ChannelSession.h" // HwAccel
-#include "MediaProbe.h"     // VideoTrack
+#include "ChannelSession.h"     // HwAccel
+#include "ClientCapabilities.h" // ClientCapabilities
+#include "MediaProbe.h"         // VideoTrack
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -87,14 +89,69 @@ void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel decode_backend,
 // washed out/hazy on any display); true re-encodes as real HEVC Main10
 // HDR10, preserving the source's actual color info instead of downgrading
 // it. See EncoderArgs.cpp for the long version of both.
+//
+// One entry per transcode-target video codec this codebase can actually
+// produce, best-to-worst. buildArgs is that codec's own per-HwAccel encode
+// args. Exposed (not EncoderArgs.cpp-local) so VodSessionManager can resolve
+// the same choice chooseVideoCodec() makes when deciding whether two
+// viewers' transcodes can share one encode — see its own comment.
+struct VideoCodecOption {
+    std::string name; // ffprobe-style codec name — must match ClientCapabilities::video_codecs entries
+    void (*buildArgs)(std::vector<std::string>& a, std::vector<std::string>& vfParts, HwAccel hw_accel);
+};
+const std::vector<VideoCodecOption>& videoCodecPriority();
+// Bounded by the source's own position in the list — never picks something
+// more "exotic"/modern than the source already is. See EncoderArgs.cpp for
+// the long version.
+const VideoCodecOption& chooseVideoCodec(const std::string& source_codec,
+                                          const std::optional<ClientCapabilities>& client_caps);
+
+// Same idea for audio — bounded by channel count instead of codec
+// generation (a surround codec only matters once there's real surround
+// content to preserve). See EncoderArgs.cpp.
+struct AudioCodecOption {
+    std::string name;
+    bool preserve_channels;
+    int  bitrate_kbps; // 0 = caller's own audio_bitrate_kbps applies instead
+};
+const std::vector<AudioCodecOption>& audioCodecPriority();
+const AudioCodecOption& chooseAudioCodec(const AudioTrack* source_audio,
+                                          const std::optional<ClientCapabilities>& client_caps);
+
+// client_caps (VOD only — see its own default): "smart muxing" — the
+// non-HDR transcode target is chosen via chooseVideoCodec() (EncoderArgs.cpp)
+// instead of unconditionally hardcoding H.264, for the same reason
+// isVideoDirectPlayable/isAudioDirectPlayable check a *specific* client's own
+// declared support rather than a fixed allowlist: a re-encode is sometimes
+// unavoidable for a reason that has nothing to do with codec support
+// (resolution mismatch, subtitle burn-in, SDR tone-map), and a capable
+// client shouldn't lose codec generations just because *something else*
+// forced a transcode. Bounded by the source's own codec — see
+// chooseVideoCodec's own comment for why re-encoding "up" a generation the
+// source never actually had is pointless. Live-channel/preview callers have
+// no single-viewer capability to target (a live channel fans one encode out
+// to N simultaneous viewers via Hermes — see ChannelBroadcaster) and simply
+// don't pass this, keeping their existing fixed-H.264 behavior unchanged.
 void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
                            HwAccel hw_accel, int keyframeIntervalSecs,
                            const VideoTrack* source_video = nullptr,
-                           bool client_hdr_capable = false);
+                           bool client_hdr_capable = false,
+                           const std::optional<ClientCapabilities>& client_caps = std::nullopt);
 
-// Audio encoder selection, shared the same way.
+// Audio encoder selection, shared the same way. client_caps/source_audio:
+// same "smart muxing" reasoning as pushVideoEncoderArgs' own, via
+// chooseAudioCodec() (EncoderArgs.cpp) — a client that's declared real
+// eac3/ac3 decode support (native apps/TVs; see the stereo-forcing comment
+// in the .cpp for why this never applies to a browser tab) gets its source
+// channel layout preserved through a surround-capable codec instead of
+// being downmixed to stereo AAC for a browser-MSE limitation that no longer
+// applies once nothing here is actually targeting a browser — but only when
+// source_audio says there's actually more than stereo to preserve; a
+// surround codec buys nothing for an already-stereo source.
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
-                           int audio_bitrate_kbps);
+                           int audio_bitrate_kbps,
+                           const std::optional<ClientCapabilities>& client_caps = std::nullopt,
+                           const AudioTrack* source_audio = nullptr);
 
 // Joins vfParts with commas and appends "-vf <joined>" to `a` if non-empty.
 void pushVideoFilterArgs(std::vector<std::string>& a, const std::vector<std::string>& vfParts);

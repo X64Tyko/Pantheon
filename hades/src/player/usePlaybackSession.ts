@@ -30,19 +30,24 @@ export interface PlaybackSession {
   // switch — reload() is still the only thing that changes this).
   startPositionMs: number
   // VOD only — restarts the session (a genuinely new encode/manifest) at
-  // the given position/audio selection. Audio still needs a different
-  // ffmpeg -map (VodSession::ensureAudioTrack does this in-place server-side,
-  // but Hades still switches audio the old way — see PlayerPage.tsx's
-  // handleSelectAudio); a plain seek does NOT call this (handleSeek just
-  // seeks the existing persistent manifest directly), and neither does a
-  // subtitle switch anymore — see selectSubtitleTrack.
-  reload: (opts: { positionMs?: number; audioTrack?: number }) => void
+  // the given position/audio/subtitle selection. Audio still needs a
+  // different ffmpeg -map (VodSession::ensureAudioTrack does this in-place
+  // server-side, but Hades still switches audio the old way — see
+  // PlayerPage.tsx's handleSelectAudio); a plain seek does NOT call this
+  // (handleSeek just seeks the existing persistent manifest directly), and
+  // neither does a normal (extractable/text) subtitle switch — see
+  // selectSubtitleTrack. subtitleTrack here is only for burn-in: a bitmap
+  // subtitle is composited into the video itself (VodSession's subtitleBurnIn
+  // path), so selecting one is fundamentally a different video variant, not
+  // a manifest-level toggle — see PlayerPage.tsx's handleSelectBurnInSubtitle.
+  reload: (opts: { positionMs?: number; audioTrack?: number; subtitleTrack?: number }) => void
   // Pure client-side selection against the master manifest's own SUBTITLES
   // group (VodSession::buildMasterPlaylist) — VideoPlayer.tsx matches this
   // index to hls.js's own subtitleTracks[] by URL and switches there
   // directly. No network call, no session/encoder restart: unlike audio,
   // subtitle extraction has been fully decoupled from the main encoder
-  // since the on-demand /subtitles/{n} pipe route landed.
+  // since the on-demand /subtitles/{n} pipe route landed. Text/extractable
+  // tracks only — burn-in never reaches this (see reload's own comment).
   selectSubtitleTrack: (index: number) => void
 }
 
@@ -157,11 +162,12 @@ export function usePlaybackSession(
   }, [target.kind, target.id])
 
   const reload: PlaybackSession['reload'] = useCallback(opts => {
-    // subtitleTrack still comes along as a request hint (not from opts —
-    // callers don't pass it anymore) purely so an audio-switch-driven
+    // subtitleTrack defaults to the current one as a request hint when the
+    // caller doesn't pass it (e.g. an audio-switch-driven restart) — so that
     // restart resolves the SAME subtitle rather than falling back to
-    // whatever the fresh session would auto-pick on its own.
-    load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, subtitleTrack)
+    // whatever the fresh session would auto-pick on its own. A burn-in
+    // selection is the one caller that DOES pass it explicitly.
+    load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, opts.subtitleTrack ?? subtitleTrack)
   }, [load, audioTrack, subtitleTrack])
 
   const selectSubtitleTrack: PlaybackSession['selectSubtitleTrack'] = useCallback(index => {

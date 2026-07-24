@@ -77,25 +77,32 @@ static void serveHlsFile(const std::string& path, const std::string& content_typ
     res.set_file_content(path, content_type);
 }
 
-// Shared by the video variant's own playlist.m3u8 route and the master
-// manifest's per-audio-track alias (VodSession::ensureAudioTrack switches
-// the encoder onto the right track before either ever reaches here) — both
-// ultimately serve the exact same underlying file.
-static void serveVodPlaylist(const std::shared_ptr<VodSession>& session, httplib::Response& res) {
+// Video and audio are now independent streams (VodSession/VodEncodeStream —
+// see their class comments) with their own segment files and their own
+// static playlist, both living in the same session directory. isAudio picks
+// which one of the pair this request is actually asking for.
+static void serveVodPlaylist(const std::shared_ptr<VodSession>& session, bool isAudio, httplib::Response& res) {
     session->touch();
-    auto path = session->dir() + "/playlist.m3u8";
+    auto path = session->dir() + (isAudio ? "/audio-playlist.m3u8" : "/playlist.m3u8");
     if (!std::filesystem::exists(path)) { res.status = 404; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
     serveHlsFile(path, "application/vnd.apple.mpegurl", res);
 }
 
-// Shared by the plain seg-NNNNN.ts route and the per-audio-track alias.
 // seg_suffix is the already zero-padded "NNNNN" component from the URL.
-static void serveVodSegment(const std::shared_ptr<VodSession>& session, int index,
+static void serveVodSegment(const std::shared_ptr<VodSession>& session, bool isAudio, int index,
                              const std::string& seg_suffix, httplib::Response& res) {
     session->touch();
-    auto path = session->dir() + "/seg-" + seg_suffix + ".ts";
-    auto prep = session->prepareSegment(index);
-    std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
+    // Segments live under the (possibly shared) stream's own directory, not
+    // this session's — see VodSession::videoSegmentFilePath/
+    // audioSegmentFilePath's own comment. seg_suffix is unused for path
+    // purposes now (kept as a param since the URL still carries it and
+    // Router's logging/callers reference it), the numeric index is what
+    // actually resolves the real on-disk path.
+    (void)seg_suffix;
+    auto path = isAudio ? session->audioSegmentFilePath(index) : session->videoSegmentFilePath(index);
+    auto prep = isAudio ? session->prepareAudioSegment(index) : session->prepareSegment(index);
+    std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " stream=" << (isAudio ? "audio" : "video")
+               << " seg=" << index
                << " prep=" << (prep == VodSession::SegmentPrep::Ready ? "Ready"
                               : prep == VodSession::SegmentPrep::WaitShort ? "WaitShort"
                               : prep == VodSession::SegmentPrep::WaitColdStart ? "WaitColdStart" : "Failed") << "\n";
@@ -103,8 +110,7 @@ static void serveVodSegment(const std::shared_ptr<VodSession>& session, int inde
         case VodSession::SegmentPrep::Ready:
             break; // already on disk — serve immediately, no wait
         case VodSession::SegmentPrep::WaitShort:
-            // Resuming an already-warm, already-initialized encoder —
-            // should be fast.
+            // Resuming an already-warm, already-initialized head — should be fast.
             if (!waitForFile(path, 10000)) {
                 std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
                            << " WaitShort TIMED OUT after 10s (503)\n";
@@ -112,9 +118,8 @@ static void serveVodSegment(const std::shared_ptr<VodSession>& session, int inde
             }
             break;
         case VodSession::SegmentPrep::WaitColdStart:
-            // A real restart just happened (seek beyond the generated
-            // range, or a track switch) — same NVENC/CUDA cold-start budget
-            // as before.
+            // A fresh head just spawned (seek beyond any live head's reach) —
+            // same NVENC/CUDA cold-start budget as before.
             if (!waitForFile(path, 25000)) {
                 std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
                            << " WaitColdStart TIMED OUT after 25s (503)\n";
@@ -417,9 +422,9 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         std::optional<ClientCapabilities> client_caps;
         if (!token.empty()) client_caps = capabilityCache.get(token);
 
-        auto session = vodSessions.create(info->file_path, position_ms, audio_track, subtitle_track, hdr_capable,
-                                           client_caps, info->external_subtitles, info->duration_ms,
-                                           info->preferred_audio_lang, info->preferred_subtitle_lang);
+        auto session = vodSessions.create(content_type, content_id, info->file_path, position_ms, audio_track,
+                                           subtitle_track, hdr_capable, client_caps, info->external_subtitles,
+                                           info->duration_ms, info->preferred_audio_lang, info->preferred_subtitle_lang);
         if (!session) {
             res.status = 500; res.set_content(json{{"error","failed to start playback"}}.dump(), "application/json"); return;
         }
@@ -509,7 +514,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         // client. The old 25s NVENC-cold-start-aware wait here is gone; only
         // a defensive existence check remains for the (should-be-rare) case
         // the session already vanished by the time this GET lands.
-        serveVodPlaylist(session, res);
+        serveVodPlaylist(session, /*isAudio=*/false, res);
     });
 
     svr.Get(R"(/stream/vod/([^/]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
@@ -517,7 +522,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         auto session = vodSessions.get(req.matches[1]);
         if (!session) { res.status = 404; return; }
         int index = std::stoi(req.matches[2].str());
-        serveVodSegment(session, index, req.matches[2].str(), res);
+        serveVodSegment(session, /*isAudio=*/false, index, req.matches[2].str(), res);
     });
 
     // Per-audio-track alias for the master manifest's AUDIO group — see
@@ -538,7 +543,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             std::cerr << "[router] audio playlist.m3u8 session=" << sid << " track=" << track << " ensureAudioTrack FAILED\n";
             res.status = 500; res.set_content(json{{"error","failed to switch audio track"}}.dump(), "application/json"); return;
         }
-        serveVodPlaylist(session, res);
+        serveVodPlaylist(session, /*isAudio=*/true, res);
     });
 
     svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
@@ -554,7 +559,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             res.status = 500; return;
         }
         int index = std::stoi(req.matches[3].str());
-        serveVodSegment(session, index, req.matches[3].str(), res);
+        serveVodSegment(session, /*isAudio=*/true, index, req.matches[3].str(), res);
     });
 
     // Wraps the on-demand pipe below in a minimal single-segment VOD media

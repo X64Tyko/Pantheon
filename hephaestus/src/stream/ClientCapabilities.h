@@ -26,6 +26,10 @@
 struct ClientCapabilities {
     std::set<std::string> video_codecs; // ffprobe codec_name values, e.g. {"h264","hevc","av1"}
     std::set<std::string> audio_codecs; // e.g. {"aac","ac3","eac3"}
+    // Client-declared output height cap, nullopt if undeclared. Also forces
+    // a transcode for an otherwise-direct-playable source taller than this —
+    // see isVideoDirectPlayable/pushVideoEncoderArgs.
+    std::optional<int> max_height;
 };
 
 class ClientCapabilityCache {

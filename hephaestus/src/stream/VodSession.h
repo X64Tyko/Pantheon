@@ -3,6 +3,7 @@
 #include "ClientCapabilities.h"
 #include "FfmpegProcess.h"
 #include "MediaProbe.h"
+#include "VodEncodeStream.h"
 #include "model/ExternalSubtitle.h" // shared/ — see that header for why
 #include <atomic>
 #include <memory>
@@ -12,6 +13,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+class VodSessionManager; // VodSessionManager.h includes this header — forward-declared to avoid the cycle
 
 struct VodStreamOptions {
 	std::string ffprobe_path = "ffprobe";
@@ -37,9 +40,17 @@ struct VodStreamOptions {
 	int         lookahead_secs    = 180;
 };
 
-// One file, one viewer. ffmpeg writes HLS segments straight to disk and the
-// HTTP layer serves them as static files — same as before. What's changed
-// from the original one-shot-encode design:
+// One viewer's own handle onto playback — but no longer "one file, one
+// viewer" underneath. video_stream_/audio_stream_ are shared_ptrs onto
+// VodEncodeStream instances that VodSessionManager hands out keyed by
+// content + the resolved transcode decision (VideoStreamKey/AudioStreamKey,
+// VodSessionManager.h) — a second viewer whose key matches an already-
+// running stream attaches to it via ordinary shared_ptr refcounting, no
+// "join" protocol needed. This facade still owns its own session_id and
+// static playlist (every viewer gets their own manifest_url, unchanged
+// protocol-wise), and still owns the *decisions* (probing, direct-play,
+// track resolution) that produce the keys — VodSessionManager just owns the
+// sharing registry, not those decisions.
 //
 // The full HLS playlist (every segment's URI + EXTINF, #EXT-X-ENDLIST) is
 // synthesized by THIS class from an authoritative duration and served
@@ -48,23 +59,19 @@ struct VodStreamOptions {
 // This is what fixes VOD's wrong/unresolved player duration: hls.js/ExoPlayer
 // see the real total duration on the very first manifest fetch.
 //
-// The main encoder still only runs one ffmpeg process at a time, but it's no
-// longer a single one-shot invocation covering the whole remaining file: it
-// gets paused (SIGSTOP) once it's generated `lookahead_secs` worth of
-// segments ahead of what the viewer has actually requested, and resumed
-// (SIGCONT) as playback catches up. A seek beyond the already-generated
-// range kills and respawns it at the new position (see restartAt()) — same
-// session_id/manifest the whole time, no more "seek = tear down this session
-// and start a whole new one" (that's still how a TRACK switch works, via
-// VodSessionManager — a different audio/subtitle selection needs genuinely
-// different ffmpeg -map args, not just a different position).
+// Each VodEncodeStream paces its own bounded-window "heads" independently
+// (pause/resume, spawn-on-seek) — see VodEncodeStream.h. A TRACK switch
+// (ensureAudioTrack) attaches audio_stream_ to a different shared stream
+// (or creates one); it never restarts video_stream_, which a plain audio
+// track selection has no bearing on at all now.
 //
 // Subtitle extraction is a second, fully independent FfmpegProcess covering
 // the whole file in one small, fast pass, spawned once at start() and never
-// touched by the main encoder's pause/restart cycle — see subs_ffmpeg.
+// shared across sessions (cheap enough not to bother) — see subs_ffmpeg.
 class VodSession {
 public:
-	VodSession(std::string session_id, std::string ffmpeg_path, VodStreamOptions opts);
+	VodSession(std::string session_id, std::string content_type, std::string content_id,
+			   std::string ffmpeg_path, VodStreamOptions opts, VodSessionManager& manager);
 	~VodSession();
 
 	VodSession(const VodSession&)            = delete;
@@ -109,14 +116,19 @@ public:
 
 	// Router-facing decision for a requested segment index — call once per
 	// seg-NNNNN.ts GET. Ready: already on disk, serve immediately (also
-	// opportunistically resumes a paused encoder if the viewer's caught back
-	// up close enough). WaitShort: within the lookahead margin just past
-	// what's generated so far — resume if paused, then wait briefly.
-	// WaitColdStart: this triggered a restartAt() (a real seek beyond reach,
-	// forward or into a backward hole) — wait for a fresh encoder spin-up.
-	// Failed: index out of range or session no longer active.
+	// opportunistically resumes a paused head if the viewer's caught back up
+	// close enough). WaitShort: within the lookahead margin just past what's
+	// generated so far — resume if paused, then wait briefly. WaitColdStart:
+	// this needed a fresh head (a real seek beyond any live head's reach) —
+	// wait for it to spin up. Failed: index out of range or session no
+	// longer active. Delegates to video_stream_'s own VodEncodeStream::
+	// prepareSegment() — see prepareAudioSegment() for the audio-route twin.
 	enum class SegmentPrep { Ready, WaitShort, WaitColdStart, Failed };
 	SegmentPrep prepareSegment(int segment_index);
+	// Same contract as prepareSegment(), against audio_stream_ — see
+	// Router.cpp's /audio/{n}/seg-{n}.ts route. Failed if this file has no
+	// audio at all (audio_stream_ is null).
+	SegmentPrep prepareAudioSegment(int segment_index);
 
 	bool isActive() const { return active.load(); }
 	bool isIdle() const;
@@ -161,9 +173,18 @@ public:
 	// fallback passed to start() if that came back empty).
 	int64_t durationMs() const { return effective_duration_ms; }
 	int totalSegments() const { return total_segments; }
-	int highestGeneratedSegment() const { return highest_generated_segment.load(); }
+	int highestGeneratedSegment() const { return video_stream_ ? video_stream_->highestGeneratedSegment() : -1; }
 	int lastRequestedSegment() const { return last_requested_segment.load(); }
-	bool isMainEncoderPaused() const;
+	bool isMainEncoderPaused() const { return video_stream_ && video_stream_->anyHeadPaused(); }
+
+	// On-disk path for a given segment, resolved through the (possibly
+	// shared) underlying stream rather than this session's own dir() — see
+	// VodEncodeStream::segmentPath()'s comment on why segment storage is
+	// keyed by stream, not by viewer. Router.cpp's playlist/segment routes
+	// use these instead of reconstructing paths from session->dir(). Empty
+	// string if the respective stream doesn't exist (e.g. no audio track).
+	std::string videoSegmentFilePath(int index) const { return video_stream_ ? video_stream_->segmentPath(index) : std::string(); }
+	std::string audioSegmentFilePath(int index) const { return audio_stream_ ? audio_stream_->segmentPath(index) : std::string(); }
 
 	// Synthesizes the multi-rendition HLS master manifest (#EXT-X-MEDIA
 	// AUDIO/SUBTITLES groups + a single #EXT-X-STREAM-INF variant pointing at
@@ -195,11 +216,12 @@ public:
 	// under them. No-op if `track` is already active. Otherwise re-resolves
 	// direct-play eligibility for the new track (different audio tracks can
 	// differ in codec — e.g. a commentary track in AC3 vs. a default AAC
-	// track — so this can flip), recomputes segment boundaries if it did, and
-	// restarts the main encoder with the new -map, reusing restartAt()'s
-	// existing kill/respawn/discontinuity/playlist machinery. Same one-
-	// process-at-a-time model as a seek restart — no parallel per-track
-	// encodes.
+	// track — so this can flip) and swaps audio_stream_ for whichever shared
+	// stream the new track's AudioStreamKey resolves to (rebuildAudioStream)
+	// — attaching to an already-running one if some other viewer already
+	// wants that exact track/codec, or spawning a fresh one otherwise. Never
+	// touches video_stream_ — audio and video are fully independent streams
+	// now, see the class comment.
 	bool ensureAudioTrack(int track);
 
 	// Resolution of an arbitrary subtitle track index (embedded relative_index
@@ -246,53 +268,52 @@ public:
 
 private:
 	std::string   session_id;
+	std::string   content_type_;
+	std::string   content_id_;
 	std::string   ffmpeg_path;
 	VodStreamOptions opts;
+	// The registry this session's shared video_stream_/audio_stream_ come
+	// from — a plain reference, not owned; VodSessionManager outlives every
+	// VodSession it hands out (it owns them via `sessions`), so this is safe
+	// for this facade's whole lifetime. Used by start()/rebuildAudioStream()
+	// to call getOrCreateVideoStream()/getOrCreateAudioStream().
+	VodSessionManager& manager_;
 
-	// Guards: the main `ffmpeg` unique_ptr swap/reset, current_run_start_segment
-	// and highest_generated_segment's RESET (its forward advancement by the
-	// lookahead thread is lock-free atomic — see prepareSegment()'s own
-	// comment on why that's safe), discontinuity_boundaries, and playlist
-	// (re)writes — i.e. everything that changes atomically together whenever
-	// the main encoder (re)starts at a new position.
+	// Guards session-level state that changes together on start()/track
+	// switches: total_segments/segment_start_ms recomputation and swapping
+	// audio_stream_ out for a different track. video_stream_/audio_stream_
+	// each own their own internal locking for their own head bookkeeping —
+	// this mutex is about VodSession's own state, not theirs.
 	std::mutex    session_mtx;
-	std::unique_ptr<FfmpegProcess> ffmpeg;
-	std::atomic<int> current_run_start_segment{0};
-	std::atomic<int> highest_generated_segment{-1};
+
+	// One shared VodEncodeStream per elementary stream — see
+	// VodEncodeStream.h's class comment for why video and audio are no
+	// longer a single muxed process, and VodSessionManager.h for why these
+	// are shared_ptrs onto content-keyed streams rather than this session's
+	// own private instances. video_stream_ is fixed for the session's life
+	// (a video-affecting change, e.g. burn-in track, needs a fresh
+	// VodSession/session_id, not a swap here); audio_stream_ gets replaced
+	// wholesale by ensureAudioTrack() when the selected track changes (a
+	// different key resolves to a different — or newly created — shared
+	// stream; this facade just stops holding a reference to the old one).
+	std::shared_ptr<VodEncodeStream> video_stream_;
+	std::shared_ptr<VodEncodeStream> audio_stream_; // null if the file has no audio at all
+
+	// Debug/activity-view aggregate — see prepareSegment()/prepareAudioSegment().
+	// Not used for any real pacing/restart decision anymore (that's each
+	// VodEncodeStream's own per-head bookkeeping); purely what ActivityRouter
+	// polls for "what segment is being asked for right now."
 	std::atomic<int> last_requested_segment{-1};
-	std::vector<int> discontinuity_boundaries; // guarded by session_mtx
-	bool has_spawned_once_ = false;            // guarded by session_mtx
-	// The segment start() originally resolved from the caller's position_ms
-	// — immutable, unlike current_run_start_segment. Distinguishes a real
-	// backward seek from a stray early request before this session ever
-	// reached its actual start — see prepareSegment().
-	int initial_start_segment_ = 0;
-	std::atomic<bool> initial_target_reached{false};
-	// True once the CURRENT run's encoder has exited on its own (reached
-	// real EOF or crashed) — reset every time restartAt() spawns a fresh
-	// one. Lets prepareSegment() notice a run that finished without ever
-	// producing every segment the static playlist declared for it (e.g. a
-	// direct-play remux whose actual keyframe cadence is coarser than the
-	// assumed uniform segment length — stream copy can't force keyframes)
-	// and restart immediately instead of waiting out a budget on a process
-	// that will never produce the missing segment.
-	std::atomic<bool> current_run_exited_naturally{false};
 
 	int64_t effective_duration_ms = 0;
 	int     total_segments        = 0;
 	// Segment i spans [segment_start_ms[i], segment_start_ms[i+1] or
 	// effective_duration_ms for the last one). Computed in start() and, on a
-	// track switch that flips direct-play eligibility (different audio
-	// tracks can differ in codec), recomputed by ensureAudioTrack() via
-	// computeSegmentBoundaries() — every restartAt() in between just reuses
-	// whatever's current, no re-probing per seek. For direct-play, these are
-	// the file's REAL keyframe-derived cut points (see
-	// MediaProbe::probeKeyframeTimestampsMs and
-	// simulateDirectPlaySegmentBoundaries in the .cpp) — stream copy can't
-	// force keyframes, so segments can only ever be cut where they already
-	// exist, and can run longer than kVodHlsSegmentSecs. For transcode/
-	// burn-in, these are the synthetic uniform kVodHlsSegmentSecs boundaries
-	// -force_key_frames actually produces.
+	// track switch that flips VIDEO direct-play eligibility (burn-in can
+	// force a video re-encode), recomputed by ensureAudioTrack() via
+	// computeSegmentBoundaries(). Shared by both video_stream_ and
+	// audio_stream_ — they must always agree on where segment N starts, even
+	// though each produces its own segment files for it.
 	std::vector<int64_t> segment_start_ms;
 	// Shared by start() and ensureAudioTrack() — (re)computes segment_start_ms/
 	// total_segments from the current direct_play/file_path/effective_duration_ms.
@@ -304,27 +325,22 @@ private:
 	std::atomic<bool> subs_exited{false};
 	std::atomic<bool> subs_failed{false};
 
-	// Lookahead monitor — see lookaheadLoop().
+	// Lookahead monitor — see lookaheadLoop(). Now just ticks both streams;
+	// all the actual scan/pause/reap logic lives in VodEncodeStream::tick().
 	std::thread       lookahead_thread;
 	std::atomic<bool> lookahead_stop{false};
 	void lookaheadLoop();
-	void scanGeneratedProgress();
-	void maybeAutoPause();
 
-	// Kills the current main ffmpeg (if any) and spawns a fresh one seeked to
-	// segment_index, with -hls_start_number set so its output segment
-	// numbering lines up with the already-declared static playlist. The
-	// ONLY code path that ever spawns the main encoder — start() calls it
-	// too — which is what guarantees segment numbering always matches.
-	bool restartAt(int segment_index);
-	std::string segmentPath(int index) const;
-	// Both require session_mtx already held by the caller (only ever called
-	// from within restartAt()).
-	std::string buildStaticPlaylist() const;
-	void writePlaylist() const;
+	// Requires session_mtx already held by the caller.
+	std::string buildStaticPlaylist(const std::string& segment_prefix) const;
+	void writeVideoPlaylist() const;
+	void writeAudioPlaylist() const;
 
 	std::atomic<bool>    active{false};
 	std::atomic<int64_t> last_touch_ms{0};
+	// Video-only now — see isVideoDirectPlayable(). Audio's own direct-play
+	// decision is made fresh per track inside buildVodAudioArgs(), not
+	// stored here, since it no longer has any bearing on the video stream.
 	bool          direct_play     = false;
 	bool          subtitle_output = false;
 	bool          subtitle_burn_in = false;
@@ -333,8 +349,8 @@ private:
 	int64_t       started_at_ms = 0;
 	std::vector<ExternalSubtitle> external_subtitles_;
 
-	// Resolved once in start(), reused by every restartAt() call — a seek
-	// restart keeps the same track/HDR selection, only the position changes.
+	// Resolved once in start(), reused by every subsequent head spawn — a
+	// seek keeps the same track/HDR selection, only the position changes.
 	// audio_track_ is the one exception: ensureAudioTrack() (a track switch
 	// via the master manifest's /audio/{n}/... routes) reassigns it.
 	int         audio_track_ = 0;
@@ -343,9 +359,14 @@ private:
 	std::string source_codec_;
 	std::string external_subtitle_path_;
 	// The requesting client's declared decode capability from start() —
-	// stashed so ensureAudioTrack() can re-run isDirectPlayable() for a
+	// stashed so ensureAudioTrack() can re-run isAudioDirectPlayable() for a
 	// different audio track's codec without needing it passed in again.
 	std::optional<ClientCapabilities> client_caps_;
 
-	void onMainEncoderExit(int code);
+	// Builds a fresh audio_stream_ targeting audio_track_ (whatever it's
+	// currently set to) and kicks off its first head at target_segment.
+	// Called from start() (the session's initial position) and
+	// ensureAudioTrack() (wherever the viewer currently is) on an actual
+	// track change.
+	void rebuildAudioStream(int target_segment);
 };

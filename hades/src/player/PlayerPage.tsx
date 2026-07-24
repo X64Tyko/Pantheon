@@ -344,14 +344,27 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     session.reload({ positionMs: currentMs, audioTrack: index })
     saveTrackPreference({ audio_lang: session.tracks?.audio.find(t => t.index === index)?.language ?? '' })
   }
-  // No session.reload() — subtitles are fully decoupled from the main
-  // encoder now (VodSession's on-demand /subtitles/{n} pipe), so this is a
-  // pure client-side selection against the master manifest's SUBTITLES
-  // group; VideoPlayer picks it up via its subtitleTrack prop and switches
-  // hls.js directly, without touching video/audio at all.
+  // Burn-in (bitmap PGS/DVD/DVB) tracks are never in the master manifest's
+  // SUBTITLES group — HLS has no way to express "select a different video,"
+  // which is what a burn-in pick actually is (VodSession composites it into
+  // the frame itself). They only ever reach this component via the wire
+  // tracks.subtitles[].burn_in flag, so route them through session.reload()
+  // (a real session-level reattach, same shape as handleSelectAudio) instead
+  // of the plain client-side toggle below, which has nothing to attach a
+  // burn-in selection to and would otherwise silently drop it.
   const handleSelectSubtitle = (index: number) => {
-    session.selectSubtitleTrack(index)
-    saveTrackPreference({ subtitle_lang: session.tracks?.subtitles.find(t => t.index === index)?.language ?? '' })
+    const track = session.tracks?.subtitles.find(t => t.index === index)
+    if (track?.burn_in) {
+      session.reload({ positionMs: currentMs, subtitleTrack: index })
+    } else {
+      // No session.reload() — subtitles are fully decoupled from the main
+      // encoder now (VodSession's on-demand /subtitles/{n} pipe), so this is
+      // a pure client-side selection against the master manifest's
+      // SUBTITLES group; VideoPlayer picks it up via its subtitleTrack prop
+      // and switches hls.js directly, without touching video/audio at all.
+      session.selectSubtitleTrack(index)
+    }
+    saveTrackPreference({ subtitle_lang: track?.language ?? '' })
   }
 
   // Not shown while casting/Roku-mirroring — the sender tab's own navigate()
