@@ -33,6 +33,7 @@
 #include "services/SubtitleService.h"
 #include "services/TimeslotService.h"
 #include "services/TvManifestService.h"
+#include "services/WatchTogetherService.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -198,6 +199,7 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<RokuDeviceService>(ctx));
 	services_.push_back(std::make_unique<PlaybackService>(ctx));
 	services_.push_back(std::make_unique<TvManifestService>(ctx));
+	services_.push_back(std::make_unique<WatchTogetherService>(ctx));
 
 	for (auto& svc : services_) svc->registerRoutes(svr_);
 }

@@ -7,6 +7,7 @@
 #include "log/LogBuffer.h"
 #include "log/RuntimeFlags.h"
 #include "thread/TaskRegistry.h"
+#include "watchtogether/WatchTogetherManager.h"
 #include <httplib.h>
 #include <iostream>
 #include <stop_token>
@@ -72,6 +73,7 @@ int main(int argc, char* argv[]) {
     KairosClient kairos(cfg.kairos_url);
     BroadcasterManager broadcasters(cfg.hephaestus_url, cfg.linger_secs);
     DeviceSessionManager devices;
+    WatchTogetherManager watch_together;
 
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(32); };
@@ -94,7 +96,7 @@ int main(int argc, char* argv[]) {
 		}
 	});
 	
-    registerRoutes(svr, broadcasters, kairos, combined_log, cfg, devices);
+    registerRoutes(svr, broadcasters, kairos, combined_log, cfg, devices, watch_together);
 
     // Relay upstream log streams so the Hades UI sees all service logs via
     // a single /api/logs/stream endpoint on Hermes.
@@ -133,6 +135,28 @@ int main(int argc, char* argv[]) {
         while (svr.is_running() && !st.stop_requested()) {
             stopTokenSleep(st, std::chrono::seconds(30));
             devices.reap(45'000);
+        }
+    });
+
+    // Watch Together: periodic `sync` tick — see WatchTogetherSession's own
+    // comment on why this runs independent of host command/heartbeat
+    // traffic (a follower who stalled or just joined needs correcting even
+    // when the host hasn't touched anything).
+    TaskRegistry::global().spawn([&watch_together, &svr](std::stop_token st) {
+        while (svr.is_running() && !st.stop_requested()) {
+            stopTokenSleep(st, std::chrono::seconds(4));
+            watch_together.tickSync();
+        }
+    });
+
+    // Watch Together: reap sessions whose host has gone quiet for 45s —
+    // same grace window as devices.reap() above, for the same reason (a
+    // few missed heartbeats at the plan's own "every few seconds" cadence,
+    // not a hair-trigger on one dropped request).
+    TaskRegistry::global().spawn([&watch_together, &cfg, &svr](std::stop_token st) {
+        while (svr.is_running() && !st.stop_requested()) {
+            stopTokenSleep(st, std::chrono::seconds(15));
+            watch_together.reap(45'000, cfg);
         }
     });
 

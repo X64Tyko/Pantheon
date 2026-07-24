@@ -1,10 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, mediaUrl } from '../api/client'
-import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress, HomePlaylistShelf } from '../api/types'
+import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress, HomePlaylistShelf, WatchTogetherSession } from '../api/types'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
 import { MediaDetailHero } from '../components/media/MediaDetailHero'
-import { LibraryDetailActions, PlayAction } from '../components/media/LibraryDetailActions'
+import { LibraryDetailActions, PlayAction, WatchTogetherAction } from '../components/media/LibraryDetailActions'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
@@ -76,6 +76,7 @@ export default function HomePage() {
   const [recentlyReleased, setRecentlyReleased] = useState<Movie[]>([])
   const [recentlyAired,    setRecentlyAired]    = useState<Show[]>([])
   const [continueWatching, setContinueWatching] = useState<WatchProgress[]>([])
+  const [watchTogether,    setWatchTogether]     = useState<WatchTogetherSession[]>([])
   const [stats,            setStats]            = useState<ScraperStats | null>(null)
   const [loading,          setLoading]          = useState(true)
   const [libraryNames,     setLibraryNames]     = useState<Map<string, string>>(new Map())
@@ -150,13 +151,15 @@ export default function HomePage() {
       api.getWatchProgress().catch(() => []),
       api.getAllLibraries().catch(() => []),
       api.getHomePlaylists().catch(() => [] as HomePlaylistShelf[]),
-    ]).then(([sr, mr, rr, ra, st, cw, libs, homeShelves]) => {
+      api.getActiveWatchTogether().catch(() => [] as WatchTogetherSession[]),
+    ]).then(([sr, mr, rr, ra, st, cw, libs, homeShelves, wt]) => {
       setRecentShows(sr.items)
       setRecentMovies(mr.items)
       setRecentlyReleased(rr.items)
       setRecentlyAired(ra.items)
       setStats(st)
       setContinueWatching(cw)
+      setWatchTogether(wt)
       setLibraryNames(new Map(libs.map(l => [l.library_id, l.display_name])))
 
       sr.items.forEach(s => allItemsRef.current.set(s.show_id, s))
@@ -402,7 +405,10 @@ export default function HomePage() {
               id={detailId}
               content_type={detailType}
               onBack={closeDetail}
-              playButton={<PlayAction id={detailId} content_type={detailType} />}
+              playButton={<>
+                <PlayAction id={detailId} content_type={detailType} />
+                <WatchTogetherAction id={detailId} content_type={detailType} />
+              </>}
               actions={media => <LibraryDetailActions id={detailId} content_type={detailType} media={media} />}
             />
           ) : (
@@ -415,6 +421,7 @@ export default function HomePage() {
                 recentlyReleased={recentlyReleased}
                 recentlyAired={recentlyAired}
                 continueWatching={continueWatching}
+                watchTogether={watchTogether}
                 customShelves={customShelves}
                 onItemClick={openDetail}
                 onNavigate={navigate}
@@ -638,6 +645,7 @@ function QuickActionsRow({ onGuideClick }: { onGuideClick: () => void }) {
 
 function Shelves({
   loading, recentShows, recentMovies, recentlyReleased, recentlyAired, continueWatching,
+  watchTogether,
   customShelves,
   onItemClick, onNavigate, onItemHover, onRowLeave,
   onContinueWatchingHover, onContinueWatchingHoverEnd,
@@ -649,6 +657,7 @@ function Shelves({
   recentlyReleased: Movie[]
   recentlyAired:    Show[]
   continueWatching: WatchProgress[]
+  watchTogether:    WatchTogetherSession[]
   // User-defined shelves — each one *is* a smart playlist with
   // show_on_home=true (see PlaylistPage.tsx's "Show on Home" toggle); there's
   // no separate shelf-definition concept. Variable length, fetched as a
@@ -682,6 +691,9 @@ function Shelves({
         <><ShelfSkeleton /><ShelfSkeleton /></>
       ) : (
         <>
+          {watchTogether.length > 0 && (
+            <WatchTogetherShelf items={watchTogether} onNavigate={onNavigate} />
+          )}
           {continueWatching.length > 0 && (
             <ContinueWatchingShelf
               items={continueWatching} onNavigate={onNavigate}
@@ -1082,6 +1094,107 @@ function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate, onHo
         {item.content_type === 'episode' && (
           <div className={styles.shelfCardMeta}>{item.title}</div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── Watch Together ───────────────────────────────────────────────────────────
+
+function WatchTogetherShelf({ items, onNavigate }: {
+  items: WatchTogetherSession[]; onNavigate: (path: string) => void
+}) {
+  const [showArrows, setShowArrows] = useState(false)
+  const travel = useTravelingFocus()
+  const { ref: rowRef, focusKey: rowFocusKey } = useFocusable<object, HTMLDivElement>({
+    focusKey: 'home-shelf-row-watch-together',
+    trackChildren: true,
+    isFocusBoundary: true,
+    focusBoundaryDirections: ['left', 'right'],
+  })
+  const scroll = (d: 'left' | 'right') =>
+    rowRef.current?.scrollBy({ left: d === 'right' ? 340 : -340, behavior: 'smooth' })
+
+  return (
+    <div
+      className={styles.shelfRowWrap}
+      onMouseEnter={() => setShowArrows(true)}
+      onMouseLeave={() => setShowArrows(false)}
+    >
+      <div className={styles.shelfHeaderRow}>
+        <span className={styles.shelfTitle}>Watch Together</span>
+      </div>
+
+      {showArrows && <ShelfArrow side="left" onClick={() => scroll('left')} />}
+      <div ref={rowRef} className={styles.shelfRowScroller}>
+        <TravelingFocusFrame rect={travel.rect} active={travel.active} />
+        <FocusContext.Provider value={rowFocusKey}>
+        {items.map(s => (
+          <WatchTogetherCard
+            key={s.session_id} item={s} onNavigate={onNavigate}
+            onActivate={travel.activate} onDeactivate={travel.deactivate}
+          />
+        ))}
+        </FocusContext.Provider>
+      </div>
+      {showArrows && <ShelfArrow side="right" onClick={() => scroll('right')} />}
+    </div>
+  )
+}
+
+function WatchTogetherCard({ item, onNavigate, onActivate, onDeactivate }: {
+  item: WatchTogetherSession; onNavigate: (path: string) => void
+  onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [imgErr,  setImgErr]  = useState(false)
+  const thumbPath = item.content_type === 'movie'
+    ? `/api/movies/${item.content_id}/thumb`
+    : item.show_id ? `/api/shows/${item.show_id}/thumb` : ''
+  const epCode = item.content_type === 'episode'
+    ? `S${String(item.season ?? 0).padStart(2, '0')}E${String(item.episode ?? 0).padStart(2, '0')}`
+    : undefined
+
+  // Joins before navigating — fire-and-forget, same spirit as
+  // ContinueWatchingCard's plain navigate. PlayerPage's own GET
+  // /api/watch-together/:id (on mount) is what actually determines
+  // host-vs-follower; nothing here needs the join to have landed first.
+  const go = () => {
+    api.joinWatchTogether(item.session_id).catch(() => {})
+    onNavigate(`/player/${item.content_type}/${item.content_id}?wt=${item.session_id}`)
+  }
+
+  const { ref, focused } = useFocusable<object, HTMLDivElement>({
+    focusKey: `home-wt-card-${item.session_id}`,
+    onEnterPress: go,
+    onFocus: () => { onActivate(ref.current) }, onBlur: onDeactivate,
+  })
+
+  return (
+    <div
+      ref={ref} data-tv-focused={focused}
+      onClick={go}
+      onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
+      onMouseLeave={() => { setHovered(false); onDeactivate() }}
+      className={`${styles.tileBase} ${styles.shelfCard} ${hovered || focused ? styles.shelfCardActive : ''}`}
+    >
+      <div className={styles.shelfCardPoster}>
+        {thumbPath && !imgErr ? (
+          <img
+            src={mediaUrl(thumbPath)} alt={item.title} onError={() => setImgErr(true)}
+            className={styles.shelfCardImg}
+          />
+        ) : (
+          <span className={styles.shelfCardMonogram}>
+            {item.title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
+          </span>
+        )}
+        {epCode && <span className={styles.cwEpBadge}>{epCode}</span>}
+        <span className={styles.wtLiveBadge}>{item.member_count} watching</span>
+      </div>
+      <div className={styles.shelfCardInfo}>
+        <div className={styles.shelfCardTitle}>{item.content_type === 'episode' ? (item.show_title || item.title) : item.title}</div>
+        <div className={styles.shelfCardMeta}>Hosted by {item.host_username}</div>
       </div>
     </div>
   )

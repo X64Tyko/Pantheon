@@ -7,7 +7,7 @@ import type { MatchStatus } from './MatchBadge'
 import { MatchBadge } from './MatchBadge'
 import { FixMatchPanel } from './FixMatchPanel'
 import { goldBtnStyle } from '../../channel/styles'
-import { resolvePlayPath } from '../../player/resolvePlayTarget'
+import { resolvePlayPath, resolvePlayTarget } from '../../player/resolvePlayTarget'
 import { useFocusable } from '../../nav/useFocusable'
 import type { MediaDetailResult } from './useMediaDetail'
 import styles from './LibraryDetailActions.module.css'
@@ -493,6 +493,49 @@ export function PlayAction({ id, content_type, discoverResult }: {
     }
   }
   return <PlayButton onClick={handlePlay} loading={playLoading} />
+}
+
+// Host-initiated — creates a Kairos Watch Together session for whatever
+// PlayAction's own resolvePlayTarget would resolve to (a show's actual next-
+// episode-to-play, same as a plain Play click), then opens it. Same
+// discoverResult/id/content_type gating as PlayAction — a discover-result
+// (not yet in the library) has nothing to create a session against.
+export function WatchTogetherAction({ id, content_type, discoverResult }: {
+  id?: string; content_type?: 'show' | 'movie'; discoverResult?: ScraperSearchResult
+}) {
+  const navigate = useNavigate()
+  const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
+  const [loading, setLoading] = useState(false)
+  if (discoverResult || !id || !content_type) return null
+
+  const handleClick = async () => {
+    setLoading(true)
+    try {
+      const target = await resolvePlayTarget(contentType, id)
+      if (!target) return
+      const session = await api.createWatchTogether(target.kind, target.id)
+      const t = target.positionMs > 0 ? `&t=${target.positionMs}` : ''
+      navigate(`/player/${target.kind}/${target.id}?wt=${session.session_id}${t}`)
+    } catch {
+      // Best-effort, same as PlayAction — a failed create just leaves the
+      // button clickable again rather than surfacing a dedicated error UI.
+    } finally {
+      setLoading(false)
+    }
+  }
+  return <WatchTogetherButton onClick={handleClick} loading={loading} />
+}
+
+function WatchTogetherButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: 'detail-watch-together', onEnterPress: onClick, focusable: !loading })
+  return (
+    <button
+      ref={ref} data-tv-focused={focused}
+      onClick={onClick} disabled={loading}
+      className={`${styles.secondaryActionButton} ${loading ? styles.secondaryActionButtonDisabled : ''}`}>
+      {loading ? 'Starting…' : 'Watch Together'}
+    </button>
+  )
 }
 
 function PlayButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {

@@ -11,7 +11,7 @@ import type {
   Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
   Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult, HomePlaylistShelf, UnresolvedSyncItem, PlaylistBrowseEntry, PlaylistItem,
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
-  Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
+  Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WatchTogetherSession, WritebackResult,
   NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection, PlaybackHistoryEntry, CrashStatus, TrackPreference,
   UnmappedSourceUser, SourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
@@ -346,6 +346,18 @@ export const api = {
                         request<{ ok: boolean; watched: boolean }>('PUT', `/watch-progress/${contentType}/${id}`, b),
   clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
   getShowWatchState:  (showId: string)                                     => request<ShowWatchState | null>('GET', `/shows/${showId}/watch-state`),
+
+  // Watch Together — identity/discovery only (Kairos owns this half; live
+  // position/paused coordination is Hermes, see watchTogetherApi.ts). Same
+  // /api surface as everything else in this object, unlike watchTogetherApi's
+  // calls which hit Hermes's own /watch-together/* routes directly.
+  createWatchTogether: (contentType: 'movie' | 'episode', contentId: string) =>
+                        request<WatchTogetherSession>('POST', '/watch-together', { content_type: contentType, content_id: contentId }),
+  getActiveWatchTogether: ()                                       => request<WatchTogetherSession[]>('GET', '/watch-together/active'),
+  getWatchTogether:       (sessionId: string)                      => request<WatchTogetherSession>('GET', `/watch-together/${sessionId}`),
+  joinWatchTogether:      (sessionId: string)                      => request<WatchTogetherSession>('POST', `/watch-together/${sessionId}/join`),
+  leaveWatchTogether:     (sessionId: string)                      => request<{ ok: boolean }>('POST', `/watch-together/${sessionId}/leave`),
+  closeWatchTogether:     (sessionId: string)                      => request<{ ok: boolean }>('POST', `/watch-together/${sessionId}/close`),
 
   // Plex-style sticky per-show audio/subtitle language (see kairos's
   // ShowTrackPreferenceRepository) — keyed by episode_id so the caller never

@@ -2168,6 +2168,43 @@ constexpr Migration kMigrations[] = {
     );
 )SQL" }
 
+// ── v95: Watch Together persistence/discovery (Kairos owns identity and the
+//         Home shelf feed, not live playback state — that's Hermes', see the
+//         watch-together design thread). watch_together_session mirrors
+//         content_request's own minimal shape: one row per group session,
+//         content_type/content_id the same 'movie'|'episode' space
+//         PlaybackService already uses. closed_at NULL = still open — no
+//         separate "active" boolean, same convention as content_request's
+//         own status field being the single source of truth rather than a
+//         derived flag. watch_together_member is current-membership, not a
+//         join/leave log: PRIMARY KEY (session_id, user_id) so a rejoin
+//         (browser refresh, app backgrounded/foregrounded) is a plain
+//         upsert — left_at NULL means still present. No position/paused
+//         columns on either table: that's live state Hermes owns in memory
+//         (WatchTogetherSession) and never persists here; a closed session's
+//         participants fall back to their own individual watch_progress,
+//         same as today.
+,{ 95, R"SQL(
+    CREATE TABLE watch_together_session (
+        session_id   TEXT    PRIMARY KEY,
+        host_user_id TEXT    NOT NULL REFERENCES user(user_id),
+        content_type TEXT    NOT NULL,
+        content_id   TEXT    NOT NULL,
+        created_at   INTEGER NOT NULL,
+        closed_at    INTEGER
+    );
+    CREATE INDEX idx_watch_together_session_open ON watch_together_session(closed_at);
+
+    CREATE TABLE watch_together_member (
+        session_id TEXT    NOT NULL REFERENCES watch_together_session(session_id),
+        user_id    TEXT    NOT NULL REFERENCES user(user_id),
+        joined_at  INTEGER NOT NULL,
+        left_at    INTEGER,
+        PRIMARY KEY (session_id, user_id)
+    );
+    CREATE INDEX idx_watch_together_member_session ON watch_together_member(session_id);
+)SQL" }
+
 }; // kMigrations
 
 } // namespace
