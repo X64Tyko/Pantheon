@@ -173,6 +173,13 @@ public:
 	// for how the per-track routes this references actually get served.
 	std::string buildMasterPlaylist() const;
 
+	// RFC 6381 CODECS string for buildMasterPlaylist's #EXT-X-STREAM-INF —
+	// see VodSession.cpp's own comment on why this only ever applies to a
+	// direct-play session and can return nullopt (omit CODECS) rather than
+	// guess. Public so Router.cpp's diagnostic/debug routes can inspect it
+	// directly if needed, same visibility as buildMasterPlaylist itself.
+	std::optional<std::string> buildCodecsAttribute() const;
+
 	// A minimal single-segment VOD media playlist wrapping the on-demand
 	// WebVTT pipe (see spawnSubtitlePipe) — required because an
 	// #EXT-X-MEDIA URI must reference a Media Playlist per the HLS spec, not

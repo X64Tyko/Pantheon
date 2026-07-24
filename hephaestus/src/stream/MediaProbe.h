@@ -8,6 +8,11 @@ struct AudioTrack {
 	int         stream_index = 0;  // ffmpeg stream index within the file
 	int         relative_index = 0; // nth audio stream (for -map 0:a:N)
 	std::string codec;
+	// ffprobe's AAC profile variant (e.g. "LC", "HE-AAC", "HE-AACv2") — only
+	// meaningful for codec=="aac"; distinguishes the mp4a.40.{2,5,29} RFC
+	// 6381 object type in VodSession.cpp's audioCodecString. Empty for any
+	// other codec.
+	std::string profile;
 	std::string language;          // BCP-47 / ISO 639-2, e.g. "eng"
 	std::string title;
 	int         channels = 0;
@@ -16,6 +21,15 @@ struct AudioTrack {
 struct VideoTrack {
 	int         stream_index = 0;
 	std::string codec;             // e.g. "h264", "hevc", "av1"
+	// ffprobe's human-readable H.264/HEVC profile name (e.g. "High", "Main")
+	// and numeric level*10 (e.g. 40 for level 4.0) — used to derive an RFC
+	// 6381 CODECS string for the master playlist (see VodSession.cpp's
+	// videoCodecString) so HLS players with strict format-declaration
+	// requirements (ExoPlayer) don't have to open/probe every rendition to
+	// discover it themselves. Empty/0 if ffprobe didn't report one (some
+	// codecs, e.g. av1, don't carry a named profile the same way).
+	std::string profile;
+	int         level = 0;
 	int         width  = 0;
 	int         height = 0;
 	int         bit_depth = 8;

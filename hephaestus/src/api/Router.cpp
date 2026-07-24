@@ -503,10 +503,14 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
     // re-fetching the playlist first.
     svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/playlist\.m3u8$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
-        auto session = vodSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
+        std::string sid = req.matches[1];
         int track = std::stoi(req.matches[2].str());
+        std::cerr << "[router] GET audio playlist.m3u8 session=" << sid << " track=" << track
+                   << " UA=\"" << req.get_header_value("User-Agent") << "\"\n";
+        auto session = vodSessions.get(sid);
+        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
         if (!session->ensureAudioTrack(track)) {
+            std::cerr << "[router] audio playlist.m3u8 session=" << sid << " track=" << track << " ensureAudioTrack FAILED\n";
             res.status = 500; res.set_content(json{{"error","failed to switch audio track"}}.dump(), "application/json"); return;
         }
         serveVodPlaylist(session, res);
@@ -514,10 +518,16 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 
     svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
-        auto session = vodSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; return; }
+        std::string sid = req.matches[1];
         int track = std::stoi(req.matches[2].str());
-        if (!session->ensureAudioTrack(track)) { res.status = 500; return; }
+        std::cerr << "[router] GET audio seg session=" << sid << " track=" << track
+                   << " seg=" << req.matches[3].str() << " UA=\"" << req.get_header_value("User-Agent") << "\"\n";
+        auto session = vodSessions.get(sid);
+        if (!session) { res.status = 404; return; }
+        if (!session->ensureAudioTrack(track)) {
+            std::cerr << "[router] audio seg session=" << sid << " track=" << track << " ensureAudioTrack FAILED\n";
+            res.status = 500; return;
+        }
         int index = std::stoi(req.matches[3].str());
         serveVodSegment(session, index, req.matches[3].str(), res);
     });

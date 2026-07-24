@@ -9,6 +9,9 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <optional>
+#include <set>
+#include <unordered_map>
 
 static int64_t nowMs() {
 	return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -461,7 +464,13 @@ bool VodSession::ensureAudioTrack(int track) {
 	{
 		std::lock_guard<std::mutex> lock(session_mtx);
 		if (!active.load()) return false;
-		if (track == audio_track_) return true;
+		if (track == audio_track_) {
+			std::cerr << "[vod:" << session_id << "] ensureAudioTrack track=" << track
+					  << " already active — no-op\n";
+			return true;
+		}
+		std::cerr << "[vod:" << session_id << "] ensureAudioTrack SWITCHING audio_track_ " << audio_track_
+				  << " -> " << track << " (will restart encoder)\n";
 		audio_track_ = track;
 		// Different audio tracks can differ in codec (e.g. a DTS/AC3
 		// commentary track alongside a default AAC one) — direct-play
@@ -477,6 +486,92 @@ bool VodSession::ensureAudioTrack(int track) {
 	// restartAt() takes session_mtx itself — must not still hold it here.
 	int target_segment = std::clamp(last_requested_segment.load(), 0, total_segments - 1);
 	return restartAt(target_segment);
+}
+
+// RFC 6381 codec-string derivation for the master playlist's CODECS
+// attribute (see buildMasterPlaylist below). Only covers what's actually
+// reachable from ffprobe's own reported fields and is common enough to be
+// worth the risk — h264 video, and the handful of audio codecs this
+// codebase's decodable-codec allowlists actually let through. Deliberately
+// returns nullopt (rather than a best-effort guess) for anything else:
+// declaring a wrong CODECS string is worse than omitting it entirely (a
+// strict player can reject the whole manifest), and this is the same "don't
+// guess wrong" call the old no-CODECS comment made, just narrowed to the
+// codecs it's actually safe to be confident about.
+static std::optional<std::string> h264CodecString(const VideoTrack& v) {
+	// profile_idc byte, keyed off ffprobe's human-readable profile name —
+	// standard H.264 Annex A profile_idc values. Constrained/Baseline
+	// variants collapse onto the same profile_idc (0x42); the
+	// constraint-flags byte that would normally distinguish them is set to
+	// 0x00 below, a widely-used simplification (hls.js/shaka-player do the
+	// same) that strict decoders tolerate fine since it only affects
+	// negotiation, not actual decoding.
+	static const std::unordered_map<std::string, int> kProfileIdc = {
+		{"Constrained Baseline", 0x42}, {"Baseline", 0x42},
+		{"Main", 0x4D}, {"Extended", 0x58},
+		{"High", 0x64}, {"High 10", 0x6E},
+		{"High 4:2:2", 0x7A}, {"High 4:4:4 Predictive", 0xF4},
+	};
+	auto it = kProfileIdc.find(v.profile);
+	if (it == kProfileIdc.end() || v.level <= 0) return std::nullopt;
+	// ffprobe's "level" is already level_idc's own scale (e.g. 40 for
+	// level 4.0) — no conversion needed, just hex-format both bytes.
+	char buf[32];
+	std::snprintf(buf, sizeof(buf), "avc1.%02x00%02x", it->second, v.level);
+	return std::string(buf);
+}
+
+static std::optional<std::string> audioCodecString(const AudioTrack& a) {
+	if (a.codec == "aac") {
+		// mp4a.40.{2,5,29} — LC vs HE-AAC(v1) vs HE-AACv2 object types.
+		// ffprobe's AAC "profile" field spells these out directly.
+		if (a.profile.find("HE-AACv2") != std::string::npos) return std::string("mp4a.40.29");
+		if (a.profile.find("HE-AAC")   != std::string::npos) return std::string("mp4a.40.5");
+		return std::string("mp4a.40.2"); // LC — also the safe default for an unrecognized/empty profile
+	}
+	if (a.codec == "ac3")     return std::string("ac-3");
+	if (a.codec == "eac3")    return std::string("ec-3");
+	if (a.codec == "mp3")     return std::string("mp3");
+	if (a.codec == "flac")    return std::string("fLaC");
+	if (a.codec == "opus")    return std::string("Opus");
+	if (a.codec == "vorbis")  return std::string("vorbis");
+	return std::nullopt;
+}
+
+// Builds the #EXT-X-STREAM-INF CODECS attribute value (video codec plus
+// every DISTINCT audio codec in use across the AUDIO group — ExoPlayer needs
+// all of them declared up front to skip probing each alternate rendition
+// itself, not just the currently-active one; see the session's comment
+// thread on the audio-track-thrashing bug this fixes). Only for direct-play:
+// once direct_play is false either the video or audio stream is actually
+// being transcoded, so media_info (the SOURCE file's own probe) no longer
+// describes the real output codec/profile — deriving CODECS from it then
+// would be exactly the kind of wrong guess this function exists to avoid.
+// Returns nullopt (omit CODECS entirely) if any piece can't be confidently
+// derived, all-or-nothing — a partial CODECS list covering only some of the
+// variant's actual streams is arguably worse than none.
+std::optional<std::string> VodSession::buildCodecsAttribute() const {
+	if (!direct_play) return std::nullopt;
+	std::vector<std::string> parts;
+	if (!media_info.video.empty()) {
+		auto vcodec = h264CodecString(media_info.video[0]);
+		if (!vcodec) return std::nullopt;
+		parts.push_back(*vcodec);
+	}
+	std::set<std::string> distinct_audio;
+	for (auto& a : media_info.audio) {
+		auto acodec = audioCodecString(a);
+		if (!acodec) return std::nullopt;
+		distinct_audio.insert(*acodec);
+	}
+	parts.insert(parts.end(), distinct_audio.begin(), distinct_audio.end());
+	if (parts.empty()) return std::nullopt;
+	std::ostringstream out;
+	for (size_t i = 0; i < parts.size(); ++i) {
+		if (i) out << ',';
+		out << parts[i];
+	}
+	return out.str();
 }
 
 std::string VodSession::buildMasterPlaylist() const {
@@ -531,13 +626,18 @@ std::string VodSession::buildMasterPlaylist() const {
 
 	// Single variant — same combined-AV playlist.m3u8 already served today,
 	// now also referencing the AUDIO/SUBTITLES groups above so native
-	// players know they exist. No CODECS attribute: it's optional per spec,
-	// and this codebase has no RFC 6381 codec-string derivation to draw a
-	// correct one from (better to omit than guess wrong and have a strict
-	// player reject the manifest).
+	// players know they exist. CODECS is included when buildCodecsAttribute
+	// can derive it confidently (direct-play + recognized codecs) — see its
+	// own comment. Without it, ExoPlayer in particular has no static way to
+	// know each AUDIO-group rendition's format and ends up opening/probing
+	// every one, which (since ensureAudioTrack treats any probe hitting a
+	// non-active track exactly like a real switch) was triggering a real
+	// encoder restart per alternate audio language on session start.
+	auto codecs = buildCodecsAttribute();
 	out << "#EXT-X-STREAM-INF:BANDWIDTH=" << estimateBandwidthBps(media_info)
 		<< (media_info.audio.empty() ? "" : ",AUDIO=\"audio\"")
 		<< (has_subs ? ",SUBTITLES=\"subs\"" : "")
+		<< (codecs ? ",CODECS=\"" + *codecs + "\"" : "")
 		<< "\n/stream/vod/" << session_id << "/playlist.m3u8\n";
 	return out.str();
 }

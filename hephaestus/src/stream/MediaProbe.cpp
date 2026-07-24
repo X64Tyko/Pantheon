@@ -105,6 +105,8 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 				VideoTrack v;
 				v.stream_index = s.value("index", 0);
 				v.codec        = s.value("codec_name", "");
+				v.profile      = s.value("profile", "");
+				v.level        = s.value("level", 0);
 				v.width        = s.value("width",  0);
 				v.height       = s.value("height", 0);
 				v.bit_depth       = parseBitDepth(s);
@@ -120,6 +122,7 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 				a.stream_index  = s.value("index", 0);
 				a.relative_index = audio_rel++;
 				a.codec         = s.value("codec_name", "");
+				a.profile       = s.value("profile", "");
 				a.language      = lang;
 				a.title         = title;
 				a.channels      = s.value("channels", 0);
