@@ -82,6 +82,39 @@ export interface DeviceConnection {
   }
 }
 
+// One row of kairos's playback_history table (see
+// kairos/src/db/PlaybackHistoryRepository.h) — an append-only "session" of
+// watching a title, separate from watch_progress (current resume state).
+// Same shape backs both GET /api/activity/history (past sessions) and
+// GET /api/activity/active (sessions still being pinged right now, the
+// cross-platform presence signal DeviceConnectionsPanel merges with Roku's
+// own ECP heartbeat).
+export interface PlaybackHistoryEntry {
+  event_id:            string
+  user_id:             string
+  content_type:        'movie' | 'episode'
+  content_id:           string
+  title:                string
+  device_type:          '' | 'web' | 'android-mobile' | 'android-tv' | 'roku' | 'cast'
+  direct_play:          boolean
+  started_at_ms:        number
+  ended_at_ms:          number
+  started_position_ms: number
+  last_position_ms:    number
+  duration_ms:          number
+  completed:            boolean
+}
+
+// GET /api/activity/crash (Hermes's own aggregating route, NOT proxied to
+// Kairos like most /api/* calls — see shared/crash/CrashHandler.h). Each
+// field is the raw marker text for that service, empty if it hasn't crashed
+// since its marker was last overwritten.
+export interface CrashStatus {
+  hermes:     string
+  kairos:     string
+  hephaestus: string
+}
+
 export interface Source {
   source_id:    string
   source_type:  'plex' | 'jellyfin' | 'emby' | 'local'

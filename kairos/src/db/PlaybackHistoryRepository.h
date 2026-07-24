@@ -50,6 +50,18 @@ public:
 	std::vector<PlaybackHistoryRow> list(const std::string& user_id_filter,
 	                                      int64_t from_ms, int64_t to_ms, int limit);
 
+	// "Who's actively playing something right now" — unlike list(), which
+	// windows on started_at_ms (when a sitting began), this windows on
+	// ended_at_ms (when it was last pinged), since a session started an hour
+	// ago but still pinging every ~15s is exactly the case this needs to
+	// catch and list()'s own from/to would miss. since_ms is an absolute
+	// timestamp (caller passes now_ms - some staleness budget, mirroring how
+	// DeviceConnectionsPanel's STALE_MS works for Roku's own heartbeat) —
+	// this repository has no wall-clock opinion of its own. Every device
+	// type's presence (web/android/roku/cast) is derived from this same
+	// watch-progress-ping data, not a separate heartbeat mechanism.
+	std::vector<PlaybackHistoryRow> listActive(int64_t since_ms);
+
 	// Deletes rows older than max_age_ms (relative to now_ms) — keeps this
 	// table from growing forever on a long-running server. Returns the
 	// number of rows removed. Call periodically (see ActivityService), not

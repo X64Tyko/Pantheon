@@ -9,10 +9,38 @@
 #include "metrics/OperationMetrics.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <chrono>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
+
+namespace {
+// How stale a playback_history row's ended_at_ms can be and still count as
+// "actively playing" for /api/activity/active — generous past the player's
+// own ~15s ping cadence so one dropped ping doesn't flap a device in and out
+// of the list, but tight enough that a viewer who actually closed the app
+// disappears within roughly a minute rather than lingering.
+constexpr int64_t kActiveStalenessMs = 45 * 1000;
+
+json playbackHistoryRowJson(const PlaybackHistoryRow& r) {
+	return {
+		{"event_id",            r.event_id},
+		{"user_id",             r.user_id},
+		{"content_type",        r.content_type},
+		{"content_id",          r.content_id},
+		{"title",               r.title},
+		{"device_type",         r.device_type},
+		{"direct_play",         r.direct_play},
+		{"started_at_ms",       r.started_at_ms},
+		{"ended_at_ms",         r.ended_at_ms},
+		{"started_position_ms", r.started_position_ms},
+		{"last_position_ms",    r.last_position_ms},
+		{"duration_ms",         r.duration_ms},
+		{"completed",           r.completed},
+	};
+}
+} // namespace
 
 ActivityService::ActivityService(const ServiceContext& ctx)
 	: db_(ctx.db), sync_(ctx.sync), logs_(ctx.logs) {}
@@ -147,23 +175,26 @@ void ActivityService::registerRoutes(httplib::Server& svr) {
 		} catch (...) { route::err(res, 400, "invalid from/to/limit"); return; }
 
 		json out = json::array();
-		for (auto& r : PlaybackHistoryRepository(db_).list(user_filter, from_ms, to_ms, limit)) {
-			out.push_back({
-				{"event_id",            r.event_id},
-				{"user_id",             r.user_id},
-				{"content_type",        r.content_type},
-				{"content_id",          r.content_id},
-				{"title",               r.title},
-				{"device_type",         r.device_type},
-				{"direct_play",         r.direct_play},
-				{"started_at_ms",       r.started_at_ms},
-				{"ended_at_ms",         r.ended_at_ms},
-				{"started_position_ms", r.started_position_ms},
-				{"last_position_ms",    r.last_position_ms},
-				{"duration_ms",         r.duration_ms},
-				{"completed",           r.completed},
-			});
-		}
+		for (auto& r : PlaybackHistoryRepository(db_).list(user_filter, from_ms, to_ms, limit))
+			out.push_back(playbackHistoryRowJson(r));
+		route::ok(res, out.dump());
+	});
+
+	// "Who's actively playing something right now" — the cross-platform
+	// counterpart to hermes's Roku-only DeviceConnectionsPanel data (ECP
+	// heartbeat). Every client (web/android/roku/cast) already pings watch-
+	// progress every ~15s while playing, feeding playback_history — this
+	// just reads back whichever rows were touched within the last
+	// kActiveStalenessMs, no separate heartbeat/session-registration
+	// mechanism needed. Admin-only: unlike /history (a personal view first),
+	// this is inherently a "who else is on my server" view.
+	svr.Get("/api/activity/active", [this](const Req&, Res& res) {
+		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+		auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::system_clock::now().time_since_epoch()).count();
+		json out = json::array();
+		for (auto& r : PlaybackHistoryRepository(db_).listActive(now_ms - kActiveStalenessMs))
+			out.push_back(playbackHistoryRowJson(r));
 		route::ok(res, out.dump());
 	});
 }

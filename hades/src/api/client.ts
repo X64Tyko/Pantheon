@@ -13,7 +13,7 @@ import type {
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
-  ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection,
+  ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection, PlaybackHistoryEntry, CrashStatus,
   UnmappedSourceUser, SourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
   OperationMetricsResponse,
 } from './types'
@@ -641,6 +641,28 @@ export const api = {
   detectShowChapters:    (id: string) => request<{status: 'started'|'already_running'}>('POST', `/shows/${id}/chapters/detect`, {}),
   detectMovieChapters:   (id: string) => request<{status: 'started'|'already_running'}>('POST', `/movies/${id}/chapters/detect`, {}),
   getChapterDetectStatus: () => request<{running: boolean}>('GET', '/chapters/detect/status'),
+
+  // Telemetry — see kairos/src/db/PlaybackHistoryRepository.h and
+  // shared/crash/CrashHandler.h. Nothing here is ever sent anywhere but this
+  // response; it's purely for the admin's own Telemetry tab.
+  getActivityHistory: (params?: { userId?: string; fromMs?: number; toMs?: number; limit?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.userId)  q.set('user_id', params.userId)
+    if (params?.fromMs)  q.set('from', String(params.fromMs))
+    if (params?.toMs)    q.set('to', String(params.toMs))
+    if (params?.limit)   q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<PlaybackHistoryEntry[]>('GET', `/activity/history${qs ? '?' + qs : ''}`)
+  },
+  // Admin-only — sessions still being pinged within the server's own
+  // staleness window (kActiveStalenessMs), i.e. "who's actively playing
+  // something right now" across every platform (web/android/roku/cast),
+  // merged client-side with Roku's own ECP-heartbeat connections in
+  // DeviceConnectionsPanel.
+  getActiveSessions: () => request<PlaybackHistoryEntry[]>('GET', '/activity/active'),
+  // Hermes's own aggregating route, not the generic /api/* proxy to Kairos —
+  // combines all three services' local crash markers in one response.
+  getCrashStatus: () => request<CrashStatus>('GET', '/activity/crash'),
 
   // System
   getSystemMetrics: () => request<any>('GET', '/system/metrics'),

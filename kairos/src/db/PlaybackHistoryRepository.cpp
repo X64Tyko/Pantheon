@@ -69,16 +69,39 @@ void PlaybackHistoryRepository::recordPing(const std::string& user_id, const std
 	}
 }
 
+namespace {
+// Shared by list() and listActive() — both select the exact same column set
+// in the exact same order, just with different WHERE/ORDER BY clauses.
+PlaybackHistoryRow rowFromStatement(SQLite::Statement& q) {
+	PlaybackHistoryRow r;
+	r.event_id             = q.getColumn(0).getString();
+	r.user_id              = q.getColumn(1).getString();
+	r.content_type         = q.getColumn(2).getString();
+	r.content_id           = q.getColumn(3).getString();
+	r.title                = q.getColumn(4).getString();
+	r.device_type          = q.getColumn(5).getString();
+	r.direct_play          = q.getColumn(6).getInt() != 0;
+	r.started_at_ms        = q.getColumn(7).getInt64();
+	r.ended_at_ms           = q.getColumn(8).getInt64();
+	r.started_position_ms  = q.getColumn(9).getInt64();
+	r.last_position_ms     = q.getColumn(10).getInt64();
+	r.duration_ms           = q.getColumn(11).getInt64();
+	r.completed             = q.getColumn(12).getInt() != 0;
+	return r;
+}
+
+constexpr const char* kSelectColumns = R"SQL(
+	SELECT event_id, user_id, content_type, content_id, title, device_type, direct_play,
+	       started_at_ms, ended_at_ms, started_position_ms, last_position_ms, duration_ms, completed
+	FROM playback_history
+)SQL";
+} // namespace
+
 std::vector<PlaybackHistoryRow> PlaybackHistoryRepository::list(const std::string& user_id_filter,
                                                                   int64_t from_ms, int64_t to_ms, int limit) {
 	std::vector<PlaybackHistoryRow> out;
 
-	std::string sql = R"SQL(
-		SELECT event_id, user_id, content_type, content_id, title, device_type, direct_play,
-		       started_at_ms, ended_at_ms, started_position_ms, last_position_ms, duration_ms, completed
-		FROM playback_history
-		WHERE 1=1
-	)SQL";
+	std::string sql = std::string(kSelectColumns) + " WHERE 1=1";
 	if (!user_id_filter.empty()) sql += " AND user_id = ?";
 	if (from_ms > 0) sql += " AND started_at_ms >= ?";
 	if (to_ms   > 0) sql += " AND started_at_ms <= ?";
@@ -91,23 +114,16 @@ std::vector<PlaybackHistoryRow> PlaybackHistoryRepository::list(const std::strin
 	if (to_ms   > 0) q.bind(idx++, to_ms);
 	q.bind(idx++, limit);
 
-	while (q.executeStep()) {
-		PlaybackHistoryRow r;
-		r.event_id             = q.getColumn(0).getString();
-		r.user_id              = q.getColumn(1).getString();
-		r.content_type         = q.getColumn(2).getString();
-		r.content_id           = q.getColumn(3).getString();
-		r.title                = q.getColumn(4).getString();
-		r.device_type          = q.getColumn(5).getString();
-		r.direct_play          = q.getColumn(6).getInt() != 0;
-		r.started_at_ms        = q.getColumn(7).getInt64();
-		r.ended_at_ms          = q.getColumn(8).getInt64();
-		r.started_position_ms  = q.getColumn(9).getInt64();
-		r.last_position_ms     = q.getColumn(10).getInt64();
-		r.duration_ms          = q.getColumn(11).getInt64();
-		r.completed            = q.getColumn(12).getInt() != 0;
-		out.push_back(std::move(r));
-	}
+	while (q.executeStep()) out.push_back(rowFromStatement(q));
+	return out;
+}
+
+std::vector<PlaybackHistoryRow> PlaybackHistoryRepository::listActive(int64_t since_ms) {
+	std::vector<PlaybackHistoryRow> out;
+	std::string sql = std::string(kSelectColumns) + " WHERE ended_at_ms >= ? ORDER BY ended_at_ms DESC";
+	SQLite::Statement q(db_.get(), sql);
+	q.bind(1, since_ms);
+	while (q.executeStep()) out.push_back(rowFromStatement(q));
 	return out;
 }
 

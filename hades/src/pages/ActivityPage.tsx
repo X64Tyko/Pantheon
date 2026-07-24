@@ -8,6 +8,8 @@ import { NowPlayingPanel } from '../components/activity/NowPlayingPanel'
 import { DeviceConnectionsPanel } from '../components/activity/DeviceConnectionsPanel'
 import { Sparkline } from '../components/activity/Sparkline'
 import { OperationMetricsPanel } from '../components/activity/OperationMetricsPanel'
+import { CrashStatusPanel } from '../components/activity/CrashStatusPanel'
+import { PlayHistoryPanel } from '../components/activity/PlayHistoryPanel'
 
 function tagColor(line: string): string {
   if (/^\[error\]/i.test(line)) return 'text-red-400'
@@ -44,9 +46,11 @@ export default observer(function ActivityPage() {
   const logs        = systemStore.logs
   const liveStatus  = systemStore.liveStatus
   // Splits the live status/gauge cards ("Monitor") from operator/diagnostic
-  // tooling ("Debugging": per-operation timing stats + the raw log stream) —
-  // keeps either tab from growing unboundedly tall as more cards get added.
-  const [tab, setTab] = useState<'monitor' | 'debugging'>('monitor')
+  // tooling ("Debugging": per-operation timing stats + the raw log stream)
+  // and from "Telemetry" (crash markers + play history — local-only, see
+  // shared/crash/CrashHandler.h / kairos's PlaybackHistoryRepository) —
+  // keeps any one tab from growing unboundedly tall as more cards get added.
+  const [tab, setTab] = useState<'monitor' | 'telemetry' | 'debugging'>('monitor')
 
   // Clear error badge while this page is visible.
   useEffect(() => {
@@ -185,7 +189,7 @@ export default observer(function ActivityPage() {
 
       {/* Tabs */}
       <div className="flex items-center gap-4 shrink-0 border-b border-zinc-800/60">
-        {(['monitor', 'debugging'] as const).map(t => (
+        {(['monitor', 'telemetry', 'debugging'] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -439,6 +443,13 @@ export default observer(function ActivityPage() {
         )}
       </div>
 
+      </div>
+      )}
+
+      {tab === 'telemetry' && (
+      <div className="flex flex-col gap-5 overflow-y-auto scrollbar-dark flex-1 min-h-0">
+        <CrashStatusPanel />
+        <PlayHistoryPanel />
       </div>
       )}
 
