@@ -196,7 +196,21 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       // request) versus something purely client-side (hls.js never even
       // issuing the request, or stuck buffering after receiving it).
       video.addEventListener('seeking', () => console.log('[player] video seeking -> target', video.currentTime))
-      video.addEventListener('seeked',  () => console.log('[player] video seeked, now at', video.currentTime))
+      // Re-assert the subtitle track once the video has actually landed at
+      // its real position — including the implicit "seek" hls.js performs
+      // internally to reach startPositionSec on a continue-watching resume.
+      // applySubtitleTrack can otherwise run once, early, off
+      // SUBTITLE_TRACKS_UPDATED (which fires right after manifest parse,
+      // before hls.js's own startPosition seek has actually landed), which
+      // was observed to leave the subtitle-stream-controller's own position
+      // bookkeeping keyed off wherever currentTime happened to be at that
+      // earlier moment rather than where playback actually resumed — the
+      // video seeks correctly, but subtitles silently keep whatever (now
+      // stale) sync state they picked up before the seek completed.
+      video.addEventListener('seeked', () => {
+        console.log('[player] video seeked, now at', video.currentTime)
+        applySubtitleTrackRef.current()
+      })
       video.addEventListener('waiting', () => console.log('[player] video waiting (buffering) at', video.currentTime))
       video.addEventListener('stalled', () => console.warn('[player] video stalled at', video.currentTime))
       video.addEventListener('canplay', () => console.log('[player] video canplay at', video.currentTime))

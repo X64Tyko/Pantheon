@@ -43,6 +43,9 @@ export const MediaGrid = observer(function MediaGrid({ shows, movies, episodes =
           rating={s.audience_rating}
           match_status={s.match_status}
           match_score={s.match_score ?? undefined}
+          watched={s.watched_episode_count > 0}
+          watched_label={s.watched_episode_count > 0 && s.watched_episode_count < s.episode_count
+            ? `${s.watched_episode_count}/${s.episode_count}` : undefined}
           density={density}
           selected={selectedId === s.show_id}
           onClick={() => onItemClick(s.show_id, 'show')}

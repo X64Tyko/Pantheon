@@ -29,6 +29,9 @@ const CONTROLS_IDLE_MS = 3_000
 // yet (most libraries, until Kairos's detector has covered them) — last 30s
 // of the episode, Netflix-style.
 const UP_NEXT_FALLBACK_WINDOW_MS = 30_000
+// How close currentMs must be to session.durationMs for a native `ended`
+// event to be trusted as real completion — see handleVideoEnded.
+const NATURAL_END_TOLERANCE_MS = 5_000
 // Live channels: how often to re-poll "what's on now" — a live schedule has
 // no scrubber to derive position from, so this also re-derives PiP state.
 const CHANNEL_NOW_POLL_MS = 7_000
@@ -424,6 +427,27 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, targetId, session.durationMs, navigate])
 
+  // The native <video> `ended` event has fired away from the file's actual
+  // end — observed after a seek lands right on the edge of the currently
+  // buffered range, which the browser can read as "no more data" before
+  // Hephaestus has actually finished serving what's beyond it. The seek
+  // itself succeeded and there's real content left; this isn't completion,
+  // so don't advance/mark watched (that would wrongly flip a mid-watch item
+  // to finished) — just nudge the same <video> element to keep playing from
+  // where it already is.
+  const handleVideoEnded = useCallback(() => {
+    const nearRealEnd = kind === 'channel' || (
+      session.durationMs > 0 && (session.durationMs - currentMsRef.current) < NATURAL_END_TOLERANCE_MS
+    )
+    if (!nearRealEnd) {
+      console.warn('[player] native ended fired away from real end (at', currentMsRef.current, 'of', session.durationMs, 'ms) — treating as spurious, resuming playback')
+      videoRef.current?.play().catch(() => {})
+      return
+    }
+    if ((queueNextItem || nextEpisode) && !upNextDismissed) handleAdvanceToNext()
+    else handleNaturalEnd()
+  }, [kind, session.durationMs, queueNextItem, nextEpisode, upNextDismissed, handleAdvanceToNext, handleNaturalEnd])
+
   // Re-evaluated on every render (piggybacking on the live video's own
   // onTimeUpdate-driven re-renders for freshness — a live channel has no
   // scrubber/duration to key an effect off of), purely from the currently-
@@ -490,8 +514,10 @@ export function PlayerPage({ kind }: PlayerPageProps) {
                   // normally (handleNaturalEnd), same as a movie or series
                   // finale; the next episode stays reachable from Continue
                   // Watching (see Kairos's up_next synthesis) instead of
-                  // auto-playing.
-                  onEnded={() => { if ((queueNextItem || nextEpisode) && !upNextDismissed) handleAdvanceToNext(); else handleNaturalEnd() }}
+                  // auto-playing. handleVideoEnded itself filters out native
+                  // `ended` events that fire away from the real end (see its
+                  // own comment) before any of this runs.
+                  onEnded={handleVideoEnded}
                   onError={setPlayerError}
                 />
               </div>

@@ -160,6 +160,10 @@ bool FfmpegProcess::resume() {
 	return true;
 }
 
+bool FfmpegProcess::isAlive() const {
+	return !killed.load() && pid > 0 && ::kill(pid, 0) == 0;
+}
+
 void FfmpegProcess::kill() {
 	if (killed.exchange(true)) return; // already killed
 	// SIGCONT first: POSIX leaves SIGTERM pending/undelivered against a

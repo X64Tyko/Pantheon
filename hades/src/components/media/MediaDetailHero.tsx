@@ -112,6 +112,21 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, play
         {videoInfo && formatVideoInfo(videoInfo) && (
           <span className={styles.metaChip}>{formatVideoInfo(videoInfo)}</span>
         )}
+        {/* Watched status — general viewer-facing info, not admin/match
+            tooling, so it lives here in the sticky header rather than down
+            in LibraryDetailActions' match-status row next to Fix Match. */}
+        {movie?.watched && (
+          <span className={`${styles.metaChip} ${styles.metaChipGreen}`}>
+            ✓ {movie.view_count && movie.view_count > 1 ? `Watched · ${movie.view_count}×` : 'Watched'}
+          </span>
+        )}
+        {show && show.watched_episode_count > 0 && (
+          <span className={`${styles.metaChip} ${styles.metaChipGreen}`}>
+            ✓ {show.watched_episode_count < show.episode_count
+              ? `${show.watched_episode_count}/${show.episode_count} watched`
+              : 'Watched'}
+          </span>
+        )}
         {discoverResult && (
           <span className={`${styles.metaChip} ${sourceChipClass}`}>{discoverResult.source.toUpperCase()}</span>
         )}

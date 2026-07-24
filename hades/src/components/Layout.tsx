@@ -230,6 +230,12 @@ export default observer(function Layout() {
                     title="My Account"
                     className={styles.usernameLinkBtn}
                   >
+                    <span className={styles.profileIconBadge} aria-hidden="true">
+                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                        <circle cx="8" cy="5.5" r="2.5" />
+                        <path d="M2.5 14c0-2.8 2.4-5 5.5-5s5.5 2.2 5.5 5" strokeLinecap="round" />
+                      </svg>
+                    </span>
                     <span className={styles.usernameText}>
                       {user.username}
                       {user.role === 'admin' && <span className={styles.adminBadgeSmall}>ADMIN</span>}
@@ -290,6 +296,12 @@ export default observer(function Layout() {
                   title="My Account"
                   className={styles.drawerUsernameLinkBtn}
                 >
+                  <span className={styles.profileIconBadge} aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                      <circle cx="8" cy="5.5" r="2.5" />
+                      <path d="M2.5 14c0-2.8 2.4-5 5.5-5s5.5 2.2 5.5 5" strokeLinecap="round" />
+                    </svg>
+                  </span>
                   <span className={styles.drawerUsernameText}>
                     {user.username}
                     {user.role === 'admin' && <span className={styles.drawerAdminBadge}>ADMIN</span>}

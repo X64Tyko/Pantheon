@@ -698,26 +698,100 @@ bool VodSession::restartAt(int segment_index) {
 	if (!active.load()) return false;
 
 	bool first_run = !has_spawned_once_;
-	if (ffmpeg) { ffmpeg->kill(); ffmpeg.reset(); } // now SIGCONT+SIGTERM-safe against a paused encoder
-
 	std::cerr << "[vod:" << session_id << "] " << (first_run ? "spawning" : "restarting")
 			  << " main encoder at segment " << segment_index << " (offset="
 			  << (position_ms / 1000.0) << "s)\n";
 
-	ffmpeg = std::make_unique<FfmpegProcess>(
-		std::move(args),
-		/*on_data=*/nullptr, // output goes to disk, not stdout — nothing to fan out
-		[this](int code) { onMainEncoderExit(code); },
-		opts.buffer_size,
-		opts.ffmpeg_debug_logs,
-		opts.verbose_transcode_logs
-	);
-	if (!ffmpeg->start()) {
+	auto spawn = [&](std::vector<std::string> spawnArgs) -> std::unique_ptr<FfmpegProcess> {
+		auto proc = std::make_unique<FfmpegProcess>(
+			std::move(spawnArgs),
+			/*on_data=*/nullptr, // output goes to disk, not stdout — nothing to fan out
+			[this](int code) { onMainEncoderExit(code); },
+			opts.buffer_size,
+			opts.ffmpeg_debug_logs,
+			opts.verbose_transcode_logs
+		);
+		if (!proc->start()) return nullptr;
+		return proc;
+	};
+
+	const int64_t t_begin = nowMs();
+	std::unique_ptr<FfmpegProcess> newProc;
+	int64_t t_spawned = t_begin, t_probed = t_begin, t_old_killed = t_begin;
+	bool used_fallback = false;
+
+	if (!ffmpeg) {
+		// Nothing to overlap against on a fresh session — plain spawn, same
+		// as the old unconditional path, no probe delay (there's no old
+		// process this could ever need to fall back away from).
+		newProc = spawn(std::move(args));
+		t_spawned = t_probed = t_old_killed = nowMs();
+	} else {
+		// Spawn the replacement before killing the old one — the old
+		// process's output is already worthless (we're about to discard
+		// whatever it's about to produce), so there's no reason to eat its
+		// FfmpegProcess::kill() teardown wait (up to 2s, SIGTERM grace
+		// period) before the new one even starts existing: that process
+		// keeps making real progress in the background regardless of how
+		// long THIS function then spends blocked killing the old one, so
+		// the net effect is the new process getting a head start on
+		// producing its first segment. Direct-play never touches a
+		// hardware encoder slot, so this always "just works" there. A
+		// transcode CAN briefly fail this way if the GPU is already at its
+		// NVENC/VAAPI session-count ceiling (the old process hasn't
+		// released its slot yet) — the short liveness probe below catches
+		// that specific failure and falls back to the old serialized
+		// kill-then-spawn behavior, unaffected by the ceiling since the
+		// slot is genuinely free by the time it spawns.
+		newProc = spawn(args); // copy, not move — args may be needed again below
+		t_spawned = nowMs();
+
+		bool overlapped = false;
+		if (newProc) {
+			// NVENC/VAAPI session-acquisition failures surface fast
+			// (typically well under 100ms, right at encoder init) — this
+			// isn't waiting out anything resembling a real encode, just
+			// giving a doomed process time to actually exit before we
+			// commit to it.
+			constexpr int kProbeMs = 150, kPollMs = 25;
+			int waited = 0;
+			while (waited < kProbeMs && newProc->isAlive()) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
+				waited += kPollMs;
+			}
+			overlapped = newProc->isAlive();
+		}
+		t_probed = nowMs();
+
+		if (overlapped) {
+			ffmpeg->kill(); // old slot (if any) already freed by the time this returns
+			t_old_killed = nowMs();
+		} else {
+			used_fallback = true;
+			std::cerr << "[vod:" << session_id << "] overlapped spawn "
+					  << (newProc ? "died immediately" : "failed to start")
+					  << " (likely no free hardware encoder session) — falling back to kill-then-spawn\n";
+			newProc.reset();
+			ffmpeg->kill(); ffmpeg.reset();
+			t_old_killed = nowMs();
+			newProc = spawn(std::move(args));
+		}
+	}
+	const int64_t t_end = nowMs();
+
+	if (!newProc) {
 		std::cerr << "[vod:" << session_id << "] failed to spawn main encoder\n";
-		ffmpeg.reset();
 		return false;
 	}
 
+	if (opts.verbose_transcode_logs) {
+		std::cerr << "[vod:" << session_id << "] restartAt timing: spawn=" << (t_spawned - t_begin)
+				  << "ms probe=" << (t_probed - t_spawned) << "ms old_kill=" << (t_old_killed - t_probed)
+				  << "ms fallback_respawn=" << (t_end - t_old_killed) << "ms total=" << (t_end - t_begin)
+				  << "ms fallback_used=" << (used_fallback ? "yes" : "no") << "\n";
+	}
+
+	ffmpeg = std::move(newProc);
 	has_spawned_once_ = true;
 	current_run_exited_naturally.store(false);
 	current_run_start_segment.store(segment_index);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { libraryStore } from '../stores/LibraryStore'
 import { useAuth } from '../auth/AuthContext'
 import { useDebounce } from '../hooks/useDebounce'
@@ -26,6 +26,7 @@ export default observer(function LibraryPage() {
   const store = libraryStore
   const { user } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [selectedDiscover, setSelectedDiscover] = useState<ScraperSearchResult | null>(null)
   const [rawQ, setRawQ] = useState(store.query)
   const debouncedQ = useDebounce(rawQ, 300)
@@ -60,6 +61,15 @@ export default observer(function LibraryPage() {
   }, [])
 
   useEffect(() => { store.setQuery(debouncedQ) }, [debouncedQ])
+
+  // Re-clicking the Library nav item while already on this page (e.g. from
+  // an open item detail) pushes a fresh history entry to the same URL —
+  // location.key changes even though the pathname doesn't, so this is the
+  // signal to back out of the detail view rather than silently no-op.
+  useEffect(() => {
+    store.clearSelection()
+    setSelectedDiscover(null)
+  }, [location.key])
 
   const handleToggleDiscover = () => {
     store.toggleDiscoverMode()

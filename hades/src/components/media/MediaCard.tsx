@@ -26,6 +26,10 @@ export interface MediaCardProps {
   network_logo_url?: string
   watched?:          boolean
   view_count?:       number
+  // Overrides the default view_count-based label next to the watched
+  // checkmark — used for shows, where "rewatch count" doesn't apply the way
+  // it does for a movie's one file (e.g. "3/12" episodes watched so far).
+  watched_label?:    string
   density:           LibraryDensity
   selected?:         boolean
   onClick?:          () => void
@@ -53,7 +57,7 @@ export function MediaCard(props: MediaCardProps) {
   const {
     id, title, year, poster_url, thumb_url, content_type,
     genres, rating, locked, match_status, match_score,
-    is_4k, hdr_type, network, network_logo_url, watched, view_count,
+    is_4k, hdr_type, network, network_logo_url, watched, view_count, watched_label,
     density, selected, onClick,
   } = props
 
@@ -99,6 +103,26 @@ export function MediaCard(props: MediaCardProps) {
         </span>
       )}
 
+      {/* Network logo / watched badge, top-right — shown at every density,
+          not just rich, so "has this been started?" is visible regardless
+          of the viewer's chosen tile density. */}
+      {(network_logo_url || network || watched) && (
+        <div className={styles.topRightStack}>
+          {density === 'rich' && (network_logo_url || network) && (
+            <div className={styles.networkBadge}>
+              {network_logo_url ? (
+                <img src={network_logo_url} alt={network} className={styles.networkLogo} />
+              ) : (
+                <span className={styles.networkText}>{network}</span>
+              )}
+            </div>
+          )}
+          {watched && (
+            <div className={styles.watchedBadge}>✓{watched_label ? ` ${watched_label}` : (view_count && view_count > 1 ? ` ${view_count}` : '')}</div>
+          )}
+        </div>
+      )}
+
       {/* Rich: bottom gradient bar with rating + HDR badges */}
       {density === 'rich' && (
         <>
@@ -124,24 +148,6 @@ export function MediaCard(props: MediaCardProps) {
           {/* Match score chip (bottom overlay, next to rating) */}
           {match_status && match_score != null && (
             <div className={`${styles.scoreChip} ${SCORE_CHIP_CLASS[match_status] ?? ''}`}>{Math.round(match_score * 100)}%</div>
-          )}
-
-          {/* Network logo / watched badge, top-right */}
-          {(network_logo_url || network || watched) && (
-            <div className={styles.topRightStack}>
-              {(network_logo_url || network) && (
-                <div className={styles.networkBadge}>
-                  {network_logo_url ? (
-                    <img src={network_logo_url} alt={network} className={styles.networkLogo} />
-                  ) : (
-                    <span className={styles.networkText}>{network}</span>
-                  )}
-                </div>
-              )}
-              {watched && (
-                <div className={styles.watchedBadge}>✓{view_count && view_count > 1 ? ` ${view_count}` : ''}</div>
-              )}
-            </div>
           )}
         </>
       )}

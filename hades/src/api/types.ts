@@ -329,6 +329,10 @@ export interface Show {
   title:           string
   content_rating:  string
   episode_count:   number
+  // Distinct episodes with a completed watch_progress entry for the caller
+  // — see kairos's ShowRow::watched_episode_count. 0 for a logged-out
+  // caller, same as everywhere else user-scoped fields default when unset.
+  watched_episode_count: number
   year?:           number
   thumb?:          string
   art?:            string
@@ -391,6 +395,7 @@ export interface ShowDetail {
   find_specials:           boolean
   episode_display_order:   'season' | 'aired'
   episode_count:           number
+  watched_episode_count:   number
   seasons:                 { number: number; name: string }[]
   external_id:             string
   source_id:               string
@@ -1214,6 +1219,10 @@ export interface BrokenSubtitleItem {
   source:         string
   valid:          boolean
   invalid_reason: string
+  // Bytes, stat()'d live off disk — omitted if the file's gone missing.
+  // Unusually small is a good tell for a broken sub (near-empty content
+  // that still matched the naming convention).
+  file_size?:     number
 }
 
 // GET /api/episodes/:id/next — the next playable episode after this one, or
