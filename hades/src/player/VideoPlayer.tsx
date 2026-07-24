@@ -59,7 +59,16 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
   // language (picks the first) — the old single-<track> sideload had the
   // same limitation for Safari (only ever offered the one server-resolved
   // track regardless of duplicates).
+  //
+  // Guarded on !hlsRef.current — hls.js renders subtitles natively too (its
+  // own textTracks entries on this same <video>), and setting .mode here
+  // unconditionally fought its internal track-mode management: it worked
+  // once on initial load (before any manual switch ever ran this with
+  // tracks already populated) but broke on every switch after, since this
+  // was forcibly disabling the track hls.js had just enabled and only
+  // sometimes matching it back on by language.
   const applyNativeSubtitleTrack = useCallback(() => {
+    if (hlsRef.current) return
     const video = videoRef.current
     if (!video) return
     for (const t of Array.from(video.textTracks)) t.mode = 'disabled'
@@ -70,9 +79,6 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
 
   // Re-applies whenever the caller changes which track should show — the
   // only trigger now, since a subtitle switch no longer reloads manifestUrl.
-  // Both are safe no-ops on the "other" playback path (hlsRef.current is
-  // null under Safari's native branch; textTracks is empty before hls.js
-  // has attached media under the MSE branch).
   useEffect(() => { applySubtitleTrack() }, [applySubtitleTrack])
   useEffect(() => { applyNativeSubtitleTrack() }, [applyNativeSubtitleTrack])
 
