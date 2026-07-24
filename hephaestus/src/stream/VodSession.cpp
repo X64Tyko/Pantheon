@@ -427,6 +427,19 @@ void VodSession::computeSegmentBoundaries() {
 		if (segment_start_ms.empty())
 			std::cerr << "[vod:" << session_id << "] keyframe probe failed/empty for direct-play — "
 			             "falling back to assumed uniform segment cadence (segment boundaries may drift from actual cut points)\n";
+		// segment_start_ms[0] is what the HLS timeline (and therefore hls.js)
+		// treats as "elapsed 0" for the video. The subtitle pipe's cues, in
+		// contrast, always use the sidecar/embedded track's own raw
+		// timestamps starting from true file position 0 (buildVodSubtitleArgs
+		// never applies -ss). If the file's first real keyframe isn't at
+		// exactly 0 (common with encoder priming/B-frame delay on some
+		// sources), those two "0" points diverge by that amount, and
+		// subtitles would appear to lead the video by a constant offset —
+		// this line exists to confirm/rule that out directly.
+		else if (!segment_start_ms.empty() && segment_start_ms[0] != 0)
+			std::cerr << "[vod:" << session_id << "] direct-play first keyframe at "
+			          << segment_start_ms[0] << "ms, not 0 — video's HLS-timeline zero and the "
+			             "subtitle pipe's file-relative zero will diverge by that much\n";
 	}
 	if (segment_start_ms.empty()) {
 		// Transcode/burn-in (keyframes forced at exactly this cadence via

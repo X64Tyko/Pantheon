@@ -2,6 +2,7 @@
 #include "ClientCapabilitiesRouter.h" // extractBearerToken
 #include "../stream/MediaProbe.h"
 #include <nlohmann/json.hpp>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -161,7 +162,17 @@ static void handleStream(const std::string& channel_id,
 
             if (sink->queue.empty()) {
                 data_sink.done();
-                return false;
+                // true, not false — cpp-httplib's write_content_chunked loop
+                // treats a false return as Error::Canceled (a real failure),
+                // not "the provider finished." done() already wrote the
+                // terminating chunk; returning true here lets the loop exit
+                // through its own data_available check instead, which is what
+                // actually reports success. Getting this backwards doesn't
+                // corrupt what's sent to the client (done() writes the
+                // correct terminator either way) but it means every clean
+                // stream end gets misreported as canceled in httplib's own
+                // completion callback/error tracking.
+                return true;
             }
 
             auto chunk = std::move(sink->queue.front());
@@ -617,6 +628,12 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             sink->queue.emplace_back(kWebvttHeader.begin(), kWebvttHeader.end());
         }
         auto skip_remaining = std::make_shared<size_t>(kWebvttSignature.size());
+        // Byte-count diagnostic — an ffmpeg run that exits 0 but produced
+        // near-zero actual cue bytes (e.g. its srt demuxer silently parsing
+        // zero blocks out of a mis-detected charenc, rather than erroring)
+        // would otherwise look identical in the logs to a real successful
+        // extraction; this makes that distinction visible.
+        auto bytes_out = std::make_shared<std::atomic<size_t>>(0);
 
         std::shared_ptr<FfmpegProcess> proc;
         try {
@@ -626,18 +643,21 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             // httplib handler is fatal to the whole process, not just this
             // request.
             proc = session->spawnSubtitlePipe(track,
-                [sink, skip_remaining](const uint8_t* data, size_t len) {
+                [sink, skip_remaining, bytes_out](const uint8_t* data, size_t len) {
                     if (*skip_remaining > 0) {
                         size_t skip = std::min(*skip_remaining, len);
                         data += skip; len -= skip; *skip_remaining -= skip;
                     }
                     if (len == 0) return;
+                    bytes_out->fetch_add(len);
                     std::lock_guard<std::mutex> lock(sink->mtx);
                     if (sink->queue.size() < ClientSink::MAX_QUEUE)
                         sink->queue.emplace_back(data, data + len);
                     sink->cv.notify_one();
                 },
-                [sink](int) {
+                [sink, bytes_out, sid, track](int code) {
+                    std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
+                               << " ffmpeg exited code=" << code << " total cue bytes=" << bytes_out->load() << "\n";
                     std::lock_guard<std::mutex> lock(sink->mtx);
                     sink->done.store(true);
                     sink->cv.notify_one();
@@ -659,7 +679,14 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             [sink](size_t, httplib::DataSink& data_sink) -> bool {
                 std::unique_lock<std::mutex> lock(sink->mtx);
                 sink->cv.wait(lock, [&] { return !sink->queue.empty() || sink->done.load(); });
-                if (sink->queue.empty()) { data_sink.done(); return false; }
+                // true, not false — see the /stream/channels/:id route's
+                // identical done()/return pair for why: httplib's
+                // write_content_chunked treats a false return as
+                // Error::Canceled regardless of done() having already
+                // written the real terminator, so this was misreporting
+                // every clean finish as a cancellation in the on-complete
+                // callback below.
+                if (sink->queue.empty()) { data_sink.done(); return true; }
                 auto chunk = std::move(sink->queue.front());
                 sink->queue.pop_front();
                 lock.unlock();

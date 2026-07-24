@@ -387,10 +387,19 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     const next = queueNextItem ?? (nextEpisode ? { kind: 'episode' as const, id: nextEpisode.episode_id } : null)
     if (!next || kind === 'channel') return
     skipCleanupPingRef.current = true
-    api.putWatchProgress(kind, targetId, {
-      position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
-      device_type: 'web', direct_play: session.directPlay ?? undefined,
-    }).catch(() => {})
+    // session.durationMs > 0 guard — same as handleNaturalEnd's. Without it,
+    // a stray/premature native `ended` event (observed when a stream fails
+    // to actually start: a failed load's retry cycle flipping manifestUrl
+    // can fire `ended` on the outgoing <video> element before session ever
+    // got a real duration) would write position_ms:0, duration_ms:0,
+    // completed:true — wiping whatever real progress was already saved for
+    // this item, exactly like a genuine 100%-watched write would look.
+    if (session.durationMs > 0) {
+      api.putWatchProgress(kind, targetId, {
+        position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
+        device_type: 'web', direct_play: session.directPlay ?? undefined,
+      }).catch(() => {})
+    }
     // replace, not push: this is a continuation of the same viewing session,
     // not a new navigation the viewer chose — pushing would leave the
     // just-finished item's route on the history stack, so Back after an
