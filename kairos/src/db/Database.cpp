@@ -2205,6 +2205,22 @@ constexpr Migration kMigrations[] = {
     CREATE INDEX idx_watch_together_member_session ON watch_together_member(session_id);
 )SQL" }
 
+// ── v96: default landing page (Home vs Guide), global + per-user — Guide
+//         becoming a first-class standalone route (previously just an
+//         embedded section at the bottom of Home) makes "which page do I
+//         land on" a real choice for the first time. Empty string on
+//         `user` = inherit the global app_config default (same
+//         'app_config' key/value table ConfigService.cpp's cast_app_id
+//         etc. already use, no new table needed there) rather than a
+//         separate boolean/NULL sentinel — matches default_audio_lang/
+//         default_subtitle_lang's own empty-string-means-unset convention.
+,
+{
+	96, R"SQL(
+    ALTER TABLE user ADD COLUMN default_landing_page TEXT NOT NULL DEFAULT '';
+)SQL"
+}
+
 }; // kMigrations
 
 } // namespace

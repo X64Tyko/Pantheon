@@ -1,15 +1,19 @@
-/* width/height below must stay in sync with guide/constants.ts's COLUMN_WIDTH
-   (220) / HEADER_HEIGHT (84) — those constants also drive JS layout math
-   (ProgramBlock positioning) so the JS values remain the source of truth;
-   these are the static-CSS mirror of them, not a duplicate to edit instead. */
+/* width below must stay in sync with guide/constants.ts's COLUMN_WIDTH (220)
+   — that constant also drives JS layout math (ProgramBlock positioning) so
+   the JS value remains the source of truth; this is the static-CSS mirror
+   of it, not a duplicate to edit instead. HEADER_HEIGHT (84) mirrors the
+   same way into .header below, now in GuideGrid's own headerRow rather than
+   sharing a scroll axis with .programsWrap — see GuideGrid.tsx. */
 .column { flex-shrink: 0; width: 220px; scroll-snap-align: start; border-right: 1px solid var(--hds-line-s); cursor: pointer; }
 
 .header {
-  position: sticky; top: 0; z-index: 2;
+    flex-shrink: 0;
+    width: 220px;
   height: 84px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--hds-space-1);
   background: var(--hds-bg-2);
-  border-bottom: 1px solid var(--hds-line-s);
+    border-right: 1px solid var(--hds-line-s);
+    border-bottom: 1px solid var(--hds-line-s);
   cursor: pointer; transition: background .12s, border-color .12s;
 }
 .headerFocused {
@@ -32,11 +36,36 @@
 }
 .programBlockPast { background: var(--hds-bg-3); opacity: 0.55; }
 .programBlockFuture { background: var(--hds-bg-4); opacity: 1; }
-/* "now" block's background comes from the global .hds-guide-now class applied alongside this one */
+
+/* .programBlockNow's actual background is the computed dark/light split
+   (inline style, ChannelColumn.tsx) — this class only carries the border/
+   glow, since the fill itself is a per-block runtime value (where "now"
+   falls varies per program), not something a static class can express. */
+.programBlockNow {
+    border-color: var(--hds-violet);
+    box-shadow: inset 0 0 0 1px oklch(0.7 0.13 287 / 0.5);
+}
+
+/* The pulsing line marking exactly where "now" falls within the block —
+   positioned (top: %) inline per-instance in ChannelColumn.tsx; the glow
+   animation itself is global (hds-guide-now-pulse, index.css) since
+   @keyframes names are scoped per-CSS-module otherwise and this needs to
+   replace the old global .hds-guide-now shimmer it's the direct successor
+   to. */
+.nowPulse {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    margin-top: -1px;
+    z-index: 1;
+}
 
 .programLabel {
   font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); line-height: 1.3;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    position: relative;
+    z-index: 1; /* sit above the now-pulse line */
 }
 .programLabelNow { color: oklch(0.98 0.01 285); }
 .programLabelDefault { color: var(--hds-txt-2); }

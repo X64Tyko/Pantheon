@@ -24,7 +24,8 @@ export function TvGuideSection() {
   const navigate = useNavigate()
   const {
     channels, epgByChannel, windowStartMs, nowMs,
-    focusedId, setFocusedId, focusedChannel, nowProgram, manifestUrl,
+      focusedId, focusedChannel, focusedProgram, nowProgram,
+      selectChannel, selectProgram, manifestUrl,
   } = useGuideSession()
 
   // guide.zones per GET /api/tv/manifest: channel-header/time-grid/preview-panel.
@@ -49,7 +50,10 @@ export function TvGuideSection() {
       <div className={styles.heading}>Live Guide</div>
       <FocusContext.Provider value={focusKey}>
       {hasZone('preview-panel') && (
-        <GuidePreview channel={focusedChannel} nowProgram={nowProgram} manifestUrl={manifestUrl} onWatch={() => focusedId && watchChannel(focusedId)} />
+          <GuidePreview
+              channel={focusedChannel} previewProgram={focusedProgram ?? nowProgram} nowMs={nowMs}
+              manifestUrl={manifestUrl} onWatch={() => focusedId && watchChannel(focusedId)}
+          />
       )}
       {(hasZone('time-grid') || hasZone('channel-header')) && (
         <GuideGrid
@@ -58,7 +62,8 @@ export function TvGuideSection() {
           windowStartMs={windowStartMs}
           nowMs={nowMs}
           focusedChannelId={focusedId}
-          onFocus={setFocusedId}
+          onFocusChannel={selectChannel}
+          onFocusProgram={selectProgram}
           onWatch={watchChannel}
         />
       )}

@@ -14,6 +14,12 @@ export function useGuideSession() {
   const [channels,     setChannels]     = useState<Channel[]>([])
   const [epgByChannel, setEpgByChannel] = useState<Record<string, EpgProgram[]>>({})
   const [focusedId,    setFocusedId]    = useState<string | null>(null)
+    // Which specific EpgProgram cell is focused, independent of focusedId (the
+    // channel) — null means "nothing specific," i.e. show that channel's own
+    // live/now program. Only ever drives the preview hero's TEXT; the live
+    // video always follows focusedId alone (see GuidePage.tsx) — you can't
+    // actually preview a future program, only read about it.
+    const [focusedProgram, setFocusedProgram] = useState<EpgProgram | null>(null)
   const [manifestUrl,  setManifestUrl]  = useState<string | null>(null)
   const [nowMs,        setNowMs]        = useState(() => Date.now())
 
@@ -140,9 +146,25 @@ export function useGuideSession() {
     ? (epgByChannel[focusedId] ?? []).find(p => p.wall_clock_start_ms <= nowMs && nowMs < p.wall_clock_end_ms) ?? null
     : null
 
+    // Header focus (or a plain channel switch) — "nothing specific," fall back
+    // to that channel's own live program in the hero.
+    const selectChannel = (channelId: string) => {
+        setFocusedId(channelId)
+        setFocusedProgram(null)
+    }
+    // A specific program cell (now OR future) was focused/hovered — still
+    // switches the live preview to that channel (same as selectChannel), but
+    // also pins the hero's text to this exact program rather than whatever's
+    // live right now.
+    const selectProgram = (channelId: string, program: EpgProgram) => {
+        setFocusedId(channelId)
+        setFocusedProgram(program)
+    }
+
   return {
     channels, epgByChannel, windowStartMs, nowMs,
-    focusedId, setFocusedId, focusedChannel, nowProgram,
+      focusedId, focusedChannel, focusedProgram, nowProgram,
+      selectChannel, selectProgram,
     manifestUrl,
   }
 }

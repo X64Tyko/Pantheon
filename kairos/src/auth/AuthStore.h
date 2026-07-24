@@ -7,25 +7,26 @@
 
 class Database;
 
-struct AuthUser {
+struct AuthUser
+{
 	std::string user_id;
 	std::string username;
-	std::string role;   // "admin" | "viewer" — forced to "viewer" for a 'cast'-purpose
-	                    // session regardless of the account's real role; see validate().
+	std::string role; // "admin" | "viewer" — forced to "viewer" for a 'cast'-purpose
+	// session regardless of the account's real role; see validate().
 	// Parental controls — see RatingSeverity.h. restricted=false (the default)
 	// means this account sees everything; the ceilings only apply when true.
-	bool        restricted         = false;
+	bool restricted                = false;
 	std::string max_tv_rating      = "TV-Y";
 	std::string max_movie_rating   = "G";
 	std::string max_channel_rating = "TV-Y";
 	// Set on invite-created accounts until the owner replaces the temp/
 	// placeholder password with one of their own choosing (updateUser and
 	// claimInvite both clear it on a successful password change).
-	bool        must_change_password = false;
+	bool must_change_password = false;
 	// True if a PIN is configured for the profile-switch flow (see
 	// switchProfile) — never the PIN itself, just whether the picker should
 	// prompt for one.
-	bool        has_pin = false;
+	bool has_pin = false;
 	// Library-wide fallback audio/subtitle language, used by
 	// GET /api/playback/:content_type/:id whenever no item-specific
 	// preference exists (show_track_preference / movie_track_preference) —
@@ -33,18 +34,25 @@ struct AuthUser {
 	// as show/movie's own preferred_language.
 	std::string default_audio_lang;
 	std::string default_subtitle_lang;
+	// Which page this account lands on after login/profile-switch —
+	// '' (inherit the global app_config default), 'home', or 'guide'. See
+	// migration v96 / ConfigService.cpp's own global "default_landing_page"
+	// key for the tier this falls back to when empty.
+	std::string default_landing_page;
 };
 
 // One active session, as surfaced to the owning user for review/revocation.
 // Deliberately excludes the raw token — session_id is a separate, non-secret
 // handle minted alongside it (see AuthStore::mintCastToken).
-struct SessionInfo {
+struct SessionInfo
+{
 	std::string session_id;
-	int64_t     created_at = 0;
-	int64_t     last_seen  = 0;
+	int64_t created_at = 0;
+	int64_t last_seen  = 0;
 };
 
-class AuthStore {
+class AuthStore
+{
 public:
 	explicit AuthStore(Database& db);
 
@@ -52,8 +60,8 @@ public:
 
 	// Returns false if username is already taken.
 	bool createUser(const std::string& username,
-	                const std::string& password,
-	                const std::string& role);
+					const std::string& password,
+					const std::string& role);
 
 	// Creates an account with a server-generated temp password instead of one
 	// the admin typed — must_change_password is set so the account is gated
@@ -63,7 +71,7 @@ public:
 	// never persisted or logged — callers must relay it out-of-band and must
 	// not hold onto it longer than needed to display it once.
 	std::pair<std::string, std::string> createUserWithTempPassword(
-	    const std::string& username, const std::string& role);
+		const std::string& username, const std::string& role);
 
 	// Creates an account nobody can log into yet — password_hash is an
 	// unguessable random value discarded immediately after hashing — and
@@ -71,8 +79,8 @@ public:
 	// flow (see claimInvite). Returns {user_id, invite_token} on success,
 	// {"",""} on failure.
 	std::pair<std::string, std::string> createUserWithEmailInvite(
-	    const std::string& username, const std::string& role,
-	    int64_t invite_ttl_seconds = 7LL * 24 * 3600);
+		const std::string& username, const std::string& role,
+		int64_t invite_ttl_seconds = 7LL * 24 * 3600);
 
 	// Username for a valid (unexpired, unused) invite token, or nullopt.
 	std::optional<std::string> getInviteUsername(const std::string& invite_token) const;
@@ -88,7 +96,7 @@ public:
 	// invalidated). Returns the new token, or "" if the user doesn't exist or
 	// no longer needs one (must_change_password already cleared).
 	std::string resendInvite(const std::string& user_id,
-	                         int64_t invite_ttl_seconds = 7LL * 24 * 3600);
+							 int64_t invite_ttl_seconds = 7LL * 24 * 3600);
 
 	// Returns session token on success, empty string on bad credentials.
 	std::string login(const std::string& username, const std::string& password);
@@ -105,16 +113,16 @@ public:
 
 	// Partial update — only fields that are non-empty are applied.
 	bool updateUser(const std::string& user_id,
-	                const std::string& new_password,
-	                const std::string& new_role);
+					const std::string& new_password,
+					const std::string& new_role);
 
 	// Parental-controls settings for one account — separate from updateUser
 	// since it's a distinct concern (restriction tier vs credentials/role) and
 	// the Users page can update it without resending password/role each time.
 	void updateRestriction(const std::string& user_id, bool restricted,
-	                       const std::string& max_tv_rating,
-	                       const std::string& max_movie_rating,
-	                       const std::string& max_channel_rating);
+						   const std::string& max_tv_rating,
+						   const std::string& max_movie_rating,
+						   const std::string& max_channel_rating);
 
 	// Self-service, unlike the admin-only settings above — any logged-in
 	// user calls this on their own user_id (see AuthService.cpp's
@@ -123,8 +131,13 @@ public:
 	// PUT /api/episodes/:id/track-preference already uses for
 	// ShowTrackPreferenceRepository — std::optional here for the same reason.
 	void updateTrackPreference(const std::string& user_id,
-	                           const std::optional<std::string>& audio_lang,
-	                           const std::optional<std::string>& subtitle_lang);
+							   const std::optional<std::string>& audio_lang,
+							   const std::optional<std::string>& subtitle_lang);
+
+	// Self-service — same shape as updateTrackPreference, its own route since
+	// "landing page" isn't a track-preference concern. Empty string means
+	// "inherit the global default" (see default_landing_page's own comment).
+	void updateDefaultLandingPage(const std::string& user_id, const std::string& page);
 
 	// Mints a session tagged purpose='cast' — validate() forces its role to
 	// "viewer" unconditionally, regardless of the calling account's real
@@ -157,7 +170,7 @@ public:
 	// lockout (5 failures -> 60s cooldown, see AuthStore.cpp). Returns
 	// {"", reason} on failure, {token, ""} on success.
 	std::pair<std::string, std::string> switchProfile(const std::string& target_user_id,
-	                                                   const std::string& pin);
+													  const std::string& pin);
 
 private:
 	Database& db_;
@@ -166,12 +179,12 @@ private:
 	// createUserWithTempPassword, createUserWithEmailInvite) — returns the
 	// new user_id, or "" if username is taken or role is invalid.
 	std::string insertUser(const std::string& username, const std::string& password_hash,
-	                       const std::string& role, bool must_change_password);
+						   const std::string& role, bool must_change_password);
 
 	static std::string hashPassword(const std::string& password);
-	static bool        checkPassword(const std::string& password,
-	                                 const std::string& hash);
+	static bool checkPassword(const std::string& password,
+							  const std::string& hash);
 	static std::string generateToken();
 	static std::string generateBcryptSalt();
-	static bool        timingSafeEqual(const std::string& a, const std::string& b);
+	static bool timingSafeEqual(const std::string& a, const std::string& b);
 };

@@ -17,6 +17,9 @@ export interface User {
   // preference exists (show/movie track-preference). '' means unset.
   default_audio_lang:    string
   default_subtitle_lang: string
+    // Which page this account lands on after login/profile-switch — ''
+    // (inherit the admin-configured global default), 'home', or 'guide'.
+    default_landing_page: string
 }
 
 // GET/PUT .../track-preference (shows, movies) — same shape both ways.

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from 'react'
+import {useEffect, useRef, useState, type CSSProperties} from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, mediaUrl } from '../api/client'
 import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress, HomePlaylistShelf, WatchTogetherSession } from '../api/types'
@@ -16,9 +16,6 @@ import { useCastSession } from '../cast/useCastSession'
 import styles from './HomePage.module.css'
 
 const HOME_FOCUS_KEY = 'HOME'
-
-// Lazy: pulls in hls.js (via the Guide's live preview) that most page loads don't need.
-const GuidePage = lazy(() => import('../guide/GuidePage').then(m => ({ default: m.GuidePage })))
 
 const SCROLL_KEY = 'home'
 
@@ -67,7 +64,6 @@ export default function HomePage() {
   const savedScrollY       = useRef(0)
   const restoredScrollRef  = useRef(false)
   const allItemsRef        = useRef<Map<string, Show | Movie>>(new Map())
-  const guideRef           = useRef<HTMLDivElement>(null)
   const castSession        = useCastSession()
 
   // Data
@@ -413,7 +409,6 @@ export default function HomePage() {
             />
           ) : (
             <>
-              <QuickActionsRow onGuideClick={() => guideRef.current?.scrollIntoView({ behavior: 'smooth' })} />
               <Shelves
                 loading={loading}
                 recentShows={recentShows}
@@ -432,9 +427,6 @@ export default function HomePage() {
                 libraryNames={libraryNames}
                 onHideLibrary={hideLibrary}
               />
-              <div ref={guideRef} className={styles.guideWrap}>
-                <Suspense fallback={null}><GuidePage /></Suspense>
-              </div>
             </>
           )}
         </div>
@@ -614,29 +606,6 @@ function EmptyHero({ onGoToSources }: { onGoToSources: () => void }) {
         No content yet
       </div>
       <button style={ghostBtnStyle} onClick={onGoToSources}>Add a Source →</button>
-    </div>
-  )
-}
-
-// ── Quick actions ────────────────────────────────────────────────────────────
-// A home for jump-to shortcuts — Guide today, more later (user-customizable).
-
-function QuickActionsRow({ onGuideClick }: { onGuideClick: () => void }) {
-  const guide = useFocusable<object, HTMLButtonElement>({ focusKey: 'home-quickaction-guide', onEnterPress: onGuideClick })
-
-  // Hero is its own fixed flex region now (see HomePage's top-level layout)
-  // — it no longer bleeds into this area via negative margin, so this just
-  // needs normal breathing room, not extra clearance for a pull-up hack.
-  return (
-    <div className={styles.quickActionsWrap}>
-      <div className={styles.quickActionsBar}>
-        <button ref={guide.ref} data-tv-focused={guide.focused} onClick={onGuideClick} className={styles.quickActionButton}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
-            <rect x="1.5" y="2.5" width="11" height="9" rx="1.5" /><path d="M4 11.5h6" />
-          </svg>
-          Guide
-        </button>
-      </div>
     </div>
   )
 }

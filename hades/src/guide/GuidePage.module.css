@@ -1,0 +1,20 @@
+/* Same fixed-hero/fill-the-rest shape as HomePage.module.css's .pageRoot —
+   this route sits in Layout.tsx's full-bleed content area, which is itself
+   overflow:hidden, so exactly one region here (the grid) is responsible for
+   its own scrolling. */
+.root {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: var(--hds-space-6) var(--hds-space-7);
+}
+
+.gridWrap {
+    flex: 1;
+    min-height: 0;
+    /* Consumed by GuideGrid.module.css's .root — see its own comment on why
+       this is a CSS var rather than a prop (TvGuideSection reuses GuideGrid
+       without this ancestor, and keeps its own fixed-viewport-fraction
+       default instead). */
+    --guide-grid-height: 100%;
+}

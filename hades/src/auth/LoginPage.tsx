@@ -13,10 +13,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export default function LoginPage() {
-  const { login }  = useAuth()
+    const {login, resolveLandingPath} = useAuth()
   const navigate   = useNavigate()
   const location   = useLocation()
-  const from       = (location.state as any)?.from?.pathname ?? '/sources'
+    // A real deep link (redirected here by ProtectedRoute) always wins; only
+    // when there wasn't one do we fall back to the resolved default landing
+    // page instead of a hardcoded path.
+    const from = (location.state as any)?.from?.pathname as string | undefined
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -28,8 +31,8 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      await login(username, password)
-      navigate(from, { replace: true })
+        const user = await login(username, password)
+        navigate(from ?? await resolveLandingPath(user), {replace: true})
     } catch (err: any) {
       setError(err.message ?? 'Login failed')
     } finally {

@@ -6,7 +6,10 @@ interface AuthContextValue {
   user:          User | null
   isLoading:     boolean
   setupRequired: boolean
-  login:         (username: string, password: string) => Promise<void>
+    // Returns the freshly-authenticated user — callers that need to act on it
+    // immediately (LoginPage/ProfileSelectPage resolving where to land) can't
+    // rely on this context's own `user` state, which updates asynchronously.
+    login: (username: string, password: string) => Promise<User>
   logout:        () => Promise<void>
   completeSetup: (username: string, password: string) => Promise<void>
   // Self-service password change — clears must_change_password, letting
@@ -16,6 +19,10 @@ interface AuthContextValue {
   // — see kairos migration v94. A field omitted from `b` leaves that side
   // untouched, same convention the per-show/movie preference endpoints use.
   updateTrackPreference: (b: { audio_lang?: string; subtitle_lang?: string }) => Promise<void>
+    // Self-service post-login/profile-switch landing page override (AccountPage)
+    // — '' means "inherit the admin-configured global default." See kairos
+    // migration v96.
+    updateDefaultLandingPage: (page: '' | 'home' | 'guide') => Promise<void>
   // Establishes a session from a token Kairos already minted (invite claim,
   // which auto-logs in on success) rather than going through /auth/login.
   // Callers must await this before navigating — like login/completeSetup, it
@@ -34,7 +41,8 @@ interface AuthContextValue {
   // Switches the active session to a different profile without its
   // password — see AuthStore::switchProfile for the actual gate (PIN, if
   // the target profile has one; always required for admin profiles).
-  switchProfile: (userId: string, pin?: string) => Promise<void>
+    // Same reasoning as login() above — returns the newly-active user directly.
+    switchProfile: (userId: string, pin?: string) => Promise<User>
   // Re-arms the picker on demand (Layout's "Switch Profile" link) without a
   // full logout — the caller still has to navigate to /profiles itself,
   // this just stops ProtectedRoute treating the current profile as chosen.
@@ -55,6 +63,12 @@ interface AuthContextValue {
   // the app. ProfileSelectPage uses this instead of switchProfile when
   // user.user_id matches the tile clicked.
   confirmCurrentProfile: () => void
+    // Resolves where a fresh login/profile-switch should land: the given
+    // user's own override if set, else the admin-configured global default
+    // (GET /api/config/public-settings — accessible with any valid token,
+    // same route Settings' own admin view reads from), else '/'. Used by
+    // LoginPage/ProfileSelectPage in place of a hardcoded landing target.
+    resolveLandingPath: (user: User) => Promise<string>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -133,6 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
     await loadProfiles()
+      return user
   }
 
   const completeSetup = async (username: string, password: string) => {
@@ -167,6 +182,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
   }
 
+    const updateDefaultLandingPage = async (page: '' | 'home' | 'guide') => {
+        if (!user) throw new Error('not logged in')
+        await api.setMyLandingPage(page)
+        setUser({...user, default_landing_page: page})
+    }
+
   const applySession = async (token: string, user: User) => {
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
@@ -178,6 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
     setProfileChosenRaw(true)
+      return user
   }
 
   const reopenProfilePicker = async () => {
@@ -187,10 +209,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const confirmCurrentProfile = () => setProfileChosenRaw(true)
 
+    const resolveLandingPath = async (u: User): Promise<string> => {
+        if (u.default_landing_page === 'guide') return '/guide'
+        if (u.default_landing_page === 'home') return '/'
+        try {
+            const settings = await api.getPublicSettings()
+            return settings.default_landing_page === 'guide' ? '/guide' : '/'
+        } catch {
+            return '/'
+        }
+    }
+
   return (
     <AuthContext.Provider value={{
-      user, isLoading, setupRequired, login, logout, completeSetup, setPassword, updateTrackPreference, applySession,
-      profiles, profileChosen, switchProfile, reopenProfilePicker, confirmCurrentProfile,
+        user,
+        isLoading,
+        setupRequired,
+        login,
+        logout,
+        completeSetup,
+        setPassword,
+        updateTrackPreference,
+        updateDefaultLandingPage,
+        applySession,
+        profiles,
+        profileChosen,
+        switchProfile,
+        reopenProfilePicker,
+        confirmCurrentProfile,
+        resolveLandingPath,
     }}>
       {children}
     </AuthContext.Provider>

@@ -14,7 +14,7 @@ function Avatar({ u }: { u: User }) {
 }
 
 export default function ProfileSelectPage() {
-  const { user, profiles, switchProfile, confirmCurrentProfile, logout, login } = useAuth()
+    const {user, profiles, switchProfile, confirmCurrentProfile, logout, login, resolveLandingPath} = useAuth()
   const navigate = useNavigate()
 
   const [pinFor,      setPinFor]      = useState<User | null>(null)
@@ -32,7 +32,7 @@ export default function ProfileSelectPage() {
     // tile, since switchProfile always requires one for role=admin.
     if (u.user_id === user?.user_id) {
       confirmCurrentProfile()
-      navigate('/', { replace: true })
+        navigate(await resolveLandingPath(u), {replace: true})
       return
     }
     // An admin profile with no PIN configured can never be switched into
@@ -42,8 +42,8 @@ export default function ProfileSelectPage() {
     if (u.has_pin && pin === undefined) { setPinFor(u); return }
     setBusy(true)
     try {
-      await switchProfile(u.user_id, pin)
-      navigate('/', { replace: true })
+        const switched = await switchProfile(u.user_id, pin)
+        navigate(await resolveLandingPath(switched), {replace: true})
     } catch (err: any) {
       setError(err.message ?? 'Failed to switch profile')
     } finally {
@@ -56,8 +56,8 @@ export default function ProfileSelectPage() {
     if (!passwordFor) return
     setError(''); setBusy(true)
     try {
-      await login(passwordFor.username, password)
-      navigate('/', { replace: true })
+        const loggedIn = await login(passwordFor.username, password)
+        navigate(await resolveLandingPath(loggedIn), {replace: true})
     } catch (err: any) {
       setError(err.message ?? 'Login failed')
     } finally {

@@ -25,14 +25,20 @@ using Res  = httplib::Response;
 static constexpr const char* kDefaultCastAppId = "FA339D2D";
 
 ConfigService::ConfigService(const ServiceContext& ctx)
-	: db_(ctx.db), conf_(ctx.conf), sync_(ctx.sync), email_(ctx.email) {}
+	: db_(ctx.db)
+	, conf_(ctx.conf)
+	, sync_(ctx.sync)
+	, email_(ctx.email)
+{
+}
 
-void ConfigService::registerRoutes(httplib::Server& svr) {
-
-	auto persistFlag = [this](const char* key, bool value) {
+void ConfigService::registerRoutes(httplib::Server& svr)
+{
+	auto persistFlag = [this](const char* key, bool value)
+	{
 		SQLite::Statement s(db_.get(),
-			"INSERT INTO app_config(key,value) VALUES(?,?)"
-			" ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+							"INSERT INTO app_config(key,value) VALUES(?,?)"
+							" ON CONFLICT(key) DO UPDATE SET value=excluded.value");
 		s.bind(1, std::string(key));
 		s.bind(2, value ? "1" : "0");
 		s.exec();
@@ -40,27 +46,45 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 
 	// Empty (never configured) falls back to the shared public relay's App ID
 	// so casting works out of the box — see kDefaultCastAppId.
-	auto castAppId = [this]() {
+	auto castAppId = [this]()
+	{
 		std::string v = ConfigRepository(db_).getValue("cast_app_id");
 		return v.empty() ? std::string(kDefaultCastAppId) : v;
 	};
 
-	auto settingsJson = [this, castAppId]() {
+	// Empty (never configured) falls back to Home — same "empty means
+	// unconfigured, apply a sane default" shape as castAppId above. A
+	// per-user default_landing_page (AuthStore) takes priority over this
+	// when set; this is only the server-wide fallback.
+	auto defaultLandingPage = [this]()
+	{
+		std::string v = ConfigRepository(db_).getValue("default_landing_page");
+		return v.empty() ? std::string("home") : v;
+	};
+
+	auto settingsJson = [this, castAppId, defaultLandingPage]()
+	{
 		return json{
-			{"epg_debug",              g_epg_debug.load()},
-			{"sync_debug",             g_debug_logging.load()},
-			{"sync_threads",           sync_.getThreadCount()},
-			{"stream_buffer_size",           g_buffer_size.load()},
-			{"image_cache_ttl_hours",  conf_.getImageCacheTtlHours()},
+			{"epg_debug", g_epg_debug.load()},
+			{"sync_debug", g_debug_logging.load()},
+			{"sync_threads", sync_.getThreadCount()},
+			{"stream_buffer_size", g_buffer_size.load()},
+			{"image_cache_ttl_hours", conf_.getImageCacheTtlHours()},
 			{"verbose_transcode_logs", g_verbose_transcode_logs.load()},
-			{"verbose_gateway_logs",   g_verbose_gateway_logs.load()},
-			{"hades_debug",            g_hades_debug.load()},
-			{"cast_app_id",            castAppId()},
+			{"verbose_gateway_logs", g_verbose_gateway_logs.load()},
+			{"hades_debug", g_hades_debug.load()},
+			{"cast_app_id", castAppId()},
+			{"default_landing_page", defaultLandingPage()},
 		};
 	};
 
-	svr.Get("/api/config/settings", [this, settingsJson](const Req&, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Get("/api/config/settings", [this, settingsJson](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		route::ok(res, settingsJson().dump());
 	});
 
@@ -68,81 +92,115 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	// the Hades frontend. This is marked public in Router.cpp, so it's
 	// accessible without a token (for Hephaestus/Hermes) or with any valid
 	// token (for viewer users).
-	svr.Get("/api/config/public-settings", [this, castAppId](const Req&, Res& res) {
+	svr.Get("/api/config/public-settings", [this, castAppId, defaultLandingPage](const Req&, Res& res)
+	{
 		route::ok(res, json{
-			{"stream_buffer_size",      g_buffer_size.load()},
-			{"verbose_transcode_logs",  g_verbose_transcode_logs.load()},
-			{"verbose_gateway_logs",    g_verbose_gateway_logs.load()},
-			{"cast_app_id",             castAppId()},
-		}.dump());
+					  {"stream_buffer_size", g_buffer_size.load()},
+					  {"verbose_transcode_logs", g_verbose_transcode_logs.load()},
+					  {"verbose_gateway_logs", g_verbose_gateway_logs.load()},
+					  {"cast_app_id", castAppId()},
+					  {"default_landing_page", defaultLandingPage()},
+				  }.dump());
 	});
 
-	svr.Patch("/api/config/settings", [this, persistFlag, settingsJson](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
+	svr.Patch("/api/config/settings", [this, persistFlag, settingsJson](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			auto b = json::parse(req.body);
-			if (b.contains("epg_debug") && b["epg_debug"].is_boolean()) {
+			if (b.contains("epg_debug") && b["epg_debug"].is_boolean())
+			{
 				bool v = b["epg_debug"].get<bool>();
 				g_epg_debug.store(v);
 				persistFlag("epg_debug", v);
 			}
-			if (b.contains("sync_debug") && b["sync_debug"].is_boolean()) {
+			if (b.contains("sync_debug") && b["sync_debug"].is_boolean())
+			{
 				bool v = b["sync_debug"].get<bool>();
 				g_debug_logging.store(v);
 				persistFlag("sync_debug", v);
 				std::cout << "[config] sync debug logging " << (v ? "enabled" : "disabled") << '\n';
 			}
-			if (b.contains("sync_threads") && b["sync_threads"].is_number_integer()) {
+			if (b.contains("sync_threads") && b["sync_threads"].is_number_integer())
+			{
 				int n = b["sync_threads"].get<int>();
 				// setThreadCount alone only ever lived in SyncManager's
 				// in-memory atomic — conf_.setSyncThreadsOverride persists it,
 				// so a restart doesn't silently revert to KAIROS_SYNC_THREADS.
-				if (n >= 1 && n <= 32) {
+				if (n >= 1 && n <= 32)
+				{
 					sync_.setThreadCount(n);
 					conf_.setSyncThreadsOverride(n);
 				}
 			}
-			if (b.contains("stream_buffer_size") && b["stream_buffer_size"].is_number_integer()) {
+			if (b.contains("stream_buffer_size") && b["stream_buffer_size"].is_number_integer())
+			{
 				int n = b["stream_buffer_size"].get<int>();
-				if (n >= 1024) {
+				if (n >= 1024)
+				{
 					g_buffer_size.store(n);
 					conf_.setBufferSize(n);
 				}
 			}
-			if (b.contains("image_cache_ttl_hours") && b["image_cache_ttl_hours"].is_number_integer()) {
+			if (b.contains("image_cache_ttl_hours") && b["image_cache_ttl_hours"].is_number_integer())
+			{
 				int h = b["image_cache_ttl_hours"].get<int>();
 				if (h >= 1 && h <= 720) conf_.setImageCacheTtlHours(h);
 			}
-			if (b.contains("verbose_transcode_logs") && b["verbose_transcode_logs"].is_boolean()) {
+			if (b.contains("verbose_transcode_logs") && b["verbose_transcode_logs"].is_boolean())
+			{
 				bool v = b["verbose_transcode_logs"].get<bool>();
 				g_verbose_transcode_logs.store(v);
 				persistFlag("verbose_transcode_logs", v);
 			}
-			if (b.contains("verbose_gateway_logs") && b["verbose_gateway_logs"].is_boolean()) {
+			if (b.contains("verbose_gateway_logs") && b["verbose_gateway_logs"].is_boolean())
+			{
 				bool v = b["verbose_gateway_logs"].get<bool>();
 				g_verbose_gateway_logs.store(v);
 				persistFlag("verbose_gateway_logs", v);
 			}
-			if (b.contains("hades_debug") && b["hades_debug"].is_boolean()) {
+			if (b.contains("hades_debug") && b["hades_debug"].is_boolean())
+			{
 				bool v = b["hades_debug"].get<bool>();
 				g_hades_debug.store(v);
 				persistFlag("hades_debug", v);
 			}
-			if (b.contains("cast_app_id") && b["cast_app_id"].is_string()) {
+			if (b.contains("cast_app_id") && b["cast_app_id"].is_string())
+			{
 				ConfigRepository(db_).setValue("cast_app_id", b["cast_app_id"].get<std::string>());
 			}
+			if (b.contains("default_landing_page") && b["default_landing_page"].is_string())
+			{
+				auto v = b["default_landing_page"].get<std::string>();
+				if (v == "home" || v == "guide") ConfigRepository(db_).setValue("default_landing_page", v);
+			}
 			route::ok(res, settingsJson().dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::err(res, 400, e.what());
 		}
 	});
 
-	svr.Post("/api/config/epg/clear-all", [this](const Req&, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
+	svr.Post("/api/config/epg/clear-all", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			int affected = ScheduleRepository(db_).clearAllScheduled();
 			route::ok(res, json{{"cleared", affected}}.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("POST /api/config/epg/clear-all", e);
 			route::err(res, 500, e.what());
 		}
@@ -153,19 +211,24 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	// the printed line rather than given its own column/table — this stays a
 	// LogBuffer line like every other log source, just with attribution
 	// instead of none, not a new structured store.
-	svr.Post("/api/logs/client", [this](const Req& req, Res& res) {
-		try {
-			auto b = json::parse(req.body);
+	svr.Post("/api/logs/client", [this](const Req& req, Res& res)
+	{
+		try
+		{
+			auto b              = json::parse(req.body);
 			std::string level   = b.value("level", "error");
 			std::string msg     = b.value("message", "");
 			std::string user_id = b.value("user_id", "");
-			if (!msg.empty()) {
+			if (!msg.empty())
+			{
 				std::cerr << "[hades] [" << level << "]"
-				          << (user_id.empty() ? "" : " [user:" + user_id + "]")
-				          << " " << msg << std::endl;
+					<< (user_id.empty() ? "" : " [user:" + user_id + "]")
+					<< " " << msg << std::endl;
 			}
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (...) {
+		}
+		catch (...)
+		{
 			route::err(res, 400, "invalid body");
 		}
 	});
@@ -173,9 +236,15 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	// Reset the entire media library index — wipes all show/episode/movie data and
 	// source mappings so the next sync starts completely fresh. Keeps source/library
 	// configuration, channels, users, and settings intact.
-	svr.Post("/api/config/library/reset", [this](const Req&, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
+	svr.Post("/api/config/library/reset", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			SQLite::Transaction txn(db_.get());
 
 			// Null out FK columns in media_cursor before deleting the rows they point at.
@@ -208,7 +277,9 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 			sync_.loadSources();
 
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("POST /api/config/library/reset", e);
 			route::err(res, 500, e.what());
 		}
@@ -220,18 +291,24 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	// WAL-safe alongside an in-progress sync — never blocks or is blocked by
 	// one. The temp copy lives under the OS temp dir and is deleted again
 	// before the response returns.
-	svr.Get("/api/config/debug-dump", [this](const Req&, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Get("/api/config/debug-dump", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		namespace fs = std::filesystem;
 		fs::path out_path;
-		try {
+		try
+		{
 			const std::time_t now = std::time(nullptr);
 			std::tm tm{};
 			gmtime_r(&now, &tm);
 			char stamp[32];
 			std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
 			const std::string filename = std::string("kairos-analysis-") + stamp + ".db";
-			out_path = fs::temp_directory_path() / filename;
+			out_path                   = fs::temp_directory_path() / filename;
 
 			static const std::vector<std::string> kTables = {
 				"media_source", "media_library", "source_mapping",
@@ -249,7 +326,8 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 				attach.exec();
 
 				SQLite::Transaction txn(out);
-				for (const auto& t : kTables) {
+				for (const auto& t : kTables)
+				{
 					SQLite::Statement sq(out, "SELECT sql FROM src.sqlite_master WHERE type='table' AND name=?");
 					sq.bind(1, t);
 					if (!sq.executeStep()) continue; // older schema without this table — skip
@@ -269,7 +347,9 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 
 			res.set_header("Content-Disposition", "attachment; filename=\"" + filename + "\"");
 			res.set_content(body, "application/octet-stream");
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			std::error_code ec;
 			if (!out_path.empty()) fs::remove(out_path, ec);
 			route::logErr("GET /api/config/debug-dump", e);
@@ -277,87 +357,132 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 		}
 	});
 
-	svr.Get("/api/config/credentials", [this](const Req&, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Get("/api/config/credentials", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		json result = json::array();
-		for (const auto& r : SourceRepository(db_).listSourcesBasic()) {
+		for (const auto& r : SourceRepository(db_).listSourcesBasic())
+		{
 			result.push_back({
-				{"source_id",    r.source_id},
-				{"source_type",  r.source_type},
+				{"source_id", r.source_id},
+				{"source_type", r.source_type},
 				{"display_name", r.display_name},
-				{"has_token",    conf_.hasToken(r.source_id)},
-				{"has_user_id",  conf_.hasUserId(r.source_id)},
+				{"has_token", conf_.hasToken(r.source_id)},
+				{"has_user_id", conf_.hasUserId(r.source_id)},
 				{"sync_priority", r.syncPriority},
 			});
 		}
 		route::ok(res, result.dump());
 	});
 
-	svr.Get("/api/config/credentials/:source_id", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Get("/api/config/credentials/:source_id", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		auto sid = req.path_params.at("source_id");
-		route::ok(res, json{{"has_token",   conf_.hasToken(sid)},
-		                    {"has_user_id", conf_.hasUserId(sid)}}.dump());
+		route::ok(res, json{
+					  {"has_token", conf_.hasToken(sid)},
+					  {"has_user_id", conf_.hasUserId(sid)}
+				  }.dump());
 	});
 
-	svr.Put("/api/config/credentials/:source_id", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
+	svr.Put("/api/config/credentials/:source_id", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			auto sid     = req.path_params.at("source_id");
 			auto b       = json::parse(req.body);
-			auto token   = b.value("token",   "");
+			auto token   = b.value("token", "");
 			auto user_id = b.value("user_id", "");
 			conf_.setCredentials(sid, token, user_id);
 			sync_.loadSources();
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const json::exception& e) {
+		}
+		catch (const json::exception& e)
+		{
 			route::err(res, 400, e.what());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("PUT /api/config/credentials/:source_id", e);
 			route::err(res, 500, e.what());
 		}
 	});
 
-	svr.Delete("/api/config/credentials/:source_id", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Delete("/api/config/credentials/:source_id", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		auto sid = req.path_params.at("source_id");
-		try {
+		try
+		{
 			conf_.removeSource(sid);
 			sync_.loadSources();
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("DELETE /api/config/credentials/" + sid, e);
 			route::err(res, 500, e.what());
 		}
 	});
 
-	svr.Get("/api/config/path-maps/:source_id", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		auto sid  = req.path_params.at("source_id");
-		auto maps = conf_.getPathMaps(sid);
+	svr.Get("/api/config/path-maps/:source_id", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		auto sid    = req.path_params.at("source_id");
+		auto maps   = conf_.getPathMaps(sid);
 		json result = json::array();
-		for (const auto& [from, to] : maps)
-			result.push_back({{"from", from}, {"to", to}});
+		for (const auto& [from, to] : maps) result.push_back({{"from", from}, {"to", to}});
 		route::ok(res, result.dump());
 	});
 
-	svr.Put("/api/config/path-maps/:source_id", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
+	svr.Put("/api/config/path-maps/:source_id", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			auto sid = req.path_params.at("source_id");
 			auto b   = json::parse(req.body);
-			std::vector<std::pair<std::string,std::string>> maps;
-			if (b.contains("maps") && b["maps"].is_array()) {
-				for (const auto& m : b["maps"]) {
+			std::vector<std::pair<std::string, std::string>> maps;
+			if (b.contains("maps") && b["maps"].is_array())
+			{
+				for (const auto& m : b["maps"])
+				{
 					auto from = m.value("from", "");
-					auto to   = m.value("to",   "");
+					auto to   = m.value("to", "");
 					if (!from.empty()) maps.push_back({from, to});
 				}
 			}
 			conf_.setPathMaps(sid, maps);
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const json::exception& e) { route::err(res, 400, e.what()); }
-		  catch (const std::exception& e)  {
+		}
+		catch (const json::exception& e) { route::err(res, 400, e.what()); }
+		catch (const std::exception& e)
+		{
 			route::logErr("PUT /api/config/path-maps/:source_id", e);
 			route::err(res, 500, e.what());
 		}
@@ -368,51 +493,81 @@ void ConfigService::registerRoutes(httplib::Server& svr) {
 	// don't-leak-secrets shape as /api/config/credentials/:source_id above) —
 	// GET reports only whether one is set; a blank password field on save
 	// preserves whatever's already stored.
-	svr.Get("/api/config/smtp", [this](const Req&, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Get("/api/config/smtp", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		ConfigRepository repo(db_);
 		route::ok(res, json{
-			{"host",             repo.getValue("smtp_host")},
-			{"port",             repo.getValue("smtp_port")},
-			{"username",         repo.getValue("smtp_username")},
-			{"has_password",     !repo.getValue("smtp_password").empty()},
-			{"from_address",     repo.getValue("smtp_from_address")},
-			{"public_base_url",  repo.getValue("smtp_public_base_url")},
-		}.dump());
+					  {"host", repo.getValue("smtp_host")},
+					  {"port", repo.getValue("smtp_port")},
+					  {"username", repo.getValue("smtp_username")},
+					  {"has_password", !repo.getValue("smtp_password").empty()},
+					  {"from_address", repo.getValue("smtp_from_address")},
+					  {"public_base_url", repo.getValue("smtp_public_base_url")},
+				  }.dump());
 	});
 
-	svr.Post("/api/config/smtp", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
+	svr.Post("/api/config/smtp", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			auto b = json::parse(req.body);
 			ConfigRepository repo(db_);
-			if (b.contains("host"))            repo.setValue("smtp_host",            b["host"].get<std::string>());
-			if (b.contains("port"))            repo.setValue("smtp_port",            b["port"].get<std::string>());
-			if (b.contains("username"))        repo.setValue("smtp_username",        b["username"].get<std::string>());
-			if (b.contains("password") && !b["password"].get<std::string>().empty())
-				repo.setValue("smtp_password", b["password"].get<std::string>());
-			if (b.contains("from_address"))    repo.setValue("smtp_from_address",    b["from_address"].get<std::string>());
+			if (b.contains("host")) repo.setValue("smtp_host", b["host"].get<std::string>());
+			if (b.contains("port")) repo.setValue("smtp_port", b["port"].get<std::string>());
+			if (b.contains("username")) repo.setValue("smtp_username", b["username"].get<std::string>());
+			if (b.contains("password") && !b["password"].get<std::string>().empty()) repo.setValue("smtp_password", b["password"].get<std::string>());
+			if (b.contains("from_address")) repo.setValue("smtp_from_address", b["from_address"].get<std::string>());
 			if (b.contains("public_base_url")) repo.setValue("smtp_public_base_url", b["public_base_url"].get<std::string>());
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const json::exception& e) {
+		}
+		catch (const json::exception& e)
+		{
 			route::err(res, 400, e.what());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("POST /api/config/smtp", e);
 			route::err(res, 500, e.what());
 		}
 	});
 
-	svr.Post("/api/config/smtp/test", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
-			auto b = json::parse(req.body);
+	svr.Post("/api/config/smtp/test", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
+			auto b               = json::parse(req.body);
 			const std::string to = b.value("to", "");
-			if (to.empty()) { route::err(res, 400, "'to' address required"); return; }
+			if (to.empty())
+			{
+				route::err(res, 400, "'to' address required");
+				return;
+			}
 			std::string error;
 			const bool ok = email_.testConnection(to, &error);
-			if (!ok) { route::err(res, 502, error.empty() ? "send failed" : error); return; }
+			if (!ok)
+			{
+				route::err(res, 502, error.empty() ? "send failed" : error);
+				return;
+			}
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const json::exception& e) {
+		}
+		catch (const json::exception& e)
+		{
 			route::err(res, 400, e.what());
 		}
 	});

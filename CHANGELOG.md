@@ -7,6 +7,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+
+- **Guide is now its own page, with a real progress-aware EPG grid (Hades)**: previously embedded at the bottom of
+  Home (reached by scrolling), Guide is now a standalone `/guide` route with its own sidebar nav entry — matching
+  Android. The grid itself got a real fix, not just polish: each channel column's header used to be `position: sticky`
+  inside the *same* vertically-scrolling region as the program blocks, so blocks routinely rendered underneath it (
+  worst-case on load, since the old auto-scroll-to-now effect left only 60px of clearance against an 84px header).
+  Headers now live in their own fixed, horizontally-synced row (`GuideGrid.tsx`), so program content never shares a
+  scroll axis with them — no more overlap by construction. Behind the grid, a subtle repeating-gradient background marks
+  real 30-minute intervals, anchored to true wall-clock half-hour boundaries. The currently-airing block per channel
+  replaced its old decorative shimmer (zero connection to elapsed time) with a computed dark/light purple split at the
+  real "now" position within that block, plus a pulsing line exactly on the split — an actual progress indicator for the
+  first time. Focusing any block (now or future) updates the hero's title/description/rating and, for a future block,
+  a "starts in Nm" countdown — but the live video preview always stays locked to the focused *channel*, never a specific
+  block, since you can't actually preview something that hasn't aired. The preview itself became a full-bleed hero (live
+  video backdrop + scrim + overlaid text, mirroring Home's own `HeroBanner`) instead of a small side-by-side video+info
+  row, with the channel's own rating (`Channel.content_tag`, already existed server-side, just never had a UI) shown in
+  the header.
+- **Default landing page — global + per-user (Kairos + Hades)**: Guide becoming a first-class destination makes "which
+  page do I land on" a real choice for the first time. New `app_config` key `default_landing_page` (admin,
+  `Settings → Interface`, same shape as the existing `cast_app_id`) plus a per-user `user.default_landing_page`
+  override (`Account → General`, empty = inherit the global default, same shape as `default_audio_lang`). Applied at the
+  two places that actually decide where a session lands post-auth — `LoginPage`'s deep-link fallback (previously
+  hardcoded to `/sources`, which looks like a stale leftover rather than an intentional default — a viewer landing on an
+  admin-only route was itself a minor existing bug this replaces) and `ProfileSelectPage`'s three post-switch
+  redirects — resolved via a new `resolveLandingPath()` on `AuthContext`, not a permanent identity swap of what `/`
+  renders: the sidebar's "Home" link always means Home, only the *initial* landing after login/profile-switch is
+  affected.
 - **Watch Together — Home shelf + player integration (Hades)**: a new "Watch Together" button (`LibraryDetailActions.tsx`, next to Play) creates a Kairos session for whatever `resolvePlayTarget` would resolve to (a show's actual next episode, same as a plain Play click) and opens it as host. A new Home shelf lists every currently-open session (title, host, live "N watching" count); clicking one joins and opens it as a follower. In the player, `usePlaybackSession`'s existing manifest/session plumbing is untouched — Watch Together layers on top via a `?wt=` query param: the host posts an explicit command (`seek`/`pause`/`play`) on every local action plus a heartbeat every 4s, a follower subscribes to Hermes' SSE stream and applies every event identically (`sync` ticks only correct once drift exceeds 1.5s, explicit commands apply immediately), and a follower's own scrub bar is a no-op (the next correction would just override it anyway). Host vs. follower is decided by comparing the logged-in user against Kairos's own `host_user_id` for the session — never assumed client-side.
 - **Watch Together live session coordination (Hermes)**: new `WatchTogetherSession`/`WatchTogetherManager` (`hermes/src/watchtogether/`) hold the in-memory playback state Kairos deliberately never persists — position, paused, who's hosting. `GET /watch-together/:id/stream` is an SSE feed (same chunked-provider + seq/`waitAfter` pull pattern as `/api/logs/stream`): a fresh subscriber's first message is a synthesized `sync` event for the *current* authoritative position, not a backlog of old commands. `POST /watch-together/:id/command` (host-only: `seek`/`pause`/`play`) applies immediately and broadcasts right away; `POST /watch-together/:id/heartbeat` (host-only, cheap/frequent) just updates the extrapolation baseline. A background tick every 4s appends a `sync` event to every live session regardless of host activity — a follower who stalled on a rebuffer or just joined gets corrected without the host touching anything — and a 45s-grace reaper drops sessions whose host has gone quiet, best-effort closing them on Kairos too (using whichever host bearer token the session last saw, since Hermes has no service-account token of its own — Kairos's own age-based sweep from Phase C is the backstop when no host token was ever seen). Getting a session's `host_user_id` on first touch, and forwarding the eventual close, both go through a small new `GET /api/watch-together/:id` Kairos added alongside Phase C's other routes.
 - **Watch Together persistence + discovery API (Kairos)**: new `watch_together_session`/`watch_together_member` tables and a `WatchTogetherService` (`POST /api/watch-together` create, `GET /api/watch-together/active` shelf feed, `POST /api/watch-together/:id/join|leave|close`, close host-only). Kairos owns identity/discovery only — no position/paused columns; live playback state stays in-memory on Hermes once that lands, and a closed session's participants just fall back to their own individual `watch_progress`. No visibility gate beyond "logged in" (no household/friend concept exists to key off, and the shelf itself is the discovery surface). A lazy age-based sweep (open >24h with no explicit close) keeps an abandoned session from lingering on the shelf forever until Hermes' own live-presence-based reaping (Phase D) can close these more promptly in practice. First phase of the shared-VOD-stream groundwork landing as an actual feature; join/player wiring (Hades) and live sync (Hermes) are still to come.

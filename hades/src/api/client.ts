@@ -383,6 +383,11 @@ export const api = {
   setMyTrackPreference: (b: { audio_lang?: string; subtitle_lang?: string }) =>
                         request<{ ok: boolean }>('PATCH', '/users/me/track-preference', b),
 
+    // '' clears the override (falls back to the admin-configured global
+    // default — see SettingsPage's own "Default Landing Page").
+    setMyLandingPage: (page: '' | 'home' | 'guide') =>
+        request<{ ok: boolean }>('PATCH', '/users/me/landing-page', {page}),
+
   // Server-side resolvePlayTarget.ts (see hades/src/player/resolvePlayTarget.ts) —
   // one call instead of watch-state + conditionally next-episode/full-episode-list.
   getResolvedPlayTarget: (showId: string)                                  => request<ResolvedPlayTarget | null>('GET', `/shows/${showId}/resolve-play-target`),
@@ -580,17 +585,56 @@ export const api = {
   deleteBumper:  (channelId: string, bumperId: number)               => request<void>          ('DELETE', `/channels/${channelId}/bumpers/${bumperId}`),
 
   // Runtime settings
-  getSettings:    ()                                                     => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; hades_debug: boolean; cast_app_id: string }>('GET',   '/config/settings'),
+    getSettings: () => request<{
+        epg_debug: boolean;
+        sync_debug: boolean;
+        sync_threads: number;
+        stream_buffer_size: number;
+        image_cache_ttl_hours: number;
+        verbose_transcode_logs: boolean;
+        verbose_gateway_logs: boolean;
+        hades_debug: boolean;
+        cast_app_id: string;
+        default_landing_page: string
+    }>('GET', '/config/settings'),
   // Public read-only subset for internal services (Hephaestus, Hermes) and
   // the Hades frontend (CastProvider, which needs cast_app_id regardless of role).
-  getPublicSettings: ()                                                  => request<{ stream_buffer_size: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; cast_app_id: string }>('GET', '/config/public-settings'),
+    getPublicSettings: () => request<{
+        stream_buffer_size: number;
+        verbose_transcode_logs: boolean;
+        verbose_gateway_logs: boolean;
+        cast_app_id: string;
+        default_landing_page: string
+    }>('GET', '/config/public-settings'),
   // user_id: best-effort attribution (see auth/AuthContext.tsx's
   // currentUserRef) — the server just logs it alongside the message,
   // nothing queries by it yet, but it means a future admin-facing view over
   // these lines isn't starting from zero attribution.
   sendClientLog: (level: 'info' | 'warn' | 'error', message: string, userId?: string | null) =>
                    request<{ ok: boolean }>('POST', '/logs/client', { level, message, user_id: userId ?? undefined }),
-  updateSettings: (b: Partial<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; hades_debug: boolean; cast_app_id: string }>) => request<{ epg_debug: boolean; sync_debug: boolean; sync_threads: number; stream_buffer_size: number; image_cache_ttl_hours: number; verbose_transcode_logs: boolean; verbose_gateway_logs: boolean; hades_debug: boolean; cast_app_id: string }>('PATCH', '/config/settings', b),
+    updateSettings: (b: Partial<{
+        epg_debug: boolean;
+        sync_debug: boolean;
+        sync_threads: number;
+        stream_buffer_size: number;
+        image_cache_ttl_hours: number;
+        verbose_transcode_logs: boolean;
+        verbose_gateway_logs: boolean;
+        hades_debug: boolean;
+        cast_app_id: string;
+        default_landing_page: string
+    }>) => request<{
+        epg_debug: boolean;
+        sync_debug: boolean;
+        sync_threads: number;
+        stream_buffer_size: number;
+        image_cache_ttl_hours: number;
+        verbose_transcode_logs: boolean;
+        verbose_gateway_logs: boolean;
+        hades_debug: boolean;
+        cast_app_id: string;
+        default_landing_page: string
+    }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),
 

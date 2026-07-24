@@ -31,6 +31,10 @@ import styles from './App.module.css'
 // Lazy: hls.js is a ~500KB dependency that only the player route needs — every
 // other page load (the vast majority of app usage) shouldn't pay for it.
 const PlayerPage = lazy(() => import('./player/PlayerPage').then(m => ({ default: m.PlayerPage })))
+// Same reasoning — GuidePage's live preview also pulls in hls.js. Previously
+// only lazy-loaded at its embedded mount point inside HomePage; now that
+// it's a standalone route, the lazy boundary moves here with it.
+const GuidePage = lazy(() => import('./guide/GuidePage').then(m => ({default: m.GuidePage})))
 
 // Lazy: the whole /tv tree (10-foot screens, TV-sized grids) is dead weight
 // on every desktop/mobile page load — only devices actually navigating to
@@ -97,6 +101,9 @@ export default function App() {
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
             <Route path="library" element={<LibraryPage />} />
+              <Route path="guide" element={
+                  <Suspense fallback={playerFallback}><GuidePage/></Suspense>
+              }/>
 
             {/* Self-service, any authenticated user — deliberately outside
                 <AdminRoute /> below, unlike SettingsPage. */}

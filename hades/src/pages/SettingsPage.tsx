@@ -29,6 +29,7 @@ interface Settings {
   verbose_gateway_logs:   boolean
   hades_debug:            boolean
   cast_app_id:            string
+    default_landing_page: string
 }
 
 type Tab = 'general' | 'scrapers' | 'integrations' | 'devices' | 'diagnostics'
@@ -471,6 +472,20 @@ const applyBuffer = () => {
                 checked={helpTipsStore.enabled}
                 onChange={v => helpTipsStore.setEnabled(v)}
               />
+            </SettingRow>
+              <SettingRow
+                  label="Default Landing Page"
+                  hint="Which page the app opens to after logging in or switching profiles. Any user can override this for their own account on their Account page."
+              >
+                  <select
+                      value={settings?.default_landing_page ?? 'home'}
+                      disabled={!settings || saving}
+                      onChange={e => patch({default_landing_page: e.target.value})}
+                      className={`${styles.input} ${styles.w120} ${styles.inputCursorPointer}`}
+                  >
+                      <option value="home">Home</option>
+                      <option value="guide">Guide</option>
+                  </select>
             </SettingRow>
           </Section>
 

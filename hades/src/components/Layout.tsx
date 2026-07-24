@@ -15,6 +15,14 @@ import styles from './Layout.module.css'
 const navItems: { to: string; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
   { to: '/',          label: 'Home',      icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 7.5L8 2l6 5.5V14H10v-3.5H6V14H2V7.5z" strokeLinejoin="round"/></svg> },
   { to: '/library',   label: 'Library',   icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg> },
+    {
+        to: '/guide',
+        label: 'Guide',
+        icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <rect x="1.5" y="3" width="13" height="10" rx="1.5"/>
+            <path d="M1.5 6.5h13M1.5 9.5h13" strokeLinecap="round"/>
+        </svg>
+    },
   { to: '/sources',   label: 'Sources',   icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/></svg>, adminOnly: true },
   { to: '/channels',  label: 'Channels',  icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="4" y="4" width="8" height="8" rx="1.5" transform="rotate(45 8 8)"/></svg>, adminOnly: true },
   { to: '/playlists', label: 'Playlists', icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><path d="M6 5.5l4 2.5-4 2.5V5.5z" fill="currentColor" stroke="none"/></svg>, adminOnly: true },
@@ -31,7 +39,7 @@ export default observer(function Layout() {
   const navigate     = useNavigate()
   const { user, reopenProfilePicker } = useAuth()
   const isChannelDetail = /^\/channels\/.+/.test(location.pathname)
-  const isFullBleed     = isChannelDetail || location.pathname === '/' || location.pathname.startsWith('/library') || location.pathname.startsWith('/review') || location.pathname === '/activity'
+    const isFullBleed = isChannelDetail || location.pathname === '/' || location.pathname.startsWith('/library') || location.pathname.startsWith('/review') || location.pathname === '/activity' || location.pathname === '/guide'
   const onActivity      = location.pathname === '/activity'
 
   const [navCollapsed,     setNavCollapsed]     = useState(() => localStorage.getItem('hds-nav-collapsed') === '1')

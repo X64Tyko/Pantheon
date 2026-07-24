@@ -1,5 +1,47 @@
-.scrollContainer {
-  height: 70vh; overflow: auto; scroll-snap-type: x mandatory;
+.root {
+    display: flex;
+    flex-direction: column;
+    /* Standalone GuidePage fills whatever flex space is left below its fixed
+       hero (sets --guide-grid-height: 100% on an ancestor); TvGuideSection has
+       no such sized ancestor to fill (it's embedded in TvHome's normal
+       scrolling flow), so it keeps this fixed-viewport-fraction default. */
+    height: var(--guide-grid-height, 70vh);
   border: 1px solid var(--hds-line-s); border-radius: var(--hds-radius-tile);
+    overflow: hidden; /* clips both children to the shared rounded corners */
+}
+
+/* Horizontally scrolled only via JS (GuideGrid.tsx's syncHeaderScroll), in
+   lockstep with .scrollContainer below — overflow: hidden here on purpose,
+   this row never scrolls on its own input. */
+.headerRow {
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.headerRowInner {
+    display: flex;
+    width: max-content;
+}
+
+.scrollContainer {
+    flex: 1;
+    min-height: 0; /* min-height: 0 so this flex child actually scrolls instead of growing to fit content */
+    overflow: auto;
+    scroll-snap-type: x mandatory;
+    /* Background time-grid — a line every 30min (60px at PX_PER_MIN=2), grey-
+       purple and subtle. Lives on this container (not per-column/per-tile) so
+       it shows through in any empty width beyond the last channel, not just
+       clipped to tile bounds — reads as belonging to the whole guide surface.
+       background-position-y is set per-render from GuideGrid.tsx's
+       --guide-grid-offset custom property so lines land on true wall-clock
+       :00/:30 marks regardless of where windowStartMs itself falls. */
+    background-image: repeating-linear-gradient(
+            to bottom,
+            oklch(0.55 0.04 292 / 0.4) 0,
+            oklch(0.55 0.04 292 / 0.4) 1px,
+            transparent 1px,
+            transparent 60px
+    );
+    background-position: 0 var(--guide-grid-offset, 0px);
 }
 .columnsRow { display: flex; }

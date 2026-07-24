@@ -23,8 +23,6 @@
 .crossfadeDetailHeight { height: 100%; }
 .crossfadeShelvesHeight { min-height: 100%; }
 
-.guideWrap { padding: 0 var(--hds-space-7) 48px; }
-
 /* ── Hero ─────────────────────────────────────────────────────────────────── */
 
 .heroRoot {
@@ -175,30 +173,6 @@
   font-family: var(--hds-font-display);
   font-size: var(--hds-font-size-tv-body);
   color: var(--hds-txt-3);
-}
-
-/* ── Quick actions ────────────────────────────────────────────────────────── */
-
-.quickActionsWrap { padding: var(--hds-space-6) var(--hds-space-7) var(--hds-space-3); }
-.quickActionsBar {
-  display: flex;
-  gap: var(--hds-space-tile-gap);
-  padding: 14px 18px;
-  border-radius: var(--hds-radius-skeleton);
-  background: var(--hds-glass);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--hds-glass-border);
-}
-.quickActionButton {
-  display: flex; align-items: center; gap: var(--hds-space-3);
-  padding: 9px var(--hds-space-5);
-  border-radius: var(--hds-radius-tile);
-  cursor: pointer;
-  border: 1px solid var(--hds-line);
-  background: var(--hds-bg-2);
-  color: var(--hds-txt);
-  font-family: var(--hds-font-mono-brand);
-  font-size: var(--hds-font-size-tv-label);
 }
 
 /* ── Shelves ──────────────────────────────────────────────────────────────── */

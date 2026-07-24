@@ -11,10 +11,11 @@ import settingsStyles from './SettingsPage.module.css'
 // SettingsPage's own page-shell classes (.page/.section/.settingRow/...)
 // rather than duplicating that CSS for a one-section page.
 export default function AccountPage() {
-  const { user, updateTrackPreference } = useAuth()
+    const {user, updateTrackPreference, updateDefaultLandingPage} = useAuth()
   const [mediaLangs, setMediaLangs] = useState<MediaLanguages | null>(null)
   const [audioLang,    setAudioLang]    = useState(user?.default_audio_lang ?? '')
   const [subtitleLang, setSubtitleLang] = useState(user?.default_subtitle_lang ?? '')
+    const [landingPage, setLandingPage] = useState(user?.default_landing_page ?? '')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -55,6 +56,37 @@ export default function AccountPage() {
       </div>
 
       <div className={settingsStyles.section}>
+          <div className={settingsStyles.sectionHeader}>
+              <span className={settingsStyles.sectionHeaderText}>GENERAL</span>
+          </div>
+          <div className={settingsStyles.sectionBody}>
+              <div className={settingsStyles.settingRow}>
+                  <div>
+                      <div className={settingsStyles.settingRowLabel}>Default Landing Page</div>
+                      <div className={settingsStyles.settingRowHint}>
+                          Which page you land on after logging in or switching profiles.
+                      </div>
+                  </div>
+                  <div className={settingsStyles.settingRowControl}>
+                      <select
+                          value={landingPage}
+                          onChange={e => {
+                              const v = e.target.value as '' | 'home' | 'guide'
+                              setLandingPage(v)
+                              updateDefaultLandingPage(v).catch(err => setError(err.message ?? 'Failed to save'))
+                          }}
+                          className={`${settingsStyles.input} ${settingsStyles.inputCursorPointer}`}
+                      >
+                          <option value="">Use server default</option>
+                          <option value="home">Home</option>
+                          <option value="guide">Guide</option>
+                      </select>
+                  </div>
+              </div>
+          </div>
+      </div>
+
+        <div className={settingsStyles.section}>
         <div className={settingsStyles.sectionHeader}>
           <span className={settingsStyles.sectionHeaderText}>PLAYBACK DEFAULTS</span>
         </div>
