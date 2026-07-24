@@ -1,6 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { makeAutoObservable, runInAction } from 'mobx'
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { api, mediaUrl, ApiError } from '../api/client'
 import { ExternalIdEditor } from '../components/media/LibraryAdminPanel'
@@ -268,6 +269,13 @@ export default observer(function ReviewPage() {
     setSelectedSubtitle(null)
   }
 
+  // Re-clicking the Review nav item while already on this page pushes a
+  // fresh history entry to the same URL — location.key changes even though
+  // the pathname doesn't, which is the signal to back out to the top-level
+  // Queue tab instead of leaving a stale selection/tab in place.
+  const location = useLocation()
+  useEffect(() => { switchTab('queue') }, [location.key])
+
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className={styles.root}>
@@ -282,121 +290,123 @@ export default observer(function ReviewPage() {
           >✕</button>
         </div>
       )}
-      {/* ── Left panel ─────────────────────────────────────────────────────── */}
-      <div className={styles.leftPanel}>
-        {/* Tab bar */}
-        <div className={styles.tabBar}>
-          {([
-            { key: 'queue',    label: 'Queue',    badge: null,                                                            admin: false },
-            { key: 'groups',   label: 'Groups',   badge: groupsStore.pendingCount > 0 ? groupsStore.pendingCount : null, admin: false },
-            { key: 'requests', label: 'Requests', badge: pendingReqCount > 0 ? pendingReqCount : null,                   admin: true  },
-            { key: 'duplicates', label: 'Duplicates', badge: duplicateTotal > 0 ? duplicateTotal : null,                 admin: true  },
-            { key: 'chapters', label: 'Chapters', badge: null,                                                            admin: false },
-            { key: 'subtitles', label: 'Subtitles', badge: subtitleItems.length > 0 ? subtitleItems.length : null,       admin: true  },
-          ] as const).filter(t => !t.admin || user?.role === 'admin').map(({ key, label, badge }) => (
-            <button
-              key={key}
-              onClick={() => switchTab(key as Tab)}
-              className={`${styles.mainTab} ${tab === key ? styles.mainTabActive : ''}`}
-            >
-              {label.toUpperCase()}
-              {badge !== null && (
-                <span className={styles.tabBadge}>{badge > 99 ? '99+' : badge}</span>
-              )}
-            </button>
-          ))}
-        </div>
 
-        {/* List area */}
-        {tab === 'queue'    && <QueueListPanel
-          items={queueItems} total={queueTotal} loading={queueLoading}
-          filter={queueFilter} selected={selectedQueue}
-          onFilterChange={setQueueFilter}
-          onSelect={setSelectedQueue}
-          onTriggerMatch={triggerMatch}
-          matching={matching}
-        />}
-        {tab === 'groups'   && <GroupsListPanel store={groupsStore} />}
-        {tab === 'requests' && <RequestsListPanel
-          items={visibleRequests} loading={reqLoading}
-          filter={reqFilter} selected={selectedReq}
-          allRequests={requests}
-          onFilterChange={setReqFilter}
-          onSelect={r => setSelectedReq(prev => prev?.request_id === r.request_id ? null : r)}
-        />}
-        {tab === 'duplicates' && <DuplicatesListPanel
-          items={duplicateItems} total={duplicateTotal} loading={duplicateLoading}
-          filter={duplicateFilter} selected={selectedDuplicate}
-          onFilterChange={setDuplicateFilter}
-          onSelect={d => setSelectedDuplicate(prev => prev?.candidate_id === d.candidate_id ? null : d)}
-        />}
-        {tab === 'chapters' && <ChaptersListPanel
-          items={chapterItems} total={chapterTotal} loading={chapterLoading}
-          mediaType={chapterMediaType} chapterType={chapterType} query={chapterQueryRaw}
-          selected={selectedChapterItem}
-          onMediaTypeChange={setChapterMediaType}
-          onChapterTypeChange={setChapterType}
-          onQueryChange={setChapterQueryRaw}
-          onSelect={setSelectedChapterItem}
-        />}
-        {tab === 'subtitles' && <SubtitlesListPanel
-          items={subtitleItems} loading={subtitleLoading} selected={selectedSubtitle}
-          onSelect={setSelectedSubtitle}
-        />}
+      {/* ── Tabs — full page width, Activity page's pattern ──────────────────── */}
+      <div className={styles.topTabBar}>
+        {([
+          { key: 'queue',    label: 'Queue',    badge: null,                                                            admin: false },
+          { key: 'groups',   label: 'Groups',   badge: groupsStore.pendingCount > 0 ? groupsStore.pendingCount : null, admin: false },
+          { key: 'requests', label: 'Requests', badge: pendingReqCount > 0 ? pendingReqCount : null,                   admin: true  },
+          { key: 'duplicates', label: 'Duplicates', badge: duplicateTotal > 0 ? duplicateTotal : null,                 admin: true  },
+          { key: 'chapters', label: 'Chapters', badge: null,                                                            admin: false },
+          { key: 'subtitles', label: 'Subtitles', badge: subtitleItems.length > 0 ? subtitleItems.length : null,       admin: true  },
+        ] as const).filter(t => !t.admin || user?.role === 'admin').map(({ key, label, badge }) => (
+          <button
+            key={key}
+            onClick={() => switchTab(key as Tab)}
+            className={`${styles.topTab} ${tab === key ? styles.topTabActive : ''}`}
+          >
+            {label.toUpperCase()}
+            {badge !== null && (
+              <span className={styles.tabBadge}>{badge > 99 ? '99+' : badge}</span>
+            )}
+          </button>
+        ))}
       </div>
 
-      {/* ── Right panel ────────────────────────────────────────────────────── */}
-      {tab === 'queue' && (
-        selectedQueue
-          ? <CandidatePanel
-              key={selectedQueue.kairos_id}
-              item={selectedQueue}
-              onAccept={handleAccept}
-              onReject={handleReject}
-              onClose={() => setSelectedQueue(null)}
-              onMatched={async (merged) => {
-                const fromTitle = selectedQueue?.title
-                await advanceQueueSelection(selectedQueue?.kairos_id)
-                setMergeNotice(merged && fromTitle ? { fromTitle, into: merged } : null)
-              }}
-            />
-          : <EmptyHint>Select an item to review candidates</EmptyHint>
-      )}
-      {tab === 'groups' && <GroupsDetailPanel store={groupsStore} />}
-      {tab === 'requests' && (
-        selectedReq
-          ? <RequestDetailPanel
-              request={selectedReq}
-              onClose={() => setSelectedReq(null)}
-              onStatusChange={(id, status) => {
-                setRequests(prev => prev.map(r => r.request_id === id ? { ...r, status } : r))
-                setSelectedReq(prev => prev?.request_id === id ? { ...prev, status } : prev)
-              }}
-            />
-          : <EmptyHint>Select a request to review</EmptyHint>
-      )}
-      {tab === 'duplicates' && (
-        selectedDuplicate
-          ? <DuplicateDetailPanel
-              key={selectedDuplicate.candidate_id}
-              item={selectedDuplicate}
-              onClose={() => setSelectedDuplicate(null)}
-              onResolved={() => { setSelectedDuplicate(null); fetchDuplicates() }}
-            />
-          : <EmptyHint>Select a pair to compare</EmptyHint>
-      )}
-      {tab === 'chapters' && (
-        selectedChapterItem
-          ? <ChapterInspectorPanel
-              key={selectedChapterItem.media_type + selectedChapterItem.media_id}
-              item={selectedChapterItem}
-              onClose={() => setSelectedChapterItem(null)}
-            />
-          : <EmptyHint>Select an item to inspect its chapters</EmptyHint>
-      )}
-      {tab === 'subtitles' && (
-        selectedSubtitle
-          ? <SubtitleInspectorPanel
+      {/* ── Split body — list on the left, detail on the right ───────────────── */}
+      <div className={styles.splitBody}>
+        {/* ── Left panel ───────────────────────────────────────────────────── */}
+        <div className={styles.leftPanel}>
+          {tab === 'queue'    && <QueueListPanel
+            items={queueItems} total={queueTotal} loading={queueLoading}
+            filter={queueFilter} selected={selectedQueue}
+            onFilterChange={setQueueFilter}
+            onSelect={setSelectedQueue}
+            onTriggerMatch={triggerMatch}
+            matching={matching}
+          />}
+          {tab === 'groups'   && <GroupsListPanel store={groupsStore} />}
+          {tab === 'requests' && <RequestsListPanel
+            items={visibleRequests} loading={reqLoading}
+            filter={reqFilter} selected={selectedReq}
+            allRequests={requests}
+            onFilterChange={setReqFilter}
+            onSelect={r => setSelectedReq(prev => prev?.request_id === r.request_id ? null : r)}
+          />}
+          {tab === 'duplicates' && <DuplicatesListPanel
+            items={duplicateItems} total={duplicateTotal} loading={duplicateLoading}
+            filter={duplicateFilter} selected={selectedDuplicate}
+            onFilterChange={setDuplicateFilter}
+            onSelect={d => setSelectedDuplicate(prev => prev?.candidate_id === d.candidate_id ? null : d)}
+          />}
+          {tab === 'chapters' && <ChaptersListPanel
+            items={chapterItems} total={chapterTotal} loading={chapterLoading}
+            mediaType={chapterMediaType} chapterType={chapterType} query={chapterQueryRaw}
+            selected={selectedChapterItem}
+            onMediaTypeChange={setChapterMediaType}
+            onChapterTypeChange={setChapterType}
+            onQueryChange={setChapterQueryRaw}
+            onSelect={setSelectedChapterItem}
+          />}
+          {tab === 'subtitles' && <SubtitlesListPanel
+            items={subtitleItems} loading={subtitleLoading} selected={selectedSubtitle}
+            onSelect={setSelectedSubtitle}
+          />}
+        </div>
+
+        {/* ── Right panel ──────────────────────────────────────────────────── */}
+        {tab === 'queue' && (
+          selectedQueue
+            ? <CandidatePanel
+                key={selectedQueue.kairos_id}
+                item={selectedQueue}
+                onAccept={handleAccept}
+                onReject={handleReject}
+                onClose={() => setSelectedQueue(null)}
+                onMatched={async (merged) => {
+                  const fromTitle = selectedQueue?.title
+                  await advanceQueueSelection(selectedQueue?.kairos_id)
+                  setMergeNotice(merged && fromTitle ? { fromTitle, into: merged } : null)
+                }}
+              />
+            : <EmptyHint>Select an item to review candidates</EmptyHint>
+        )}
+        {tab === 'groups' && <GroupsDetailPanel store={groupsStore} />}
+        {tab === 'requests' && (
+          selectedReq
+            ? <RequestDetailPanel
+                request={selectedReq}
+                onClose={() => setSelectedReq(null)}
+                onStatusChange={(id, status) => {
+                  setRequests(prev => prev.map(r => r.request_id === id ? { ...r, status } : r))
+                  setSelectedReq(prev => prev?.request_id === id ? { ...prev, status } : prev)
+                }}
+              />
+            : <EmptyHint>Select a request to review</EmptyHint>
+        )}
+        {tab === 'duplicates' && (
+          selectedDuplicate
+            ? <DuplicateDetailPanel
+                key={selectedDuplicate.candidate_id}
+                item={selectedDuplicate}
+                onClose={() => setSelectedDuplicate(null)}
+                onResolved={() => { setSelectedDuplicate(null); fetchDuplicates() }}
+              />
+            : <EmptyHint>Select a pair to compare</EmptyHint>
+        )}
+        {tab === 'chapters' && (
+          selectedChapterItem
+            ? <ChapterInspectorPanel
+                key={selectedChapterItem.media_type + selectedChapterItem.media_id}
+                item={selectedChapterItem}
+                onClose={() => setSelectedChapterItem(null)}
+              />
+            : <EmptyHint>Select an item to inspect its chapters</EmptyHint>
+        )}
+        {tab === 'subtitles' && (
+          selectedSubtitle
+            ? <SubtitleInspectorPanel
               key={selectedSubtitle.subtitle_id}
               item={selectedSubtitle}
               onClose={() => setSelectedSubtitle(null)}
@@ -418,7 +428,8 @@ export default observer(function ReviewPage() {
               }}
             />
           : <EmptyHint>Select a file to inspect</EmptyHint>
-      )}
+        )}
+      </div>
     </div>
   )
 })
@@ -1815,6 +1826,14 @@ function ChapterRow({
 // re-check a file after fixing/replacing it on disk, rather than waiting
 // for the next full library sync.
 
+// Subtitle sidecars are small — bytes/KB is the useful resolution here
+// (unlike OperationMetricsPanel's MB-only formatBytes for RAM figures), and
+// a near-zero size is itself the signal that usually explains a broken sub.
+function formatSubtitleFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
+
 function SubtitlesListPanel({
   items, loading, selected, onSelect,
 }: {
@@ -1860,6 +1879,7 @@ function SubtitlesListPanel({
                   {item.language && <span className={styles.chapterListDuration}>{item.language.toUpperCase()}</span>}
                   {item.forced && <span className={styles.chapterTypeCountChip}>FORCED</span>}
                   {item.sdh && <span className={styles.chapterTypeCountChip}>SDH</span>}
+                  {item.file_size != null && <span className={styles.chapterListDuration}>{formatSubtitleFileSize(item.file_size)}</span>}
                   <span className={styles.chapterListDuration}>{item.invalid_reason}</span>
                 </div>
               </button>
@@ -1985,6 +2005,7 @@ function SubtitleInspectorPanel({ item, onClose, onChanged, onDeleted }: {
             <SubtitleStatRow label="Forced" value={item.forced ? 'yes' : 'no'} />
             <SubtitleStatRow label="SDH" value={item.sdh ? 'yes' : 'no'} />
             <SubtitleStatRow label="Source" value={item.source} />
+            <SubtitleStatRow label="File size" value={item.file_size != null ? formatSubtitleFileSize(item.file_size) : 'unknown'} />
             <SubtitleStatRow label="Reason" value={item.invalid_reason} />
           </div>
         )}

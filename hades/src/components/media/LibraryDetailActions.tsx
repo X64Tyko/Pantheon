@@ -253,7 +253,6 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
         <div className={styles.matchStatusRow}>
           <div className={styles.matchStatusLeft}>
             <MatchBadge status={matchStatus} score={detail?.match_score} size="md" />
-            {movie?.watched && <WatchedPill viewCount={movie.view_count ?? 1} />}
           </div>
           {isAdmin && (
             <FixMatchButton active={fixMatchOpen} onClick={() => setFixMatchOpen(o => !o)} />
@@ -456,12 +455,6 @@ export function LibraryDetailActions({ id, content_type, discoverResult, onViewI
   }
 
   return null
-}
-
-function WatchedPill({ viewCount }: { viewCount: number }) {
-  return (
-    <span className={styles.watchedPill}>✓ {viewCount > 1 ? `Watched · ${viewCount}×` : 'Watched'}</span>
-  )
 }
 
 function FixMatchButton({ active, onClick }: { active: boolean; onClick: () => void }) {

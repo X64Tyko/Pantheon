@@ -556,10 +556,21 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
                                                AND pi.item_id IN (SELECT episode_id FROM episode WHERE show_id = s.show_id)
                                            ) )") + dirFor("ASC") :
                                             std::string(" ORDER BY s.title ") + dirFor("ASC");
+    // Scalar subquery, not another LEFT JOIN — joining watch_progress
+    // alongside the existing episode join would multiply rows (episodes ×
+    // progress entries) and break the COUNT(DISTINCT e.episode_id) above.
+    // Its `?` is the first placeholder in the whole compiled statement (this
+    // SELECT clause comes before any WHERE/JOIN/ORDER placeholder), so every
+    // bind block below binds p.user_id first, ahead of extras/library_ids.
+    const std::string watched_subq = R"(, (
+            SELECT COUNT(DISTINCT wp.content_id) FROM watch_progress wp
+            JOIN episode e5 ON e5.episode_id = wp.content_id
+            WHERE wp.user_id = ? AND wp.content_type = 'episode' AND e5.show_id = s.show_id AND wp.completed > 0
+        ) AS watched_episode_count)";
     const std::string show_select = R"(
             SELECT s.show_id, s.title, s.content_rating,
                    COUNT(DISTINCT e.episode_id) AS episode_count, s.year,
-                   s.thumb, s.art, s.audience_rating, s.match_status, s.match_score, )" + src_subq;
+                   s.thumb, s.art, s.audience_rating, s.match_status, s.match_score, )" + src_subq + watched_subq;
 
     auto parseShowRow = [](SQLite::Statement& q) {
         ShowRow r;
@@ -575,6 +586,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         if (!q.getColumn(9).isNull()) r.match_score      = q.getColumn(9).getDouble();
         r.source_base_url = q.getColumn(10).getString();
         r.library_id      = q.getColumn(11).getString();
+        r.watched_episode_count = q.getColumn(12).getInt();
         return r;
     };
 
@@ -604,7 +616,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         SQLite::Statement q(db_.get(), show_select +
             R"( FROM show s LEFT JOIN episode e ON e.show_id = s.show_id
             WHERE 1=1)" + extras + home_exclude + hide_empty_clause + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
-        idx = 1; bindExtras(q, idx);
+        idx = 1; q.bind(idx++, p.user_id); bindExtras(q, idx);
         if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
         if (p.sort == "playlist_order" && p.playlist_id) q.bind(idx++, *p.playlist_id);
         q.bind(idx++, p.limit); q.bind(idx++, p.offset);
@@ -628,6 +640,7 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
             LEFT JOIN episode e ON e.show_id = s.show_id
             WHERE 1=1)" + extras + hide_empty_clause + R"( GROUP BY s.show_id)" + order_clause + " LIMIT ? OFFSET ?");
         idx = 1;
+        q.bind(idx++, p.user_id);
         for (const auto& lid : p.library_ids) q.bind(idx++, lid);
         bindExtras(q, idx);
         if (p.sort == "random" && p.random_seed.has_value()) q.bind(idx++, p.random_seed.value());
@@ -763,7 +776,7 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     return result;
 }
 
-std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& show_id) {
+std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& show_id, const std::string& user_id) {
     SQLite::Statement q(db_.get(), R"(
         SELECT s.show_id, s.title, s.content_rating, s.overview, s.studio, s.status,
                s.genres, s.thumb, s.art, s.imdb_id, s.tvdb_id, s.tmdb_id,
@@ -828,6 +841,19 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
             d.source_id       = sm.getColumn(1).getString();
             d.source_base_url = sm.getColumn(2).getString();
         }
+    }
+
+    // Same "separate query, only when we have a user" shape as
+    // getMovieDetail's watch_progress lookup — see its comment.
+    if (!user_id.empty()) {
+        SQLite::Statement wp(db_.get(), R"SQL(
+            SELECT COUNT(DISTINCT wp.content_id) FROM watch_progress wp
+            JOIN episode e ON e.episode_id = wp.content_id
+            WHERE wp.user_id = ? AND wp.content_type = 'episode' AND e.show_id = ? AND wp.completed > 0
+        )SQL");
+        wp.bind(1, user_id);
+        wp.bind(2, show_id);
+        if (wp.executeStep()) d.watched_episode_count = wp.getColumn(0).getInt();
     }
 
     {

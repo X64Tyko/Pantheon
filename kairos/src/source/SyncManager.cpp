@@ -2361,12 +2361,13 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
         std::string video_stem;
         std::string resolution_label;    // current DB value — empty means never probed
         int64_t     duration_ms = 0;     // current DB value
+        std::string audio_languages;     // current DB value — '[]'/empty means never (language-)probed
     };
     std::vector<ScanItem> items;
 
     {
         SQLite::Statement q(sync_db_, R"(
-            SELECT sm.kairos_id, e.file_path, e.resolution_label, e.duration_ms
+            SELECT sm.kairos_id, e.file_path, e.resolution_label, e.duration_ms, e.audio_languages
             FROM source_mapping sm
             JOIN episode e ON e.episode_id = sm.kairos_id
             WHERE sm.item_type='episode' AND sm.source_id=?
@@ -2381,13 +2382,13 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             items.push_back({
                 q.getColumn(0).getString(), "episode", file_path, mapped,
                 mp.parent_path().string(), mp.filename().stem().string(),
-                q.getColumn(2).getString(), q.getColumn(3).getInt64()
+                q.getColumn(2).getString(), q.getColumn(3).getInt64(), q.getColumn(4).getString()
             });
         }
     }
     {
         SQLite::Statement q(sync_db_, R"(
-            SELECT sm.kairos_id, m.file_path, m.resolution_label, m.duration_ms
+            SELECT sm.kairos_id, m.file_path, m.resolution_label, m.duration_ms, m.audio_languages
             FROM source_mapping sm
             JOIN movie m ON m.movie_id = sm.kairos_id
             WHERE sm.item_type='movie' AND sm.source_id=?
@@ -2402,7 +2403,7 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             items.push_back({
                 q.getColumn(0).getString(), "movie", file_path, mapped,
                 mp.parent_path().string(), mp.filename().stem().string(),
-                q.getColumn(2).getString(), q.getColumn(3).getInt64()
+                q.getColumn(2).getString(), q.getColumn(3).getInt64(), q.getColumn(4).getString()
             });
         }
     }
@@ -2439,7 +2440,17 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
     for (size_t d = 0; d < dirs.size(); ++d) dir_index[dirs[d]] = d;
 
     // ── Media-info probe — one combined ffprobe call per file that needs it ──
-    // (resolution never probed, or the current duration looks implausible).
+    // (resolution never probed, the current duration looks implausible, or
+    // audio_languages is still at its untouched '[]'/empty default). The
+    // language check matters on its own: a file can arrive with a valid
+    // resolution_label/duration_ms from the source's own metadata (e.g. Plex-
+    // reported values on import) well before Kairos ever ffprobes it itself,
+    // which used to leave audio_languages/embedded_subtitle_languages
+    // permanently unpopulated for such files — probeFileInfo (the only thing
+    // that fills them in) would never run because the other two fields
+    // already looked "already probed." Surfaced as audio/subtitle language
+    // pills and the pre-playback language picker silently having nothing to
+    // show for an otherwise perfectly normal file.
     std::vector<std::optional<FileProbeInfo>> probe_results(items.size());
     {
         std::atomic<size_t> next{0};
@@ -2451,7 +2462,8 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             workers.emplace_back([&]() {
                 for (size_t i = next.fetch_add(1); i < items.size(); i = next.fetch_add(1)) {
                     const auto& it = items[i];
-                    const bool needs_probe = it.resolution_label.empty() || !durationLooksValid(it.duration_ms);
+                    const bool langs_never_probed = it.audio_languages.empty() || it.audio_languages == "[]";
+                    const bool needs_probe = it.resolution_label.empty() || !durationLooksValid(it.duration_ms) || langs_never_probed;
                     if (needs_probe) probe_results[i] = probeFileInfo(it.mapped_path);
                 }
             });

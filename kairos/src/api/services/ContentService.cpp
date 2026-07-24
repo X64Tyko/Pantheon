@@ -712,6 +712,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		if (req.has_param("home"))           p.home_only     = req.get_param_value("home") == "1";
 		if (req.has_param("hide_empty"))     p.hide_empty    = req.get_param_value("hide_empty") == "1";
 		p.restriction = restrictionFor("show");
+		auto user = currentUser();
+		p.user_id = user ? user->user_id : "";
 
 		ContentRepository repo(db_);
 		auto result = repo.searchShows(p);
@@ -721,6 +723,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 			              {"title",           r.title},
 			              {"content_rating",  r.content_rating},
 			              {"episode_count",   r.episode_count},
+			              {"watched_episode_count", r.watched_episode_count},
 			              {"thumb",           r.thumb},
 			              {"art",             r.art},
 			              {"source_base_url", r.source_base_url},
@@ -933,7 +936,8 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/shows/:id", [this](const Req& req, Res& res) {
 		auto id = req.path_params.at("id");
 		ContentRepository repo(db_);
-		auto d = repo.getShowDetail(id);
+		auto user = currentUser();
+		auto d = repo.getShowDetail(id, user ? user->user_id : "");
 		if (!d) { route::err(res, 404, "show not found"); return; }
 		// Same 404 as a genuinely missing show — don't reveal existence of
 		// blocked content via a distinct "forbidden" response.
@@ -969,6 +973,7 @@ void ContentService::registerRoutes(httplib::Server& svr) {
 		show["find_specials"]   = d->find_specials;
 		show["episode_display_order"] = d->episode_display_order;
 		show["episode_count"]   = d->episode_count;
+		show["watched_episode_count"] = d->watched_episode_count;
 		show["labels"]          = parseArr(d->labels);
 		show["network"]         = d->network;
 		show["actors"]          = parseArr(d->actors);

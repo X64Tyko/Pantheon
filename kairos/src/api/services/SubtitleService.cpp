@@ -33,8 +33,22 @@ std::string lookupTitle(Database& db, const std::string& media_type, const std::
 	return "";
 }
 
-json subtitleTrackJson(Database& db, const SubtitleTrack& t) {
-	return {
+// File size is a good tell for a broken subtitle (a 0-3 byte file that
+// matched the naming convention but has no real content) — not persisted,
+// just stat()'d on demand here. This list is admin-only and small (only
+// ever the subset flagged invalid, or, for the general Review > Subtitles
+// tab, one page at a time), so re-statting on every request is cheap enough
+// to skip a DB column + sync-time-population round trip for it.
+std::optional<int64_t> subtitleFileSize(ConfStore& conf, const std::string& file_path) {
+	try {
+		auto mapped = conf.applyPathMap(file_path);
+		if (std::filesystem::exists(mapped)) return static_cast<int64_t>(std::filesystem::file_size(mapped));
+	} catch (const std::exception&) {}
+	return std::nullopt;
+}
+
+json subtitleTrackJson(Database& db, ConfStore& conf, const SubtitleTrack& t) {
+	json j = {
 		{"subtitle_id",    t.subtitle_id},
 		{"media_type",     t.media_type},
 		{"media_id",       t.media_id},
@@ -47,6 +61,8 @@ json subtitleTrackJson(Database& db, const SubtitleTrack& t) {
 		{"valid",          t.valid},
 		{"invalid_reason", t.invalid_reason},
 	};
+	if (auto size = subtitleFileSize(conf, t.file_path)) j["file_size"] = *size;
+	return j;
 }
 } // namespace
 
@@ -56,7 +72,7 @@ void SubtitleService::registerRoutes(httplib::Server& svr) {
 	svr.Get("/api/subtitles/broken", [this](const Req&, Res& res) {
 		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
 		json arr = json::array();
-		for (const auto& t : repo_.listInvalid()) arr.push_back(subtitleTrackJson(db_, t));
+		for (const auto& t : repo_.listInvalid()) arr.push_back(subtitleTrackJson(db_, conf_, t));
 		route::ok(res, arr.dump());
 	});
 
@@ -75,7 +91,7 @@ void SubtitleService::registerRoutes(httplib::Server& svr) {
 		repo_.updateValidity(existing->subtitle_id, validation.valid, validation.reason);
 		existing->valid          = validation.valid;
 		existing->invalid_reason = validation.reason;
-		route::ok(res, subtitleTrackJson(db_, *existing).dump());
+		route::ok(res, subtitleTrackJson(db_, conf_, *existing).dump());
 	});
 
 	// ── PATCH /api/subtitles/:id — manual metadata correction ──────────────────
@@ -99,7 +115,7 @@ void SubtitleService::registerRoutes(httplib::Server& svr) {
 			existing->language = language;
 			existing->forced   = forced;
 			existing->sdh      = sdh;
-			route::ok(res, subtitleTrackJson(db_, *existing).dump());
+			route::ok(res, subtitleTrackJson(db_, conf_, *existing).dump());
 		} catch (const std::exception& e) {
 			route::err(res, 400, e.what());
 		}

@@ -87,8 +87,18 @@
 .usernameLinkBtn {
   background: none; border: none; padding: 0; cursor: pointer;
   font-family: inherit; text-align: left; overflow: hidden; min-width: 0;
+  display: flex; align-items: center; gap: var(--hds-space-2);
 }
 .usernameLinkBtn:hover .usernameText { color: var(--hds-txt); }
+.profileIconBadge {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--hds-bg-3); border: 1px solid var(--hds-line-s);
+  color: var(--hds-txt-3);
+}
+.usernameLinkBtn:hover .profileIconBadge {
+  color: var(--hds-gold); border-color: var(--hds-gold);
+}
 .adminBadgeSmall { margin-left: var(--hds-space-2); color: var(--hds-gold); opacity: 0.7; font-size: var(--hds-font-size-tv-badge); }
 .sidebarExitBtn {
   background: none; border: none; cursor: pointer;
@@ -134,8 +144,10 @@
 .drawerUsernameLinkBtn {
   background: none; border: none; padding: 0; cursor: pointer;
   font-family: inherit; text-align: left; overflow: hidden; min-width: 0;
+  display: flex; align-items: center; gap: var(--hds-space-2);
 }
 .drawerUsernameLinkBtn:hover .drawerUsernameText { color: var(--hds-txt); }
+.drawerUsernameLinkBtn:hover .profileIconBadge { color: var(--hds-gold); border-color: var(--hds-gold); }
 .drawerAdminBadge { margin-left: var(--hds-space-2); color: var(--hds-gold); opacity: 0.7; font-size: var(--hds-font-size-tv-caption); }
 .drawerButtonRow { display: flex; gap: var(--hds-space-2); flex-shrink: 0; }
 .drawerExitBtn {

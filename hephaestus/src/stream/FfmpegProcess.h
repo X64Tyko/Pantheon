@@ -66,6 +66,13 @@ public:
 	bool resume();
 	bool isPaused() const { return paused.load(); }
 
+	// Non-blocking liveness probe (signal-0 existence check, same technique
+	// kill()'s own poll loop uses) — lets a caller that just spawned a
+	// replacement process verify it didn't immediately die (e.g. failed to
+	// acquire an NVENC/VAAPI session) before committing to it over whatever
+	// it's meant to replace. Always false once kill() has run.
+	bool isAlive() const;
+
 	FfmpegProcess(const FfmpegProcess&)            = delete;
 	FfmpegProcess& operator=(const FfmpegProcess&) = delete;
 };

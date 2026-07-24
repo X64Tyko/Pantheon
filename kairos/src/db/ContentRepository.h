@@ -34,6 +34,12 @@ struct ShowRow {
     std::optional<double> audience_rating;
     std::string           match_status;
     std::optional<double> match_score;
+    // Distinct episodes of this show with a completed watch_progress entry
+    // for the caller's user (0 if not logged in — see searchShows). Same
+    // "count, not bool" shape as MovieRow::view_count, but there's no
+    // per-show rewatch-count analogue the way a movie has one file to
+    // rewatch — this is "how many episodes have you watched" instead.
+    int watched_episode_count = 0;
 };
 
 struct ShowListResult {
@@ -57,6 +63,9 @@ struct ShowDetail {
     bool find_specials = false;
     std::string episode_display_order = "season"; // "season" | "aired"
     int  episode_count = 0;
+    // See ShowRow::watched_episode_count — same meaning, populated only when
+    // getShowDetail() is called with a user_id.
+    int  watched_episode_count = 0;
     std::string labels, network, actors, countries, collections;
     std::string external_id, source_id, source_base_url;
     std::vector<SeasonRow> seasons;
@@ -212,6 +221,10 @@ struct ShowSearchParams {
     // every library including show_on_home=0 ones; home visibility is a
     // Home-shelf-only concept, not a general content filter.
     bool home_only = false;
+    // watch_progress join key for ShowRow::watched_episode_count — see
+    // MovieSearchParams::user_id's identical comment for why this isn't
+    // restriction.user_id.
+    std::string user_id;
     // Excludes shows with zero episodes — a matched-but-not-yet-synced (or
     // orphan-pruned-down-to-nothing) show that's really just a metadata
     // stub with no actual media. Always on for Home-shelf loaders (a shelf
@@ -301,7 +314,9 @@ public:
     ShowListResult  searchShows(const ShowSearchParams& p);
     MovieListResult searchMovies(const MovieSearchParams& p);
 
-    std::optional<ShowDetail>  getShowDetail(const std::string& show_id);
+    // user_id populates ShowDetail::watched_episode_count when non-empty
+    // (left at 0 otherwise) — same convention as getMovieDetail below.
+    std::optional<ShowDetail>  getShowDetail(const std::string& show_id, const std::string& user_id = "");
     // user_id populates MovieDetail::watched/view_count when non-empty (left
     // at their defaults otherwise) — see MovieSearchParams::user_id.
     std::optional<MovieDetail> getMovieDetail(const std::string& movie_id, const std::string& user_id = "");

@@ -2,10 +2,47 @@
 
 .root {
   display: flex;
+  flex-direction: column;
   height: 100%;
   overflow: hidden;
   background: var(--hds-bg);
   position: relative;
+}
+
+/* Tabs across the full page width (Activity page's pattern), with the
+   list/detail split living underneath as its own flex row. */
+.topTabBar {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-6);
+  padding: var(--hds-space-5) var(--hds-space-7) 0;
+  border-bottom: 1px solid var(--hds-line);
+  flex-shrink: 0;
+}
+.topTab {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  padding-bottom: var(--hds-space-3);
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.topTabActive {
+  color: var(--hds-gold);
+  border-bottom-color: var(--hds-gold);
+}
+
+.splitBody {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
 }
 
 .chip {
@@ -103,49 +140,14 @@
   letter-spacing: 0.04em;
 }
 
-/* Tab bar (Queue/Groups/Requests/Duplicates/Chapters) */
+/* List column within splitBody (Queue/Groups/Requests/Duplicates/Chapters/Subtitles) */
 .leftPanel {
   width: 320px;
   flex-shrink: 0;
-  height: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--hds-line);
-}
-
-.tabBar {
-  display: flex;
-  padding: var(--hds-space-6) var(--hds-space-5) 0;
-  gap: var(--hds-space-1);
-  border-bottom: 1px solid var(--hds-line);
-  flex-shrink: 0;
-}
-
-.mainTab {
-  flex: 1;
-  padding: var(--hds-space-3) 0;
-  border-radius: var(--hds-space-2) var(--hds-space-2) 0 0;
-  border: 1px solid transparent;
-  border-bottom: none;
-  background: transparent;
-  color: var(--hds-txt-3);
-  font-family: var(--hds-font-mono-brand);
-  font-size: var(--hds-font-size-tv-caption);
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--hds-space-2);
-  margin-bottom: 0;
-}
-.mainTabActive {
-  border-color: var(--hds-line);
-  background: var(--hds-bg);
-  color: var(--hds-txt);
-  margin-bottom: -1px;
 }
 
 .tabBadge {
