@@ -135,7 +135,7 @@ void addExternalSubtitleLanguagesForShow(nlohmann::json& result, const std::stri
 		SQLite::Statement q(db.get(),
 			"SELECT DISTINCT st.language FROM subtitle_track st "
 			"JOIN episode e ON e.episode_id = st.media_id "
-			"WHERE st.media_type = 'episode' AND e.show_id = ? AND st.language != ''");
+			"WHERE st.media_type = 'episode' AND e.show_id = ? AND st.language != '' AND st.valid = 1");
 		q.bind(1, show_id);
 		while (q.executeStep()) {
 			auto lang = q.getColumn(0).getString();

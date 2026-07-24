@@ -516,7 +516,7 @@ struct Compiler {
                 binds.push_back(n.value);
                 std::string cmp2 = like ? "st.language LIKE '%' || ? || '%'" : "st.language = ?";
                 combined = "(EXISTS (SELECT 1 FROM json_each(NULLIF(" + c + ",'')) " + tag + " WHERE " + cmp1 + ") OR "
-                           "EXISTS (SELECT 1 FROM subtitle_track st WHERE st.media_type='movie' AND st.media_id=" + mid + " AND " + cmp2 + "))";
+                           "EXISTS (SELECT 1 FROM subtitle_track st WHERE st.media_type='movie' AND st.media_id=" + mid + " AND st.valid = 1 AND " + cmp2 + "))";
             } else {
                 std::string sid = col("show_id");
                 binds.push_back(n.value);
@@ -526,7 +526,7 @@ struct Compiler {
                 combined = "(EXISTS (SELECT 1 FROM episode e_lang, json_each(NULLIF(e_lang.embedded_subtitle_languages,'')) je_lang "
                            "WHERE e_lang.show_id = " + sid + " AND " + cmp1 + ") OR "
                            "EXISTS (SELECT 1 FROM subtitle_track st JOIN episode e_st ON e_st.episode_id = st.media_id "
-                           "WHERE st.media_type='episode' AND e_st.show_id = " + sid + " AND " + cmp2 + "))";
+                           "WHERE st.media_type='episode' AND e_st.show_id = " + sid + " AND st.valid = 1 AND " + cmp2 + "))";
             }
             return neg ? "NOT " + combined : combined;
         }

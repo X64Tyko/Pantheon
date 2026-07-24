@@ -489,11 +489,11 @@ std::vector<std::string> ContentRepository::getMetadataValues(const std::string&
         // via its shared `seen` set, so no SQL-level UNION is needed.
         if (type != "movie") {
             collect("SELECT DISTINCT je.value FROM episode e, json_each(NULLIF(e.embedded_subtitle_languages,'')) je WHERE je.value != ''" + episode_lib + " ORDER BY je.value", lib);
-            collect("SELECT DISTINCT st.language FROM subtitle_track st JOIN episode e ON e.episode_id = st.media_id WHERE st.media_type='episode' AND st.language != ''" + episode_lib + " ORDER BY st.language", lib);
+            collect("SELECT DISTINCT st.language FROM subtitle_track st JOIN episode e ON e.episode_id = st.media_id WHERE st.media_type='episode' AND st.language != '' AND st.valid = 1" + episode_lib + " ORDER BY st.language", lib);
         }
         if (type != "show") {
             collect("SELECT DISTINCT je.value FROM movie m, json_each(NULLIF(m.embedded_subtitle_languages,'')) je WHERE je.value != ''" + movie_lib + " ORDER BY je.value", lib);
-            collect("SELECT DISTINCT st.language FROM subtitle_track st JOIN movie m ON m.movie_id = st.media_id WHERE st.media_type='movie' AND st.language != ''" + movie_lib + " ORDER BY st.language", lib);
+            collect("SELECT DISTINCT st.language FROM subtitle_track st JOIN movie m ON m.movie_id = st.media_id WHERE st.media_type='movie' AND st.language != '' AND st.valid = 1" + movie_lib + " ORDER BY st.language", lib);
         }
     }
 

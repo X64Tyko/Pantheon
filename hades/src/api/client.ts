@@ -4,7 +4,7 @@ import type {
   Block, BlockContent, BumperContentType, BumperMode, ChannelBumper, ChannelExport,
   CastSessionInfo, CastTokenResponse,
   Channel, ContentOverride, ContentRequest, ContentType, CredentialStatus, DownloadJob, EpisodeOrder,
-  ActivitySession, Chapter, ChapterReviewItem,
+  ActivitySession, Chapter, ChapterReviewItem, BrokenSubtitleItem,
   Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, MediaLanguages, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
@@ -619,6 +619,23 @@ export const api = {
   // Chapter review (visual inspection of chapter detection, not a commit flow)
   getChapterReviewItems: (p: { media_type?: string; chapter_type?: string; q?: string; limit?: number; offset?: number } = {}) =>
                            request<{items: ChapterReviewItem[]; total: number}>('GET', `/chapters/review?${qs(p)}`),
+
+  // Broken subtitle sidecar review — see kairos's SubtitleValidation.h.
+  getBrokenSubtitles: () => request<BrokenSubtitleItem[]>('GET', '/subtitles/broken'),
+  // Re-runs the content check against the file as it exists on disk right
+  // now (e.g. after the admin has gone and fixed/replaced it), rather than
+  // waiting for the next full library sync to notice.
+  recheckSubtitle: (id: string) => request<BrokenSubtitleItem>('POST', `/subtitles/${id}/recheck`),
+  // Not durable against a source="file" row — the next full library sync
+  // still unconditionally regenerates every sidecar-derived row for that
+  // item from scratch, so an edit only sticks until the file is rescanned.
+  updateSubtitle: (id: string, b: { language?: string; forced?: boolean; sdh?: boolean }) =>
+                     request<BrokenSubtitleItem>('PATCH', `/subtitles/${id}`, b),
+  // Permanently deletes the actual sidecar file from the media library, not
+  // just this record — the point is clearing the slot so a downloader like
+  // Bazarr treats the language as missing again and fetches a fresh file.
+  // No undo.
+  deleteSubtitle: (id: string) => request<{ ok: boolean; file_deleted: boolean }>('DELETE', `/subtitles/${id}`),
 
   // Chapters for the currently-playing item (skip-intro / credits detection)
   getEpisodeChapters: (id: string) => request<Chapter[]>('GET', `/episodes/${id}/chapters`),

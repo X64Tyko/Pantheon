@@ -9,7 +9,7 @@ import type {
   EpisodeGroup, GroupingCandidate, ShowGroupingResult,
   ArrLookupResult, ArrServiceOptions, ContentRequest, RequestStatus,
   ScraperSearchResult, ChapterReviewItem, Chapter, ChapterType,
-  ItemMetadata, ExternalId, MergedInto, DuplicateCandidate,
+  ItemMetadata, ExternalId, MergedInto, DuplicateCandidate, BrokenSubtitleItem,
 } from '../api/types'
 import { MatchBadge } from '../components/media/MatchBadge'
 import type { MatchStatus } from '../components/media/MatchBadge'
@@ -113,7 +113,7 @@ const groupsStore = new GroupsStore()
 
 // ── Tab type ──────────────────────────────────────────────────────────────────
 
-type Tab = 'queue' | 'groups' | 'requests' | 'duplicates' | 'chapters'
+type Tab = 'queue' | 'groups' | 'requests' | 'duplicates' | 'chapters' | 'subtitles'
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -243,6 +243,21 @@ export default observer(function ReviewPage() {
 
   useEffect(() => { if (tab === 'chapters') fetchChapterItems() }, [tab, fetchChapterItems])
 
+  // ── Broken subtitles state ──────────────────────────────────────────────────
+  const [subtitleItems,     setSubtitleItems]     = useState<BrokenSubtitleItem[]>([])
+  const [subtitleLoading,   setSubtitleLoading]   = useState(false)
+  const [selectedSubtitle,  setSelectedSubtitle]  = useState<BrokenSubtitleItem | null>(null)
+
+  const fetchSubtitleItems = useCallback(() => {
+    setSubtitleLoading(true)
+    api.getBrokenSubtitles()
+      .then(setSubtitleItems)
+      .catch(() => {})
+      .finally(() => setSubtitleLoading(false))
+  }, [])
+
+  useEffect(() => { if (tab === 'subtitles') fetchSubtitleItems() }, [tab, fetchSubtitleItems])
+
   // ── Tab switch ───────────────────────────────────────────────────────────────
   const switchTab = (t: Tab) => {
     setTab(t)
@@ -250,6 +265,7 @@ export default observer(function ReviewPage() {
     setSelectedReq(null)
     setSelectedDuplicate(null)
     setSelectedChapterItem(null)
+    setSelectedSubtitle(null)
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -276,6 +292,7 @@ export default observer(function ReviewPage() {
             { key: 'requests', label: 'Requests', badge: pendingReqCount > 0 ? pendingReqCount : null,                   admin: true  },
             { key: 'duplicates', label: 'Duplicates', badge: duplicateTotal > 0 ? duplicateTotal : null,                 admin: true  },
             { key: 'chapters', label: 'Chapters', badge: null,                                                            admin: false },
+            { key: 'subtitles', label: 'Subtitles', badge: subtitleItems.length > 0 ? subtitleItems.length : null,       admin: true  },
           ] as const).filter(t => !t.admin || user?.role === 'admin').map(({ key, label, badge }) => (
             <button
               key={key}
@@ -321,6 +338,10 @@ export default observer(function ReviewPage() {
           onChapterTypeChange={setChapterType}
           onQueryChange={setChapterQueryRaw}
           onSelect={setSelectedChapterItem}
+        />}
+        {tab === 'subtitles' && <SubtitlesListPanel
+          items={subtitleItems} loading={subtitleLoading} selected={selectedSubtitle}
+          onSelect={setSelectedSubtitle}
         />}
       </div>
 
@@ -372,6 +393,31 @@ export default observer(function ReviewPage() {
               onClose={() => setSelectedChapterItem(null)}
             />
           : <EmptyHint>Select an item to inspect its chapters</EmptyHint>
+      )}
+      {tab === 'subtitles' && (
+        selectedSubtitle
+          ? <SubtitleInspectorPanel
+              key={selectedSubtitle.subtitle_id}
+              item={selectedSubtitle}
+              onClose={() => setSelectedSubtitle(null)}
+              onChanged={updated => {
+                setSelectedSubtitle(updated)
+                if (updated.valid) {
+                  // Fixed on disk since it was flagged (a recheck, not an
+                  // edit — editing language/forced/sdh never changes
+                  // validity) — no longer belongs in a "broken" list at all.
+                  setSubtitleItems(prev => prev.filter(i => i.subtitle_id !== updated.subtitle_id))
+                  setSelectedSubtitle(null)
+                } else {
+                  setSubtitleItems(prev => prev.map(i => i.subtitle_id === updated.subtitle_id ? updated : i))
+                }
+              }}
+              onDeleted={id => {
+                setSubtitleItems(prev => prev.filter(i => i.subtitle_id !== id))
+                setSelectedSubtitle(null)
+              }}
+            />
+          : <EmptyHint>Select a file to inspect</EmptyHint>
       )}
     </div>
   )
@@ -1757,6 +1803,241 @@ function ChapterRow({
       </div>
       <button onClick={onSeekStart} className={styles.chapterActionBtn}>▶ Start</button>
       <button onClick={onSeekEnd} className={styles.chapterActionBtn}>▶ End</button>
+    </div>
+  )
+}
+
+// ── Subtitles tab ────────────────────────────────────────────────────────────
+// Read-only report over sidecar files kairos's sync-time content check (see
+// kairos/src/source/SubtitleValidation.h) flagged as broken — e.g. matching
+// the "<video>.<lang>.srt" naming convention but containing ~0 real cues, so
+// nothing about the filename itself would ever catch it. One action:
+// re-check a file after fixing/replacing it on disk, rather than waiting
+// for the next full library sync.
+
+function SubtitlesListPanel({
+  items, loading, selected, onSelect,
+}: {
+  items: BrokenSubtitleItem[]; loading: boolean; selected: BrokenSubtitleItem | null
+  onSelect: (item: BrokenSubtitleItem) => void
+}) {
+  return (
+    <>
+      <div className={styles.panelHeader}>
+        <div className={styles.panelHeaderRow}>
+          <span className={styles.panelTitle}>
+            Broken Subtitles
+          </span>
+          <span className={styles.panelCount}>
+            {items.length} item{items.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+      </div>
+
+      <div className={`${styles.listScroll} scrollbar-dark`}>
+        {loading ? (
+          <div className={styles.skeletonListGap1}>
+            {Array.from({ length: 8 }, (_, i) => (
+              <div key={i} className={`hds-skeleton ${styles.skeletonRowSm}`} />
+            ))}
+          </div>
+        ) : items.length === 0 ? (
+          <div className={styles.emptyState}>
+            No broken subtitle files found.<br />
+            <span className={styles.emptyStateSub}>Sidecar files are checked during every library sync.</span>
+          </div>
+        ) : (
+          items.map(item => {
+            const isSelected = selected?.subtitle_id === item.subtitle_id
+            return (
+              <button
+                key={item.subtitle_id}
+                onClick={() => onSelect(item)}
+                className={`${styles.chapterListRow} ${isSelected ? styles.chapterListRowSelected : ''}`}
+              >
+                <div className={styles.chapterListTitle}>{item.title || item.media_id}</div>
+                <div className={styles.chapterListMetaRow}>
+                  {item.language && <span className={styles.chapterListDuration}>{item.language.toUpperCase()}</span>}
+                  {item.forced && <span className={styles.chapterTypeCountChip}>FORCED</span>}
+                  {item.sdh && <span className={styles.chapterTypeCountChip}>SDH</span>}
+                  <span className={styles.chapterListDuration}>{item.invalid_reason}</span>
+                </div>
+              </button>
+            )
+          })
+        )}
+      </div>
+    </>
+  )
+}
+
+function SubtitleInspectorPanel({ item, onClose, onChanged, onDeleted }: {
+  item: BrokenSubtitleItem
+  onClose: () => void
+  onChanged: (updated: BrokenSubtitleItem) => void
+  onDeleted: (id: string) => void
+}) {
+  const [rechecking, setRechecking] = useState(false)
+  const [editing,    setEditing]    = useState(false)
+  const [saving,     setSaving]     = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting,   setDeleting]   = useState(false)
+  const [error,      setError]      = useState<string | null>(null)
+
+  const [editLanguage, setEditLanguage] = useState(item.language)
+  const [editForced,   setEditForced]   = useState(item.forced)
+  const [editSdh,       setEditSdh]     = useState(item.sdh)
+
+  const startEdit = () => {
+    setEditLanguage(item.language)
+    setEditForced(item.forced)
+    setEditSdh(item.sdh)
+    setError(null)
+    setEditing(true)
+  }
+
+  const handleRecheck = async () => {
+    setRechecking(true)
+    setError(null)
+    try {
+      onChanged(await api.recheckSubtitle(item.subtitle_id))
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to re-check this file.')
+    } finally {
+      setRechecking(false)
+    }
+  }
+
+  const handleSaveEdit = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      onChanged(await api.updateSubtitle(item.subtitle_id, { language: editLanguage, forced: editForced, sdh: editSdh }))
+      setEditing(false)
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to save changes.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    setError(null)
+    try {
+      await api.deleteSubtitle(item.subtitle_id)
+      onDeleted(item.subtitle_id)
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to delete this file.')
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
+  }
+
+  return (
+    <div className={styles.detailPanel}>
+      <div className={styles.detailHeader}>
+        <div className={styles.detailHeaderTop}>
+          <h2 className={styles.detailHeaderTitle}>{item.title || item.media_id}</h2>
+          <div className={styles.detailHeaderFolder}>{item.file_path}</div>
+        </div>
+        <button onClick={onClose} className={styles.iconCloseBtn}>✕</button>
+      </div>
+
+      <div className={`${styles.listScroll} scrollbar-dark`} style={{ padding: 'var(--hds-space-7)' }}>
+        {editing ? (
+          <div className={styles.chapterRowStack}>
+            <label className={styles.emptyStateSub}>
+              Language (ISO 639-2)
+              <input
+                value={editLanguage}
+                onChange={e => setEditLanguage(e.target.value)}
+                placeholder="e.g. spa"
+                className={styles.chapterSearchInput}
+                style={{ marginTop: 'var(--hds-space-2)' }}
+              />
+            </label>
+            <label className={styles.emptyStateSub} style={{ display: 'flex', alignItems: 'center', gap: 'var(--hds-space-3)' }}>
+              <input type="checkbox" checked={editForced} onChange={e => setEditForced(e.target.checked)} />
+              Forced
+            </label>
+            <label className={styles.emptyStateSub} style={{ display: 'flex', alignItems: 'center', gap: 'var(--hds-space-3)' }}>
+              <input type="checkbox" checked={editSdh} onChange={e => setEditSdh(e.target.checked)} />
+              SDH
+            </label>
+            <p className={styles.emptyStateSub}>
+              Not permanent for a sidecar file: the next library sync re-derives this row from the
+              filename and overwrites these fields if the file is still there.
+            </p>
+            <div style={{ display: 'flex', gap: 'var(--hds-space-3)' }}>
+              <button onClick={handleSaveEdit} disabled={saving} className={styles.chapterActionBtn}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              <button onClick={() => setEditing(false)} disabled={saving} className={styles.chapterActionBtn}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.chapterRowStack}>
+            <SubtitleStatRow label="Media type" value={item.media_type} />
+            <SubtitleStatRow label="Language" value={item.language || 'unknown'} />
+            <SubtitleStatRow label="Forced" value={item.forced ? 'yes' : 'no'} />
+            <SubtitleStatRow label="SDH" value={item.sdh ? 'yes' : 'no'} />
+            <SubtitleStatRow label="Source" value={item.source} />
+            <SubtitleStatRow label="Reason" value={item.invalid_reason} />
+          </div>
+        )}
+
+        {!editing && (
+          <div style={{ display: 'flex', gap: 'var(--hds-space-3)', marginTop: 'var(--hds-space-5)', flexWrap: 'wrap' }}>
+            <button onClick={handleRecheck} disabled={rechecking} className={styles.chapterActionBtn}>
+              {rechecking ? 'Re-checking…' : '↻ Re-check now'}
+            </button>
+            <button onClick={startEdit} className={styles.chapterActionBtn}>
+              ✎ Edit
+            </button>
+            {confirmDelete ? (
+              <div className={styles.chapterRowStack} style={{ width: '100%' }}>
+                <p className={styles.emptyStateSub} style={{ color: 'var(--hds-match-red)' }}>
+                  Permanently deletes the actual file from your media library (not just this record),
+                  so a subtitle downloader like Bazarr treats this language as missing again and fetches
+                  a fresh copy. This cannot be undone. Delete "{item.file_path}"?
+                </p>
+                <div style={{ display: 'flex', gap: 'var(--hds-space-3)' }}>
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className={styles.chapterActionBtn}
+                    style={{ borderColor: 'var(--hds-match-red)', color: 'var(--hds-match-red)' }}
+                  >
+                    {deleting ? 'Deleting…' : 'Yes, delete the file'}
+                  </button>
+                  <button onClick={() => setConfirmDelete(false)} disabled={deleting} className={styles.chapterActionBtn}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmDelete(true)} className={styles.chapterActionBtn}>
+                🗑 Delete file
+              </button>
+            )}
+          </div>
+        )}
+        {error && <p className={styles.emptyStateSub} style={{ marginTop: 'var(--hds-space-3)' }}>{error}</p>}
+      </div>
+    </div>
+  )
+}
+
+function SubtitleStatRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className={styles.chapterRow} style={{ borderLeftColor: 'var(--hds-line)' }}>
+      <div className={styles.chapterRowInfo}>
+        <div className={styles.chapterRowTitle}>{label}</div>
+        <div className={styles.chapterRowTime}>{value}</div>
+      </div>
     </div>
   )
 }

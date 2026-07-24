@@ -13,6 +13,7 @@
 #include "log/DebugLog.h"
 #include "scraper/ScraperManager.h"
 #include "SubtitleSidecar.h"
+#include "SubtitleValidation.h"
 #include "util/PathMatch.h"
 #include "util/TitleMatch.h"
 #include "thread/TaskRegistry.h"
@@ -1011,6 +1012,18 @@ void SyncManager::syncShows(IMediaSource& src,
         return it != ep_path_to_id.end() ? it->second : "";
     };
 
+    // title/overview/thumb now follow the exact same confirmed-ownership
+    // guard as s_upsert_show's own fields (see incomingWins()'s comment) —
+    // previously these three were gated on `locked` alone, meaning ANY
+    // source touching an episode on ANY sync pass could silently overwrite
+    // its thumbnail/title/overview even when the parent show's match was
+    // human-confirmed. Episodes have no match_confirmed of their own, so
+    // `wins` here is computed from the PARENT SHOW's confirmed+ownership
+    // state (see the per-show `wins` just above this episode loop) — a
+    // wrong/lower-trust source (e.g. a Plex agent mismatching an obscure
+    // episode) can no longer reclaim a thumb the confirmed source already
+    // populated, the exact gap that let a bad poster silently resurface on
+    // the next sync after being fixed.
     SQLite::Statement s_upsert_ep(sync_db_, R"(
         INSERT INTO episode (episode_id, show_id, season, episode, title,
                              file_path, duration_ms, overview, air_date,
@@ -1021,12 +1034,12 @@ void SyncManager::syncShows(IMediaSource& src,
             show_id        = excluded.show_id,
             season         = excluded.season,
             episode        = excluded.episode,
-            title          = CASE WHEN locked THEN title    ELSE excluded.title    END,
+            title          = CASE WHEN locked THEN title    WHEN ? AND excluded.title<>''    THEN excluded.title    WHEN title=''    THEN excluded.title    ELSE title    END,
             file_path      = excluded.file_path,
             duration_ms    = excluded.duration_ms,
-            overview       = CASE WHEN locked THEN overview ELSE excluded.overview END,
+            overview       = CASE WHEN locked THEN overview WHEN ? AND excluded.overview<>'' THEN excluded.overview WHEN overview='' THEN excluded.overview ELSE overview END,
             air_date       = excluded.air_date,
-            thumb          = CASE WHEN locked THEN thumb    ELSE excluded.thumb    END,
+            thumb          = CASE WHEN locked THEN thumb    WHEN ? AND excluded.thumb<>''    THEN excluded.thumb    WHEN thumb=''    THEN excluded.thumb    ELSE thumb    END,
             absolute_index = excluded.absolute_index,
             resolution_label            = COALESCE(NULLIF(excluded.resolution_label, ''), resolution_label),
             audio_languages             = COALESCE(NULLIF(excluded.audio_languages, '[]'), audio_languages),
@@ -1077,6 +1090,16 @@ void SyncManager::syncShows(IMediaSource& src,
         auto& show     = shows[i];
         auto& episodes = episodes_by_show[i];
         const bool cross_show = cross_ref_shows[i];
+
+        // Same incomingWins() computation s_upsert_show uses for this show,
+        // reused for every one of its episodes below — see s_upsert_ep's own
+        // comment for why episode title/overview/thumb need this too.
+        const int ep_wins = [&] {
+            const auto owner_it = show_primary_source.find(show.show_id);
+            const std::string current_owner = owner_it != show_primary_source.end() ? owner_it->second : "";
+            const bool confirmed = show_match_confirmed.count(show.show_id) != 0;
+            return incomingWins(current_owner, confirmed) ? 1 : 0;
+        }();
 
         yieldIfRequested();
         try {
@@ -1138,6 +1161,9 @@ void SyncManager::syncShows(IMediaSource& src,
                         s_upsert_ep.bind(12, ep.resolution_label);
                         s_upsert_ep.bind(13, ep.audio_languages);
                         s_upsert_ep.bind(14, ep.embedded_subtitle_languages);
+                        s_upsert_ep.bind(15, ep_wins);
+                        s_upsert_ep.bind(16, ep_wins);
+                        s_upsert_ep.bind(17, ep_wins);
                         s_upsert_ep.exec();
                     }
                     s_ep_mapping.reset();
@@ -2471,6 +2497,21 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
                 t.forced     = ext.forced;
                 t.sdh        = ext.sdh;
                 t.title      = ext.title;
+                // ext.file_path is the mapped path (see SubtitleSidecar.h),
+                // actually readable from this process — matching the
+                // filename convention doesn't mean the file is a real,
+                // non-empty/non-corrupt subtitle track (see
+                // SubtitleValidation.h's own comment for a real example).
+                // Still recorded either way (with valid=0), not silently
+                // dropped, so the admin's Review > Subtitles tab has
+                // something to show and fix on disk.
+                auto validation = validateSubtitleFile(ext.file_path);
+                t.valid          = validation.valid;
+                t.invalid_reason = validation.reason;
+                if (!validation.valid) {
+                    std::cerr << "[sync] WARNING: subtitle file looks broken (" << validation.reason
+                              << "): " << ext.file_path << "\n";
+                }
                 track_list.push_back(std::move(t));
             }
             ++with_ext_subs;

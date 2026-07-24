@@ -2125,6 +2125,21 @@ constexpr Migration kMigrations[] = {
     );
 )SQL" }
 
+// ── v93: subtitle sidecar content validation (see SubtitleValidation.h) —
+//         a sidecar file matching the naming convention isn't necessarily a
+//         real subtitle file (found in the wild: a .es.srt with a single
+//         line in it, extracting to ~0 real cues while ffmpeg still exits
+//         0). valid=0 rows are excluded from SubtitleTrackRepository::get()
+//         (the playback-serving/language-listing path) but still recorded
+//         — not silently dropped — so the admin's Review > Subtitles tab
+//         (GET /api/subtitles/broken) has something to show and fix on
+//         disk. invalid_reason is free text for that same UI, not matched
+//         on programmatically.
+,{ 93, R"SQL(
+    ALTER TABLE subtitle_track ADD COLUMN valid          INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE subtitle_track ADD COLUMN invalid_reason TEXT    NOT NULL DEFAULT '';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

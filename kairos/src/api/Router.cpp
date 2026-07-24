@@ -30,6 +30,7 @@
 #include "services/ScraperService.h"
 #include "services/SchedulerService.h"
 #include "services/SourceService.h"
+#include "services/SubtitleService.h"
 #include "services/TimeslotService.h"
 #include "services/TvManifestService.h"
 #include <nlohmann/json.hpp>
@@ -186,6 +187,7 @@ void Router::registerRoutes() {
 	});
 	services_.push_back(std::move(content_service));
 	services_.push_back(std::make_unique<ChapterService>(ctx, *chapter_detect_mgr_));
+	services_.push_back(std::make_unique<SubtitleService>(ctx));
 	services_.push_back(std::make_unique<PlaylistService>(ctx));
 	services_.push_back(std::make_unique<FillerService>(ctx));
 	services_.push_back(std::make_unique<ActivityService>(ctx));

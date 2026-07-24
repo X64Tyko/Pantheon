@@ -1186,6 +1186,25 @@ export interface ChapterReviewItem {
   chapters:    Chapter[]
 }
 
+// GET /api/subtitles/broken — a sidecar file kairos's sync-time content
+// check (see kairos/src/source/SubtitleValidation.h) flagged as broken,
+// e.g. found matching the "<video>.<lang>.srt" naming convention but
+// containing ~0 real cues. Excluded from playback while valid is false;
+// still recorded (not silently dropped) so this list has something to show.
+export interface BrokenSubtitleItem {
+  subtitle_id:    string
+  media_type:     'episode' | 'movie'
+  media_id:       string
+  title:          string
+  file_path:      string
+  language:       string
+  forced:         boolean
+  sdh:            boolean
+  source:         string
+  valid:          boolean
+  invalid_reason: string
+}
+
 // GET /api/episodes/:id/next — the next playable episode after this one, or
 // null if it's the last (see ContentRepository::getNextEpisode).
 export interface NextEpisode {

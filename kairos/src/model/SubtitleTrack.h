@@ -16,4 +16,10 @@ struct SubtitleTrack {
     bool        sdh    = false;
     std::string title;
     std::string source = "file";
+    // See SubtitleValidation.h — set during sync from the sidecar file's own
+    // content, not just its filename matching the naming convention.
+    // invalid_reason is human-readable free text for the admin's Review >
+    // Subtitles tab, empty whenever valid is true.
+    bool        valid = true;
+    std::string invalid_reason;
 };
