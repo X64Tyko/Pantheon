@@ -26,6 +26,13 @@ struct AuthUser {
 	// switchProfile) — never the PIN itself, just whether the picker should
 	// prompt for one.
 	bool        has_pin = false;
+	// Library-wide fallback audio/subtitle language, used by
+	// GET /api/playback/:content_type/:id whenever no item-specific
+	// preference exists (show_track_preference / movie_track_preference) —
+	// see migration v94. Empty means "no preference set," same convention
+	// as show/movie's own preferred_language.
+	std::string default_audio_lang;
+	std::string default_subtitle_lang;
 };
 
 // One active session, as surfaced to the owning user for review/revocation.
@@ -108,6 +115,16 @@ public:
 	                       const std::string& max_tv_rating,
 	                       const std::string& max_movie_rating,
 	                       const std::string& max_channel_rating);
+
+	// Self-service, unlike the admin-only settings above — any logged-in
+	// user calls this on their own user_id (see AuthService.cpp's
+	// PATCH /api/users/me/track-preference). Empty string clears that side,
+	// same "absent means don't touch, empty string means clear" convention
+	// PUT /api/episodes/:id/track-preference already uses for
+	// ShowTrackPreferenceRepository — std::optional here for the same reason.
+	void updateTrackPreference(const std::string& user_id,
+	                           const std::optional<std::string>& audio_lang,
+	                           const std::optional<std::string>& subtitle_lang);
 
 	// Mints a session tagged purpose='cast' — validate() forces its role to
 	// "viewer" unconditionally, regardless of the calling account's real

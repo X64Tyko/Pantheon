@@ -1,0 +1,29 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-5);
+  flex-wrap: wrap;
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+}
+
+.label { color: var(--hds-txt-2); }
+
+.select {
+  background: var(--hds-bg-2);
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-space-2);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-caption);
+  padding: 2px var(--hds-space-3);
+  cursor: pointer;
+}
+
+.error { color: var(--hds-match-red); }

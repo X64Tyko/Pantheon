@@ -2,6 +2,7 @@ import { type ReactNode } from 'react'
 import type { ScraperSearchResult, VideoInfo } from '../../api/types'
 import { EpisodeShelf } from './EpisodeShelf'
 import { LanguageChips } from './LanguageChips'
+import { PlaybackPreferenceSelector } from './PlaybackPreferenceSelector'
 import { useFocusable } from '../../nav/useFocusable'
 import { useNavBack } from '../../nav/back'
 import { folderBaseName, useMediaDetail, type MediaDetailResult } from './useMediaDetail'
@@ -158,6 +159,16 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, play
     <>
       {/* Languages */}
       <LanguageChips languages={languages} />
+
+      {/* Playback preference — settable before ever pressing play, unlike
+          the sticky per-show/movie preference that used to only ever get
+          set as a side effect of switching tracks mid-playback. Only for a
+          real library item (id + detail both present) — a bare
+          discoverResult (not yet in the library) has no show_id/movie_id
+          for this to key off. */}
+      {id && detail && (
+        <PlaybackPreferenceSelector contentType={contentType} id={id} languages={languages} />
+      )}
 
       {/* Movie: credits */}
       {movie && (

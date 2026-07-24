@@ -12,6 +12,10 @@ interface AuthContextValue {
   // Self-service password change — clears must_change_password, letting
   // ProtectedRoute's gate release. Used by SetPasswordPage.
   setPassword:   (password: string) => Promise<void>
+  // Self-service library-wide fallback audio/subtitle language (AccountPage)
+  // — see kairos migration v94. A field omitted from `b` leaves that side
+  // untouched, same convention the per-show/movie preference endpoints use.
+  updateTrackPreference: (b: { audio_lang?: string; subtitle_lang?: string }) => Promise<void>
   // Establishes a session from a token Kairos already minted (invite claim,
   // which auto-logs in on success) rather than going through /auth/login.
   // Callers must await this before navigating — like login/completeSetup, it
@@ -153,6 +157,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser({ ...user, must_change_password: false })
   }
 
+  const updateTrackPreference = async (b: { audio_lang?: string; subtitle_lang?: string }) => {
+    if (!user) throw new Error('not logged in')
+    await api.setMyTrackPreference(b)
+    setUser({
+      ...user,
+      default_audio_lang:    b.audio_lang    ?? user.default_audio_lang,
+      default_subtitle_lang: b.subtitle_lang ?? user.default_subtitle_lang,
+    })
+  }
+
   const applySession = async (token: string, user: User) => {
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
@@ -175,7 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider value={{
-      user, isLoading, setupRequired, login, logout, completeSetup, setPassword, applySession,
+      user, isLoading, setupRequired, login, logout, completeSetup, setPassword, updateTrackPreference, applySession,
       profiles, profileChosen, switchProfile, reopenProfilePicker, confirmCurrentProfile,
     }}>
       {children}

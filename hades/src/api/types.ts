@@ -12,6 +12,17 @@ export interface User {
   // True if a PIN is configured for the profile-switch picker (see
   // ProfileSelectPage) — never the PIN itself, just whether to prompt for one.
   has_pin: boolean
+  // Library-wide fallback audio/subtitle language — used by
+  // GET /api/playback/:content_type/:id whenever no item-specific
+  // preference exists (show/movie track-preference). '' means unset.
+  default_audio_lang:    string
+  default_subtitle_lang: string
+}
+
+// GET/PUT .../track-preference (shows, movies) — same shape both ways.
+export interface TrackPreference {
+  audio_lang:    string
+  subtitle_lang: string
 }
 
 export interface ContentOverride {

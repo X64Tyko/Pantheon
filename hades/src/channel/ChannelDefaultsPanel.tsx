@@ -5,26 +5,9 @@ import { CardSection, LauncherRow } from './sections'
 import type { ChannelDetailStore } from './store'
 import { api } from '../api/client'
 import { CHANNEL_RATINGS } from '../api/ratingScales'
+import { LangSelect } from '../components/media/LangSelect'
 import shared from './sharedStyles.module.css'
 import styles from './ChannelDefaultsPanel.module.css'
-
-// ISO 639-2 code → display name for the language dropdowns.
-const LANG_NAMES: Record<string, string> = {
-  eng: 'English',   jpn: 'Japanese',  fre: 'French',   fra: 'French',
-  ger: 'German',    deu: 'German',    spa: 'Spanish',   por: 'Portuguese',
-  ita: 'Italian',   chi: 'Chinese',   zho: 'Chinese',   kor: 'Korean',
-  rus: 'Russian',   ara: 'Arabic',    nld: 'Dutch',     dut: 'Dutch',
-  pol: 'Polish',    swe: 'Swedish',   nor: 'Norwegian', dan: 'Danish',
-  fin: 'Finnish',   hun: 'Hungarian', ces: 'Czech',     cze: 'Czech',
-  slk: 'Slovak',    hrv: 'Croatian',  srp: 'Serbian',   bul: 'Bulgarian',
-  ron: 'Romanian',  rum: 'Romanian',  tur: 'Turkish',   heb: 'Hebrew',
-  hin: 'Hindi',     tha: 'Thai',      vie: 'Vietnamese', ind: 'Indonesian',
-  msa: 'Malay',     ukr: 'Ukrainian', cat: 'Catalan',   lat: 'Latin',
-}
-
-function langLabel(code: string): string {
-  return LANG_NAMES[code] ? `${LANG_NAMES[code]} (${code})` : code
-}
 
 const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, channelId, store }: {
   channel:   Channel | undefined
@@ -180,6 +163,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
             onChange={v => store.setChannelDraft({ audio_lang: v })}
             langs={mediaLangs?.audio ?? []}
             emptyLabel="Global default"
+            className={shared.input}
           />
           <div className={styles.fieldHint}>
             Overrides the server-wide default for this channel only.
@@ -192,6 +176,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
             onChange={v => store.setChannelDraft({ subtitle_lang: v })}
             langs={mediaLangs?.subtitle ?? []}
             emptyLabel="Disabled (no subtitles)"
+            className={shared.input}
           />
           <div className={styles.fieldHint}>
             When set, Hephaestus maps a matching subtitle track into the stream.
@@ -283,63 +268,6 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
     </div>
   )
 })
-
-// ─── Language select ──────────────────────────────────────────────────────────
-
-// Renders a <select> populated with library-discovered languages plus the full
-// LANG_NAMES list as a fallback, deduped and sorted.
-function LangSelect({ value, onChange, langs, emptyLabel }: {
-  value:      string
-  onChange:   (v: string) => void
-  langs:      string[]   // discovered from library
-  emptyLabel: string
-}) {
-  // Merge discovered languages with the static list; discovered ones come first.
-  const discovered = [...new Set(langs)]
-  const staticCodes = Object.keys(LANG_NAMES).filter(k => !discovered.includes(k))
-  // Remove bibliographic/terminological duplicates (keep only one per name)
-  const seen = new Set<string>()
-  const deduped: string[] = []
-  for (const code of discovered) {
-    const name = LANG_NAMES[code] ?? code
-    if (!seen.has(name)) { seen.add(name); deduped.push(code) }
-  }
-  const staticDeduped: string[] = []
-  for (const code of staticCodes) {
-    const name = LANG_NAMES[code] ?? code
-    if (!seen.has(name)) { seen.add(name); staticDeduped.push(code) }
-  }
-
-  // If the current value isn't in any list, add it so the select shows it.
-  const hasValue = value && [...deduped, ...staticDeduped].includes(value)
-
-  return (
-    <select
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      className={shared.input}
-    >
-      <option value="">{emptyLabel}</option>
-      {!hasValue && value && (
-        <option value={value}>{langLabel(value)}</option>
-      )}
-      {deduped.length > 0 && (
-        <optgroup label="In your library">
-          {deduped.map(code => (
-            <option key={code} value={code}>{langLabel(code)}</option>
-          ))}
-        </optgroup>
-      )}
-      {staticDeduped.length > 0 && (
-        <optgroup label="Other languages">
-          {staticDeduped.map(code => (
-            <option key={code} value={code}>{langLabel(code)}</option>
-          ))}
-        </optgroup>
-      )}
-    </select>
-  )
-}
 
 // ─── Audio picker ─────────────────────────────────────────────────────────────
 

@@ -206,7 +206,8 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	SQLite::Statement q(db_.get(), R"(
 		SELECT u.user_id, u.username, u.role,
 		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating,
-		       s.purpose, u.must_change_password, u.pin_hash
+		       s.purpose, u.must_change_password, u.pin_hash,
+		       u.default_audio_lang, u.default_subtitle_lang
 		FROM session s
 		JOIN user u ON u.user_id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
@@ -225,6 +226,8 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token) {
 	user.max_channel_rating  = q.getColumn(6).getString();
 	user.must_change_password = q.getColumn(8).getInt() != 0;
 	user.has_pin             = !q.getColumn(9).isNull();
+	user.default_audio_lang    = q.getColumn(10).getString();
+	user.default_subtitle_lang = q.getColumn(11).getString();
 
 	// A 'cast'-purpose session (minted for handing off to a Cast receiver,
 	// see mintCastToken) is always viewer-capped — this is the actual
@@ -335,6 +338,22 @@ void AuthStore::updateRestriction(const std::string& user_id, bool restricted,
 	u.bind(3, max_movie_rating);
 	u.bind(4, max_channel_rating);
 	u.bind(5, user_id);
+	u.exec();
+}
+
+void AuthStore::updateTrackPreference(const std::string& user_id,
+                                      const std::optional<std::string>& audio_lang,
+                                      const std::optional<std::string>& subtitle_lang) {
+	if (!audio_lang && !subtitle_lang) return;
+	SQLite::Statement u(db_.get(), R"(
+		UPDATE user SET
+			default_audio_lang    = COALESCE(?, default_audio_lang),
+			default_subtitle_lang = COALESCE(?, default_subtitle_lang)
+		WHERE user_id = ?
+	)");
+	if (audio_lang)    u.bind(1, *audio_lang);    else u.bind(1);
+	if (subtitle_lang) u.bind(2, *subtitle_lang); else u.bind(2);
+	u.bind(3, user_id);
 	u.exec();
 }
 

@@ -6,6 +6,7 @@
 #include "../../db/RestrictionRepository.h"
 #include "../../email/EmailService.h"
 #include <nlohmann/json.hpp>
+#include <optional>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -26,6 +27,8 @@ json userJson(const AuthUser& u) {
 		{"max_channel_rating",   u.max_channel_rating},
 		{"must_change_password", u.must_change_password},
 		{"has_pin",              u.has_pin},
+		{"default_audio_lang",    u.default_audio_lang},
+		{"default_subtitle_lang", u.default_subtitle_lang},
 	};
 }
 }
@@ -246,6 +249,29 @@ void AuthService::registerRoutes(httplib::Server& svr) {
 			route::err(res, 400, "PIN must be 4-6 digits"); return;
 		}
 		route::ok(res, json{{"ok", true}}.dump());
+	});
+
+	// Self-service, unlike every other /api/users/:id/... route above (all
+	// admin-only, managing *other* accounts) — any logged-in user sets their
+	// own library-wide fallback audio/subtitle language, used by
+	// GET /api/playback/:content_type/:id whenever no item-specific
+	// preference exists (see migration v94 / PlaybackService.cpp). Body: any
+	// of {"audio_lang": "eng", "subtitle_lang": "spa"} — a field
+	// absent/omitted leaves that side untouched, same convention
+	// PUT /api/episodes/:id/track-preference already uses.
+	svr.Patch("/api/users/me/track-preference", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		try {
+			auto b = json::parse(req.body);
+			std::optional<std::string> audio_lang, subtitle_lang;
+			if (b.contains("audio_lang"))    audio_lang    = b.at("audio_lang").get<std::string>();
+			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
+			auth_.updateTrackPreference(user->user_id, audio_lang, subtitle_lang);
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("PATCH /api/users/me/track-preference", e); route::err(res, 400, e.what());
+		}
 	});
 
 	svr.Get("/api/users/:id/overrides", [this](const Req& req, Res& res) {

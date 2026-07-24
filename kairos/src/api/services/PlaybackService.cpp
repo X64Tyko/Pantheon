@@ -8,6 +8,7 @@
 #include "../../db/ContentRepository.h"
 #include "../../db/SubtitleTrackRepository.h"
 #include "../../db/ShowTrackPreferenceRepository.h"
+#include "../../db/MovieTrackPreferenceRepository.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -102,13 +103,28 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 				});
 			}
 
+			// Resolution order: item-specific preference (movie_track_preference
+			// / show_track_preference, settable from the detail page or by
+			// switching tracks mid-playback) first, then the user's library-wide
+			// default (migration v94) fills in whichever side that left unset —
+			// e.g. a user who's only ever set a global "always Danish audio"
+			// default, never touched this specific show, still gets it honored.
 			std::string preferred_audio_lang, preferred_subtitle_lang;
 			const auto show_id = q.getColumn(4).getString();
-			if (auto user = currentUser(); user && !show_id.empty()) {
-				if (auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, show_id)) {
-					preferred_audio_lang    = pref->audio_lang;
-					preferred_subtitle_lang = pref->subtitle_lang;
+			if (auto user = currentUser()) {
+				if (content_type == "movie") {
+					if (auto pref = MovieTrackPreferenceRepository(db_).get(user->user_id, id)) {
+						preferred_audio_lang    = pref->audio_lang;
+						preferred_subtitle_lang = pref->subtitle_lang;
+					}
+				} else if (!show_id.empty()) {
+					if (auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, show_id)) {
+						preferred_audio_lang    = pref->audio_lang;
+						preferred_subtitle_lang = pref->subtitle_lang;
+					}
 				}
+				if (preferred_audio_lang.empty())    preferred_audio_lang    = user->default_audio_lang;
+				if (preferred_subtitle_lang.empty()) preferred_subtitle_lang = user->default_subtitle_lang;
 			}
 
 			route::ok(res, json{
@@ -149,6 +165,70 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 			route::ok(res, json{{"ok", true}}.dump());
 		} catch (const std::exception& e) {
 			route::logErr("PUT /api/episodes/:id/track-preference", e); route::err(res, 400, e.what());
+		}
+	});
+
+	// ── Show/movie track preference, direct by id ─────────────────────────────
+	// The episode-indirection route above is what a switch mid-playback
+	// actually calls (all it has on hand is the episode being watched); these
+	// let the detail page read/write the same show_track_preference row
+	// directly by show_id, so a preference can be set before ever pressing
+	// play at all — the whole reason this pair exists.
+	svr.Get("/api/shows/:id/track-preference", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, req.path_params.at("id"));
+		route::ok(res, json{
+			{"audio_lang",    pref ? pref->audio_lang    : ""},
+			{"subtitle_lang", pref ? pref->subtitle_lang : ""},
+		}.dump());
+	});
+
+	svr.Put("/api/shows/:id/track-preference", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		try {
+			auto b = json::parse(req.body);
+			std::optional<std::string> audio_lang, subtitle_lang;
+			if (b.contains("audio_lang"))    audio_lang    = b.at("audio_lang").get<std::string>();
+			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
+			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
+			ShowTrackPreferenceRepository(db_).set(user->user_id, req.path_params.at("id"), audio_lang, subtitle_lang, now_ms);
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("PUT /api/shows/:id/track-preference", e); route::err(res, 400, e.what());
+		}
+	});
+
+	// Movie counterpart — see MovieTrackPreferenceRepository's own comment
+	// for why this is a separate table from show_track_preference rather
+	// than a media_type column on one shared table (matches this codebase's
+	// existing show/movie split everywhere else, e.g. subtitle_track uses
+	// media_type+media_id instead — the two conventions coexist for
+	// different reasons, this one following the narrower, older precedent).
+	svr.Get("/api/movies/:id/track-preference", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		auto pref = MovieTrackPreferenceRepository(db_).get(user->user_id, req.path_params.at("id"));
+		route::ok(res, json{
+			{"audio_lang",    pref ? pref->audio_lang    : ""},
+			{"subtitle_lang", pref ? pref->subtitle_lang : ""},
+		}.dump());
+	});
+
+	svr.Put("/api/movies/:id/track-preference", [this](const Req& req, Res& res) {
+		auto user = currentUser();
+		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		try {
+			auto b = json::parse(req.body);
+			std::optional<std::string> audio_lang, subtitle_lang;
+			if (b.contains("audio_lang"))    audio_lang    = b.at("audio_lang").get<std::string>();
+			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
+			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
+			MovieTrackPreferenceRepository(db_).set(user->user_id, req.path_params.at("id"), audio_lang, subtitle_lang, now_ms);
+			route::ok(res, json{{"ok", true}}.dump());
+		} catch (const std::exception& e) {
+			route::logErr("PUT /api/movies/:id/track-preference", e); route::err(res, 400, e.what());
 		}
 	});
 

@@ -13,6 +13,7 @@ import Layout                 from './components/Layout'
 import { FocusRoot }          from './nav/FocusRoot'
 import { CastProvider }       from './cast/CastProvider'
 import { CastReceiverProvider } from './cast/CastReceiverProvider'
+import AccountPage            from './pages/AccountPage'
 import ActivityPage           from './pages/ActivityPage'
 import ChannelDetailPage      from './pages/ChannelDetailPage'
 import ChannelsPage           from './pages/ChannelsPage'
@@ -96,6 +97,10 @@ export default function App() {
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
             <Route path="library" element={<LibraryPage />} />
+
+            {/* Self-service, any authenticated user — deliberately outside
+                <AdminRoute /> below, unlike SettingsPage. */}
+            <Route path="account" element={<AccountPage />} />
 
             {/* Everything else under Layout is admin-only — system/source/
                 channel configuration, scraper+credential settings, download

@@ -2140,6 +2140,34 @@ constexpr Migration kMigrations[] = {
     ALTER TABLE subtitle_track ADD COLUMN invalid_reason TEXT    NOT NULL DEFAULT '';
 )SQL" }
 
+// ── v94: user-level default audio/subtitle language, and a movie
+//         counterpart to show_track_preference (v92) — that one only ever
+//         covered shows (via episode->show_id resolution) and was only ever
+//         *written* as a side effect of switching tracks mid-playback, so a
+//         viewer had no way to set anything before the very first play.
+//         default_audio_lang/default_subtitle_lang on `user` are the
+//         library-wide fallback GET /api/playback/:content_type/:id now
+//         falls back to when no item-specific preference is set (see
+//         PlaybackService.cpp); movie_track_preference is movie_id's own
+//         version of show_track_preference, same shape, same reasoning —
+//         movies don't have the "carries into episode 2" angle shows do,
+//         but a sticky per-movie preference across rewatches is just as
+//         useful, and now both are directly settable from the detail page
+//         instead of only ever being inferred from an in-player switch.
+,{ 94, R"SQL(
+    ALTER TABLE user ADD COLUMN default_audio_lang    TEXT NOT NULL DEFAULT '';
+    ALTER TABLE user ADD COLUMN default_subtitle_lang TEXT NOT NULL DEFAULT '';
+
+    CREATE TABLE movie_track_preference (
+        user_id       TEXT    NOT NULL REFERENCES user(user_id),
+        movie_id      TEXT    NOT NULL REFERENCES movie(movie_id),
+        audio_lang    TEXT    NOT NULL DEFAULT '',
+        subtitle_lang TEXT    NOT NULL DEFAULT '',
+        updated_at    INTEGER NOT NULL,
+        PRIMARY KEY (user_id, movie_id)
+    );
+)SQL" }
+
 }; // kMigrations
 
 } // namespace

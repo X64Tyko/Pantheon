@@ -13,7 +13,7 @@ import type {
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WritebackResult,
   NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
-  ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection, PlaybackHistoryEntry, CrashStatus,
+  ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection, PlaybackHistoryEntry, CrashStatus, TrackPreference,
   UnmappedSourceUser, SourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
   OperationMetricsResponse,
 } from './types'
@@ -353,6 +353,23 @@ export const api = {
   // of `b` leaves that side of the saved preference untouched.
   setEpisodeTrackPreference: (episodeId: string, b: { audio_lang?: string; subtitle_lang?: string }) =>
                         request<{ ok: boolean }>('PUT', `/episodes/${episodeId}/track-preference`, b),
+
+  // Same show_track_preference row the episode route above writes, but
+  // directly by show_id — for the detail page, so a preference can be set
+  // before ever pressing play at all (the episode route is what an
+  // in-player track switch calls, since that's all it has on hand).
+  getShowTrackPreference: (showId: string) => request<TrackPreference>('GET', `/shows/${showId}/track-preference`),
+  setShowTrackPreference: (showId: string, b: { audio_lang?: string; subtitle_lang?: string }) =>
+                        request<{ ok: boolean }>('PUT', `/shows/${showId}/track-preference`, b),
+  getMovieTrackPreference: (movieId: string) => request<TrackPreference>('GET', `/movies/${movieId}/track-preference`),
+  setMovieTrackPreference: (movieId: string, b: { audio_lang?: string; subtitle_lang?: string }) =>
+                        request<{ ok: boolean }>('PUT', `/movies/${movieId}/track-preference`, b),
+
+  // Library-wide fallback, used whenever no show/movie-specific preference
+  // is set (see kairos's migration v94). Self-service — operates on the
+  // caller's own account, no id needed.
+  setMyTrackPreference: (b: { audio_lang?: string; subtitle_lang?: string }) =>
+                        request<{ ok: boolean }>('PATCH', '/users/me/track-preference', b),
 
   // Server-side resolvePlayTarget.ts (see hades/src/player/resolvePlayTarget.ts) —
   // one call instead of watch-state + conditionally next-episode/full-episode-list.

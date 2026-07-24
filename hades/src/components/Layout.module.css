@@ -84,6 +84,11 @@
 .versionText { font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); font-family: var(--hds-font-mono-brand); }
 .userRow { display: flex; align-items: center; justify-content: space-between; gap: var(--hds-space-3); }
 .usernameText { font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usernameLinkBtn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: inherit; text-align: left; overflow: hidden; min-width: 0;
+}
+.usernameLinkBtn:hover .usernameText { color: var(--hds-txt); }
 .adminBadgeSmall { margin-left: var(--hds-space-2); color: var(--hds-gold); opacity: 0.7; font-size: var(--hds-font-size-tv-badge); }
 .sidebarExitBtn {
   background: none; border: none; cursor: pointer;
@@ -126,6 +131,11 @@
   display: flex; align-items: center; justify-content: space-between; gap: var(--hds-space-3);
 }
 .drawerUsernameText { font-size: var(--hds-font-size-tv-label); color: var(--hds-txt-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawerUsernameLinkBtn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: inherit; text-align: left; overflow: hidden; min-width: 0;
+}
+.drawerUsernameLinkBtn:hover .drawerUsernameText { color: var(--hds-txt); }
 .drawerAdminBadge { margin-left: var(--hds-space-2); color: var(--hds-gold); opacity: 0.7; font-size: var(--hds-font-size-tv-caption); }
 .drawerButtonRow { display: flex; gap: var(--hds-space-2); flex-shrink: 0; }
 .drawerExitBtn {

@@ -225,10 +225,16 @@ export default observer(function Layout() {
               </div>
               {user && (
                 <div className={styles.userRow}>
-                  <span className={styles.usernameText}>
-                    {user.username}
-                    {user.role === 'admin' && <span className={styles.adminBadgeSmall}>ADMIN</span>}
-                  </span>
+                  <button
+                    onClick={() => navigate('/account')}
+                    title="My Account"
+                    className={styles.usernameLinkBtn}
+                  >
+                    <span className={styles.usernameText}>
+                      {user.username}
+                      {user.role === 'admin' && <span className={styles.adminBadgeSmall}>ADMIN</span>}
+                    </span>
+                  </button>
                   <button
                     onClick={async () => { await reopenProfilePicker(); navigate('/profiles') }}
                     title="Exit to profile picker"
@@ -279,10 +285,16 @@ export default observer(function Layout() {
             ))}
             {user && (
               <div className={styles.drawerUserRow}>
-                <span className={styles.drawerUsernameText}>
-                  {user.username}
-                  {user.role === 'admin' && <span className={styles.drawerAdminBadge}>ADMIN</span>}
-                </span>
+                <button
+                  onClick={() => navigate('/account')}
+                  title="My Account"
+                  className={styles.drawerUsernameLinkBtn}
+                >
+                  <span className={styles.drawerUsernameText}>
+                    {user.username}
+                    {user.role === 'admin' && <span className={styles.drawerAdminBadge}>ADMIN</span>}
+                  </span>
+                </button>
                 <div className={styles.drawerButtonRow}>
                   <button
                     onClick={async () => { await reopenProfilePicker(); navigate('/profiles') }}
