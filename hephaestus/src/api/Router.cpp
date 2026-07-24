@@ -546,7 +546,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         serveVodPlaylist(session, /*isAudio=*/true, res);
     });
 
-    svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
+    svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/aseg-([0-9]+)\.ts$)", [&vodSessions](
             const httplib::Request& req, httplib::Response& res) {
         std::string sid = req.matches[1];
         int track = std::stoi(req.matches[2].str());
