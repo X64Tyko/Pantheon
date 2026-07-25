@@ -11,15 +11,19 @@ A media platform built around three pillars:
 <table>
 <tr>
 <td width="50%"><a href="docs/screens/HomePage.jpg"><img src="docs/screens/HomePage.jpg" width="100%"/></a><br/><sub><b>Home</b> — hero carousel, Continue Watching, and library shelves.</sub></td>
-<td width="50%"><a href="docs/screens/BlockBuilder.jpg"><img src="docs/screens/BlockBuilder.jpg" width="100%"/></a><br/><sub><b>Channel builder</b> — paint a weekly schedule, live EPG preview included.</sub></td>
+<td width="50%"><a href="docs/screens/Guide.jpg"><img src="docs/screens/Guide.jpg" width="100%"/></a><br/><sub><b>Live guide</b> — its own page now, with a synced channel grid and a live now-playing hero.</sub></td>
 </tr>
 <tr>
 <td width="50%"><a href="docs/screens/Channels01.png"><img src="docs/screens/Channels01.png" width="100%"/></a><br/><sub><b>Channels</b> — every channel's day at a glance.</sub></td>
-<td width="50%"><a href="docs/screens/Sources01.png"><img src="docs/screens/Sources01.png" width="100%"/></a><br/><sub><b>Media sources</b> — Plex, Jellyfin, Emby, and local, side by side.</sub></td>
+<td width="50%"><a href="docs/screens/ChannelEditor.png"><img src="docs/screens/ChannelEditor.png" width="100%"/></a><br/><sub><b>Channel editor</b> — full weekly schedule grid with timezone, EPG seed, and content-rating settings.</sub></td>
 </tr>
 <tr>
+<td width="50%"><a href="docs/screens/Sources01.png"><img src="docs/screens/Sources01.png" width="100%"/></a><br/><sub><b>Media sources</b> — Plex, Jellyfin, Emby, and local, side by side.</sub></td>
 <td width="50%"><a href="docs/screens/Review01.png"><img src="docs/screens/Review01.png" width="100%"/></a><br/><sub><b>Metadata review</b> — accept or reject uncertain scraper matches.</sub></td>
+</tr>
+<tr>
 <td width="50%"><a href="docs/screens/Activity.png"><img src="docs/screens/Activity.png" width="100%"/></a><br/><sub><b>Live activity</b> — sync status, now playing, system resources.</sub></td>
+<td width="50%"></td>
 </tr>
 </table>
 
