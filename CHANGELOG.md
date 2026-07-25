@@ -24,6 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **`detail-meta-block` zone gains a `fields` array (Kairos, v97 migration)**: same principle as v82/v83's
+  `filterFields`/`sortOptions` on the library zones — *which* fields Detail's meta-block shows (year/rating/
+  content_type) is now server-owned data a client renders, not a fixed hardcoded row per platform. Values match the
+  existing hardcoded set exactly, so this is additive only; part of a wider pass hardening the native Android client's
+  manifest adoption (Home row iteration, real theme-token reads, Guide zone gating, and a full channel×time EPG grid
+  matching Hades' own Guide redesign — see the `pantheon-android` repo for the client-side half of that work).
 - **Guide is now its own page, with a real progress-aware EPG grid (Hades)**: previously embedded at the bottom of
   Home (reached by scrolling), Guide is now a standalone `/guide` route with its own sidebar nav entry — matching
   Android. The grid itself got a real fix, not just polish: each channel column's header used to be `position: sticky`

@@ -43,6 +43,7 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] **Linked-ID Editor Title Confirmation:** The editable external-ID list (add/reorder/remove) currently shows only raw `source:id` pairs; it should resolve and display the matched title inline so a typo'd ID is caught before saving, not after. (The read-only badge row elsewhere already links out to the source — this only affects the editor.)
 - [ ] **VR Content Detection:** File-probe heuristic to flag VR video, plus a library toggle/filter to browse it — same tag/filter infrastructure as Scraper-Derived Tags.
 - [ ] **Chapter Classification Quality:** Reduce the "Unclassified" bucket in chapter detection — Episode/Credits already resolve well, but a lot of detected chapters fall through uncategorized. Worth doing before Chapter-Aware Scheduling (V1.0) depends on classification being trustworthy.
+- [ ] **Media Downloads:** Download media to device for offline playback.
 
 ## Phase 3: V1.0 Release (Late 2026)
 *Focus: Production readiness, security auditing, and long-term support.*
