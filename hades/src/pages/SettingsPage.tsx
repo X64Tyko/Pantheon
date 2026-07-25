@@ -30,6 +30,7 @@ interface Settings {
   hades_debug:            boolean
   cast_app_id:            string
     default_landing_page: string
+    internal_token: string
 }
 
 type Tab = 'general' | 'scrapers' | 'integrations' | 'devices' | 'diagnostics'
@@ -116,6 +117,8 @@ export default observer(function SettingsPage() {
   const [threads,  setThreads]    = useState('')
   const [bufferSize, setBufferSize] = useState('')
   const [castAppId, setCastAppId] = useState('')
+    const [internalToken, setInternalToken] = useState('')
+    const [regeneratingToken, setRegeneratingToken] = useState(false)
   const [castSessions, setCastSessions] = useState<CastSessionInfo[] | null>(null)
   const [revokingCast, setRevokingCast] = useState<string | null>(null)
 
@@ -272,6 +275,7 @@ export default observer(function SettingsPage() {
       setThreads(String(s.sync_threads))
       setBufferSize(String(s.stream_buffer_size))
       setCastAppId(s.cast_app_id)
+        setInternalToken(s.internal_token)
     }).catch(() => setError('Failed to load settings'))
     loadCastSessions()
     pollRokuDevices()
@@ -311,6 +315,7 @@ export default observer(function SettingsPage() {
       setThreads(String(next.sync_threads))
       setBufferSize(String(next.stream_buffer_size))
       setCastAppId(next.cast_app_id)
+        setInternalToken(next.internal_token)
       // Keep statusStore in sync immediately so the debug banner reflects the change.
       if ('sync_debug'  in update) statusStore.syncDebug  = next.sync_debug
       if ('epg_debug'   in update) statusStore.epgDebug   = next.epg_debug
@@ -340,6 +345,24 @@ const applyBuffer = () => {
   const applyCastAppId = () => {
     if (castAppId !== (settings?.cast_app_id ?? '')) patch({ cast_app_id: castAppId.trim() })
   }
+
+    const applyInternalToken = () => {
+        const v = internalToken.trim()
+        if (v && v !== (settings?.internal_token ?? '')) patch({internal_token: v})
+        else if (!v) setInternalToken(settings?.internal_token ?? '')
+    }
+
+    const regenerateInternalToken = async () => {
+        setRegeneratingToken(true)
+        try {
+            const bytes = new Uint8Array(32)
+            crypto.getRandomValues(bytes)
+            const v = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+            await patch({internal_token: v})
+        } finally {
+            setRegeneratingToken(false)
+        }
+    }
 
   const resetLibrary = async () => {
     setResetting(true)
@@ -1197,6 +1220,30 @@ const applyBuffer = () => {
                 disabled={!settings || saving}
                 onChange={v => patch({ hades_debug: v })}
               />
+            </SettingRow>
+              <SettingRow
+                  label="Internal Service Token"
+                  hint="Shared secret Hephaestus sends when reporting live-channel playback progress back to Kairos — auto-generated on first run, rotating it here takes effect on the next report with no restart needed. Only change this if you suspect it's been exposed."
+              >
+                  <div className={styles.inlineRow}>
+                      <input
+                          className={`${styles.input} ${styles.w200}`}
+                          value={internalToken}
+                          onChange={e => setInternalToken(e.target.value)}
+                          onBlur={applyInternalToken}
+                          onKeyDown={e => e.key === 'Enter' && applyInternalToken()}
+                          disabled={!settings || saving}
+                          spellCheck={false}
+                      />
+                      <NavButton
+                          id="regenerate-internal-token"
+                          onClick={regenerateInternalToken}
+                          disabled={!settings || saving || regeneratingToken}
+                          className={`${styles.navBtn} ${styles.navBtnNeutral14} ${(!settings || saving || regeneratingToken) ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${(!settings || saving || regeneratingToken) ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+                      >
+                          {regeneratingToken ? 'Generating…' : 'Regenerate'}
+                      </NavButton>
+                  </div>
             </SettingRow>
             <SettingRow
               label="Download DB Snapshot"

@@ -21,68 +21,77 @@
 //   [my_plex]
 //   token = abc123
 //   path_map = /data:/media
-class ConfStore {
+class ConfStore
+{
 public:
-    explicit ConfStore(std::string path);
+	explicit ConfStore(std::string path);
 
-    void maybeReload();
+	void maybeReload();
 
-    std::string token(const std::string& source_id)  const;
-    std::string userId(const std::string& source_id) const;
-    bool hasToken(const std::string& source_id)  const;
-    bool hasUserId(const std::string& source_id) const;
+	std::string token(const std::string& source_id) const;
+	std::string userId(const std::string& source_id) const;
+	bool hasToken(const std::string& source_id) const;
+	bool hasUserId(const std::string& source_id) const;
 	bool getSyncPriority(const std::string& source_id) const;
 	std::vector<std::string> allSources() const;
 
-    std::string getDownloadPath() const;
-    void        setDownloadPath(const std::string& path);
+	std::string getDownloadPath() const;
+	void setDownloadPath(const std::string& path);
 
-    int  getImageCacheTtlHours() const;
-    void setImageCacheTtlHours(int hours);
-	int  getBufferSize() const;
+	int getImageCacheTtlHours() const;
+	void setImageCacheTtlHours(int hours);
+	int getBufferSize() const;
 	void setBufferSize(int size);
 
-    // 0 = unset — SyncManager falls back to KAIROS_SYNC_THREADS / hardware
-    // concurrency (see SyncManager::defaultSyncThreadCount). Persisted here
-    // (unlike SyncManager's own in-memory override_thread_count_) so a
-    // Settings-page change survives a restart instead of reverting to
-    // whatever KAIROS_SYNC_THREADS the compose file happens to set.
-    int  getSyncThreadsOverride() const;
-    void setSyncThreadsOverride(int n);
+	// 0 = unset — SyncManager falls back to KAIROS_SYNC_THREADS / hardware
+	// concurrency (see SyncManager::defaultSyncThreadCount). Persisted here
+	// (unlike SyncManager's own in-memory override_thread_count_) so a
+	// Settings-page change survives a restart instead of reverting to
+	// whatever KAIROS_SYNC_THREADS the compose file happens to set.
+	int getSyncThreadsOverride() const;
+	void setSyncThreadsOverride(int n);
 
-    // Rewrite a file path by applying the first matching path_map prefix across
-    // all configured sources. Returns the path unchanged if no mapping matches.
-    std::string applyPathMap(const std::string& path) const;
+	// Shared secret gating POST /api/channels/:id/played (see Router.cpp) —
+	// auto-generated on first run. Hephaestus reads it straight off the
+	// shared /data volume; see hephaestus/src/kairos/InternalToken.cpp.
+	std::string getInternalToken() const;
+	void setInternalToken(const std::string& token);
 
-    std::vector<std::pair<std::string,std::string>> getPathMaps(const std::string& source_id) const;
-    void setPathMaps(const std::string& source_id,
-                     const std::vector<std::pair<std::string,std::string>>& maps);
+	// Rewrite a file path by applying the first matching path_map prefix across
+	// all configured sources. Returns the path unchanged if no mapping matches.
+	std::string applyPathMap(const std::string& path) const;
 
-    void setCredentials(const std::string& source_id,
-                        const std::string& token,
-                        const std::string& user_id);
-    void removeSource(const std::string& source_id);
+	std::vector<std::pair<std::string, std::string>> getPathMaps(const std::string& source_id) const;
+	void setPathMaps(const std::string& source_id,
+					 const std::vector<std::pair<std::string, std::string>>& maps);
+
+	void setCredentials(const std::string& source_id,
+						const std::string& token,
+						const std::string& user_id);
+	void removeSource(const std::string& source_id);
 
 private:
-    struct Entry {
-        std::string token, user_id;
-        // Each pair is {from_prefix, to_prefix}.
-        std::vector<std::pair<std::string, std::string>> path_maps;
-    };
+	struct Entry
+	{
+		std::string token, user_id;
+		// Each pair is {from_prefix, to_prefix}.
+		std::vector<std::pair<std::string, std::string>> path_maps;
+	};
 
-    void loadLocked();
-    void parseLocked(const std::string& text);
-    void saveLocked() const;
+	void loadLocked();
+	void parseLocked(const std::string& text);
+	void saveLocked() const;
 
-    std::string                              path_;
-    std::filesystem::file_time_type          mtime_{};
-    std::unordered_map<std::string, Entry>   entries_;
-    std::string                              download_path_;
-	int buffer_size_ = 1048576; // 1024 KB
-    int                                      image_cache_ttl_hours_ = 2;
-    int                                      sync_threads_override_ = 0;
-    mutable std::mutex                       mu_;
+	std::string path_;
+	std::filesystem::file_time_type mtime_{};
+	std::unordered_map<std::string, Entry> entries_;
+	std::string download_path_;
+	int buffer_size_           = 1048576; // 1024 KB
+	int image_cache_ttl_hours_ = 2;
+	int sync_threads_override_ = 0;
+	std::string internal_token_;
+	mutable std::mutex mu_;
 
-    // Throttle maybeReload() to at most once per 30 seconds.
-    mutable std::atomic<std::chrono::steady_clock::rep> last_check_ns_{0};
+	// Throttle maybeReload() to at most once per 30 seconds.
+	mutable std::atomic<std::chrono::steady_clock::rep> last_check_ns_{0};
 };

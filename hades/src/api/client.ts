@@ -598,7 +598,8 @@ export const api = {
         verbose_gateway_logs: boolean;
         hades_debug: boolean;
         cast_app_id: string;
-        default_landing_page: string
+        default_landing_page: string;
+        internal_token: string
     }>('GET', '/config/settings'),
   // Public read-only subset for internal services (Hephaestus, Hermes) and
   // the Hades frontend (CastProvider, which needs cast_app_id regardless of role).
@@ -625,7 +626,8 @@ export const api = {
         verbose_gateway_logs: boolean;
         hades_debug: boolean;
         cast_app_id: string;
-        default_landing_page: string
+        default_landing_page: string;
+        internal_token: string
     }>) => request<{
         epg_debug: boolean;
         sync_debug: boolean;
@@ -636,7 +638,8 @@ export const api = {
         verbose_gateway_logs: boolean;
         hades_debug: boolean;
         cast_app_id: string;
-        default_landing_page: string
+        default_landing_page: string;
+        internal_token: string
     }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),

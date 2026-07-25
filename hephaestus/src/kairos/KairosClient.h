@@ -6,10 +6,12 @@
 
 class KairosClient {
     std::string base_url;
-public:
-    explicit KairosClient(std::string base_url);
+	std::string internal_token_conf_path;
 
-    // atMs == -1 → omit the ?at= parameter (use server-side wall clock)
+public:
+	explicit KairosClient(std::string base_url, std::string internal_token_conf_path = "");
+
+	// atMs == -1 → omit the ?at= parameter (use server-side wall clock)
     std::optional<KairosNowResponse> getNow(const std::string& channelId, int64_t atMs = -1);
 
     // Fire-and-forget; logs on failure but never throws.

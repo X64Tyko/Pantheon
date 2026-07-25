@@ -75,6 +75,7 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			{"hades_debug", g_hades_debug.load()},
 			{"cast_app_id", castAppId()},
 			{"default_landing_page", defaultLandingPage()},
+			{"internal_token", conf_.getInternalToken()},
 		};
 	};
 
@@ -178,6 +179,18 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			{
 				auto v = b["default_landing_page"].get<std::string>();
 				if (v == "home" || v == "guide") ConfigRepository(db_).setValue("default_landing_page", v);
+			}
+			// Empty means "unconfigured" to Router.cpp, which fails closed —
+			// reject it here instead of silently breaking channel advancement.
+			if (b.contains("internal_token") && b["internal_token"].is_string())
+			{
+				auto v = b["internal_token"].get<std::string>();
+				if (!v.empty()) conf_.setInternalToken(v);
+				else
+				{
+					route::err(res, 400, "internal_token cannot be empty");
+					return;
+				}
 			}
 			route::ok(res, settingsJson().dump());
 		}

@@ -27,6 +27,11 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [x] **Per-Client Direct-Play Capability:** Clients (currently pantheon-android) can declare their real decode capabilities so Hephaestus can direct-play more than the previous fixed h264/aac allowlist.
 - [x] **Advanced Scheduling UI:** Drag-and-drop (click-and-drag paint) EPG builder with priority-based overlap resolution and a live EPG preview.
 - [x] **Collection Management:** Covered by the existing Playlists & Home Shelves system — a smart/filter-driven playlist *is* an auto-updating dynamic collection.
+- [x] **Watch Together (Synchronized VOD Viewing):** Real-time synchronized on-demand playback across multiple viewers,
+  mirroring the wall-clock sync channels already have for live playback — host/follower session state (position, paused,
+  join-catch-up), an End/Leave control, and a close (×) affordance from the Home shelf card <experimental>. Landed ahead
+  of its original Phase 3 placement below; still Hades (web) only — no Android or Roku support yet, and no automated
+  test coverage yet either, so treat it as the newest and least-hardened part of the stack.
 
 ## Phase 2: Beta (Q3 2026)
 *Focus: Feature completeness, user experience, and expanded hardware support.*
@@ -60,11 +65,16 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 
 - [ ] **Chapter-Aware Scheduling:** Use detected chapters for precise program start/end and bumper placement. Deferred out of Beta — this consumes chapter data as a scheduling input rather than just displaying it, which touches the scheduler core and EPG projection directly; architecturally it belongs with the other foundational items below, not alongside Beta's smaller UX/format items.
 - [ ] **Watch-History-Driven Automated Channels:** Let a channel's rerun/advancement logic read from actual VOD watch history instead of only shuffle/sequential rules. Bigger than a normal advancement mode: channels are shared broadcast entities, so it needs its own design pass on whose watch state drives a shared schedule before it's safe to build — similar in spirit to the Plex external-ID deferral above, but larger in scope.
-- [ ] **Watch Together (Synchronized VOD Viewing):** Real-time synchronized on-demand playback across multiple viewers, mirroring the wall-clock sync channels already have for live playback. A genuinely new capability (session/host-follower state sync), not an extension of existing playback code.
+- [ ] **Watch Together for Android and Roku:** The web (Hades) implementation shipped in Alpha (see above) — bringing
+  the same host/follower session sync to the native clients is still open.
 - [ ] **Security Audit:** Full review of the Hermes gateway and authentication flow.
 - [ ] **Public Plugin API:** Allow community-developed scrapers and source providers.
 - [ ] **Stable API:** Versioned REST API for third-party integrations.
-- [ ] **Client Ecosystem:** Native applications for TV and mobile. `pantheon-roku` is functionally verified on real hardware but pending the manifest update tracked in Beta above; `pantheon-android` (4 build flavors) is verified on emulator with the Amazon/Fire TV flavor still unverified on real hardware; a Chromecast HTTPS relay (`pantheon-relay`) is live. Apple TV and a self-hosted/managed relay connection-broker mode remain future work. None of the three client repos are public yet — distribution today is login-gated CI sideload artifacts only.
+- [ ] **Client Ecosystem:** Native applications for TV and mobile. `pantheon-android` (4 build flavors) and
+  `pantheon-relay` are public and installable today — Android is verified on real Android/Android TV hardware, with only
+  the Amazon/Fire TV flavor still emulator-only and unverified on real Fire TV hardware. `pantheon-roku` is functionally
+  verified on real hardware but stays private pending the per-client capability manifest update tracked in Beta above.
+  Apple TV and a self-hosted/managed relay connection-broker mode remain future work.
 
 ---
 

@@ -58,7 +58,7 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	// fail closed with a 403 no admin token could ever satisfy.
 	if (method == "GET" && path == "/api/channels") return true;
 	if (method == "GET" && path == "/api/sources")  return true;
-	if (path.ends_with("/played")) return true;
+	if (method == "POST" && path.ends_with("/played")) return true;
 	// Hephaestus resolving a library item to a playable file for VOD sessions.
 	if (path.starts_with("/api/playback/")) return true;
 	// Hephaestus fetching runtime flags.
@@ -122,6 +122,19 @@ void Router::registerRoutes() {
 		clearCurrentUser();
 
 		bool required = !isPublicPath(req.method, req.path);
+
+		// Mutates live schedule state with no end-user session to check —
+		// gate on the shared internal secret instead (see getInternalToken()).
+		if (req.method == "POST" && req.path.ends_with("/played"))
+		{
+			const std::string expected = conf_.getInternalToken();
+			if (expected.empty() || req.get_header_value("X-Internal-Token") != expected)
+			{
+				res.status = 401;
+				res.set_content(R"({"error":"Unauthorized"})", "application/json");
+				return httplib::Server::HandlerResponse::Handled;
+			}
+		}
 
 		std::string token;
 		if (req.has_header("Authorization")) {

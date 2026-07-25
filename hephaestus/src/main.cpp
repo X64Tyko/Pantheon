@@ -38,9 +38,9 @@ int main(int argc, char* argv[]) {
               << " decode=" << hwAccelName(hw_caps.decode)
               << " decodable_codecs=" << hw_caps.decodable_codecs.size() << "\n";
 
-    KairosClient kairos(cfg.kairos_url);
+	KairosClient kairos(cfg.kairos_url, cfg.kairos_conf_path);
 
-    StreamOptions stream_opts;
+	StreamOptions stream_opts;
     stream_opts.ffprobe_path = cfg.ffprobe_path;
     stream_opts.audio_lang   = cfg.audio_lang;
     stream_opts.loudnorm          = cfg.loudnorm;

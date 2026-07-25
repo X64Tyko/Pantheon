@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **`POST /api/channels/:id/played` was globally unauthenticated (Kairos)**: `Router.cpp`'s `isPublicPath` had
+  `path.ends_with("/played")` with no method restriction — unlike the sibling internal-service rules right above it,
+  which correctly scope by method. Since Kairos's port is published directly to the host by default
+  (`docker-compose.yml`'s `8081:8080`, documented as "optional; useful for debugging"), any LAN-reachable client could
+  POST to this route with zero credentials and corrupt a channel's live scheduling state (`RuleEngine::markPlayed`,
+  schedule-cache invalidation) — no token, no service identity, nothing. Fixed with a shared machine secret
+  (`ConfStore::getInternalToken()`) gating this one route specifically, since it's the one "public" path that mutates
+  state instead of just reading it. The secret is auto-generated into `kairos.conf`'s `[_global]` section on first run
+  (`ConfStore`'s constructor, same CSPRNG approach as `AuthStore::generateToken`) — no setup step, no env var, nothing
+  for an operator to configure. Hephaestus reads it by parsing that same file directly off the `/data` volume both
+  containers already share (`hephaestus/src/kairos/InternalToken.cpp`) rather than fetching it over HTTP, since it must
+  never be served by any unauthenticated route (that would defeat the whole point) and Hephaestus has no end-user
+  session to authenticate a fetch with. Admin-visible and editable (including a one-click regenerate) via Settings →
+  Diagnostics → Internal Service Token (`GET`/`PATCH /api/config/settings`'s new `internal_token` field, deliberately
+  kept out of the existing unauthenticated `/api/config/public-settings` subset) — an edit takes effect on Hephaestus's
+  very next playback report, no restart of either service required.
+
 - **Data race on `VodSession::video_stream_`/`audio_stream_` (Hephaestus)**: `session_mtx` is documented as guarding
   these two fields, and `ensureAudioTrack()`/`stop()` correctly took it before reassigning/resetting them — but
   `prepareSegment()`/`prepareAudioSegment()` (called per-segment on whatever thread is handling that HTTP request) and
