@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Data race on `VodSession::video_stream_`/`audio_stream_` (Hephaestus)**: `session_mtx` is documented as guarding
+  these two fields, and `ensureAudioTrack()`/`stop()` correctly took it before reassigning/resetting them — but
+  `prepareSegment()`/`prepareAudioSegment()` (called per-segment on whatever thread is handling that HTTP request) and
+  `lookaheadLoop()` (its own dedicated thread) both read them with no lock at all, racing a plain (non-atomic)
+  `shared_ptr` read on one thread against a reassignment/reset on another. `audio_stream_` was the one actually likely
+  to trigger it in practice — it gets reassigned mid-session on every audio track switch, while `video_stream_` is
+  otherwise fixed until `stop()`. All three now snapshot the shared_ptr under `session_mtx` before using it, held only
+  long enough to copy the pointer, not for the (potentially slow) `prepareSegment()`/`tick()` calls themselves.
 - **Guide's live preview never actually switched channels (Hades + Android)**: `PreviewSession.h`'s `switchChannel()`
   deliberately reuses the exact same `manifest_url` for a preview session's whole life, so the video player's own load
   effect — keyed on `manifestUrl` in `VideoPlayer.tsx`, on the same in Android's `PreviewPlayerView.kt` — only ever

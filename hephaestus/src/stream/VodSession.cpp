@@ -1022,9 +1022,27 @@ void VodSession::writeAudioPlaylist() const {
 }
 
 VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
-	if (!active.load() || !video_stream_) return SegmentPrep::Failed;
+	if (!active.load()) return SegmentPrep::Failed;
 	last_requested_segment.store(segment_index);
-	auto prep = video_stream_->prepareSegment(segment_index, segment_start_ms, total_segments);
+	// Snapshot the shared_ptr under session_mtx rather than dereferencing
+	// video_stream_ directly — this runs on whatever thread is handling the
+	// HTTP segment request, concurrently with ensureAudioTrack()/stop() on
+	// another thread, both of which mutate video_stream_/audio_stream_ under
+	// this same lock. An unguarded read here was racing against those
+	// writes (a plain shared_ptr isn't safe to read on one thread while
+	// another reassigns/resets it, same as any other unsynchronized
+	// variable) — session_mtx's own comment already documents it as the
+	// lock for exactly this pair of fields, this just wasn't taking it.
+	// Not held for the prepareSegment() call itself below (which can spawn/
+	// wait on ffmpeg) so it doesn't serialize behind a potentially slow
+	// segment request.
+	std::shared_ptr<VodEncodeStream> stream;
+	{
+		std::lock_guard<std::mutex> lock(session_mtx);
+		stream = video_stream_;
+	}
+	if (!stream) return SegmentPrep::Failed;
+	auto prep = stream->prepareSegment(segment_index, segment_start_ms, total_segments);
 	switch (prep) {
 		case VodEncodeStream::SegmentPrep::Ready:        return SegmentPrep::Ready;
 		case VodEncodeStream::SegmentPrep::WaitShort:     return SegmentPrep::WaitShort;
@@ -1034,10 +1052,19 @@ VodSession::SegmentPrep VodSession::prepareSegment(int segment_index) {
 }
 
 // Same contract as prepareSegment(), for the independent audio stream — see
-// Router.cpp's /audio/{n}/seg-{n}.ts route.
+// Router.cpp's /audio/{n}/seg-{n}.ts route. Same session_mtx snapshot
+// reasoning as prepareSegment() above — audio_stream_ is the one that
+// actually gets reassigned mid-session (ensureAudioTrack(), on a track
+// switch), so this was the read most likely to actually race in practice.
 VodSession::SegmentPrep VodSession::prepareAudioSegment(int segment_index) {
-	if (!active.load() || !audio_stream_) return SegmentPrep::Failed;
-	auto prep = audio_stream_->prepareSegment(segment_index, segment_start_ms, total_segments);
+	if (!active.load()) return SegmentPrep::Failed;
+	std::shared_ptr<VodEncodeStream> stream;
+	{
+		std::lock_guard<std::mutex> lock(session_mtx);
+		stream = audio_stream_;
+	}
+	if (!stream) return SegmentPrep::Failed;
+	auto prep = stream->prepareSegment(segment_index, segment_start_ms, total_segments);
 	switch (prep) {
 		case VodEncodeStream::SegmentPrep::Ready:        return SegmentPrep::Ready;
 		case VodEncodeStream::SegmentPrep::WaitShort:     return SegmentPrep::WaitShort;
@@ -1050,8 +1077,18 @@ void VodSession::lookaheadLoop() {
 	while (!lookahead_stop.load() && active.load()) {
 		std::this_thread::sleep_for(std::chrono::seconds(kLookaheadTickSecs));
 		if (!active.load() || lookahead_stop.load()) return;
-		if (video_stream_) video_stream_->tick(total_segments);
-		if (audio_stream_) audio_stream_->tick(total_segments);
+		// Same session_mtx snapshot as prepareSegment()/prepareAudioSegment()
+		// above — this runs on its own dedicated thread, so an unguarded
+		// read here raced against ensureAudioTrack()/stop() exactly the same
+		// way theirs did.
+		std::shared_ptr<VodEncodeStream> vstream, astream;
+		{
+			std::lock_guard<std::mutex> lock(session_mtx);
+			vstream = video_stream_;
+			astream = audio_stream_;
+		}
+		if (vstream) vstream->tick(total_segments);
+		if (astream) astream->tick(total_segments);
 	}
 }
 
