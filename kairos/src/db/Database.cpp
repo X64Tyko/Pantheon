@@ -2221,6 +2221,20 @@ constexpr Migration kMigrations[] = {
 )SQL"
 }
 
+// ── v97: detail-meta-block zone gains a `fields` array — same principle as
+//         v82/v83's filterFields/sortOptions: *which* fields the Detail
+//         meta-block shows is server-owned data a client renders, not a
+//         fixed hardcoded Row per platform. Values match today's existing
+//         hardcoded set exactly (year/rating/content_type), so this is
+//         additive only — a client that doesn't read `fields` yet keeps
+//         rendering its own fixed set; one that does gets the identical
+//         result until this row is ever edited.
+,{ 97, R"SQL(
+    UPDATE tv_zone
+    SET config_json = '{"fields":["year","rating","content_type"]}'
+    WHERE id = 'detail-meta-block';
+)SQL" }
+
 }; // kMigrations
 
 } // namespace
