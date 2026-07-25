@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Android: VOD playback always restarted from 0 instead of resuming (Android)**: `PlayerScreen.kt` hardcoded
+  ExoPlayer's `MediaItem` start position to `0L` for every VOD session, on a stale assumption (leftover from before
+  Hephaestus's VOD sessions moved to a whole-file, absolute-timeline manifest) that the manifest itself always began
+  at the resume point. `VodSession::buildStaticPlaylist()` actually emits the entire source file on its own real
+  timeline from the first request — `position_ms` only tells Hephaestus which segment to encode first for a fast
+  first byte, it never trims or renumbers the playlist — so an explicit client-side seek is required, same as Hades'
+  `VideoPlayer.tsx` (`startPosition: startPositionSec ?? 0`) already does. Now seeks to `PlayerViewModel.basePositionMs`
+  (already tracked correctly for watch-progress-ping math, just never fed into the player itself). This is what made
+  Continue Watching, and every other resume path, start over entirely on Android.
+- **Android: "Play" from a shelf (other than Continue Watching) ignored watch progress for movies**: `HomeScreen.kt`
+  (mobile + TV) and `DetailViewModel.kt` hardcoded `position_ms = 0` for every movie "Play" action, on the (now
+  outdated) assumption that a movie never needed a resume lookup. Kairos's `resolve-play-target` endpoint gains a
+  movie counterpart (`GET /api/movies/:id/resolve-play-target`, `PlaybackService.cpp`) backed by
+  `WatchProgressRepository::getStates`, and both Android flavors' shelf/hero "Play" actions and `DetailViewModel`'s
+  own resolver now call it instead of assuming 0. A show's `PLAY_LATEST_EPISODE` shelf action (e.g. a "New Episodes"
+  row) is similarly fixed to resume that specific episode via `GET /api/shows/:id/watch-state` when the viewer is
+  actually mid-way through it, rather than always starting at 0.
 - **Android: movie playback always timed out (Android)**: `ApiClient.kt`'s shared `OkHttpClient` set no explicit
   timeouts, so `POST /stream/vod/start` ran under OkHttp's default 10s read/write timeout. Direct-stream sessions
   (`VodSession::start()` -> `computeSegmentBoundaries()`, Hephaestus) ran `ffprobe` synchronously over the whole file
@@ -16,6 +33,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   most movies land on that direct-stream path. Web's `fetch()` has no such timeout and just waits it out, which is why
   only Android was affected. `connectTimeout` stays at 10s (an unreachable server should still fail fast);
   `readTimeout`/`writeTimeout` are now 60s. (The underlying slow probe itself is separately addressed below.)
+- **GitHub Release notes rendered as a wall of broken lines**: this file is hard-wrapped at ~120 columns for readable
+  diffs/terminal viewing — fine for GitHub's own file-blob renderer (a soft line break just collapses, same as any
+  CommonMark reader), but the renderer GitHub uses for Releases (same one as issues/PRs) turns every one of those
+  soft breaks into a literal `<br>` instead, so `v0.2.1`'s freshly-backfilled release came out as one forced line
+  break per wrapped source line. `.github/workflows/release.yml` now runs the extracted section through a small
+  script (`.github/scripts/extract_changelog_section.py`) that joins each entry's wrapped continuation lines back
+  into one before handing it to `gh release create`/`edit`. Also fixed two spots in this file where the original
+  hard-wrap happened to land mid-token (a long run of `` `code`/`code` `` pairs with no real space to break at,
+  e.g. `` `recent-shows`/`recent-movies`/ ``  →  `` `recent-released`/`recent-aired` ``) rather than at a real word
+  boundary — the join script can't tell those apart from a normal wrap without guessing wrong, so the two rewrapped
+  instead.
 
 ### Changed
 
@@ -32,6 +60,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Android: "Play from Beginning" button on the Detail screen (mobile + TV)**: sits next to the existing "Play"
+  button, which now always resumes real progress (see the resume fixes above) — this gives an explicit way to
+  restart a movie or a show (from episode 1, not whatever episode/position "Play" would resume into) instead of
+  needing to clear watch progress to do it. `DetailViewModel.playFromBeginningTarget()` bypasses
+  `resolve-play-target` entirely rather than resolving progress and discarding it.
 - **Cached direct-stream keyframe data — no more full-file probe on every playback start (Kairos + Hephaestus)**: a
   direct-stream (stream copy) VOD session can only cut its HLS segments at real keyframes, which meant
   `VodSession::computeSegmentBoundaries()` ran a full packet-level `ffprobe` scan of the whole file synchronously
@@ -100,9 +133,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   default D-pad initial focus isn't guaranteed to land inside the grid now that the Home/Library quick-action row sits
   above it.
 - **`/tv`'s Home shelves silently missed any row Kairos hadn't been hardcoded for, and the hero never used its own
-  declared data source (Hades)**: `TvHome.tsx` fetched exactly four named shelves (`recent-shows`/`recent-movies`/
-  `recent-released`/`recent-aired`) instead of iterating every `shelf`-typed row `GET /api/tv/manifest` actually
-  returns — a new shelf added server-side (`tv_shelf` table) would render nothing until this file was updated too,
+  declared data source (Hades)**: `TvHome.tsx` fetched exactly four named shelves
+  (`recent-shows`/`recent-movies`/`recent-released`/`recent-aired`) instead of iterating every `shelf`-typed row
+  `GET /api/tv/manifest` actually returns — a new shelf added server-side (`tv_shelf` table) would render nothing until
+  this file was updated too,
   defeating the manifest's entire point. Row fetching is now generic (dispatches on each row's own `dataSource.
   endpoint`), and the hero panel now reads its own `dataSources.shows`/`dataSources.movies` (already modeled in
   `TvManifestService.cpp`'s `heroRowJson()`, never actually consumed) instead of reusing whatever recent-shows/
@@ -136,8 +170,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`/tv`'s Guide is now its own route, matching desktop (Hades)**: `TvGuideSection` used to be embedded inline at the
   bottom of Home, reached via a quick-action button that `scrollIntoView`'d + refocused it — the one place `/tv` hadn't
   gotten the same standalone-route treatment desktop Guide already has. New `TvGuidePage.tsx` at `/tv/guide` renders it
-  full-page instead, with its own Home/Library quick-action row (reusing `TvHome.tsx`'s own `quickActionRow`/
-  `quickActionButton` styling rather than duplicating it). `TvGuideSection` itself is unchanged. The native Android
+  full-page instead, with its own Home/Library quick-action row (reusing `TvHome.tsx`'s own
+  `quickActionRow`/`quickActionButton` styling rather than duplicating it). `TvGuideSection` itself is unchanged. The
+  native Android
   client's Guide screen was already its own nav destination on both flavors, but only had a single generic "← Back"
   button — it now gets the same Home + Library pair, styled like its own Home screen's quick-action row.
 - **`detail-meta-block` zone gains a `fields` array (Kairos, v97 migration + Hades)**: same principle as v82/v83's

@@ -38,17 +38,15 @@ jobs:
           TAG="${{ inputs.tag || github.ref_name }}"
           VERSION="${TAG#v}"
 
-          # Exact-match on "## [x.y.z]" (including the closing bracket) so
-          # e.g. 0.2.1 can't accidentally match a 0.2.10/0.2.11 section.
-          if ! awk -v ver="[$VERSION]" '
-            BEGIN { printing = 0; found = 0 }
-            /^## \[/ {
-              if (printing) exit
-              if (index($0, "## " ver) == 1) { printing = 1; found = 1; next }
-            }
-            printing { print }
-            END { exit(found ? 0 : 1) }
-          ' CHANGELOG.md > /tmp/release-notes.md
+          # CHANGELOG.md is hard-wrapped for readable diffs/terminal viewing,
+          # which GitHub's own file-blob renderer handles fine (soft breaks
+          # collapse) but its release/issue/PR renderer does not — every one
+          # of those wrapped lines came out as a literal <br>, so the release
+          # notes looked like a wall of broken sentences. This script
+          # extracts the matching section and joins each entry's wrapped
+          # lines back into one — see its own docstring for what it assumes
+          # about this file's structure.
+          if ! python3 .github/scripts/extract_changelog_section.py CHANGELOG.md "$VERSION" > /tmp/release-notes.md
           then
             echo "::error::No '## [$VERSION]' section found in CHANGELOG.md for tag $TAG — add one before (re-)running this." >&2
             exit 1

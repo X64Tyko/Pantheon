@@ -626,14 +626,48 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 		}
 	});
 
+	// ── GET /api/movies/:id/resolve-play-target ───────────────────────────────
+	// Movie counterpart of the show endpoint below — a movie has no next-
+	// episode branch to resolve, but it does still need a real watch-progress
+	// lookup: several call sites (Android's shelf/hero "Play" actions,
+	// DetailViewModel) used to hardcode position_ms=0 for every movie
+	// regardless of actual progress, on the mistaken assumption that movies
+	// "don't need" this endpoint. A finished movie (completed, i.e. a
+	// rewatch-in-waiting) resolves to position_ms=0 same as a finished show's
+	// finale-with-no-next-episode case, rather than resuming at the very end.
+	svr.Get("/api/movies/:id/resolve-play-target", [this](const Req& req, Res& res)
+	{
+		auto user = currentUser();
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
+
+		auto movie_id = req.path_params.at("id");
+		try
+		{
+			auto states         = WatchProgressRepository(db_).getStates(user->user_id, {{"movie", movie_id}});
+			auto it             = states.find(watchStateKey("movie", movie_id));
+			int64_t position_ms = (it != states.end() && !it->second.completed) ? it->second.position_ms : int64_t{0};
+
+			route::ok(res, json{
+						  {"kind", "movie"}, {"id", movie_id}, {"position_ms", position_ms},
+					  }.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("GET /api/movies/:id/resolve-play-target", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
 	// ── GET /api/shows/:id/resolve-play-target ────────────────────────────────
 	// Server-side version of hades/src/player/resolvePlayTarget.ts's show
 	// branch — collapses what used to be 2-3 client-issued round-trips
 	// (watch-state, then conditionally next-episode or the full episode list)
 	// into one internal query chain, and means no client (Android, eventually
-	// Roku) ever needs to re-implement this branch itself. Movies don't need
-	// this endpoint at all — trivial, position_ms always 0, every caller
-	// already special-cases that before ever reaching here.
+	// Roku) ever needs to re-implement this branch itself.
 	svr.Get("/api/shows/:id/resolve-play-target", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
