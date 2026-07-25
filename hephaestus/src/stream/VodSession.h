@@ -48,7 +48,7 @@ struct VodStreamOptions {
 // running stream attaches to it via ordinary shared_ptr refcounting, no
 // "join" protocol needed. This facade still owns its own session_id and
 // static playlist (every viewer gets their own manifest_url, unchanged
-// protocol-wise), and still owns the *decisions* (probing, direct-play,
+// protocol-wise), and still owns the *decisions* (probing, direct-stream,
 // track resolution) that produce the keys — VodSessionManager just owns the
 // sharing registry, not those decisions.
 //
@@ -77,7 +77,7 @@ public:
 	VodSession(const VodSession&)            = delete;
 	VodSession& operator=(const VodSession&) = delete;
 
-	// Probes file_path, decides direct-play vs transcode, and spawns the main
+	// Probes file_path, decides direct-stream vs transcode, and spawns the main
 	// encoder + the independent subtitle extraction process. Returns false if
 	// probing fails (file missing/unreadable), no duration is available from
 	// either this probe or fallback_duration_ms, or ffmpeg won't start.
@@ -88,7 +88,7 @@ public:
 	// client_caps is this specific client's declared decode capability (see
 	// ClientCapabilities.h) — nullopt when the requesting token never
 	// declared one (or Hephaestus restarted since), in which case
-	// isDirectPlayable() falls back to the conservative h264/aac allowlist.
+	// isDirectStreamable() falls back to the conservative h264/aac allowlist.
 	// external_subtitles is the full catalog for this item (from Kairos's
 	// playback-info response) — subtitle_track <= -2 selects
 	// external_subtitles[-(subtitle_track)-2] (see Router.cpp's
@@ -102,13 +102,23 @@ public:
 	// per-show preference (empty = none) — only consulted when
 	// audio_track/subtitle_track are left at their "unset" default (-1) by
 	// the client itself, which always wins if explicitly given.
+	// kairos_keyframes_ms/_size/_mtime are Kairos's own cached direct-stream
+	// keyframe probe for this file (from its sync-time scan — see
+	// Database.cpp's v98 migration), used by computeSegmentBoundaries() in
+	// place of Hephaestus's own ffprobe scan when kairos_keyframes_size/
+	// _mtime still match the file's current stat(). Empty/0 (the default)
+	// just means "nothing cached yet" — falls back to a live probe exactly
+	// as before.
 	bool start(const std::string& file_path, int64_t position_ms,
 			   int audio_track, int subtitle_track, bool hdr_capable,
 			   const std::optional<ClientCapabilities>& client_caps,
 			   const std::vector<ExternalSubtitle>& external_subtitles,
 			   int64_t fallback_duration_ms,
-			   const std::string& preferred_audio_lang = "",
-			   const std::string& preferred_subtitle_lang = "");
+			   const std::string& preferred_audio_lang         = "",
+			   const std::string& preferred_subtitle_lang      = "",
+			   const std::vector<int64_t>& kairos_keyframes_ms = {},
+			   int64_t kairos_keyframes_size                   = 0,
+			   int64_t kairos_keyframes_mtime                  = 0);
 
 	void stop();
 	// Called by the HTTP handler on every playlist/segment/subs.vtt GET.
@@ -134,7 +144,7 @@ public:
 	bool isIdle() const;
 	const std::string& sessionId() const { return session_id; }
 	std::string dir() const { return opts.hls_root + "/vod/" + session_id; }
-	bool directPlay() const { return direct_play; }
+	bool directStream() const { return direct_stream; }
 	const MediaInfo& tracks() const { return media_info; }
 	bool hasSubtitleOutput() const { return subtitle_output; }
 	// The actually-resolved selection — may differ from what the client
@@ -196,7 +206,7 @@ public:
 
 	// RFC 6381 CODECS string for buildMasterPlaylist's #EXT-X-STREAM-INF —
 	// see VodSession.cpp's own comment on why this only ever applies to a
-	// direct-play session and can return nullopt (omit CODECS) rather than
+	// direct-stream session and can return nullopt (omit CODECS) rather than
 	// guess. Public so Router.cpp's diagnostic/debug routes can inspect it
 	// directly if needed, same visibility as buildMasterPlaylist itself.
 	std::optional<std::string> buildCodecsAttribute() const;
@@ -214,7 +224,7 @@ public:
 
 	// Called by the /audio/{n}/... routes before serving the playlist/segment
 	// under them. No-op if `track` is already active. Otherwise re-resolves
-	// direct-play eligibility for the new track (different audio tracks can
+	// direct-stream eligibility for the new track (different audio tracks can
 	// differ in codec — e.g. a commentary track in AC3 vs. a default AAC
 	// track — so this can flip) and swaps audio_stream_ for whichever shared
 	// stream the new track's AudioStreamKey resolves to (rebuildAudioStream)
@@ -309,14 +319,14 @@ private:
 	int     total_segments        = 0;
 	// Segment i spans [segment_start_ms[i], segment_start_ms[i+1] or
 	// effective_duration_ms for the last one). Computed in start() and, on a
-	// track switch that flips VIDEO direct-play eligibility (burn-in can
+	// track switch that flips VIDEO direct-stream eligibility (burn-in can
 	// force a video re-encode), recomputed by ensureAudioTrack() via
 	// computeSegmentBoundaries(). Shared by both video_stream_ and
 	// audio_stream_ — they must always agree on where segment N starts, even
 	// though each produces its own segment files for it.
 	std::vector<int64_t> segment_start_ms;
 	// Shared by start() and ensureAudioTrack() — (re)computes segment_start_ms/
-	// total_segments from the current direct_play/file_path/effective_duration_ms.
+	// total_segments from the current direct_stream/file_path/effective_duration_ms.
 	void computeSegmentBoundaries();
 
 	// Independent subtitle extraction — see class comment.
@@ -338,15 +348,21 @@ private:
 
 	std::atomic<bool>    active{false};
 	std::atomic<int64_t> last_touch_ms{0};
-	// Video-only now — see isVideoDirectPlayable(). Audio's own direct-play
+	// Video-only now — see isVideoDirectStreamable(). Audio's own direct-stream
 	// decision is made fresh per track inside buildVodAudioArgs(), not
 	// stored here, since it no longer has any bearing on the video stream.
-	bool          direct_play     = false;
+	bool          direct_stream     = false;
 	bool          subtitle_output = false;
 	bool          subtitle_burn_in = false;
 	MediaInfo     media_info;
-	std::string   file_path;
-	int64_t       started_at_ms = 0;
+	std::string file_path;
+	int64_t started_at_ms = 0;
+	// Kairos's cached direct-stream keyframe probe, and the file stat() it
+	// was computed from — see start()'s own comment and
+	// computeSegmentBoundaries(), the only reader.
+	std::vector<int64_t> kairos_keyframes_ms_;
+	int64_t kairos_keyframes_size_               = 0;
+	int64_t              kairos_keyframes_mtime_ = 0;
 	std::vector<ExternalSubtitle> external_subtitles_;
 
 	// Resolved once in start(), reused by every subsequent head spawn — a
@@ -359,7 +375,7 @@ private:
 	std::string source_codec_;
 	std::string external_subtitle_path_;
 	// The requesting client's declared decode capability from start() —
-	// stashed so ensureAudioTrack() can re-run isAudioDirectPlayable() for a
+	// stashed so ensureAudioTrack() can re-run isAudioDirectStreamable() for a
 	// different audio track's codec without needing it passed in again.
 	std::optional<ClientCapabilities> client_caps_;
 

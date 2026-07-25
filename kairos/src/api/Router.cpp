@@ -123,9 +123,15 @@ void Router::registerRoutes() {
 
 		bool required = !isPublicPath(req.method, req.path);
 
-		// Mutates live schedule state with no end-user session to check —
-		// gate on the shared internal secret instead (see getInternalToken()).
-		if (req.method == "POST" && req.path.ends_with("/played"))
+		// Mutates live schedule state / library metadata with no end-user
+		// session to check — gate on the shared internal secret instead (see
+		// getInternalToken()). Same reasoning applies to both: isPublicPath's
+		// blanket "/api/playback/" GET-shaped exemption (Hephaestus resolving
+		// a file to play) would otherwise also cover this PUT, which writes
+		// Hephaestus's own fallback keyframe probe back into movie/episode —
+		// see PlaybackService.cpp's PUT .../keyframes route.
+		if ((req.method == "POST" && req.path.ends_with("/played")) ||
+			(req.method == "PUT" && req.path.ends_with("/keyframes")))
 		{
 			const std::string expected = conf_.getInternalToken();
 			if (expected.empty() || req.get_header_value("X-Internal-Token") != expected)

@@ -13,7 +13,7 @@ export interface PlaybackSession {
   error:         string | null
   manifestUrl:   string | null
   isLive:        boolean
-  directPlay:    boolean | null // null: n/a (live)
+    directStream: boolean | null // null: n/a (live)
   title:         string
   durationMs:    number
   tracks:        VodTracks | null // null: loading, or n/a (live)
@@ -79,7 +79,7 @@ export function usePlaybackSession(
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState<string | null>(null)
   const [manifestUrl,   setManifestUrl]   = useState<string | null>(null)
-  const [directPlay,    setDirectPlay]    = useState<boolean | null>(null)
+    const [directStream, setDirectStream] = useState<boolean | null>(null)
   const [title,         setTitle]         = useState('')
   const [durationMs,    setDurationMs]    = useState(0)
   const [tracks,        setTracks]        = useState<VodTracks | null>(null)
@@ -115,7 +115,7 @@ export function usePlaybackSession(
           return
         }
         setManifestUrl(liveChannelManifestUrl(target.id))
-        setDirectPlay(null)
+          setDirectStream(null)
         setTracks(null)
         setLoading(false)
       }).catch(err => {
@@ -141,7 +141,7 @@ export function usePlaybackSession(
       if (genRef.current !== gen) { stopVodPlayback(res.session_id); return } // superseded while in flight
       sessionIdRef.current = res.session_id
       setManifestUrl(res.manifest_url)
-      setDirectPlay(res.direct_play)
+        setDirectStream(res.direct_stream)
       setTitle(res.title)
       setDurationMs(res.duration_ms)
       setTracks(res.tracks)
@@ -192,7 +192,7 @@ export function usePlaybackSession(
   }, [])
 
   return {
-    loading, error, manifestUrl, isLive, directPlay,
+      loading, error, manifestUrl, isLive, directStream,
     title, durationMs, tracks, audioTrack, subtitleTrack, reload, selectAudioTrack, selectSubtitleTrack, startPositionMs,
   }
 }

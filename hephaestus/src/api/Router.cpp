@@ -42,7 +42,7 @@ static bool waitForFile(const std::string& path, int maxWaitMs = 10000) {
 // can seek anywhere over the session's life) — ffmpeg's demuxer therefore
 // still has to sequentially read every interleaved video/audio packet in
 // the ENTIRE container to reach each subtitle packet, exactly as slow as a
-// full-file direct-play remux was, just without an encode on top. A real
+// full-file direct-stream remux was, just without an encode on top. A real
 // movie/episode file (many GB, especially over network storage) can easily
 // take much longer than a few seconds for that — nothing here is actually
 // "small" for that case. An EXTERNAL sidecar (the `-map 1:s:0` branch) is
@@ -424,8 +424,9 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 
         auto session = vodSessions.create(content_type, content_id, info->file_path, position_ms, audio_track,
                                            subtitle_track, hdr_capable, client_caps, info->external_subtitles,
-                                           info->duration_ms, info->preferred_audio_lang, info->preferred_subtitle_lang);
-        if (!session) {
+										   info->duration_ms, info->preferred_audio_lang, info->preferred_subtitle_lang,
+										   info->keyframes_ms, info->keyframes_size, info->keyframes_mtime);
+		if (!session) {
             res.status = 500; res.set_content(json{{"error","failed to start playback"}}.dump(), "application/json"); return;
         }
 
@@ -472,9 +473,9 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             // hls.js's subtitleTrack/audioTrack APIs instead (see
             // VideoPlayer.tsx), matched against these renditions by URL.
             {"manifest_url", "/stream/vod/" + session->sessionId() + "/master.m3u8"},
-            {"direct_play",  session->directPlay()},
-            // Prefer this session's own authoritative ffprobe duration —
-            // Kairos's info->duration_ms is only the fallback VodSession uses
+            {"direct_stream",  session->directStream()},
+			// Prefer this session's own authoritative ffprobe duration —
+			// Kairos's info->duration_ms is only the fallback VodSession uses
             // when its own probe comes back empty (see durationMs()'s comment).
             {"duration_ms",  session->durationMs() > 0 ? session->durationMs() : info->duration_ms},
             {"title",        info->title},

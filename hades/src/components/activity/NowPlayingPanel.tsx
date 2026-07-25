@@ -138,8 +138,8 @@ export function NowPlayingPanel() {
             <Stat label="Encode"        value={selected.hw_accel} />
             <Stat label="Decode"        value={selected.decode_hw_accel} />
             <Stat label="Started"       value={elapsed(selected.started_at_ms) + ' ago'} />
-            {selected.direct_play !== undefined && (
-              <Stat label="Direct play" value={selected.direct_play ? 'yes' : 'no'} />
+              {selected.direct_stream !== undefined && (
+                  <Stat label="Direct stream" value={selected.direct_stream ? 'yes' : 'no'}/>
             )}
             {selected.kind === 'channel' && <Stat label="Viewers" value={viewerLabel(selected)} />}
             <Stat label="File" value={selected.file_path} wide />

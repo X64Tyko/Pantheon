@@ -33,7 +33,7 @@ std::string decodeCodecKey(const std::string& codec, int bit_depth);
 // decode offload needs the device set up globally the same way encode does.
 // No-op otherwise.
 void pushVaapiDeviceArg(std::vector<std::string>& a, HwAccel encode, HwAccel decode,
-                         const std::string& vaapi_device);
+						const std::string& vaapi_device);
 
 // NVDEC/VAAPI decode offload — insert right before -i. Deliberately just
 // "-hwaccel cuda"/"-hwaccel vaapi" without an explicit hwaccel_output_format:
@@ -61,8 +61,8 @@ void pushVaapiDeviceArg(std::vector<std::string>& a, HwAccel encode, HwAccel dec
 // it's a web/YouTube codec not relevant to a movie/TV library) all fall
 // through to ordinary CPU decode.
 void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel decode_backend,
-                            const std::set<std::string>& decodable_codecs,
-                            const std::string& source_codec);
+						   const std::set<std::string>& decodable_codecs,
+						   const std::string& source_codec);
 
 // Video encoder selection, shared across live-channel, offline-slate, and
 // VOD ffmpeg argument builders. Appends codec args to `a` and (for AMD,
@@ -95,33 +95,37 @@ void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel decode_backend,
 // args. Exposed (not EncoderArgs.cpp-local) so VodSessionManager can resolve
 // the same choice chooseVideoCodec() makes when deciding whether two
 // viewers' transcodes can share one encode — see its own comment.
-struct VideoCodecOption {
-    std::string name; // ffprobe-style codec name — must match ClientCapabilities::video_codecs entries
-    void (*buildArgs)(std::vector<std::string>& a, std::vector<std::string>& vfParts, HwAccel hw_accel);
+struct VideoCodecOption
+{
+	std::string name; // ffprobe-style codec name — must match ClientCapabilities::video_codecs entries
+	void (*buildArgs)(std::vector<std::string>& a, std::vector<std::string>& vfParts, HwAccel hw_accel);
 };
+
 const std::vector<VideoCodecOption>& videoCodecPriority();
 // Bounded by the source's own position in the list — never picks something
 // more "exotic"/modern than the source already is. See EncoderArgs.cpp for
 // the long version.
 const VideoCodecOption& chooseVideoCodec(const std::string& source_codec,
-                                          const std::optional<ClientCapabilities>& client_caps);
+										 const std::optional<ClientCapabilities>& client_caps);
 
 // Same idea for audio — bounded by channel count instead of codec
 // generation (a surround codec only matters once there's real surround
 // content to preserve). See EncoderArgs.cpp.
-struct AudioCodecOption {
-    std::string name;
-    bool preserve_channels;
-    int  bitrate_kbps; // 0 = caller's own audio_bitrate_kbps applies instead
+struct AudioCodecOption
+{
+	std::string name;
+	bool preserve_channels;
+	int bitrate_kbps; // 0 = caller's own audio_bitrate_kbps applies instead
 };
+
 const std::vector<AudioCodecOption>& audioCodecPriority();
 const AudioCodecOption& chooseAudioCodec(const AudioTrack* source_audio,
-                                          const std::optional<ClientCapabilities>& client_caps);
+										 const std::optional<ClientCapabilities>& client_caps);
 
 // client_caps (VOD only — see its own default): "smart muxing" — the
 // non-HDR transcode target is chosen via chooseVideoCodec() (EncoderArgs.cpp)
 // instead of unconditionally hardcoding H.264, for the same reason
-// isVideoDirectPlayable/isAudioDirectPlayable check a *specific* client's own
+// isVideoDirectStreamable/isAudioDirectStreamable check a *specific* client's own
 // declared support rather than a fixed allowlist: a re-encode is sometimes
 // unavoidable for a reason that has nothing to do with codec support
 // (resolution mismatch, subtitle burn-in, SDR tone-map), and a capable
@@ -133,10 +137,10 @@ const AudioCodecOption& chooseAudioCodec(const AudioTrack* source_audio,
 // to N simultaneous viewers via Hermes — see ChannelBroadcaster) and simply
 // don't pass this, keeping their existing fixed-H.264 behavior unchanged.
 void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
-                           HwAccel hw_accel, int keyframeIntervalSecs,
-                           const VideoTrack* source_video = nullptr,
-                           bool client_hdr_capable = false,
-                           const std::optional<ClientCapabilities>& client_caps = std::nullopt);
+						  HwAccel hw_accel, int keyframeIntervalSecs,
+						  const VideoTrack* source_video                       = nullptr,
+						  bool client_hdr_capable                              = false,
+						  const std::optional<ClientCapabilities>& client_caps = std::nullopt);
 
 // Audio encoder selection, shared the same way. client_caps/source_audio:
 // same "smart muxing" reasoning as pushVideoEncoderArgs' own, via
@@ -149,9 +153,9 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
 // source_audio says there's actually more than stereo to preserve; a
 // surround codec buys nothing for an already-stereo source.
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
-                           int audio_bitrate_kbps,
-                           const std::optional<ClientCapabilities>& client_caps = std::nullopt,
-                           const AudioTrack* source_audio = nullptr);
+						  int audio_bitrate_kbps,
+						  const std::optional<ClientCapabilities>& client_caps = std::nullopt,
+						  const AudioTrack* source_audio                       = nullptr);
 
 // Joins vfParts with commas and appends "-vf <joined>" to `a` if non-empty.
 void pushVideoFilterArgs(std::vector<std::string>& a, const std::vector<std::string>& vfParts);

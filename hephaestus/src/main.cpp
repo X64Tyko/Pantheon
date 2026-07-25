@@ -92,8 +92,8 @@ int main(int argc, char* argv[]) {
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(16); };
 
-    // Per-client declared decode capability for VodSession's direct-play
-    // decision — see ClientCapabilities.h. One cache for the whole
+	// Per-client declared decode capability for VodSession's direct-stream
+	// decision — see ClientCapabilities.h. One cache for the whole
     // process's lifetime, same as every *SessionManager above.
     ClientCapabilityCache capability_cache;
 

@@ -258,13 +258,25 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     if (kind === 'channel') return
     const interval = setInterval(() => {
       if (!isRemoteActiveRef.current && currentMsRef.current > 0 && session.durationMs > 0)
-        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMsRef.current), duration_ms: Math.round(session.durationMs), device_type: 'web', direct_play: session.directPlay ?? undefined }).catch(() => {})
+          api.putWatchProgress(kind, targetId, {
+              position_ms: Math.round(currentMsRef.current),
+              duration_ms: Math.round(session.durationMs),
+              device_type: 'web',
+              direct_stream: session.directStream ?? undefined
+          }).catch(() => {
+          })
     }, PROGRESS_PING_MS)
     return () => {
       clearInterval(interval)
       if (skipCleanupPingRef.current) { skipCleanupPingRef.current = false; return }
       if (!isRemoteActiveRef.current && currentMsRef.current > 0 && session.durationMs > 0)
-        api.putWatchProgress(kind, targetId, { position_ms: Math.round(currentMsRef.current), duration_ms: Math.round(session.durationMs), device_type: 'web', direct_play: session.directPlay ?? undefined }).catch(() => {})
+          api.putWatchProgress(kind, targetId, {
+              position_ms: Math.round(currentMsRef.current),
+              duration_ms: Math.round(session.durationMs),
+              device_type: 'web',
+              direct_stream: session.directStream ?? undefined
+          }).catch(() => {
+          })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, targetId, session.durationMs])
@@ -552,7 +564,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     if (session.durationMs > 0) {
       api.putWatchProgress(kind, targetId, {
         position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
-        device_type: 'web', direct_play: session.directPlay ?? undefined,
+          device_type: 'web', direct_stream: session.directStream ?? undefined,
       }).catch(() => {})
     }
     // replace, not push: this is a continuation of the same viewing session,
@@ -572,7 +584,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     if (kind !== 'channel' && session.durationMs > 0) {
       api.putWatchProgress(kind, targetId, {
         position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
-        device_type: 'web', direct_play: session.directPlay ?? undefined,
+          device_type: 'web', direct_stream: session.directStream ?? undefined,
       }).catch(() => {})
     }
     navigate(-1)
@@ -770,7 +782,8 @@ export function PlayerPage({ kind }: PlayerPageProps) {
               />
             )}
             {menu === 'settings' && (
-              <SettingsMenu onClose={() => setMenu(null)} directPlay={session.directPlay} tracks={session.tracks} />
+                <SettingsMenu onClose={() => setMenu(null)} directStream={session.directStream}
+                              tracks={session.tracks}/>
             )}
           </div>
         </>

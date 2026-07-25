@@ -338,11 +338,17 @@ export const api = {
 
   // Watch progress
   getWatchProgress:   (limit?: number)                                     => request<WatchProgress[]>('GET', `/watch-progress${limit != null ? '?limit=' + limit : ''}`),
-  // device_type/direct_play (both optional) additionally feed the local
+    // device_type/direct_stream (both optional) additionally feed the local
   // play-history table (see kairos's PlaybackHistoryRepository) — nothing
   // client-side reads them back, they're just piggybacked onto pings this
   // call already sends.
-  putWatchProgress:   (contentType: 'movie' | 'episode', id: string, b: { position_ms: number; duration_ms: number; completed?: boolean; device_type?: string; direct_play?: boolean }) =>
+    putWatchProgress: (contentType: 'movie' | 'episode', id: string, b: {
+        position_ms: number;
+        duration_ms: number;
+        completed?: boolean;
+        device_type?: string;
+        direct_stream?: boolean
+    }) =>
                         request<{ ok: boolean; watched: boolean }>('PUT', `/watch-progress/${contentType}/${id}`, b),
   clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
   getShowWatchState:  (showId: string)                                     => request<ShowWatchState | null>('GET', `/shows/${showId}/watch-state`),

@@ -4,7 +4,8 @@
 #include <random>
 #include <sstream>
 
-static std::string generateSessionId() {
+static std::string generateSessionId()
+{
 	thread_local std::mt19937_64 rng(std::random_device{}());
 	std::ostringstream ss;
 	ss << std::hex << std::setfill('0') << std::setw(16) << rng();
@@ -16,16 +17,24 @@ static constexpr auto kActiveRefreshInterval = std::chrono::seconds(15);
 static constexpr auto kIdleRefreshInterval   = std::chrono::minutes(5);
 
 VodSessionManager::VodSessionManager(std::string ffmpeg_path, VodStreamOptions opts, KairosClient& kairos)
-	: ffmpeg_path(std::move(ffmpeg_path)), opts(std::move(opts)), kairos(kairos) {
+	: ffmpeg_path(std::move(ffmpeg_path))
+	, opts(std::move(opts))
+	, kairos(kairos)
+{
 	reaper_thread = std::thread([this] { reapLoop(); });
 	refreshSettings(); // blocking, but only once, at startup
-	settings_refresh_thread = std::thread([this] {
-		while (!stop_settings_refresh.load()) {
+	settings_refresh_thread = std::thread([this]
+	{
+		while (!stop_settings_refresh.load())
+		{
 			bool active;
-			{ std::lock_guard<std::mutex> lock(mtx); active = !sessions.empty(); }
+			{
+				std::lock_guard<std::mutex> lock(mtx);
+				active = !sessions.empty();
+			}
 			auto wait = active ? kActiveRefreshInterval : kIdleRefreshInterval;
 			for (auto elapsed = std::chrono::seconds(0); elapsed < wait && !stop_settings_refresh.load();
-				 elapsed += std::chrono::seconds(1))
+				 elapsed      += std::chrono::seconds(1))
 				std::this_thread::sleep_for(std::chrono::seconds(1));
 			if (stop_settings_refresh.load()) break;
 			refreshSettings();
@@ -33,7 +42,8 @@ VodSessionManager::VodSessionManager(std::string ffmpeg_path, VodStreamOptions o
 	});
 }
 
-VodSessionManager::~VodSessionManager() {
+VodSessionManager::~VodSessionManager()
+{
 	stop_reaper.store(true);
 	if (reaper_thread.joinable()) reaper_thread.join();
 	stop_settings_refresh.store(true);
@@ -43,7 +53,8 @@ VodSessionManager::~VodSessionManager() {
 	sessions.clear();
 }
 
-void VodSessionManager::refreshSettings() {
+void VodSessionManager::refreshSettings()
+{
 	auto verbose = kairos.getVerboseTranscodeLogs();
 	auto bs      = kairos.getBufferSize();
 	std::lock_guard<std::mutex> lock(settings_mtx);
@@ -51,14 +62,24 @@ void VodSessionManager::refreshSettings() {
 	if (bs) cached_buffer_size = *bs * 1024; // KB -> bytes
 }
 
+void VodSessionManager::pushKeyframeCache(const std::string& content_type, const std::string& content_id,
+										  const std::vector<int64_t>& keyframes_ms, int64_t size, int64_t mtime)
+{
+	kairos.pushKeyframeCache(content_type, content_id, keyframes_ms, size, mtime);
+}
+
 std::shared_ptr<VodSession> VodSessionManager::create(const std::string& content_type, const std::string& content_id,
-														const std::string& file_path, int64_t position_ms,
-														int audio_track, int subtitle_track, bool hdr_capable,
-														const std::optional<ClientCapabilities>& client_caps,
-														const std::vector<ExternalSubtitle>& external_subtitles,
-														int64_t fallback_duration_ms,
-														const std::string& preferred_audio_lang,
-														const std::string& preferred_subtitle_lang) {
+													  const std::string& file_path, int64_t position_ms,
+													  int audio_track, int subtitle_track, bool hdr_capable,
+													  const std::optional<ClientCapabilities>& client_caps,
+													  const std::vector<ExternalSubtitle>& external_subtitles,
+													  int64_t fallback_duration_ms,
+													  const std::string& preferred_audio_lang,
+													  const std::string& preferred_subtitle_lang,
+													  const std::vector<int64_t>& kairos_keyframes_ms,
+													  int64_t kairos_keyframes_size,
+													  int64_t kairos_keyframes_mtime)
+{
 	VodStreamOptions session_opts = opts;
 	{
 		std::lock_guard<std::mutex> lock(settings_mtx);
@@ -68,8 +89,10 @@ std::shared_ptr<VodSession> VodSessionManager::create(const std::string& content
 
 	auto session = std::make_shared<VodSession>(generateSessionId(), content_type, content_id, ffmpeg_path, session_opts, *this);
 	if (!session->start(file_path, position_ms, audio_track, subtitle_track, hdr_capable, client_caps,
-						 external_subtitles, fallback_duration_ms,
-						 preferred_audio_lang, preferred_subtitle_lang)) return nullptr;
+						external_subtitles, fallback_duration_ms,
+						preferred_audio_lang, preferred_subtitle_lang,
+						kairos_keyframes_ms, kairos_keyframes_size, kairos_keyframes_mtime))
+		return nullptr;
 
 	std::lock_guard<std::mutex> lock(mtx);
 	sessions[session->sessionId()] = session;
@@ -77,36 +100,42 @@ std::shared_ptr<VodSession> VodSessionManager::create(const std::string& content
 }
 
 std::shared_ptr<VodEncodeStream> VodSessionManager::getOrCreateVideoStream(
-		const VideoStreamKey& key, const std::function<std::shared_ptr<VodEncodeStream>()>& factory) {
+	const VideoStreamKey& key, const std::function<std::shared_ptr<VodEncodeStream>()>& factory)
+{
 	std::lock_guard<std::mutex> lock(stream_mtx);
 	auto it = video_streams.find(key);
-	if (it != video_streams.end()) {
+	if (it != video_streams.end())
+	{
 		if (auto existing = it->second.lock()) return existing;
 	}
-	auto created = factory();
+	auto created       = factory();
 	video_streams[key] = created;
 	return created;
 }
 
 std::shared_ptr<VodEncodeStream> VodSessionManager::getOrCreateAudioStream(
-		const AudioStreamKey& key, const std::function<std::shared_ptr<VodEncodeStream>()>& factory) {
+	const AudioStreamKey& key, const std::function<std::shared_ptr<VodEncodeStream>()>& factory)
+{
 	std::lock_guard<std::mutex> lock(stream_mtx);
 	auto it = audio_streams.find(key);
-	if (it != audio_streams.end()) {
+	if (it != audio_streams.end())
+	{
 		if (auto existing = it->second.lock()) return existing;
 	}
-	auto created = factory();
+	auto created       = factory();
 	audio_streams[key] = created;
 	return created;
 }
 
-std::shared_ptr<VodSession> VodSessionManager::get(const std::string& sessionId) {
+std::shared_ptr<VodSession> VodSessionManager::get(const std::string& sessionId)
+{
 	std::lock_guard<std::mutex> lock(mtx);
 	auto it = sessions.find(sessionId);
 	return (it != sessions.end() && it->second->isActive()) ? it->second : nullptr;
 }
 
-void VodSessionManager::stop(const std::string& sessionId) {
+void VodSessionManager::stop(const std::string& sessionId)
+{
 	std::shared_ptr<VodSession> session;
 	{
 		std::lock_guard<std::mutex> lock(mtx);
@@ -118,27 +147,31 @@ void VodSessionManager::stop(const std::string& sessionId) {
 	session->stop();
 }
 
-std::vector<std::shared_ptr<VodSession>> VodSessionManager::listActive() {
+std::vector<std::shared_ptr<VodSession>> VodSessionManager::listActive()
+{
 	std::lock_guard<std::mutex> lock(mtx);
 	std::vector<std::shared_ptr<VodSession>> out;
-	for (auto& [id, session] : sessions)
-		if (session->isActive()) out.push_back(session);
+	for (auto& [id, session] : sessions) if (session->isActive()) out.push_back(session);
 	return out;
 }
 
-void VodSessionManager::reapLoop() {
-	while (!stop_reaper.load()) {
-		for (int i = 0; i < 5 && !stop_reaper.load(); ++i)
-			std::this_thread::sleep_for(std::chrono::seconds(1));
+void VodSessionManager::reapLoop()
+{
+	while (!stop_reaper.load())
+	{
+		for (int i = 0; i < 5 && !stop_reaper.load(); ++i) std::this_thread::sleep_for(std::chrono::seconds(1));
 		if (stop_reaper.load()) break;
 
 		{
 			std::lock_guard<std::mutex> lock(mtx);
-			for (auto it = sessions.begin(); it != sessions.end(); ) {
-				if (!it->second->isActive() || it->second->isIdle()) {
+			for (auto it = sessions.begin(); it != sessions.end();)
+			{
+				if (!it->second->isActive() || it->second->isIdle())
+				{
 					it->second->stop();
 					it = sessions.erase(it);
-				} else ++it;
+				}
+				else ++it;
 			}
 		}
 		// Expired weak_ptr entries — the streams themselves already tore
@@ -147,10 +180,8 @@ void VodSessionManager::reapLoop() {
 		// unbounded with dead keys over a long-running instance's lifetime.
 		{
 			std::lock_guard<std::mutex> lock(stream_mtx);
-			for (auto it = video_streams.begin(); it != video_streams.end(); )
-				it = it->second.expired() ? video_streams.erase(it) : std::next(it);
-			for (auto it = audio_streams.begin(); it != audio_streams.end(); )
-				it = it->second.expired() ? audio_streams.erase(it) : std::next(it);
+			for (auto it = video_streams.begin(); it != video_streams.end();) it = it->second.expired() ? video_streams.erase(it) : std::next(it);
+			for (auto it = audio_streams.begin(); it != audio_streams.end();) it = it->second.expired() ? audio_streams.erase(it) : std::next(it);
 		}
 	}
 }

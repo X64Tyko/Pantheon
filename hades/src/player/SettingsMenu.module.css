@@ -13,7 +13,10 @@
   font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); letter-spacing: 0.1em;
   color: var(--hds-txt-3); margin-bottom: var(--hds-space-1); text-transform: uppercase;
 }
-.modeDirectPlay { color: var(--hds-match-green); }
+
+.modeDirectStream {
+    color: var(--hds-match-green);
+}
 .modeTranscoding { color: var(--hds-gold); }
 
 .row {

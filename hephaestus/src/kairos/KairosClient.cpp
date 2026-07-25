@@ -159,6 +159,12 @@ std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& con
 		info.duration_ms             = j.value("duration_ms", int64_t(0));
 		info.preferred_audio_lang    = j.value("preferred_audio_lang", "");
 		info.preferred_subtitle_lang = j.value("preferred_subtitle_lang", "");
+		info.keyframes_size          = j.value("keyframes_size", int64_t(0));
+		info.keyframes_mtime         = j.value("keyframes_mtime", int64_t(0));
+		if (j.contains("keyframes_ms") && j["keyframes_ms"].is_array())
+		{
+			for (const auto& v : j["keyframes_ms"]) if (v.is_number_integer()) info.keyframes_ms.push_back(v.get<int64_t>());
+		}
 		if (j.contains("external_subtitles") && j["external_subtitles"].is_array())
 		{
 			for (const auto& s : j["external_subtitles"])
@@ -178,6 +184,30 @@ std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& con
 	{
 		std::cerr << "[kairos] getPlaybackInfo JSON parse error: " << e.what() << "\n";
 		return std::nullopt;
+	}
+}
+
+void KairosClient::pushKeyframeCache(const std::string& contentType,
+									 const std::string& contentId,
+									 const std::vector<int64_t>& keyframesMs,
+									 int64_t size,
+									 int64_t mtime)
+{
+	auto cli  = makeClient(base_url);
+	json body = {
+		{"keyframes_ms", keyframesMs},
+		{"size", size},
+		{"mtime", mtime},
+	};
+	httplib::Headers headers;
+	std::string token = readKairosInternalToken(internal_token_conf_path);
+	if (!token.empty()) headers.emplace("X-Internal-Token", token);
+	std::string path = "/api/playback/" + contentType + "/" + contentId + "/keyframes";
+	auto res         = cli.Put(path, headers, body.dump(), "application/json");
+	if (!res || res->status / 100 != 2)
+	{
+		std::cerr << "[kairos] PUT " << path << " failed: "
+			<< (res ? std::to_string(res->status) : "no response") << "\n";
 	}
 }
 

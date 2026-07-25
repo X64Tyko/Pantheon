@@ -40,12 +40,23 @@ A specialized FFmpeg wrapper for high-concurrency stream delivery.
 *   **Dynamic Transcoding:** Just-in-time HLS and MPEG-TS generation with hardware acceleration (NVIDIA/VAAPI).
 *   **Drift Correction:** Ensures continuous playback by managing PTS/DTS timestamps across program transitions.
 *   **Manifest Management:** Optimized HLS manifest sliding-window for long-running linear channels.
-*   **Client Capability Detection:** Clients can declare their supported video/audio codecs (`POST /stream/client-capabilities`, keyed by bearer token); a VOD session checks the source file's codecs against that declaration (falling back to a fixed h264/aac allowlist if nothing was declared) to decide direct-play vs. transcode per client. External subtitles direct-play as WebVTT muxed into the HLS output where the format allows it; bitmap subtitle formats (PGS/DVD/DVB) instead burn in via an overlay filter and force a transcode.
+* **Client Capability Detection:** Clients can declare their supported video/audio codecs (
+  `POST /stream/client-capabilities`, keyed by bearer token); a VOD session checks the source file's codecs against that
+  declaration (falling back to a fixed h264/aac allowlist if nothing was declared) to decide direct-stream vs. transcode
+  per client. External subtitles direct-stream as WebVTT muxed into the HLS output where the format allows it; bitmap
+  subtitle formats (PGS/DVD/DVB) instead burn in via an overlay filter and force a transcode.
 
 ### 5. Client Applications
 Native and semi-native surfaces that consume Hermes/Kairos over the network rather than embedding Hades. Each lives in its own repository outside this monorepo:
 *   **[pantheon-roku](https://github.com/X64Tyko/pantheon-roku):** A native BrightScript Roku channel — Connect, Home, Library, Detail, a hand-rolled transposed time-grid Guide, Player (with track menu and Up Next), and device pairing/casting via Hermes's long-poll command channel. Feature-complete and the most battle-tested client: multiple real-hardware debugging rounds (D-pad focus, keyboard component, pagination) plus a pass through Roku's own certification checklist. HDR/codec capability signaling is still hardcoded false.
-*   **[pantheon-android](https://github.com/X64Tyko/pantheon-android):** A fully native Kotlin/Jetpack Compose app (no WebView) built against a Kairos-served UI manifest (`GET /api/tv/manifest`) that both this app and Hades' own `/tv` route consume identically. Gradle flavor matrix `store`(google/amazon) × `formFactor`(mobile/tv) → 4 variants; Home/Library/Detail/Guide/Player all built for both form factors, using Media3/ExoPlayer and Paging3. Queries its own real decode capabilities via `MediaCodecList` (`DeviceCodecCapabilities.kt`) and declares them to Hephaestus on session restore/login/profile-switch so per-client direct-play decisions reflect what the device can actually decode, rather than a fixed allowlist. Verified end-to-end on emulator against the live dev stack; the Amazon/Fire TV flavor compiles and assembles in CI but has never run on real Fire OS hardware.
+* **[pantheon-android](https://github.com/X64Tyko/pantheon-android):** A fully native Kotlin/Jetpack Compose app (no
+  WebView) built against a Kairos-served UI manifest (`GET /api/tv/manifest`) that both this app and Hades' own `/tv`
+  route consume identically. Gradle flavor matrix `store`(google/amazon) × `formFactor`(mobile/tv) → 4 variants;
+  Home/Library/Detail/Guide/Player all built for both form factors, using Media3/ExoPlayer and Paging3. Queries its own
+  real decode capabilities via `MediaCodecList` (`DeviceCodecCapabilities.kt`) and declares them to Hephaestus on
+  session restore/login/profile-switch so per-client direct-stream decisions reflect what the device can actually
+  decode, rather than a fixed allowlist. Verified end-to-end on emulator against the live dev stack; the Amazon/Fire TV
+  flavor compiles and assembles in CI but has never run on real Fire OS hardware.
 *   **[pantheon-relay](https://github.com/X64Tyko/pantheon-relay):** A minimal HTTPS-hosted Chromecast receiver bootstrap, solving the problem that Cast senders require a secure context Hades' LAN-only HTTP address can't provide on its own (an alternative to the Cloudflare Tunnel path in the README). Its planned role as a connection broker for self-hosted/managed relay modes (see the client apps design in project history) is not yet built — `/api/*` is currently a stub.
 
 ## Technical Principles

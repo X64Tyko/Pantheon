@@ -86,7 +86,7 @@ export const PlayHistoryPanel = observer(function PlayHistoryPanel() {
                 <th className="py-1 pr-4 font-normal">Title</th>
                 <th className="py-1 pr-4 font-normal">User</th>
                 <th className="py-1 pr-4 font-normal">Device</th>
-                <th className="py-1 pr-4 font-normal">Direct Play</th>
+                  <th className="py-1 pr-4 font-normal">Direct Stream</th>
                 <th className="py-1 pr-4 font-normal">Progress</th>
                 <th className="py-1 pr-4 font-normal">When</th>
               </tr>
@@ -101,8 +101,8 @@ export const PlayHistoryPanel = observer(function PlayHistoryPanel() {
                     <td className="py-2 pr-4 text-zinc-400 whitespace-nowrap">{user?.username ?? r.user_id.slice(0, 8)}</td>
                     <td className="py-2 pr-4 text-zinc-500 whitespace-nowrap">{DEVICE_LABELS[r.device_type]}</td>
                     <td className="py-2 pr-4 whitespace-nowrap">
-                      <span className={r.direct_play ? 'text-emerald-400' : 'text-amber-400'}>
-                        {r.direct_play ? 'Direct' : 'Transcode'}
+                      <span className={r.direct_stream ? 'text-emerald-400' : 'text-amber-400'}>
+                        {r.direct_stream ? 'Direct' : 'Transcode'}
                       </span>
                     </td>
                     <td className="py-2 pr-4 whitespace-nowrap">

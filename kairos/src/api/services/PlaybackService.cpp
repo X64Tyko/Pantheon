@@ -19,34 +19,42 @@ using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-PlaybackService::PlaybackService(const ServiceContext& ctx) : db_(ctx.db), conf_(ctx.conf) {}
-
-namespace {
-
-bool validContentType(const std::string& t) { return t == "movie" || t == "episode"; }
-
-// Best-effort title lookup for the playback_history row — kept a plain
-// inline query here (not a ContentRepository method) since it's only ever
-// needed by this one write path and movie/episode titles don't share a
-// column name the way GET /api/watch-progress's own two separate lookups
-// above already don't either. Empty on any failure; a missing title in the
-// history view is cosmetic, never worth failing the ping over.
-std::string lookupTitle(Database& db, const std::string& content_type, const std::string& content_id) {
-	try {
-		const char* sql = content_type == "movie"
-			? "SELECT title FROM movie WHERE movie_id = ?"
-			: "SELECT title FROM episode WHERE episode_id = ?";
-		SQLite::Statement q(db.get(), sql);
-		q.bind(1, content_id);
-		if (q.executeStep()) return q.getColumn(0).getString();
-	} catch (...) {}
-	return "";
+PlaybackService::PlaybackService(const ServiceContext& ctx)
+	: db_(ctx.db)
+	, conf_(ctx.conf)
+{
 }
 
+namespace
+{
+	bool validContentType(const std::string& t) { return t == "movie" || t == "episode"; }
+
+	// Best-effort title lookup for the playback_history row — kept a plain
+	// inline query here (not a ContentRepository method) since it's only ever
+	// needed by this one write path and movie/episode titles don't share a
+	// column name the way GET /api/watch-progress's own two separate lookups
+	// above already don't either. Empty on any failure; a missing title in the
+	// history view is cosmetic, never worth failing the ping over.
+	std::string lookupTitle(Database& db, const std::string& content_type, const std::string& content_id)
+	{
+		try
+		{
+			const char* sql = content_type == "movie"
+								  ? "SELECT title FROM movie WHERE movie_id = ?"
+								  : "SELECT title FROM episode WHERE episode_id = ?";
+			SQLite::Statement q(db.get(), sql);
+			q.bind(1, content_id);
+			if (q.executeStep()) return q.getColumn(0).getString();
+		}
+		catch (...)
+		{
+		}
+		return "";
+	}
 } // namespace
 
-void PlaybackService::registerRoutes(httplib::Server& svr) {
-
+void PlaybackService::registerRoutes(httplib::Server& svr)
+{
 	// ── GET /api/playback/:content_type/:id ───────────────────────────────────
 	// Internal — called by Hephaestus (not the browser) to resolve a library
 	// item to a playable file. Exempted from auth in Router.cpp's isPublicPath,
@@ -55,51 +63,70 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// set_pre_routing_handler) — used below to surface this user's sticky
 	// per-show track preference (see migration v92), so a viewer's own client
 	// never has to pass show_id or a saved preference through itself.
-	svr.Get("/api/playback/:content_type/:id", [this](const Req& req, Res& res) {
+	svr.Get("/api/playback/:content_type/:id", [this](const Req& req, Res& res)
+	{
 		auto content_type = req.path_params.at("content_type");
-		auto id            = req.path_params.at("id");
-		if (!validContentType(content_type)) { route::err(res, 400, "content_type must be movie or episode"); return; }
+		auto id           = req.path_params.at("id");
+		if (!validContentType(content_type))
+		{
+			route::err(res, 400, "content_type must be movie or episode");
+			return;
+		}
 
-		try {
+		try
+		{
 			// A linked special (episode.linked_movie_id set — see ScraperManager's
 			// specials linking) has no file of its own; its file_path/duration_ms
 			// must live-resolve through the movie it's linked to, never a stale
 			// copy, so a re-scanned/moved movie file is always reflected here.
 			const char* sql = content_type == "movie"
-				? "SELECT file_path, duration_ms, title, '', '' FROM movie WHERE movie_id = ?"
-				: R"(
+								  ? "SELECT file_path, duration_ms, title, '', '', keyframes_ms, keyframes_size, keyframes_mtime "
+								  "FROM movie WHERE movie_id = ?"
+								  : R"(
 					SELECT COALESCE(m.file_path, e.file_path),
 					       COALESCE(m.duration_ms, e.duration_ms),
 					       e.title,
 					       COALESCE(e.linked_movie_id, ''),
-					       e.show_id
+					       e.show_id,
+					       COALESCE(m.keyframes_ms, e.keyframes_ms),
+					       COALESCE(m.keyframes_size, e.keyframes_size),
+					       COALESCE(m.keyframes_mtime, e.keyframes_mtime)
 					FROM episode e LEFT JOIN movie m ON m.movie_id = e.linked_movie_id
 					WHERE e.episode_id = ?
 				)";
 			SQLite::Statement q(db_.get(), sql);
 			q.bind(1, id);
-			if (!q.executeStep()) { route::err(res, 404, "not found"); return; }
+			if (!q.executeStep())
+			{
+				route::err(res, 404, "not found");
+				return;
+			}
 
 			auto file_path = q.getColumn(0).getString();
-			if (file_path.empty()) { route::err(res, 404, "no file for this item"); return; }
+			if (file_path.empty())
+			{
+				route::err(res, 404, "no file for this item");
+				return;
+			}
 
 			// subtitle_track rows don't share a column across movie/episode the
 			// way file_path/duration_ms do above (COALESCE works there because
 			// both sides read the same column name) — this is a key switch
 			// instead: a linked special's external subtitles live under the
 			// movie it's linked to, not the episode row itself.
-			const auto linked_movie_id = q.getColumn(3).getString();
+			const auto linked_movie_id       = q.getColumn(3).getString();
 			const std::string sub_media_type = (content_type == "movie" || !linked_movie_id.empty()) ? "movie" : "episode";
-			const std::string sub_media_id    = content_type == "movie" ? id : (!linked_movie_id.empty() ? linked_movie_id : id);
+			const std::string sub_media_id   = content_type == "movie" ? id : (!linked_movie_id.empty() ? linked_movie_id : id);
 
 			json external_subtitles = json::array();
-			for (const auto& t : SubtitleTrackRepository(db_).get(sub_media_type, sub_media_id)) {
+			for (const auto& t : SubtitleTrackRepository(db_).get(sub_media_type, sub_media_id))
+			{
 				external_subtitles.push_back({
 					{"file_path", conf_.applyPathMap(t.file_path)},
-					{"language",  t.language},
-					{"forced",    t.forced},
-					{"sdh",       t.sdh},
-					{"title",     t.title},
+					{"language", t.language},
+					{"forced", t.forced},
+					{"sdh", t.sdh},
+					{"title", t.title},
 				});
 			}
 
@@ -111,32 +138,128 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 			// default, never touched this specific show, still gets it honored.
 			std::string preferred_audio_lang, preferred_subtitle_lang;
 			const auto show_id = q.getColumn(4).getString();
-			if (auto user = currentUser()) {
-				if (content_type == "movie") {
-					if (auto pref = MovieTrackPreferenceRepository(db_).get(user->user_id, id)) {
-						preferred_audio_lang    = pref->audio_lang;
-						preferred_subtitle_lang = pref->subtitle_lang;
-					}
-				} else if (!show_id.empty()) {
-					if (auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, show_id)) {
+			if (auto user = currentUser())
+			{
+				if (content_type == "movie")
+				{
+					if (auto pref = MovieTrackPreferenceRepository(db_).get(user->user_id, id))
+					{
 						preferred_audio_lang    = pref->audio_lang;
 						preferred_subtitle_lang = pref->subtitle_lang;
 					}
 				}
-				if (preferred_audio_lang.empty())    preferred_audio_lang    = user->default_audio_lang;
+				else if (!show_id.empty())
+				{
+					if (auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, show_id))
+					{
+						preferred_audio_lang    = pref->audio_lang;
+						preferred_subtitle_lang = pref->subtitle_lang;
+					}
+				}
+				if (preferred_audio_lang.empty()) preferred_audio_lang = user->default_audio_lang;
 				if (preferred_subtitle_lang.empty()) preferred_subtitle_lang = user->default_subtitle_lang;
 			}
 
+			// Cached direct-stream keyframe data from the sync-time probe (see
+			// Database.cpp's v98 migration and SyncManager::syncMediaProbeFromFiles)
+			// — lets Hephaestus skip its own full-file ffprobe scan on playback
+			// start when this is present and still matches the file's current
+			// size/mtime. keyframes_ms is stored as a JSON array string; an empty/
+			// unparseable value (never probed yet) surfaces as [], which
+			// Hephaestus treats the same as "no cached data."
+			json keyframes_ms = json::array();
+			try { keyframes_ms = json::parse(q.getColumn(5).getString()); }
+			catch (...)
+			{
+			}
+
 			route::ok(res, json{
-				{"file_path",               conf_.applyPathMap(file_path)},
-				{"duration_ms",             q.getColumn(1).getInt64()},
-				{"title",                   q.getColumn(2).getString()},
-				{"external_subtitles",      external_subtitles},
-				{"preferred_audio_lang",    preferred_audio_lang},
-				{"preferred_subtitle_lang", preferred_subtitle_lang},
-			}.dump());
-		} catch (const std::exception& e) {
-			route::logErr("GET /api/playback/:content_type/:id", e); route::err(res, 500, e.what());
+						  {"file_path", conf_.applyPathMap(file_path)},
+						  {"duration_ms", q.getColumn(1).getInt64()},
+						  {"title", q.getColumn(2).getString()},
+						  {"external_subtitles", external_subtitles},
+						  {"preferred_audio_lang", preferred_audio_lang},
+						  {"preferred_subtitle_lang", preferred_subtitle_lang},
+						  {"keyframes_ms", keyframes_ms},
+						  {"keyframes_size", q.getColumn(6).getInt64()},
+						  {"keyframes_mtime", q.getColumn(7).getInt64()},
+					  }.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("GET /api/playback/:content_type/:id", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	// ── PUT /api/playback/:content_type/:id/keyframes ─────────────────────────
+	// Internal — Hephaestus calls this after its own fallback ffprobe keyframe
+	// scan (the GET route above returned no cached keyframes_ms, or Hephaestus's
+	// own re-stat of the file no longer matched keyframes_size/keyframes_mtime
+	// — see VodSession::computeSegmentBoundaries()), so the next direct-stream
+	// session on this file doesn't pay for that scan again. Gated on the
+	// shared internal secret in Router.cpp's pre-routing handler, same bucket
+	// as /played — this mutates library metadata with no end-user session to
+	// check, and isPublicPath's blanket "/api/playback/" exemption would
+	// otherwise leave it wide open. Body: {"keyframes_ms": [0, 4004, ...],
+	// "size": 123, "mtime": 456}.
+	svr.Put("/api/playback/:content_type/:id/keyframes", [this](const Req& req, Res& res)
+	{
+		auto content_type = req.path_params.at("content_type");
+		auto id           = req.path_params.at("id");
+		if (!validContentType(content_type))
+		{
+			route::err(res, 400, "content_type must be movie or episode");
+			return;
+		}
+
+		try
+		{
+			json body = json::parse(req.body);
+			if (!body.contains("keyframes_ms") || !body["keyframes_ms"].is_array())
+			{
+				route::err(res, 400, "keyframes_ms must be an array");
+				return;
+			}
+			const std::string keyframes_ms = body["keyframes_ms"].dump();
+			const int64_t size             = body.value("size", int64_t(0));
+			const int64_t mtime            = body.value("mtime", int64_t(0));
+
+			// A linked special (episode.linked_movie_id set) has no file of its
+			// own — its keyframe data lives on the movie it's linked to, same
+			// resolution the GET handler above does for file_path/duration_ms.
+			std::string target_type = content_type, target_id = id;
+			if (content_type == "episode")
+			{
+				SQLite::Statement lq(db_.get(), "SELECT linked_movie_id FROM episode WHERE episode_id = ?");
+				lq.bind(1, id);
+				if (lq.executeStep())
+				{
+					auto linked = lq.getColumn(0).getString();
+					if (!linked.empty())
+					{
+						target_type = "movie";
+						target_id   = linked;
+					}
+				}
+			}
+
+			const char* sql = target_type == "movie"
+								  ? "UPDATE movie SET keyframes_ms = ?, keyframes_size = ?, keyframes_mtime = ? WHERE movie_id = ?"
+								  : "UPDATE episode SET keyframes_ms = ?, keyframes_size = ?, keyframes_mtime = ? WHERE episode_id = ?";
+			SQLite::Statement upd(db_.get(), sql);
+			upd.bind(1, keyframes_ms);
+			upd.bind(2, size);
+			upd.bind(3, mtime);
+			upd.bind(4, target_id);
+			upd.exec();
+
+			route::ok(res, json{{"ok", true}}.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("PUT /api/playback/:content_type/:id/keyframes", e);
+			route::err(res, 500, e.what());
 		}
 	});
 
@@ -146,25 +269,38 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// neither client needs to know or plumb show_id. Body: any of
 	// {"audio_lang": "eng", "subtitle_lang": "spa"} (a field absent/omitted
 	// leaves that side untouched — see ShowTrackPreferenceRepository::set).
-	svr.Put("/api/episodes/:id/track-preference", [this](const Req& req, Res& res) {
+	svr.Put("/api/episodes/:id/track-preference", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 
-		try {
+		try
+		{
 			auto episode = ContentRepository(db_).getEpisode(req.path_params.at("id"));
-			if (!episode) { route::err(res, 404, "not found"); return; }
+			if (!episode)
+			{
+				route::err(res, 404, "not found");
+				return;
+			}
 
 			auto b = json::parse(req.body);
 			std::optional<std::string> audio_lang, subtitle_lang;
-			if (b.contains("audio_lang"))    audio_lang    = b.at("audio_lang").get<std::string>();
+			if (b.contains("audio_lang")) audio_lang = b.at("audio_lang").get<std::string>();
 			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
 
 			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
 			ShowTrackPreferenceRepository(db_).set(user->user_id, episode->show_id, audio_lang, subtitle_lang, now_ms);
 
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const std::exception& e) {
-			route::logErr("PUT /api/episodes/:id/track-preference", e); route::err(res, 400, e.what());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("PUT /api/episodes/:id/track-preference", e);
+			route::err(res, 400, e.what());
 		}
 	});
 
@@ -174,29 +310,43 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// let the detail page read/write the same show_track_preference row
 	// directly by show_id, so a preference can be set before ever pressing
 	// play at all — the whole reason this pair exists.
-	svr.Get("/api/shows/:id/track-preference", [this](const Req& req, Res& res) {
+	svr.Get("/api/shows/:id/track-preference", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 		auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, req.path_params.at("id"));
 		route::ok(res, json{
-			{"audio_lang",    pref ? pref->audio_lang    : ""},
-			{"subtitle_lang", pref ? pref->subtitle_lang : ""},
-		}.dump());
+					  {"audio_lang", pref ? pref->audio_lang : ""},
+					  {"subtitle_lang", pref ? pref->subtitle_lang : ""},
+				  }.dump());
 	});
 
-	svr.Put("/api/shows/:id/track-preference", [this](const Req& req, Res& res) {
+	svr.Put("/api/shows/:id/track-preference", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
-		try {
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
+		try
+		{
 			auto b = json::parse(req.body);
 			std::optional<std::string> audio_lang, subtitle_lang;
-			if (b.contains("audio_lang"))    audio_lang    = b.at("audio_lang").get<std::string>();
+			if (b.contains("audio_lang")) audio_lang = b.at("audio_lang").get<std::string>();
 			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
 			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
 			ShowTrackPreferenceRepository(db_).set(user->user_id, req.path_params.at("id"), audio_lang, subtitle_lang, now_ms);
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const std::exception& e) {
-			route::logErr("PUT /api/shows/:id/track-preference", e); route::err(res, 400, e.what());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("PUT /api/shows/:id/track-preference", e);
+			route::err(res, 400, e.what());
 		}
 	});
 
@@ -206,29 +356,43 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// existing show/movie split everywhere else, e.g. subtitle_track uses
 	// media_type+media_id instead — the two conventions coexist for
 	// different reasons, this one following the narrower, older precedent).
-	svr.Get("/api/movies/:id/track-preference", [this](const Req& req, Res& res) {
+	svr.Get("/api/movies/:id/track-preference", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 		auto pref = MovieTrackPreferenceRepository(db_).get(user->user_id, req.path_params.at("id"));
 		route::ok(res, json{
-			{"audio_lang",    pref ? pref->audio_lang    : ""},
-			{"subtitle_lang", pref ? pref->subtitle_lang : ""},
-		}.dump());
+					  {"audio_lang", pref ? pref->audio_lang : ""},
+					  {"subtitle_lang", pref ? pref->subtitle_lang : ""},
+				  }.dump());
 	});
 
-	svr.Put("/api/movies/:id/track-preference", [this](const Req& req, Res& res) {
+	svr.Put("/api/movies/:id/track-preference", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
-		try {
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
+		try
+		{
 			auto b = json::parse(req.body);
 			std::optional<std::string> audio_lang, subtitle_lang;
-			if (b.contains("audio_lang"))    audio_lang    = b.at("audio_lang").get<std::string>();
+			if (b.contains("audio_lang")) audio_lang = b.at("audio_lang").get<std::string>();
 			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
 			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
 			MovieTrackPreferenceRepository(db_).set(user->user_id, req.path_params.at("id"), audio_lang, subtitle_lang, now_ms);
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const std::exception& e) {
-			route::logErr("PUT /api/movies/:id/track-preference", e); route::err(res, 400, e.what());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("PUT /api/movies/:id/track-preference", e);
+			route::err(res, 400, e.what());
 		}
 	});
 
@@ -242,16 +406,26 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// than the show just vanishing until the viewer manually starts it again.
 	// Mirrors resolvePlayTarget.ts's client-side resume logic, computed here
 	// once per show for the shelf instead of on demand.
-	svr.Get("/api/watch-progress", [this](const Req& req, Res& res) {
+	svr.Get("/api/watch-progress", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
-
-		int limit = 24;
-		if (auto it = req.params.find("limit"); it != req.params.end()) {
-			try { limit = std::clamp(std::stoi(it->second), 1, 100); } catch (...) {}
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
 		}
 
-		try {
+		int limit = 24;
+		if (auto it = req.params.find("limit"); it != req.params.end())
+		{
+			try { limit = std::clamp(std::stoi(it->second), 1, 100); }
+			catch (...)
+			{
+			}
+		}
+
+		try
+		{
 			json out = json::array();
 
 			// completed is the rewatch count (see WatchProgressRepository.h), not a
@@ -265,7 +439,8 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 					AND duration_ms > 0 AND position_ms < duration_ms
 			)SQL");
 			movies.bind(1, user->user_id);
-			while (movies.executeStep()) {
+			while (movies.executeStep())
+			{
 				auto content_id = movies.getColumn(0).getString();
 				SQLite::Statement m(db_.get(), "SELECT title FROM movie WHERE movie_id = ?");
 				m.bind(1, content_id);
@@ -292,7 +467,8 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 
 			WatchProgressRepository wpRepo(db_);
 			ContentRepository contentRepo(db_);
-			for (auto& show_id : show_ids) {
+			for (auto& show_id : show_ids)
+			{
 				auto state = wpRepo.getLatestForShow(user->user_id, show_id);
 				if (!state) continue;
 
@@ -301,7 +477,8 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 				auto duration_ms = state->duration_ms;
 				bool up_next     = false;
 
-				if (state->completed) {
+				if (state->completed)
+				{
 					auto next = contentRepo.getNextEpisode(state->content_id);
 					if (!next) continue; // finale watched — nothing to continue into
 					content_id  = next->episode_id;
@@ -322,11 +499,11 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 				// Kept as the completed episode's timestamp (not "now") when
 				// synthesizing an up_next card, so shelf ordering still
 				// reflects how recently the show was actually watched.
-				r["updated_at"]   = state->updated_at;
-				r["title"]        = e.getColumn(0).getString();
-				r["season"]       = e.getColumn(1).getInt();
-				r["episode"]      = e.getColumn(2).getInt();
-				r["show_id"]      = show_id;
+				r["updated_at"] = state->updated_at;
+				r["title"]      = e.getColumn(0).getString();
+				r["season"]     = e.getColumn(1).getInt();
+				r["episode"]    = e.getColumn(2).getInt();
+				r["show_id"]    = show_id;
 				if (up_next) r["up_next"] = true;
 
 				SQLite::Statement s(db_.get(), "SELECT title FROM show WHERE show_id = ?");
@@ -336,14 +513,18 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 				out.push_back(std::move(r));
 			}
 
-			std::sort(out.begin(), out.end(), [](const json& a, const json& b) {
+			std::sort(out.begin(), out.end(), [](const json& a, const json& b)
+			{
 				return a["updated_at"].get<int64_t>() > b["updated_at"].get<int64_t>();
 			});
 			if (out.size() > static_cast<size_t>(limit)) out.erase(out.begin() + limit, out.end());
 
 			route::ok(res, out.dump());
-		} catch (const std::exception& e) {
-			route::logErr("GET /api/watch-progress", e); route::err(res, 500, e.what());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("GET /api/watch-progress", e);
+			route::err(res, 500, e.what());
 		}
 	});
 
@@ -355,20 +536,30 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// "played" survives as a durable fact (see migration v73). Ordinary pings
 	// with no "completed" field behave exactly as before.
 	//
-	// device_type/direct_play (both optional, client already knows both from
+	// device_type/direct_stream (both optional, client already knows both from
 	// its own session-start response) additionally feed PlaybackHistoryRepository
 	// — see migration v91's comment for why that's a separate append-only
 	// table rather than something bolted onto watch_progress itself.
-	svr.Put("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res) {
+	svr.Put("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 
 		auto content_type = req.path_params.at("content_type");
-		auto content_id    = req.path_params.at("id");
-		if (!validContentType(content_type)) { route::err(res, 400, "content_type must be movie or episode"); return; }
+		auto content_id   = req.path_params.at("id");
+		if (!validContentType(content_type))
+		{
+			route::err(res, 400, "content_type must be movie or episode");
+			return;
+		}
 
-		try {
-			auto b = json::parse(req.body);
+		try
+		{
+			auto b              = json::parse(req.body);
 			int64_t position_ms = b.value("position_ms", int64_t{0});
 			int64_t duration_ms = b.value("duration_ms", int64_t{0});
 			if (position_ms < 0) position_ms = 0;
@@ -379,17 +570,20 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 
 			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
 			WatchProgressRepository(db_).upsert(user->user_id, content_type, content_id,
-				position_ms, duration_ms, now_ms / 1000, completed);
+												position_ms, duration_ms, now_ms / 1000, completed);
 
 			PlaybackHistoryRepository(db_).recordPing(
 				user->user_id, content_type, content_id,
 				lookupTitle(db_, content_type, content_id),
-				b.value("device_type", ""), b.value("direct_play", false),
+				b.value("device_type", ""), b.value("direct_stream", false),
 				position_ms, duration_ms, now_ms, completed);
 
 			route::ok(res, json{{"ok", true}, {"watched", completed}}.dump());
-		} catch (const std::exception& e) {
-			route::logErr("PUT /api/watch-progress/:content_type/:id", e); route::err(res, 400, e.what());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("PUT /api/watch-progress/:content_type/:id", e);
+			route::err(res, 400, e.what());
 		}
 	});
 
@@ -399,23 +593,36 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// from "the last episode was finished, continue at the next one" (see
 	// hades/src/player/resolvePlayTarget.ts). Unlike the Continue Watching
 	// list above, this deliberately does not filter out completed rows.
-	svr.Get("/api/shows/:id/watch-state", [this](const Req& req, Res& res) {
+	svr.Get("/api/shows/:id/watch-state", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 
-		try {
+		try
+		{
 			auto state = WatchProgressRepository(db_).getLatestForShow(user->user_id, req.path_params.at("id"));
-			if (!state) { route::ok(res, "null"); return; }
+			if (!state)
+			{
+				route::ok(res, "null");
+				return;
+			}
 
 			route::ok(res, json{
-				{"content_id",  state->content_id},
-				{"position_ms", state->position_ms},
-				{"duration_ms", state->duration_ms},
-				{"completed",   state->completed},
-				{"updated_at",  state->updated_at},
-			}.dump());
-		} catch (const std::exception& e) {
-			route::logErr("GET /api/shows/:id/watch-state", e); route::err(res, 500, e.what());
+						  {"content_id", state->content_id},
+						  {"position_ms", state->position_ms},
+						  {"duration_ms", state->duration_ms},
+						  {"completed", state->completed},
+						  {"updated_at", state->updated_at},
+					  }.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("GET /api/shows/:id/watch-state", e);
+			route::err(res, 500, e.what());
 		}
 	});
 
@@ -427,28 +634,37 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 	// Roku) ever needs to re-implement this branch itself. Movies don't need
 	// this endpoint at all — trivial, position_ms always 0, every caller
 	// already special-cases that before ever reaching here.
-	svr.Get("/api/shows/:id/resolve-play-target", [this](const Req& req, Res& res) {
+	svr.Get("/api/shows/:id/resolve-play-target", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 
 		auto show_id = req.path_params.at("id");
-		try {
+		try
+		{
 			ContentRepository content(db_);
 
 			auto state = WatchProgressRepository(db_).getLatestForShow(user->user_id, show_id);
-			if (state && !state->completed) {
+			if (state && !state->completed)
+			{
 				route::ok(res, json{
-					{"kind", "episode"}, {"id", state->content_id}, {"position_ms", state->position_ms},
-				}.dump());
+							  {"kind", "episode"}, {"id", state->content_id}, {"position_ms", state->position_ms},
+						  }.dump());
 				return;
 			}
 
-			if (state && state->completed) {
+			if (state && state->completed)
+			{
 				auto next = content.getNextEpisode(state->content_id);
-				if (next) {
+				if (next)
+				{
 					route::ok(res, json{
-						{"kind", "episode"}, {"id", next->episode_id}, {"position_ms", int64_t{0}},
-					}.dump());
+								  {"kind", "episode"}, {"id", next->episode_id}, {"position_ms", int64_t{0}},
+							  }.dump());
 					return;
 				}
 			}
@@ -458,29 +674,45 @@ void PlaybackService::registerRoutes(httplib::Server& svr) {
 			// is season/episode ascending, so the first entry is exactly the
 			// same fallback resolvePlayTarget.ts computes client-side.
 			auto episodes = content.listEpisodesForShow(show_id);
-			if (episodes.empty()) { route::ok(res, "null"); return; }
+			if (episodes.empty())
+			{
+				route::ok(res, "null");
+				return;
+			}
 
 			route::ok(res, json{
-				{"kind", "episode"}, {"id", episodes.front().episode_id}, {"position_ms", int64_t{0}},
-			}.dump());
-		} catch (const std::exception& e) {
-			route::logErr("GET /api/shows/:id/resolve-play-target", e); route::err(res, 500, e.what());
+						  {"kind", "episode"}, {"id", episodes.front().episode_id}, {"position_ms", int64_t{0}},
+					  }.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("GET /api/shows/:id/resolve-play-target", e);
+			route::err(res, 500, e.what());
 		}
 	});
 
 	// ── DELETE /api/watch-progress/:content_type/:id ──────────────────────────
-	svr.Delete("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res) {
+	svr.Delete("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res)
+	{
 		auto user = currentUser();
-		if (!user) { route::err(res, 401, "Unauthorized"); return; }
+		if (!user)
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 
 		auto content_type = req.path_params.at("content_type");
-		auto content_id    = req.path_params.at("id");
+		auto content_id   = req.path_params.at("id");
 
-		try {
+		try
+		{
 			WatchProgressRepository(db_).remove(user->user_id, content_type, content_id);
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const std::exception& e) {
-			route::logErr("DELETE /api/watch-progress/:content_type/:id", e); route::err(res, 400, e.what());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("DELETE /api/watch-progress/:content_type/:id", e);
+			route::err(res, 400, e.what());
 		}
 	});
 }

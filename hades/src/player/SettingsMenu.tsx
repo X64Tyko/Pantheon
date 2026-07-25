@@ -3,19 +3,19 @@ import styles from './SettingsMenu.module.css'
 
 interface SettingsMenuProps {
   onClose:    () => void
-  directPlay: boolean | null
+    directStream: boolean | null
   tracks:     VodTracks | null
 }
 
-export function SettingsMenu({ onClose, directPlay, tracks }: SettingsMenuProps) {
+export function SettingsMenu({onClose, directStream, tracks}: SettingsMenuProps) {
   const video = tracks?.video[0]
   return (
     <div className={styles.overlay} onClick={onClose}>
       <div className={styles.panel} onClick={e => e.stopPropagation()}>
         <div className={styles.sectionTitle}>Playback</div>
         <Row label="Mode">
-          <span className={directPlay ? styles.modeDirectPlay : styles.modeTranscoding}>
-            {directPlay === null ? '—' : directPlay ? 'Direct Play' : 'Transcoding'}
+          <span className={directStream ? styles.modeDirectStream : styles.modeTranscoding}>
+            {directStream === null ? '—' : directStream ? 'Direct Stream' : 'Transcoding'}
           </span>
         </Row>
         {video && (

@@ -7,11 +7,11 @@ class ClientCapabilityCache;
 // "Bearer <token>" -> "<token>"; empty if the header is missing/malformed.
 // Shared with the Hephaestus Router's own /stream/vod/start handler (which
 // needs the same token to look up a client's declared capability before
-// deciding direct-play), rather than duplicating this in both places.
+// deciding direct-stream), rather than duplicating this in both places.
 std::string extractBearerToken(const httplib::Request& req);
 
 // Client-declared decode capability, keyed by bearer token — lets
-// isDirectPlayable() (VodSession.cpp) make a per-client direct-play
+// isDirectStreamable() (VodSession.cpp) make a per-client direct-stream
 // decision instead of a fixed global allowlist. See ClientCapabilities.h
 // for the full design (in-memory, restart-wiped, why that's fine).
 //
@@ -24,4 +24,4 @@ std::string extractBearerToken(const httplib::Request& req);
 // caller here, no separate auth check needed beyond "a token was
 // present"), and Hephaestus's own /api/ namespace is already spoken for by
 // unrelated routes.
-void registerClientCapabilitiesRoutes(httplib::Server& svr, ClientCapabilityCache& cache);
+void registerClientCapabilitiesRoutes(httplib::Server & svr, ClientCapabilityCache & cache);

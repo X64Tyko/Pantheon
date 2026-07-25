@@ -9,29 +9,31 @@ class Database;
 // why this is a separate append-only table from watch_progress (which stays
 // exactly what it's always been: current resume state, one row per
 // (user,content), upserted in place).
-struct PlaybackHistoryRow {
+struct PlaybackHistoryRow
+{
 	std::string event_id;
 	std::string user_id;
 	std::string content_type;
 	std::string content_id;
 	std::string title;
-	std::string device_type;   // "web" | "android-mobile" | "android-tv" | "roku" | "" (unknown)
-	bool        direct_play = false;
-	int64_t     started_at_ms = 0;
-	int64_t     ended_at_ms   = 0;
-	int64_t     started_position_ms = 0;
-	int64_t     last_position_ms    = 0;
-	int64_t     duration_ms  = 0;
-	bool        completed    = false;
+	std::string device_type; // "web" | "android-mobile" | "android-tv" | "roku" | "" (unknown)
+	bool direct_stream          = false;
+	int64_t started_at_ms       = 0;
+	int64_t ended_at_ms         = 0;
+	int64_t started_position_ms = 0;
+	int64_t last_position_ms    = 0;
+	int64_t duration_ms         = 0;
+	bool completed              = false;
 };
 
-class PlaybackHistoryRepository {
+class PlaybackHistoryRepository
+{
 public:
 	explicit PlaybackHistoryRepository(Database& db);
 
 	// Called from the same place watch_progress gets upserted (PUT
 	// /api/watch-progress/:content_type/:id) — NOT a new event-reporting
-	// pipeline, just piggybacking two more fields (device_type, direct_play)
+	// pipeline, just piggybacking two more fields (device_type, direct_stream)
 	// onto pings the client already sends. Extends the most recent history
 	// row for (user_id, content_type, content_id) if its ended_at_ms is
 	// within kSessionGapMs of now_ms (still "the same sitting"); otherwise
@@ -40,15 +42,15 @@ public:
 	// watch-progress ping itself (which remains the source of truth for
 	// resume/continue-watching regardless of whether this succeeds).
 	void recordPing(const std::string& user_id, const std::string& content_type,
-	                 const std::string& content_id, const std::string& title,
-	                 const std::string& device_type, bool direct_play,
-	                 int64_t position_ms, int64_t duration_ms, int64_t now_ms, bool completed);
+					const std::string& content_id, const std::string& title,
+					const std::string& device_type, bool direct_stream,
+					int64_t position_ms, int64_t duration_ms, int64_t now_ms, bool completed);
 
 	// Most-recent-first. user_id_filter empty = every user (admin-only view —
 	// callers must check role themselves, this repository has no concept of
 	// permissions). from_ms/to_ms of 0 = unbounded on that side.
 	std::vector<PlaybackHistoryRow> list(const std::string& user_id_filter,
-	                                      int64_t from_ms, int64_t to_ms, int limit);
+										 int64_t from_ms, int64_t to_ms, int limit);
 
 	// "Who's actively playing something right now" — unlike list(), which
 	// windows on started_at_ms (when a sitting began), this windows on

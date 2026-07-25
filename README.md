@@ -290,28 +290,28 @@ Full endpoint-by-endpoint reference: **[x64tyko.github.io/Pantheon/API.html](htt
 
 Alpha Complete.
 
-| Area | State   |
-|---|---------|
-| Library sync (Plex, Jellyfin, Emby, local) | Working |
-| Cross-source merge & canonical settings | Working |
-| Metadata scraping (TMDB, TVDB, AniDB) | Working <experimental> |
-| Metadata writeback (Plex, Jellyfin) | Working <experimental> |
-| Playlists (static + smart/filter-driven, source sync + writeback) | Working |
-| Home page shelves (incl. seasonal/tag-driven) | Working |
-| Audio/subtitle language filtering + external subtitles | Working |
-| Per-client direct-play capability declaration | Working |
-| Discovery & Requests (*arr stack integration) | Working <experimental> |
-| Chapter detection & review | Working <experimental> |
-| Series continuation (skip intro/credits, up next, auto-advance) | Code-complete, untested against a real library |
-| Show specials linking | Working |
-| IPTV channel scheduling + EPG | Working |
-| Stream delivery (Hermes + Hephaestus) | Working |
-| Media player | Working |
-| Chromecast (browser) | Working <experimental> |
-| Chromecast relay (pantheon-relay) | Working |
-| Roku native app (pantheon-roku) | Verified functional on real hardware; pending capability-manifest update + retest before public release |
-| Multi-User & Parental Controls | Working <experimental> |
-| HDHomeRun emulation | Working |
-| Log Centralization | Working |
+| Area                                                              | State                                                                                                   |
+|-------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| Library sync (Plex, Jellyfin, Emby, local)                        | Working                                                                                                 |
+| Cross-source merge & canonical settings                           | Working                                                                                                 |
+| Metadata scraping (TMDB, TVDB, AniDB)                             | Working <experimental>                                                                                  |
+| Metadata writeback (Plex, Jellyfin)                               | Working <experimental>                                                                                  |
+| Playlists (static + smart/filter-driven, source sync + writeback) | Working                                                                                                 |
+| Home page shelves (incl. seasonal/tag-driven)                     | Working                                                                                                 |
+| Audio/subtitle language filtering + external subtitles            | Working                                                                                                 |
+| Per-client direct-stream capability declaration                   | Working                                                                                                 |
+| Discovery & Requests (*arr stack integration)                     | Working <experimental>                                                                                  |
+| Chapter detection & review                                        | Working <experimental>                                                                                  |
+| Series continuation (skip intro/credits, up next, auto-advance)   | Code-complete, untested against a real library                                                          |
+| Show specials linking                                             | Working                                                                                                 |
+| IPTV channel scheduling + EPG                                     | Working                                                                                                 |
+| Stream delivery (Hermes + Hephaestus)                             | Working                                                                                                 |
+| Media player                                                      | Working                                                                                                 |
+| Chromecast (browser)                                              | Working <experimental>                                                                                  |
+| Chromecast relay (pantheon-relay)                                 | Working                                                                                                 |
+| Roku native app (pantheon-roku)                                   | Verified functional on real hardware; pending capability-manifest update + retest before public release |
+| Multi-User & Parental Controls                                    | Working <experimental>                                                                                  |
+| HDHomeRun emulation                                               | Working                                                                                                 |
+| Log Centralization                                                | Working                                                                                                 |
 
 Issues and feedback welcome.

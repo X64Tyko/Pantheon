@@ -2346,6 +2346,38 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id) {
     }
 }
 
+namespace
+{
+	// Size + mtime at keyframe-probe time — stored alongside keyframes_ms so
+	// Hephaestus can tell a cached probe is still trustworthy without assuming a
+	// stable file_path means a stable file: Sonarr/Radarr-style upgrades replace
+	// a library file in place (same path, new content), which this catches but
+	// the path alone never would. Same last_write_time-to-epoch conversion as
+	// LocalSource.cpp's fsAddedAtEpoch, kept as a separate copy since that one's
+	// file-local. Both fields are 0 on any stat error, which a real file's stat
+	// will practically never match, so a stat failure here just always forces
+	// Hephaestus to re-probe rather than risking a false "unchanged."
+	struct FileFingerprint
+	{
+		int64_t size = 0, mtime = 0;
+	};
+
+	FileFingerprint statFingerprint(const std::filesystem::path& p)
+	{
+		std::error_code ec;
+		FileFingerprint fp;
+		auto sz = std::filesystem::file_size(p, ec);
+		if (!ec) fp.size = static_cast<int64_t>(sz);
+		auto ftime = std::filesystem::last_write_time(p, ec);
+		if (!ec)
+		{
+			auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+			fp.mtime  = static_cast<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+		}
+		return fp;
+	}
+} // namespace
+
 // See SyncManager.h's declaration for the full rationale (combined ffprobe +
 // subtitle sidecar cataloging in one pass over the same item set).
 void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
@@ -2359,20 +2391,21 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
         std::string mapped_path;
         std::string mapped_dir;
         std::string video_stem;
-        std::string resolution_label;    // current DB value — empty means never probed
-        int64_t     duration_ms = 0;     // current DB value
-        std::string audio_languages;     // current DB value — '[]'/empty means never (language-)probed
-    };
-    std::vector<ScanItem> items;
+        std::string resolution_label; // current DB value — empty means never probed
+        int64_t     duration_ms = 0;  // current DB value
+        std::string audio_languages;  // current DB value — '[]'/empty means never (language-)probed
+		std::string keyframes_ms;     // current DB value — empty means never keyframe-probed
+	};
+	std::vector<ScanItem> items;
 
     {
         SQLite::Statement q(sync_db_, R"(
-            SELECT sm.kairos_id, e.file_path, e.resolution_label, e.duration_ms, e.audio_languages
+            SELECT sm.kairos_id, e.file_path, e.resolution_label, e.duration_ms, e.audio_languages, e.keyframes_ms
             FROM source_mapping sm
             JOIN episode e ON e.episode_id = sm.kairos_id
             WHERE sm.item_type='episode' AND sm.source_id=?
         )");
-        q.bind(1, source_id);
+		q.bind(1, source_id);
         while (q.executeStep()) {
             const std::string file_path = q.getColumn(1).getString();
             if (file_path.empty()) continue;
@@ -2382,20 +2415,22 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             items.push_back({
                 q.getColumn(0).getString(), "episode", file_path, mapped,
                 mp.parent_path().string(), mp.filename().stem().string(),
-                q.getColumn(2).getString(), q.getColumn(3).getInt64(), q.getColumn(4).getString()
-            });
-        }
-    }
-    {
-        SQLite::Statement q(sync_db_, R"(
-            SELECT sm.kairos_id, m.file_path, m.resolution_label, m.duration_ms, m.audio_languages
+                q.getColumn(2).getString(), q.getColumn(3).getInt64(), q.getColumn(4).getString(),
+				q.getColumn(5).getString()
+			});
+		}
+	}
+	{
+		SQLite::Statement q(sync_db_, R"(
+            SELECT sm.kairos_id, m.file_path, m.resolution_label, m.duration_ms, m.audio_languages, m.keyframes_ms
             FROM source_mapping sm
             JOIN movie m ON m.movie_id = sm.kairos_id
             WHERE sm.item_type='movie' AND sm.source_id=?
         )");
-        q.bind(1, source_id);
-        while (q.executeStep()) {
-            const std::string file_path = q.getColumn(1).getString();
+		q.bind(1, source_id);
+		while (q.executeStep())
+		{
+			const std::string file_path = q.getColumn(1).getString();
             if (file_path.empty()) continue;
             const std::string mapped = conf_.applyPathMap(file_path);
             if (!std::filesystem::exists(mapped)) continue;
@@ -2403,13 +2438,15 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             items.push_back({
                 q.getColumn(0).getString(), "movie", file_path, mapped,
                 mp.parent_path().string(), mp.filename().stem().string(),
-                q.getColumn(2).getString(), q.getColumn(3).getInt64(), q.getColumn(4).getString()
-            });
-        }
-    }
+                q.getColumn(2).getString(), q.getColumn(3).getInt64(), q.getColumn(4).getString(),
+				q.getColumn(5).getString()
+			});
+		}
+	}
 
-    if (items.empty()) {
-        std::cout << "[sync] media probe done: " << source_id << " (nothing to scan)" << std::endl;
+	if (items.empty())
+	{
+		std::cout << "[sync] media probe done: " << source_id << " (nothing to scan)" << std::endl;
         return;
     }
 
@@ -2440,21 +2477,24 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
     for (size_t d = 0; d < dirs.size(); ++d) dir_index[dirs[d]] = d;
 
     // ── Media-info probe — one combined ffprobe call per file that needs it ──
-    // (resolution never probed, the current duration looks implausible, or
-    // audio_languages is still at its untouched '[]'/empty default). The
-    // language check matters on its own: a file can arrive with a valid
-    // resolution_label/duration_ms from the source's own metadata (e.g. Plex-
-    // reported values on import) well before Kairos ever ffprobes it itself,
-    // which used to leave audio_languages/embedded_subtitle_languages
-    // permanently unpopulated for such files — probeFileInfo (the only thing
-    // that fills them in) would never run because the other two fields
-    // already looked "already probed." Surfaced as audio/subtitle language
-    // pills and the pre-playback language picker silently having nothing to
-    // show for an otherwise perfectly normal file.
-    std::vector<std::optional<FileProbeInfo>> probe_results(items.size());
-    {
-        std::atomic<size_t> next{0};
-        const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(items.size()));
+    // (resolution never probed, the current duration looks implausible,
+    // audio_languages is still at its untouched '[]'/empty default, or
+	// keyframes_ms is still empty). The language check matters on its own: a
+	// file can arrive with a valid resolution_label/duration_ms from the
+	// source's own metadata (e.g. Plex-reported values on import) well
+	// before Kairos ever ffprobes it itself, which used to leave
+	// audio_languages/embedded_subtitle_languages permanently unpopulated
+	// for such files — probeFileInfo (the only thing that fills them in)
+	// would never run because the other two fields already looked "already
+	// probed." Surfaced as audio/subtitle language pills and the
+	// pre-playback language picker silently having nothing to show for an
+	// otherwise perfectly normal file. The keyframes_ms check is the same
+	// idea, and also what backfills it for every file synced before that
+	// column existed (see Database.cpp's v98 migration comment).
+	std::vector<std::optional<FileProbeInfo>> probe_results(items.size());
+	{
+		std::atomic<size_t> next{0};
+		const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(items.size()));
         OperationRecorder::reportThreads(worker_count);
         std::vector<std::thread> workers;
         workers.reserve(static_cast<size_t>(worker_count));
@@ -2463,27 +2503,31 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
                 for (size_t i = next.fetch_add(1); i < items.size(); i = next.fetch_add(1)) {
                     const auto& it = items[i];
                     const bool langs_never_probed = it.audio_languages.empty() || it.audio_languages == "[]";
-                    const bool needs_probe = it.resolution_label.empty() || !durationLooksValid(it.duration_ms) || langs_never_probed;
-                    if (needs_probe) probe_results[i] = probeFileInfo(it.mapped_path);
-                }
-            });
-        }
-        for (auto& t : workers) t.join();
-    }
+                    const bool needs_probe = it.resolution_label.empty() || !durationLooksValid(it.duration_ms)
+                        || langs_never_probed || it.keyframes_ms.empty();
+					if (needs_probe) probe_results[i] = probeFileInfo(it.mapped_path);
+				}
+			});
+		}
+		for (auto& t : workers) t.join();
+	}
 
-    // ── Compute (in memory, no DB I/O) ─────────────────────────────────────────
+	// ── Compute (in memory, no DB I/O) ─────────────────────────────────────────
     struct ProbeUpdate {
         std::string kairos_id;
         std::string resolution_label;
         std::string audio_languages;
         std::string embedded_subs;
         int64_t     duration_ms;
+        std::string keyframes_ms;
+        int64_t     keyframes_size;
+        int64_t     keyframes_mtime;
     };
     std::vector<std::string> episode_ids, movie_ids;
     std::vector<SubtitleTrack> episode_tracks, movie_tracks;
     std::vector<ProbeUpdate> episode_updates, movie_updates;
-    int with_ext_subs = 0, media_probed = 0;
-    // How many items will actually get an ffprobe this pass — for the "N/M"
+	int with_ext_subs = 0, media_probed = 0;
+	// How many items will actually get an ffprobe this pass — for the "N/M"
     // progress prefix below, so a user watching the Activity log can tell how
     // much of this phase is left, not just that it's running.
     const size_t to_probe = static_cast<size_t>(std::count_if(
@@ -2546,25 +2590,30 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
         }
 
         const std::string resolution_label = bucketResolutionLabel(probed.video.height);
+        const auto fp = statFingerprint(it.mapped_path);
         auto& updates = it.media_type == "movie" ? movie_updates : episode_updates;
         updates.push_back(ProbeUpdate{
             it.kairos_id,
             resolution_label,
-            nlohmann::json(probed.langs.audio).dump(),
-            nlohmann::json(probed.langs.subtitle).dump(),
+			nlohmann::json(probed.langs.audio).dump(),
+			nlohmann::json(probed.langs.subtitle).dump(),
             new_duration_ms,
+            nlohmann::json(probed.keyframes_ms).dump(),
+            fp.size,
+            fp.mtime,
         });
 
         std::cout << "[sync-advanced]   probed " << media_probed << "/" << to_probe << ": "
                   << it.mapped_path << " (" << resolution_label
-                  << ", " << probed.langs.audio.size() << " audio track(s)"
+				  << ", " << probed.langs.audio.size() << " audio track(s)"
+				  << ", " << probed.keyframes_ms.size() << " keyframe(s)"
                   << (has_ext_subs_this_item ? ", external subtitles found" : "")
                   << ")" << std::endl;
     }
 
     // ── Write (two batched transactions instead of thousands of tiny ones) ────
-    // Previously this issued one autocommit UPDATE per file on sync_db_ plus
-    // one delete+insert transaction per file on the primary connection — on a
+	// Previously this issued one autocommit UPDATE per file on sync_db_ plus
+	// one delete+insert transaction per file on the primary connection — on a
     // large library, thousands of individual write-lock acquisitions ping-
     // ponging between two connections, which made "database is locked" far
     // more likely under any concurrent write (e.g. an API-triggered scraper
@@ -2580,27 +2629,35 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
         if (!episode_updates.empty()) {
             SQLite::Statement upd(sync_db_,
                 "UPDATE episode SET duration_ms = ?, resolution_label = ?, "
-                "audio_languages = ?, embedded_subtitle_languages = ? WHERE episode_id = ?");
+                "audio_languages = ?, embedded_subtitle_languages = ?, "
+                "keyframes_ms = ?, keyframes_size = ?, keyframes_mtime = ? WHERE episode_id = ?");
             for (auto& u : episode_updates) {
                 upd.bind(1, u.duration_ms);
                 upd.bind(2, u.resolution_label);
-                upd.bind(3, u.audio_languages);
-                upd.bind(4, u.embedded_subs);
-                upd.bind(5, u.kairos_id);
+				upd.bind(3, u.audio_languages);
+				upd.bind(4, u.embedded_subs);
+				upd.bind(5, u.keyframes_ms);
+				upd.bind(6, u.keyframes_size);
+                upd.bind(7, u.keyframes_mtime);
+                upd.bind(8, u.kairos_id);
                 upd.exec();
                 upd.reset();
             }
         }
         if (!movie_updates.empty()) {
             SQLite::Statement upd(sync_db_,
-                "UPDATE movie SET duration_ms = ?, resolution_label = ?, "
-                "audio_languages = ?, embedded_subtitle_languages = ? WHERE movie_id = ?");
+								  "UPDATE movie SET duration_ms = ?, resolution_label = ?, "
+								  "audio_languages = ?, embedded_subtitle_languages = ?, "
+								  "keyframes_ms = ?, keyframes_size = ?, keyframes_mtime = ? WHERE movie_id = ?");
             for (auto& u : movie_updates) {
                 upd.bind(1, u.duration_ms);
                 upd.bind(2, u.resolution_label);
                 upd.bind(3, u.audio_languages);
-                upd.bind(4, u.embedded_subs);
-                upd.bind(5, u.kairos_id);
+				upd.bind(4, u.embedded_subs);
+				upd.bind(5, u.keyframes_ms);
+				upd.bind(6, u.keyframes_size);
+				upd.bind(7, u.keyframes_mtime);
+				upd.bind(8, u.kairos_id);
                 upd.exec();
                 upd.reset();
             }
@@ -2610,6 +2667,6 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
 
     std::cout << "[sync] media probe done: " << source_id
               << " (" << media_probed << "/" << items.size() << " file(s) ffprobed, "
-              << with_ext_subs << " with external subtitles, "
-              << elapsedMs(t_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
+			  << with_ext_subs << " with external subtitles, "
+			  << elapsedMs(t_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }

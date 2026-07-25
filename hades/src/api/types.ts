@@ -110,7 +110,7 @@ export interface PlaybackHistoryEntry {
   content_id:           string
   title:                string
   device_type:          '' | 'web' | 'android-mobile' | 'android-tv' | 'roku' | 'cast'
-  direct_play:          boolean
+    direct_stream: boolean
   started_at_ms:        number
   ended_at_ms:          number
   started_position_ms: number
@@ -311,7 +311,7 @@ export interface ActivitySession {
   hw_accel:        string
   decode_hw_accel: string
   started_at_ms:   number
-  direct_play?:    boolean // vod only
+    direct_stream?: boolean // vod only
 }
 
 // ── List-view types (minimal) ────────────────────────────────────────────────

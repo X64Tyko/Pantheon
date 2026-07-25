@@ -37,7 +37,10 @@ std::vector<Chapter> probeChapters(const std::string& file_path);
 // ContentService.cpp's /videoinfo endpoint since resolution/codec/bit-depth
 // aren't persisted columns the way audio_languages/embedded_subtitle_
 // languages are — see Database.cpp's v86 migration comment).
-struct StreamLanguages { std::vector<std::string> audio, subtitle; };
+struct StreamLanguages
+{
+	std::vector<std::string> audio, subtitle;
+};
 
 // Video codec/resolution/bit-depth of the first video stream, for display on
 // library detail panels (distinct from Hephaestus's own MediaProbe, which
@@ -46,7 +49,12 @@ struct StreamLanguages { std::vector<std::string> audio, subtitle; };
 // nor a pix_fmt with a 10le/12le suffix. Returns a zero-valued struct
 // (empty codec, 0x0, bit_depth 8) if ffprobe fails or the file has no video
 // stream.
-struct VideoInfo { std::string codec; int width = 0, height = 0, bit_depth = 8; };
+struct VideoInfo
+{
+	std::string codec;
+	int width = 0, height = 0, bit_depth = 8;
+};
+
 VideoInfo probeVideoInfo(const std::string& file_path);
 
 // Combined probe: one ffprobe invocation (-show_format -show_streams) for
@@ -60,12 +68,21 @@ VideoInfo probeVideoInfo(const std::string& file_path);
 // anymore — SyncManager::syncMediaProbeFromFiles persists this probe's
 // langs into audio_languages/embedded_subtitle_languages, and
 // ContentService.cpp's /languages endpoints just read those columns.
-// duration_ms is 0 if undeterminable.
-struct FileProbeInfo {
-    int64_t         duration_ms = 0;
-    VideoInfo       video;
-    StreamLanguages langs;
+// duration_ms is 0 if undeterminable. keyframes_ms is every real keyframe
+// timestamp in the primary video stream (packet-level scan, no decode) —
+// added here so it rides along with the rest of this sync-time probe instead
+// of Hephaestus paying for this same scan again on every direct-stream
+// playback start (see Database.cpp's v98 migration comment and
+// VodSession.cpp's computeSegmentBoundaries()). Empty if the file has no
+// video stream or the scan failed.
+struct FileProbeInfo
+{
+	int64_t duration_ms = 0;
+	VideoInfo video;
+	StreamLanguages langs;
+	std::vector<int64_t> keyframes_ms;
 };
+
 FileProbeInfo probeFileInfo(const std::string& file_path);
 
 // Buckets a probed video height into the same "4K"/"1080p"/"720p"/"SD"

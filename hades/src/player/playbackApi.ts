@@ -25,7 +25,7 @@ export interface VodStartResponse {
   session_id:    string
   manifest_url:  string
   subtitle_url?: string
-  direct_play:   boolean
+    direct_stream: boolean
   duration_ms:   number
   title:         string
   tracks:        VodTracks
@@ -89,7 +89,7 @@ export interface ActivitySession {
   hw_accel:        string
   decode_hw_accel: string
   started_at_ms:   number
-  direct_play?:    boolean
+    direct_stream?: boolean
   // channel sessions only — a VOD session is always exactly one viewer.
   // client_count is exact (native MPEG-TS/DVR clients); hls_viewer_active is
   // a presence signal only (HLS has no persistent connection to count

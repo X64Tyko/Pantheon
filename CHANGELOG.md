@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android: movie playback always timed out (Android)**: `ApiClient.kt`'s shared `OkHttpClient` set no explicit
+  timeouts, so `POST /stream/vod/start` ran under OkHttp's default 10s read/write timeout. Direct-stream sessions
+  (`VodSession::start()` -> `computeSegmentBoundaries()`, Hephaestus) ran `ffprobe` synchronously over the whole file
+  to find real keyframe boundaries before responding — legitimately slower than 10s for a movie-length file, especially
+  on network storage — and Android declares wide enough codec support (`[av1,h264,hevc,vp9]`/`[aac,ac3,eac3]`) that
+  most movies land on that direct-stream path. Web's `fetch()` has no such timeout and just waits it out, which is why
+  only Android was affected. `connectTimeout` stays at 10s (an unreachable server should still fail fast);
+  `readTimeout`/`writeTimeout` are now 60s. (The underlying slow probe itself is separately addressed below.)
+
+### Changed
+
+- **"Direct play" renamed to "direct stream" everywhere (Kairos, Hephaestus, Hermes, Hades, Android, Roku, docs)**: a
+  stream copy is still very much a stream, just not a transcoded one — "play" never actually described what this does,
+  and the name was inviting confusion with unrelated concepts (e.g. Hades' Home shelf `directPlayPath`, a navigation
+  shortcut with nothing to do with this, deliberately left untouched). Covers the `direct_play` JSON wire field (now
+  `direct_stream`, GET playback-info responses and the watch-progress ping body alike), the persisted
+  `playback_history.direct_play` DB column (migration v97, `RENAME COLUMN` — no data loss), function names
+  (`isVideoDirectPlayable`/`isAudioDirectPlayable`/`isDirectPlayable` -> `...DirectStreamable`,
+  `simulateDirectPlaySegmentBoundaries` -> `...DirectStream...`), and every user-facing label (Hades' Settings menu
+  and Activity → Play History/Now Playing panels: "Direct Play" -> "Direct Stream"). Purely a rename — no behavior
+  change on its own.
+
+### Added
+
+- **Cached direct-stream keyframe data — no more full-file probe on every playback start (Kairos + Hephaestus)**: a
+  direct-stream (stream copy) VOD session can only cut its HLS segments at real keyframes, which meant
+  `VodSession::computeSegmentBoundaries()` ran a full packet-level `ffprobe` scan of the whole file synchronously
+  inside `POST /stream/vod/start` on *every* session start — the actual root cause of the Android timeout above, and
+  a real (if smaller) tax on every other client too. That scan now also runs once during Kairos's existing sync-time
+  media probe pass (`SyncManager::syncMediaProbeFromFiles`, alongside the resolution/duration/language probing
+  already there — same "empty means never probed" trigger convention, so it backfills automatically for libraries
+  synced before this migration) and gets persisted on the `movie`/`episode` row (`keyframes_ms`, migration v98) rather
+  than thrown away. `GET /api/playback/:content_type/:id` (Kairos) now returns it; `VodSession` uses it directly
+  instead of re-probing — *if* the file's current `stat()` still matches `keyframes_size`/`keyframes_mtime`, captured
+  alongside the keyframe data at probe time. That check matters: a stable `file_path` doesn't prove a stable file —
+  Sonarr/Radarr-style upgrades replace a library file in place (same path, new content) — so a mismatch (or no cached
+  data at all yet) falls back to the same live `ffprobe` scan as before, whose fresh result Hephaestus then pushes
+  back to Kairos (`PUT /api/playback/:content_type/:id/keyframes`, internal-token gated like `/played`) so the next
+  session on that file doesn't pay for it again either.
+
 ## [0.2.1] - 2026-07-25
 
 ### Fixed

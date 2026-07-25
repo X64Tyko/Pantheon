@@ -31,7 +31,19 @@ public:
                                                  const std::string& contentId,
                                                  const std::string& bearerToken = "");
 
-    // Fetches the live stream_buffer_size from Kairos's /api/config/settings,
+	// Fire-and-forget (like markPlayed): persists a fresh keyframe probe back
+	// into Kairos so the next direct-stream session on this file skips its
+	// own ffprobe scan too — see VodSession::computeSegmentBoundaries()'s own
+	// fallback-probe path, the only caller. contentType/contentId are the
+	// same pair passed to getPlaybackInfo(), not necessarily what Kairos ends
+	// up writing to (a linked special resolves through its movie server-side).
+	void pushKeyframeCache(const std::string& contentType,
+						   const std::string& contentId,
+						   const std::vector<int64_t>& keyframesMs,
+						   int64_t size,
+						   int64_t mtime);
+
+	// Fetches the live stream_buffer_size from Kairos's /api/config/settings,
     // in KB (matching the Hades UI unit) — callers must convert to bytes.
     // Returns nullopt on any failure so callers can fall back to a local default.
     std::optional<int> getBufferSize();

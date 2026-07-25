@@ -3,323 +3,441 @@
 #include <cstdio>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <string>
 
 using json = nlohmann::json;
 
-namespace {
-
-constexpr int64_t kMinMs =        1'000; // 1 second
-constexpr int64_t kMaxMs = 86'400'000;   // 24 hours
-
-} // namespace
+namespace
+{
+	constexpr int64_t kMinMs = 1'000;      // 1 second
+	constexpr int64_t kMaxMs = 86'400'000; // 24 hours
+}                                          // namespace
 
 bool durationLooksValid(int64_t ms) { return ms >= kMinMs && ms <= kMaxMs; }
 
-namespace {
+namespace
+{
+	// Wrap s in single quotes, escaping any interior single quotes.
+	std::string shellQuote(const std::string& s)
+	{
+		std::string r = "'";
+		for (char c : s)
+		{
+			if (c == '\'') r += "'\\''";
+			else r           += c;
+		}
+		return r + "'";
+	}
 
-// Wrap s in single quotes, escaping any interior single quotes.
-std::string shellQuote(const std::string& s) {
-    std::string r = "'";
-    for (char c : s) {
-        if (c == '\'') r += "'\\''";
-        else           r += c;
-    }
-    return r + "'";
-}
+	// Primary: container-level duration from the format header (fast).
+	int64_t probeFormatDurationMs(const std::string& file_path)
+	{
+		const std::string cmd =
+			"timeout -k 2 10 ffprobe -v quiet -show_entries format=duration -of csv=p=0 "
+			+ shellQuote(file_path) + " 2>/dev/null";
+		DLOG << "[probe] format-duration cmd: " << cmd << '\n';
+		FILE* pipe = popen(cmd.c_str(), "r");
+		if (!pipe) return 0;
+		char buf[64] = {};
+		fgets(buf, sizeof(buf), pipe);
+		pclose(pipe);
+		try
+		{
+			const double secs = std::stod(buf);
+			if (secs > 0.0) return static_cast<int64_t>(secs * 1000.0);
+		}
+		catch (...)
+		{
+		}
+		return 0;
+	}
 
-// Primary: container-level duration from the format header (fast).
-int64_t probeFormatDurationMs(const std::string& file_path) {
-    const std::string cmd =
-        "timeout -k 2 10 ffprobe -v quiet -show_entries format=duration -of csv=p=0 "
-        + shellQuote(file_path) + " 2>/dev/null";
-    DLOG << "[probe] format-duration cmd: " << cmd << '\n';
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return 0;
-    char buf[64] = {};
-    fgets(buf, sizeof(buf), pipe);
-    pclose(pipe);
-    try {
-        const double secs = std::stod(buf);
-        if (secs > 0.0) return static_cast<int64_t>(secs * 1000.0);
-    } catch (...) {}
-    return 0;
-}
+	// Fallback: per-track stream duration.  Matroska track headers are stored near
+	// the start of the file even when the segment SegmentInfo Duration element is
+	// absent (common in some Blu-ray MKV encodes).  Returns the longest track
+	// duration so the result reflects whichever track runs longest.
+	int64_t probeStreamDurationMs(const std::string& file_path)
+	{
+		const std::string cmd =
+			"timeout -k 2 10 ffprobe -v quiet -show_entries stream=duration -of csv=p=0 "
+			+ shellQuote(file_path) + " 2>/dev/null";
+		DLOG << "[probe] stream-duration cmd: " << cmd << '\n';
+		FILE* pipe = popen(cmd.c_str(), "r");
+		if (!pipe) return 0;
+		int64_t best = 0;
+		char buf[64] = {};
+		while (fgets(buf, sizeof(buf), pipe))
+		{
+			try
+			{
+				const double secs = std::stod(buf);
+				const int64_t ms  = static_cast<int64_t>(secs * 1000.0);
+				if (ms > best) best = ms;
+			}
+			catch (...)
+			{
+			}
+		}
+		pclose(pipe);
+		return best;
+	}
 
-// Fallback: per-track stream duration.  Matroska track headers are stored near
-// the start of the file even when the segment SegmentInfo Duration element is
-// absent (common in some Blu-ray MKV encodes).  Returns the longest track
-// duration so the result reflects whichever track runs longest.
-int64_t probeStreamDurationMs(const std::string& file_path) {
-    const std::string cmd =
-        "timeout -k 2 10 ffprobe -v quiet -show_entries stream=duration -of csv=p=0 "
-        + shellQuote(file_path) + " 2>/dev/null";
-    DLOG << "[probe] stream-duration cmd: " << cmd << '\n';
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return 0;
-    int64_t best = 0;
-    char buf[64] = {};
-    while (fgets(buf, sizeof(buf), pipe)) {
-        try {
-            const double secs = std::stod(buf);
-            const int64_t ms = static_cast<int64_t>(secs * 1000.0);
-            if (ms > best) best = ms;
-        } catch (...) {}
-    }
-    pclose(pipe);
-    return best;
-}
+	int64_t probeDurationMs(const std::string& file_path)
+	{
+		const auto t0 = std::chrono::steady_clock::now();
 
-int64_t probeDurationMs(const std::string& file_path) {
-    const auto t0 = std::chrono::steady_clock::now();
+		int64_t result = probeFormatDurationMs(file_path);
+		if (result > 0)
+		{
+			DLOG << "[probe] format-duration " << elapsedMs(t0, std::chrono::steady_clock::now())
+				<< "ms → " << result << "ms: " << file_path << '\n';
+			return result;
+		}
 
-    int64_t result = probeFormatDurationMs(file_path);
-    if (result > 0) {
-        DLOG << "[probe] format-duration " << elapsedMs(t0, std::chrono::steady_clock::now())
-             << "ms → " << result << "ms: " << file_path << '\n';
-        return result;
-    }
-
-    result = probeStreamDurationMs(file_path);
-    DLOG << "[probe] stream-duration fallback " << elapsedMs(t0, std::chrono::steady_clock::now())
-         << "ms → " << result << "ms: " << file_path << '\n';
-    return result;
-}
-
+		result = probeStreamDurationMs(file_path);
+		DLOG << "[probe] stream-duration fallback " << elapsedMs(t0, std::chrono::steady_clock::now())
+			<< "ms → " << result << "ms: " << file_path << '\n';
+		return result;
+	}
 } // namespace
 
-std::vector<Chapter> probeChapters(const std::string& file_path) {
-    const std::string cmd =
-        "timeout -k 2 10 ffprobe -v quiet -print_format json -show_chapters "
-        + shellQuote(file_path) + " 2>/dev/null";
-    DLOG << "[probe] chapters cmd: " << cmd << '\n';
-    const auto t0 = std::chrono::steady_clock::now();
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        DLOG << "[probe] chapters popen failed: " << file_path << '\n';
-        return {};
-    }
-    std::string out;
-    char buf[4096];
-    while (fgets(buf, sizeof(buf), pipe))
-        out += buf;
-    pclose(pipe);
-    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
-    if (out.empty()) {
-        DLOG << "[probe] chapters done in " << ms << "ms → no output: " << file_path << '\n';
-        return {};
-    }
+std::vector<Chapter> probeChapters(const std::string& file_path)
+{
+	const std::string cmd =
+		"timeout -k 2 10 ffprobe -v quiet -print_format json -show_chapters "
+		+ shellQuote(file_path) + " 2>/dev/null";
+	DLOG << "[probe] chapters cmd: " << cmd << '\n';
+	const auto t0 = std::chrono::steady_clock::now();
+	FILE* pipe    = popen(cmd.c_str(), "r");
+	if (!pipe)
+	{
+		DLOG << "[probe] chapters popen failed: " << file_path << '\n';
+		return {};
+	}
+	std::string out;
+	char buf[4096];
+	while (fgets(buf, sizeof(buf), pipe)) out += buf;
+	pclose(pipe);
+	const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
+	if (out.empty())
+	{
+		DLOG << "[probe] chapters done in " << ms << "ms → no output: " << file_path << '\n';
+		return {};
+	}
 
-    std::vector<Chapter> result;
-    try {
-        auto j = json::parse(out);
-        if (!j.contains("chapters")) return result;
-        int pos = 0;
-        for (const auto& ch : j["chapters"]) {
-            Chapter c;
-            c.chapter_type = "unclassified";
-            c.source       = "file";
-            c.position     = pos++;
-            if (ch.contains("tags") && ch["tags"].is_object()
-                    && ch["tags"].contains("title"))
-                c.title = ch["tags"]["title"].get<std::string>();
-            if (ch.contains("start_time") && ch["start_time"].is_string()) {
-                try {
-                    c.start_ms = static_cast<int64_t>(
-                        std::stod(ch["start_time"].get<std::string>()) * 1000.0);
-                } catch (...) {}
-            }
-            if (ch.contains("end_time") && ch["end_time"].is_string()) {
-                try {
-                    c.end_ms = static_cast<int64_t>(
-                        std::stod(ch["end_time"].get<std::string>()) * 1000.0);
-                } catch (...) {}
-            }
-            result.push_back(std::move(c));
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "[probe] chapter parse error for " << file_path
-                  << ": " << e.what() << '\n';
-    }
-    DLOG << "[probe] chapters done in " << ms << "ms → " << result.size()
-         << " chapter(s): " << file_path << '\n';
-    return result;
+	std::vector<Chapter> result;
+	try
+	{
+		auto j = json::parse(out);
+		if (!j.contains("chapters")) return result;
+		int pos = 0;
+		for (const auto& ch : j["chapters"])
+		{
+			Chapter c;
+			c.chapter_type = "unclassified";
+			c.source       = "file";
+			c.position     = pos++;
+			if (ch.contains("tags") && ch["tags"].is_object()
+				&& ch["tags"].contains("title"))
+				c.title = ch["tags"]["title"].get<std::string>();
+			if (ch.contains("start_time") && ch["start_time"].is_string())
+			{
+				try
+				{
+					c.start_ms = static_cast<int64_t>(
+						std::stod(ch["start_time"].get<std::string>()) * 1000.0);
+				}
+				catch (...)
+				{
+				}
+			}
+			if (ch.contains("end_time") && ch["end_time"].is_string())
+			{
+				try
+				{
+					c.end_ms = static_cast<int64_t>(
+						std::stod(ch["end_time"].get<std::string>()) * 1000.0);
+				}
+				catch (...)
+				{
+				}
+			}
+			result.push_back(std::move(c));
+		}
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "[probe] chapter parse error for " << file_path
+			<< ": " << e.what() << '\n';
+	}
+	DLOG << "[probe] chapters done in " << ms << "ms → " << result.size()
+		<< " chapter(s): " << file_path << '\n';
+	return result;
 }
 
-namespace {
-// ffprobe reports "bits_per_raw_sample" as a JSON string (e.g. "10"), and
-// not every container/muxer populates it reliably — pix_fmt's "10le"/"12le"
-// suffix (e.g. "yuv420p10le") is a solid fallback when it's absent. Same
-// approach as Hephaestus's own MediaProbe (src/stream/MediaProbe.cpp) —
-// kept as a separate copy since these are two different services/binaries,
-// not shared code.
-int parseBitDepth(const json& s) {
-    if (s.contains("bits_per_raw_sample")) {
-        try {
-            auto raw = s["bits_per_raw_sample"].get<std::string>();
-            if (!raw.empty()) return std::stoi(raw);
-        } catch (...) {}
-    }
-    std::string pix_fmt = s.value("pix_fmt", "");
-    if (pix_fmt.find("10le") != std::string::npos || pix_fmt.find("10be") != std::string::npos) return 10;
-    if (pix_fmt.find("12le") != std::string::npos || pix_fmt.find("12be") != std::string::npos) return 12;
-    return 8;
-}
+namespace
+{
+	// ffprobe reports "bits_per_raw_sample" as a JSON string (e.g. "10"), and
+	// not every container/muxer populates it reliably — pix_fmt's "10le"/"12le"
+	// suffix (e.g. "yuv420p10le") is a solid fallback when it's absent. Same
+	// approach as Hephaestus's own MediaProbe (src/stream/MediaProbe.cpp) —
+	// kept as a separate copy since these are two different services/binaries,
+	// not shared code.
+	int parseBitDepth(const json& s)
+	{
+		if (s.contains("bits_per_raw_sample"))
+		{
+			try
+			{
+				auto raw = s["bits_per_raw_sample"].get<std::string>();
+				if (!raw.empty()) return std::stoi(raw);
+			}
+			catch (...)
+			{
+			}
+		}
+		std::string pix_fmt = s.value("pix_fmt", "");
+		if (pix_fmt.find("10le") != std::string::npos || pix_fmt.find("10be") != std::string::npos) return 10;
+		if (pix_fmt.find("12le") != std::string::npos || pix_fmt.find("12be") != std::string::npos) return 12;
+		return 8;
+	}
 } // namespace
 
-VideoInfo probeVideoInfo(const std::string& file_path) {
-    const std::string cmd =
-        "timeout -k 2 15 ffprobe -v quiet -print_format json -show_streams "
-        + shellQuote(file_path) + " 2>/dev/null";
-    DLOG << "[probe] videoinfo cmd: " << cmd << '\n';
-    const auto t0 = std::chrono::steady_clock::now();
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        DLOG << "[probe] videoinfo popen failed: " << file_path << '\n';
-        return {};
-    }
-    std::string out;
-    char buf[8192];
-    while (fgets(buf, sizeof(buf), pipe))
-        out += buf;
-    pclose(pipe);
-    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
-    if (out.empty()) {
-        DLOG << "[probe] videoinfo done in " << ms << "ms → no output: " << file_path << '\n';
-        return {};
-    }
+VideoInfo probeVideoInfo(const std::string& file_path)
+{
+	const std::string cmd =
+		"timeout -k 2 15 ffprobe -v quiet -print_format json -show_streams "
+		+ shellQuote(file_path) + " 2>/dev/null";
+	DLOG << "[probe] videoinfo cmd: " << cmd << '\n';
+	const auto t0 = std::chrono::steady_clock::now();
+	FILE* pipe    = popen(cmd.c_str(), "r");
+	if (!pipe)
+	{
+		DLOG << "[probe] videoinfo popen failed: " << file_path << '\n';
+		return {};
+	}
+	std::string out;
+	char buf[8192];
+	while (fgets(buf, sizeof(buf), pipe)) out += buf;
+	pclose(pipe);
+	const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
+	if (out.empty())
+	{
+		DLOG << "[probe] videoinfo done in " << ms << "ms → no output: " << file_path << '\n';
+		return {};
+	}
 
-    VideoInfo result;
-    try {
-        auto j = json::parse(out);
-        if (!j.contains("streams")) return result;
-        for (const auto& s : j["streams"]) {
-            if (s.value("codec_type", "") != "video") continue;
-            result.codec     = s.value("codec_name", "");
-            result.width     = s.value("width", 0);
-            result.height    = s.value("height", 0);
-            result.bit_depth = parseBitDepth(s);
-            break; // first video stream only
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "[probe] videoinfo parse error for " << file_path
-                  << ": " << e.what() << '\n';
-    }
-    DLOG << "[probe] videoinfo done in " << ms << "ms → " << result.codec << " "
-         << result.width << "x" << result.height << " " << result.bit_depth
-         << "-bit: " << file_path << '\n';
-    return result;
+	VideoInfo result;
+	try
+	{
+		auto j = json::parse(out);
+		if (!j.contains("streams")) return result;
+		for (const auto& s : j["streams"])
+		{
+			if (s.value("codec_type", "") != "video") continue;
+			result.codec     = s.value("codec_name", "");
+			result.width     = s.value("width", 0);
+			result.height    = s.value("height", 0);
+			result.bit_depth = parseBitDepth(s);
+			break; // first video stream only
+		}
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "[probe] videoinfo parse error for " << file_path
+			<< ": " << e.what() << '\n';
+	}
+	DLOG << "[probe] videoinfo done in " << ms << "ms → " << result.codec << " "
+		<< result.width << "x" << result.height << " " << result.bit_depth
+		<< "-bit: " << file_path << '\n';
+	return result;
 }
 
-FileProbeInfo probeFileInfo(const std::string& file_path) {
-    const std::string cmd =
-        "timeout -k 2 15 ffprobe -v quiet -print_format json -show_format -show_streams "
-        + shellQuote(file_path) + " 2>/dev/null";
-    DLOG << "[probe] fileinfo cmd: " << cmd << '\n';
-    const auto t0 = std::chrono::steady_clock::now();
-    FILE* pipe = popen(cmd.c_str(), "r");
-    FileProbeInfo result;
-    if (!pipe) {
-        DLOG << "[probe] fileinfo popen failed: " << file_path << '\n';
-        return result;
-    }
-    std::string out;
-    char buf[8192];
-    while (fgets(buf, sizeof(buf), pipe))
-        out += buf;
-    pclose(pipe);
-    const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
-    if (out.empty()) {
-        DLOG << "[probe] fileinfo done in " << ms << "ms → no output: " << file_path << '\n';
-        return result;
-    }
+namespace
+{
+	// Packet-level keyframe scan (flags column only, no decode) — same
+	// technique as Hephaestus's own probeKeyframeTimestampsMs (stream/
+	// MediaProbe.cpp there), kept as a separate copy for the same reason
+	// parseBitDepth above is: different service/binary, not shared code. This
+	// is what used to run on Hephaestus's own playback-start critical path for
+	// every direct-stream session; it's a separate ffprobe invocation from the
+	// combined -show_format -show_streams call below because packet flags
+	// aren't part of that output.
+	std::vector<int64_t> probeKeyframesMs(const std::string& file_path)
+	{
+		const std::string cmd = "timeout -k 2 30 ffprobe -v quiet -select_streams v:0 "
+			"-show_entries packet=pts_time,flags -of csv=p=0 " + shellQuote(file_path) + " 2>/dev/null";
+		DLOG << "[probe] keyframes cmd: " << cmd << '\n';
+		const auto t0 = std::chrono::steady_clock::now();
+		FILE* pipe    = popen(cmd.c_str(), "r");
+		std::vector<int64_t> keyframes;
+		if (!pipe)
+		{
+			DLOG << "[probe] keyframes popen failed: " << file_path << '\n';
+			return keyframes;
+		}
+		std::string out;
+		char buf[4096];
+		while (fgets(buf, sizeof(buf), pipe)) out += buf;
+		pclose(pipe);
 
-    try {
-        auto j = json::parse(out);
+		std::istringstream iss(out);
+		std::string line;
+		while (std::getline(iss, line))
+		{
+			auto comma = line.find(',');
+			if (comma == std::string::npos || comma + 1 >= line.size()) continue;
+			if (line[comma + 1] != 'K') continue;
+			try
+			{
+				const double secs = std::stod(line.substr(0, comma));
+				keyframes.push_back(static_cast<int64_t>(secs * 1000.0 + 0.5));
+			}
+			catch (...)
+			{
+			}
+		}
+		DLOG << "[probe] keyframes done in " << elapsedMs(t0, std::chrono::steady_clock::now())
+			<< "ms → " << keyframes.size() << " keyframe(s): " << file_path << '\n';
+		return keyframes;
+	}
+} // namespace
 
-        // Duration: format-level first (fast, matches probeFormatDurationMs
-        // above), falling back to the longest per-stream duration (matches
-        // probeStreamDurationMs — some Blu-ray MKV encodes only have this) —
-        // both drawn from this same single parsed response, no second spawn.
-        if (j.contains("format") && j["format"].contains("duration")) {
-            try {
-                const double secs = std::stod(j["format"]["duration"].get<std::string>());
-                if (secs > 0.0) result.duration_ms = static_cast<int64_t>(secs * 1000.0);
-            } catch (...) {}
-        }
+FileProbeInfo probeFileInfo(const std::string& file_path)
+{
+	const std::string cmd =
+		"timeout -k 2 15 ffprobe -v quiet -print_format json -show_format -show_streams "
+		+ shellQuote(file_path) + " 2>/dev/null";
+	DLOG << "[probe] fileinfo cmd: " << cmd << '\n';
+	const auto t0 = std::chrono::steady_clock::now();
+	FILE* pipe    = popen(cmd.c_str(), "r");
+	FileProbeInfo result;
+	if (!pipe)
+	{
+		DLOG << "[probe] fileinfo popen failed: " << file_path << '\n';
+		return result;
+	}
+	std::string out;
+	char buf[8192];
+	while (fgets(buf, sizeof(buf), pipe)) out += buf;
+	pclose(pipe);
+	const long long ms = elapsedMs(t0, std::chrono::steady_clock::now());
+	if (out.empty())
+	{
+		DLOG << "[probe] fileinfo done in " << ms << "ms → no output: " << file_path << '\n';
+		return result;
+	}
 
-        if (j.contains("streams")) {
-            int64_t longest_stream_ms = 0;
-            bool got_video = false;
-            for (const auto& s : j["streams"]) {
-                const std::string type = s.value("codec_type", "");
+	try
+	{
+		auto j = json::parse(out);
 
-                if (result.duration_ms <= 0 && s.contains("duration")) {
-                    try {
-                        const double secs = std::stod(s["duration"].get<std::string>());
-                        const int64_t sms = static_cast<int64_t>(secs * 1000.0);
-                        if (sms > longest_stream_ms) longest_stream_ms = sms;
-                    } catch (...) {}
-                }
+		// Duration: format-level first (fast, matches probeFormatDurationMs
+		// above), falling back to the longest per-stream duration (matches
+		// probeStreamDurationMs — some Blu-ray MKV encodes only have this) —
+		// both drawn from this same single parsed response, no second spawn.
+		if (j.contains("format") && j["format"].contains("duration"))
+		{
+			try
+			{
+				const double secs = std::stod(j["format"]["duration"].get<std::string>());
+				if (secs > 0.0) result.duration_ms = static_cast<int64_t>(secs * 1000.0);
+			}
+			catch (...)
+			{
+			}
+		}
 
-                if (type == "video" && !got_video) {
-                    result.video.codec     = s.value("codec_name", "");
-                    result.video.width     = s.value("width", 0);
-                    result.video.height    = s.value("height", 0);
-                    result.video.bit_depth = parseBitDepth(s);
-                    got_video = true;
-                }
+		if (j.contains("streams"))
+		{
+			int64_t longest_stream_ms = 0;
+			bool got_video            = false;
+			for (const auto& s : j["streams"])
+			{
+				const std::string type = s.value("codec_type", "");
 
-                std::string lang;
-                if (s.contains("tags") && s["tags"].is_object()) {
-                    auto& t = s["tags"];
-                    if      (t.contains("language"))  lang = t["language"].get<std::string>();
-                    else if (t.contains("LANGUAGE"))  lang = t["LANGUAGE"].get<std::string>();
-                }
-                if (!lang.empty() && lang != "und") {
-                    if      (type == "audio")    result.langs.audio.push_back(lang);
-                    else if (type == "subtitle") result.langs.subtitle.push_back(lang);
-                }
-            }
-            if (result.duration_ms <= 0) result.duration_ms = longest_stream_ms;
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "[probe] fileinfo parse error for " << file_path << ": " << e.what() << '\n';
-    }
+				if (result.duration_ms <= 0 && s.contains("duration"))
+				{
+					try
+					{
+						const double secs = std::stod(s["duration"].get<std::string>());
+						const int64_t sms = static_cast<int64_t>(secs * 1000.0);
+						if (sms > longest_stream_ms) longest_stream_ms = sms;
+					}
+					catch (...)
+					{
+					}
+				}
 
-    DLOG << "[probe] fileinfo done in " << ms << "ms → duration=" << result.duration_ms
-         << "ms " << result.video.width << "x" << result.video.height
-         << " audio=" << result.langs.audio.size() << " subtitle=" << result.langs.subtitle.size()
-         << ": " << file_path << '\n';
-    return result;
+				if (type == "video" && !got_video)
+				{
+					result.video.codec     = s.value("codec_name", "");
+					result.video.width     = s.value("width", 0);
+					result.video.height    = s.value("height", 0);
+					result.video.bit_depth = parseBitDepth(s);
+					got_video              = true;
+				}
+
+				std::string lang;
+				if (s.contains("tags") && s["tags"].is_object())
+				{
+					auto& t = s["tags"];
+					if (t.contains("language")) lang = t["language"].get<std::string>();
+					else if (t.contains("LANGUAGE")) lang = t["LANGUAGE"].get<std::string>();
+				}
+				if (!lang.empty() && lang != "und")
+				{
+					if (type == "audio") result.langs.audio.push_back(lang);
+					else if (type == "subtitle") result.langs.subtitle.push_back(lang);
+				}
+			}
+			if (result.duration_ms <= 0) result.duration_ms = longest_stream_ms;
+		}
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "[probe] fileinfo parse error for " << file_path << ": " << e.what() << '\n';
+	}
+
+	result.keyframes_ms = probeKeyframesMs(file_path);
+
+	DLOG << "[probe] fileinfo done in " << ms << "ms → duration=" << result.duration_ms
+		<< "ms " << result.video.width << "x" << result.video.height
+		<< " audio=" << result.langs.audio.size() << " subtitle=" << result.langs.subtitle.size()
+		<< ": " << file_path << '\n';
+	return result;
 }
 
-std::string bucketResolutionLabel(int height) {
-    if (height >= 2000) return "4K";
-    if (height >= 900)  return "1080p";
-    if (height >= 600)  return "720p";
-    if (height > 0)     return "SD";
-    return "";
+std::string bucketResolutionLabel(int height)
+{
+	if (height >= 2000) return "4K";
+	if (height >= 900) return "1080p";
+	if (height >= 600) return "720p";
+	if (height > 0) return "SD";
+	return "";
 }
 
-int64_t validateDurationMs(int64_t dur, const std::string& file_path) {
-    if (durationLooksValid(dur))
-        return dur;
+int64_t validateDurationMs(int64_t dur, const std::string& file_path)
+{
+	if (durationLooksValid(dur)) return dur;
 
-    if (dur != 0) {
-        std::cerr << "[probe] out-of-range duration_ms=" << dur
-                  << " for " << file_path << " — probing with ffprobe\n";
-    }
+	if (dur != 0)
+	{
+		std::cerr << "[probe] out-of-range duration_ms=" << dur
+			<< " for " << file_path << " — probing with ffprobe\n";
+	}
 
-    const int64_t probed = probeDurationMs(file_path);
-    if (durationLooksValid(probed)) {
-        std::cout << "[probe] " << file_path
-                  << " — ffprobe duration: " << probed << " ms\n";
-        return probed;
-    }
+	const int64_t probed = probeDurationMs(file_path);
+	if (durationLooksValid(probed))
+	{
+		std::cout << "[probe] " << file_path
+			<< " — ffprobe duration: " << probed << " ms\n";
+		return probed;
+	}
 
-    std::cerr << "[probe] WARNING: could not determine valid duration for "
-              << file_path << " (source=" << dur
-              << " ffprobe=" << probed << ")\n";
-    return 0;
+	std::cerr << "[probe] WARNING: could not determine valid duration for "
+		<< file_path << " (source=" << dur
+		<< " ffprobe=" << probed << ")\n";
+	return 0;
 }
