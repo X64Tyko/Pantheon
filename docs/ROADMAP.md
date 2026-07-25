@@ -32,6 +32,16 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 *Focus: Feature completeness, user experience, and expanded hardware support.*
 
 - [ ] **Plex External-ID Writeback:** Plex's GUID is only changeable via a "match" call that re-scrapes the whole item under a new agent result, not a field edit like everything else in the writeback system — needs its own design before it's safe to automate.
+- [ ] **Full .ass/.ssa Subtitle Styling:** Embedded/sidecar `.ass`/`.ssa` tracks are already recognized as text
+  subtitles and extracted into an HLS sidecar, but only as plain dialogue — ffmpeg's WebVTT conversion doesn't preserve
+  ASS/SSA's own styling (positioning, karaoke, custom fonts/colors), so anything relying on those renders as flat text
+  today.
+- [ ] **TTML Subtitle Support:** Timed Text Markup Language — a common broadcast/DASH subtitle format not currently
+  recognized as either a text or bitmap subtitle codec at all, as an additional format alongside the existing `.srt`/
+  `.ass`/`.ssa`/`.vtt` set.
+- [ ] **fMP4 Segment Support:** Fragmented MP4 (CMAF-style `.m4s` segments) as an alternative to the current MPEG-TS (
+  `.ts`) HLS segment output — broader codec compatibility, needed for some codec/player combinations MPEG-TS doesn't
+  cleanly support, and a step toward Low-Latency HLS.
 - [ ] **Expanded IPTV Support:** Native support for more complex M3U8 attributes and XMLTV extensions.
 - [ ] **Performance Benchmarking:** Optimization of the `kairos_core` scheduler for 100+ concurrent channels.
 - [ ] **User Notifications:** Alerts for sync failures or stream interruptions.
