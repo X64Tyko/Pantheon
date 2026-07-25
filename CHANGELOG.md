@@ -47,6 +47,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   data at all yet) falls back to the same live `ffprobe` scan as before, whose fresh result Hephaestus then pushes
   back to Kairos (`PUT /api/playback/:content_type/:id/keyframes`, internal-token gated like `/played`) so the next
   session on that file doesn't pay for it again either.
+- **A `vX.Y.Z` tag push now also publishes a GitHub Release (`.github/workflows/release.yml`)**: previously the
+  docker-\*.yml workflows built and pushed versioned GHCR images on a tag push, but nothing ever touched the repo's
+  Releases tab — `v0.2.1` shipped images with no release to show for it. This new workflow (independent of the image
+  builds — a release doesn't need to wait on those, and a failure in one shouldn't block the other) pulls its notes
+  straight from `CHANGELOG.md`'s matching `## [x.y.z]` section, attaches the root `docker-compose*.yml` variants as
+  assets (matching what `v0.2.0`'s release already did by hand), and marks a hyphenated version (e.g.
+  `v0.3.0-beta.1`) as a pre-release. Fails loudly rather than publishing an empty release if that CHANGELOG section
+  doesn't exist yet. Re-runnable via `workflow_dispatch` (with a `tag` input) to backfill a release for a tag pushed
+  before this workflow existed, or to republish after a CHANGELOG fix.
 
 ## [0.2.1] - 2026-07-25
 

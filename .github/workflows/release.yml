@@ -1,0 +1,68 @@
+name: GitHub Release
+
+# Publishes the repo's Releases-tab entry for a version tag — separate from
+# docker-*.yml (which build/push the GHCR images for the same tag) since a
+# release doesn't need to wait on those, and a failure in one shouldn't block
+# the other. Notes are pulled straight from CHANGELOG.md's matching
+# `## [x.y.z]` section rather than written twice; a milestone release that
+# wants v0.2.0-style hand-written highlights can still `gh release edit`
+# afterward — this just guarantees every tag gets *something* correct.
+
+on:
+  push:
+    tags: [ "v*.*.*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to (re)publish a release for, e.g. v0.2.1 — for backfilling a release whose tag push predates this workflow, or re-running after a CHANGELOG fix"
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Extract CHANGELOG section and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+
+          # Exact-match on "## [x.y.z]" (including the closing bracket) so
+          # e.g. 0.2.1 can't accidentally match a 0.2.10/0.2.11 section.
+          if ! awk -v ver="[$VERSION]" '
+            BEGIN { printing = 0; found = 0 }
+            /^## \[/ {
+              if (printing) exit
+              if (index($0, "## " ver) == 1) { printing = 1; found = 1; next }
+            }
+            printing { print }
+            END { exit(found ? 0 : 1) }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          then
+            echo "::error::No '## [$VERSION]' section found in CHANGELOG.md for tag $TAG — add one before (re-)running this." >&2
+            exit 1
+          fi
+
+          # Historical precedent (v0.1.0-alpha.1) — a hyphenated version
+          # (alpha/beta/rc) publishes as a GitHub pre-release.
+          PRERELEASE_FLAG=()
+          if [[ "$VERSION" == *-* ]]; then PRERELEASE_FLAG=(--prerelease); fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file /tmp/release-notes.md "${PRERELEASE_FLAG[@]}"
+            gh release upload "$TAG" docker-compose*.yml --clobber
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file /tmp/release-notes.md \
+              "${PRERELEASE_FLAG[@]}" docker-compose*.yml
+          fi
