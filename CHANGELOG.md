@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-25
+
 ### Fixed
 
 - **`POST /api/channels/:id/played` was globally unauthenticated (Kairos)**: `Router.cpp`'s `isPublicPath` had
