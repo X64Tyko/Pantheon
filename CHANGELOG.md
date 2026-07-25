@@ -68,6 +68,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   player now shows a small "Watch Together — Hosting/Following" badge with an End/Leave button (strips `?wt=` from the
   URL, which the existing session-cleanup effect already reacts to); the Home shelf card also gets a close (×) button,
   visible to the host or an admin, for ending a session without needing to join it first.
+- **Android TV: clicking the Library search bar never opened the keyboard (Android)**: selecting the search row swaps
+  its content from a static `Text` to an `OutlinedTextField` and requests focus on it from a `LaunchedEffect`, but
+  Compose fires that field's own `onFocusChanged` once, synchronously, the moment it attaches to the focus tree —
+  with `isFocused = false`, since attach always precedes the pending `requestFocus()` call. That spurious first
+  "false" ran the same collapse-back-to-button branch a real focus loss does, flipping edit mode back off before
+  focus (and the IME `show()` it triggers) ever actually landed — visible as the row's selection animation flashing
+  and then immediately replaying its unfocused look, with no keyboard. `LibraryScreen.kt` (tv flavor) now tracks
+  whether the field has genuinely gained focus at least once this editing session and only collapses on a loss of
+  focus after that.
 
 ### Added
 
