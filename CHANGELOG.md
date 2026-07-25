@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Guide's live preview never actually switched channels (Hades + Android)**: `PreviewSession.h`'s `switchChannel()`
+  deliberately reuses the exact same `manifest_url` for a preview session's whole life, so the video player's own load
+  effect — keyed on `manifestUrl` in `VideoPlayer.tsx`, on the same in Android's `PreviewPlayerView.kt` — only ever
+  fired once, on the *first* focused channel. Every later channel switch retargeted the session server-side, but
+  neither hls.js nor ExoPlayer was ever told to reload, so both were left to notice on their own that the server had
+  deleted and recreated the segments underneath them — which a live media-sequence reset like that isn't something
+  players reliably self-recover from. `GuidePreview.tsx` now remounts `VideoPlayer` on `key={channel.channel_id}`;
+  Android's `PreviewPlayerView` gained a separate `reloadKey` (the focused channel id) alongside `manifestUrl` so its
+  reload effect fires on either changing — both react to the same "channel changed" signal the channel-header's own
+  focus highlight already does, instead of the effectively-constant manifest URL. Also gave Android TV's Guide an
+  explicit auto-select-first-channel-on-load fallback (mirroring what mobile's own preview card already had), since
+  default D-pad initial focus isn't guaranteed to land inside the grid now that the Home/Library quick-action row sits
+  above it.
+- **`/tv`'s Home shelves silently missed any row Kairos hadn't been hardcoded for, and the hero never used its own
+  declared data source (Hades)**: `TvHome.tsx` fetched exactly four named shelves (`recent-shows`/`recent-movies`/
+  `recent-released`/`recent-aired`) instead of iterating every `shelf`-typed row `GET /api/tv/manifest` actually
+  returns — a new shelf added server-side (`tv_shelf` table) would render nothing until this file was updated too,
+  defeating the manifest's entire point. Row fetching is now generic (dispatches on each row's own `dataSource.
+  endpoint`), and the hero panel now reads its own `dataSources.shows`/`dataSources.movies` (already modeled in
+  `TvManifestService.cpp`'s `heroRowJson()`, never actually consumed) instead of reusing whatever recent-shows/
+  recent-movies happened to be configured with. Found auditing native Android for the same gap (see that repo's own
+  changelog) — this was the one place web `/tv` had it too.
 - **Watch Together: a joining viewer's session didn't catch up to the host, and stayed paused (Hades + Hermes)**:
   joining always started the follower's own VOD session at position 0 and relied on the SSE stream's first `sync` event
   to nudge it into place via a raw `video.currentTime` assignment — which fights hls.js's own internal seek/buffering
@@ -24,12 +46,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- **`detail-meta-block` zone gains a `fields` array (Kairos, v97 migration)**: same principle as v82/v83's
+- **`/tv`'s Guide is now its own route, matching desktop (Hades)**: `TvGuideSection` used to be embedded inline at the
+  bottom of Home, reached via a quick-action button that `scrollIntoView`'d + refocused it — the one place `/tv` hadn't
+  gotten the same standalone-route treatment desktop Guide already has. New `TvGuidePage.tsx` at `/tv/guide` renders it
+  full-page instead, with its own Home/Library quick-action row (reusing `TvHome.tsx`'s own `quickActionRow`/
+  `quickActionButton` styling rather than duplicating it). `TvGuideSection` itself is unchanged. The native Android
+  client's Guide screen was already its own nav destination on both flavors, but only had a single generic "← Back"
+  button — it now gets the same Home + Library pair, styled like its own Home screen's quick-action row.
+- **`detail-meta-block` zone gains a `fields` array (Kairos, v97 migration + Hades)**: same principle as v82/v83's
   `filterFields`/`sortOptions` on the library zones — *which* fields Detail's meta-block shows (year/rating/
   content_type) is now server-owned data a client renders, not a fixed hardcoded row per platform. Values match the
-  existing hardcoded set exactly, so this is additive only; part of a wider pass hardening the native Android client's
-  manifest adoption (Home row iteration, real theme-token reads, Guide zone gating, and a full channel×time EPG grid
-  matching Hades' own Guide redesign — see the `pantheon-android` repo for the client-side half of that work).
+  existing hardcoded set exactly, so this is additive only. `TvLibraryDetail.tsx` now renders from `zone('meta-block')
+  ?.fields` (falling back to the old fixed set for a manifest that predates it) instead of a hardcoded `Row`; part of a
+  wider pass hardening manifest adoption on both `/tv` and the native Android client (Home row iteration, real
+  theme-token reads, Guide zone gating, and a full channel×time EPG grid matching Hades' own Guide redesign — see the
+  `pantheon-android` repo for the client-side half of that work).
 - **Guide is now its own page, with a real progress-aware EPG grid (Hades)**: previously embedded at the bottom of
   Home (reached by scrolling), Guide is now a standalone `/guide` route with its own sidebar nav entry — matching
   Android. The grid itself got a real fix, not just polish: each channel column's header used to be `position: sticky`

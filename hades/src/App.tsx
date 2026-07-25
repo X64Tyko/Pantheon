@@ -41,6 +41,7 @@ const GuidePage = lazy(() => import('./guide/GuidePage').then(m => ({default: m.
 // /tv should pay for this chunk.
 const TvShell         = lazy(() => import('./tv/TvShell').then(m => ({ default: m.TvShell })))
 const TvHome          = lazy(() => import('./tv/TvHome').then(m => ({ default: m.TvHome })))
+const TvGuidePage = lazy(() => import('./tv/TvGuidePage').then(m => ({default: m.TvGuidePage})))
 const TvLibrary       = lazy(() => import('./tv/TvLibrary').then(m => ({ default: m.TvLibrary })))
 const TvLibraryDetail = lazy(() => import('./tv/TvLibraryDetail').then(m => ({ default: m.TvLibraryDetail })))
 const TvProfileSelect = lazy(() => import('./tv/TvProfileSelect').then(m => ({ default: m.TvProfileSelect })))
@@ -90,6 +91,7 @@ export default function App() {
             <Suspense fallback={tvFallback}><TvShell /></Suspense>
           }>
             <Route index                    element={<TvHome />} />
+              <Route path="guide" element={<TvGuidePage/>}/>
             <Route path="library"           element={<TvLibrary />} />
             <Route path="library/:type/:id" element={<TvLibraryDetail />} />
             {/* Reached via ProtectedRoute's !profileChosen redirect when it

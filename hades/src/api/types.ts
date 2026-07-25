@@ -1319,6 +1319,12 @@ export interface TvZone {
   filterFields?: string[]
   itemAction?:   TvItemAction
   showOnly?:     boolean
+    // Which fields this zone renders — same "server owns which fields exist,
+    // client owns how each one is rendered" split filterFields already uses.
+    // Currently only detail/meta-block declares this (kairos v97); undefined/
+    // empty means a manifest that predates it, so callers fall back to their
+    // own fixed field set rather than rendering nothing.
+    fields?: string[]
 }
 
 export interface TvManifest {

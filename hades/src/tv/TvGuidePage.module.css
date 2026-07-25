@@ -1,0 +1,14 @@
+.page {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.guideArea {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--hds-space-3) 0 64px;
+}

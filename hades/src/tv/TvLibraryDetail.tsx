@@ -56,7 +56,10 @@ export function TvLibraryDetail() {
   // — presence-gating is what makes it a real manifest consumer rather than
   // hardcoded, without inventing new behavior. episode-shelves' showOnly is
   // already naturally respected: seasonsWithEpisodes is empty for movies.
-  const { hasZone } = useZoneManifest('detail')
+    const {hasZone, zone} = useZoneManifest('detail')
+    // Which fields the meta-block zone renders (kairos v97) — falls back to
+    // today's fixed set for a manifest that predates the `fields` key.
+    const metaFields = zone('meta-block')?.fields?.length ? zone('meta-block')!.fields! : ['year', 'rating', 'content_type']
 
   const { scrollRef, sentinelRef, collapsed } = useScrollCollapse()
   const { ref: headerRef, height: headerHeight } = useElementHeight<HTMLDivElement>()
@@ -136,9 +139,14 @@ export function TvLibraryDetail() {
 
               {hasZone('meta-block') && (
                 <div className={styles.metaRow}>
-                  {year && <span>{year}</span>}
-                  {rating != null && <span className={styles.ratingText}>★ {rating.toFixed(1)}</span>}
-                  <span className={styles.contentTypeText}>{contentType === 'show' ? 'series' : 'film'}</span>
+                    {metaFields.map(field => {
+                        if (field === 'year' && year) return <span key={field}>{year}</span>
+                        if (field === 'rating' && rating != null) return <span key={field}
+                                                                               className={styles.ratingText}>★ {rating.toFixed(1)}</span>
+                        if (field === 'content_type') return <span key={field}
+                                                                   className={styles.contentTypeText}>{contentType === 'show' ? 'series' : 'film'}</span>
+                        return null
+                    })}
                 </div>
               )}
 

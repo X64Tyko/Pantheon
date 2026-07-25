@@ -9,10 +9,9 @@ import { resolvePlayTarget } from '../player/resolvePlayTarget'
 import { useFocusable } from '../nav/useFocusable'
 import { useTravelingFocus } from '../nav/useTravelingFocus'
 import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
-import { TvGuideSection, TV_GUIDE_SECTION_FOCUS_KEY } from './TvGuideSection'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
 import { useHomeManifest, toClientParams } from './useHomeManifest'
-import type { TvHomeRow } from '../api/types'
+import type {TvHomeRow, TvDataSource} from '../api/types'
 import styles from './TvHome.module.css'
 import sharedStyles from '../channel/sharedStyles.module.css'
 
@@ -39,12 +38,11 @@ export function TvHome() {
   // away and needs to survive across repeated Play presses).
   const castVodSessionRef = useRef<string | null>(null)
   const allItemsRef = useRef<Map<string, Show | Movie>>(new Map())
-  const guideRef = useRef<HTMLDivElement>(null)
 
-  const [recentShows,      setRecentShows]      = useState<Show[]>([])
-  const [recentMovies,     setRecentMovies]     = useState<Movie[]>([])
-  const [recentlyReleased, setRecentlyReleased] = useState<Movie[]>([])
-  const [recentlyAired,    setRecentlyAired]    = useState<Show[]>([])
+    // Every shelf row's real items, keyed by row id — not a fixed set of named
+    // slots, so a shelf Kairos adds/removes only needs a tv_shelf DB row (see
+    // that table's own v81 seed comment), no client change.
+    const [rowItemsState, setRowItemsState] = useState<Record<string, (Show | Movie)[]>>({})
   const [continueWatching, setContinueWatching] = useState<WatchProgress[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -151,36 +149,64 @@ export function TvHome() {
   const { rows: manifestRows, loading: manifestLoading } = useHomeManifest()
   const findRow = (id: string) => manifestRows.find(r => r.id === id)
 
+    // The endpoint vocabulary a shelf/hero dataSource can point at — same
+    // "which fields/endpoints exist is server-owned data" split every other
+    // manifest zone follows. An endpoint this client doesn't recognize
+    // degrades to an empty (rather than crashing) row.
+    const fetchDataSource = (ds?: TvDataSource): Promise<{ items: (Show | Movie)[] }> => {
+        if (!ds) return Promise.resolve({items: []})
+        const params = toClientParams(ds.params)
+        if (ds.endpoint === '/api/shows') return api.getShows(params).catch(() => ({items: [] as Show[], total: 0}))
+        if (ds.endpoint === '/api/movies') return api.getMovies(params).catch(() => ({items: [] as Movie[], total: 0}))
+        return Promise.resolve({items: []})
+    }
+
   useEffect(() => {
     if (manifestLoading) return
 
-    const showsRow    = findRow('recent-shows')
-    const moviesRow    = findRow('recent-movies')
-    const releasedRow = findRow('recent-released')
-    const airedRow    = findRow('recent-aired')
-    const cwRow       = findRow('continue-watching')
+      const shelfRows = manifestRows.filter(r => r.type === 'shelf' && r.id !== 'continue-watching')
+      const cwRow = findRow('continue-watching')
+      const heroRow = manifestRows.find(r => r.type === 'hero')
 
     Promise.all([
-      showsRow    ? api.getShows(toClientParams(showsRow.dataSource?.params))     : Promise.resolve({ items: [] as Show[], total: 0 }),
-      moviesRow   ? api.getMovies(toClientParams(moviesRow.dataSource?.params))   : Promise.resolve({ items: [] as Movie[], total: 0 }),
-      releasedRow ? api.getMovies(toClientParams(releasedRow.dataSource?.params)).catch(() => ({ items: [] as Movie[], total: 0 })) : Promise.resolve({ items: [] as Movie[], total: 0 }),
-      airedRow    ? api.getShows(toClientParams(airedRow.dataSource?.params)).catch(() => ({ items: [] as Show[], total: 0 })) : Promise.resolve({ items: [] as Show[], total: 0 }),
-      cwRow       ? api.getWatchProgress().catch(() => [] as WatchProgress[]) : Promise.resolve([] as WatchProgress[]),
-    ]).then(([sr, mr, rr, ra, cw]) => {
-      setRecentShows(sr.items)
-      setRecentMovies(mr.items)
-      setRecentlyReleased(rr.items)
-      setRecentlyAired(ra.items)
+        Promise.all(shelfRows.map(row => fetchDataSource(row.dataSource).then(res => [row, res] as const))),
+        cwRow ? api.getWatchProgress().catch(() => [] as WatchProgress[]) : Promise.resolve([] as WatchProgress[]),
+        heroRow?.dataSources
+            ? Promise.all([fetchDataSource(heroRow.dataSources.shows), fetchDataSource(heroRow.dataSources.movies)])
+            : Promise.resolve(null),
+    ]).then(([shelfResults, cw, heroResults]) => {
+        const newRowItems: Record<string, (Show | Movie)[]> = {}
+        shelfResults.forEach(([row, res]) => {
+            // recent-aired's real item list also filters to shows that actually
+            // have a latest_episode — generalized from "recent-aired specifically"
+            // to "any row whose click action plays the latest episode," since a
+            // row without one wouldn't make sense to show here anyway.
+            const items = row.itemAction === 'play-latest-episode' ? res.items.filter(i => isShow(i) && i.latest_episode) : res.items
+            newRowItems[row.id] = items
+            items.forEach(item => allItemsRef.current.set(isShow(item) ? item.show_id : item.movie_id, item))
+        })
+        setRowItemsState(newRowItems)
       setContinueWatching(cw)
 
-      sr.items.forEach(s => allItemsRef.current.set(s.show_id, s))
-      mr.items.forEach(m => allItemsRef.current.set(m.movie_id, m))
-      rr.items.forEach(m => allItemsRef.current.set(m.movie_id, m))
-      ra.items.forEach(s => allItemsRef.current.set(s.show_id, s))
-
-      const withArt = [...sr.items.filter(s => s.art), ...mr.items.filter(m => m.art)]
-      heroCandidates.current = withArt
-      const first = withArt[0] ?? sr.items[0]
+        // The hero row declares its own two data sources rather than reusing
+        // whatever recent-shows/recent-movies happen to be configured with
+        // (see TvManifestService.cpp's heroRowJson comment: hero's candidates
+        // are a fixed, art-filtered shows+movies merge, not derived from
+        // another row) — falls back to the old shelf-derived computation only
+        // for a manifest that predates the hero row's dataSources.
+        let candidates: (Show | Movie)[]
+        if (heroResults) {
+            const [hs, hm] = heroResults
+            const withArt = [...hs.items.filter(s => s.art), ...hm.items.filter(m => m.art)]
+            candidates = withArt.length > 0 ? withArt : hs.items
+        } else {
+            const shows = newRowItems['recent-shows'] ?? []
+            const movies = newRowItems['recent-movies'] ?? []
+            const withArt = [...shows.filter(s => s.art), ...movies.filter(m => m.art)]
+            candidates = withArt.length > 0 ? withArt : shows
+        }
+        heroCandidates.current = candidates
+        const first = candidates[0]
       if (first) { heroIdx.current = 0; setHeroItem(first); loadHeroDetail(first) }
     }).finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -234,15 +260,6 @@ export function TvHome() {
       return () => navigate(`/player/episode/${episodeId}`)
     }
     return () => goToLibrary(id, type, tvShelfCardFocusKey(row.title ?? row.id, id))
-  }
-
-  // recent-aired's real item list also filters to shows that actually have a
-  // latest_episode — same filter the pre-manifest hardcoded version applied.
-  const rowItems: Record<string, (Show | Movie)[]> = {
-    'recent-shows':    recentShows,
-    'recent-movies':   recentMovies,
-    'recent-released': recentlyReleased,
-    'recent-aired':    recentlyAired.filter(s => s.latest_episode),
   }
 
   return (
@@ -321,16 +338,13 @@ export function TvHome() {
 
         <div className={styles.quickActionRow}>
           <LibraryButton onClick={() => navigate('/tv/library')} />
-          <GuideButton onClick={() => {
-            // scrollIntoView alone only moved the viewport — it never
-            // touched actual spatial-nav focus, so the D-pad kept driving
-            // whatever shelf card was focused before, which reads as
-            // "pressing any direction goes back to the top of the list."
-            // setFocus() on the guide section's own container key resolves
-            // down to a real focusable descendant (see TvGuideSection.tsx).
-            guideRef.current?.scrollIntoView({ behavior: 'smooth' })
-            setFocus(TV_GUIDE_SECTION_FOCUS_KEY)
-          }} />
+            {/* Guide is a real route (/tv/guide, TvGuidePage.tsx) rather than
+              a scroll-and-refocus target now — matches desktop Guide's own
+              standalone-route treatment (TvGuideSection itself is unchanged,
+              just no longer embedded here). */}
+            {manifestRows.some(row => row.type === 'guide') && (
+                <GuideButton onClick={() => navigate('/tv/guide')}/>
+            )}
         </div>
 
       <div className={`${styles.shelvesScroll} scrollbar-dark`}>
@@ -338,14 +352,7 @@ export function TvHome() {
           <div className={styles.loadingText}>Loading…</div>
         ) : (
           <>
-            {manifestRows.filter(row => row.type !== 'hero').map(row => {
-              if (row.type === 'guide') {
-                return (
-                  <div key={row.id} ref={guideRef} className={styles.guideWrap}>
-                    <TvGuideSection />
-                  </div>
-                )
-              }
+              {manifestRows.filter(row => row.type !== 'hero' && row.type !== 'guide').map(row => {
 
               if (row.id === 'continue-watching') {
                 return continueWatching.length > 0 ? (
@@ -357,7 +364,7 @@ export function TvHome() {
                 ) : null
               }
 
-              const items = rowItems[row.id] ?? []
+                  const items = rowItemsState[row.id] ?? []
               if (items.length === 0) return null
               const title = row.title ?? row.id
               return (

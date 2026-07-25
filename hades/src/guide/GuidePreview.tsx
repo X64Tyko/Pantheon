@@ -50,7 +50,19 @@ export function GuidePreview({channel, previewProgram, nowMs, manifestUrl, onWat
       <div className={styles.root}>
           <div className={styles.videoLayer}>
         {manifestUrl && (
+            // key={channel.channel_id}: PreviewSession.h's switchChannel()
+            // deliberately reuses the exact same manifest_url for the
+            // session's whole life (never issues a new one on switch), so
+            // VideoPlayer's own [manifestUrl]-keyed load effect never re-fires
+            // after the first channel — hls.js was left to notice on its own
+            // that the server deleted and recreated the segments underneath
+            // it, which it doesn't reliably do. Forcing a full remount on
+            // channel change (the same "channel changed" signal the header's
+            // own focus highlight already reacts to) sidesteps that instead of
+            // trying to make hls.js self-recover from a live media-sequence
+            // reset.
           <VideoPlayer
+              key={channel?.channel_id}
             videoRef={videoRef}
             manifestUrl={manifestUrl}
             isLive
