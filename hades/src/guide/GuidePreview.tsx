@@ -17,15 +17,36 @@ interface GuidePreviewProps {
     onWatch: () => void
 }
 
-function fmtClock(ms: number): string {
+// Exported for direct unit testing (momus/hades/guide/GuidePreview.test.ts) —
+// both are pure and easy to regress (e.g. fmtCountdown's 60-minute rollover).
+export function fmtClock(ms: number): string {
     return new Date(ms).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'})
 }
 
-function fmtCountdown(ms: number): string {
+export function fmtCountdown(ms: number): string {
     const mins = Math.round(ms / 60000)
     if (mins < 60) return `${mins}m`
     const h = Math.floor(mins / 60), m = mins % 60
     return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
+
+export interface PreviewTiming {
+    isLive: boolean
+    // Only set when NOT live and the program is genuinely in the future —
+    // you can't show a countdown for something already over.
+    startsInMs: number | null
+}
+
+// A program is "live" iff wall_clock_start_ms <= nowMs < wall_clock_end_ms
+// (start inclusive, end exclusive — a program ending exactly at nowMs is NOT
+// live). Extracted from the component body so this boundary logic is
+// directly unit-testable without rendering.
+export function computePreviewTiming(program: EpgProgram | null, nowMs: number): PreviewTiming {
+    const isLive = !!program && program.wall_clock_start_ms <= nowMs && nowMs < program.wall_clock_end_ms
+    const startsInMs = program && !isLive && program.wall_clock_start_ms > nowMs
+        ? program.wall_clock_start_ms - nowMs
+        : null
+    return {isLive, startsInMs}
 }
 
 export function GuidePreview({channel, previewProgram, nowMs, manifestUrl, onWatch}: GuidePreviewProps) {
@@ -35,12 +56,9 @@ export function GuidePreview({channel, previewProgram, nowMs, manifestUrl, onWat
     if (videoRef.current) videoRef.current.muted = true
   }, [manifestUrl])
 
-    const isLive = !!previewProgram && previewProgram.wall_clock_start_ms <= nowMs && nowMs < previewProgram.wall_clock_end_ms
     // "we can remove it if we don't like it" — kept as its own small, isolated
     // bit of markup on purpose, easy to delete wholesale later.
-    const startsInMs = previewProgram && !isLive && previewProgram.wall_clock_start_ms > nowMs
-        ? previewProgram.wall_clock_start_ms - nowMs
-        : null
+    const {startsInMs} = computePreviewTiming(previewProgram, nowMs)
 
     const label = previewProgram && previewProgram.item_type === 'episode' && previewProgram.season != null && previewProgram.episode_num != null
         ? `S${String(previewProgram.season).padStart(2, '0')}E${String(previewProgram.episode_num).padStart(2, '0')}`

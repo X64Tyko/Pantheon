@@ -20,6 +20,8 @@ add_executable(momus_kairos
     api/test_auth_service_routes.cpp
     api/test_restriction_access_check.cpp
     api/test_playback_and_channel_routes.cpp
+        api/test_playback_keyframes_and_resolve_routes.cpp
+        api/test_tv_manifest_service.cpp
     api/test_writeback_all.cpp
     api/test_content_service_auto_writeback.cpp
     auth/test_auth_store.cpp

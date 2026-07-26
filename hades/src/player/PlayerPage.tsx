@@ -17,6 +17,7 @@ import { useRokuSession } from '../cast-roku/useRokuSession'
 import type { CastMediaArgs } from '../cast/castMedia'
 import { useAuth } from '../auth/AuthContext'
 import { subscribeWatchTogether, postWatchTogetherCommand, postWatchTogetherHeartbeat, type WatchTogetherEvent } from './watchTogetherApi'
+import {computeWtEventEffect} from './wtEventEffect'
 import styles from './PlayerPage.module.css'
 
 const TARGET_BUFFER_SECS = 6 // matches the HLS segment length — "fully buffered" for throbber purposes
@@ -38,11 +39,9 @@ const NATURAL_END_TOLERANCE_MS = 5_000
 // interval (WatchTogetherManager::tickSync, main.cpp), so a follower's
 // authoritative position is never more than one tick stale.
 const WT_HEARTBEAT_MS = 4_000
-// Watch Together: how far a follower's local position must drift from a
-// periodic `sync` tick's authoritative one before snapping to it — small
-// clock/decode jitter shouldn't cause constant micro-seeking, but a stalled
-// rebuffer or a fresh join should correct promptly.
-const WT_SYNC_DRIFT_THRESHOLD_MS = 1_500
+// Watch Together follower drift-tolerance/seek-vs-no-op decision now lives in
+// wtEventEffect.ts's WT_SYNC_DRIFT_THRESHOLD_MS (pulled out so it's
+// unit-testable without a real <video> element) — see applyWtEvent below.
 // Live channels: how often to re-poll "what's on now" — a live schedule has
 // no scrubber to derive position from, so this also re-derives PiP state.
 const CHANNEL_NOW_POLL_MS = 7_000
@@ -336,15 +335,14 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   const applyWtEvent = useCallback((event: WatchTogetherEvent) => {
     const video = videoRef.current
     if (!video) return
-    if (typeof event.position_ms === 'number') {
-      const targetSec = event.position_ms / 1000
-      if (event.type !== 'sync' || Math.abs(targetSec - video.currentTime) * 1000 > WT_SYNC_DRIFT_THRESHOLD_MS) {
-        video.currentTime = targetSec
-        setCurrentMs(event.position_ms)
+      const effect = computeWtEventEffect(event, video.currentTime * 1000, video.paused)
+      if (typeof effect.seekToMs === 'number') {
+          video.currentTime = effect.seekToMs / 1000
+          setCurrentMs(effect.seekToMs)
       }
-    }
-    if (event.paused === true && !video.paused) video.pause()
-    else if (event.paused === false && video.paused) video.play().catch(() => {})
+      if (effect.pause) video.pause()
+      else if (effect.play) video.play().catch(() => {
+      })
   }, [])
 
   useEffect(() => {

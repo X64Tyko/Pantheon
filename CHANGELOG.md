@@ -75,6 +75,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   deliberate scope trim vs. the web client: a follower's own manual seek via ExoPlayer's native scrub bar isn't
   intercepted into a no-op (media3's default `PlayerView` controller has no easy per-gesture interception point) —
   it still self-corrects via the next command/sync tick, just one round trip later rather than never visibly moving.
+- **Momus: gtest coverage for Hermes' Watch Together state machine**: `WatchTogetherSession`/`WatchTogetherManager`
+  shipped with no tests. New `momus/hermes/test_watch_together_session.cpp` (16 cases) drives the session class
+  directly — snapshot of a fresh/solo-host session, `pushCommand` seek/play/pause semantics, position extrapolation
+  while playing vs. flat while paused, heartbeat updating baseline+liveness without appending an event, `waitAfter`
+  ordering/re-poll/timeout-empty/wake-on-push semantics, rapid seek-then-pause sequencing, and the `kMaxBacklog`
+  event-log bound staying seq-monotonic past eviction. New `test_watch_together_manager.cpp` (11 cases) adds a
+  `MockKairos` local httplib server (same pattern `test_kairos_client.cpp` uses for `KairosClient`) to cover
+  `getOrCreate`'s Kairos round trip (unknown/closed/malformed/empty-host responses all yield `nullptr`, successful
+  lookups cache), that repeated `getOrCreate` calls simulating multiple viewers joining never reset live
+  position/paused, `reap`'s stale-vs-fresh eviction and its best-effort Kairos close (using whichever host token the
+  session last saw, and skipping the close call entirely when none was ever set), and `tickSync` broadcasting a
+  `sync` event to every live session. All 27 tests pass; no production code changed. Router-level auth-boundary
+  tests (`resolveAuthHeader`'s `?token=` fallback, 401 without any credential) were scoped out for time — flagged as
+  a follow-up, not forgotten.
 - **Kairos: playlist-backed Home shelves now reach `/api/tv/manifest` (and therefore `/tv` and Android)**: a smart
   playlist's "show on home" toggle (`PlaylistRepository::listHomeShelves`) previously only ever rendered on the
   regular web Home page (`HomePage.tsx`'s `customShelves`, via `GET /api/home-playlists`) — `TvManifestService.cpp`
@@ -125,6 +139,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `v0.3.0-beta.1`) as a pre-release. Fails loudly rather than publishing an empty release if that CHANGELOG section
   doesn't exist yet. Re-runnable via `workflow_dispatch` (with a `tag` input) to backfill a release for a tag pushed
   before this workflow existed, or to republish after a CHANGELOG fix.
+- **Test coverage for `extract_changelog_section.py`**: the release-notes join script above had zero test coverage,
+  and no pytest infra existed anywhere in this repo yet for any Python script. New
+  `.github/scripts/test_extract_changelog_section.py` (17 cases, plain `pytest`, no other dependencies) covers
+  `extract_section`'s heading-boundary matching (mid-file, last-in-file/EOF, not-found, and the
+  prefix-heading-collision case a bare `startswith` could get wrong), `reflow`'s line-joining rules (continuation
+  merging, blank-line/paragraph preservation, leading/trailing strip), and `main()`'s CLI exit codes/messages —
+  plus two integration cases that reflow real excerpts pulled straight from this file's own `## [0.2.1]` and
+  `## [Unreleased]` sections (the latter self-referentially covering the exact wrap this script exists to fix).
+  Imported as a plain module (no `__init__.py`, no conftest shim needed — pytest's default rootless import mode
+  handles it) since it's a standalone script, not a package.
+- **Hades: test coverage for Watch Together's client wrapper and the direct_play->direct_stream rename**: three new
+  `momus/hades` files. `player/watchTogetherApi.test.ts` (14 cases) covers `subscribeWatchTogether`'s URL/`?token=`
+  construction and JSON-parse/malformed-message handling (via the same `FakeEventSource` stub pattern
+  `SystemStore.test.ts` established), `joinWatchTogether`'s request shape plus its error propagation
+  (non-ok/network-failure), and that `postWatchTogetherCommand`/`postWatchTogetherHeartbeat` never reject regardless
+  of response status — they're fire-and-forget by design (no `res.ok` check in either), which the tests now pin down
+  explicitly rather than leave implicit. PlayerPage.tsx's follower-side `applyWtEvent` (the drift-tolerant
+  sync/seek/pause/play logic Android's port mirrors) was previously inline in a `useCallback` acting directly on the
+  native `<video>` element, so its decision rule wasn't unit-testable in isolation; pulled the pure part into a new
+  `player/wtEventEffect.ts` (`computeWtEventEffect`, same extract-a-pure-function convention as `resolvePlayTarget.ts`
+  and `playQueue.ts`) — `applyWtEvent` itself is now a thin wrapper that just applies the returned effect to
+  `videoRef.current`/`setCurrentMs`, behavior unchanged. New `player/wtEventEffect.test.ts` (13 cases) covers the
+  drift-threshold boundary in both directions, that `seek`/`pause`/`play` always apply position immediately (unlike
+  `sync`), and paused-state idempotency. (`WatchTogetherEvent` carries no sequence number, so no
+  stale/out-of-order-event
+  case exists to test.) Separately, `directPlayRename.test.ts` guards the field rename itself: `NowPlayingPanel.tsx`,
+  `PlayHistoryPanel.tsx`, `playbackApi.ts`, `usePlaybackSession.ts`, `api/types.ts`, and `api/client.ts` have no
+  existing component-test harness (no jsdom in this suite), so instead of standing one up for narrow ROI, this reads
+  those six files' source directly and asserts `direct_play` can't silently creep back in while `direct_stream` stays
+  present — cheap insurance against exactly the regression this rename could reintroduce.
+- **Test coverage for the Guide/live-preview stack (Hephaestus, Hades, Android)**: none of it had any tests at all
+  before this. **Hephaestus**: `PreviewSession::switchChannel()` can't run in a unit test (real Kairos round-trip +
+  `ffprobe` + a real `ffmpeg` spawn), so `computeOffset` (its own copy of `ChannelSession`'s filler-loop/clamp math)
+  is exposed via a `computeOffsetForTest` seam matching `test_channel_session.cpp`'s existing convention, and new
+  `test_preview_session.cpp`/`test_preview_session_manager.cpp` (20 cases) cover everything reachable without
+  spawning ffmpeg: `dir()` — and so the `manifest_url` Router.cpp builds from it — is proven to be a pure function of
+  `session_id` alone with no `channel_id` input anywhere it could depend on, which is *why* `switchChannel()` can
+  reuse one manifest URL for a session's whole life; `isActive`/`isIdle`/`touch`/`stop` bookkeeping; and
+  `PreviewSessionManager::create()`'s real failure path (no offline image configured + unreachable Kairos) exercises
+  its actual mkdir/round-trip/registration logic with no ffmpeg involved. A successful spawn, the 5s reaper thread,
+  and the settings-cache refresh remain untested — no fake ffmpeg/Kairos server exists yet. **Hades**: `GuidePreview.
+  tsx`'s `fmtClock`/`fmtCountdown`/the `isLive`/`startsInMs` boundary logic and `useGuideSession.ts`'s `nowProgram`
+  derivation are now exported pure functions (`computePreviewTiming`, `findLiveProgram`) for the same
+  directly-testable reason `resolvePlayTarget.ts`/`wtEventEffect.ts` already are; `useGuideSession`'s
+  start/switch/queue/self-stop session state machine (previously inline refs/closures) is pulled into a new
+  framework-free `PreviewSessionController` class so it's unit-testable without a React renderer (this repo still
+  has no jsdom/`@testing-library/react`). New `momus/hades/guide/` files —
+  `GuidePreview.test.ts`/`useGuideSession.test.ts`/`previewSessionController.test.ts`/`previewApi.test.ts` (43 cases)
+  — cover the countdown's 60-minute rollover, the live-window's inclusive-start/exclusive-end boundary, the
+  controller's reuse-vs-queue-vs-fresh-start branching including a stale in-flight start self-stopping instead of
+  being adopted after a `stop()`, and `previewApi.ts`'s request shape/error handling. **Android**:
+  `GuideViewModel.kt`'s own live-boundary check is similarly extracted into a standalone `findLiveProgram` (matching
+  `util/QueryParams.kt`'s established pattern — `GuideViewModel.nowMs` has no clock-injection seam, so testing this
+  boundary through the ViewModel itself would be flaky). New `GuideViewModelTest.kt` (21 cases, reusing the
+  JUnit4/MockK/coroutines-test infra another in-flight change bootstrapped for `PlayerViewModelTest`/
+  `DetailViewModelTest`) covers channel/EPG load success and partial/full failure, zone gating, focus state, and the
+  preview session lifecycle — including a genuine behavioral divergence this suite caught from the web hook:
+  `useGuideSession.ts` queues a channel switch that arrives mid-cold-start and applies it once the start resolves;
+  `GuideViewModel.beginPreview()` has no such branch and silently drops it instead. Left as-is (not obviously a bug —
+  no real Android analogue to a backgrounded browser tab racing a cold start — but pinned down either way so it
+  can't regress further). **Security check**: `POST /stream/preview/start` (and `/switch`) carry no auth check
+  inside Hephaestus's own `Router.cpp` at all, but Hephaestus has no host port mapping in any `docker-compose*.yml`
+  variant — it's only reachable through Hermes' `authedHephaestusProxy`, which validates the bearer token against
+  Kairos's `/api/auth/me` and runs a parental-control `access-check` before proxying `start`/`switch` through. Not an
+  unauthenticated hole like the pre-fix `/played` route was — the gate just lives one layer further out, same as
+  `/stream/vod/start`'s identical proxy-side gating.
 
 ## [0.2.1] - 2026-07-25
 

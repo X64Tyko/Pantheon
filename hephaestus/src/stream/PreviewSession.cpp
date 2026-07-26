@@ -8,195 +8,219 @@
 #include <set>
 #include <sstream>
 
-namespace {
+namespace
+{
+	constexpr int kPreviewSegmentSecs = 2;
+	constexpr int kPreviewMaxHeight   = 480;
 
-constexpr int kPreviewSegmentSecs = 2;
-constexpr int kPreviewMaxHeight   = 480;
+	int64_t nowMs()
+	{
+		return std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::system_clock::now().time_since_epoch()).count();
+	}
 
-int64_t nowMs() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-}
+	void appendPreviewOutputArgs(std::vector<std::string>& a, const std::string& dir)
+	{
+		a.insert(a.end(), {
+					 "-f", "hls",
+					 "-hls_time", std::to_string(kPreviewSegmentSecs),
+					 "-hls_list_size", "6",
+					 "-hls_flags", "delete_segments+append_list",
+					 "-hls_segment_filename", dir + "/seg-%05d.ts",
+					 dir + "/playlist.m3u8"
+				 });
+	}
 
-int64_t computeOffset(const KairosNowResponse& item, int64_t atMs) {
-    int64_t raw = std::max(int64_t(0), atMs - item.wall_clock_start_ms);
-    return (item.is_filler && item.duration_ms > 0) ? raw % item.duration_ms : raw;
-}
+	std::vector<std::string> buildPreviewArgs(const std::string& ffmpeg_path,
+											  const KairosNowResponse& item,
+											  int64_t startOffsetMs,
+											  HwAccel hw_accel,
+											  const std::string& vaapi_device,
+											  HwAccel decode_hw_accel,
+											  const std::set<std::string>& decodable_codecs,
+											  const std::string& source_codec,
+											  const VideoTrack* source_video,
+											  bool hdr_capable,
+											  bool verbose_transcode_logs,
+											  const std::string& dir)
+	{
+		std::vector<std::string> a{ffmpeg_path};
+		pushLogLevelArgs(a, verbose_transcode_logs);
+		a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt", "-flags", "low_delay", "-re"});
+		pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
+		if (startOffsetMs > 0)
+		{
+			std::ostringstream ss;
+			ss << std::fixed << std::setprecision(3) << (startOffsetMs / 1000.0);
+			a.insert(a.end(), {"-ss", ss.str()});
+		}
+		pushHwAccelDecodeArgs(a, decode_hw_accel, decodable_codecs, source_codec);
+		a.insert(a.end(), {"-i", item.file_path});
+		a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:0?", "-dn", "-map_chapters", "-1"});
 
-void appendPreviewOutputArgs(std::vector<std::string>& a, const std::string& dir) {
-    a.insert(a.end(), {
-        "-f", "hls",
-        "-hls_time", std::to_string(kPreviewSegmentSecs),
-        "-hls_list_size", "6",
-        "-hls_flags", "delete_segments+append_list",
-        "-hls_segment_filename", dir + "/seg-%05d.ts",
-        dir + "/playlist.m3u8"
-    });
-}
+		std::vector<std::string> vfParts;
+		pushScaleFilter(vfParts, kPreviewMaxHeight);
+		pushVideoEncoderArgs(a, vfParts, hw_accel, kPreviewSegmentSecs, source_video, hdr_capable);
+		pushVideoFilterArgs(a, vfParts);
+		pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/96);
 
-std::vector<std::string> buildPreviewArgs(const std::string& ffmpeg_path,
-                                           const KairosNowResponse& item,
-                                           int64_t startOffsetMs,
-                                           HwAccel hw_accel,
-                                           const std::string& vaapi_device,
-                                           HwAccel decode_hw_accel,
-                                           const std::set<std::string>& decodable_codecs,
-                                           const std::string& source_codec,
-                                           const VideoTrack* source_video,
-                                           bool hdr_capable,
-                                           bool verbose_transcode_logs,
-                                           const std::string& dir) {
-    std::vector<std::string> a{ffmpeg_path};
-    pushLogLevelArgs(a, verbose_transcode_logs);
-    a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt", "-flags", "low_delay", "-re"});
-    pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
-    if (startOffsetMs > 0) {
-        std::ostringstream ss;
-        ss << std::fixed << std::setprecision(3) << (startOffsetMs / 1000.0);
-        a.insert(a.end(), {"-ss", ss.str()});
-    }
-    pushHwAccelDecodeArgs(a, decode_hw_accel, decodable_codecs, source_codec);
-    a.insert(a.end(), {"-i", item.file_path});
-    a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:0?", "-dn", "-map_chapters", "-1"});
+		appendPreviewOutputArgs(a, dir);
+		return a;
+	}
 
-    std::vector<std::string> vfParts;
-    pushScaleFilter(vfParts, kPreviewMaxHeight);
-    pushVideoEncoderArgs(a, vfParts, hw_accel, kPreviewSegmentSecs, source_video, hdr_capable);
-    pushVideoFilterArgs(a, vfParts);
-    pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/96);
+	std::vector<std::string> buildPreviewImageArgs(const std::string& ffmpeg_path,
+												   const std::string& image_path,
+												   HwAccel hw_accel,
+												   const std::string& vaapi_device,
+												   bool verbose_transcode_logs,
+												   const std::string& dir)
+	{
+		std::vector<std::string> a{ffmpeg_path};
+		pushLogLevelArgs(a, verbose_transcode_logs);
+		a.insert(a.end(), {"-fflags", "+genpts", "-flags", "low_delay", "-re"});
+		// Image loop input never decodes a real file, so only encode-side amd
+		// (not decode) can ever need the device here.
+		pushVaapiDeviceArg(a, hw_accel, HwAccel::none, vaapi_device);
+		// -f image2 forced explicitly — image_path may be a remote URL, and
+		// ffmpeg's demuxer auto-detection picks a pipe-style demuxer for those
+		// instead of image2, silently breaking -loop (see ChannelSession.cpp's
+		// buildImageArgs for the full explanation).
+		a.insert(a.end(), {"-f", "image2", "-loop", "1", "-framerate", "25", "-i", image_path});
+		a.insert(a.end(), {"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"});
+		a.insert(a.end(), {"-map", "0:v:0", "-map", "1:a:0", "-dn", "-map_chapters", "-1"});
 
-    appendPreviewOutputArgs(a, dir);
-    return a;
-}
+		std::vector<std::string> vfParts;
+		pushScaleFilter(vfParts, kPreviewMaxHeight);
+		pushVideoEncoderArgs(a, vfParts, hw_accel, kPreviewSegmentSecs);
+		pushVideoFilterArgs(a, vfParts);
+		pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/96);
 
-std::vector<std::string> buildPreviewImageArgs(const std::string& ffmpeg_path,
-                                                const std::string& image_path,
-                                                HwAccel hw_accel,
-                                                const std::string& vaapi_device,
-                                                bool verbose_transcode_logs,
-                                                const std::string& dir) {
-    std::vector<std::string> a{ffmpeg_path};
-    pushLogLevelArgs(a, verbose_transcode_logs);
-    a.insert(a.end(), {"-fflags", "+genpts", "-flags", "low_delay", "-re"});
-    // Image loop input never decodes a real file, so only encode-side amd
-    // (not decode) can ever need the device here.
-    pushVaapiDeviceArg(a, hw_accel, HwAccel::none, vaapi_device);
-    // -f image2 forced explicitly — image_path may be a remote URL, and
-    // ffmpeg's demuxer auto-detection picks a pipe-style demuxer for those
-    // instead of image2, silently breaking -loop (see ChannelSession.cpp's
-    // buildImageArgs for the full explanation).
-    a.insert(a.end(), {"-f", "image2", "-loop", "1", "-framerate", "25", "-i", image_path});
-    a.insert(a.end(), {"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"});
-    a.insert(a.end(), {"-map", "0:v:0", "-map", "1:a:0", "-dn", "-map_chapters", "-1"});
-
-    std::vector<std::string> vfParts;
-    pushScaleFilter(vfParts, kPreviewMaxHeight);
-    pushVideoEncoderArgs(a, vfParts, hw_accel, kPreviewSegmentSecs);
-    pushVideoFilterArgs(a, vfParts);
-    pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, /*audio_bitrate_kbps=*/96);
-
-    appendPreviewOutputArgs(a, dir);
-    return a;
-}
-
+		appendPreviewOutputArgs(a, dir);
+		return a;
+	}
 } // namespace
 
 PreviewSession::PreviewSession(std::string session_id, std::string ffmpeg_path,
-                                PreviewStreamOptions opts, KairosClient& kairos, bool hdr_capable)
-    : session_id(std::move(session_id)), ffmpeg_path(std::move(ffmpeg_path)),
-      opts(std::move(opts)), kairos(kairos), hdr_capable(hdr_capable) {}
+							   PreviewStreamOptions opts, KairosClient& kairos, bool hdr_capable)
+	: session_id(std::move(session_id))
+	, ffmpeg_path(std::move(ffmpeg_path))
+	, opts(std::move(opts))
+	, kairos(kairos)
+	, hdr_capable(hdr_capable)
+{
+}
 
 PreviewSession::~PreviewSession() { stop(); }
 
-bool PreviewSession::switchChannel(const std::string& channel_id) {
-    auto d = dir();
-    std::error_code ec;
-    std::filesystem::create_directories(d, ec);
-    if (ec) {
-        std::cerr << "[preview:" << session_id << "] failed to create \"" << d << "\": " << ec.message() << "\n";
-        return false;
-    }
-    // Clear stale segments from whatever was previously playing so the
-    // client never picks up a mix of old and new channel content.
-    for (auto& entry : std::filesystem::directory_iterator(d))
-        std::filesystem::remove(entry.path(), ec);
-
-    auto item = kairos.getNow(channel_id);
-
-    std::vector<std::string> args;
-    if (!item || item->item_type == "offline") {
-        std::string image = item && item->offline_image_path ? *item->offline_image_path : opts.default_logo_path;
-        if (image.empty()) image = opts.default_logo_path;
-        if (image.empty()) {
-            std::cerr << "[preview:" << session_id << "] channel " << channel_id
-                      << " is offline and no logo/default image is configured\n";
-            return false;
-        }
-        std::cerr << "[preview:" << session_id << "] spawning ffmpeg (offline slate): \"" << image << "\"\n";
-        args = buildPreviewImageArgs(ffmpeg_path, image, opts.hw_accel, opts.vaapi_device,
-                                      opts.verbose_transcode_logs, d);
-    } else if (item->file_path.empty()) {
-        std::cerr << "[preview:" << session_id << "] channel " << channel_id << " /now item has no file_path\n";
-        return false;
-    } else {
-        int64_t offset = computeOffset(*item, nowMs());
-        // Always probed now (not just when decode hwaccel is in play) —
-        // correct HDR handling needs this item's source color info
-        // regardless of that setting. switchChannel() already does a
-        // synchronous kairos.getNow() HTTP round-trip above, so a local
-        // ffprobe call here doesn't change the latency class of this
-        // function — and probeMediaCached makes repeat flips through the
-        // same handful of channels/files free after the first probe.
-        std::string source_codec;
-        auto info = probeMediaCached(opts.ffprobe_path, item->file_path);
-        if (info && !info->video.empty())
-            source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
-        const VideoTrack* source_video = (info && !info->video.empty()) ? &info->video[0] : nullptr;
-        std::cerr << "[preview:" << session_id << "] spawning ffmpeg: \"" << item->file_path << "\" offset=" << offset << "ms\n";
-        args = buildPreviewArgs(ffmpeg_path, *item, offset, opts.hw_accel, opts.vaapi_device,
-                                 opts.decode_hw_accel, opts.decodable_codecs, source_codec, source_video, hdr_capable,
-                                 opts.verbose_transcode_logs, d);
-    }
-
-    active = true;
-    touch();
-
-    std::lock_guard<std::mutex> lock(ffmpeg_mtx);
-    if (ffmpeg) ffmpeg->kill();
-    ffmpeg = std::make_unique<FfmpegProcess>(
-        std::move(args),
-        /*on_data=*/nullptr,
-        [this](int code) { onExit(code); },
-        opts.buffer_size,
-        opts.ffmpeg_debug_logs,
-        opts.verbose_transcode_logs
-    );
-    if (!ffmpeg->start()) {
-        std::cerr << "[preview:" << session_id << "] failed to spawn ffmpeg\n";
-        active = false;
-        return false;
-    }
-    return true;
+int64_t PreviewSession::computeOffset(const KairosNowResponse& item, int64_t atMs)
+{
+	int64_t raw = std::max(int64_t(0), atMs - item.wall_clock_start_ms);
+	return (item.is_filler && item.duration_ms > 0) ? raw % item.duration_ms : raw;
 }
 
-void PreviewSession::onExit(int code) {
-    std::cerr << "[preview:" << session_id << "] ffmpeg exited (code=" << code << ")\n";
+bool PreviewSession::switchChannel(const std::string& channel_id)
+{
+	auto d = dir();
+	std::error_code ec;
+	std::filesystem::create_directories(d, ec);
+	if (ec)
+	{
+		std::cerr << "[preview:" << session_id << "] failed to create \"" << d << "\": " << ec.message() << "\n";
+		return false;
+	}
+	// Clear stale segments from whatever was previously playing so the
+	// client never picks up a mix of old and new channel content.
+	for (auto& entry : std::filesystem::directory_iterator(d)) std::filesystem::remove(entry.path(), ec);
+
+	auto item = kairos.getNow(channel_id);
+
+	std::vector<std::string> args;
+	if (!item || item->item_type == "offline")
+	{
+		std::string image = item && item->offline_image_path ? *item->offline_image_path : opts.default_logo_path;
+		if (image.empty()) image = opts.default_logo_path;
+		if (image.empty())
+		{
+			std::cerr << "[preview:" << session_id << "] channel " << channel_id
+				<< " is offline and no logo/default image is configured\n";
+			return false;
+		}
+		std::cerr << "[preview:" << session_id << "] spawning ffmpeg (offline slate): \"" << image << "\"\n";
+		args = buildPreviewImageArgs(ffmpeg_path, image, opts.hw_accel, opts.vaapi_device,
+									 opts.verbose_transcode_logs, d);
+	}
+	else if (item->file_path.empty())
+	{
+		std::cerr << "[preview:" << session_id << "] channel " << channel_id << " /now item has no file_path\n";
+		return false;
+	}
+	else
+	{
+		int64_t offset = computeOffset(*item, nowMs());
+		// Always probed now (not just when decode hwaccel is in play) —
+		// correct HDR handling needs this item's source color info
+		// regardless of that setting. switchChannel() already does a
+		// synchronous kairos.getNow() HTTP round-trip above, so a local
+		// ffprobe call here doesn't change the latency class of this
+		// function — and probeMediaCached makes repeat flips through the
+		// same handful of channels/files free after the first probe.
+		std::string source_codec;
+		auto info = probeMediaCached(opts.ffprobe_path, item->file_path);
+		if (info && !info->video.empty()) source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
+		const VideoTrack* source_video = (info && !info->video.empty()) ? &info->video[0] : nullptr;
+		std::cerr << "[preview:" << session_id << "] spawning ffmpeg: \"" << item->file_path << "\" offset=" << offset << "ms\n";
+		args = buildPreviewArgs(ffmpeg_path, *item, offset, opts.hw_accel, opts.vaapi_device,
+								opts.decode_hw_accel, opts.decodable_codecs, source_codec, source_video, hdr_capable,
+								opts.verbose_transcode_logs, d);
+	}
+
+	active = true;
+	touch();
+
+	std::lock_guard<std::mutex> lock(ffmpeg_mtx);
+	if (ffmpeg) ffmpeg->kill();
+	ffmpeg = std::make_unique<FfmpegProcess>(
+		std::move(args),
+		/*on_data=*/nullptr,
+		[this](int code) { onExit(code); },
+		opts.buffer_size,
+		opts.ffmpeg_debug_logs,
+		opts.verbose_transcode_logs
+	);
+	if (!ffmpeg->start())
+	{
+		std::cerr << "[preview:" << session_id << "] failed to spawn ffmpeg\n";
+		active = false;
+		return false;
+	}
+	return true;
 }
 
-void PreviewSession::stop() {
-    if (!active.exchange(false)) return;
-    {
-        std::lock_guard<std::mutex> lock(ffmpeg_mtx);
-        if (ffmpeg) { ffmpeg->kill(); ffmpeg.reset(); }
-    }
-    std::error_code ec;
-    std::filesystem::remove_all(dir(), ec);
+void PreviewSession::onExit(int code)
+{
+	std::cerr << "[preview:" << session_id << "] ffmpeg exited (code=" << code << ")\n";
+}
+
+void PreviewSession::stop()
+{
+	if (!active.exchange(false)) return;
+	{
+		std::lock_guard<std::mutex> lock(ffmpeg_mtx);
+		if (ffmpeg)
+		{
+			ffmpeg->kill();
+			ffmpeg.reset();
+		}
+	}
+	std::error_code ec;
+	std::filesystem::remove_all(dir(), ec);
 }
 
 void PreviewSession::touch() { last_touch_ms.store(nowMs()); }
 
-bool PreviewSession::isIdle() const {
-    int64_t touch = last_touch_ms.load();
-    if (touch == 0) return false;
-    return (nowMs() - touch) > static_cast<int64_t>(opts.linger_secs) * 1000;
+bool PreviewSession::isIdle() const
+{
+	int64_t touch = last_touch_ms.load();
+	if (touch == 0) return false;
+	return (nowMs() - touch) > static_cast<int64_t>(opts.linger_secs) * 1000;
 }

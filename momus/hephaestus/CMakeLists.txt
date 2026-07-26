@@ -5,6 +5,8 @@ add_executable(momus_hephaestus
     test_channel_session.cpp
     test_hw_probe.cpp
     test_discontinuity_sequence.cpp
+        test_preview_session.cpp
+        test_preview_session_manager.cpp
 )
 
 target_link_libraries(momus_hephaestus
