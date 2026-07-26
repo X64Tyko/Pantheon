@@ -60,6 +60,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Android: Watch Together (mobile + TV)**: full native port of the existing web/Hades feature — Kairos and Hermes
+  already implemented the whole protocol (session identity/discovery, live position/paused coordination over SSE),
+  this just gives the Android app a client. "Watch Together" button on the Detail screen (movies/shows, next to
+  Play) creates a session via `POST /api/watch-together` and opens the player as host; a "Watch Together" shelf on
+  Home (mirroring `HomePage.tsx`'s `WatchTogetherShelf`, fed by `GET /api/watch-together/active`) lets any other
+  viewer join an open session, seeded at the host's live position via Hermes' `POST /watch-together/:id/join`
+  instead of starting at 0. `PlayerViewModel`/`PlayerScreen` add: a host-only heartbeat (`WT_HEARTBEAT_MS`, matching
+  Hermes' own sync-tick interval) and explicit play/pause/seek command dispatch (via ExoPlayer's
+  `onPlayWhenReadyChanged`/`onPositionDiscontinuity(..., DISCONTINUITY_REASON_SEEK)` listeners); a follower-only SSE
+  subscription (`ApiClient.openWatchTogetherStream`, via a new `okhttp-sse` dependency — Retrofit has no SSE support)
+  applying `sync`/`seek`/`pause`/`play` events with the same drift-tolerant correction PlayerPage.tsx's
+  `applyWtEvent` uses; and a small "Hosting/Watching Together" badge with an explicit Leave/End action. One
+  deliberate scope trim vs. the web client: a follower's own manual seek via ExoPlayer's native scrub bar isn't
+  intercepted into a no-op (media3's default `PlayerView` controller has no easy per-gesture interception point) —
+  it still self-corrects via the next command/sync tick, just one round trip later rather than never visibly moving.
+- **Kairos: playlist-backed Home shelves now reach `/api/tv/manifest` (and therefore `/tv` and Android)**: a smart
+  playlist's "show on home" toggle (`PlaylistRepository::listHomeShelves`) previously only ever rendered on the
+  regular web Home page (`HomePage.tsx`'s `customShelves`, via `GET /api/home-playlists`) — `TvManifestService.cpp`
+  only ever read the static, admin-seeded `tv_shelf` table, with no code path turning a playlist into a manifest row
+  at all. `/tv` and every native client (Android included) silently never showed a playlist-backed shelf that the
+  desktop Home page did. Fixed by having the manifest builder additionally query `listHomeShelves()` and append an
+  equivalent `shelf`-type row per playlist (`/api/shows` or `/api/movies`, with `limit`/`sort`/`filter`/`home`/
+  `hide_empty` params — the exact same `dataSource` shape every `tv_shelf` row already emits), ordered after the
+  fixed rows. No client-side changes were needed at all: Android's `HomeViewModel.fetchDataSource` and `/tv`'s own
+  manifest consumer already handle any `shelf` row pointed at those two endpoints generically.
+- **Android: manifest-driven color theming, actually reaching the UI**: `PantheonTheme.kt` (both flavors) has always
+  read real hex values from the manifest's `theme.tokens.colors` (`generate-tv-tokens.mjs`'s output), but only ever
+  fed them into the stock Material3 `ColorScheme` slots — every screen's own hand-rolled UI (`HomeScreen`,
+  `DetailScreen`, `PlayerScreen`, `GuideScreen`, `LibraryScreen`, `ProfileSelectScreen`, both flavors) defined its own
+  local hardcoded `Color(0x...)` constants instead and never read `MaterialTheme.colorScheme` at all, so a manifest
+  theme change never actually reached them. New `PantheonColors`/`LocalPantheonColors` (`ui/theme/PantheonColors.kt`)
+  exposes the fuller HDS token set (`bg`/`bg2`/`bg3`/`bg4`, `txt`/`txt2`/`txt3`, `gold`/`gold2`/`txtOnGold`,
+  `violet`/`violetDeep`, the `match*` semantic colors, `glassBorder`, `discoverAccent`) that Material3's handful of
+  semantic slots can't represent without losing information (HDS has multiple background/text tiers; Material3 has
+  one background/onBackground pair). Every screen across both flavors now reads `LocalPantheonColors.current`
+  instead of a local constant — an admin's theme customization now actually reaches the native app end to end.
 - **Android: "Play from Beginning" button on the Detail screen (mobile + TV)**: sits next to the existing "Play"
   button, which now always resumes real progress (see the resume fixes above) — this gives an explicit way to
   restart a movie or a show (from episode 1, not whatever episode/position "Play" would resume into) instead of
