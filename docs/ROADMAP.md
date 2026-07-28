@@ -37,6 +37,10 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 ## Phase 2: Beta (Q3 2026)
 *Focus: Feature completeness, user experience, and expanded hardware support.*
 
+- [x] **Watch Together for Android:** The web (Hades) implementation shipped in Alpha (see above) — bringing
+  the same host/follower session sync to the native clients is still open.
+- [ ] **True Direct Play:** Direct streaming is up and running, but requires the server to do work that the end client
+  can do. We need Direct Play to serve files directly to clients, this should work for VOD and channels when possible.
 - [ ] **Plex External-ID Writeback:** Plex's GUID is only changeable via a "match" call that re-scrapes the whole item under a new agent result, not a field edit like everything else in the writeback system — needs its own design before it's safe to automate.
 - [ ] **Full .ass/.ssa Subtitle Styling:** Embedded/sidecar `.ass`/`.ssa` tracks are already recognized as text
   subtitles and extracted into an HLS sidecar, but only as plain dialogue — ffmpeg's WebVTT conversion doesn't preserve
@@ -52,7 +56,8 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] **Performance Benchmarking:** Optimization of the `kairos_core` scheduler for 100+ concurrent channels.
 - [ ] **User Notifications:** Alerts for sync failures or stream interruptions.
 - [ ] **Roku Manifest Update:** `pantheon-roku` has been tested and confirmed functional on real hardware, but needs to be updated to use the per-client capability manifest (see above) and re-verified before any public release.
-- [ ] **Scheduled Sync & Scan Jobs:** Time-based (cron-style) triggering of the existing sync/scan operations, so libraries stay current without a manual "Hard Sync."
+- [ ] **Scheduled Sync & Scan Jobs:** Time-based (cron-style) triggering of the existing sync/scan operations, so
+  libraries stay current without a manual sync.
 - [ ] **Offline Backup & Restore:** On-demand and schedulable backup/restore of the Kairos database and configuration — reuses the scheduled-jobs mechanism above for the "schedulable" part.
 - [ ] **Scheduling Robustness for Placeholder Content:** Shows with no synced episodes yet, and movies still sitting on the Discovery "added" list, shouldn't be able to break channel scheduling if they end up selected into a block.
 - [ ] **Cast Session Skip-to-Player:** Skip the profile picker when a cast originates from an already-authenticated account, especially when casting directly to a specific piece of media.
@@ -60,14 +65,15 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] **VR Content Detection:** File-probe heuristic to flag VR video, plus a library toggle/filter to browse it — same tag/filter infrastructure as Scraper-Derived Tags.
 - [ ] **Chapter Classification Quality:** Reduce the "Unclassified" bucket in chapter detection — Episode/Credits already resolve well, but a lot of detected chapters fall through uncategorized. Worth doing before Chapter-Aware Scheduling (V1.0) depends on classification being trustworthy.
 - [ ] **Media Downloads:** Download media to device for offline playback.
+- [ ] **External ratings:** Add support for exteral rating systems (IMDb, Rotten Tomatoes, Metacritic, etc.)
+- [ ] **Advanced Search:** Add more advanced search operators (e.g. filtering by watch state, sorting by episode, etc.)
+- [ ] **Home Screen Management:** Reorder shelves on the home screen.
 
 ## Phase 3: V1.0 Release (Late 2026)
 *Focus: Production readiness, security auditing, and long-term support.*
 
 - [ ] **Chapter-Aware Scheduling:** Use detected chapters for precise program start/end and bumper placement. Deferred out of Beta — this consumes chapter data as a scheduling input rather than just displaying it, which touches the scheduler core and EPG projection directly; architecturally it belongs with the other foundational items below, not alongside Beta's smaller UX/format items.
 - [ ] **Watch-History-Driven Automated Channels:** Let a channel's rerun/advancement logic read from actual VOD watch history instead of only shuffle/sequential rules. Bigger than a normal advancement mode: channels are shared broadcast entities, so it needs its own design pass on whose watch state drives a shared schedule before it's safe to build — similar in spirit to the Plex external-ID deferral above, but larger in scope.
-- [ ] **Watch Together for Android and Roku:** The web (Hades) implementation shipped in Alpha (see above) — bringing
-  the same host/follower session sync to the native clients is still open.
 - [ ] **Security Audit:** Full review of the Hermes gateway and authentication flow.
 - [ ] **Public Plugin API:** Allow community-developed scrapers and source providers.
 - [ ] **Stable API:** Versioned REST API for third-party integrations.
