@@ -2458,6 +2458,20 @@ namespace
 )SQL"
 		}
 
+		// ── v99: guest profiles (see AuthStore::createGuestUser) — a
+		//         passwordless, viewer-only account a visitor creates for
+		//         themselves on a demo server, idle-pruned via
+		//         AuthStore::pruneIdleGuests. No expiry timestamp column: idle
+		//         time is computed at prune time from session.last_seen
+		//         (already updated on every authenticated request, see
+		//         validate()), not stored redundantly here.
+		,
+		{
+			99, R"SQL(
+    ALTER TABLE user ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0;
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

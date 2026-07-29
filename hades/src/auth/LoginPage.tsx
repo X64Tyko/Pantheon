@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import {useEffect, useState, type FormEvent} from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import {api} from '../api/client'
 import { useAuth } from './AuthContext'
 import styles from './LoginPage.module.css'
 
@@ -13,7 +14,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export default function LoginPage() {
-    const {login, resolveLandingPath} = useAuth()
+    const {login, resolveLandingPath, applySession, confirmCurrentProfile} = useAuth()
   const navigate   = useNavigate()
   const location   = useLocation()
     // A real deep link (redirected here by ProtectedRoute) always wins; only
@@ -25,6 +26,20 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error,    setError]    = useState('')
   const [loading,  setLoading]  = useState(false)
+
+    // Read pre-login (no session exists yet) — same public-settings route
+    // CastProvider already fetches unauthenticated. Off unless the admin has
+    // explicitly turned it on (SettingsPage's Guest Access section).
+    const [guestProfilesEnabled, setGuestProfilesEnabled] = useState(false)
+    const [showGuestForm, setShowGuestForm] = useState(false)
+    const [guestName, setGuestName] = useState('')
+    const [guestError, setGuestError] = useState('')
+    const [guestLoading, setGuestLoading] = useState(false)
+
+    useEffect(() => {
+        api.getPublicSettings().then(s => setGuestProfilesEnabled(s.guest_profiles_enabled)).catch(() => {
+        })
+    }, [])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -39,6 +54,27 @@ export default function LoginPage() {
       setLoading(false)
     }
   }
+
+    const submitGuest = async (e: FormEvent) => {
+        e.preventDefault()
+        setGuestError('')
+        setGuestLoading(true)
+        try {
+            const {token, user} = await api.createGuest(guestName)
+            await applySession(token, user)
+            // A freshly-created guest session IS the profile just picked —
+            // there's no "who's watching?" ambiguity to resolve, so skip
+            // straight past ProtectedRoute's picker redirect the way
+            // ProfileSelectPage does for the tile matching the active
+            // session (see confirmCurrentProfile's own doc).
+            confirmCurrentProfile()
+            navigate('/guest-setup', {replace: true})
+        } catch (err: any) {
+            setGuestError(err.message ?? 'Failed to create guest account')
+        } finally {
+            setGuestLoading(false)
+        }
+    }
 
   return (
     <div className={styles.page}>
@@ -79,6 +115,41 @@ export default function LoginPage() {
             {loading ? 'SIGNING IN…' : 'SIGN IN'}
           </button>
         </form>
+
+          {guestProfilesEnabled && !showGuestForm && (
+              <button
+                  type="button"
+                  onClick={() => setShowGuestForm(true)}
+                  className={styles.guestLink}
+              >
+                  Continue as Guest
+              </button>
+          )}
+
+          {guestProfilesEnabled && showGuestForm && (
+              <form onSubmit={submitGuest} className={styles.form}>
+                  <Field label="YOUR NAME">
+                      <input
+                          type="text" autoFocus required maxLength={40}
+                          value={guestName} onChange={e => setGuestName(e.target.value)}
+                          className={styles.textInput}
+                      />
+                  </Field>
+
+                  {guestError && (
+                      <div className={styles.errorBox}>
+                          {guestError}
+                      </div>
+                  )}
+
+                  <button
+                      type="submit" disabled={guestLoading}
+                      className={`${styles.submitBtn} ${guestLoading ? styles.submitBtnDisabled : styles.submitBtnEnabled}`}
+                  >
+                      {guestLoading ? 'CREATING GUEST ACCOUNT…' : 'CONTINUE AS GUEST'}
+                  </button>
+              </form>
+          )}
       </div>
     </div>
   )

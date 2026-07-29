@@ -49,3 +49,22 @@
 }
 .submitBtnEnabled { background: oklch(0.83 0.13 84 / 0.15); cursor: pointer; opacity: 1; }
 .submitBtnDisabled { background: var(--hds-bg-4); cursor: not-allowed; opacity: 0.6; }
+
+.guestLink {
+    width: 100%;
+    margin-top: var(--hds-space-5);
+    padding: 8px 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--hds-txt-3);
+    font-size: var(--hds-font-size-tv-caption);
+    font-family: var(--hds-font-mono-brand);
+    letter-spacing: 0.08em;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.guestLink:hover {
+    color: var(--hds-txt-2);
+}

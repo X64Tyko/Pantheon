@@ -8,6 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Guest profiles: no way to add a guest from the "Who's watching?" picker (Hades)**: `LoginPage.tsx`'s "Continue
+  as Guest" only ever covered a device with no active session at all — a device that already passed a real
+  username/password login (the actual precondition for ever reaching `/profiles`) had no equivalent entry point
+  there, so enabling guest profiles and signing out to the picker showed nothing new. `ProfileSelectPage.tsx` gains
+  its own "Add Guest" tile (shown only when the same `guest_profiles_enabled` public setting is on), which mints a
+  new guest and switches this device's active session onto it exactly the way picking any other existing profile
+  tile already does, then continues into the same first-run setup wizard the login-page path uses.
+- **`POST /api/config/library/reset` ("Reset Library Index") failed with "FOREIGN KEY constraint failed" whenever
+  any show/movie had a per-user track preference set**: reported live as "Can't delete DB because of FK watch
+  progress" — SQLite's FK violation error never actually names the offending table, and `watch_progress` turns out
+  to have no foreign key to `episode`/`movie`/`show` at all (verified against the live schema via
+  `pragma_foreign_key_list`, not just the migration source). The real cause: `show_track_preference`/
+  `movie_track_preference` (migrations v92/v94) reference `show(show_id)`/`movie(movie_id)` with no
+  `ON DELETE CASCADE`, and this route (which predates both tables) was never updated to clear them before deleting
+  the shows/movies they point at — same root-cause class as `AuthStore::deleteUserCascade`'s fix earlier in this
+  session for the exact same two tables on the user-deletion path, just a second independent call site with the
+  identical gap. `ConfigService.cpp`'s reset now deletes both tables up front, alongside the other
+  content-dependent cleanup (`chapter`, `playlist_item`, etc.) it already did. New
+  `momus/kairos/api/test_config_service_library_reset.cpp` reproduces the exact reported error message with the
+  fix disabled before confirming the fix resolves it.
 - **Android: VOD playback always restarted from 0 instead of resuming (Android)**: `PlayerScreen.kt` hardcoded
   ExoPlayer's `MediaItem` start position to `0L` for every VOD session, on a stale assumption (leftover from before
   Hephaestus's VOD sessions moved to a whole-file, absolute-timeline manifest) that the manifest itself always began
@@ -60,6 +80,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Security: "Require Password for Admin Profile Switch" (Kairos, Hades)**: the "Who's watching?" picker
+  (`ProfileSelectPage.tsx`/`TvProfileSelect.tsx`) lets a device that already passed a real username/password login
+  hop into any profile without re-entering credentials — for admin, that previously meant a 4-6 digit PIN alone was
+  enough, a meaningfully weaker credential than the real password guarding an account that can do real damage. New
+  Settings → Security toggle (`require_admin_password_switch`, `AuthStore::switchProfile` gains a
+  `require_password_for_admin` parameter, enforced server-side — not just left to the client to decide whether to
+  show a PIN prompt or a password one, same "can't be bypassed by calling the endpoint directly" posture the
+  existing no-pin-admin rule already has) forces the real password every time for admin, PIN configured or not.
+  Independent of guest profiles on its own, but turning guest profiles on auto-enables it as a safe default — the
+  same "who's watching?" picker showing an admin tile is now reachable by any guest — and deliberately
+  one-directional: turning guest profiles back off does not auto-revert it, and the *effective* enforcement
+  (`security_settings::requireAdminPasswordSwitchEffective`, exposed via public-settings for the picker's own
+  client-side routing) stays "on if guest profiles are on" regardless of the raw stored setting, so it can't be
+  quietly weakened while guests remain enabled.
+- **Guest profiles — self-service "Continue as Guest" for demo servers (Kairos, Hades)**: admin-toggleable
+  (Settings → Guest Access, off by default), gives anyone who reaches the login page a passwordless, viewer-only
+  account they create and name themselves — meant for running a public Pantheon demo server without handing out
+  real credentials. `POST /api/auth/guest` (public, but 403s unless `guest_profiles_enabled` is on, and rejects once
+  `guest_max_concurrent` active guests already exist — an admin-adjustable cap against a publicly-exposed endpoint
+  being spammed) creates the account and mints a session in one call, same response shape as `/api/auth/setup`. A
+  new first-run wizard (`GuestSetupPage.tsx`) lets the guest configure the exact same fields a normal account has —
+  PIN (profile-switch) and parental-control restriction/rating ceilings — minus the admin/viewer role toggle,
+  through two new guest-only self-service routes (`PATCH`/`DELETE /api/auth/me/guest`, gated on
+  `currentUser()->is_guest` specifically rather than "any authenticated caller editing their own id," so a
+  *non-guest* viewer can never use these to loosen restrictions an admin set on them). Pruning is idle-based, not
+  creation-based: a background job deletes any guest account with no session activity (`session.last_seen`, already
+  tracked) within the admin-configured window (`guest_idle_timeout_days`, default 7) — an actively-used guest
+  account never expires on its own. A guest can also delete their own account early from My Account
+  ("mindful types"); an admin can delete any guest the same way they delete any other user. New migration v99 adds
+  a single `user.is_guest` column — no expiry timestamp is stored, idle time is computed at prune time. Fixed a
+  latent bug found while wiring guest deletion: `playback_history`, `show_track_preference`,
+  `movie_track_preference`, and `watch_together_session`/`watch_together_member` reference `user(user_id)` without
+  `ON DELETE CASCADE`, so deleting *any* account (guest or not) that had ever played something or used Watch
+  Together threw a foreign-key constraint violation instead of actually deleting it — `AuthStore::deleteUser` now
+  goes through a shared `deleteUserCascade` helper that clears those five tables first.
+- **`JobScheduler` — a reusable periodic-job mechanism (Kairos)**: replaces the hand-rolled tick-counter that used
+  to live inline in `main.cpp`'s coordinator thread (a single 24h playback-history prune, easy to lose track of
+  buried in an unrelated sync-coordination loop). Supports both fixed intervals (`registerInterval`) and
+  wall-clock daily jobs (`registerDaily`, UTC) — the latter isn't used yet but is there for upcoming sync/backup
+  work, which need "run at a specific time," not just "run every N hours since boot." One background thread,
+  each job's exception caught and logged so one broken job can't take down the others or block the rest. The
+  playback-history prune migrated over as its first job; the new guest-idle-prune job (above) is its second. New
+  `kairos/src/jobs/` — deliberately not under `kairos/src/scheduler/`, which is unrelated EPG/channel scheduling.
 - **Android: Watch Together (mobile + TV)**: full native port of the existing web/Hades feature — Kairos and Hermes
   already implemented the whole protocol (session identity/discovery, live position/paused coordination over SSE),
   this just gives the Android app a client. "Watch Together" button on the Detail screen (movies/shows, next to

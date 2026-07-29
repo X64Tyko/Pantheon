@@ -20,6 +20,14 @@ export interface User {
     // Which page this account lands on after login/profile-switch — ''
     // (inherit the admin-configured global default), 'home', or 'guide'.
     default_landing_page: string
+    // A self-created, passwordless demo-server account (see
+    // api.createGuest) — always role 'viewer'. Drives the "Guest" badge on
+    // UsersPage and the guest-only self-service setup/delete UI.
+    is_guest: boolean
+    // Epoch seconds — most recent activity across every session this account
+    // has ever held (or created_at if it's never had one). Only meaningfully
+    // populated on the admin Users list (api.getProfiles); 0 elsewhere.
+    last_seen: number
 }
 
 // GET/PUT .../track-preference (shows, movies) — same shape both ways.

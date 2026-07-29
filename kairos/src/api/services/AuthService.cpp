@@ -2,6 +2,8 @@
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../auth/AuthStore.h"
+#include "../../conf/GuestSettings.h"
+#include "../../conf/SecuritySettings.h"
 #include "../../db/ConfigRepository.h"
 #include "../../db/RestrictionRepository.h"
 #include "../../email/EmailService.h"
@@ -36,6 +38,8 @@ namespace
 			{"default_audio_lang", u.default_audio_lang},
 			{"default_subtitle_lang", u.default_subtitle_lang},
 			{"default_landing_page", u.default_landing_page},
+			{"is_guest", u.is_guest},
+			{"last_seen", u.last_seen},
 		};
 	}
 }
@@ -104,6 +108,49 @@ void AuthService::registerRoutes(httplib::Server& svr)
 		route::ok(res, json{{"token", token}, {"user", userJson(*user)}}.dump());
 	});
 
+	// Public (see Router.cpp's isPublicPath) — a visitor with no session yet
+	// creates their own passwordless, viewer-only account. Gated on the
+	// guest_profiles_enabled setting even though the frontend already hides
+	// this entry point when it's off: the route itself must not rely on that
+	// alone, same reasoning as every other admin-toggleable capability in
+	// this codebase. Also enforces guest_max_concurrent so a public demo
+	// server can't be spammed into an unbounded number of accounts. Response
+	// shape matches /api/auth/setup and /api/auth/login exactly.
+	svr.Post("/api/auth/guest", [this](const Req& req, Res& res)
+	{
+		if (!guest_settings::enabled(db_))
+		{
+			route::err(res, 403, "Guest profiles are not enabled on this server");
+			return;
+		}
+		json body;
+		try { body = json::parse(req.body); }
+		catch (...)
+		{
+			route::err(res, 400, "Invalid JSON");
+			return;
+		}
+		const std::string display_name = body.value("display_name", "");
+		if (display_name.empty())
+		{
+			route::err(res, 400, "display_name required");
+			return;
+		}
+		if (auth_.countActiveGuests() >= guest_settings::maxConcurrent(db_))
+		{
+			route::err(res, 429, "Guest capacity reached — try again later");
+			return;
+		}
+		auto [user_id, token] = auth_.createGuestUser(display_name);
+		if (user_id.empty())
+		{
+			route::err(res, 409, "That name is already in use — try another");
+			return;
+		}
+		auto user = auth_.validate(token);
+		route::ok(res, json{{"token", token}, {"user", userJson(*user)}}.dump());
+	});
+
 	svr.Post("/api/auth/logout", [this](const Req& req, Res& res)
 	{
 		if (req.has_header("Authorization"))
@@ -122,6 +169,53 @@ void AuthService::registerRoutes(httplib::Server& svr)
 			return;
 		}
 		route::ok(res, userJson(*currentUser()).dump());
+	});
+
+	// Guest-only first-run self-service setup — same PIN/restriction fields
+	// the admin-only PATCH /api/users/:id[/pin|/restriction] routes expose
+	// for anyone else, deliberately re-scoped as its own route rather than
+	// loosening those: gating on currentUser()->is_guest (not just "any
+	// authenticated user editing their own id") is a real security property,
+	// not incidental — it means a *non-guest* viewer can never use this to
+	// loosen restrictions an admin set on them, since only a guest (who set
+	// their own defaults in the first place) is allowed through at all.
+	svr.Patch("/api/auth/me/guest", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || !currentUser()->is_guest)
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		json body;
+		try { body = json::parse(req.body); }
+		catch (...)
+		{
+			route::err(res, 400, "Invalid JSON");
+			return;
+		}
+		std::optional<std::string> pin, max_tv, max_movie, max_channel;
+		std::optional<bool> restricted;
+		if (body.contains("pin")) pin = body.at("pin").get<std::string>();
+		if (body.contains("restricted")) restricted = body.at("restricted").get<bool>();
+		if (body.contains("max_tv_rating")) max_tv = body.at("max_tv_rating").get<std::string>();
+		if (body.contains("max_movie_rating")) max_movie = body.at("max_movie_rating").get<std::string>();
+		if (body.contains("max_channel_rating")) max_channel = body.at("max_channel_rating").get<std::string>();
+		auth_.updateGuestSelfSetup(currentUser()->user_id, pin, restricted, max_tv, max_movie, max_channel);
+		route::ok(res, json{{"ok", true}}.dump());
+	});
+
+	// Self-delete — "if they're one of those mindful types" (no admin
+	// action required). Same is_guest gate as the PATCH above, plus
+	// deleteGuestSelf's own defense-in-depth WHERE clause.
+	svr.Delete("/api/auth/me/guest", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || !currentUser()->is_guest)
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		auth_.deleteGuestSelf(currentUser()->user_id);
+		route::ok(res, json{{"ok", true}}.dump());
 	});
 
 	// "Who's watching?" profile grid (Netflix/Plex Home style) — reachable by
@@ -161,7 +255,8 @@ void AuthService::registerRoutes(httplib::Server& svr)
 			return;
 		}
 		const std::string pin = body.value("pin", "");
-		auto [token, error]   = auth_.switchProfile(req.path_params.at("id"), pin);
+		auto [token, error]   = auth_.switchProfile(req.path_params.at("id"), pin,
+												  security_settings::requireAdminPasswordSwitchEffective(db_));
 		// 403, not 401: the caller's OWN session (already validated above) stays
 		// perfectly valid here — they're just denied this particular switch by
 		// PIN policy. Hades' request() helper treats any 401 as "session dead,

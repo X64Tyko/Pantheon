@@ -15,6 +15,19 @@ const BTN_VARIANT_CLASS = {
 } as const
 const btnClass = (variant: 'primary' | 'ghost' | 'danger') => `${styles.btn} ${BTN_VARIANT_CLASS[variant]}`
 
+// last_seen is epoch seconds — most recent activity across every session
+// this account has ever held (see AuthStore::listUsers). Guest-only display;
+// coarse buckets are plenty for "is this account still being used" at a
+// glance, not a precise clock.
+export function formatLastActive(lastSeenSec: number): string {
+    if (!lastSeenSec) return 'never'
+    const deltaSec = Date.now() / 1000 - lastSeenSec
+    if (deltaSec < 60) return 'just now'
+    if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`
+    if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h ago`
+    return `${Math.floor(deltaSec / 86400)}d ago`
+}
+
 type CreateMode = 'password' | 'temp_password' | 'email'
 interface NewUserForm { username: string; password: string; role: 'admin' | 'viewer'; mode: CreateMode; email: string }
 interface EditState {
@@ -243,6 +256,11 @@ export default observer(function UsersPage() {
                   <span className={`${styles.roleBadge} ${u.role === 'admin' ? styles.roleBadgeAdmin : styles.roleBadgeViewer}`}>
                     {u.role}
                   </span>
+                    {u.is_guest && (
+                        <span className={styles.guestBadge}>
+                      GUEST
+                    </span>
+                    )}
                   {u.restricted && (
                     <span className={styles.restrictedBadge}>
                       RESTRICTED
@@ -251,6 +269,11 @@ export default observer(function UsersPage() {
                   {u.has_pin && (
                     <span title="PIN set" className={styles.pinIcon}>🔒</span>
                   )}
+                    {u.is_guest && (
+                        <span className={styles.lastActive}>
+                      active {formatLastActive(u.last_seen)}
+                    </span>
+                    )}
                   <div className={styles.rowActions}>
                     {u.restricted && (
                       <button className={btnClass('ghost')} onClick={() => setOverridesFor(u)}>

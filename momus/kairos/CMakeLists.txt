@@ -20,6 +20,7 @@ add_executable(momus_kairos
     api/test_auth_service_routes.cpp
     api/test_restriction_access_check.cpp
     api/test_playback_and_channel_routes.cpp
+        api/test_config_service_library_reset.cpp
         api/test_playback_keyframes_and_resolve_routes.cpp
         api/test_tv_manifest_service.cpp
     api/test_writeback_all.cpp
@@ -36,6 +37,7 @@ add_executable(momus_kairos
     db/test_search_episodes.cpp
     db/test_playlist_repository.cpp
     detect/test_chapter_detector.cpp
+        jobs/test_job_scheduler.cpp
     scheduler/test_cursor_state.cpp
     scheduler/test_rule_engine.cpp
     scheduler/test_epg_output.cpp

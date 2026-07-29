@@ -1,0 +1,151 @@
+.page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background: var(--hds-bg);
+    font-family: var(--hds-font-mono-brand);
+}
+
+.card {
+    width: 420px;
+    padding: var(--hds-space-7);
+    background: var(--hds-bg-2);
+    border: 1px solid var(--hds-line-s);
+    border-radius: var(--hds-radius-lg);
+    box-shadow: 0 16px 64px -12px rgba(0, 0, 0, 0.7);
+    animation: hds-in 0.2s ease both;
+    display: flex;
+    flex-direction: column;
+    gap: var(--hds-space-4);
+}
+
+.brandWrap {
+    margin-bottom: var(--hds-space-3);
+    text-align: center;
+}
+
+.title {
+    font-family: var(--hds-font-display);
+    font-weight: 700;
+    font-size: 20px;
+    color: var(--hds-gold);
+}
+
+.subtitle {
+    font-size: var(--hds-font-size-tv-caption);
+    color: var(--hds-txt-3);
+    margin-top: var(--hds-space-2);
+}
+
+.stepLabel {
+    font-size: var(--hds-font-size-tv-caption);
+    color: var(--hds-txt-3);
+    letter-spacing: 0.06em;
+}
+
+.stepHint {
+    font-size: var(--hds-font-size-tv-caption);
+    color: var(--hds-txt-3);
+    opacity: 0.85;
+    margin-top: -6px;
+}
+
+.checkboxLabel {
+    display: flex;
+    align-items: center;
+    gap: var(--hds-space-2);
+    font-size: var(--hds-font-size-tv-meta);
+    color: var(--hds-txt);
+    cursor: pointer;
+}
+
+.ratingGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--hds-space-3);
+}
+
+.fieldCol {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hds-space-2);
+}
+
+.fieldLabel {
+    font-size: var(--hds-font-size-tv-caption);
+    color: var(--hds-txt-3);
+    letter-spacing: 0.06em;
+}
+
+.select {
+    padding: 9px var(--hds-space-4);
+    box-sizing: border-box;
+    background: var(--hds-bg-3);
+    border: 1px solid var(--hds-line);
+    border-radius: var(--hds-radius-tile);
+    color: var(--hds-txt);
+    font-size: var(--hds-font-size-tv-meta);
+    font-family: var(--hds-font-mono-brand);
+    outline: none;
+    cursor: pointer;
+}
+
+.errorBox {
+    font-size: var(--hds-font-size-tv-caption);
+    color: oklch(0.72 0.18 22);
+    padding: var(--hds-space-3) 10px;
+    background: oklch(0.55 0.22 22 / 0.12);
+    border-radius: var(--hds-radius-tile);
+    border: 1px solid oklch(0.55 0.22 22 / 0.3);
+}
+
+.actionRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hds-space-3);
+    margin-top: var(--hds-space-2);
+}
+
+.skipBtn {
+    padding: 8px 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--hds-txt-3);
+    font-size: var(--hds-font-size-tv-caption);
+    font-family: var(--hds-font-mono-brand);
+    letter-spacing: 0.08em;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.skipBtn:hover {
+    color: var(--hds-txt-2);
+}
+
+.submitBtn {
+    flex: 1;
+    padding: 10px 0;
+    border: 1px solid oklch(0.83 0.13 84 / 0.4);
+    border-radius: var(--hds-radius-tile);
+    color: var(--hds-gold);
+    font-size: var(--hds-font-size-tv-label);
+    font-weight: 600;
+    font-family: var(--hds-font-mono-brand);
+    letter-spacing: 0.1em;
+    transition: background .12s;
+}
+
+.submitBtnEnabled {
+    background: oklch(0.83 0.13 84 / 0.15);
+    cursor: pointer;
+    opacity: 1;
+}
+
+.submitBtnDisabled {
+    background: var(--hds-bg-4);
+    cursor: not-allowed;
+    opacity: 0.6;
+}

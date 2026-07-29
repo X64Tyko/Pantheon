@@ -2,6 +2,8 @@
 #include "../AuthContext.h"
 #include "../RouteHelpers.h"
 #include "../../conf/ConfStore.h"
+#include "../../conf/GuestSettings.h"
+#include "../../conf/SecuritySettings.h"
 #include "../../db/ConfigRepository.h"
 #include "../../db/ScheduleRepository.h"
 #include "../../db/SourceRepository.h"
@@ -76,6 +78,15 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			{"cast_app_id", castAppId()},
 			{"default_landing_page", defaultLandingPage()},
 			{"internal_token", conf_.getInternalToken()},
+			{"guest_profiles_enabled", guest_settings::enabled(db_)},
+			{"guest_idle_timeout_days", guest_settings::idleTimeoutDays(db_)},
+			{"guest_max_concurrent", guest_settings::maxConcurrent(db_)},
+			// Raw stored value, not the OR-with-guest-profiles effective one —
+			// this is what the Settings page's own toggle reflects/edits; it
+			// shows (and forces) on whenever guest_profiles_enabled is also on,
+			// but that's a UI rule the frontend applies itself from these two
+			// fields together, not something baked into the value returned here.
+			{"require_admin_password_switch", security_settings::requireAdminPasswordSwitchRaw(db_)},
 		};
 	};
 
@@ -101,6 +112,20 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 					  {"verbose_gateway_logs", g_verbose_gateway_logs.load()},
 					  {"cast_app_id", castAppId()},
 					  {"default_landing_page", defaultLandingPage()},
+					  // Only the on/off flag, not the idle-timeout/cap admin
+					  // tunables — this is read pre-login (Hades' login page
+					  // deciding whether to show "Continue as Guest" at all),
+					  // same reasoning as every other field already here.
+					  {"guest_profiles_enabled", guest_settings::enabled(db_)},
+					  // The EFFECTIVE (already OR'd with guest_profiles_enabled)
+					  // value, unlike settingsJson's raw one above — this is what
+					  // ProfileSelectPage.tsx reads to decide whether an admin
+					  // tile should prompt for a PIN or fall back to a real
+					  // password, and it needs the same answer AuthStore::
+					  // switchProfile itself enforces or the picker's own PIN
+					  // prompt would just fail server-side instead of routing to
+					  // the right form to begin with.
+					  {"require_admin_password_switch", security_settings::requireAdminPasswordSwitchEffective(db_)},
 				  }.dump());
 	});
 
@@ -179,6 +204,34 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			{
 				auto v = b["default_landing_page"].get<std::string>();
 				if (v == "home" || v == "guide") ConfigRepository(db_).setValue("default_landing_page", v);
+			}
+			if (b.contains("guest_profiles_enabled") && b["guest_profiles_enabled"].is_boolean())
+			{
+				bool v = b["guest_profiles_enabled"].get<bool>();
+				ConfigRepository(db_).setValue("guest_profiles_enabled", v ? "1" : "0");
+				// Auto-enable require_admin_password_switch as a safe default the
+				// moment guest profiles turn on — deliberately one-directional
+				// (turning guest profiles back off does NOT auto-revert this) so
+				// it stays a real, independently-held setting afterward rather
+				// than one that silently re-weakens itself. An admin who wants it
+				// off again while guests remain on can't: requireAdminPassword
+				// SwitchEffective is enforced as raw-OR-guest_profiles_enabled
+				// regardless of what gets written here.
+				if (v) ConfigRepository(db_).setValue("require_admin_password_switch", "1");
+			}
+			if (b.contains("require_admin_password_switch") && b["require_admin_password_switch"].is_boolean())
+			{
+				ConfigRepository(db_).setValue("require_admin_password_switch", b["require_admin_password_switch"].get<bool>() ? "1" : "0");
+			}
+			if (b.contains("guest_idle_timeout_days") && b["guest_idle_timeout_days"].is_number_integer())
+			{
+				int d = b["guest_idle_timeout_days"].get<int>();
+				if (d >= 1 && d <= 365) ConfigRepository(db_).setValue("guest_idle_timeout_days", std::to_string(d));
+			}
+			if (b.contains("guest_max_concurrent") && b["guest_max_concurrent"].is_number_integer())
+			{
+				int n = b["guest_max_concurrent"].get<int>();
+				if (n >= 1 && n <= 1000) ConfigRepository(db_).setValue("guest_max_concurrent", std::to_string(n));
 			}
 			// Empty means "unconfigured" to Router.cpp, which fails closed —
 			// reject it here instead of silently breaking channel advancement.
@@ -276,6 +329,19 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			// Playlists are source-synced; they'll be recreated on next sync.
 			db_.get().exec("DELETE FROM playlist_item");
 			db_.get().exec("DELETE FROM playlist");
+
+			// Per-show/movie sticky track preference (migrations v92/v94) —
+			// both reference show(show_id)/movie(movie_id) with no ON DELETE
+			// CASCADE (see AuthStore::deleteUserCascade's own comment on the
+			// exact same gap for user deletion — these two tables were added
+			// after this reset route and that deletion path both predate
+			// them, and neither was ever updated to know about them). Without
+			// this, resetting a library that has any per-user track
+			// preference on a show/movie throws a foreign-key constraint
+			// violation on the DELETE FROM show/movie below instead of
+			// actually resetting anything.
+			db_.get().exec("DELETE FROM show_track_preference");
+			db_.get().exec("DELETE FROM movie_track_preference");
 
 			// Core media tables — delete in FK order (episode → show).
 			db_.get().exec("DELETE FROM episode");

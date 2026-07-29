@@ -31,6 +31,10 @@ interface Settings {
   cast_app_id:            string
     default_landing_page: string
     internal_token: string
+    guest_profiles_enabled: boolean
+    guest_idle_timeout_days: number
+    guest_max_concurrent: number
+    require_admin_password_switch: boolean
 }
 
 type Tab = 'general' | 'scrapers' | 'integrations' | 'devices' | 'diagnostics'
@@ -118,6 +122,8 @@ export default observer(function SettingsPage() {
   const [bufferSize, setBufferSize] = useState('')
   const [castAppId, setCastAppId] = useState('')
     const [internalToken, setInternalToken] = useState('')
+    const [guestIdleTimeoutDays, setGuestIdleTimeoutDays] = useState('')
+    const [guestMaxConcurrent, setGuestMaxConcurrent] = useState('')
     const [regeneratingToken, setRegeneratingToken] = useState(false)
   const [castSessions, setCastSessions] = useState<CastSessionInfo[] | null>(null)
   const [revokingCast, setRevokingCast] = useState<string | null>(null)
@@ -276,6 +282,8 @@ export default observer(function SettingsPage() {
       setBufferSize(String(s.stream_buffer_size))
       setCastAppId(s.cast_app_id)
         setInternalToken(s.internal_token)
+        setGuestIdleTimeoutDays(String(s.guest_idle_timeout_days))
+        setGuestMaxConcurrent(String(s.guest_max_concurrent))
     }).catch(() => setError('Failed to load settings'))
     loadCastSessions()
     pollRokuDevices()
@@ -316,6 +324,8 @@ export default observer(function SettingsPage() {
       setBufferSize(String(next.stream_buffer_size))
       setCastAppId(next.cast_app_id)
         setInternalToken(next.internal_token)
+        setGuestIdleTimeoutDays(String(next.guest_idle_timeout_days))
+        setGuestMaxConcurrent(String(next.guest_max_concurrent))
       // Keep statusStore in sync immediately so the debug banner reflects the change.
       if ('sync_debug'  in update) statusStore.syncDebug  = next.sync_debug
       if ('epg_debug'   in update) statusStore.epgDebug   = next.epg_debug
@@ -345,6 +355,18 @@ const applyBuffer = () => {
   const applyCastAppId = () => {
     if (castAppId !== (settings?.cast_app_id ?? '')) patch({ cast_app_id: castAppId.trim() })
   }
+
+    const applyGuestIdleTimeoutDays = () => {
+        const n = parseInt(guestIdleTimeoutDays, 10)
+        if (!isNaN(n) && n >= 1 && n <= 365) patch({guest_idle_timeout_days: n})
+        else setGuestIdleTimeoutDays(settings ? String(settings.guest_idle_timeout_days) : '7')
+    }
+
+    const applyGuestMaxConcurrent = () => {
+        const n = parseInt(guestMaxConcurrent, 10)
+        if (!isNaN(n) && n >= 1 && n <= 1000) patch({guest_max_concurrent: n})
+        else setGuestMaxConcurrent(settings ? String(settings.guest_max_concurrent) : '20')
+    }
 
     const applyInternalToken = () => {
         const v = internalToken.trim()
@@ -511,6 +533,64 @@ const applyBuffer = () => {
                   </select>
             </SettingRow>
           </Section>
+
+            <Section title="Guest Access">
+                <SettingRow
+                    label="Allow Guest Profiles"
+                    hint={'Lets anyone who reaches the login page create their own passwordless, viewer-only account ("Continue as Guest") — meant for running a public demo server. Off by default. A guest picks their own display name and can configure their own PIN and parental-control restrictions during first-run setup; they never get admin access.'}
+                >
+                    <Toggle
+                        id="guest_profiles_enabled"
+                        checked={settings?.guest_profiles_enabled ?? false}
+                        disabled={!settings || saving}
+                        onChange={v => patch({guest_profiles_enabled: v})}
+                    />
+                </SettingRow>
+                <SettingRow
+                    label="Guest Idle Timeout (days)"
+                    hint="A guest account is automatically deleted once it's gone this many days without any activity (not from when it was created — an actively-used guest account never expires on its own). Checked hourly."
+                >
+                    <input
+                        type="number" min={1} max={365}
+                        value={guestIdleTimeoutDays}
+                        onChange={e => setGuestIdleTimeoutDays(e.target.value)}
+                        onBlur={applyGuestIdleTimeoutDays}
+                        onKeyDown={e => e.key === 'Enter' && applyGuestIdleTimeoutDays()}
+                        disabled={!settings || saving}
+                        className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                    />
+                </SettingRow>
+                <SettingRow
+                    label="Max Concurrent Guests"
+                    hint="Caps how many guest accounts can exist at once, so a public demo server can't be spammed into an unbounded number of accounts — creating a new guest fails with a clear message once this many already exist."
+                >
+                    <input
+                        type="number" min={1} max={1000}
+                        value={guestMaxConcurrent}
+                        onChange={e => setGuestMaxConcurrent(e.target.value)}
+                        onBlur={applyGuestMaxConcurrent}
+                        onKeyDown={e => e.key === 'Enter' && applyGuestMaxConcurrent()}
+                        disabled={!settings || saving}
+                        className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                    />
+                </SettingRow>
+            </Section>
+
+            <Section title="Security">
+                <SettingRow
+                    label="Require Password for Admin Profile Switch"
+                    hint={settings?.guest_profiles_enabled
+                        ? 'Automatically on while Guest Access is enabled — a 4-6 digit PIN is a meaningfully weaker credential than the real password, and the "Who\'s watching?" picker showing an admin tile is reachable by any guest once guest profiles exist. Turn off Guest Access to make this optional again.'
+                        : 'When on, switching into an admin profile from the "Who\'s watching?" picker always requires the real password, even if a PIN is set for convenience — closes the gap where a weaker PIN alone could grant admin access. Independent of Guest Access, which turns this on automatically as a safe default the moment it\'s enabled.'}
+                >
+                    <Toggle
+                        id="require_admin_password_switch"
+                        checked={(settings?.require_admin_password_switch || settings?.guest_profiles_enabled) ?? false}
+                        disabled={!settings || saving || (settings?.guest_profiles_enabled ?? false)}
+                        onChange={v => patch({require_admin_password_switch: v})}
+                    />
+                </SettingRow>
+            </Section>
 
           <Section title="Performance">
             <SettingRow

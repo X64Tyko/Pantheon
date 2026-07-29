@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import {useNavigate} from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import type { MediaLanguages } from '../api/types'
@@ -11,12 +12,15 @@ import settingsStyles from './SettingsPage.module.css'
 // SettingsPage's own page-shell classes (.page/.section/.settingRow/...)
 // rather than duplicating that CSS for a one-section page.
 export default function AccountPage() {
-    const {user, updateTrackPreference, updateDefaultLandingPage} = useAuth()
+    const {user, updateTrackPreference, updateDefaultLandingPage, deleteGuestAccount} = useAuth()
+    const navigate = useNavigate()
   const [mediaLangs, setMediaLangs] = useState<MediaLanguages | null>(null)
   const [audioLang,    setAudioLang]    = useState(user?.default_audio_lang ?? '')
   const [subtitleLang, setSubtitleLang] = useState(user?.default_subtitle_lang ?? '')
     const [landingPage, setLandingPage] = useState(user?.default_landing_page ?? '')
   const [error, setError] = useState<string | null>(null)
+    const [confirmingDelete, setConfirmingDelete] = useState(false)
+    const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     api.getMediaLanguages().then(setMediaLangs).catch(() => {})
@@ -30,6 +34,18 @@ export default function AccountPage() {
       setError(e.message ?? 'Failed to save')
     }
   }
+
+    const deleteAccount = async () => {
+        setError(null)
+        setDeleting(true)
+        try {
+            await deleteGuestAccount()
+            navigate('/login', {replace: true})
+        } catch (e: any) {
+            setError(e.message ?? 'Failed to delete account')
+            setDeleting(false)
+        }
+    }
 
   if (!user) return null
 
@@ -127,6 +143,55 @@ export default function AccountPage() {
           </div>
         </div>
       </div>
+
+        {user.is_guest && (
+            <div className={settingsStyles.section}>
+                <div className={settingsStyles.sectionHeader}>
+                    <span className={settingsStyles.sectionHeaderText}>GUEST ACCOUNT</span>
+                </div>
+                <div className={settingsStyles.sectionBody}>
+                    <div className={settingsStyles.settingRow}>
+                        <div>
+                            <div className={settingsStyles.settingRowLabel}>Delete My Guest Account</div>
+                            <div className={settingsStyles.settingRowHint}>
+                                Removes this account and everything on it (watch progress, restrictions, PIN) right now
+                                — it would
+                                otherwise be deleted automatically after the server's configured idle period.
+                            </div>
+                        </div>
+                        <div className={settingsStyles.settingRowControl}>
+                            {!confirmingDelete ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setConfirmingDelete(true)}
+                                    className={`${settingsStyles.navBtn} ${settingsStyles.navBtnDangerSoft14} ${settingsStyles.navBtnCursorPointer} ${settingsStyles.navBtnOpaque}`}
+                                >
+                                    Delete Account
+                                </button>
+                            ) : (
+                                <div className={settingsStyles.inlineRow}>
+                                    <span className={settingsStyles.confirmTextDanger}>Sure?</span>
+                                    <button
+                                        type="button" disabled={deleting}
+                                        onClick={deleteAccount}
+                                        className={`${settingsStyles.navBtn} ${settingsStyles.navBtnDangerStrong14} ${deleting ? settingsStyles.navBtnCursorNotAllowed : settingsStyles.navBtnCursorPointer} ${deleting ? settingsStyles.navBtnFaded6 : settingsStyles.navBtnOpaque}`}
+                                    >
+                                        {deleting ? 'Deleting…' : 'Yes, delete it'}
+                                    </button>
+                                    <button
+                                        type="button" disabled={deleting}
+                                        onClick={() => setConfirmingDelete(false)}
+                                        className={`${settingsStyles.navBtn} ${settingsStyles.navBtnCancel10} ${settingsStyles.navBtnCursorPointer}`}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
     </div>
   )
 }

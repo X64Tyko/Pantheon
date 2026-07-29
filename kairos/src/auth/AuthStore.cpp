@@ -36,7 +36,8 @@ bool AuthStore::hasAnyUser() const
 }
 
 std::string AuthStore::insertUser(const std::string& username, const std::string& password_hash,
-								  const std::string& role, bool must_change_password)
+								  const std::string& role, bool must_change_password,
+								  bool is_guest)
 {
 	if (username.empty()) return "";
 	if (role != "admin" && role != "viewer") return "";
@@ -47,14 +48,15 @@ std::string AuthStore::insertUser(const std::string& username, const std::string
 	try
 	{
 		SQLite::Statement ins(db_.get(),
-							  "INSERT INTO user (user_id, username, password_hash, role, created_at, must_change_password)"
-							  " VALUES (?,?,?,?,?,?)");
+							  "INSERT INTO user (user_id, username, password_hash, role, created_at, must_change_password, is_guest)"
+							  " VALUES (?,?,?,?,?,?,?)");
 		ins.bind(1, user_id);
 		ins.bind(2, username);
 		ins.bind(3, password_hash);
 		ins.bind(4, role);
 		ins.bind(5, now);
 		ins.bind(6, must_change_password ? 1 : 0);
+		ins.bind(7, is_guest ? 1 : 0);
 		ins.exec();
 		return user_id;
 	}
@@ -80,7 +82,7 @@ std::pair<std::string, std::string> AuthStore::createUserWithTempPassword(
 	// user immediately replaces.
 	const std::string temp_password = generateToken().substr(0, 20);
 	const std::string user_id       = insertUser(username, hashPassword(temp_password), role,
-												 /*must_change_password=*/true);
+										   /*must_change_password=*/true);
 	if (user_id.empty()) return {"", ""};
 	return {user_id, temp_password};
 }
@@ -93,7 +95,7 @@ std::pair<std::string, std::string> AuthStore::createUserWithEmailInvite(
 	// password for the account until claimInvite() sets a real one.
 	const std::string placeholder_hash = hashPassword(generateToken());
 	const std::string user_id          = insertUser(username, placeholder_hash, role,
-													/*must_change_password=*/true);
+										   /*must_change_password=*/true);
 	if (user_id.empty()) return {"", ""};
 
 	const std::string invite_token = generateToken();
@@ -178,6 +180,25 @@ std::string AuthStore::resendInvite(const std::string& user_id, int64_t invite_t
 	return invite_token;
 }
 
+std::string AuthStore::insertSession(const std::string& user_id, const std::string& purpose)
+{
+	const std::string token = generateToken();
+	const int64_t now       = static_cast<int64_t>(std::time(nullptr));
+
+	SQLite::Statement ins(db_.get(),
+						  "INSERT INTO session (token, user_id, created_at, expires_at, last_seen, purpose)"
+						  " VALUES (?,?,?,?,?,?)");
+	ins.bind(1, token);
+	ins.bind(2, user_id);
+	ins.bind(3, now);
+	ins.bind(4, now + SESSION_TTL);
+	ins.bind(5, now);
+	ins.bind(6, purpose);
+	ins.exec();
+
+	return token;
+}
+
 std::string AuthStore::login(const std::string& username,
 							 const std::string& password)
 {
@@ -191,20 +212,7 @@ std::string AuthStore::login(const std::string& username,
 
 	if (!checkPassword(password, stored)) return "";
 
-	const std::string token = generateToken();
-	const int64_t now       = static_cast<int64_t>(std::time(nullptr));
-
-	SQLite::Statement ins(db_.get(),
-						  "INSERT INTO session (token, user_id, created_at, expires_at, last_seen)"
-						  " VALUES (?,?,?,?,?)");
-	ins.bind(1, token);
-	ins.bind(2, user_id);
-	ins.bind(3, now);
-	ins.bind(4, now + SESSION_TTL);
-	ins.bind(5, now);
-	ins.exec();
-
-	return token;
+	return insertSession(user_id);
 }
 
 void AuthStore::logout(const std::string& token)
@@ -224,7 +232,8 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token)
 		SELECT u.user_id, u.username, u.role,
 		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating,
 		       s.purpose, u.must_change_password, u.pin_hash,
-		       u.default_audio_lang, u.default_subtitle_lang, u.default_landing_page
+		       u.default_audio_lang, u.default_subtitle_lang, u.default_landing_page,
+		       u.is_guest
 		FROM session s
 		JOIN user u ON u.user_id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
@@ -246,6 +255,7 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token)
 	user.default_audio_lang    = q.getColumn(10).getString();
 	user.default_subtitle_lang = q.getColumn(11).getString();
 	user.default_landing_page  = q.getColumn(12).getString();
+	user.is_guest              = q.getColumn(13).getInt() != 0;
 
 	// A 'cast'-purpose session (minted for handing off to a Cast receiver,
 	// see mintCastToken) is always viewer-capped — this is the actual
@@ -275,25 +285,31 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token)
 
 std::vector<AuthUser> AuthStore::listUsers() const
 {
-	SQLite::Statement q(db_.get(),
-						"SELECT user_id, username, role, "
-						"       restricted, max_tv_rating, max_movie_rating, max_channel_rating, must_change_password, "
-						"       pin_hash "
-						"FROM user ORDER BY username");
+	SQLite::Statement q(db_.get(), R"(
+		SELECT u.user_id, u.username, u.role,
+		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating, u.must_change_password,
+		       u.pin_hash, u.is_guest, COALESCE(s.last_seen, u.created_at)
+		FROM user u
+		LEFT JOIN (SELECT user_id, MAX(last_seen) AS last_seen FROM session GROUP BY user_id) s
+			ON s.user_id = u.user_id
+		ORDER BY u.username
+	)");
 	std::vector<AuthUser> result;
 	while (q.executeStep())
 	{
-		result.push_back({
-			q.getColumn(0).getString(),
-			q.getColumn(1).getString(),
-			q.getColumn(2).getString(),
-			q.getColumn(3).getInt() != 0,
-			q.getColumn(4).getString(),
-			q.getColumn(5).getString(),
-			q.getColumn(6).getString(),
-			q.getColumn(7).getInt() != 0,
-			!q.getColumn(8).isNull(),
-		});
+		AuthUser u;
+		u.user_id              = q.getColumn(0).getString();
+		u.username             = q.getColumn(1).getString();
+		u.role                 = q.getColumn(2).getString();
+		u.restricted           = q.getColumn(3).getInt() != 0;
+		u.max_tv_rating        = q.getColumn(4).getString();
+		u.max_movie_rating     = q.getColumn(5).getString();
+		u.max_channel_rating   = q.getColumn(6).getString();
+		u.must_change_password = q.getColumn(7).getInt() != 0;
+		u.has_pin              = !q.getColumn(8).isNull();
+		u.is_guest             = q.getColumn(9).getInt() != 0;
+		u.last_seen            = q.getColumn(10).getInt64();
+		result.push_back(std::move(u));
 	}
 	return result;
 }
@@ -319,10 +335,44 @@ bool AuthStore::deleteUser(const std::string& user_id,
 		if (adminCheck.getColumn(0).getInt() == 0) return false;
 	}
 
+	deleteUserCascade(user_id);
+	return true;
+}
+
+void AuthStore::deleteUserCascade(const std::string& user_id)
+{
+	// These five tables reference user(user_id) WITHOUT ON DELETE CASCADE
+	// (see Database.cpp's migrations v91/92/94/95) — deleting a user who's
+	// ever played anything or hosted/joined a Watch Together session would
+	// otherwise throw a foreign-key constraint violation instead of actually
+	// deleting the account. Every other user-referencing table (session,
+	// watch_progress, restriction overrides, playlist-related rows, etc.)
+	// already cascades and needs no explicit cleanup here.
+	SQLite::Transaction txn(db_.get());
+
+	const char* child_tables[] = {
+		"playback_history",
+		"show_track_preference",
+		"movie_track_preference",
+		"watch_together_member",
+	};
+	for (const char* table : child_tables)
+	{
+		SQLite::Statement d(db_.get(), std::string("DELETE FROM ") + table + " WHERE user_id = ?");
+		d.bind(1, user_id);
+		d.exec();
+	}
+	{
+		SQLite::Statement d(db_.get(), "DELETE FROM watch_together_session WHERE host_user_id = ?");
+		d.bind(1, user_id);
+		d.exec();
+	}
+
 	SQLite::Statement d(db_.get(), "DELETE FROM user WHERE user_id = ?");
 	d.bind(1, user_id);
 	d.exec();
-	return db_.get().getChanges() > 0;
+
+	txn.commit();
 }
 
 bool AuthStore::updateUser(const std::string& user_id,
@@ -485,7 +535,8 @@ void AuthStore::clearPin(const std::string& user_id)
 }
 
 std::pair<std::string, std::string> AuthStore::switchProfile(const std::string& target_user_id,
-															 const std::string& pin)
+															 const std::string& pin,
+															 bool require_password_for_admin)
 {
 	const int64_t now = static_cast<int64_t>(std::time(nullptr));
 
@@ -501,11 +552,20 @@ std::pair<std::string, std::string> AuthStore::switchProfile(const std::string& 
 	const int fail_count           = q.getColumn(2).getInt();
 	const int64_t pin_locked_until = q.getColumn(3).getInt64();
 
-	// Admin profiles are never switchable without a PIN — there's no
-	// unlocked-admin path the way an unlocked viewer profile has one. This
-	// is enforced here (not just nudged in the Users page UI) so it can't be
-	// bypassed by calling this endpoint directly.
-	if (role == "admin" && !has_pin) return {"", "Admin profiles require a PIN — set one in Users first"};
+	if (role == "admin")
+	{
+		// Hardening mode: a PIN is never sufficient for admin, even a
+		// correctly-configured one — always fall back to the real password.
+		// Checked before the plain no-pin case below so the message
+		// correctly points at "sign in directly" rather than "set a PIN",
+		// which wouldn't help here.
+		if (require_password_for_admin) return {"", "Admin profiles require a password on this server — sign in directly"};
+		// Admin profiles are never switchable without a PIN either way —
+		// there's no unlocked-admin path the way an unlocked viewer profile
+		// has one. This is enforced here (not just nudged in the Users page
+		// UI) so it can't be bypassed by calling this endpoint directly.
+		if (!has_pin) return {"", "Admin profiles require a PIN — set one in Users first"};
+	}
 
 	if (has_pin)
 	{
@@ -545,6 +605,91 @@ std::pair<std::string, std::string> AuthStore::switchProfile(const std::string& 
 	ins.exec();
 
 	return {token, ""};
+}
+
+// ---------------------------------------------------------------------------
+// Guest profiles
+// ---------------------------------------------------------------------------
+
+std::pair<std::string, std::string> AuthStore::createGuestUser(const std::string& display_name)
+{
+	// No password at all — insertUser still needs a non-null bind value, and
+	// an empty hash can never match checkPassword's bcrypt comparison, so a
+	// guest account is structurally unable to log in via the normal
+	// username+password path even if someone tried.
+	const std::string user_id = insertUser(display_name, /*password_hash=*/"", "viewer",
+										   /*must_change_password=*/false, /*is_guest=*/true);
+	if (user_id.empty()) return {"", ""};
+	return {user_id, insertSession(user_id)};
+}
+
+int AuthStore::countActiveGuests() const
+{
+	SQLite::Statement q(db_.get(), "SELECT COUNT(*) FROM user WHERE is_guest = 1");
+	q.executeStep();
+	return q.getColumn(0).getInt();
+}
+
+void AuthStore::updateGuestSelfSetup(const std::string& user_id,
+									 const std::optional<std::string>& pin,
+									 const std::optional<bool>& restricted,
+									 const std::optional<std::string>& max_tv_rating,
+									 const std::optional<std::string>& max_movie_rating,
+									 const std::optional<std::string>& max_channel_rating)
+{
+	if (pin)
+	{
+		if (pin->empty()) clearPin(user_id);
+		else setPin(user_id, *pin);
+	}
+	if (restricted || max_tv_rating || max_movie_rating || max_channel_rating)
+	{
+		// updateRestriction writes all four columns together, so any field
+		// the caller didn't supply falls back to this account's current
+		// value rather than being clobbered with a default.
+		SQLite::Statement cur(db_.get(),
+							  "SELECT restricted, max_tv_rating, max_movie_rating, max_channel_rating "
+							  "FROM user WHERE user_id = ?");
+		cur.bind(1, user_id);
+		if (cur.executeStep())
+		{
+			updateRestriction(user_id,
+							  restricted.value_or(cur.getColumn(0).getInt() != 0),
+							  max_tv_rating.value_or(cur.getColumn(1).getString()),
+							  max_movie_rating.value_or(cur.getColumn(2).getString()),
+							  max_channel_rating.value_or(cur.getColumn(3).getString()));
+		}
+	}
+}
+
+bool AuthStore::deleteGuestSelf(const std::string& user_id)
+{
+	SQLite::Statement check(db_.get(), "SELECT 1 FROM user WHERE user_id = ? AND is_guest = 1");
+	check.bind(1, user_id);
+	if (!check.executeStep()) return false;
+
+	deleteUserCascade(user_id);
+	return true;
+}
+
+int AuthStore::pruneIdleGuests(int64_t idle_seconds)
+{
+	const int64_t now    = static_cast<int64_t>(std::time(nullptr));
+	const int64_t cutoff = now - idle_seconds;
+
+	std::vector<std::string> stale;
+	SQLite::Statement q(db_.get(), R"(
+		SELECT u.user_id
+		FROM user u
+		LEFT JOIN (SELECT user_id, MAX(last_seen) AS last_seen FROM session GROUP BY user_id) s
+			ON s.user_id = u.user_id
+		WHERE u.is_guest = 1 AND COALESCE(s.last_seen, u.created_at) < ?
+	)");
+	q.bind(1, cutoff);
+	while (q.executeStep()) stale.push_back(q.getColumn(0).getString());
+
+	for (const auto& user_id : stale) deleteUserCascade(user_id);
+	return static_cast<int>(stale.size());
 }
 
 // ---------------------------------------------------------------------------

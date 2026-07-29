@@ -159,6 +159,23 @@ export const api = {
   // session at all; only actionable with the unguessable token in the path.
   getInvite:   (token: string)                     => request<{ username: string }>('GET', `/auth/invite/${token}`),
   claimInvite: (token: string, password: string)   => request<AuthResponse>('POST', `/auth/invite/${token}`, { password }),
+    // Guest profiles (demo-server "Continue as Guest") — unauthenticated, only
+    // reachable at all when getPublicSettings().guest_profiles_enabled is true
+    // (the server 403s regardless, this is just what lets the login page
+    // decide whether to show the entry point). display_name doubles as the
+    // account's username. updateGuestSetup/deleteGuest are guest-only
+    // self-service — the server 403s a non-guest caller even with a valid
+    // token, see AuthService.cpp's own comment on why that's a real security
+    // boundary, not incidental.
+    createGuest: (display_name: string) => request<AuthResponse>('POST', '/auth/guest', {display_name}),
+    updateGuestSetup: (b: Partial<{
+        pin: string
+        restricted: boolean
+        max_tv_rating: string
+        max_movie_rating: string
+        max_channel_rating: string
+    }>) => request<{ ok: boolean }>('PATCH', '/auth/me/guest', b),
+    deleteGuest: () => request<{ ok: boolean }>('DELETE', '/auth/me/guest'),
   mintCastToken:    ()                    => request<CastTokenResponse>('POST',   '/auth/cast-token'),
   getCastSessions:  ()                    => request<CastSessionInfo[]>('GET',    '/auth/sessions?purpose=cast'),
   revokeCastSession: (sessionId: string)  => request<{ ok: boolean }>('DELETE',   `/auth/sessions/${sessionId}`),
@@ -605,16 +622,23 @@ export const api = {
         hades_debug: boolean;
         cast_app_id: string;
         default_landing_page: string;
-        internal_token: string
+        internal_token: string;
+        guest_profiles_enabled: boolean;
+        guest_idle_timeout_days: number;
+        guest_max_concurrent: number;
+        require_admin_password_switch: boolean
     }>('GET', '/config/settings'),
   // Public read-only subset for internal services (Hephaestus, Hermes) and
-  // the Hades frontend (CastProvider, which needs cast_app_id regardless of role).
+    // the Hades frontend (CastProvider, which needs cast_app_id regardless of
+    // role; the login page, which needs guest_profiles_enabled pre-login).
     getPublicSettings: () => request<{
         stream_buffer_size: number;
         verbose_transcode_logs: boolean;
         verbose_gateway_logs: boolean;
         cast_app_id: string;
-        default_landing_page: string
+        default_landing_page: string;
+        guest_profiles_enabled: boolean;
+        require_admin_password_switch: boolean
     }>('GET', '/config/public-settings'),
   // user_id: best-effort attribution (see auth/AuthContext.tsx's
   // currentUserRef) — the server just logs it alongside the message,
@@ -633,7 +657,11 @@ export const api = {
         hades_debug: boolean;
         cast_app_id: string;
         default_landing_page: string;
-        internal_token: string
+        internal_token: string;
+        guest_profiles_enabled: boolean;
+        guest_idle_timeout_days: number;
+        guest_max_concurrent: number;
+        require_admin_password_switch: boolean
     }>) => request<{
         epg_debug: boolean;
         sync_debug: boolean;
@@ -645,7 +673,11 @@ export const api = {
         hades_debug: boolean;
         cast_app_id: string;
         default_landing_page: string;
-        internal_token: string
+        internal_token: string;
+        guest_profiles_enabled: boolean;
+        guest_idle_timeout_days: number;
+        guest_max_concurrent: number;
+        require_admin_password_switch: boolean
     }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),

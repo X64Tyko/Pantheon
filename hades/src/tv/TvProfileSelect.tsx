@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
+import {api} from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import PinPad from '../auth/PinPad'
+import {requiresPasswordForAdminSwitch} from '../auth/profileSwitchPolicy'
 import type { User } from '../api/types'
 import { useFocusable } from '../nav/useFocusable'
 import sharedStyles from '../channel/sharedStyles.module.css'
@@ -32,6 +34,17 @@ export function TvProfileSelect() {
   const [error, setError] = useState('')
   const [busy,  setBusy]  = useState(false)
 
+    // Same effective (already OR'd with guest_profiles_enabled) value
+    // auth/ProfileSelectPage.tsx reads — the server enforces this regardless
+    // of what this client sends, but without checking it here first, an
+    // admin-with-pin tile would show a PIN prompt that always gets rejected
+    // instead of routing straight to the password form.
+    const [requireAdminPasswordSwitch, setRequireAdminPasswordSwitch] = useState(false)
+    useEffect(() => {
+        api.getPublicSettings().then(s => setRequireAdminPasswordSwitch(s.require_admin_password_switch)).catch(() => {
+        })
+    }, [])
+
   const { ref: gridRef, focusKey: gridFocusKey } = useFocusable<object, HTMLDivElement>({
     focusKey: 'tv-profiles-grid', trackChildren: true, isFocusBoundary: true,
   })
@@ -43,7 +56,11 @@ export function TvProfileSelect() {
       navigate(returnPath, { replace: true })
       return
     }
-    if (u.role === 'admin' && !u.has_pin) { setPassword(''); setPasswordFor(u); return }
+      if (requiresPasswordForAdminSwitch(u.role, u.has_pin, requireAdminPasswordSwitch)) {
+          setPassword('');
+          setPasswordFor(u);
+          return
+      }
     if (u.has_pin && pin === undefined) { setPinFor(u); return }
     setBusy(true)
     try {

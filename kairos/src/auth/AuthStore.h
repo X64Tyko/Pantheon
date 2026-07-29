@@ -39,6 +39,16 @@ struct AuthUser
 	// migration v96 / ConfigService.cpp's own global "default_landing_page"
 	// key for the tier this falls back to when empty.
 	std::string default_landing_page;
+	// A self-created, passwordless demo-server account (see
+	// AuthStore::createGuestUser) — always role="viewer", never has a
+	// password. Drives the "Guest" badge/self-service routes in Hades and
+	// the guest-only self-service routes in AuthService.cpp.
+	bool is_guest = false;
+	// Most recent session.last_seen across every session this account has
+	// ever held, or created_at if it's never had one — only populated by
+	// listUsers() (for the admin Users page's "last active" column), not by
+	// validate() (irrelevant to a request's own auth check). 0 if unknown.
+	int64_t last_seen = 0;
 };
 
 // One active session, as surfaced to the owning user for review/revocation.
@@ -169,17 +179,90 @@ public:
 	// like an unlocked Netflix profile. Wrong pins count against a per-user
 	// lockout (5 failures -> 60s cooldown, see AuthStore.cpp). Returns
 	// {"", reason} on failure, {token, ""} on success.
+	//
+	// require_password_for_admin (see security_settings::
+	// requireAdminPasswordSwitchEffective, resolved by the caller — this
+	// method has no config access of its own) — when true, an admin-role
+	// target is refused here even if it has a PIN configured: a 4-6 digit
+	// PIN is a meaningfully weaker credential than the real password, and
+	// this closes that gap for servers where the "who's watching?" picker
+	// might be reached by a less-trusted device (e.g. any guest profile,
+	// once guest profiles exist). Enforced here, not just left to the caller
+	// to decide whether to prompt for a PIN or a password, so it can't be
+	// bypassed by calling this endpoint directly.
 	std::pair<std::string, std::string> switchProfile(const std::string& target_user_id,
-													  const std::string& pin);
+													  const std::string& pin,
+													  bool require_password_for_admin = false);
+
+	// ── Guest profiles (demo-server "Continue as Guest") ────────────────────
+
+	// Creates a passwordless, viewer-only account (display_name doubles as
+	// username — same UNIQUE-constrained taken-name rejection as any other
+	// account) and immediately mints a session for it, same shape login()
+	// returns. {"", ""} on failure (name taken). Callers are responsible for
+	// checking the guest_profiles_enabled setting and countActiveGuests()
+	// against the configured cap first — kept as separate, independently
+	// testable pieces rather than folded into this one method.
+	std::pair<std::string, std::string> createGuestUser(const std::string& display_name);
+
+	int countActiveGuests() const;
+
+	// Guest-only self-service first-run setup — lets a guest configure the
+	// same parental-control fields an admin can set for anyone else (see
+	// updateRestriction) plus their own PIN, on themselves. Deliberately its
+	// own method rather than a loosened version of the admin-only routes
+	// above: scoping self-service restriction editing to guests specifically
+	// means a *non-guest* viewer can never use it to loosen restrictions an
+	// admin set on them. Every field is optional — only supplied ones change.
+	void updateGuestSelfSetup(const std::string& user_id,
+							  const std::optional<std::string>& pin,
+							  const std::optional<bool>& restricted,
+							  const std::optional<std::string>& max_tv_rating,
+							  const std::optional<std::string>& max_movie_rating,
+							  const std::optional<std::string>& max_channel_rating);
+
+	// Deletes user_id's account iff it is actually a guest (is_guest=1 is
+	// checked in the DELETE's own WHERE clause — defense in depth so this can
+	// never delete a non-guest account even if a route-level gate above it
+	// were ever wrong). Returns false if user_id doesn't exist or isn't a
+	// guest.
+	bool deleteGuestSelf(const std::string& user_id);
+
+	// Deletes every guest account idle for at least idle_seconds — no
+	// session touched within that window (see session.last_seen), or one
+	// that's never had a session touched at all since created_at. Returns
+	// the number of accounts pruned. Meant to be called periodically (see
+	// JobScheduler) rather than per-request.
+	int pruneIdleGuests(int64_t idle_seconds);
 
 private:
 	Database& db_;
 
-	// Shared INSERT for all three creation paths (createUser,
-	// createUserWithTempPassword, createUserWithEmailInvite) — returns the
-	// new user_id, or "" if username is taken or role is invalid.
+	// Shared INSERT for all creation paths (createUser,
+	// createUserWithTempPassword, createUserWithEmailInvite, createGuestUser)
+	// — returns the new user_id, or "" if username is taken or role is
+	// invalid.
 	std::string insertUser(const std::string& username, const std::string& password_hash,
-						   const std::string& role, bool must_change_password);
+						   const std::string& role, bool must_change_password,
+						   bool is_guest = false);
+
+	// Shared session-row insert — factored out of login() so createGuestUser
+	// (which has no password to check, so can't go through login() itself)
+	// can mint a session the same way. Returns the new token.
+	std::string insertSession(const std::string& user_id, const std::string& purpose = "login");
+
+	// Deletes user_id's rows from every table that references user_id
+	// WITHOUT an ON DELETE CASCADE (playback_history, show_track_preference,
+	// movie_track_preference, watch_together_session.host_user_id,
+	// watch_together_member — see Database.cpp's migrations v91/92/94/95),
+	// then the user row itself (which cascades everything else: session,
+	// watch_progress, restriction overrides, playlist-related rows, etc.).
+	// Without this, deleting an account that has ever played anything or
+	// hosted/joined a Watch Together session throws a foreign-key constraint
+	// violation instead of actually deleting it — shared by the admin
+	// deleteUser() below and the guest self-delete/prune paths, all of which
+	// hit the exact same constraint.
+	void deleteUserCascade(const std::string& user_id);
 
 	static std::string hashPassword(const std::string& password);
 	static bool checkPassword(const std::string& password,

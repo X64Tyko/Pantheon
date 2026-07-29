@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import {api} from '../api/client'
 import { useAuth } from './AuthContext'
 import PinPad from './PinPad'
+import {requiresPasswordForAdminSwitch} from './profileSwitchPolicy'
 import type { User } from '../api/types'
 import styles from './ProfileSelectPage.module.css'
 
@@ -14,7 +16,16 @@ function Avatar({ u }: { u: User }) {
 }
 
 export default function ProfileSelectPage() {
-    const {user, profiles, switchProfile, confirmCurrentProfile, logout, login, resolveLandingPath} = useAuth()
+    const {
+        user,
+        profiles,
+        switchProfile,
+        confirmCurrentProfile,
+        applySession,
+        logout,
+        login,
+        resolveLandingPath
+    } = useAuth()
   const navigate = useNavigate()
 
   const [pinFor,      setPinFor]      = useState<User | null>(null)
@@ -22,6 +33,56 @@ export default function ProfileSelectPage() {
   const [password,    setPassword]    = useState('')
   const [error,  setError]  = useState('')
   const [busy,   setBusy]   = useState(false)
+
+    // "Add Guest" tile — a device that's already past a real login (that's
+    // the whole precondition for reaching this picker at all) can mint a
+    // brand-new guest profile right here, same idea as Netflix's own
+    // "Add Profile" tile, rather than that only ever being reachable from
+    // the pre-login page. Read pre-emptively (not gated behind any
+    // interaction) so the tile itself only renders when actually enabled —
+    // same public-settings fetch LoginPage.tsx already does for the same reason.
+    const [guestProfilesEnabled, setGuestProfilesEnabled] = useState(false)
+    const [addingGuest, setAddingGuest] = useState(false)
+    const [guestName, setGuestName] = useState('')
+    const [guestBusy, setGuestBusy] = useState(false)
+    const [guestError, setGuestError] = useState('')
+
+    // The already-OR'd-with-guest_profiles_enabled effective value (see
+    // ConfigService.cpp's public-settings) — needed before ever attempting a
+    // switch, so an admin tile routes straight to the password form instead
+    // of showing a PIN prompt that AuthStore::switchProfile would just
+    // reject anyway.
+    const [requireAdminPasswordSwitch, setRequireAdminPasswordSwitch] = useState(false)
+
+    useEffect(() => {
+        api.getPublicSettings().then(s => {
+            setGuestProfilesEnabled(s.guest_profiles_enabled)
+            setRequireAdminPasswordSwitch(s.require_admin_password_switch)
+        }).catch(() => {
+        })
+    }, [])
+
+    const submitGuest = async (e: FormEvent) => {
+        e.preventDefault()
+        setGuestError('')
+        setGuestBusy(true)
+        try {
+            const {token, user: guestUser} = await api.createGuest(guestName)
+            // Replaces this device's active session with the freshly-created
+            // guest's, exactly like picking an existing tile does via
+            // switchProfile — the original session that got this device past
+            // the real login isn't lost server-side, just no longer the one
+            // this device is holding onto (same as switching to any other
+            // existing profile from this same picker).
+            await applySession(token, guestUser)
+            confirmCurrentProfile()
+            navigate('/guest-setup', {replace: true})
+        } catch (err: any) {
+            setGuestError(err.message ?? 'Failed to create guest account')
+        } finally {
+            setGuestBusy(false)
+        }
+    }
 
   const pick = async (u: User, pin?: string) => {
     setError('')
@@ -38,7 +99,15 @@ export default function ProfileSelectPage() {
     // An admin profile with no PIN configured can never be switched into
     // (AuthStore::switchProfile always denies it) — rather than a dead-end
     // error, fall back to a real password login for that specific account.
-    if (u.role === 'admin' && !u.has_pin) { setPassword(''); setPasswordFor(u); return }
+      // Same fallback when the server's hardening setting is on, even for an
+      // admin that DOES have a PIN — a PIN is a meaningfully weaker credential
+      // than the real password, and switchProfile rejects PIN-based admin
+      // switches outright in that mode regardless of what we'd send it.
+      if (requiresPasswordForAdminSwitch(u.role, u.has_pin, requireAdminPasswordSwitch)) {
+          setPassword('');
+          setPasswordFor(u);
+          return
+      }
     if (u.has_pin && pin === undefined) { setPinFor(u); return }
     setBusy(true)
     try {
@@ -121,6 +190,39 @@ export default function ProfileSelectPage() {
             ← back
           </button>
         </form>
+      ) : addingGuest ? (
+          <form onSubmit={submitGuest} className={styles.passwordStage}>
+              <div className={`${styles.avatar} ${styles.avatarAddGuest}`}>+</div>
+              <div className={styles.stageNote}>
+                  Pick a name — you'll be able to set a PIN and try out parental-control restrictions next.
+              </div>
+              <input
+                  type="text" autoFocus required maxLength={40} disabled={guestBusy}
+                  value={guestName} onChange={e => setGuestName(e.target.value)}
+                  className={styles.passwordInput}
+              />
+              {guestError && (
+                  <div className={styles.errorTextSmall}>
+                      {guestError}
+                  </div>
+              )}
+              <button
+                  type="submit" disabled={guestBusy || !guestName}
+                  className={`${styles.submitBtn} ${(guestBusy || !guestName) ? styles.submitBtnDisabled : styles.submitBtnEnabled}`}
+              >
+                  {guestBusy ? '…' : 'CONTINUE'}
+              </button>
+              <button
+                  type="button" onClick={() => {
+                  setAddingGuest(false);
+                  setGuestName('');
+                  setGuestError('')
+              }}
+                  className={styles.backLink}
+              >
+                  ← back
+              </button>
+          </form>
       ) : (
         <div className={styles.profileGrid}>
           {profiles.map(u => (
@@ -150,6 +252,17 @@ export default function ProfileSelectPage() {
               )}
             </button>
           ))}
+            {guestProfilesEnabled && (
+                <button
+                    type="button"
+                    onClick={() => setAddingGuest(true)}
+                    disabled={busy}
+                    className={`${styles.profileTile} ${busy ? styles.profileTileDisabled : styles.profileTileEnabled}`}
+                >
+                    <div className={`${styles.avatar} ${styles.avatarAddGuest}`}>+</div>
+                    <div className={styles.profileName}>Add Guest</div>
+                </button>
+            )}
         </div>
       )}
 

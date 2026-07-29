@@ -9,6 +9,7 @@ import SetupPage              from './auth/SetupPage'
 import SetPasswordPage        from './auth/SetPasswordPage'
 import InvitePage             from './auth/InvitePage'
 import ProfileSelectPage      from './auth/ProfileSelectPage'
+import GuestSetupPage from './auth/GuestSetupPage'
 import Layout                 from './components/Layout'
 import { FocusRoot }          from './nav/FocusRoot'
 import { CastProvider }       from './cast/CastProvider'
@@ -74,6 +75,13 @@ export default function App() {
               !profileChosen redirect, not a normal nav target. Same
               deliberately-outside-<Layout> treatment as set-password above. */}
           <Route path="profiles" element={<ProfileSelectPage />} />
+
+            {/* First-run wizard after "Continue as Guest" (LoginPage) — reached
+              via an explicit navigate() right after guest account creation,
+              not a ProtectedRoute redirect (unlike set-password/profiles
+              above, this step is skippable). Same deliberately-outside-
+              <Layout> treatment. */}
+            <Route path="guest-setup" element={<GuestSetupPage/>}/>
 
           {/* Full-screen takeover — no sidebar chrome during playback. */}
           <Route path="player/movie/:id" element={

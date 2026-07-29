@@ -30,6 +30,22 @@ interface AuthContextValue {
   // before that resolves lets ProtectedRoute momentarily see an empty
   // profiles list and skip the picker it shouldn't.
   applySession:  (token: string, user: User) => Promise<void>
+    // Guest-only self-service first-run setup (GuestSetupPage) — see
+    // AuthService.cpp's PATCH /api/auth/me/guest, which 403s for anyone whose
+    // account isn't actually a guest. Same "server rejects it regardless of
+    // what the UI shows" belt-and-suspenders as every other admin-toggleable
+    // capability in this codebase.
+    completeGuestSetup: (b: {
+        pin?: string;
+        restricted?: boolean;
+        max_tv_rating?: string;
+        max_movie_rating?: string;
+        max_channel_rating?: string
+    }) => Promise<void>
+    // Guest-only self-delete (AccountPage's "Delete My Guest Account") — logs
+    // the device out afterward, same as logout(), since there's no account
+    // left to hold a session for.
+    deleteGuestAccount: () => Promise<void>
   // Every profile on this server, for the "Who's watching?" picker —
   // populated once a real login session exists. Empty until then.
   profiles:      User[]
@@ -194,6 +210,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loadProfiles()
   }
 
+    const completeGuestSetup = async (b: {
+        pin?: string;
+        restricted?: boolean;
+        max_tv_rating?: string;
+        max_movie_rating?: string;
+        max_channel_rating?: string
+    }) => {
+        if (!user) throw new Error('not logged in')
+        await api.updateGuestSetup(b)
+        setUser({
+            ...user,
+            has_pin: b.pin !== undefined ? b.pin !== '' : user.has_pin,
+            restricted: b.restricted ?? user.restricted,
+            max_tv_rating: b.max_tv_rating ?? user.max_tv_rating,
+            max_movie_rating: b.max_movie_rating ?? user.max_movie_rating,
+            max_channel_rating: b.max_channel_rating ?? user.max_channel_rating,
+        })
+    }
+
+    const deleteGuestAccount = async () => {
+        await api.deleteGuest()
+        localStorage.removeItem(TOKEN_KEY)
+        setUser(null)
+        setProfiles([])
+        setProfileChosenRaw(false)
+    }
+
   const switchProfile = async (userId: string, pin?: string) => {
     const { token, user } = await api.switchProfile(userId, pin)
     localStorage.setItem(TOKEN_KEY, token)
@@ -232,6 +275,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         updateTrackPreference,
         updateDefaultLandingPage,
         applySession,
+        completeGuestSetup,
+        deleteGuestAccount,
         profiles,
         profileChosen,
         switchProfile,

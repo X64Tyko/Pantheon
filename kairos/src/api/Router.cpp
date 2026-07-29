@@ -44,6 +44,13 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	if (!path.starts_with("/api/")) return true;
 	if (path == "/api/auth/setup") return true;
 	if (path == "/api/auth/login") return true;
+	// A visitor with no session yet creates their own guest account — see
+	// AuthService.cpp's own comment on why the route itself still gates on
+	// guest_profiles_enabled rather than relying on this exemption alone.
+	// Deliberately NOT extended to /api/auth/me/guest (the guest-only
+	// self-service PATCH/DELETE routes) — those require an already-valid
+	// session, checked via currentUser()->is_guest.
+	if (path == "/api/auth/guest") return true;
 	// Invite-claim flow — reached before the person has any session at all;
 	// only actionable with the unguessable token in the path itself (see
 	// AuthStore::claimInvite).
