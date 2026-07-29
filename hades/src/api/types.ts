@@ -1136,11 +1136,17 @@ export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'an
 
 export interface ScraperConfig {
   source:          ScraperSource
+    // Always "" from the server now — GET /api/scrapers/config never returns
+    // the real key/pin (see has_api_key/has_pin below). Only meaningful as an
+    // outgoing value: leave blank to keep whatever's already configured,
+    // non-blank to set a new one. Never actually round-trips the stored value.
   api_key:         string
   enabled:         boolean
   language:        string
   language_weight: number
-  pin?:            string  // TVDB subscriber pin
+    pin?: string  // TVDB subscriber pin — same write-only convention as api_key
+    has_api_key?: boolean // true if a key is already configured server-side
+    has_pin?: boolean // TVDB only
 }
 
 export interface ScraperSettings {

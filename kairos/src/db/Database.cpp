@@ -2472,6 +2472,19 @@ namespace
 )SQL"
 		}
 
+		// ── v100: login brute-force lockout — same shape and reasoning as
+		//          pin_fail_count/pin_locked_until (v ~91's PIN lockout, see
+		//          AuthStore::switchProfile), applied to plain username/
+		//          password login, which previously had no rate limiting at
+		//          all. See AuthStore::login.
+		,
+		{
+			100, R"SQL(
+    ALTER TABLE user ADD COLUMN login_fail_count   INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE user ADD COLUMN login_locked_until INTEGER NOT NULL DEFAULT 0;
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

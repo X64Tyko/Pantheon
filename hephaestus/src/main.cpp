@@ -73,9 +73,9 @@ int main(int argc, char* argv[]) {
     vod_opts.ffmpeg_debug_logs = cfg.ffmpeg_debug_logs;
     vod_opts.verbose_transcode_logs = cfg.verbose_transcode_logs;
     vod_opts.lookahead_secs   = cfg.vod_lookahead_secs;
-    VodSessionManager vodSessions(cfg.ffmpeg_path, vod_opts, kairos);
+	VodSessionManager vodSessions(cfg.ffmpeg_path, vod_opts, kairos, cfg.max_vod_sessions);
 
-    PreviewStreamOptions preview_opts;
+	PreviewStreamOptions preview_opts;
     preview_opts.ffprobe_path      = cfg.ffprobe_path;
     preview_opts.hls_root          = cfg.hls_root;
     preview_opts.default_logo_path = cfg.default_logo_path;
@@ -87,10 +87,23 @@ int main(int argc, char* argv[]) {
     preview_opts.vaapi_device      = cfg.vaapi_device;
     preview_opts.ffmpeg_debug_logs = cfg.ffmpeg_debug_logs;
     preview_opts.verbose_transcode_logs = cfg.verbose_transcode_logs;
-    PreviewSessionManager previewSessions(cfg.ffmpeg_path, preview_opts, kairos);
+    PreviewSessionManager previewSessions(cfg.ffmpeg_path, preview_opts, kairos, cfg.max_preview_sessions);
 
-    httplib::Server svr;
+	httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(16); };
+    // See Kairos's main.cpp for why — same reasoning; every body Hephaestus
+	// accepts (POST /stream/vod/start etc.) is a small JSON control payload.
+	svr.set_payload_max_length(25 * 1024 * 1024);
+
+	// Baseline hardening headers on every response — see Kairos's Router.cpp
+	// for why no Content-Security-Policy is included here either.
+	svr.set_post_routing_handler([](const httplib::Request&, httplib::Response& res)
+	{
+		res.set_header("X-Content-Type-Options", "nosniff");
+		res.set_header("X-Frame-Options", "DENY");
+		res.set_header("Referrer-Policy", "same-origin");
+		res.set_header("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+	});
 
 	// Per-client declared decode capability for VodSession's direct-stream
 	// decision — see ClientCapabilities.h. One cache for the whole

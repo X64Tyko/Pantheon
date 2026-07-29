@@ -115,6 +115,26 @@ TEST_F(AuthServiceRoutesTest, GetMeRejectsGarbageToken)
 	EXPECT_EQ(r->status, 401);
 }
 
+// POST /api/auth/login previously had no rate limiting at all — see
+// auth/test_auth_store.cpp for the AuthStore::login lockout logic itself in
+// isolation; this proves it's actually wired up through the route (same
+// generic 401 either way, so a script probing this endpoint can't
+// distinguish "wrong password" from "locked out" and use that as an oracle).
+TEST_F(AuthServiceRoutesTest, LoginLocksOutAfterFiveWrongAttemptsThroughTheRoute)
+{
+	for (int i = 0; i < 5; ++i)
+	{
+		json body = {{"username", "routes_admin"}, {"password", "wrong-password"}};
+		auto r    = cli->Post("/api/auth/login", body.dump(), "application/json");
+		ASSERT_TRUE(r);
+		EXPECT_EQ(r->status, 401);
+	}
+	json correct = {{"username", "routes_admin"}, {"password", "routes-password-1"}};
+	auto r       = cli->Post("/api/auth/login", correct.dump(), "application/json");
+	ASSERT_TRUE(r);
+	EXPECT_EQ(r->status, 401); // still locked out even with the right password
+}
+
 TEST_F(AuthServiceRoutesTest, GetProfilesRequiresAuth)
 {
 	auto r = cli->Get("/api/auth/profiles");
@@ -149,6 +169,53 @@ TEST_F(AuthServiceRoutesTest, GetProfilesVisibleToViewerNotJustAdmin)
 	}
 	EXPECT_TRUE(sawAdmin);
 	EXPECT_TRUE(sawViewer);
+}
+
+// GET /api/auth/profiles is reachable by ANY authenticated session, including
+// a freshly self-created guest — it previously returned full userJson() for
+// every account (must_change_password, last_seen, rating ceilings, language/
+// landing-page preferences), letting a guest map out real accounts' details
+// server-wide. Must be trimmed to exactly what the picker UI renders (see
+// profilePickerJson in AuthService.cpp): user_id/username/role/restricted/
+// has_pin, nothing else.
+TEST_F(AuthServiceRoutesTest, GetProfilesOmitsSensitiveFieldsFromEveryEntry)
+{
+	auto r = cli->Get("/api/auth/profiles", viewerHeaders());
+	ASSERT_TRUE(r);
+	ASSERT_EQ(r->status, 200);
+	json body = json::parse(r->body);
+	ASSERT_GE(body.size(), 1u);
+	for (const auto& u : body)
+	{
+		EXPECT_TRUE(u.contains("user_id"));
+		EXPECT_TRUE(u.contains("username"));
+		EXPECT_TRUE(u.contains("role"));
+		EXPECT_TRUE(u.contains("restricted"));
+		EXPECT_TRUE(u.contains("has_pin"));
+		EXPECT_FALSE(u.contains("must_change_password"));
+		EXPECT_FALSE(u.contains("last_seen"));
+		EXPECT_FALSE(u.contains("max_tv_rating"));
+		EXPECT_FALSE(u.contains("max_movie_rating"));
+		EXPECT_FALSE(u.contains("max_channel_rating"));
+		EXPECT_FALSE(u.contains("default_audio_lang"));
+		EXPECT_FALSE(u.contains("default_subtitle_lang"));
+		EXPECT_FALSE(u.contains("default_landing_page"));
+		EXPECT_FALSE(u.contains("is_guest"));
+	}
+}
+
+// GET /api/users (admin-only) is a completely separate endpoint from
+// /api/auth/profiles and must keep returning the full detail admin
+// management actually needs — proves the trim above is scoped to the picker
+// endpoint only, not a blanket change to userJson() itself.
+TEST_F(AuthServiceRoutesTest, GetUsersAdminEndpointStillReturnsFullDetail)
+{
+	auto r = cli->Get("/api/users", adminHeaders());
+	ASSERT_TRUE(r);
+	ASSERT_EQ(r->status, 200);
+	json body = json::parse(r->body);
+	ASSERT_GE(body.size(), 1u);
+	for (const auto& u : body) EXPECT_TRUE(u.contains("must_change_password"));
 }
 
 TEST_F(AuthServiceRoutesTest, SwitchProfileRequiresAuth)
@@ -300,6 +367,34 @@ TEST_F(AuthServiceRoutesTest, PostGuestRejectsOnceMaxConcurrentIsReached)
 	auto r2     = cli->Post("/api/auth/guest", second.dump(), "application/json");
 	ASSERT_TRUE(r2);
 	EXPECT_EQ(r2->status, 429);
+}
+
+// Independent of the concurrent-guest cap above (which stops N guests
+// existing at once but not a script creating-and-abandoning accounts as fast
+// as the server can hash a password) — POST /api/auth/guest is now also
+// per-IP rate-limited (see AuthService.h's guest_creation_limiter_), 10 per
+// 10 minutes. guest_max_concurrent is set high here specifically so this
+// test exercises the rate limiter, not the concurrency cap already covered
+// above.
+TEST_F(AuthServiceRoutesTest, PostGuestRateLimitedPerIpIndependentOfConcurrentCap)
+{
+	ConfigRepository(db).setValue("guest_profiles_enabled", "1");
+	ConfigRepository(db).setValue("guest_max_concurrent", "100");
+
+	int ok_count = 0, limited_count = 0;
+	for (int i = 0; i < 11; ++i)
+	{
+		json body = {{"display_name", "Rate Limit Guest " + std::to_string(i)}};
+		auto r    = cli->Post("/api/auth/guest", body.dump(), "application/json");
+		ASSERT_TRUE(r);
+		if (r->status == 200) ++ok_count;
+		else if (r->status == 429) ++limited_count;
+	}
+	// All 11 requests come from the same test client (127.0.0.1, no
+	// X-Forwarded-For), so they share one rate-limit bucket — the 11th
+	// (limit is 10) must be throttled.
+	EXPECT_EQ(ok_count, 10);
+	EXPECT_EQ(limited_count, 1);
 }
 
 TEST_F(AuthServiceRoutesTest, PatchMeGuestForbiddenForARegularViewer)

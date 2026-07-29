@@ -42,6 +42,26 @@ namespace
 			{"last_seen", u.last_seen},
 		};
 	}
+
+	// Trimmed down to exactly what the "who's watching?" picker renders
+	// (ProfileSelectPage.tsx / TvProfileSelect.tsx: avatar initial + admin
+	// styling from role, the has_pin lock badge, the restricted tag) — GET
+	// /api/auth/profiles is reachable by ANY authenticated session, including
+	// a free self-service guest, so unlike userJson() above (used by
+	// admin-only /api/users and the caller's own /api/auth/me) it must not
+	// include must_change_password (flags freshly-invited/weak-password
+	// accounts), last_seen (activity pattern), rating ceilings, or language/
+	// landing-page preferences for every other account on the server.
+	json profilePickerJson(const AuthUser& u)
+	{
+		return {
+			{"user_id", u.user_id},
+			{"username", u.username},
+			{"role", u.role},
+			{"restricted", u.restricted},
+			{"has_pin", u.has_pin},
+		};
+	}
 }
 
 void AuthService::registerRoutes(httplib::Server& svr)
@@ -141,6 +161,18 @@ void AuthService::registerRoutes(httplib::Server& svr)
 			route::err(res, 429, "Guest capacity reached — try again later");
 			return;
 		}
+		// Independent of the concurrent-guest cap above (which only bounds
+		// how many guest accounts exist *at once* — pruned/deleted guests
+		// free up room again): without this, a script could create and
+		// abandon accounts as fast as the server can hash a password,
+		// churning through the concurrent cap's headroom indefinitely. 10
+		// creations per IP per 10 minutes is generous for a real household
+		// behind NAT while still blocking scripted mass creation.
+		if (!guest_creation_limiter_.allow(clientAddressForRateLimit(req), 10, 600))
+		{
+			route::err(res, 429, "Too many guest accounts created recently — try again later");
+			return;
+		}
 		auto [user_id, token] = auth_.createGuestUser(display_name);
 		if (user_id.empty())
 		{
@@ -232,7 +264,7 @@ void AuthService::registerRoutes(httplib::Server& svr)
 			return;
 		}
 		json arr = json::array();
-		for (const auto& u : auth_.listUsers()) arr.push_back(userJson(u));
+		for (const auto& u : auth_.listUsers()) arr.push_back(profilePickerJson(u));
 		route::ok(res, arr.dump());
 	});
 

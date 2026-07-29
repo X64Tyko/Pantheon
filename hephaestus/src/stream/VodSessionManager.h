@@ -65,7 +65,12 @@ struct AudioStreamKey
 class VodSessionManager
 {
 public:
-	VodSessionManager(std::string ffmpeg_path, VodStreamOptions opts, KairosClient& kairos);
+	// max_sessions caps concurrent transcode sessions host-wide — 0 means no
+	// cap. Without this, any authenticated caller (a free self-service guest
+	// account included) could loop-request VOD sessions and exhaust the
+	// host's CPU/GPU; see Config.h's max_vod_sessions for the default.
+	VodSessionManager(std::string ffmpeg_path, VodStreamOptions opts, KairosClient& kairos,
+					  int max_sessions = 0);
 	~VodSessionManager();
 
 	// Creates and starts a new per-viewer session (attaching to shared
@@ -122,6 +127,7 @@ private:
 
 	std::mutex mtx;
 	std::map<std::string, std::shared_ptr<VodSession>> sessions;
+	int max_sessions = 0;
 
 	std::mutex stream_mtx;
 	std::map<VideoStreamKey, std::weak_ptr<VodEncodeStream>> video_streams;

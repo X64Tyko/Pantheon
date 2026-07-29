@@ -111,6 +111,26 @@ int main(int argc, char* argv[])
 	EmailService email(db);
 	sync.loadSources();
 
+	// Public-demo-safe admin bootstrap: if the operator supplied credentials
+	// via the environment (see docker-compose.yml's KAIROS_ADMIN_USERNAME/
+	// KAIROS_ADMIN_PASSWORD), create the admin account here, before the HTTP
+	// port ever opens. Without this, POST /api/auth/setup lets whoever reaches
+	// the server first — not necessarily the operator — claim the admin
+	// account; on a publicly reachable demo that could be any visitor who
+	// beats the operator to it. Bootstrapping here closes that window: by the
+	// time svr.listen() runs below, hasAnyUser() is already true, so
+	// /api/auth/setup simply reports "already complete" for anyone else.
+	if (!auth.hasAnyUser())
+	{
+		const char* env_user = std::getenv("KAIROS_ADMIN_USERNAME");
+		const char* env_pass = std::getenv("KAIROS_ADMIN_PASSWORD");
+		if (env_user && env_pass && *env_user && *env_pass)
+		{
+			if (auth.createUser(env_user, env_pass, "admin")) std::cout << "[kairos] admin account '" << env_user << "' created from KAIROS_ADMIN_USERNAME/KAIROS_ADMIN_PASSWORD\n";
+			else std::cerr << "[kairos] KAIROS_ADMIN_USERNAME/KAIROS_ADMIN_PASSWORD set but admin creation failed (username taken?)\n";
+		}
+	}
+
 	// Load persisted runtime flags from app_config.
 	// Env vars and --debug can force flags on; if not forced, use DB value.
 	auto loadFlag = [&](const char* key, std::atomic<bool>& flag)
@@ -142,6 +162,13 @@ int main(int argc, char* argv[])
 
 	httplib::Server svr;
 	svr.new_task_queue = [api_threads] { return new httplib::ThreadPool(api_threads); };
+	// httplib defaults this to SIZE_MAX (unbounded) — every request body in
+	// this API is a JSON config/metadata payload (no file-upload endpoints
+	// exist), so a generous-but-bounded cap blocks a trivial memory/disk
+	// exhaustion vector (one huge POST body) without risking any legitimate
+	// request. Read/write timeouts are left at httplib's own 5s default,
+	// which is already reasonable and unrelated to this.
+	svr.set_payload_max_length(25 * 1024 * 1024);
 
 	svr.Get("/health", [](const httplib::Request&, httplib::Response& res)
 	{

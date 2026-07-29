@@ -3,6 +3,7 @@
 #include "broadcast/BroadcasterManager.h"
 #include "crash/CrashHandler.h"
 #include "devices/DeviceSessionManager.h"
+#include "kairos/InternalToken.h"
 #include "kairos/KairosClient.h"
 #include "log/LogBuffer.h"
 #include "log/RuntimeFlags.h"
@@ -15,16 +16,26 @@
 
 // Subscribe to an upstream SSE log stream and push lines into LogBuffer.
 // Reconnects indefinitely on disconnect (until `st` is stop-requested).
-// Intended to be run via TaskRegistry's stop_token overload.
-static void relayUpstreamLogs(std::stop_token st, const std::string& upstream_url, LogBuffer& dest) {
-    while (!st.stop_requested()) {
+// Intended to be run via TaskRegistry's stop_token overload. internal_token
+// authenticates this server-to-server call — both Kairos's and Hephaestus's
+// own /api/logs/stream are internal-auth-gated (see their own Router.cpp),
+// since this relay (not a browser) is their only caller; empty omits the
+// header and lets the upstream's own check reject it, same as before this
+// existed for a server with no internal_token configured yet.
+static void relayUpstreamLogs(std::stop_token st, const std::string& upstream_url,
+							  const std::string& internal_token, LogBuffer& dest)
+{
+	httplib::Headers headers;
+	if (!internal_token.empty()) headers.emplace("X-Internal-Token", internal_token);
+
+	while (!st.stop_requested()) {
         httplib::Client cli(upstream_url);
         cli.set_connection_timeout(5);
         cli.set_read_timeout(60);
 
         std::string partial;
-        cli.Get("/api/logs/stream",
-            [](const httplib::Response&) -> bool { return true; },
+        cli.Get("/api/logs/stream", headers,
+				[](const httplib::Response&) -> bool { return true; },
             [&dest, &partial](const char* data, size_t len) -> bool {
                 for (size_t i = 0; i < len; ++i) {
                     char c = data[i];
@@ -77,6 +88,22 @@ int main(int argc, char* argv[]) {
 
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(32); };
+    // See Kairos's main.cpp for why — same reasoning, Hermes has no upload
+	// endpoints of its own either (it proxies Kairos's/Hephaestus's JSON
+	// bodies verbatim).
+	svr.set_payload_max_length(25 * 1024 * 1024);
+
+	// Baseline hardening headers on every response — see Kairos's Router.cpp
+	// for why no Content-Security-Policy is included here either (same
+	// gstatic.com/Cast-SDK/hls.js-worker/websocket surface, same "wrong is
+	// worse than absent on a live public demo" reasoning).
+	svr.set_post_routing_handler([](const httplib::Request&, httplib::Response& res)
+	{
+		res.set_header("X-Content-Type-Options", "nosniff");
+		res.set_header("X-Frame-Options", "DENY");
+		res.set_header("Referrer-Policy", "same-origin");
+		res.set_header("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+	});
 
 	// Log any 4XX/5XX response so we don't have to rely on client-side errors
 	// to discover Hermes returning unexpected status codes.
@@ -99,16 +126,21 @@ int main(int argc, char* argv[]) {
     registerRoutes(svr, broadcasters, kairos, combined_log, cfg, devices, watch_together);
 
     // Relay upstream log streams so the Hades UI sees all service logs via
-    // a single /api/logs/stream endpoint on Hermes.
-    TaskRegistry::global().spawn([&combined_log, url = cfg.kairos_url](std::stop_token st) {
-        relayUpstreamLogs(st, url, combined_log);
-    });
-    TaskRegistry::global().spawn([&combined_log, url = cfg.hephaestus_url](std::stop_token st) {
-        relayUpstreamLogs(st, url, combined_log);
-    });
+    // a single /api/logs/stream endpoint on Hermes. Read once at startup —
+    // matches how Hephaestus's own KairosClient re-reads kairos.conf per
+	// request instead of caching it, but this relay reconnects far less often
+	// than a request rate, and internal_token isn't meant to be rotated live.
+	std::string internal_token = readKairosInternalToken(cfg.kairos_conf_path);
+	TaskRegistry::global().spawn([&combined_log, url = cfg.kairos_url, internal_token](std::stop_token st)
+	{
+		relayUpstreamLogs(st, url, internal_token, combined_log);
+	});
+	TaskRegistry::global().spawn([&combined_log, url = cfg.hephaestus_url, internal_token](std::stop_token st) {
+		relayUpstreamLogs(st, url, internal_token, combined_log);
+	});
 
-    // Keep g_verbose_gateway_logs fresh from Kairos's persisted setting —
-    // same polling idea as Hephaestus's SessionManager::refreshCache() for
+	// Keep g_verbose_gateway_logs fresh from Kairos's persisted setting —
+	// same polling idea as Hephaestus's SessionManager::refreshCache() for
     // its own verbose flag, just not worth a whole cache class here for one
     // bool. Gates local_log's [hermes]/[roku-ecp] push-to-Hades filtering;
     // hermes.log itself always gets everything regardless.

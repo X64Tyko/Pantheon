@@ -24,9 +24,24 @@
 # On first start, open the Hades UI at http://<host>:8000 and configure
 # your settings through it.
 #
+# Admin account: if KAIROS_ADMIN_USERNAME / KAIROS_ADMIN_PASSWORD are set
+# (put them in a `.env` file next to this compose file, same pattern as
+# CLOUDFLARE_TUNNEL_TOKEN below), Kairos creates that admin account itself on
+# first boot, before it ever starts accepting connections. Strongly
+# recommended for any server reachable from outside your LAN — without it,
+# the in-app "Continue setup" screen has no way to tell your first real
+# visitor apart from the operator, and whoever gets there first becomes
+# admin. Leave both unset for the old behavior (configure the admin account
+# through the Hades UI on first visit) if this is staying LAN-only.
+#
 # Port map:
 #   8000 — Hermes (single public endpoint: UI, API, live TV, HDHomeRun)
-#   8081 — Kairos direct access (optional; useful for debugging)
+#   8081 — Kairos direct access, commented out below by default. Handy for
+#          local debugging, but it's a second, unnecessary way into the same
+#          admin-capable API and doesn't need to be reachable from wherever
+#          your public/demo traffic comes from — uncomment the port mapping
+#          in the kairos service below only if you specifically need it, and
+#          don't publish it on an internet-facing host.
 #
 # Optional: remote/HTTPS access via Cloudflare Tunnel — chromecast sender
 # support (and anything else requiring a secure context) needs Hades served
@@ -58,10 +73,12 @@ services:
     image: ghcr.io/x64tyko/kairos:latest
     labels:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Kairos_Beta_Icon.png"
-    ports:
-      - "8081:8080"
+    # ports:
+    #   - "8081:8080"   # direct Kairos access — see the Port map note above
     environment:
       - KAIROS_SYNC_THREADS=4
+      - KAIROS_ADMIN_USERNAME=${KAIROS_ADMIN_USERNAME:-}
+      - KAIROS_ADMIN_PASSWORD=${KAIROS_ADMIN_PASSWORD:-}
       # - KAIROS_DEBUG=1
       # - KAIROS_DEBUG_EPG=1
     volumes:
@@ -76,6 +93,12 @@ services:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Hephaestus_Beta_Icon.png"
     environment:
       - KAIROS_URL=http://kairos:8080
+      # Caps concurrent transcode/preview sessions (each is a spawned ffmpeg
+      # process) so no single account — including a guest — can exhaust this
+      # host's CPU/GPU by opening unlimited sessions. Defaults to 8 each if
+      # unset; raise/lower to match this host's real transcode capacity.
+      # - HEPH_MAX_VOD_SESSIONS=8
+      # - HEPH_MAX_PREVIEW_SESSIONS=8
       # ── NVIDIA: uncomment these three lines and add `runtime: nvidia` below ──
       - HEPH_HW_ACCEL=nvidia
       - NVIDIA_VISIBLE_DEVICES=all

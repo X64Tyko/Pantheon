@@ -3,6 +3,7 @@
 #include "../RouteHelpers.h"
 #include "crash/CrashHandler.h"
 #include "log/LogBuffer.h"
+#include "../../conf/ConfStore.h"
 #include "../../db/PlaybackHistoryRepository.h"
 #include "../../source/SyncManager.h"
 #include "../../util/MetricsGatherer.h"
@@ -48,6 +49,7 @@ ActivityService::ActivityService(const ServiceContext& ctx)
 	: db_(ctx.db)
 	, sync_(ctx.sync)
 	, logs_(ctx.logs)
+	, conf_(ctx.conf)
 {
 }
 
@@ -55,6 +57,15 @@ void ActivityService::registerRoutes(httplib::Server& svr)
 {
 	svr.Post("/api/sync/all", [this](const Req&, Res& res)
 	{
+		// Was missing a role check entirely — any authenticated account,
+		// including a free self-service guest, could trigger a full library
+		// resync (expensive: hits every configured source and scraper).
+		// Admin-gated now, matching /api/sync/all-hard just below.
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		sync_.triggerSync("");
 		res.status = 202;
 		route::ok(res, json{{"status", "started"}}.dump());
@@ -76,8 +87,27 @@ void ActivityService::registerRoutes(httplib::Server& svr)
 		route::ok(res, json{{"status", "started"}}.dump());
 	});
 
-	svr.Get("/api/logs/stream", [this](const Req&, Res& res)
+	svr.Get("/api/logs/stream", [this](const Req& req, Res& res)
 	{
+		// Admin-only, matching the Hades Activity page's own adminOnly nav
+		// gate — this endpoint is no longer on the public-path allowlist (see
+		// Router.cpp's isPublicPath), so an unauthenticated or non-admin
+		// caller is rejected here rather than being allowed to hold an
+		// API-thread-pool slot open indefinitely. The one exception: Hermes
+		// relays this stream into its own unified /api/logs/stream (see
+		// relayUpstreamLogs in hermes/src/main.cpp) as a server-to-server
+		// call with no user session of its own — same shared-secret pattern
+		// POST .../played and PUT .../keyframes already use (see
+		// Router.cpp's pre-routing handler), checked here instead since
+		// (unlike those two) this path also has a real per-user admin-session
+		// mode that internal callers don't need.
+		const std::string expected = conf_.getInternalToken();
+		bool is_internal           = !expected.empty() && req.get_header_value("X-Internal-Token") == expected;
+		if (!is_internal && (!currentUser() || currentUser()->role != "admin"))
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		res.set_header("Cache-Control", "no-cache");
 		res.set_header("Connection", "keep-alive");
 		res.set_header("X-Accel-Buffering", "no");

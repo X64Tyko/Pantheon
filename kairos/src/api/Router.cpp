@@ -80,8 +80,13 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	if (method == "GET" && path == "/api/home-playlists") return true;
 	// Hermes aggregating system metrics across services for the Activity page.
 	if (method == "GET" && path == "/api/system/metrics") return true;
-	// Log stream — relayed by Hermes into the unified Hades log view.
-	if (path == "/api/logs/stream") return true;
+	// Log stream is intentionally NOT public — it's admin-only (see the role
+	// check in ActivityService.cpp) and holds an API-thread-pool slot open for
+	// up to 25s per idle cycle, so anonymous access would let a handful of
+	// concurrent connections starve the whole pool. The frontend already
+	// authenticates it via ?token= (EventSource can't set an Authorization
+	// header — see SystemStore.ts), which the token-parsing above this
+	// function already handles regardless of isPublicPath.
 	// Hades reporting console errors.
 	if (path == "/api/logs/client") return true;
 	// Image proxy — loaded by <img> tags that cannot send Authorization headers.
@@ -117,10 +122,30 @@ void Router::registerRoutes() {
 		res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 		res.status = 204;
 	});
-	svr_.set_post_routing_handler([](const Req&, Res& res) {
-		res.set_header("Access-Control-Allow-Origin", "*");
-	});
 #endif
+	svr_.set_post_routing_handler([](const Req&, Res& res) {
+		// Baseline hardening headers on every response — cheap, essentially
+		// never breaks anything, and matters more once this is reachable from
+		// the public internet rather than just a LAN. Deliberately NOT
+		// including a Content-Security-Policy here: Hades loads Google Fonts
+		// and the Chromecast Sender SDK from gstatic.com, hls.js may use a
+		// blob: worker, and Watch Together needs a websocket connect-src —
+		// getting a CSP subtly wrong (especially the Cast SDK, which can't be
+		// verified without real Chromecast hardware) is worse for a live
+		// public demo than not having one. That needs its own pass with real
+		// device testing, not a default added alongside everything else here.
+		res.set_header("X-Content-Type-Options", "nosniff");
+		res.set_header("X-Frame-Options", "DENY");
+		res.set_header("Referrer-Policy", "same-origin");
+		// Only takes effect once a browser sees this over an actual HTTPS
+		// connection (Cloudflare Tunnel or another TLS-terminating reverse
+		// proxy in front — see docker-compose.yml); harmless to send over the
+		// plain HTTP this process speaks internally otherwise.
+		res.set_header("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+#ifdef KAIROS_DEV
+		res.set_header("Access-Control-Allow-Origin", "*");
+#endif
+	});
 
 	svr_.set_pre_routing_handler([this](const Req& req, Res& res)
 	    -> httplib::Server::HandlerResponse
@@ -147,6 +172,17 @@ void Router::registerRoutes() {
 				res.set_content(R"({"error":"Unauthorized"})", "application/json");
 				return httplib::Server::HandlerResponse::Handled;
 			}
+		}
+
+		// GET /api/logs/stream is admin-only (see ActivityService.cpp), but
+		// Hermes also relays it server-to-server with no user session of its
+		// own (relayUpstreamLogs in hermes/src/main.cpp) — same shared secret
+		// as above lets that internal call through the `required` gate below;
+		// ActivityService.cpp does the actual admin-or-internal-token check.
+		if (req.method == "GET" && req.path == "/api/logs/stream")
+		{
+			const std::string expected = conf_.getInternalToken();
+			if (!expected.empty() && req.get_header_value("X-Internal-Token") == expected) required = false;
 		}
 
 		std::string token;

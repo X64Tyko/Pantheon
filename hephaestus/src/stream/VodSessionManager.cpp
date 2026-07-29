@@ -16,10 +16,12 @@ static std::string generateSessionId()
 static constexpr auto kActiveRefreshInterval = std::chrono::seconds(15);
 static constexpr auto kIdleRefreshInterval   = std::chrono::minutes(5);
 
-VodSessionManager::VodSessionManager(std::string ffmpeg_path, VodStreamOptions opts, KairosClient& kairos)
+VodSessionManager::VodSessionManager(std::string ffmpeg_path, VodStreamOptions opts, KairosClient& kairos,
+									 int max_sessions)
 	: ffmpeg_path(std::move(ffmpeg_path))
 	, opts(std::move(opts))
 	, kairos(kairos)
+	, max_sessions(max_sessions)
 {
 	reaper_thread = std::thread([this] { reapLoop(); });
 	refreshSettings(); // blocking, but only once, at startup
@@ -80,6 +82,20 @@ std::shared_ptr<VodSession> VodSessionManager::create(const std::string& content
 													  int64_t kairos_keyframes_size,
 													  int64_t kairos_keyframes_mtime)
 {
+	// Hard cap on concurrent transcode sessions — each one spawns an
+	// ffmpeg-class process, so without this an authenticated caller could
+	// loop-request sessions and exhaust host CPU/GPU. A pre-check against the
+	// current map size rather than a reserved-slot counter: the actual
+	// session::start() work below is expensive and deliberately runs outside
+	// this lock, so a handful of concurrent requests right at the boundary
+	// could transiently land a few over the cap — acceptable, since the goal
+	// is bounding sustained growth, not exact enforcement.
+	if (max_sessions > 0)
+	{
+		std::lock_guard<std::mutex> lock(mtx);
+		if (sessions.size() >= static_cast<size_t>(max_sessions)) return nullptr;
+	}
+
 	VodStreamOptions session_opts = opts;
 	{
 		std::lock_guard<std::mutex> lock(settings_mtx);

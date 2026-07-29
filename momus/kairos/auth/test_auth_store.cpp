@@ -215,7 +215,7 @@ TEST_F(AuthStoreTest, PlainCreateUser_NeverSetsMustChangePassword)
 	ASSERT_TRUE(auth.createUser("oscar", "chosen-password", "viewer"));
 	auto users = auth.listUsers();
 	auto it    = std::find_if(users.begin(), users.end(),
-							  [](const AuthUser& u) { return u.username == "oscar"; });
+						   [](const AuthUser& u) { return u.username == "oscar"; });
 	ASSERT_NE(it, users.end());
 	EXPECT_FALSE(it->must_change_password);
 }
@@ -673,4 +673,118 @@ TEST_F(AuthStoreTest, PruneIdleGuests_GuestWithNoSessionAtAllFallsBackToCreatedA
 
 	EXPECT_EQ(auth.pruneIdleGuests(3600), 1);
 	EXPECT_FALSE(findUser(user_id).has_value());
+}
+
+// ---------------------------------------------------------------------------
+// Login brute-force lockout — POST /api/auth/login previously had no rate
+// limiting at all (unlike switchProfile's PIN lockout, tested above); an
+// attacker could script unlimited password guesses against any known
+// username. Same 5-fail/lockout shape, mirrored onto login_fail_count/
+// login_locked_until (see AuthStore.cpp's login()).
+// ---------------------------------------------------------------------------
+
+TEST_F(AuthStoreTest, Login_WrongPasswordFailsWithoutLockingOutImmediately)
+{
+	ASSERT_TRUE(auth.createUser("yusuf", "correct-password", "viewer"));
+	EXPECT_TRUE(auth.login("yusuf", "wrong-password").empty());
+
+	// One wrong guess isn't itself a lockout — the right password still works.
+	EXPECT_FALSE(auth.login("yusuf", "correct-password").empty());
+}
+
+TEST_F(AuthStoreTest, Login_LocksOutAfterFiveWrongAttempts)
+{
+	ASSERT_TRUE(auth.createUser("zack", "correct-password", "viewer"));
+
+	for (int i = 0; i < 5; ++i) EXPECT_TRUE(auth.login("zack", "wrong-password").empty());
+
+	// Even the correct password is refused while locked out — proves the
+	// lockout blocks the account, not just the specific wrong guess.
+	EXPECT_TRUE(auth.login("zack", "correct-password").empty());
+}
+
+TEST_F(AuthStoreTest, Login_RecoversOnceLockoutWindowExpires)
+{
+	ASSERT_TRUE(auth.createUser("amara", "correct-password", "viewer"));
+	for (int i = 0; i < 5; ++i) auth.login("amara", "wrong-password");
+	ASSERT_TRUE(auth.login("amara", "correct-password").empty()); // still locked
+
+	// Simulate the lockout window having already elapsed, without a real sleep.
+	SQLite::Statement upd(db.get(), "UPDATE user SET login_locked_until = ? WHERE username = ?");
+	upd.bind(1, static_cast<int64_t>(std::time(nullptr)) - 1);
+	upd.bind(2, std::string("amara"));
+	upd.exec();
+
+	EXPECT_FALSE(auth.login("amara", "correct-password").empty());
+}
+
+TEST_F(AuthStoreTest, Login_SuccessfulLoginResetsFailCounter)
+{
+	ASSERT_TRUE(auth.createUser("brice", "correct-password", "viewer"));
+	for (int i = 0; i < 4; ++i) auth.login("brice", "wrong-password"); // one under the lockout threshold
+	ASSERT_FALSE(auth.login("brice", "correct-password").empty());     // succeeds, resets counter
+
+	// If the counter hadn't reset, these 4 more wrong guesses would be the
+	// 5th-8th consecutive failures and should already be locked by now —
+	// instead only 4 have accrued since the reset, so the account should
+	// still accept its correct password afterward.
+	for (int i = 0; i < 4; ++i) auth.login("brice", "wrong-password");
+	EXPECT_FALSE(auth.login("brice", "correct-password").empty());
+}
+
+TEST_F(AuthStoreTest, Login_UnknownUsernameNeverLocksOrThrows)
+{
+	// No user row exists to attach a fail-counter to — must simply fail,
+	// every time, without ever succeeding regardless of "password" guessed.
+	for (int i = 0; i < 10; ++i) EXPECT_TRUE(auth.login("no-such-user", "anything").empty());
+}
+
+// ---------------------------------------------------------------------------
+// Session idle expiry — validate() previously only checked session.expires_at
+// (a flat 30-day TTL from creation), so an abandoned session token stayed
+// valid for a full month with zero activity. Idle-based expiry closes that:
+// a session untouched for SESSION_IDLE_TTL is rejected even if it's still
+// within its 30-day absolute window.
+// ---------------------------------------------------------------------------
+
+TEST_F(AuthStoreTest, Validate_FreshSessionIsValid)
+{
+	ASSERT_TRUE(auth.createUser("cleo", "password", "viewer"));
+	const std::string token = auth.login("cleo", "password");
+	ASSERT_FALSE(token.empty());
+	EXPECT_TRUE(auth.validate(token).has_value());
+}
+
+TEST_F(AuthStoreTest, Validate_RejectsSessionIdleBeyondTheIdleWindow)
+{
+	ASSERT_TRUE(auth.createUser("dez", "password", "viewer"));
+	const std::string token = auth.login("dez", "password");
+	ASSERT_FALSE(token.empty());
+
+	// Back-date last_seen well past the idle window (14 days — see
+	// SESSION_IDLE_TTL in AuthStore.cpp) but leave expires_at (30 days out,
+	// set at login) untouched — proves this is the idle check firing, not
+	// the pre-existing absolute-TTL one.
+	const int64_t idle_ago = static_cast<int64_t>(std::time(nullptr)) - (20LL * 24 * 3600);
+	SQLite::Statement upd(db.get(), "UPDATE session SET last_seen = ? WHERE token = ?");
+	upd.bind(1, idle_ago);
+	upd.bind(2, token);
+	upd.exec();
+
+	EXPECT_FALSE(auth.validate(token).has_value());
+}
+
+TEST_F(AuthStoreTest, Validate_StillValidJustUnderTheIdleWindow)
+{
+	ASSERT_TRUE(auth.createUser("eve", "password", "viewer"));
+	const std::string token = auth.login("eve", "password");
+	ASSERT_FALSE(token.empty());
+
+	const int64_t just_under = static_cast<int64_t>(std::time(nullptr)) - (13LL * 24 * 3600);
+	SQLite::Statement upd(db.get(), "UPDATE session SET last_seen = ? WHERE token = ?");
+	upd.bind(1, just_under);
+	upd.bind(2, token);
+	upd.exec();
+
+	EXPECT_TRUE(auth.validate(token).has_value());
 }

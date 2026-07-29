@@ -1,5 +1,6 @@
 #include "Router.h"
 #include "ClientCapabilitiesRouter.h" // extractBearerToken
+#include "../kairos/InternalToken.h"
 #include "../stream/MediaProbe.h"
 #include <nlohmann/json.hpp>
 #include <atomic>
@@ -207,8 +208,22 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
     });
 
     // ── Log stream (SSE — same contract as Kairos /api/logs/stream) ───────────
-    svr.Get("/api/logs/stream", [&logs](const httplib::Request&, httplib::Response& res) {
-        res.set_header("Cache-Control",     "no-cache");
+	// Internal-only: the sole caller is Hermes's relayUpstreamLogs (see
+	// hermes/src/main.cpp), a server-to-server merge into its own unified
+	// /api/logs/stream — no browser client ever hits this directly. Same
+	// shared-secret check Kairos uses for its own internal-only routes
+	// (POST .../played, PUT .../keyframes); unlike Kairos's own log stream
+	// there's no admin-session fallback needed here since nothing else calls it.
+	svr.Get("/api/logs/stream", [&logs, &cfg](const httplib::Request& req, httplib::Response& res)
+	{
+		const std::string expected = readKairosInternalToken(cfg.kairos_conf_path);
+		if (expected.empty() || req.get_header_value("X-Internal-Token") != expected)
+		{
+			res.status = 401;
+			res.set_content(json{{"error", "Unauthorized"}}.dump(), "application/json");
+			return;
+		}
+		res.set_header("Cache-Control",     "no-cache");
         res.set_header("Connection",        "keep-alive");
         res.set_header("X-Accel-Buffering", "no");
         res.set_header("Access-Control-Allow-Origin", "*");
@@ -427,12 +442,17 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 										   info->duration_ms, info->preferred_audio_lang, info->preferred_subtitle_lang,
 										   info->keyframes_ms, info->keyframes_size, info->keyframes_mtime);
 		if (!session) {
-            res.status = 500; res.set_content(json{{"error","failed to start playback"}}.dump(), "application/json"); return;
-        }
+            // Covers both a genuine probe/start failure and the concurrent-
+			// session cap (see VodSessionManager::create) — 503 either way
+			// since both are "try again," not a client-input error.
+			res.status = 503;
+			res.set_content(json{{"error", "failed to start playback (or server is at capacity — try again shortly)"}}.dump(), "application/json");
+			return;
+		}
 
-        json tracks;
-        tracks["video"] = json::array();
-        for (auto& t : session->tracks().video)
+		json tracks;
+		tracks["video"] = json::array();
+		for (auto& t : session->tracks().video)
             tracks["video"].push_back({{"codec", t.codec}, {"width", t.width}, {"height", t.height}});
         tracks["audio"] = json::array();
         for (auto& t : session->tracks().audio)
@@ -758,12 +778,15 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         bool hdr_capable = body.value("hdr_capable", false);
         auto session = previewSessions.create(channel_id, hdr_capable);
         if (!session) {
-            res.status = 500; res.set_content(json{{"error","failed to start preview"}}.dump(), "application/json"); return;
-        }
-        res.set_content(json{
-            {"session_id",   session->sessionId()},
-            {"manifest_url", "/stream/preview/" + session->sessionId() + "/playlist.m3u8"},
-        }.dump(), "application/json");
+            // See /stream/vod/start's own comment — same cap-or-failure ambiguity.
+            res.status = 503;
+			res.set_content(json{{"error", "failed to start preview (or server is at capacity — try again shortly)"}}.dump(), "application/json");
+			return;
+		}
+		res.set_content(json{
+							{"session_id", session->sessionId()},
+							{"manifest_url", "/stream/preview/" + session->sessionId() + "/playlist.m3u8"},
+						}.dump(), "application/json");
     });
 
     svr.Post(R"(/stream/preview/([^/]+)/switch$)", [&previewSessions](

@@ -8,8 +8,19 @@
 #include <sstream>
 #include <stdexcept>
 
-// Session lifetime: 30 days.
+// Session lifetime: 30 days from creation, regardless of activity.
 static constexpr int64_t SESSION_TTL = 30LL * 24 * 3600;
+
+// Idle expiry, checked independently of SESSION_TTL above: a session with no
+// activity (session.last_seen — bumped on every validate() call) in this
+// long is treated as expired even if it's still within its 30-day absolute
+// window. Bounds how long an abandoned browser session on a public demo
+// stays valid — someone who tries the demo once and never returns doesn't
+// leave a live credential sitting around for a full month. Doesn't help
+// against a token that's actively being used by whoever holds it (their own
+// use keeps bumping last_seen either way) — that's what session
+// listing/revocation (see listSessions/revokeSession) is for.
+static constexpr int64_t SESSION_IDLE_TTL = 14LL * 24 * 3600;
 
 // bcrypt cost factor.
 static constexpr int BCRYPT_COST = 12;
@@ -19,6 +30,14 @@ static constexpr int BCRYPT_COST = 12;
 // allowed — friction against brute-forcing a 4-6 digit PIN over the network.
 static constexpr int PIN_MAX_ATTEMPTS        = 5;
 static constexpr int64_t PIN_LOCKOUT_SECONDS = 60;
+
+// Login brute-force lockout — same shape as the PIN lockout above, applied
+// to plain username/password login (see AuthStore::login), which previously
+// had no rate limiting at all: an attacker could script unlimited password
+// guesses against any known username. A real password deserves more
+// patience per guess than a 4-6 digit PIN, so the lockout is longer.
+static constexpr int LOGIN_MAX_ATTEMPTS        = 5;
+static constexpr int64_t LOGIN_LOCKOUT_SECONDS = 300;
 
 // ---------------------------------------------------------------------------
 
@@ -202,15 +221,46 @@ std::string AuthStore::insertSession(const std::string& user_id, const std::stri
 std::string AuthStore::login(const std::string& username,
 							 const std::string& password)
 {
+	const int64_t now = static_cast<int64_t>(std::time(nullptr));
+
 	SQLite::Statement q(db_.get(),
-						"SELECT user_id, password_hash FROM user WHERE username = ?");
+						"SELECT user_id, password_hash, login_fail_count, login_locked_until "
+						"FROM user WHERE username = ?");
 	q.bind(1, username);
 	if (!q.executeStep()) return "";
 
-	const std::string user_id = q.getColumn(0).getString();
-	const std::string stored  = q.getColumn(1).getString();
+	const std::string user_id        = q.getColumn(0).getString();
+	const std::string stored         = q.getColumn(1).getString();
+	const int fail_count             = q.getColumn(2).getInt();
+	const int64_t login_locked_until = q.getColumn(3).getInt64();
 
-	if (!checkPassword(password, stored)) return "";
+	// Locked out — reject even a correct password without touching the
+	// counter, same as switchProfile's PIN lockout. Unknown usernames above
+	// return "" (no row to lock) rather than reaching here, so this only
+	// ever throttles guesses against an account that actually exists.
+	if (now < login_locked_until) return "";
+
+	if (!checkPassword(password, stored))
+	{
+		const int new_fail_count = fail_count + 1;
+		SQLite::Statement upd(db_.get(), R"(
+			UPDATE user SET login_fail_count = ?, login_locked_until = ? WHERE user_id = ?
+		)");
+		upd.bind(1, new_fail_count);
+		upd.bind(2, new_fail_count >= LOGIN_MAX_ATTEMPTS ? now + LOGIN_LOCKOUT_SECONDS : 0);
+		upd.bind(3, user_id);
+		upd.exec();
+		return "";
+	}
+
+	// Correct password — reset the fail counter.
+	if (fail_count > 0)
+	{
+		SQLite::Statement upd(db_.get(),
+							  "UPDATE user SET login_fail_count = 0, login_locked_until = 0 WHERE user_id = ?");
+		upd.bind(1, user_id);
+		upd.exec();
+	}
 
 	return insertSession(user_id);
 }
@@ -236,10 +286,11 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token)
 		       u.is_guest
 		FROM session s
 		JOIN user u ON u.user_id = s.user_id
-		WHERE s.token = ? AND s.expires_at > ?
+		WHERE s.token = ? AND s.expires_at > ? AND s.last_seen > ?
 	)");
 	q.bind(1, token);
 	q.bind(2, now);
+	q.bind(3, now - SESSION_IDLE_TTL);
 	if (!q.executeStep()) return std::nullopt;
 
 	AuthUser user;

@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Public-demo hardening pass**: a full audit (5 parallel workstreams across auth, DDoS/resource-exhaustion,
+  secrets storage, injection/path-traversal, and deployment/CORS, plus a follow-up guest-account-abuse pass)
+  turned up several real gaps before this could safely go up as a public server; all are now fixed and covered by
+  new tests in `momus/kairos/api/test_content_service_security.cpp`,
+  `momus/kairos/api/test_scraper_service_security.cpp`, and `momus/kairos/auth/test_auth_store.cpp`. Ship
+  blockers: (1) `POST /api/auth/setup` had no protection against a random visitor claiming the admin account before
+  the operator did on a freshly-deployed public instance — Kairos now bootstraps the admin account itself at
+  startup from `KAIROS_ADMIN_USERNAME`/`KAIROS_ADMIN_PASSWORD` env vars (`docker-compose.yml`), closing the window
+  before the port ever opens. (2) `GET /api/images/proxy?url=` was an open, unauthenticated SSRF proxy — no host
+  allowlist meant an outside attacker could point it at internal Docker services or a cloud metadata endpoint;
+  `ContentService.cpp` now resolves and rejects private/loopback/link-local/reserved addresses before fetching.
+  (3) `/api/logs/stream` (Kairos and Hermes both) was completely unauthenticated and held an API-thread-pool slot
+  open per connection — a handful of concurrent anonymous connections could freeze the whole API; now admin-only,
+  with a new shared-secret internal-token path (`hermes/src/kairos/InternalToken.{h,cpp}`, mirroring Hephaestus's
+  existing one) so Hermes's server-to-server log relay and Hephaestus's own now-internal-only `/api/logs/stream`
+  keep working. (4) VOD/preview transcode sessions (`Hephaestus`) had no concurrency cap at all — any account,
+  including a free self-service guest, could loop-request sessions and exhaust host CPU/GPU; both session managers
+  now take a `max_sessions` cap (`HEPH_MAX_VOD_SESSIONS`/`HEPH_MAX_PREVIEW_SESSIONS`, default 8 each). High-priority:
+  `POST /api/auth/login` had no brute-force protection at all (now a 5-fail/5-minute lockout per account, mirroring
+  the existing PIN-lockout pattern); `GET /api/auth/profiles` leaked every account's full detail
+  (`must_change_password`, `last_seen`, rating ceilings, language/landing-page prefs) to any authenticated session
+  including a guest, enabling username enumeration for the login lockout to matter against — now trimmed to exactly
+  what the picker UI renders; `GET /api/scrapers/config` returned real TMDB/TVDB/Trakt/AniDB keys and TVDB's pin in
+  plaintext, breaking this codebase's own established `has_token`-style masking convention — now write-only
+  (`has_api_key`/`has_pin` booleans on GET, empty-means-unchanged on PATCH, with a matching Hades `SettingsPage.tsx`
+  placeholder so an untouched field can't silently wipe a stored key on an unrelated save); guest-account creation
+  had no rate limit beyond the existing concurrent-count cap (now also 10/IP/10min, `RateLimiter.h`); `POST
+  /api/sync/all` had no role check at all, letting any authenticated account including a guest trigger a full
+  library resync; sessions never expired on idle (a 30-day flat TTL regardless of activity) — now also enforces a
+  14-day idle cutoff; and all three services gained baseline hardening response headers
+  (`X-Content-Type-Options`/`X-Frame-Options`/`Referrer-Policy`/`Strict-Transport-Security`) and a bounded request
+  payload size (25 MB, previously unbounded). Reviewed and deliberately left unchanged: wildcard CORS (this API is
+  bearer-token-only with no cookie/credentialed mode, so the classic wildcard-CORS exploit doesn't apply, and
+  several endpoints — HDHomeRun/XMLTV/M3U feeds, the Chromecast custom receiver — need it) and the download
+  destination path (an intentional operator-configured absolute directory, same category as `FILLER_PATH`, not a
+  sandboxed value with a boundary to escape). No Content-Security-Policy was added — this app loads Google Fonts
+  and the Chromecast Sender SDK from `gstatic.com` and hls.js may use a blob: worker, and getting a CSP subtly
+  wrong (especially Cast, unverifiable without real hardware) is worse for a live public demo than not having one;
+  flagged as a follow-up needing real device testing.
+
 ### Fixed
 
 - **Guest profiles: no way to add a guest from the "Who's watching?" picker (Hades)**: `LoginPage.tsx`'s "Continue

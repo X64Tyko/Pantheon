@@ -167,6 +167,19 @@ static std::string buildQuery(const httplib::Params& params)
 	return q;
 }
 
+// Downstream services (Kairos) are normally only ever reached through
+// Hermes, so without this they have no way to see the real client address —
+// every request looks like it's coming from Hermes's own container IP,
+// which makes any per-IP abuse throttling downstream (e.g. guest-account
+// creation) meaningless. Standard XFF chaining: append this hop's own view
+// of the client to whatever's already there (a chain of exactly one entry
+// unless something upstream of Hermes — e.g. cloudflared — already set one).
+static std::string appendForwardedFor(const httplib::Request& req)
+{
+	std::string existing = req.get_header_value("X-Forwarded-For");
+	return existing.empty() ? req.remote_addr : existing + ", " + req.remote_addr;
+}
+
 // Proxy a long-lived streaming response (SSE, chunked) from an upstream service.
 // Unlike proxyRequest this never buffers — it pipes bytes to the client as they arrive.
 static void proxyStream(const std::string& upstream_base,
@@ -183,6 +196,7 @@ static void proxyStream(const std::string& upstream_base,
 		auto v = req.get_header_value(h);
 		if (!v.empty()) fwd.emplace(h, v);
 	}
+	fwd.emplace("X-Forwarded-For", appendForwardedFor(req));
 
 	res.set_header("Cache-Control", "no-cache");
 	res.set_header("Connection", "keep-alive");
@@ -230,6 +244,7 @@ static void proxyRequest(const std::string& upstream_base,
 		auto v = req.get_header_value(h);
 		if (!v.empty()) fwd.emplace(h, v);
 	}
+	fwd.emplace("X-Forwarded-For", appendForwardedFor(req));
 
 	httplib::Result r;
 	if (req.method == "GET") r = cli.Get(path, fwd);
@@ -275,8 +290,49 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 	});
 
 	// ── Log stream (SSE) — Hermes's own log buffer ───────────────────────────
-	svr.Get("/api/logs/stream", [&logs](const httplib::Request&, httplib::Response& res)
+	svr.Get("/api/logs/stream", [&logs, cfg](const httplib::Request& req, httplib::Response& res)
 	{
+		// Admin-only, matching Kairos's own /api/logs/stream and the Hades
+		// Activity page's own adminOnly nav gate — this was previously wide
+		// open to anyone, letting an anonymous caller hold an SSE connection
+		// open indefinitely (enough concurrent ones exhaust Hermes's thread
+		// pool). Hermes has no session/user concept of its own, so it
+		// validates the caller against Kairos's /api/auth/me, same pattern as
+		// DELETE /api/activity/crash below. EventSource can't set an
+		// Authorization header, so the token may arrive as ?token= instead —
+		// check both, same as Kairos's own auth middleware does.
+		std::string token = req.get_header_value("Authorization");
+		if (token.starts_with("Bearer ")) token = token.substr(7);
+		else
+		{
+			token.clear();
+			auto it = req.params.find("token");
+			if (it != req.params.end()) token = it->second;
+		}
+		bool is_admin = false;
+		if (!token.empty())
+		{
+			httplib::Client cli(cfg.kairos_url);
+			cli.set_connection_timeout(5);
+			cli.set_read_timeout(5);
+			if (auto who = cli.Get("/api/auth/me?token=" + urlEncodeValue(token)))
+			{
+				if (who->status == 200)
+				{
+					try { is_admin = json::parse(who->body).value("role", "") == "admin"; }
+					catch (...)
+					{
+					}
+				}
+			}
+		}
+		if (!is_admin)
+		{
+			res.status = token.empty() ? 401 : 403;
+			res.set_content(json{{"error", token.empty() ? "Unauthorized" : "Forbidden"}}.dump(), "application/json");
+			return;
+		}
+
 		res.set_header("Cache-Control", "no-cache");
 		res.set_header("Connection", "keep-alive");
 		res.set_header("X-Accel-Buffering", "no");

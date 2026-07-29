@@ -41,6 +41,15 @@ struct Config
 	std::string hdhr_device_id = "48455048"; // "HEPH" in ASCII hex
 	std::string hdhr_friendly  = "Hephaestus";
 	int hdhr_tuner_count       = 4;
+
+	// Hard ceiling on concurrent transcode sessions — each one is a spawned
+	// ffmpeg-class process, so without a cap any authenticated caller
+	// (including a free self-service guest account) could loop-request
+	// sessions and exhaust the host's CPU/GPU. 0 disables the cap (opt-in,
+	// for a trusted single-operator LAN deployment); every other deployment,
+	// especially a public-facing one, should leave the default in place.
+	int max_vod_sessions     = 8;
+	int max_preview_sessions = 8;
 };
 
 inline HwAccel parseHwAccel(const std::string& s)
@@ -171,5 +180,7 @@ inline Config parseConfig(int argc, char* argv[])
 	if (auto* p = getenv("HEPH_HLS_ROOT")) cfg.hls_root = p;
 	if (auto* p = getenv("HEPH_VOD_LOOKAHEAD_SECS")) cfg.vod_lookahead_secs = std::stoi(p);
 	if (auto* p = getenv("HEPH_HW_PROBE_ASSETS")) cfg.hw_probe_assets_dir = p;
+	if (auto* p = getenv("HEPH_MAX_VOD_SESSIONS")) cfg.max_vod_sessions = std::stoi(p);
+	if (auto* p = getenv("HEPH_MAX_PREVIEW_SESSIONS")) cfg.max_preview_sessions = std::stoi(p);
 	return cfg;
 }

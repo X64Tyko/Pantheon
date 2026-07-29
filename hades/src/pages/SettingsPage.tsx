@@ -425,6 +425,13 @@ const applyBuffer = () => {
     }
   }
 
+    // The server never sends the real key/pin back (see ScraperService.cpp's
+    // GET handler) — api_key/pin are write-only now, so an untouched field
+    // shows this instead of the actual value, and stays blank (meaning "leave
+    // unchanged") unless the admin types a new one.
+    const secretPlaceholder = (hasValue: boolean | undefined, fallback: string) =>
+        hasValue ? 'configured — leave blank to keep' : fallback
+
   const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist' | 'wikidata', field: string, value: string | boolean | number) => {
     if (!scraperSettings) return
     setScraperSettings(prev => prev ? {
@@ -673,7 +680,7 @@ const applyBuffer = () => {
                 data-tour="tmdb-api-key-input"
                 className={`${styles.input} ${styles.w260}`}
                 type="password"
-                placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                placeholder={secretPlaceholder(tmdb?.has_api_key, 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')}
                 value={tmdb?.api_key ?? ''}
                 onChange={e => updateScraperConfig('tmdb', 'api_key', e.target.value)}
               />
@@ -709,7 +716,7 @@ const applyBuffer = () => {
               <input
                 className={`${styles.input} ${styles.w260}`}
                 type="password"
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                placeholder={secretPlaceholder(tvdb?.has_api_key, 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
                 value={tvdb?.api_key ?? ''}
                 onChange={e => updateScraperConfig('tvdb', 'api_key', e.target.value)}
               />
@@ -718,7 +725,7 @@ const applyBuffer = () => {
               <input
                 className={`${styles.input} ${styles.w140}`}
                 type="password"
-                placeholder="optional"
+                placeholder={secretPlaceholder(tvdb?.has_pin, 'optional')}
                 value={tvdb?.pin ?? ''}
                 onChange={e => updateScraperConfig('tvdb', 'pin', e.target.value)}
               />
@@ -773,7 +780,7 @@ const applyBuffer = () => {
               <input
                 className={`${styles.input} ${styles.w280}`}
                 type="password"
-                placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                placeholder={secretPlaceholder(trakt?.has_api_key, 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')}
                 value={trakt?.api_key ?? ''}
                 onChange={e => updateScraperConfig('trakt', 'api_key', e.target.value)}
               />
@@ -800,7 +807,7 @@ const applyBuffer = () => {
             <SettingRow label="Client Name" hint="Your registered AniDB HTTP API client name. Register at anidb.net/software/add.">
               <input
                 className={`${styles.input} ${styles.w200}`}
-                placeholder="myclientname"
+                placeholder={secretPlaceholder(anidb?.has_api_key, 'myclientname')}
                 value={anidb?.api_key ?? ''}
                 onChange={e => updateScraperConfig('anidb', 'api_key', e.target.value)}
               />
