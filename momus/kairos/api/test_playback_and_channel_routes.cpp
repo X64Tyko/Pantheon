@@ -32,6 +32,8 @@
 #include "download/DownloadManager.h"
 #include "email/EmailService.h"
 #include "log/LogBuffer.h"
+#include "backup/BackupManager.h"
+#include "jobs/JobScheduler.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
 #include "source/SyncManager.h"
@@ -50,6 +52,8 @@ protected:
 	AuthStore auth{db};
 	EmailService email{db};
 	LogBuffer logs;
+	JobScheduler jobs;
+	BackupManager backups{db, "", "", "/tmp/kairos_test_backups_unused"};
 
 	httplib::Server svr;
 	std::unique_ptr<Router> router;
@@ -61,7 +65,7 @@ protected:
 
 	void SetUp() override
 	{
-		router = std::make_unique<Router>(svr, db, sync, conf, logs, engine, materializer, dl, auth, email);
+		router = std::make_unique<Router>(svr, db, sync, conf, logs, engine, materializer, dl, auth, email, jobs, backups);
 		router->registerRoutes();
 
 		int port      = svr.bind_to_any_port("127.0.0.1");

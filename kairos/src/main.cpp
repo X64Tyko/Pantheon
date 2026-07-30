@@ -9,6 +9,7 @@
 #include <thread>
 #include "api/Router.h"
 #include "auth/AuthStore.h"
+#include "backup/BackupManager.h"
 #include "conf/ConfStore.h"
 #include "crash/CrashHandler.h"
 #include "db/Database.h"
@@ -175,7 +176,16 @@ int main(int argc, char* argv[])
 		res.set_content(R"({"status":"ok","service":"kairos"})", "application/json");
 	});
 
-	Router router(svr, db, sync, conf, log_buffer, engine, materializer, dl, auth, email);
+	// Constructed ahead of Router (which hands both to JobService/
+	// BackupService to register the sync/metadata_refresh/chapter_detection/
+	// writeback_sweep/backup jobs — see JobScheduler.h and BackupManager.h's
+	// own comments) so both outlive every job's captured reference to them.
+	// backup_dir sits inside the same /data volume as db_path/conf_path, so
+	// no separate Docker volume is needed for scheduled backups.
+	JobScheduler jobs;
+	BackupManager backups(db, db_path, conf_path, "./data/backups");
+
+	Router router(svr, db, sync, conf, log_buffer, engine, materializer, dl, auth, email, jobs, backups);
 	router.registerRoutes();
 
 	if (g_debug_logging.load()) std::cout << "[kairos] sync debug logging enabled\n";
@@ -190,8 +200,10 @@ int main(int argc, char* argv[])
 	// this is a separate mechanism from the coordinator thread below (which
 	// stays focused on sync-coordination concerns tightly coupled to its own
 	// pause/resume protocol) and from kairos/src/scheduler/ (EPG/channel
-	// scheduling, an unrelated meaning of "scheduler").
-	JobScheduler jobs;
+	// scheduling, an unrelated meaning of "scheduler"). `jobs` itself is
+	// constructed above, before Router — the sync/metadata_refresh/
+	// chapter_detection/writeback_sweep/backup jobs are already registered
+	// against it by this point (via Router's JobService/BackupService).
 	jobs.registerInterval("playback_history_prune", std::chrono::hours(24), [&db]
 	{
 		// Prune play-history rows older than 180 days so a long-running

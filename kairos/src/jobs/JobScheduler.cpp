@@ -52,19 +52,27 @@ void JobScheduler::runDueJobs()
 	std::lock_guard<std::mutex> lock(mtx_);
 	for (auto& job : jobs_)
 	{
+		if (!job.enabled) continue;
 		if (now < job.next_due_ms) continue;
 		try
 		{
 			job.fn();
+			job.last_run_ok = true;
+			job.last_error.clear();
 		}
 		catch (const std::exception& e)
 		{
 			std::cerr << "[kairos] job '" << job.name << "' threw: " << e.what() << std::endl;
+			job.last_run_ok = false;
+			job.last_error  = e.what();
 		}
 		catch (...)
 		{
 			std::cerr << "[kairos] job '" << job.name << "' threw an unknown exception" << std::endl;
+			job.last_run_ok = false;
+			job.last_error  = "unknown exception";
 		}
+		job.last_run_ms = now;
 		// Re-anchor on the actual now rather than the missed due time, so a
 		// job that was briefly delayed (process paused, a slow prior job)
 		// doesn't then fire in a tight catch-up burst.
@@ -75,6 +83,60 @@ void JobScheduler::runDueJobs()
 void JobScheduler::tickOnceForTest()
 {
 	runDueJobs();
+}
+
+bool JobScheduler::setEnabled(const std::string& name, bool enabled)
+{
+	std::lock_guard<std::mutex> lock(mtx_);
+	for (auto& job : jobs_)
+	{
+		if (job.name != name) continue;
+		if (enabled && !job.enabled) job.next_due_ms = now_() + job.period_ms;
+		job.enabled = enabled;
+		return true;
+	}
+	return false;
+}
+
+bool JobScheduler::setInterval(const std::string& name, std::chrono::milliseconds interval)
+{
+	std::lock_guard<std::mutex> lock(mtx_);
+	for (auto& job : jobs_)
+	{
+		if (job.name != name) continue;
+		job.period_ms   = std::max<int64_t>(1, interval.count());
+		job.next_due_ms = now_() + job.period_ms;
+		return true;
+	}
+	return false;
+}
+
+bool JobScheduler::setDaily(const std::string& name, int hour, int minute)
+{
+	std::lock_guard<std::mutex> lock(mtx_);
+	for (auto& job : jobs_)
+	{
+		if (job.name != name) continue;
+		job.period_ms   = 24LL * 3600 * 1000;
+		job.next_due_ms = nextDailyOccurrence(now_(), hour, minute);
+		return true;
+	}
+	return false;
+}
+
+std::vector<JobScheduler::JobStatus> JobScheduler::listJobs() const
+{
+	std::lock_guard<std::mutex> lock(mtx_);
+	std::vector<JobStatus> out;
+	out.reserve(jobs_.size());
+	for (const auto& job : jobs_)
+	{
+		out.push_back(JobStatus{
+			job.name, job.enabled, job.next_due_ms, job.period_ms,
+			job.last_run_ms, job.last_run_ok, job.last_error
+		});
+	}
+	return out;
 }
 
 void JobScheduler::start()

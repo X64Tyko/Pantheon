@@ -5,7 +5,16 @@ import { api, downloadDebugDump } from '../api/client'
 import { statusStore, helpTipsStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
-import type { ArrConfig, CastSessionInfo, RokuDevice, ScraperSettings, ScraperStats } from '../api/types'
+import type {
+    ArrConfig,
+    BackupInfo,
+    CastSessionInfo,
+    RokuDevice,
+    ScheduledJob,
+    ScheduledJobPatch,
+    ScraperSettings,
+    ScraperStats
+} from '../api/types'
 
 interface SmtpForm {
   host:            string
@@ -40,14 +49,25 @@ interface Settings {
     require_admin_password_switch: boolean
 }
 
-type Tab = 'general' | 'scrapers' | 'integrations' | 'devices' | 'diagnostics'
+type Tab = 'general' | 'scrapers' | 'integrations' | 'devices' | 'jobs' | 'diagnostics'
 const TABS: { key: Tab; label: string }[] = [
   { key: 'general',      label: 'General' },
   { key: 'scrapers',     label: 'Scrapers' },
   { key: 'integrations', label: 'Integrations' },
   { key: 'devices',      label: 'Devices' },
+    {key: 'jobs', label: 'Jobs'},
   { key: 'diagnostics',  label: 'Diagnostics' },
 ]
+
+function relativeTime(ms: number): string {
+    const secs = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+    if (secs < 60) return `${secs}s ago`
+    const mins = Math.floor(secs / 60)
+    if (mins < 60) return `${mins}m ago`
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return `${hours}h ago`
+    return `${Math.floor(hours / 24)}d ago`
+}
 
 function Toggle({ id, checked, onChange, disabled }: { id: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   const { ref, focused } = useFocusable<object, HTMLButtonElement>({
@@ -141,6 +161,16 @@ export default observer(function SettingsPage() {
   const [removingRoku, setRemovingRoku] = useState<string | null>(null)
   const rokuPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+    const [jobs, setJobs] = useState<ScheduledJob[] | null>(null)
+    const [jobBusy, setJobBusy] = useState<string | null>(null) // job name currently being patched/run
+    const [jobMsg, setJobMsg] = useState<string | null>(null)
+
+    const [backups, setBackups] = useState<BackupInfo[] | null>(null)
+    const [backupMaxCount, setBackupMaxCount] = useState('')
+    const [backupMaxCountServer, setBackupMaxCountServer] = useState(14) // last-known-good, for reverting an invalid edit
+    const [backupBusy, setBackupBusy] = useState<string | null>(null) // 'run' | 'config' | a backup id
+    const [restoreConfirmId, setRestoreConfirmId] = useState<string | null>(null)
+    const [backupMsg, setBackupMsg] = useState<string | null>(null)
 
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetting,     setResetting]     = useState(false)
@@ -301,6 +331,12 @@ export default observer(function SettingsPage() {
     }).catch(() => {})
     api.getScraperSettings().then(setScraperSettings).catch(() => {})
     api.getScraperStats().then(setScraperStats).catch(() => {})
+      api.getJobs().then(setJobs).catch(() => setJobs([]))
+      api.getBackups().then(r => {
+          setBackups(r.backups)
+          setBackupMaxCount(String(r.max_count))
+          setBackupMaxCountServer(r.max_count)
+      }).catch(() => setBackups([]))
     // One-time check in case a match/refresh-all kicked off elsewhere (or
     // before this mount) is still running — the poll chains take over from
     // here on their own if so, and stay quiet otherwise.
@@ -420,6 +456,94 @@ const applyBuffer = () => {
       setResetting(false)
     }
   }
+
+    const patchJob = async (name: string, jobPatch: ScheduledJobPatch) => {
+        setJobBusy(name)
+        setJobMsg(null)
+        try {
+            await api.updateJob(name, jobPatch)
+            setJobs(await api.getJobs())
+        } catch (e: any) {
+            setJobMsg(`Error: ${e.message ?? 'Unknown error'}`)
+        } finally {
+            setJobBusy(null)
+        }
+    }
+
+    const runJobNow = async (name: string) => {
+        setJobBusy(name)
+        setJobMsg(null)
+        try {
+            const {status} = await api.runJobNow(name)
+            setJobMsg(status === 'started' ? null : `${name} is already running.`)
+            setJobs(await api.getJobs())
+        } catch (e: any) {
+            setJobMsg(`Error: ${e.message ?? 'Unknown error'}`)
+        } finally {
+            setJobBusy(null)
+        }
+    }
+
+    const applyBackupMaxCount = async () => {
+        const n = parseInt(backupMaxCount, 10)
+        if (!Number.isFinite(n) || n < 1) {
+            setBackupMaxCount(String(backupMaxCountServer));
+            return
+        }
+        setBackupBusy('config')
+        try {
+            await api.updateBackupConfig(n)
+            setBackupMaxCountServer(n)
+        } finally {
+            setBackupBusy(null)
+        }
+    }
+
+    const runBackupNow = async () => {
+        setBackupBusy('run')
+        setBackupMsg(null)
+        try {
+            await api.runBackupNow()
+            setBackupMsg('Backup started.')
+        } catch (e: any) {
+            setBackupMsg(`Error: ${e.message ?? 'Unknown error'}`)
+        } finally {
+            setBackupBusy(null)
+            api.getBackups().then(r => {
+                setBackups(r.backups)
+                setBackupMaxCount(String(r.max_count))
+                setBackupMaxCountServer(r.max_count)
+            }).catch(() => {
+            })
+        }
+    }
+
+    const deleteBackup = async (id: string) => {
+        setBackupBusy(id)
+        try {
+            await api.deleteBackup(id)
+            setBackups(await api.getBackups().then(r => r.backups))
+        } finally {
+            setBackupBusy(null)
+        }
+    }
+
+    const restoreBackup = async (id: string) => {
+        setBackupBusy(id)
+        setBackupMsg(null)
+        try {
+            await api.restoreBackup(id)
+            setBackupMsg('Restoring — Kairos is restarting. This page will stop responding for a few seconds.')
+            setRestoreConfirmId(null)
+        } catch (e: any) {
+            setBackupMsg(`Error: ${e.message ?? 'Unknown error'}`)
+            setBackupBusy(null)
+        }
+        // Deliberately no `finally` clearing busy on success — the process is
+        // about to exit, so there's no server left to answer a follow-up
+        // getBackups() call, and leaving the button disabled is the correct
+        // state to be in until the page is reloaded anyway.
+    }
 
   const dumpDebugDb = async () => {
     setDumping(true)
@@ -1312,6 +1436,146 @@ const applyBuffer = () => {
         </>
       )}
 
+        {/* ── Jobs ─────────────────────────────────────────────────────────────── */}
+        {tab === 'jobs' && (
+            <>
+                <Section title="Scheduled Jobs">
+                    {jobs === null ? (
+                        <div className={styles.listMsg}>Loading…</div>
+                    ) : (
+                        <>
+                            {(['sync', 'metadata_refresh', 'chapter_detection', 'writeback_sweep'] as const).map(name => {
+                                const job = jobs.find(j => j.name === name)
+                                if (!job) return null
+                                const meta: Record<string, { label: string; hint: string }> = {
+                                    sync: {
+                                        label: 'Library Sync',
+                                        hint: 'Pulls new/changed content from every configured source, then runs matching, orphan cleanup, specials linking, and chapter sync as part of the same pass.',
+                                    },
+                                    metadata_refresh: {
+                                        label: 'Metadata Refresh',
+                                        hint: 'Re-pulls full metadata (title, overview, posters, ratings) from each linked source for every already-matched show and movie.',
+                                    },
+                                    chapter_detection: {
+                                        label: 'Chapter Detection',
+                                        hint: 'Runs intro/credits detection for one show without it yet, per run — CPU/IO-heavy, so this trickles across the library instead of all at once.',
+                                    },
+                                    writeback_sweep: {
+                                        label: 'Writeback Sweep',
+                                        hint: 'Pushes confirmed metadata to every source with auto-writeback enabled, catching anything a per-item save might have missed.',
+                                    },
+                                }
+                                return (
+                                    <JobRow
+                                        key={name}
+                                        job={job}
+                                        label={meta[name].label}
+                                        hint={meta[name].hint}
+                                        busy={jobBusy === name}
+                                        onPatch={p => patchJob(name, p)}
+                                        onRunNow={() => runJobNow(name)}
+                                    />
+                                )
+                            })}
+                        </>
+                    )}
+                    {jobMsg && (
+                        <div className={`${styles.msgRow} ${jobMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
+                            {jobMsg}
+                        </div>
+                    )}
+                </Section>
+
+                <Section title="Backups">
+                    {jobs?.find(j => j.name === 'backup') && (
+                        <JobRow
+                            job={jobs.find(j => j.name === 'backup')!}
+                            label="Scheduled Backup"
+                            hint="Snapshots the database and config file (SQLite online backup — safe to run against a live server) into data/backups/."
+                            busy={jobBusy === 'backup' || backupBusy === 'run'}
+                            onPatch={p => patchJob('backup', p)}
+                            onRunNow={runBackupNow}
+                        />
+                    )}
+
+                    <SettingRow
+                        label="Keep last N backups"
+                        hint="Oldest backups beyond this count are deleted automatically after each successful run."
+                    >
+                        <input
+                            type="number" min={1}
+                            value={backupMaxCount}
+                            disabled={backupBusy === 'config'}
+                            onChange={e => setBackupMaxCount(e.target.value)}
+                            onBlur={applyBackupMaxCount}
+                            onKeyDown={e => e.key === 'Enter' && applyBackupMaxCount()}
+                            className={`${styles.input} ${styles.w80}`}
+                        />
+                    </SettingRow>
+
+                    {backupMsg && (
+                        <div className={`${styles.msgRow} ${backupMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
+                            {backupMsg}
+                        </div>
+                    )}
+
+                    {backups === null ? (
+                        <div className={styles.listMsg}>Loading…</div>
+                    ) : backups.length === 0 ? (
+                        <div className={styles.listMsg}>No backups yet — "Run now" above creates one immediately.</div>
+                    ) : (
+                        backups.map(b => (
+                            <SettingRow
+                                key={b.id}
+                                label={new Date(b.created_ms).toLocaleString()}
+                                hint={`${(b.size_bytes / 1024 / 1024).toFixed(1)} MB · ${relativeTime(b.created_ms)}`}
+                            >
+                                {restoreConfirmId !== b.id ? (
+                                    <div className={styles.inlineRow}>
+                                        <NavButton
+                                            id={`backup-restore-${b.id}`}
+                                            onClick={() => setRestoreConfirmId(b.id)}
+                                            disabled={backupBusy !== null}
+                                            className={`${styles.navBtn} ${styles.navBtnDangerSoft14} ${styles.navBtnCursorPointer} ${styles.navBtnOpaque}`}
+                                        >
+                                            Restore
+                                        </NavButton>
+                                        <NavButton
+                                            id={`backup-delete-${b.id}`}
+                                            onClick={() => deleteBackup(b.id)}
+                                            disabled={backupBusy !== null}
+                                            className={`${styles.navBtn} ${styles.navBtnRevoke12} ${styles.navBtnCursorPointer} ${backupBusy === b.id ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
+                                        >
+                                            {backupBusy === b.id ? 'Deleting…' : 'Delete'}
+                                        </NavButton>
+                                    </div>
+                                ) : (
+                                    <div className={styles.inlineRow}>
+                                        <span className={styles.confirmTextDanger}>Restarts Kairos — sure?</span>
+                                        <NavButton
+                                            id={`backup-restore-confirm-${b.id}`}
+                                            onClick={() => restoreBackup(b.id)}
+                                            disabled={backupBusy === b.id}
+                                            className={`${styles.navBtn} ${styles.navBtnDangerStrong14} ${backupBusy === b.id ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${backupBusy === b.id ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+                                        >
+                                            {backupBusy === b.id ? 'Restoring…' : 'Yes, restore'}
+                                        </NavButton>
+                                        <NavButton
+                                            id={`backup-restore-cancel-${b.id}`}
+                                            onClick={() => setRestoreConfirmId(null)}
+                                            className={`${styles.navBtn} ${styles.navBtnCancel10} ${styles.navBtnCursorPointer}`}
+                                        >
+                                            Cancel
+                                        </NavButton>
+                                    </div>
+                                )}
+                            </SettingRow>
+                        ))
+                    )}
+                </Section>
+            </>
+        )}
+
       {/* ── Diagnostics ─────────────────────────────────────────────────────── */}
       {tab === 'diagnostics' && (
         <>
@@ -1477,6 +1741,114 @@ const applyBuffer = () => {
     </div>
   )
 })
+
+// One row of the Scheduled Jobs / Backups sections — enable toggle, mode
+// (interval-hours vs. daily-at-HH:MM) picker, and a "Run now" button. Owns
+// its own local echo of the editable numeric fields (same on-blur-commit
+// shape as applyThreads/applyGuestIdleTimeoutDays above), re-seeded whenever
+// the authoritative `job` prop changes — e.g. after a successful patch, or
+// the periodic-ish refetches elsewhere on this page.
+function JobRow({job, label, hint, busy, onPatch, onRunNow}: {
+    job: ScheduledJob
+    label: string
+    hint: string
+    busy: boolean
+    onPatch: (patch: ScheduledJobPatch) => void
+    onRunNow: () => void
+}) {
+    const [intervalHours, setIntervalHours] = useState(String(job.interval_hours))
+    const [dailyHour, setDailyHour] = useState(String(job.daily_hour))
+    const [dailyMinute, setDailyMinute] = useState(String(job.daily_minute).padStart(2, '0'))
+
+    useEffect(() => {
+        setIntervalHours(String(job.interval_hours))
+        setDailyHour(String(job.daily_hour))
+        setDailyMinute(String(job.daily_minute).padStart(2, '0'))
+    }, [job.interval_hours, job.daily_hour, job.daily_minute])
+
+    const applyInterval = () => {
+        const n = parseInt(intervalHours, 10)
+        if (Number.isFinite(n) && n >= 1) onPatch({mode: 'interval', interval_hours: n})
+        else setIntervalHours(String(job.interval_hours))
+    }
+    const applyDaily = () => {
+        const h = parseInt(dailyHour, 10)
+        const m = parseInt(dailyMinute, 10)
+        if (Number.isFinite(h) && h >= 0 && h <= 23 && Number.isFinite(m) && m >= 0 && m <= 59) {
+            onPatch({mode: 'daily', daily_hour: h, daily_minute: m})
+        } else {
+            setDailyHour(String(job.daily_hour))
+            setDailyMinute(String(job.daily_minute).padStart(2, '0'))
+        }
+    }
+
+    const lastRan = job.last_run_ms
+        ? `${job.last_run_ok ? 'Last ran' : 'Last ran (failed)'} ${relativeTime(job.last_run_ms)}`
+        : 'Never run yet'
+
+    return (
+        <SettingRow label={label} hint={`${hint} ${lastRan}.`}>
+            <div className={styles.inlineRow}>
+                <Toggle
+                    id={`job-${job.name}-enabled`}
+                    checked={job.enabled}
+                    disabled={busy}
+                    onChange={v => onPatch({enabled: v})}
+                />
+                <select
+                    value={job.mode}
+                    disabled={busy}
+                    onChange={e => onPatch({mode: e.target.value as 'interval' | 'daily'})}
+                    className={`${styles.input} ${styles.w140} ${styles.inputCursorPointer}`}
+                >
+                    <option value="interval">Every N hours</option>
+                    <option value="daily">Daily at (UTC)</option>
+                </select>
+                {job.mode === 'interval' ? (
+                    <input
+                        type="number" min={1}
+                        value={intervalHours}
+                        disabled={busy}
+                        onChange={e => setIntervalHours(e.target.value)}
+                        onBlur={applyInterval}
+                        onKeyDown={e => e.key === 'Enter' && applyInterval()}
+                        className={`${styles.input} ${styles.w60}`}
+                    />
+                ) : (
+                    <>
+                        <input
+                            type="number" min={0} max={23}
+                            value={dailyHour}
+                            disabled={busy}
+                            onChange={e => setDailyHour(e.target.value)}
+                            onBlur={applyDaily}
+                            onKeyDown={e => e.key === 'Enter' && applyDaily()}
+                            className={`${styles.input} ${styles.w60}`}
+                        />
+                        <span>:</span>
+                        <input
+                            type="number" min={0} max={59}
+                            value={dailyMinute}
+                            disabled={busy}
+                            onChange={e => setDailyMinute(e.target.value)}
+                            onBlur={applyDaily}
+                            onKeyDown={e => e.key === 'Enter' && applyDaily()}
+                            className={`${styles.input} ${styles.w60}`}
+                        />
+                    </>
+                )}
+                <NavButton
+                    id={`job-${job.name}-run`}
+                    onClick={onRunNow}
+                    disabled={busy}
+                    className={`${styles.navBtn} ${styles.navBtnViolet14} ${styles.navBtnCursorPointer} ${busy ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
+                >
+                    {busy ? 'Running…' : 'Run now'}
+                </NavButton>
+            </div>
+        </SettingRow>
+    )
+}
 
 function ArrField({ label, hint, value, onChange, password }: {
   label: string; hint?: string; value: string; onChange: (v: string) => void; password?: boolean

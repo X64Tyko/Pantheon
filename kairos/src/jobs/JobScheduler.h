@@ -59,6 +59,34 @@ public:
 	// background thread races runDueJobs against itself).
 	void tickOnceForTest();
 
+	// Live enable/reschedule — lets a Settings-page change take effect without
+	// a restart, the same way other admin settings do (see ConfigService's
+	// PATCH /api/config/settings). All three return false if `name` isn't a
+	// registered job.
+	//
+	// Turning a job back on re-anchors its next-due time to "one period from
+	// now" rather than leaving whatever it was — otherwise a job disabled for
+	// a week would fire immediately the moment it's re-enabled, having been
+	// "overdue" the entire time it was off.
+	bool setEnabled(const std::string& name, bool enabled);
+	// Re-anchors next_due_ms = now + interval, same "don't fire immediately
+	// off a stale due time" reasoning as setEnabled(true).
+	bool setInterval(const std::string& name, std::chrono::milliseconds interval);
+	bool setDaily(const std::string& name, int hour, int minute);
+
+	struct JobStatus
+	{
+		std::string name;
+		bool enabled;
+		int64_t next_due_ms;
+		int64_t period_ms;
+		int64_t last_run_ms; // 0 if it has never run
+		bool last_run_ok;
+		std::string last_error; // empty if last_run_ok (or never run)
+	};
+
+	std::vector<JobStatus> listJobs() const;
+
 private:
 	struct Job
 	{
@@ -71,12 +99,16 @@ private:
 		// always exactly 86400000 (24h), which lands back on the same
 		// hour:minute it started at.
 		int64_t period_ms;
+		bool enabled        = true;
+		int64_t last_run_ms = 0;
+		bool last_run_ok    = true;
+		std::string last_error;
 	};
 
 	void runDueJobs();
 
 	std::function<int64_t()> now_;
-	std::mutex mtx_;
+	mutable std::mutex mtx_;
 	std::vector<Job> jobs_;
 	std::thread thread_;
 	std::atomic<bool> stop_{true};

@@ -159,6 +159,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Scheduled jobs + backup/restore, with a new Settings → Jobs tab (Kairos, Hades)**: sync, metadata refresh,
+  chapter detection, and metadata writeback have always been fully-working manual operations with no way to run
+  them on a timer — `JobScheduler` (`kairos/src/jobs/JobScheduler.h`) existed for exactly this since the
+  playback-history/guest-pruning jobs were added, but nothing else had been wired to it yet. It now drives five
+  jobs total: `sync` (`SyncManager::triggerSync`, which already runs orphan cleanup/specials linking/chapter sync
+  as phases of its own pass — those don't get independent schedules, see below), `metadata_refresh`
+  (`ScraperManager::triggerRefreshAll`), `chapter_detection` (a new `ChapterRepository::
+  getShowIdsNeedingDetection`, globalizing the "no detected intro/credits yet" eligibility check sync already used
+  internally, so this can pick a target independent of sync's own cadence), `writeback_sweep` (`ContentService::
+  triggerWritebackAll`, extracted from `POST /api/writeback/all`'s handler so both share one guarded code path),
+  and `backup`. Each job is enable/disable-toggleable and schedulable as either a fixed interval or a daily
+  UTC time (`JobScheduler` gained `setEnabled`/`setInterval`/`setDaily` plus `listJobs()` status reporting, so a
+  Settings change takes effect immediately without a restart); all five default to **disabled** — this is new
+  background behavior on an existing self-hosted app, not something that should silently start happening on
+  upgrade. New `GET/PATCH /api/jobs`, `POST /api/jobs/:name/run-now` (`JobService`).
+  Orphan cleanup was considered for its own job but isn't one: `SyncManager::runOrphanCleanup` consumes a
+  `SyncLiveIds` snapshot only a real sync pass produces, so decoupling it would mean either a redundant second
+  full-library walk on its own timer or a much larger `SyncManager` refactor — out of scope here.
+  **Backup didn't exist anywhere in the codebase before this** — new `kairos/src/backup/BackupManager`
+  snapshots the SQLite database (via SQLiteCpp's online-backup API against a dedicated connection, safe against a
+  live/actively-written DB) and `kairos.conf` into timestamped pairs under `data/backups/` (inside the existing
+  `/data` volume — no new Docker volume needed), with admin-configurable retention (`GET/POST/DELETE /api/backup`,
+  `PATCH /api/backup/config`, `BackupService`). Restore (`POST /api/backup/:id/restore`) stages the chosen
+  backup's files over the live ones and exits the process — there's no safe way to hot-swap a SQLite file out from
+  under an open connection — relying on `docker-compose.yml`'s existing `restart: unless-stopped` to bring Kairos
+  back up against the restored data; the Settings UI gates this behind a "restarts Kairos — sure?" confirm, not a
+  casual button.
 - **Security: "Require Password for Admin Profile Switch" (Kairos, Hades)**: the "Who's watching?" picker
   (`ProfileSelectPage.tsx`/`TvProfileSelect.tsx`) lets a device that already passed a real username/password login
   hop into any profile without re-entering credentials — for admin, that previously meant a 4-6 digit PIN alone was

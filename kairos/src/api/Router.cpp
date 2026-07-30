@@ -16,9 +16,11 @@
 #include "services/ArrService.h"
 #include "services/RequestService.h"
 #include "services/AuthService.h"
+#include "services/BackupService.h"
 #include "services/BlockService.h"
 #include "services/ChapterService.h"
 #include "services/ChannelService.h"
+#include "services/JobService.h"
 #include "services/KairosService.h"
 #include "services/ConfigService.h"
 #include "services/PlaybackService.h"
@@ -106,10 +108,12 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 Router::Router(httplib::Server& svr, Database& db, SyncManager& sync,
                ConfStore& conf, LogBuffer& logs,
                RuleEngine& engine, EPGMaterializer& materializer,
-               DownloadManager& dl, AuthStore& auth, EmailService& email)
+			   DownloadManager& dl, AuthStore& auth, EmailService& email,
+			   JobScheduler& jobs, BackupManager& backups)
 	: svr_(svr), db_(db), sync_(sync), conf_(conf), logs_(logs),
 	  engine_(engine), materializer_(materializer), dl_(dl), auth_(auth), email_(email),
-	  schedule_cache_(db), divergence_checker_(materializer)
+	  jobs_(jobs), backups_(backups)
+	, schedule_cache_(db), divergence_checker_(materializer)
 {}
 
 Router::~Router() = default;
@@ -246,12 +250,15 @@ void Router::registerRoutes() {
 	// ScraperManager would be circular; wiring a std::function here after
 	// both exist isn't.
 	auto content_service = std::make_unique<ContentService>(ctx, *scraper_mgr_);
-	ContentService* content_service_ptr = content_service.get();
-	scraper_mgr_->setOnMatchConfirmed([content_service_ptr](const std::string& item_type, const std::string& kairos_id) {
-		content_service_ptr->autoWritebackIfEnabled(item_type, kairos_id);
+	content_service_ptr_ = content_service.get();
+	scraper_mgr_->setOnMatchConfirmed([this](const std::string& item_type, const std::string& kairos_id)
+	{
+		content_service_ptr_->autoWritebackIfEnabled(item_type, kairos_id);
 	});
 	services_.push_back(std::move(content_service));
 	services_.push_back(std::make_unique<ChapterService>(ctx, *chapter_detect_mgr_));
+	services_.push_back(std::make_unique<JobService>(ctx, jobs_, sync_, *scraper_mgr_, *chapter_detect_mgr_, *content_service_ptr_));
+	services_.push_back(std::make_unique<BackupService>(ctx, jobs_, backups_));
 	services_.push_back(std::make_unique<SubtitleService>(ctx));
 	services_.push_back(std::make_unique<PlaylistService>(ctx));
 	services_.push_back(std::make_unique<FillerService>(ctx));

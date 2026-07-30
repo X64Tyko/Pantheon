@@ -22,7 +22,10 @@ import type {
   NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection, PlaybackHistoryEntry, CrashStatus, TrackPreference,
   UnmappedSourceUser, SourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
-  OperationMetricsResponse,
+    OperationMetricsResponse,
+    ScheduledJob,
+    ScheduledJobPatch,
+    BackupInfo,
 } from './types'
 
 export const TOKEN_KEY = 'kairos_token'
@@ -736,6 +739,24 @@ export const api = {
     }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),
+
+    // Scheduled jobs (sync/metadata_refresh/chapter_detection/writeback_sweep/
+    // backup) — GET/PATCH /api/jobs is a unified surface over all five even
+    // though "backup" is registered server-side by a separate service (see
+    // kairos/src/api/services/JobService.h); its manual trigger lives at
+    // POST /api/backup/run instead of .../jobs/backup/run-now.
+    getJobs: () => request<ScheduledJob[]>('GET', '/jobs'),
+    updateJob: (name: string, patch: ScheduledJobPatch) => request<void>('PATCH', `/jobs/${name}`, patch),
+    runJobNow: (name: string) => request<{ status: 'started' | 'already_running' }>('POST', `/jobs/${name}/run-now`),
+
+    getBackups: () => request<{ backups: BackupInfo[]; max_count: number }>('GET', '/backup'),
+    updateBackupConfig: (maxCount: number) => request<void>('PATCH', '/backup/config', {max_count: maxCount}),
+    runBackupNow: () => request<{ status: 'started' }>('POST', '/backup/run'),
+    deleteBackup: (id: string) => request<void>('DELETE', `/backup/${id}`),
+    // Restarts Kairos on success — see BackupManager.h's own comment on why
+    // restore can't be a live hot-swap. The client should expect the
+    // connection to drop shortly after this resolves and poll /health.
+    restoreBackup: (id: string) => request<{ status: 'restoring' }>('POST', `/backup/${id}/restore`),
 
   // SMTP (invite emails + Settings page "Send Test Email")
   getSmtpConfig:  ()                                                     => request<SmtpConfig>('GET', '/config/smtp'),

@@ -723,6 +723,26 @@ void ContentService::autoWritebackIfEnabled(const std::string& item_type, const 
 	}
 }
 
+bool ContentService::triggerWritebackAll(const std::string& library_id, const std::string& source_id)
+{
+	bool expected = false;
+	if (!writeback_running_.compare_exchange_strong(expected, true)) return false;
+
+	TaskRegistry::global().spawn([this, library_id, source_id]()
+	{
+		try
+		{
+			runWritebackAll(library_id, source_id);
+		}
+		catch (const std::exception& e)
+		{
+			std::cerr << "[writeback] error: " << e.what() << std::endl;
+		}
+		writeback_running_.store(false);
+	});
+	return true;
+}
+
 void ContentService::runWritebackAll(const std::string& library_id, const std::string& source_id)
 {
 	ContentRepository repo(db_);
@@ -1835,12 +1855,6 @@ void ContentService::registerRoutes(httplib::Server& svr)
 			route::err(res, 403, "Forbidden");
 			return;
 		}
-		bool expected = false;
-		if (!writeback_running_.compare_exchange_strong(expected, true))
-		{
-			route::err(res, 409, "writeback already running");
-			return;
-		}
 		std::string library_id, source_id;
 		try
 		{
@@ -1853,18 +1867,11 @@ void ContentService::registerRoutes(httplib::Server& svr)
 			/* malformed body — fall through unfiltered, same as an empty body */
 		}
 
-		TaskRegistry::global().spawn([this, library_id, source_id]()
+		if (!triggerWritebackAll(library_id, source_id))
 		{
-			try
-			{
-				runWritebackAll(library_id, source_id);
-			}
-			catch (const std::exception& e)
-			{
-				std::cerr << "[writeback] error: " << e.what() << std::endl;
-			}
-			writeback_running_.store(false);
-		});
+			route::err(res, 409, "writeback already running");
+			return;
+		}
 
 		res.status = 202;
 		route::ok(res, json{{"status", "started"}}.dump());

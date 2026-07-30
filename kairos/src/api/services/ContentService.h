@@ -15,7 +15,8 @@ struct ServiceContext;
 struct ShowDetail;
 struct MovieDetail;
 
-class ContentService : public IKairosService {
+class ContentService : public IKairosService
+{
 public:
 	ContentService(const ServiceContext& ctx, ScraperManager& scraper);
 	void registerRoutes(httplib::Server& svr) override;
@@ -31,10 +32,16 @@ public:
 	// zero targets or that doesn't exist — both just no-op.
 	void autoWritebackIfEnabled(const std::string& item_type, const std::string& kairos_id);
 
+	// Guarded async trigger — same shape as SyncManager::triggerSync/
+	// ScraperManager::triggerMatch. Returns false (no-op) if a writeback
+	// sweep is already running. Shared by POST /api/writeback/all and the
+	// writeback_sweep scheduled job (see JobService).
+	bool triggerWritebackAll(const std::string& library_id = "", const std::string& source_id = "");
+
 private:
-	Database&       db_;
-	ConfStore&      conf_;
-	SyncManager&    sync_;
+	Database& db_;
+	ConfStore& conf_;
+	SyncManager& sync_;
 	ScraperManager& scraper_;
 
 	// Guards "Writeback All" against overlapping runs — same
@@ -44,7 +51,7 @@ private:
 	std::atomic<bool> writeback_running_{false};
 
 	void proxyImage(const httplib::Request& req, const std::string& imgPath,
-	                const std::string& sourceId, httplib::Response& res);
+					const std::string& sourceId, httplib::Response& res);
 
 	// Resolves imgPath (CDN URL / source-relative path / "local:" sentinel —
 	// same three forms proxyImage() serves) into raw bytes for writeback
@@ -53,7 +60,7 @@ private:
 	// image traffic, so the on-disk image-cache machinery would be
 	// pointless overhead here.
 	std::optional<WritebackImage> fetchImageBytes(const std::string& imgPath,
-	                                               const std::string& sourceId);
+												  const std::string& sourceId);
 
 	// Builds WritebackFields from an already-match-confirmed show/movie and
 	// pushes to every linked source, or only source_id_filter's target when

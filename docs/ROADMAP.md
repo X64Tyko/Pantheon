@@ -39,6 +39,16 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 
 - [x] **Watch Together for Android:** The web (Hades) implementation shipped in Alpha (see above) — bringing
   the same host/follower session sync to the native clients is still open.
+- [x] **Advanced Search:** Add more advanced search operators (e.g. filtering by watch state, sorting by episode, etc.)
+- [x] **Scheduled Sync & Scan Jobs:** Time-based (interval or daily-at-UTC-time) triggering for sync, metadata refresh,
+  chapter detection, and metadata writeback, each independently enable/disable-toggleable with a "Run now" override,
+  configured from Settings → Jobs. All default off — new background behavior on an existing server shouldn't silently
+  start on upgrade. Orphan cleanup didn't get its own job: it only runs as a phase of a real sync pass (it needs that
+  pass's live-source snapshot), so it rides along with sync's own schedule instead.
+- [x] **Offline Backup & Restore:** On-demand or scheduled SQLite-safe backup of the Kairos database and `kairos.conf` (
+  SQLite's online-backup API, safe against a live/actively-written DB), with admin-configurable retention and a
+  Settings → Jobs restore action. Restore stages the chosen backup over the live files and restarts the Kairos container
+  to apply it — there's no safe way to hot-swap a SQLite file under an open connection.
 - [ ] **True Direct Play:** Direct streaming is up and running, but requires the server to do work that the end client
   can do. We need Direct Play to serve files directly to clients, this should work for VOD and channels when possible.
 - [ ] **Plex External-ID Writeback:** Plex's GUID is only changeable via a "match" call that re-scrapes the whole item under a new agent result, not a field edit like everything else in the writeback system — needs its own design before it's safe to automate.
@@ -56,17 +66,13 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] **Performance Benchmarking:** Optimization of the `kairos_core` scheduler for 100+ concurrent channels.
 - [ ] **User Notifications:** Alerts for sync failures or stream interruptions.
 - [ ] **Roku Manifest Update:** `pantheon-roku` has been tested and confirmed functional on real hardware, but needs to be updated to use the per-client capability manifest (see above) and re-verified before any public release.
-- [ ] **Scheduled Sync & Scan Jobs:** Time-based (cron-style) triggering of the existing sync/scan operations, so
-  libraries stay current without a manual sync.
-- [ ] **Offline Backup & Restore:** On-demand and schedulable backup/restore of the Kairos database and configuration — reuses the scheduled-jobs mechanism above for the "schedulable" part.
 - [ ] **Scheduling Robustness for Placeholder Content:** Shows with no synced episodes yet, and movies still sitting on the Discovery "added" list, shouldn't be able to break channel scheduling if they end up selected into a block.
 - [ ] **Cast Session Skip-to-Player:** Skip the profile picker when a cast originates from an already-authenticated account, especially when casting directly to a specific piece of media.
 - [ ] **Linked-ID Editor Title Confirmation:** The editable external-ID list (add/reorder/remove) currently shows only raw `source:id` pairs; it should resolve and display the matched title inline so a typo'd ID is caught before saving, not after. (The read-only badge row elsewhere already links out to the source — this only affects the editor.)
 - [ ] **VR Content Detection:** File-probe heuristic to flag VR video, plus a library toggle/filter to browse it — same tag/filter infrastructure as Scraper-Derived Tags.
 - [ ] **Chapter Classification Quality:** Reduce the "Unclassified" bucket in chapter detection — Episode/Credits already resolve well, but a lot of detected chapters fall through uncategorized. Worth doing before Chapter-Aware Scheduling (V1.0) depends on classification being trustworthy.
 - [ ] **Media Downloads:** Download media to device for offline playback.
-- [ ] **External ratings:** Add support for exteral rating systems (IMDb, Rotten Tomatoes, Metacritic, etc.)
-- [ ] **Advanced Search:** Add more advanced search operators (e.g. filtering by watch state, sorting by episode, etc.)
+- [ ] **External ratings:** Add support for external rating systems (IMDb, Rotten Tomatoes, Metacritic, etc.)
 - [ ] **Home Screen Management:** Reorder shelves on the home screen.
 
 ## Phase 3: V1.0 Release (Late 2026)

@@ -8,12 +8,15 @@
 #include "../util/RateLimiter.h"
 
 class AuthStore;
+class BackupManager;
 class ChapterDetectionManager;
 class ConfStore;
+class ContentService;
 class Database;
 class DownloadManager;
 class EmailService;
 class EPGMaterializer;
+class JobScheduler;
 class LogBuffer;
 class RuleEngine;
 class ScraperManager;
@@ -25,7 +28,8 @@ public:
 	Router(httplib::Server& svr, Database& db, SyncManager& sync,
 		   ConfStore& conf, LogBuffer& logs,
 		   RuleEngine& engine, EPGMaterializer& materializer,
-		   DownloadManager& dl, AuthStore& auth, EmailService& email);
+		   DownloadManager& dl, AuthStore& auth, EmailService& email,
+		   JobScheduler& jobs, BackupManager& backups);
 	~Router();
 	void registerRoutes();
 
@@ -40,6 +44,8 @@ private:
 	DownloadManager& dl_;
 	AuthStore& auth_;
 	EmailService& email_;
+	JobScheduler& jobs_;
+	BackupManager& backups_;
 
 	ScheduleCache schedule_cache_;
 	EPGDivergenceChecker divergence_checker_;
@@ -49,5 +55,11 @@ private:
 	RateLimiter guest_mutation_limiter_;
 	std::unique_ptr<ScraperManager> scraper_mgr_;
 	std::unique_ptr<ChapterDetectionManager> chapter_detect_mgr_;
+	// Raw, non-owning — the owning unique_ptr moves into services_ once
+	// constructed (see registerRoutes()). Kept for JobService's
+	// writeback_sweep job, same reason ScraperManager's match-confirmed
+	// callback already needed this pointer (see registerRoutes()'s own
+	// comment on it).
+	ContentService* content_service_ptr_ = nullptr;
 	std::vector<std::unique_ptr<IKairosService>> services_;
 };

@@ -1444,3 +1444,32 @@ export interface OperationRun {
 // runs yet.
 export type OperationMetricsResponse = Record<string, OperationRun[]>
 
+// One of the five JobScheduler-driven background jobs (see
+// kairos/src/jobs/JobScheduler.h) — sync/metadata_refresh/chapter_detection/
+// writeback_sweep/backup. mode picks which of interval_hours vs.
+// daily_hour+daily_minute is active; the other pair is still present
+// (whatever it was last set to) so switching modes in the UI doesn't lose
+// the previous value.
+export interface ScheduledJob {
+    name: 'sync' | 'metadata_refresh' | 'chapter_detection' | 'writeback_sweep' | 'backup'
+    enabled: boolean
+    mode: 'interval' | 'daily'
+    interval_hours: number
+    daily_hour: number
+    daily_minute: number
+    next_run_ms: number | null
+    last_run_ms: number
+    last_run_ok: boolean
+    last_error: string
+}
+
+export type ScheduledJobPatch = Partial<
+    Pick<ScheduledJob, 'enabled' | 'mode' | 'interval_hours' | 'daily_hour' | 'daily_minute'>
+>
+
+export interface BackupInfo {
+    id: string
+    created_ms: number
+    size_bytes: number
+}
+
