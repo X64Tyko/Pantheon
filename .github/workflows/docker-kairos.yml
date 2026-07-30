@@ -13,6 +13,7 @@ on:
       - "shared/**"
       - "momus/kairos/**"
       - "momus/CMakeLists.txt"
+      - "VERSION"
       - ".github/workflows/docker-kairos.yml"
       # Kairos's served theme (GET /api/tv/manifest) is generated from
       # Hades' own CSS — see hades/scripts/generate-tv-tokens.mjs — so a

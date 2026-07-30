@@ -13,6 +13,7 @@ WORKDIR /src
 # below flattened to the same /src layout as before, so CMAKE_SOURCE_DIR
 # still resolves shared/ the same way a monorepo build (dev.sh) does.
 COPY hephaestus/CMakeLists.txt .
+COPY VERSION .
 RUN cmake -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DFETCHCONTENT_QUIET=OFF

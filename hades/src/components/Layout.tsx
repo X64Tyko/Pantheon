@@ -249,7 +249,7 @@ export default observer(function Layout() {
               <div className={styles.statusRow}>
                 <span className={styles.liveDot} />
                 <span className={styles.versionText}>
-                  v0.2.1 · running
+                  v{__APP_VERSION__} · running
                 </span>
               </div>
               {user && (

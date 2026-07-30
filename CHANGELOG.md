@@ -131,6 +131,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **App version now has a single source of truth**: a new root `VERSION` file replaces six separately-maintained
+  `0.2.1` literals (root and per-service `CMakeLists.txt` x4, `hades/package.json`), plus a `Layout.tsx` sidebar
+  string that was hardcoded to `v0.2.1` and wasn't even wired to anything — bumping the version never updated it.
+  Every `CMakeLists.txt`'s `project(... VERSION ...)` now reads `VERSION` via `CMAKE_SOURCE_DIR`, which resolves
+  correctly both in the monorepo build and in each service's flattened standalone Docker build. Hades reads it at
+  build time (`vite.config.ts`/`vitest.config.ts` inject it as `__APP_VERSION__`) and displays the real version in
+  the sidebar. Hades' Docker build context moved from `hades/` to the repo root (matching Hephaestus/Hermes/Kairos,
+  whose Dockerfiles already build from the root to reach `shared/`) so it can see `VERSION` too; a new root
+  `.dockerignore` keeps that wider context from uploading `build/`, `node_modules/`, etc. Releasing now means
+  editing exactly one file.
 - **"Direct play" renamed to "direct stream" everywhere (Kairos, Hephaestus, Hermes, Hades, Android, Roku, docs)**: a
   stream copy is still very much a stream, just not a transcoded one — "play" never actually described what this does,
   and the name was inviting confusion with unrelated concepts (e.g. Hades' Home shelf `directPlayPath`, a navigation

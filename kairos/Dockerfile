@@ -16,6 +16,7 @@ WORKDIR /src
 # Copy only the build manifest first. CMake configure fetches all FetchContent
 # dependencies here — this layer is cached until CMakeLists.txt changes.
 COPY kairos/CMakeLists.txt .
+COPY VERSION .
 RUN cmake -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DFETCHCONTENT_QUIET=OFF
