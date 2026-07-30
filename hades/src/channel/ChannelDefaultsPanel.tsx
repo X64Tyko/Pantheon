@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
 import type { AdvanceMode, Channel, EpisodeSearchResult } from '../api/types'
 import { CardSection, LauncherRow } from './sections'
+import {TIMEZONE_SUGGESTIONS} from './constants'
 import type { ChannelDetailStore } from './store'
 import { api } from '../api/client'
 import { CHANNEL_RATINGS } from '../api/ratingScales'
@@ -56,18 +57,7 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
             spellCheck={false}
           />
           <datalist id="tz-suggestions">
-            <option value="UTC" />
-            <option value="America/New_York" />
-            <option value="America/Chicago" />
-            <option value="America/Denver" />
-            <option value="America/Los_Angeles" />
-            <option value="America/Anchorage" />
-            <option value="Pacific/Honolulu" />
-            <option value="Europe/London" />
-            <option value="Europe/Paris" />
-            <option value="Europe/Berlin" />
-            <option value="Australia/Sydney" />
-            <option value="Asia/Tokyo" />
+              {TIMEZONE_SUGGESTIONS.map(tz => <option key={tz} value={tz}/>)}
           </datalist>
           <div className={styles.fieldHint}>
             IANA format — e.g. <span className={styles.fieldHintMono}>America/Denver</span>

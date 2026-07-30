@@ -34,6 +34,9 @@ interface Settings {
     guest_profiles_enabled: boolean
     guest_idle_timeout_days: number
     guest_max_concurrent: number
+    guest_channel_builder_enabled: boolean
+    guest_max_demo_channels: number
+    viewer_max_channels: number
     require_admin_password_switch: boolean
 }
 
@@ -124,6 +127,8 @@ export default observer(function SettingsPage() {
     const [internalToken, setInternalToken] = useState('')
     const [guestIdleTimeoutDays, setGuestIdleTimeoutDays] = useState('')
     const [guestMaxConcurrent, setGuestMaxConcurrent] = useState('')
+    const [guestMaxDemoChannels, setGuestMaxDemoChannels] = useState('')
+    const [viewerMaxChannels, setViewerMaxChannels] = useState('')
     const [regeneratingToken, setRegeneratingToken] = useState(false)
   const [castSessions, setCastSessions] = useState<CastSessionInfo[] | null>(null)
   const [revokingCast, setRevokingCast] = useState<string | null>(null)
@@ -284,6 +289,8 @@ export default observer(function SettingsPage() {
         setInternalToken(s.internal_token)
         setGuestIdleTimeoutDays(String(s.guest_idle_timeout_days))
         setGuestMaxConcurrent(String(s.guest_max_concurrent))
+        setGuestMaxDemoChannels(String(s.guest_max_demo_channels))
+        setViewerMaxChannels(String(s.viewer_max_channels))
     }).catch(() => setError('Failed to load settings'))
     loadCastSessions()
     pollRokuDevices()
@@ -326,6 +333,8 @@ export default observer(function SettingsPage() {
         setInternalToken(next.internal_token)
         setGuestIdleTimeoutDays(String(next.guest_idle_timeout_days))
         setGuestMaxConcurrent(String(next.guest_max_concurrent))
+        setGuestMaxDemoChannels(String(next.guest_max_demo_channels))
+        setViewerMaxChannels(String(next.viewer_max_channels))
       // Keep statusStore in sync immediately so the debug banner reflects the change.
       if ('sync_debug'  in update) statusStore.syncDebug  = next.sync_debug
       if ('epg_debug'   in update) statusStore.epgDebug   = next.epg_debug
@@ -366,6 +375,18 @@ const applyBuffer = () => {
         const n = parseInt(guestMaxConcurrent, 10)
         if (!isNaN(n) && n >= 1 && n <= 1000) patch({guest_max_concurrent: n})
         else setGuestMaxConcurrent(settings ? String(settings.guest_max_concurrent) : '20')
+    }
+
+    const applyGuestMaxDemoChannels = () => {
+        const n = parseInt(guestMaxDemoChannels, 10)
+        if (!isNaN(n) && n >= 1 && n <= 10) patch({guest_max_demo_channels: n})
+        else setGuestMaxDemoChannels(settings ? String(settings.guest_max_demo_channels) : '1')
+    }
+
+    const applyViewerMaxChannels = () => {
+        const n = parseInt(viewerMaxChannels, 10)
+        if (!isNaN(n) && n >= 1 && n <= 50) patch({viewer_max_channels: n})
+        else setViewerMaxChannels(settings ? String(settings.viewer_max_channels) : '3')
     }
 
     const applyInternalToken = () => {
@@ -577,6 +598,48 @@ const applyBuffer = () => {
                         onChange={e => setGuestMaxConcurrent(e.target.value)}
                         onBlur={applyGuestMaxConcurrent}
                         onKeyDown={e => e.key === 'Enter' && applyGuestMaxConcurrent()}
+                        disabled={!settings || saving}
+                        className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                    />
+                </SettingRow>
+                <SettingRow
+                    label="Allow Guest Channel Builder"
+                    hint="Lets a guest build one throwaway demo channel against the real library, and watch it play. Off by default, and only takes effect while Guest Profiles (above) is also on. Intended for a separate, already-curated public demo deployment — not a server that also holds your real personal library. The demo channel never appears in the real channel lineup or M3U/XMLTV output, and is deleted automatically along with the guest account (idle timeout or self-delete)."
+                >
+                    <Toggle
+                        id="guest_channel_builder_enabled"
+                        checked={settings?.guest_channel_builder_enabled ?? false}
+                        disabled={!settings || saving || !(settings?.guest_profiles_enabled ?? false)}
+                        onChange={v => patch({guest_channel_builder_enabled: v})}
+                    />
+                </SettingRow>
+                <SettingRow
+                    label="Max Demo Channels per Guest"
+                    hint="How many channels one guest account can build at once."
+                >
+                    <input
+                        type="number" min={1} max={10}
+                        value={guestMaxDemoChannels}
+                        onChange={e => setGuestMaxDemoChannels(e.target.value)}
+                        onBlur={applyGuestMaxDemoChannels}
+                        onKeyDown={e => e.key === 'Enter' && applyGuestMaxDemoChannels()}
+                        disabled={!settings || saving}
+                        className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                    />
+                </SettingRow>
+            </Section>
+
+            <Section title="Viewer Channel Builder">
+                <SettingRow
+                    label="Max Channels per Viewer"
+                    hint="How many channels a real (named) account can build at once, once an admin has granted them channel-builder access on the Users page. Unlike Guest Access above, that access is granted per-account, not server-wide — this only caps the quota for whoever's been granted it."
+                >
+                    <input
+                        type="number" min={1} max={50}
+                        value={viewerMaxChannels}
+                        onChange={e => setViewerMaxChannels(e.target.value)}
+                        onBlur={applyViewerMaxChannels}
+                        onKeyDown={e => e.key === 'Enter' && applyViewerMaxChannels()}
                         disabled={!settings || saving}
                         className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
                     />

@@ -1,8 +1,11 @@
 #include "ChannelService.h"
 #include "../AuthContext.h"
+#include "../ChannelAuth.h"
 #include "../RouteHelpers.h"
 #include "../ScheduleCache.h"
 #include "../../conf/ConfStore.h"
+#include "../../conf/GuestSettings.h"
+#include "../../conf/ViewerSettings.h"
 #include "../../db/ChannelRepository.h"
 #include "../../db/ChannelSerializer.h"
 #include "../../db/RestrictionRepository.h"
@@ -11,63 +14,97 @@
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-static bool isValidTimezone(const std::string& tz) {
+static bool isValidTimezone(const std::string& tz)
+{
 	if (tz.empty()) return false;
-	try { std::chrono::locate_zone(tz); return true; } catch (...) { return false; }
+	try
+	{
+		std::chrono::locate_zone(tz);
+		return true;
+	}
+	catch (...) { return false; }
 }
 
 ChannelService::ChannelService(const ServiceContext& ctx)
-	: db_(ctx.db), conf_(ctx.conf), schedule_cache_(ctx.schedule_cache), logs_(ctx.logs) {}
+	: db_(ctx.db)
+	, conf_(ctx.conf)
+	, schedule_cache_(ctx.schedule_cache)
+	, logs_(ctx.logs)
+	, guest_mutation_limiter_(ctx.guest_mutation_limiter)
+{
+}
 
-void ChannelService::registerRoutes(httplib::Server& svr) {
-
-	svr.Get("/api/channels", [this](const Req&, Res& res) {
-		try {
-			auto channels = ChannelRepository(db_).listChannels();
-			json result = json::array();
-			for (const auto& c : channels) {
+void ChannelService::registerRoutes(httplib::Server& svr)
+{
+	svr.Get("/api/channels", [this](const Req&, Res& res)
+	{
+		try
+		{
+			// Admin sees every channel unfiltered, same as always. Anyone else
+			// sees real channels plus only their own demo channel(s) — a
+			// guest's is_demo=1 channel is a throwaway, not a lineup citizen;
+			// see ChannelRepository::listChannels and EPGMaterializer's own
+			// generateM3U/generateXMLTV filter for the other half of this.
+			bool is_admin                        = currentUser() && currentUser()->role == "admin";
+			std::optional<std::string> viewer_id = currentUser()
+													   ? std::optional(currentUser()->user_id)
+													   : std::nullopt;
+			auto channels = ChannelRepository(db_).listChannels(viewer_id, is_admin);
+			json result   = json::array();
+			for (const auto& c : channels)
+			{
 				// Parental controls — a restricted account never sees a
 				// channel whose content_tag fails its ceiling/override, same
 				// "don't reveal existence of blocked content" posture as the
 				// show/movie list endpoints.
 				if (currentUser() && currentUser()->restricted
-				    && !RestrictionRepository(db_).isAllowed(*currentUser(), "channel", c.channel_id, c.content_tag)) {
+					&& !RestrictionRepository(db_).isAllowed(*currentUser(), "channel", c.channel_id, c.content_tag))
+				{
 					continue;
 				}
 				json channel = {
-					{"channel_id",               c.channel_id},
-					{"name",                     c.name},
-					{"number",                   c.number},
-					{"timezone",                 c.timezone},
+					{"channel_id", c.channel_id},
+					{"name", c.name},
+					{"number", c.number},
+					{"timezone", c.timezone},
 					{"default_filler_selection", c.default_filler_selection},
-					{"seed",                     c.seed},
-					{"advance_mode",             c.advance_mode},
-					{"offline_video_path",       c.offline_video_path},
-					{"offline_image_path",       c.offline_image_path},
-					{"offline_audio_id",         c.offline_audio_id},
-					{"offline_audio_type",       c.offline_audio_type},
-					{"offline_audio_title",      c.offline_audio_title},
-					{"logo_path",                c.logo_path},
-					{"audio_lang",               c.audio_lang},
-					{"subtitle_lang",            c.subtitle_lang},
-					{"stream_resolution",        c.stream_resolution},
-					{"stream_video_bitrate",     c.stream_video_bitrate},
-					{"stream_audio_bitrate",     c.stream_audio_bitrate},
-					{"content_tag",              c.content_tag},
+					{"seed", c.seed},
+					{"advance_mode", c.advance_mode},
+					{"offline_video_path", c.offline_video_path},
+					{"offline_image_path", c.offline_image_path},
+					{"offline_audio_id", c.offline_audio_id},
+					{"offline_audio_type", c.offline_audio_type},
+					{"offline_audio_title", c.offline_audio_title},
+					{"logo_path", c.logo_path},
+					{"audio_lang", c.audio_lang},
+					{"subtitle_lang", c.subtitle_lang},
+					{"stream_resolution", c.stream_resolution},
+					{"stream_video_bitrate", c.stream_video_bitrate},
+					{"stream_audio_bitrate", c.stream_audio_bitrate},
+					{"content_tag", c.content_tag},
+					{"is_demo", c.is_demo},
 				};
-				if (!c.anchor_hashes.empty()) {
-					try { channel["anchor_hashes"] = json::parse(c.anchor_hashes); } catch (...) {}
+				if (c.owner_user_id.has_value()) channel["owner_user_id"] = *c.owner_user_id;
+				if (!c.anchor_hashes.empty())
+				{
+					try { channel["anchor_hashes"] = json::parse(c.anchor_hashes); }
+					catch (...)
+					{
+					}
 				}
 				channel["default_filler_entries"] = ChannelRepository(db_).listFillerEntries(c.channel_id);
 				result.push_back(channel);
 			}
 			route::ok(res, result.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("GET /api/channels", e);
 			route::err(res, 500, e.what());
 		}
@@ -78,83 +115,164 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	// the raw MPEG-TS/HLS routes stay intentionally open for HDHomeRun/DVR
 	// compatibility — see the writeback/parental-controls plan). Also used
 	// by Hermes's authedHephaestusProxy for Guide preview sessions.
-	svr.Get("/api/channels/:id/access-check", [this](const Req& req, Res& res) {
-		if (!currentUser()) { route::err(res, 401, "Unauthorized"); return; }
+	svr.Get("/api/channels/:id/access-check", [this](const Req& req, Res& res)
+	{
+		if (!currentUser())
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 		auto id = req.path_params.at("id");
 		auto ch = ChannelRepository(db_).findById(id);
-		if (!ch) { route::err(res, 404, "channel not found"); return; }
+		if (!ch)
+		{
+			route::err(res, 404, "channel not found");
+			return;
+		}
 		bool allowed = RestrictionRepository(db_).isAllowed(*currentUser(), "channel", id, ch->content_tag);
 		route::ok(res, json{{"allowed", allowed}}.dump());
 	});
 
-	svr.Post("/api/channels", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
-			auto b = json::parse(req.body);
+	svr.Post("/api/channels", [this](const Req& req, Res& res)
+	{
+		if (!currentUser())
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		bool is_admin        = currentUser()->role == "admin";
+		bool is_self_service = !is_admin; // guest or real viewer
+		std::optional<std::string> owner_user_id;
+		bool is_demo = false;
+
+		if (is_self_service)
+		{
+			// Access gate differs by kind: guests are server-wide toggled (no
+			// individual account to grant access to), a real named account
+			// needs the admin's per-user grant — see AuthUser::
+			// channel_builder_enabled / guest_settings::channelBuilderEnabled.
+			bool allowed = currentUser()->is_guest
+							   ? guest_settings::channelBuilderEnabled(db_)
+							   : currentUser()->channel_builder_enabled;
+			if (!allowed)
+			{
+				route::err(res, 403, "Forbidden");
+				return;
+			}
+
+			if (!guest_mutation_limiter_.allow(currentUser()->user_id, 20, 60))
+			{
+				route::err(res, 429, "Too many requests");
+				return;
+			}
+
+			int owned = ChannelRepository(db_).countOwnedBy(currentUser()->user_id);
+			int quota = currentUser()->is_guest
+							? guest_settings::maxDemoChannels(db_)
+							: viewer_settings::maxChannels(db_);
+			if (owned >= quota)
+			{
+				route::err(res, 403, "Channel limit reached");
+				return;
+			}
+
+			owner_user_id = currentUser()->user_id;
+			is_demo       = currentUser()->is_guest;
+		}
+
+		try
+		{
+			auto b                   = json::parse(req.body);
 			std::string name         = b.value("name", "");
-			int         number       = b.value("number", 0);
+			int number               = b.value("number", 0);
 			std::string timezone     = b.value("timezone", "UTC");
 			std::string advance_mode = b.value("advance_mode", "scheduled");
-			if (name.empty() || number == 0) {
-				route::err(res, 400, "name and number required"); return;
+			if (name.empty() || number == 0)
+			{
+				route::err(res, 400, "name and number required");
+				return;
 			}
-			if (!isValidTimezone(timezone)) {
-				route::err(res, 400, "invalid timezone: " + timezone); return;
+			if (!isValidTimezone(timezone))
+			{
+				route::err(res, 400, "invalid timezone: " + timezone);
+				return;
 			}
-			std::string channel_id = ChannelRepository(db_).create(name, number, timezone, advance_mode);
+			std::string channel_id = ChannelRepository(db_).create(
+				name, number, timezone, advance_mode, owner_user_id, is_demo);
 			res.status = 201;
 			route::ok(res, json{{"channel_id", channel_id}}.dump());
-		} catch (const SQLite::Exception& e) {
+		}
+		catch (const SQLite::Exception& e)
+		{
 			route::logErr("POST /api/channels", e);
 			route::err(res, 409, e.what());
-		} catch (const json::exception& e) {
+		}
+		catch (const json::exception& e)
+		{
 			route::err(res, 400, e.what());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("POST /api/channels", e);
 			route::err(res, 500, e.what());
 		}
 	});
 
-	svr.Patch("/api/channels/:id", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Patch("/api/channels/:id", [this](const Req& req, Res& res)
+	{
 		auto id = req.path_params.at("id");
-		try {
+		if (!currentUser() || !channel_auth::canMutateChannel(db_, guest_mutation_limiter_, *currentUser(), id))
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			auto b = json::parse(req.body);
 			ChannelRepository repo(db_);
 			auto upd  = [&](const char* col, const std::string& val) { repo.updateField(id, col, val); };
-			auto updI = [&](const char* col, int val)                { repo.updateField(id, col, val); };
-			if (b.contains("name"))                     upd("name",                     b["name"]);
-			if (b.contains("timezone")) {
+			auto updI = [&](const char* col, int val) { repo.updateField(id, col, val); };
+			if (b.contains("name")) upd("name", b["name"]);
+			if (b.contains("timezone"))
+			{
 				std::string tz = b["timezone"].get<std::string>();
-				if (!isValidTimezone(tz)) { route::err(res, 400, "invalid timezone: " + tz); return; }
+				if (!isValidTimezone(tz))
+				{
+					route::err(res, 400, "invalid timezone: " + tz);
+					return;
+				}
 				upd("timezone", tz);
 			}
-			if (b.contains("number"))                   updI("number",                   b["number"].get<int>());
+			if (b.contains("number")) updI("number", b["number"].get<int>());
 			if (b.contains("default_filler_selection")) upd("default_filler_selection", b["default_filler_selection"]);
-			if (b.contains("advance_mode"))             upd("advance_mode",             b["advance_mode"]);
-			if (b.contains("offline_video_path"))       upd("offline_video_path",       b["offline_video_path"]);
-			if (b.contains("offline_image_path"))       upd("offline_image_path",       b["offline_image_path"]);
-			if (b.contains("offline_audio_id"))         upd("offline_audio_id",         b["offline_audio_id"]);
-			if (b.contains("offline_audio_type"))       upd("offline_audio_type",       b["offline_audio_type"]);
-			if (b.contains("offline_audio_title"))      upd("offline_audio_title",      b["offline_audio_title"]);
-			if (b.contains("logo_path"))                upd("logo_path",                b["logo_path"]);
-			if (b.contains("audio_lang"))               upd("audio_lang",               b["audio_lang"]);
-			if (b.contains("subtitle_lang"))            upd("subtitle_lang",            b["subtitle_lang"]);
-			if (b.contains("stream_resolution")) {
+			if (b.contains("advance_mode")) upd("advance_mode", b["advance_mode"]);
+			if (b.contains("offline_video_path")) upd("offline_video_path", b["offline_video_path"]);
+			if (b.contains("offline_image_path")) upd("offline_image_path", b["offline_image_path"]);
+			if (b.contains("offline_audio_id")) upd("offline_audio_id", b["offline_audio_id"]);
+			if (b.contains("offline_audio_type")) upd("offline_audio_type", b["offline_audio_type"]);
+			if (b.contains("offline_audio_title")) upd("offline_audio_title", b["offline_audio_title"]);
+			if (b.contains("logo_path")) upd("logo_path", b["logo_path"]);
+			if (b.contains("audio_lang")) upd("audio_lang", b["audio_lang"]);
+			if (b.contains("subtitle_lang")) upd("subtitle_lang", b["subtitle_lang"]);
+			if (b.contains("stream_resolution"))
+			{
 				std::string resolution = b["stream_resolution"].get<std::string>();
-				if (resolution != "source" && resolution != "1080p" && resolution != "720p" && resolution != "480p") {
-					route::err(res, 400, "stream_resolution must be source|1080p|720p|480p"); return;
+				if (resolution != "source" && resolution != "1080p" && resolution != "720p" && resolution != "480p")
+				{
+					route::err(res, 400, "stream_resolution must be source|1080p|720p|480p");
+					return;
 				}
 				upd("stream_resolution", resolution);
 			}
-			if (b.contains("stream_video_bitrate"))     updI("stream_video_bitrate",    b["stream_video_bitrate"].get<int>());
-			if (b.contains("stream_audio_bitrate"))     updI("stream_audio_bitrate",    b["stream_audio_bitrate"].get<int>());
-			if (b.contains("seed"))                     updI("seed",                    b["seed"].get<int>());
-			if (b.contains("content_tag"))               upd("content_tag",              b["content_tag"]);
-			if (b.contains("anchor_hashes")) {
+			if (b.contains("stream_video_bitrate")) updI("stream_video_bitrate", b["stream_video_bitrate"].get<int>());
+			if (b.contains("stream_audio_bitrate")) updI("stream_audio_bitrate", b["stream_audio_bitrate"].get<int>());
+			if (b.contains("seed")) updI("seed", b["seed"].get<int>());
+			if (b.contains("content_tag")) upd("content_tag", b["content_tag"]);
+			if (b.contains("anchor_hashes"))
+			{
 				std::string ah = b["anchor_hashes"].is_string()
-					? b["anchor_hashes"].get<std::string>()
-					: b["anchor_hashes"].dump();
+									 ? b["anchor_hashes"].get<std::string>()
+									 : b["anchor_hashes"].dump();
 				upd("anchor_hashes", ah);
 			}
 			// timezone shifts which calendar day/week-boundary every block's
@@ -163,25 +281,33 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 			// state doesn't just look different afterward, it's for a different
 			// channel in all but name. default_filler_selection/advance_mode only
 			// shape future picks, so a soft clear is enough for those.
-			if (b.contains("timezone") || b.contains("seed"))
-				schedule_cache_.hardReset(id);
-			else if (b.contains("default_filler_selection") || b.contains("advance_mode"))
-				schedule_cache_.clear(id);
+			if (b.contains("timezone") || b.contains("seed")) schedule_cache_.hardReset(id);
+			else if (b.contains("default_filler_selection") || b.contains("advance_mode")) schedule_cache_.clear(id);
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("PATCH /api/channels/" + id, e);
 			route::err(res, 400, e.what());
 		}
 	});
 
-	svr.Delete("/api/channels/:id", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Delete("/api/channels/:id", [this](const Req& req, Res& res)
+	{
 		auto id = req.path_params.at("id");
-		try {
+		if (!currentUser() || !channel_auth::canMutateChannel(db_, guest_mutation_limiter_, *currentUser(), id))
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			ChannelRepository(db_).remove(id);
 			logs_.push("[api] deleted channel: " + id);
 			route::ok(res, json{{"deleted", id}}.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("DELETE /api/channels/" + id, e);
 			route::err(res, 500, e.what());
 		}
@@ -194,54 +320,88 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 	// rather than proxied, since ContentService's fetch-and-cache proxyImage()
 	// is scoped to that service and this doesn't need its CDN-hotlink-bypass
 	// logic — plain image hosts and XMLTV consumers both follow redirects fine.
-	svr.Get("/api/channels/:id/logo", [this](const Req& req, Res& res) {
-		auto id = req.path_params.at("id");
+	svr.Get("/api/channels/:id/logo", [this](const Req& req, Res& res)
+	{
+		auto id      = req.path_params.at("id");
 		auto channel = ChannelRepository(db_).findById(id);
-		if (!channel || channel->logo_path.empty()) { res.status = 404; return; }
-		if (channel->logo_path.rfind("http://", 0) == 0 || channel->logo_path.rfind("https://", 0) == 0) {
+		if (!channel || channel->logo_path.empty())
+		{
+			res.status = 404;
+			return;
+		}
+		if (channel->logo_path.rfind("http://", 0) == 0 || channel->logo_path.rfind("https://", 0) == 0)
+		{
 			res.set_redirect(channel->logo_path);
 			return;
 		}
 		auto path = conf_.applyPathMap(channel->logo_path);
-		if (!std::filesystem::exists(path)) { res.status = 404; return; }
+		if (!std::filesystem::exists(path))
+		{
+			res.status = 404;
+			return;
+		}
 		res.set_header("Cache-Control", "public, max-age=3600");
 		res.set_file_content(path);
 	});
 
-	svr.Get("/api/channels/:id/export", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Get("/api/channels/:id/export", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		auto channel_id = req.path_params.at("id");
-		bool deep = (req.has_param("depth") && req.get_param_value("depth") == "deep");
-		try {
+		bool deep       = (req.has_param("depth") && req.get_param_value("depth") == "deep");
+		try
+		{
 			route::ok(res, ChannelSerializer(db_).exportChannel(channel_id, deep).dump(2));
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("GET /api/channels/:id/export", e);
 			route::err(res, 500, e.what());
 		}
 	});
 
-	svr.Post("/api/channels/import/preview", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
+	svr.Post("/api/channels/import/preview", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
 			auto body = json::parse(req.body);
 			bool deep = (body.value("depth", "shallow") == "deep");
 			route::ok(res, ChannelSerializer(db_).previewImport(body, deep).dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("POST /api/channels/import/preview", e);
 			route::err(res, 400, e.what());
 		}
 	});
 
-	svr.Post("/api/channels/import", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
-		try {
-			auto body = json::parse(req.body);
-			bool deep = (body.value("depth", "shallow") == "deep");
+	svr.Post("/api/channels/import", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
+			auto body                     = json::parse(req.body);
+			bool deep                     = (body.value("depth", "shallow") == "deep");
 			auto [channel_id, unresolved] = ChannelSerializer(db_).importChannel(body, deep);
-			res.status = 201;
+			res.status                    = 201;
 			logs_.push("[api] imported channel: " + channel_id);
 			route::ok(res, json{{"channel_id", channel_id}, {"unresolved", unresolved}}.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("POST /api/channels/import", e);
 			route::err(res, 400, e.what());
 		}
@@ -249,71 +409,98 @@ void ChannelService::registerRoutes(httplib::Server& svr) {
 
 	// ── Channel filler entry CRUD ─────────────────────────────────────────────
 
-	svr.Post("/api/channels/:id/filler", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Post("/api/channels/:id/filler", [this](const Req& req, Res& res)
+	{
 		auto channel_id = req.path_params.at("id");
-		try {
-			auto b = json::parse(req.body);
+		if (!currentUser() || !channel_auth::canMutateChannel(db_, guest_mutation_limiter_, *currentUser(), channel_id))
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
+			auto b                   = json::parse(req.body);
 			std::string content_type = b.value("content_type", "filler_list");
-			std::string content_id   = b.value("content_id",   "");
-			std::string advancement  = b.value("advancement",  "sequential");
-			int         weight       = b.value("weight",       1);
-			if (content_id.empty()) { route::err(res, 400, "content_id required"); return; }
+			std::string content_id   = b.value("content_id", "");
+			std::string advancement  = b.value("advancement", "sequential");
+			int weight               = b.value("weight", 1);
+			if (content_id.empty())
+			{
+				route::err(res, 400, "content_id required");
+				return;
+			}
 			std::optional<int> season_filter;
-			if (b.contains("season_filter") && !b["season_filter"].is_null())
-				season_filter = b["season_filter"].get<int>();
+			if (b.contains("season_filter") && !b["season_filter"].is_null()) season_filter = b["season_filter"].get<int>();
 			auto fr = ChannelRepository(db_).addFillerEntry(
 				channel_id, content_type, content_id, advancement, weight, season_filter);
 			schedule_cache_.clear(channel_id);
 			json resp = {
-				{"id",           fr.id},
+				{"id", fr.id},
 				{"content_type", content_type},
-				{"content_id",   content_id},
-				{"title",        fr.title},
-				{"advancement",  advancement},
-				{"weight",       weight},
-				{"position",     fr.position},
+				{"content_id", content_id},
+				{"title", fr.title},
+				{"advancement", advancement},
+				{"weight", weight},
+				{"position", fr.position},
 			};
 			if (season_filter.has_value()) resp["season_filter"] = season_filter.value();
 			res.status = 201;
 			route::ok(res, resp.dump());
-		} catch (const SQLite::Exception& e) {
+		}
+		catch (const SQLite::Exception& e)
+		{
 			route::logErr("POST /api/channels/:id/filler", e);
 			route::err(res, 409, e.what());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("POST /api/channels/:id/filler", e);
 			route::err(res, 400, e.what());
 		}
 	});
 
-	svr.Patch("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Patch("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res)
+	{
 		auto channel_id = req.path_params.at("id");
+		if (!currentUser() || !channel_auth::canMutateChannel(db_, guest_mutation_limiter_, *currentUser(), channel_id))
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		auto eid = std::stoi(req.path_params.at("eid"));
-		try {
+		try
+		{
 			auto b = json::parse(req.body);
 			ChannelRepository repo(db_);
-			if (b.contains("advancement"))
-				repo.updateFillerEntryField(eid, "advancement", b["advancement"].get<std::string>());
-			if (b.contains("weight"))
-				repo.updateFillerEntryField(eid, "weight", b["weight"].get<int>());
+			if (b.contains("advancement")) repo.updateFillerEntryField(eid, "advancement", b["advancement"].get<std::string>());
+			if (b.contains("weight")) repo.updateFillerEntryField(eid, "weight", b["weight"].get<int>());
 			schedule_cache_.clear(channel_id);
 			route::ok(res, json{{"ok", true}}.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("PATCH /api/channels/:id/filler/:eid", e);
 			route::err(res, 400, e.what());
 		}
 	});
 
-	svr.Delete("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res) {
-		if (!currentUser() || currentUser()->role != "admin") { route::err(res, 403, "Forbidden"); return; }
+	svr.Delete("/api/channels/:id/filler/:eid", [this](const Req& req, Res& res)
+	{
 		auto channel_id = req.path_params.at("id");
+		if (!currentUser() || !channel_auth::canMutateChannel(db_, guest_mutation_limiter_, *currentUser(), channel_id))
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
 		auto eid = std::stoi(req.path_params.at("eid"));
-		try {
+		try
+		{
 			ChannelRepository(db_).removeFillerEntry(eid);
 			schedule_cache_.clear(channel_id);
 			route::ok(res, json{{"deleted", eid}}.dump());
-		} catch (const std::exception& e) {
+		}
+		catch (const std::exception& e)
+		{
 			route::logErr("DELETE /api/channels/:id/filler/" + std::to_string(eid), e);
 			route::err(res, 500, e.what());
 		}

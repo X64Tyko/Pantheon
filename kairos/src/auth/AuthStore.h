@@ -44,6 +44,14 @@ struct AuthUser
 	// password. Drives the "Guest" badge/self-service routes in Hades and
 	// the guest-only self-service routes in AuthService.cpp.
 	bool is_guest = false;
+	// Per-account admin grant — lets this non-admin user create/edit their own
+	// channel via the channel builder (see channel_auth::canEditChannel).
+	// Same shape as `restricted`: an individual account flag, not a
+	// server-wide setting, since real named accounts are provisioned
+	// individually (unlike guests — see guest_settings::channelBuilderEnabled
+	// for their server-wide equivalent). Meaningless for a guest account,
+	// which uses that separate guest-wide toggle instead.
+	bool channel_builder_enabled = false;
 	// Most recent session.last_seen across every session this account has
 	// ever held, or created_at if it's never had one — only populated by
 	// listUsers() (for the admin Users page's "last active" column), not by
@@ -133,6 +141,11 @@ public:
 						   const std::string& max_tv_rating,
 						   const std::string& max_movie_rating,
 						   const std::string& max_channel_rating);
+
+	// Admin grant of channel-builder access to one named account — separate
+	// concern from updateRestriction, same "own PATCH so the Users page can
+	// save one thing without resending another" reasoning.
+	void updateChannelBuilderEnabled(const std::string& user_id, bool enabled);
 
 	// Self-service, unlike the admin-only settings above — any logged-in
 	// user calls this on their own user_id (see AuthService.cpp's

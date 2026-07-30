@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { channelStore } from '../stores'
 import { api } from '../api/client'
+import {useAuth} from '../auth/AuthContext'
 import type { Channel, ChannelExport, EpgProgram, ExportDepth, ImportPreviewResult } from '../api/types'
-import { BLOCK_META, DAYS } from '../channel/constants'
+import {BLOCK_META, DAYS, TIMEZONE_SUGGESTIONS} from '../channel/constants'
 import { todayEpgDay } from '../channel/utils'
 import { msToTzMins, mergeFiller, localDateStr } from '../channel/EpgPreview'
 import ArrAddModal from '../components/ArrAddModal'
@@ -22,6 +23,8 @@ function triggerJsonDownload(data: object, filename: string) {
 
 export default observer(function ChannelsPage() {
   const store = channelStore
+    const {user} = useAuth()
+    const isAdmin = user?.role === 'admin'
   const [showAdd, setShowAdd]           = useState(false)
   const [form, setForm]                 = useState({ name: '', number: '', timezone: 'UTC' })
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
@@ -36,6 +39,32 @@ export default observer(function ChannelsPage() {
   const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null)
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+    // Non-admin channel-builder access is gated two different ways — a guest
+    // via the server-wide guest_channel_builder_enabled toggle, a real named
+    // account via the per-user grant already on their own user object (see
+    // AuthStore::updateChannelBuilderEnabled). Fetched from public-settings
+    // since it must be readable before/without admin rights, same reasoning
+    // as guest_profiles_enabled there.
+    const [guestBuilderSettings, setGuestBuilderSettings] = useState<{
+        enabled: boolean; maxDemoChannels: number
+    } | null>(null)
+    useEffect(() => {
+        if (isAdmin) return
+        api.getPublicSettings().then(s => setGuestBuilderSettings({
+            enabled: s.guest_channel_builder_enabled,
+            maxDemoChannels: s.guest_max_demo_channels,
+        })).catch(() => {
+        })
+    }, [isAdmin])
+
+    const ownedCount = user ? store.channels.filter(c => c.owner_user_id === user.user_id).length : 0
+    const canBuild = isAdmin || (user?.is_guest
+        ? !!guestBuilderSettings?.enabled
+        : !!user?.channel_builder_enabled)
+    const buildQuota = user?.is_guest ? (guestBuilderSettings?.maxDemoChannels ?? 1) : Infinity
+    const canAddMore = canBuild && ownedCount < buildQuota
+    const canEdit = (ch: Channel) => isAdmin || ch.owner_user_id === user?.user_id
 
   useEffect(() => { store.fetchAll() }, [])
 
@@ -110,15 +139,33 @@ export default observer(function ChannelsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-zinc-100">Channels</h1>
         <div className="flex gap-2">
-          <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImportFile} />
-          <button onClick={() => fileRef.current?.click()} className="btn-secondary">
-            Import Channel
-          </button>
-          <button onClick={() => setShowAdd(v => !v)} className="btn-primary" data-tour="add-channel-btn">
-            + Add Channel
-          </button>
+            {isAdmin && (
+                <>
+                    <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImportFile}/>
+                    <button onClick={() => fileRef.current?.click()} className="btn-secondary">
+                        Import Channel
+                    </button>
+                </>
+            )}
+            {canAddMore && (
+                <button onClick={() => setShowAdd(v => !v)} className="btn-primary" data-tour="add-channel-btn">
+                    + Add Channel
+                </button>
+            )}
         </div>
       </div>
+
+        {!isAdmin && user?.is_guest && !canBuild && (
+            <p className="text-zinc-600 text-sm">
+                Channel building isn't available on this server right now — you can still browse and watch the channels
+                below.
+            </p>
+        )}
+        {!isAdmin && canBuild && !canAddMore && (
+            <p className="text-zinc-600 text-sm">
+                You've reached your channel limit ({buildQuota}). Remove one to build another.
+            </p>
+        )}
 
       {store.error && (
         <div className="text-red-400 text-sm bg-red-950/30 border border-red-900/40 rounded-lg p-3">
@@ -185,11 +232,16 @@ export default observer(function ChannelsPage() {
               className="input"
             />
             <input
-              placeholder="Timezone  (e.g. America/Chicago)"
+                list="new-channel-tz-suggestions"
+                placeholder="Timezone (e.g. America/Chicago)"
               value={form.timezone}
               onChange={e => setForm({ ...form, timezone: e.target.value })}
               className="input"
+                spellCheck={false}
             />
+              <datalist id="new-channel-tz-suggestions">
+                  {TIMEZONE_SUGGESTIONS.map(tz => <option key={tz} value={tz}/>)}
+              </datalist>
           </div>
           <div className="flex gap-2">
             <button onClick={add} className="btn-primary">Save</button>
@@ -210,7 +262,15 @@ export default observer(function ChannelsPage() {
                   {ch.number}
                 </span>
                 <div>
-                  <div className="font-medium text-sm text-zinc-100">{ch.name}</div>
+                    <div className="font-medium text-sm text-zinc-100 flex items-center gap-1.5">
+                        {ch.name}
+                        {ch.is_demo && (
+                            <span
+                                className="text-[9px] font-mono uppercase tracking-widest text-amber-500 border border-amber-700/50 rounded px-1">
+                        demo
+                      </span>
+                        )}
+                    </div>
                   <div className="text-[10px] text-zinc-600 mt-0.5">{ch.timezone}</div>
                 </div>
               </div>
@@ -218,11 +278,13 @@ export default observer(function ChannelsPage() {
                 <Link to={`/player/channel/${ch.channel_id}`} className="btn-primary">
                   Watch
                 </Link>
-                <Link to={`/channels/${ch.channel_id}`} className="btn-secondary">
-                  Edit Schedule
-                </Link>
-                <ExportButton channel={ch} onExport={handleExport} />
-                {confirmRemove === ch.channel_id ? (
+                  {canEdit(ch) && (
+                      <Link to={`/channels/${ch.channel_id}`} className="btn-secondary">
+                          Edit Schedule
+                      </Link>
+                  )}
+                  {isAdmin && <ExportButton channel={ch} onExport={handleExport}/>}
+                  {canEdit(ch) && (confirmRemove === ch.channel_id ? (
                   <span className="flex items-center gap-1.5 text-xs">
                     <span className="text-red-400">Delete channel?</span>
                     <button
@@ -238,7 +300,7 @@ export default observer(function ChannelsPage() {
                   <button onClick={() => setConfirmRemove(ch.channel_id)} className="btn-danger">
                     Remove
                   </button>
-                )}
+                  ))}
               </div>
             </div>
             <ChannelGuideStrip channelId={ch.channel_id} timezone={ch.timezone} />

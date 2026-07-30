@@ -227,7 +227,9 @@ void Router::registerRoutes() {
 	sync_.setChapterDetectionManager(chapter_detect_mgr_.get());
 
 	ServiceContext ctx{db_, conf_, sync_, schedule_cache_,
-	                   materializer_, divergence_checker_, engine_, auth_, logs_, dl_, email_};
+		materializer_, divergence_checker_, engine_, auth_, logs_, dl_, email_,
+		guest_mutation_limiter_
+	};
 
 	services_.push_back(std::make_unique<AuthService>(ctx));
 	services_.push_back(std::make_unique<SourceService>(ctx));

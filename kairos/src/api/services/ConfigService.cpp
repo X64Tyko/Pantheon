@@ -4,6 +4,7 @@
 #include "../../conf/ConfStore.h"
 #include "../../conf/GuestSettings.h"
 #include "../../conf/SecuritySettings.h"
+#include "../../conf/ViewerSettings.h"
 #include "../../db/ConfigRepository.h"
 #include "../../db/ScheduleRepository.h"
 #include "../../db/SourceRepository.h"
@@ -81,6 +82,9 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			{"guest_profiles_enabled", guest_settings::enabled(db_)},
 			{"guest_idle_timeout_days", guest_settings::idleTimeoutDays(db_)},
 			{"guest_max_concurrent", guest_settings::maxConcurrent(db_)},
+			{"guest_channel_builder_enabled", guest_settings::channelBuilderEnabled(db_)},
+			{"guest_max_demo_channels", guest_settings::maxDemoChannels(db_)},
+			{"viewer_max_channels", viewer_settings::maxChannels(db_)},
 			// Raw stored value, not the OR-with-guest-profiles effective one —
 			// this is what the Settings page's own toggle reflects/edits; it
 			// shows (and forces) on whenever guest_profiles_enabled is also on,
@@ -117,6 +121,14 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 					  // deciding whether to show "Continue as Guest" at all),
 					  // same reasoning as every other field already here.
 					  {"guest_profiles_enabled", guest_settings::enabled(db_)},
+					  // Same "read pre-login/pre-auth" reasoning as
+					  // guest_profiles_enabled above — ChannelsPage needs these to
+					  // decide whether to show the guest demo builder UI at all, and
+					  // viewer_max_channels for the real-viewer builder's own quota
+					  // display.
+					  {"guest_channel_builder_enabled", guest_settings::channelBuilderEnabled(db_)},
+					  {"guest_max_demo_channels", guest_settings::maxDemoChannels(db_)},
+					  {"viewer_max_channels", viewer_settings::maxChannels(db_)},
 					  // The EFFECTIVE (already OR'd with guest_profiles_enabled)
 					  // value, unlike settingsJson's raw one above — this is what
 					  // ProfileSelectPage.tsx reads to decide whether an admin
@@ -232,6 +244,29 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			{
 				int n = b["guest_max_concurrent"].get<int>();
 				if (n >= 1 && n <= 1000) ConfigRepository(db_).setValue("guest_max_concurrent", std::to_string(n));
+			}
+			if (b.contains("guest_channel_builder_enabled") && b["guest_channel_builder_enabled"].is_boolean())
+			{
+				bool v = b["guest_channel_builder_enabled"].get<bool>();
+				// Meaningless (and a confusing state to persist) if guests can't
+				// even sign in — refuse rather than silently no-op, so the admin
+				// gets a clear error instead of a toggle that looks saved but isn't.
+				if (v && !guest_settings::enabled(db_))
+				{
+					route::err(res, 400, "guest_profiles_enabled must be on first");
+					return;
+				}
+				ConfigRepository(db_).setValue("guest_channel_builder_enabled", v ? "1" : "0");
+			}
+			if (b.contains("guest_max_demo_channels") && b["guest_max_demo_channels"].is_number_integer())
+			{
+				int n = b["guest_max_demo_channels"].get<int>();
+				if (n >= 1 && n <= 10) ConfigRepository(db_).setValue("guest_max_demo_channels", std::to_string(n));
+			}
+			if (b.contains("viewer_max_channels") && b["viewer_max_channels"].is_number_integer())
+			{
+				int n = b["viewer_max_channels"].get<int>();
+				if (n >= 1 && n <= 50) ConfigRepository(db_).setValue("viewer_max_channels", std::to_string(n));
 			}
 			// Empty means "unconfigured" to Router.cpp, which fails closed —
 			// reject it here instead of silently breaking channel advancement.

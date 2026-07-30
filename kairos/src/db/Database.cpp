@@ -2485,6 +2485,34 @@ namespace
 )SQL"
 		}
 
+		// ── v101: guest/viewer self-service channel building. owner_user_id is
+		//          NULL for every channel today (admin-owned, unchanged) or set
+		//          to the creating guest/viewer's user_id for a self-service
+		//          channel (see ChannelAuth.h). is_demo distinguishes a guest's
+		//          throwaway demo channel (excluded from the real lineup, see
+		//          EPGMaterializer) from a real viewer's persistent one (a full
+		//          lineup citizen); stored explicitly rather than inferred by
+		//          joining against user.is_guest so lineup visibility doesn't
+		//          change if the owning account is later deleted or promoted.
+		//          ON DELETE CASCADE means a removed guest's demo channel (and
+		//          everything under it — block/timeslot_slot/
+		//          channel_filler_entry, all already cascading from
+		//          channel_id) is cleaned up for free by AuthStore::
+		//          pruneIdleGuests / self-delete, no new cleanup code needed.
+		//          user.channel_builder_enabled is a per-account admin grant
+		//          (see AuthStore::updateChannelBuilderEnabled), same shape as
+		//          `restricted`, deliberately not a server-wide setting — real
+		//          named accounts are provisioned individually, unlike guests.
+		,
+		{
+			101, R"SQL(
+    ALTER TABLE channel ADD COLUMN owner_user_id TEXT REFERENCES user(user_id) ON DELETE CASCADE;
+    ALTER TABLE channel ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS idx_channel_owner ON channel(owner_user_id);
+    ALTER TABLE user ADD COLUMN channel_builder_enabled INTEGER NOT NULL DEFAULT 0;
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

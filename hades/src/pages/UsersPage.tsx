@@ -38,11 +38,13 @@ interface EditState {
   maxTv:      string
   maxMovie:   string
   maxChannel: string
+    channelBuilderEnabled: boolean
 }
 
 const editStateFor = (u: User): EditState => ({
   userId: u.user_id, password: '', role: u.role,
   restricted: u.restricted, maxTv: u.max_tv_rating, maxMovie: u.max_movie_rating, maxChannel: u.max_channel_rating,
+    channelBuilderEnabled: u.channel_builder_enabled,
 })
 
 export default observer(function UsersPage() {
@@ -114,6 +116,12 @@ export default observer(function UsersPage() {
         max_movie_rating:   editing.maxMovie,
         max_channel_rating: editing.maxChannel,
       })
+        // Meaningless for a guest account (they use the separate guest-wide
+        // toggle on the Settings page instead) — editStateFor still seeds it
+        // from u.channel_builder_enabled, but the checkbox itself is hidden
+        // for guest rows, so this is always the account's existing value for
+        // them and a harmless no-op write.
+        await store.updateChannelBuilder(editing.userId, editing.channelBuilderEnabled)
       setEditing(null)
     } catch (err: any) {
       setEditError(err.message ?? 'Failed to update user')
@@ -352,6 +360,19 @@ export default observer(function UsersPage() {
                       </div>
                     )}
                   </div>
+
+                    {!u.is_guest && (
+                        <div className={styles.editSection}>
+                            <label className={styles.checkboxLabel}>
+                                <input type="checkbox" checked={editing.channelBuilderEnabled}
+                                       onChange={e => setEditing(s => s && ({
+                                           ...s,
+                                           channelBuilderEnabled: e.target.checked
+                                       }))}/>
+                                Channel builder access <span className={styles.fieldLabelHint}>(build and edit their own channel against the real library)</span>
+                            </label>
+                        </div>
+                    )}
 
                   <div className={styles.editSection}>
                     <div className={styles.pinRow}>

@@ -24,7 +24,17 @@ const navItems: { to: string; label: string; icon: React.ReactNode; adminOnly?: 
         </svg>
     },
   { to: '/sources',   label: 'Sources',   icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/></svg>, adminOnly: true },
-  { to: '/channels',  label: 'Channels',  icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="4" y="4" width="8" height="8" rx="1.5" transform="rotate(45 8 8)"/></svg>, adminOnly: true },
+    // Not adminOnly — /channels is reachable by any authenticated user now
+    // (guest demo channels, per-user-granted real-viewer channels), same
+    // reasoning as App.tsx pulling channels/channels/:id out from under
+    // <AdminRoute/>. The page itself renders admin-only actions conditionally.
+    {
+        to: '/channels',
+        label: 'Channels',
+        icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <rect x="4" y="4" width="8" height="8" rx="1.5" transform="rotate(45 8 8)"/>
+        </svg>
+    },
   { to: '/playlists', label: 'Playlists', icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="5.5"/><path d="M6 5.5l4 2.5-4 2.5V5.5z" fill="currentColor" stroke="none"/></svg>, adminOnly: true },
   // /filler is intentionally omitted from nav — accessed via channel context (ChannelFillerOverlay)
   { to: '/downloads', label: 'Downloads', icon: <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 2v8M5 7l3 3 3-3" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 12h10" strokeLinecap="round"/></svg>, adminOnly: true },
@@ -108,11 +118,22 @@ export default observer(function Layout() {
     tourStore.refreshCompletion()
   }, [user?.role, location.pathname])
 
-  // Connect the global SSE log stream once and keep it alive.
-  useEffect(() => { systemStore.connectLogs() }, [])
+    // Connect the global SSE log stream once and keep it alive. Admin-only
+    // route (see CHANGELOG's "/api/logs/stream ... now admin-only" security
+    // fix) — a viewer/guest session has no use for it and would otherwise
+    // just spend the whole session retrying a 403.
+    useEffect(() => {
+        if (user?.role !== 'admin') return
+        systemStore.connectLogs()
+    }, [user?.role])
 
-  // Status polling lifecycle — pause when tab is hidden.
+    // Status polling lifecycle — pause when tab is hidden. Every field this
+    // polls (sync/match/writeback status, full settings) is admin-only on the
+    // backend, same reasoning as the log stream above — a non-admin session
+    // would otherwise retry a 403 on a fixed interval for as long as the tab
+    // stays open.
   useEffect(() => {
+      if (user?.role !== 'admin') return
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
         statusStore.stopPolling()
@@ -126,7 +147,7 @@ export default observer(function Layout() {
       document.removeEventListener('visibilitychange', onVisibility)
       statusStore.stopPolling()
     }
-  }, [])
+  }, [user?.role])
 
   // Clear unread-error badge while the user is on the Activity page.
   useEffect(() => {

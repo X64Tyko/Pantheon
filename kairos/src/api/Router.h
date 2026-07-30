@@ -5,6 +5,7 @@
 #include "IKairosService.h"
 #include "ScheduleCache.h"
 #include "../scheduler/EPGDivergenceChecker.h"
+#include "../util/RateLimiter.h"
 
 class AuthStore;
 class ChapterDetectionManager;
@@ -18,30 +19,35 @@ class RuleEngine;
 class ScraperManager;
 class SyncManager;
 
-class Router {
+class Router
+{
 public:
 	Router(httplib::Server& svr, Database& db, SyncManager& sync,
-	       ConfStore& conf, LogBuffer& logs,
-	       RuleEngine& engine, EPGMaterializer& materializer,
-	       DownloadManager& dl, AuthStore& auth, EmailService& email);
+		   ConfStore& conf, LogBuffer& logs,
+		   RuleEngine& engine, EPGMaterializer& materializer,
+		   DownloadManager& dl, AuthStore& auth, EmailService& email);
 	~Router();
 	void registerRoutes();
 
 private:
-	httplib::Server&  svr_;
-	Database&         db_;
-	SyncManager&      sync_;
-	ConfStore&        conf_;
-	LogBuffer&        logs_;
-	RuleEngine&       engine_;
-	EPGMaterializer&  materializer_;
-	DownloadManager&  dl_;
-	AuthStore&        auth_;
-	EmailService&     email_;
+	httplib::Server& svr_;
+	Database& db_;
+	SyncManager& sync_;
+	ConfStore& conf_;
+	LogBuffer& logs_;
+	RuleEngine& engine_;
+	EPGMaterializer& materializer_;
+	DownloadManager& dl_;
+	AuthStore& auth_;
+	EmailService& email_;
 
-	ScheduleCache                                schedule_cache_;
-	EPGDivergenceChecker                         divergence_checker_;
-	std::unique_ptr<ScraperManager>              scraper_mgr_;
-	std::unique_ptr<ChapterDetectionManager>     chapter_detect_mgr_;
+	ScheduleCache schedule_cache_;
+	EPGDivergenceChecker divergence_checker_;
+	// Shared across ChannelService/BlockService/TimeslotService (not one
+	// instance per service) so a guest/real-viewer can't multiply their
+	// effective rate by spreading channel-builder calls across all three.
+	RateLimiter guest_mutation_limiter_;
+	std::unique_ptr<ScraperManager> scraper_mgr_;
+	std::unique_ptr<ChapterDetectionManager> chapter_detect_mgr_;
 	std::vector<std::unique_ptr<IKairosService>> services_;
 };

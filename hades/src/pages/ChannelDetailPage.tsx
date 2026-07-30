@@ -1,7 +1,8 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import {useParams, useNavigate, Link} from 'react-router-dom'
 import { channelStore } from '../stores'
+import {useAuth} from '../auth/AuthContext'
 import { store } from '../channel/store'
 import { DAYS, GUTTER_W, DAY_MIN_W, PPH_DEFAULT } from '../channel/constants'
 import { zoomBtnStyle } from '../channel/styles'
@@ -18,6 +19,8 @@ import styles from './ChannelDetailPage.module.css'
 
 export default observer(function ChannelDetailPage() {
   const { id } = useParams<{ id: string }>()
+    const navigate = useNavigate()
+    const {user} = useAuth()
   const channel   = channelStore.channels.find(c => c.channel_id === id)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -31,6 +34,22 @@ export default observer(function ChannelDetailPage() {
       }, 80)
     })
   }, [id])
+
+    // The full drag-and-drop editor below assumes write access to whatever
+    // channel it's pointed at — it predates non-admin access entirely, and
+    // teaching every panel (DayColumn, EditorPanel, BlockEditMain, ...) a
+    // parallel read-only mode is out of scope here. The server is the real
+    // authorization boundary (channel_auth::canEditChannel 403s every
+    // mutation regardless) — this is just a coarse client-side bounce away
+    // from an editor a non-owner would only see broken write attempts in,
+    // for someone who reached this URL directly rather than through
+    // ChannelsPage's own canEdit-gated "Edit Schedule" link.
+    useEffect(() => {
+        if (!channel || !user) return
+        if (user.role !== 'admin' && channel.owner_user_id !== user.user_id) {
+            navigate('/channels', {replace: true})
+        }
+    }, [channel, user, navigate])
 
   useEffect(() => {
     if (channel) store.initChannelDraft(channel)

@@ -283,7 +283,7 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token)
 		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating,
 		       s.purpose, u.must_change_password, u.pin_hash,
 		       u.default_audio_lang, u.default_subtitle_lang, u.default_landing_page,
-		       u.is_guest
+		       u.is_guest, u.channel_builder_enabled
 		FROM session s
 		JOIN user u ON u.user_id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ? AND s.last_seen > ?
@@ -294,19 +294,20 @@ std::optional<AuthUser> AuthStore::validate(const std::string& token)
 	if (!q.executeStep()) return std::nullopt;
 
 	AuthUser user;
-	user.user_id               = q.getColumn(0).getString();
-	user.username              = q.getColumn(1).getString();
-	user.role                  = q.getColumn(2).getString();
-	user.restricted            = q.getColumn(3).getInt() != 0;
-	user.max_tv_rating         = q.getColumn(4).getString();
-	user.max_movie_rating      = q.getColumn(5).getString();
-	user.max_channel_rating    = q.getColumn(6).getString();
-	user.must_change_password  = q.getColumn(8).getInt() != 0;
-	user.has_pin               = !q.getColumn(9).isNull();
-	user.default_audio_lang    = q.getColumn(10).getString();
-	user.default_subtitle_lang = q.getColumn(11).getString();
-	user.default_landing_page  = q.getColumn(12).getString();
-	user.is_guest              = q.getColumn(13).getInt() != 0;
+	user.user_id                 = q.getColumn(0).getString();
+	user.username                = q.getColumn(1).getString();
+	user.role                    = q.getColumn(2).getString();
+	user.restricted              = q.getColumn(3).getInt() != 0;
+	user.max_tv_rating           = q.getColumn(4).getString();
+	user.max_movie_rating        = q.getColumn(5).getString();
+	user.max_channel_rating      = q.getColumn(6).getString();
+	user.must_change_password    = q.getColumn(8).getInt() != 0;
+	user.has_pin                 = !q.getColumn(9).isNull();
+	user.default_audio_lang      = q.getColumn(10).getString();
+	user.default_subtitle_lang   = q.getColumn(11).getString();
+	user.default_landing_page    = q.getColumn(12).getString();
+	user.is_guest                = q.getColumn(13).getInt() != 0;
+	user.channel_builder_enabled = q.getColumn(14).getInt() != 0;
 
 	// A 'cast'-purpose session (minted for handing off to a Cast receiver,
 	// see mintCastToken) is always viewer-capped — this is the actual
@@ -339,7 +340,7 @@ std::vector<AuthUser> AuthStore::listUsers() const
 	SQLite::Statement q(db_.get(), R"(
 		SELECT u.user_id, u.username, u.role,
 		       u.restricted, u.max_tv_rating, u.max_movie_rating, u.max_channel_rating, u.must_change_password,
-		       u.pin_hash, u.is_guest, COALESCE(s.last_seen, u.created_at)
+		       u.pin_hash, u.is_guest, COALESCE(s.last_seen, u.created_at), u.channel_builder_enabled
 		FROM user u
 		LEFT JOIN (SELECT user_id, MAX(last_seen) AS last_seen FROM session GROUP BY user_id) s
 			ON s.user_id = u.user_id
@@ -349,17 +350,18 @@ std::vector<AuthUser> AuthStore::listUsers() const
 	while (q.executeStep())
 	{
 		AuthUser u;
-		u.user_id              = q.getColumn(0).getString();
-		u.username             = q.getColumn(1).getString();
-		u.role                 = q.getColumn(2).getString();
-		u.restricted           = q.getColumn(3).getInt() != 0;
-		u.max_tv_rating        = q.getColumn(4).getString();
-		u.max_movie_rating     = q.getColumn(5).getString();
-		u.max_channel_rating   = q.getColumn(6).getString();
-		u.must_change_password = q.getColumn(7).getInt() != 0;
-		u.has_pin              = !q.getColumn(8).isNull();
-		u.is_guest             = q.getColumn(9).getInt() != 0;
-		u.last_seen            = q.getColumn(10).getInt64();
+		u.user_id                 = q.getColumn(0).getString();
+		u.username                = q.getColumn(1).getString();
+		u.role                    = q.getColumn(2).getString();
+		u.restricted              = q.getColumn(3).getInt() != 0;
+		u.max_tv_rating           = q.getColumn(4).getString();
+		u.max_movie_rating        = q.getColumn(5).getString();
+		u.max_channel_rating      = q.getColumn(6).getString();
+		u.must_change_password    = q.getColumn(7).getInt() != 0;
+		u.has_pin                 = !q.getColumn(8).isNull();
+		u.is_guest                = q.getColumn(9).getInt() != 0;
+		u.last_seen               = q.getColumn(10).getInt64();
+		u.channel_builder_enabled = q.getColumn(11).getInt() != 0;
 		result.push_back(std::move(u));
 	}
 	return result;
@@ -469,6 +471,14 @@ void AuthStore::updateRestriction(const std::string& user_id, bool restricted,
 	u.bind(3, max_movie_rating);
 	u.bind(4, max_channel_rating);
 	u.bind(5, user_id);
+	u.exec();
+}
+
+void AuthStore::updateChannelBuilderEnabled(const std::string& user_id, bool enabled)
+{
+	SQLite::Statement u(db_.get(), "UPDATE user SET channel_builder_enabled = ? WHERE user_id = ?");
+	u.bind(1, enabled ? 1 : 0);
+	u.bind(2, user_id);
 	u.exec();
 }
 

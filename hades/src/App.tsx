@@ -119,8 +119,20 @@ export default function App() {
                 <AdminRoute /> below, unlike SettingsPage. */}
             <Route path="account" element={<AccountPage />} />
 
-            {/* Everything else under Layout is admin-only — system/source/
-                channel configuration, scraper+credential settings, download
+              {/* Same "deliberately outside AdminRoute" reasoning as /account —
+                any authenticated viewer (guest or real account) can reach
+                the channel builder now, not just admin. ChannelsPage/
+                ChannelDetailPage render a read-only view themselves when
+                neither guest_channel_builder_enabled nor the caller's own
+                channel_builder_enabled grant applies; every actual mutation
+                is still authorized server-side per-resource by
+                channel_auth::canEditChannel regardless of what this route
+                lets through. */}
+              <Route path="channels" element={<ChannelsPage/>}/>
+              <Route path="channels/:id" element={<ChannelDetailPage/>}/>
+
+              {/* Everything else under Layout is admin-only — system/source
+                configuration, scraper+credential settings, download
                 triggering, and internal activity/logs. Viewers get browsing
                 (Home/Library), requesting content (from within Library's
                 detail view), and /tv. Nav-link visibility (Layout.tsx's
@@ -130,8 +142,6 @@ export default function App() {
                 shared source of truth for "admin-only" between them. */}
             <Route element={<AdminRoute />}>
               <Route path="sources"      element={<SourcesPage />} />
-              <Route path="channels"     element={<ChannelsPage />} />
-              <Route path="channels/:id" element={<ChannelDetailPage />} />
               <Route path="playlists"    element={<PlaylistPage />} />
               <Route path="filler"       element={<FillerPage />} />
               <Route path="downloads"    element={<DownloadPage />} />

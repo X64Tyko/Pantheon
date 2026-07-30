@@ -24,6 +24,11 @@ export interface User {
     // api.createGuest) — always role 'viewer'. Drives the "Guest" badge on
     // UsersPage and the guest-only self-service setup/delete UI.
     is_guest: boolean
+    // Admin grant of channel-builder access — see AuthStore::
+    // updateChannelBuilderEnabled. Meaningless for a guest account, which
+    // uses the separate guest_channel_builder_enabled server-wide setting
+    // (api.getPublicSettings) instead.
+    channel_builder_enabled: boolean
     // Epoch seconds — most recent activity across every session this account
     // has ever held (or created_at if it's never had one). Only meaningfully
     // populated on the admin Users list (api.getProfiles); 0 elsewhere.
@@ -286,6 +291,12 @@ export interface Channel {
   stream_video_bitrate?:    number  // kbps; 0 = CRF/CQ auto
   stream_audio_bitrate?:    number  // kbps; default 192
   content_tag?:             string  // admin-assigned rating tag, TV scale; empty = unrated (fails closed for restricted accounts)
+    // Server-derived on create (see POST /api/channels), never client-set —
+    // undefined/absent means an admin-owned channel, same as today.
+    // is_demo=true only for a guest's throwaway channel (excluded from the
+    // real lineup); a real viewer's owned channel has is_demo=false.
+    owner_user_id?: string
+    is_demo?: boolean
 }
 
 export interface AnchorSnapshot {

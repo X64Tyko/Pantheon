@@ -206,6 +206,10 @@ export const api = {
   deleteUser:  (id: string)                                 => request<void>('DELETE', `/users/${id}`),
   updateUserRestriction: (id: string, patch: { restricted: boolean; max_tv_rating: string; max_movie_rating: string; max_channel_rating: string }) =>
                                                              request<void>('PATCH', `/users/${id}/restriction`, patch),
+    // Admin grant of channel-builder access to one named account — same
+    // "own PATCH, own concern" reasoning as updateUserRestriction above.
+    updateUserChannelBuilder: (id: string, enabled: boolean) =>
+        request<void>('PATCH', `/users/${id}/channel-builder`, {channel_builder_enabled: enabled}),
   // Profile-switch PIN (admin-managed) — empty string clears it.
   setUserPin:  (id: string, pin: string)                    => request<void>('PATCH', `/users/${id}/pin`, { pin }),
   getUserOverrides:   (id: string)                          => request<ContentOverride[]>('GET', `/users/${id}/overrides`),
@@ -285,7 +289,9 @@ export const api = {
   getChannels:      ()                                                            => request<Channel[]>('GET',    '/channels'),
   checkChannelAccess: (id: string)                                                => request<{ allowed: boolean }>('GET', `/channels/${id}/access-check`),
   getChannelNow:      (id: string)                                                => request<ChannelNow>('GET', `/channels/${id}/now`),
-  createChannel:    (b: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection'>) => request<{channel_id: string}>('POST', '/channels', b),
+    createChannel: (b: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection' | 'owner_user_id' | 'is_demo'>) => request<{
+        channel_id: string
+    }>('POST', '/channels', b),
   updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes' | 'audio_lang' | 'subtitle_lang' | 'stream_resolution' | 'stream_video_bitrate' | 'stream_audio_bitrate' | 'content_tag'>>) => request<void>('PATCH', `/channels/${id}`, b),
   deleteChannel:    (id: string)                                                  => request<void>('DELETE', `/channels/${id}`),
   exportChannel:    (id: string, depth: ExportDepth)                              => request<ChannelExport>('GET', `/channels/${id}/export?depth=${depth}`),
@@ -626,6 +632,9 @@ export const api = {
         guest_profiles_enabled: boolean;
         guest_idle_timeout_days: number;
         guest_max_concurrent: number;
+        guest_channel_builder_enabled: boolean;
+        guest_max_demo_channels: number;
+        viewer_max_channels: number;
         require_admin_password_switch: boolean
     }>('GET', '/config/settings'),
   // Public read-only subset for internal services (Hephaestus, Hermes) and
@@ -638,6 +647,9 @@ export const api = {
         cast_app_id: string;
         default_landing_page: string;
         guest_profiles_enabled: boolean;
+        guest_channel_builder_enabled: boolean;
+        guest_max_demo_channels: number;
+        viewer_max_channels: number;
         require_admin_password_switch: boolean
     }>('GET', '/config/public-settings'),
   // user_id: best-effort attribution (see auth/AuthContext.tsx's
@@ -661,6 +673,9 @@ export const api = {
         guest_profiles_enabled: boolean;
         guest_idle_timeout_days: number;
         guest_max_concurrent: number;
+        guest_channel_builder_enabled: boolean;
+        guest_max_demo_channels: number;
+        viewer_max_channels: number;
         require_admin_password_switch: boolean
     }>) => request<{
         epg_debug: boolean;
@@ -677,6 +692,9 @@ export const api = {
         guest_profiles_enabled: boolean;
         guest_idle_timeout_days: number;
         guest_max_concurrent: number;
+        guest_channel_builder_enabled: boolean;
+        guest_max_demo_channels: number;
+        viewer_max_channels: number;
         require_admin_password_switch: boolean
     }>('PATCH', '/config/settings', b),
   clearAllEpg:    ()                                                     => request<{ cleared: number }>('POST', '/config/epg/clear-all'),

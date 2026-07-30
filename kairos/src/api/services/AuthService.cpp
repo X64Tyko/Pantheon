@@ -39,6 +39,7 @@ namespace
 			{"default_subtitle_lang", u.default_subtitle_lang},
 			{"default_landing_page", u.default_landing_page},
 			{"is_guest", u.is_guest},
+			{"channel_builder_enabled", u.channel_builder_enabled},
 			{"last_seen", u.last_seen},
 		};
 	}
@@ -509,6 +510,31 @@ void AuthService::registerRoutes(httplib::Server& svr)
 			body.value("max_tv_rating", "TV-Y"),
 			body.value("max_movie_rating", "G"),
 			body.value("max_channel_rating", "TV-Y"));
+		route::ok(res, json{{"ok", true}}.dump());
+	});
+
+	// Per-account grant of channel-builder access — same "own PATCH, own
+	// concern" reasoning as /restriction above. Deliberately a per-user flag
+	// rather than a server-wide setting: real named accounts are provisioned
+	// individually, unlike guests (see guest_settings::channelBuilderEnabled
+	// for their equivalent, server-wide toggle).
+	svr.Patch("/api/users/:id/channel-builder", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		json body;
+		try { body = json::parse(req.body); }
+		catch (...)
+		{
+			route::err(res, 400, "Invalid JSON");
+			return;
+		}
+		auth_.updateChannelBuilderEnabled(
+			req.path_params.at("id"),
+			body.value("channel_builder_enabled", false));
 		route::ok(res, json{{"ok", true}}.dump());
 	});
 
