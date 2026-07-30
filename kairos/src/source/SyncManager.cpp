@@ -2100,7 +2100,7 @@ void SyncManager::refreshSmartPlaylists() {
 		while (q.executeStep())
 		{
 			defs.push_back({
-                q.getColumn(0).getString(), q.getColumn(1).getString(),
+				q.getColumn(0).getString(), q.getColumn(1).getString(),
                 q.getColumn(2).getString(), q.getColumn(3).getString(),
                 q.getColumn(5).getString(),
                 q.getColumn(4).getInt(), q.getColumn(6).getInt() != 0
@@ -2110,8 +2110,8 @@ void SyncManager::refreshSmartPlaylists() {
 	if (defs.empty())
 	{
 		std::cout << "[sync] smart playlist refresh: nothing to refresh (no smart playlists defined)" << std::endl;
-        return;
-    }
+		return;
+	}
 
     std::cout << "[sync] refreshing " << defs.size() << " smart playlist(s)" << std::endl;
 
@@ -2138,13 +2138,13 @@ void SyncManager::refreshSmartPlaylists() {
 				SQLite::Statement q(sync_db_,
 									"SELECT m.movie_id FROM movie m WHERE (" + compiled.sql + ")" +
 									smartOrderBySql(def.smart_sort, "m", false, def.smart_sort_dir) + limit_clause);
-                for (size_t i = 0; i < compiled.binds.size(); ++i) q.bind(static_cast<int>(i) + 1, compiled.binds[i]);
+				for (size_t i = 0; i < compiled.binds.size(); ++i) q.bind(static_cast<int>(i) + 1, compiled.binds[i]);
                 while (q.executeStep()) items.push_back({"movie", q.getColumn(0).getString()});
 			}
 			else if (def.smart_expand_episodes)
 			{
 				// See PlaylistRepository::refreshSmart's identical branch —
-                // flattens to a per-episode list under `smart_sort` (any
+				// flattens to a per-episode list under `smart_sort` (any
                 // mode) instead of shows-then-dump-each-show's-entire-run.
 				// smart_limit is an episode cap here. Unlike refreshSmart,
 				// this background pass has no specific viewer, so a
@@ -2163,20 +2163,20 @@ void SyncManager::refreshSmartPlaylists() {
 				// watch_state stays unresolved (no-op) for this background
 				// pass regardless of sort mode.
 				auto compiled = compileFilterExpr(def.filter_expr, FilterEntity::Show, "s");
-                SQLite::Statement q(sync_db_,
-                    "SELECT s.show_id FROM show s WHERE (" + compiled.sql + ")" +
-                    smartOrderBySql(def.smart_sort, "s", true, def.smart_sort_dir) + limit_clause);
+				SQLite::Statement q(sync_db_,
+									"SELECT s.show_id FROM show s WHERE (" + compiled.sql + ")" +
+									smartOrderBySql(def.smart_sort, "s", true, def.smart_sort_dir) + limit_clause);
 				for (size_t i = 0; i < compiled.binds.size(); ++i) q.bind(static_cast<int>(i) + 1, compiled.binds[i]);
 				std::vector<std::string> show_ids;
-                while (q.executeStep()) show_ids.push_back(q.getColumn(0).getString());
+				while (q.executeStep()) show_ids.push_back(q.getColumn(0).getString());
 
-                for (const auto& show_id : show_ids) {
+				for (const auto& show_id : show_ids) {
                     SQLite::Statement eq(sync_db_,
 										 "SELECT episode_id FROM episode WHERE show_id = ? AND season > 0 ORDER BY season, episode");
 					eq.bind(1, show_id);
-                    while (eq.executeStep()) items.push_back({"episode", eq.getColumn(0).getString()});
-                }
-            }
+					while (eq.executeStep()) items.push_back({"episode", eq.getColumn(0).getString()});
+				}
+			}
 
             SQLite::Transaction txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
             SQLite::Statement del(sync_db_, "DELETE FROM playlist_item WHERE playlist_id = ?");
