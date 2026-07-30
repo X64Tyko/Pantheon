@@ -8,12 +8,13 @@
 
 class Database;
 
-struct PlaylistItemRow {
-    int64_t id = 0;
-    int position = 0;
-    std::string item_type, item_id, title;
-    int64_t duration_ms = 0;
-    std::optional<int> season, episode;
+struct PlaylistItemRow
+{
+	int64_t id   = 0;
+	int position = 0;
+	std::string item_type, item_id, title;
+	int64_t duration_ms = 0;
+	std::optional<int> season, episode;
 };
 
 // Smart-membership fields (Database.cpp migration 87) — a "smart" playlist's
@@ -22,13 +23,22 @@ struct PlaylistItemRow {
 // rather than resolved live on every read, so channel/block cursors (which
 // point at playlist_item.position) never see membership shift out from
 // under them mid-read the way a truly live query could.
-struct SmartPlaylistFields {
-    std::string membership  = "static"; // "static" | "smart"
-    std::string filter_expr;
-    std::string smart_type  = "movie";  // "show" | "movie"
-    std::string smart_sort  = "title";
-    int smart_limit = 0;                // <= 0 = unlimited
-    std::optional<int64_t> last_smart_refresh_at;
+struct SmartPlaylistFields
+{
+	std::string membership = "static"; // "static" | "smart"
+	std::string filter_expr;
+	std::string smart_type = "movie"; // "show" | "movie" | "mixed"
+	std::string smart_sort = "title";
+	// "" (default) = each sort mode's own natural direction, same
+	// "" |"asc"|"desc" convention as ShowSearchParams::sort_dir.
+	std::string smart_sort_dir;
+	// Show-typed only: flatten to a per-episode list under `smart_sort`
+	// (any mode, via MixedSort.h's fetchMixedEpisodeRows/sortMixedRows)
+	// instead of the default "sort the shows, list each one's episodes in
+	// season order" grouping.
+	bool smart_expand_episodes = false;
+	int smart_limit            = 0; // <= 0 = unlimited
+	std::optional<int64_t> last_smart_refresh_at;
 };
 
 // Home-shelf fields (Database.cpp migration 88) — a home shelf is just a
@@ -38,126 +48,146 @@ struct SmartPlaylistFields {
 // actual playlist membership/scheduling. home_active_start/end (MM-DD, both
 // empty = always shown) gate a shelf to a date window — see
 // PlaylistService.cpp's inActiveWindow for the wraparound-safe check.
-struct HomeShelfFields {
-    bool show_on_home = false;
-    int  home_order = 0;
-    int  home_tile_limit = 16;
-    std::string home_active_start, home_active_end;
+struct HomeShelfFields
+{
+	bool show_on_home   = false;
+	int home_order      = 0;
+	int home_tile_limit = 16;
+	std::string home_active_start, home_active_end;
 };
 
 // Library "Playlists" section tile — a pasted URL, same override convention
 // shows/movies already use (served via the existing generic
 // /api/images/proxy, no new upload infra). Empty = frontend falls back to a
 // client-side collage of the first few items' own posters.
-struct PlaylistPosterFields {
-    std::string poster_source;
+struct PlaylistPosterFields
+{
+	std::string poster_source;
 };
 
-struct PlaylistRow : SmartPlaylistFields, HomeShelfFields, PlaylistPosterFields {
-    std::string playlist_id, title, mode;
-    int item_count = 0;
-    int64_t total_ms = 0;
-    std::optional<PlexLinkRow> plex_link;
+struct PlaylistRow : SmartPlaylistFields, HomeShelfFields, PlaylistPosterFields
+{
+	std::string playlist_id, title, mode;
+	int item_count   = 0;
+	int64_t total_ms = 0;
+	std::optional<PlexLinkRow> plex_link;
 };
 
-struct PlaylistDetail : SmartPlaylistFields, HomeShelfFields, PlaylistPosterFields {
-    std::string playlist_id, title, mode;
-    std::vector<PlaylistItemRow> items;
+struct PlaylistDetail : SmartPlaylistFields, HomeShelfFields, PlaylistPosterFields
+{
+	std::string playlist_id, title, mode;
+	std::vector<PlaylistItemRow> items;
 };
 
-class PlaylistRepository {
+class PlaylistRepository
+{
 public:
-    explicit PlaylistRepository(Database& db);
+	explicit PlaylistRepository(Database& db);
 
-    // Create a new empty playlist; returns playlist_id.
-    std::string create(const std::string& title, const std::string& mode = "sequential");
+	// Create a new empty playlist; returns playlist_id.
+	std::string create(const std::string& title, const std::string& mode = "sequential");
 
-    // Single-field string update.
-    void updateField(const std::string& playlist_id, const std::string& col,
-                     const std::string& val);
+	// Single-field string update.
+	void updateField(const std::string& playlist_id, const std::string& col,
+					 const std::string& val);
 
-    void remove(const std::string& playlist_id);
+	void remove(const std::string& playlist_id);
 
-    // Remove the plex_list_link record; items are kept.
-    void unlinkPlex(const std::string& playlist_id);
+	// Remove the plex_list_link record; items are kept.
+	void unlinkPlex(const std::string& playlist_id);
 
-    std::vector<PlaylistRow>      listAll();
-    std::optional<PlaylistDetail> getDetail(const std::string& playlist_id);
+	std::vector<PlaylistRow> listAll();
+	std::optional<PlaylistDetail> getDetail(const std::string& playlist_id);
 
-    // Lightweight, any-authenticated-user summary for the Library's
-    // Playlists section tiles — unlike listAll()/getDetail() (admin-only,
-    // full editing internals), this is just the tile-rendering fields plus
-    // the first few items (by position) for the client-side poster-collage
-    // fallback when poster_source is empty.
-    struct BrowseItemRef { std::string item_type, item_id; };
-    struct BrowseEntry {
-        std::string playlist_id, title, mode, poster_source;
-        int item_count = 0;
-        int64_t total_ms = 0;
-        std::vector<BrowseItemRef> preview_items;
-    };
-    std::vector<BrowseEntry> listBrowse();
+	// Lightweight, any-authenticated-user summary for the Library's
+	// Playlists section tiles — unlike listAll()/getDetail() (admin-only,
+	// full editing internals), this is just the tile-rendering fields plus
+	// the first few items (by position) for the client-side poster-collage
+	// fallback when poster_source is empty.
+	struct BrowseItemRef
+	{
+		std::string item_type, item_id;
+	};
 
-    // Home shelf definitions — every smart playlist with show_on_home=1
-    // whose active window (if any) includes today, ordered by home_order.
-    // Static playlists are excluded: a shelf needs a filter to hand to
-    // getShows/getMovies the same way the Home page's own built-in shelves
-    // already work; a static playlist's explicit item list has no such
-    // representation without a separate item-resolution path.
-    struct HomeShelfRow {
-        std::string playlist_id, title, smart_type, filter_expr, smart_sort;
-        int home_tile_limit = 16;
-    };
-    std::vector<HomeShelfRow> listHomeShelves();
+	struct BrowseEntry
+	{
+		std::string playlist_id, title, mode, poster_source;
+		int item_count   = 0;
+		int64_t total_ms = 0;
+		std::vector<BrowseItemRef> preview_items;
+	};
 
-    // Add one item; returns {rowid, position}.
-    std::pair<int64_t, int> addItem(const std::string& playlist_id,
-                                     const std::string& item_type,
-                                     const std::string& item_id);
+	std::vector<BrowseEntry> listBrowse();
 
-    // Bulk-add items in a single transaction; returns count added.
-    int addItems(const std::string& playlist_id,
-                 const std::vector<std::pair<std::string, std::string>>& items);
+	// Home shelf definitions — every smart playlist with show_on_home=1
+	// whose active window (if any) includes today, ordered by home_order.
+	// Static playlists are excluded: a shelf needs a filter to hand to
+	// getShows/getMovies the same way the Home page's own built-in shelves
+	// already work; a static playlist's explicit item list has no such
+	// representation without a separate item-resolution path.
+	struct HomeShelfRow
+	{
+		std::string playlist_id, title, smart_type, filter_expr, smart_sort, smart_sort_dir;
+		bool smart_expand_episodes = false;
+		int home_tile_limit        = 16;
+	};
 
-    // Remove item and renumber subsequent positions.
-    void removeItem(int item_id, const std::string& playlist_id);
+	std::vector<HomeShelfRow> listHomeShelves();
 
-    // Move item to new_position (simple position update).
-    void moveItem(int item_id, const std::string& playlist_id, int new_position);
+	// Add one item; returns {rowid, position}.
+	std::pair<int64_t, int> addItem(const std::string& playlist_id,
+									const std::string& item_type,
+									const std::string& item_id);
 
-    // Expand block content entries to flat {item_type, item_id} pairs.
-    std::vector<std::pair<std::string, std::string>>
-        expandBlockItems(const std::string& block_id);
+	// Bulk-add items in a single transaction; returns count added.
+	int addItems(const std::string& playlist_id,
+				 const std::vector<std::pair<std::string, std::string>>& items);
 
-    // Expand block content to episodes/movies, create playlist + items in a transaction.
-    // Returns {playlist_id, item_count}.
-    std::pair<std::string, int> createFromBlock(const std::string& block_id,
-                                                 const std::string& title);
+	// Remove item and renumber subsequent positions.
+	void removeItem(int item_id, const std::string& playlist_id);
 
-    void upsertPlexLink(const std::string& list_type, const std::string& list_id,
-                        const std::string& source_id, const std::string& external_id,
-                        const std::string& plex_type);
+	// Move item to new_position (simple position update).
+	void moveItem(int item_id, const std::string& playlist_id, int new_position);
 
-    // Looks up an existing link (pull *or* push both go through the same
-    // plex_list_link row — see PlaylistPushHelper.cpp) so a push knows
-    // whether to create a brand-new remote list or reconcile an already-
-    // linked one. nullopt if this list has never been linked to anything.
-    std::optional<PlexLinkRow> getLink(const std::string& list_type, const std::string& list_id);
+	// Expand block content entries to flat {item_type, item_id} pairs.
+	std::vector<std::pair<std::string, std::string>> expandBlockItems(const std::string& block_id);
 
-    // Replace all items in a list (playlist or filler_list) with the given set.
-    // list_type must be "playlist" or "filler_list".
-    void replaceListItems(const std::string& list_type,
-                          const std::string& list_id,
-                          const std::vector<std::pair<std::string, std::string>>& items);
+	// Expand block content to episodes/movies, create playlist + items in a transaction.
+	// Returns {playlist_id, item_count}.
+	std::pair<std::string, int> createFromBlock(const std::string& block_id,
+												const std::string& title);
 
-    // Recomputes one smart playlist's items from its stored filter_expr and
-    // writes them via replaceListItems, then stamps last_smart_refresh_at.
-    // Throws if the playlist doesn't exist or isn't membership='smart'. Runs
-    // synchronously on the caller's connection (the main API thread's db_) —
-    // see SyncManager::refreshSmartPlaylists for the equivalent bulk/
-    // background-thread pass used by the regular sync cycle.
-    int refreshSmart(const std::string& playlist_id);
+	void upsertPlexLink(const std::string& list_type, const std::string& list_id,
+						const std::string& source_id, const std::string& external_id,
+						const std::string& plex_type);
+
+	// Looks up an existing link (pull *or* push both go through the same
+	// plex_list_link row — see PlaylistPushHelper.cpp) so a push knows
+	// whether to create a brand-new remote list or reconcile an already-
+	// linked one. nullopt if this list has never been linked to anything.
+	std::optional<PlexLinkRow> getLink(const std::string& list_type, const std::string& list_id);
+
+	// Replace all items in a list (playlist or filler_list) with the given set.
+	// list_type must be "playlist" or "filler_list".
+	void replaceListItems(const std::string& list_type,
+						  const std::string& list_id,
+						  const std::vector<std::pair<std::string, std::string>>& items);
+
+	// Recomputes one smart playlist's items from its stored filter_expr and
+	// writes them via replaceListItems, then stamps last_smart_refresh_at.
+	// Throws if the playlist doesn't exist or isn't membership='smart'. Runs
+	// synchronously on the caller's connection (the main API thread's db_) —
+	// see SyncManager::refreshSmartPlaylists for the equivalent bulk/
+	// background-thread pass used by the regular sync cycle (which has no
+	// specific viewer, so it always leaves user_id empty).
+	// user_id (the caller who triggered this refresh) scopes a show-typed
+	// playlist's `watch_state:X` clause to per-episode "have I watched this
+	// one" rather than the whole-show interpretation Show/Movie filtering
+	// gives it elsewhere — see FilterExpr.h's extractWatchState. Empty =
+	// that clause no-ops, same graceful-degradation convention as everywhere
+	// else watch_state needs a viewer it doesn't have.
+	int refreshSmart(const std::string& playlist_id, const std::string& user_id = "");
 
 private:
-    Database& db_;
+	Database& db_;
 };

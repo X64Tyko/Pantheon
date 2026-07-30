@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
+import {runInAction} from 'mobx'
+import {useNavigate} from 'react-router-dom'
 import { AccordionSection } from '../../channel/sections'
 import { libraryStore } from '../../stores/LibraryStore'
 import styles from './LibraryFilters.module.css'
@@ -15,7 +17,16 @@ const SORT_OPTIONS: { value: string; label: string; dirless?: boolean }[] = [
   { value: 'audience_rating',             label: 'Audience Rating' },
   { value: 'duration',                    label: 'Duration' },
   { value: 'recently_released_or_aired',  label: 'Recently Aired/Released' },
+    // Chronological (oldest premiere/release first) — distinct from the
+    // recency-based option above, which is always newest-first.
+    {value: 'air_date', label: 'Air/Release Date'},
   { value: 'random',                      label: 'Random', dirless: true },
+    // Only offered once "Include Episodes" is on — this reorders just the
+    // episode results (S1E1, S1E2… across shows, ignoring show-title
+    // grouping); shows/movies fall back to their default sort since they
+    // don't have season/episode numbers (see ContentRepository::searchShows/
+    // searchMovies's sort ternary, which no-ops on an unrecognized value).
+    {value: 'episode_number', label: 'Episode Number'},
   // Only offered once a `playlist:<id>` clause is active in the filter tree
   // (see the filter below) — meaningless otherwise, there's no playlist to
   // order by.
@@ -25,9 +36,20 @@ const SORT_OPTIONS: { value: string; label: string; dirless?: boolean }[] = [
 export const LibraryFilters = observer(function LibraryFilters() {
   const [typeOpen, setTypeOpen] = useState(true)
   const [sortOpen, setSortOpen] = useState(true)
+    const navigate = useNavigate()
+
+    const handleSaveSmartPlaylist = async () => {
+        try {
+            const id = await libraryStore.saveSmartPlaylist()
+            navigate(`/playlists?open=${id}`)
+        } catch { /* store surfaces the error via libraryStore.error */
+        }
+    }
 
   const hasActivePlaylist = !!libraryStore.activePlaylistId
-  const visibleSortOptions = SORT_OPTIONS.filter(o => o.value !== 'playlist_order' || hasActivePlaylist)
+    const visibleSortOptions = SORT_OPTIONS.filter(o =>
+        (o.value !== 'playlist_order' || hasActivePlaylist) &&
+        (o.value !== 'episode_number' || libraryStore.includeEpisodes))
   const dirless = SORT_OPTIONS.find(o => o.value === libraryStore.sort)?.dirless ?? false
 
   return (
@@ -106,6 +128,41 @@ export const LibraryFilters = observer(function LibraryFilters() {
           )}
         </div>
       </AccordionSection>
+
+          {/* Captures the current filter/sort as a real smart playlist (see
+          LibraryStore.saveSmartPlaylist) — 'all' becomes a 'mixed' smart
+          playlist, same truly-interleaved show+movie ordering this page
+          itself now uses (see MixedSort.h). */}
+          <div className={styles.savePlaylistRow}>
+              {libraryStore.savingSmartPlaylist ? (
+                  <div className={styles.savePlaylistPrompt}>
+                      <input
+                          className="input text-xs"
+                          value={libraryStore.smartPlaylistTitle}
+                          onChange={e => runInAction(() => {
+                              libraryStore.smartPlaylistTitle = e.target.value
+                          })}
+                          onKeyDown={e => e.key === 'Enter' && handleSaveSmartPlaylist()}
+                          placeholder="Playlist title…"
+                          autoFocus
+                      />
+                      <div className={styles.savePlaylistActions}>
+                          <button className="btn-primary" disabled={libraryStore.smartPlaylistBusy}
+                                  onClick={handleSaveSmartPlaylist}>
+                              {libraryStore.smartPlaylistBusy ? 'Saving…' : 'Save'}
+                          </button>
+                          <button className="btn-ghost" disabled={libraryStore.smartPlaylistBusy}
+                                  onClick={() => libraryStore.cancelSaveSmartPlaylist()}>
+                              Cancel
+                          </button>
+                      </div>
+                  </div>
+              ) : (
+                  <button className="btn-secondary" onClick={() => libraryStore.startSaveSmartPlaylist()}>
+                      Save as Smart Playlist
+                  </button>
+              )}
+          </div>
       </aside>
     </>
   )

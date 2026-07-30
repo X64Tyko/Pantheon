@@ -1,7 +1,17 @@
 import {useEffect, useRef, useState, type CSSProperties} from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, mediaUrl } from '../api/client'
-import type { Show, Movie, ShowDetail, MovieDetail, ScraperStats, WatchProgress, HomePlaylistShelf, WatchTogetherSession } from '../api/types'
+import type {
+    Show,
+    Movie,
+    MixedMediaItem,
+    ShowDetail,
+    MovieDetail,
+    ScraperStats,
+    WatchProgress,
+    HomePlaylistShelf,
+    WatchTogetherSession
+} from '../api/types'
 import { resolvePlayPath } from '../player/resolvePlayTarget'
 import {joinWatchTogether} from '../player/watchTogetherApi'
 import { MediaDetailHero } from '../components/media/MediaDetailHero'
@@ -58,6 +68,51 @@ function proxyArt(item: Show | Movie) {
   return mediaUrl(isShow(item) ? `/api/shows/${item.show_id}/art` : `/api/movies/${item.movie_id}/art`)
 }
 
+function proxyMixedThumb(item: MixedMediaItem) {
+    if (!item.thumb) return undefined
+    return mediaUrl(`/api/${item.content_type}s/${item.id}/thumb`)
+}
+
+// MixedMediaItem -> ShelfEntry — a custom shelf renders every content_type
+// (show/movie/episode) through the same Shelf/ShelfCard, so an episode tile
+// just carries a directPlayPath (jump straight into playback, same as the
+// built-in Recently Aired shelf — there's no episode detail page to open)
+// plus its show title/S-E code for display, same convention as
+// ContinueWatchingCard's title/subtitle split.
+function mixedToShelfEntry(item: MixedMediaItem): ShelfEntry {
+    if (item.content_type === 'episode') {
+        return {
+            id: item.id, title: item.title, thumb_url: proxyMixedThumb(item),
+            content_type: 'episode', library_id: item.library_id,
+            directPlayPath: `/player/episode/${item.id}`,
+            episodeCode: `S${String(item.season ?? 0).padStart(2, '0')}E${String(item.episode ?? 0).padStart(2, '0')}`,
+            showTitle: item.show_title,
+        }
+    }
+    return {
+        id: item.id, title: item.title, year: item.year,
+        thumb_url: proxyMixedThumb(item), rating: item.audience_rating,
+        content_type: item.content_type, library_id: item.library_id,
+    }
+}
+
+// Show/Movie -> MixedMediaItem — lets a custom shelf's items be one uniform
+// shape regardless of its smart_type, instead of splitting shelves by type.
+function showToMixed(s: Show): MixedMediaItem {
+    return {
+        content_type: 'show', id: s.show_id, title: s.title, thumb: s.thumb, library_id: s.library_id,
+        year: s.year, audience_rating: s.audience_rating,
+        watched: s.watched_episode_count > 0, view_count: s.watched_episode_count, episode_count: s.episode_count,
+    }
+}
+
+function movieToMixed(m: Movie): MixedMediaItem {
+    return {
+        content_type: 'movie', id: m.movie_id, title: m.title, thumb: m.thumb, library_id: m.library_id,
+        year: m.year, audience_rating: m.audience_rating, watched: !!m.watched, view_count: m.view_count ?? 0,
+    }
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
@@ -81,8 +136,14 @@ export default function HomePage() {
   // User-defined shelves (smart playlists with show_on_home=true) — see the
   // data-load effect's second fetch wave below for why this is separate from
   // the built-in shelves' state (variable count, not known until the first
-  // /api/home-playlists round trip resolves).
-  const [customShelves, setCustomShelves] = useState<{ shelf: HomePlaylistShelf; items: (Show | Movie)[] }[]>([])
+    // /api/home-playlists round trip resolves). One array in listHomeShelves'
+    // home_order (not split by smart_type/smart_expand_episodes into separate
+    // arrays) so a user's drag-ordering is never silently discarded across a
+    // type boundary at render time; one uniform MixedMediaItem shape regardless
+    // of a shelf's own smart_type (show/movie/mixed) or expand-to-episodes
+    // setting — see showToMixed/movieToMixed/mixedToShelfEntry — rather than
+    // splitting shelves by type.
+    const [customShelves, setCustomShelves] = useState<{ shelf: HomePlaylistShelf; items: MixedMediaItem[] }[]>([])
 
   // Hero
   const heroCandidates    = useRef<(Show | Movie)[]>([])
@@ -171,16 +232,38 @@ export default function HomePage() {
       if (first) { heroIdx.current = 0; setHeroItem(first); loadHeroDetail(first) }
 
       // Second wave: each custom shelf's items, fetched the same way the
-      // built-in shelves above are (getShows/getMovies with a filter+sort+
-      // limit) — not known until the home-playlists list itself resolves.
+        // built-in shelves above are — not known until the home-playlists
+        // list itself resolves (already in home_order). Every shelf ends up
+        // as MixedMediaItem[] regardless of its own smart_type/expand setting:
+        // 'mixed' and show+smart_expand_episodes shelves go through the
+        // unified index+hydrate flow (truly interleaved at the actual
+        // displayed granularity — movie+episode, not movie+whole-show — see
+        // kairos's MixedSort.h), plain show/movie shelves through
+        // getShows/getMovies converted via showToMixed/movieToMixed.
       Promise.all(homeShelves.map(shelf => {
+          if (shelf.smart_type === 'mixed' || (shelf.smart_type === 'show' && shelf.smart_expand_episodes)) {
+              return api.getMixedMediaIndex({
+                  sort: shelf.smart_sort, sort_dir: shelf.smart_sort_dir || undefined, filter: shelf.filter_expr,
+                  home: true, hideEmpty: true, expandEpisodes: true,
+                  includeMovies: shelf.smart_type === 'mixed',
+              })
+                  .then(idx => api.getMixedMediaTiles(idx.items.slice(0, shelf.home_tile_limit).map(e => ({
+                      content_type: e.content_type,
+                      id: e.id
+                  }))))
+                  .then(r => ({shelf, items: r.items}))
+                  .catch(() => ({shelf, items: [] as MixedMediaItem[]}))
+          }
         const params = { limit: shelf.home_tile_limit, sort: shelf.smart_sort, filter: shelf.filter_expr, home: true, hideEmpty: true }
         const req = shelf.smart_type === 'show' ? api.getShows(params) : api.getMovies(params)
-        return req.then(r => ({ shelf, items: r.items as (Show | Movie)[] })).catch(() => ({ shelf, items: [] as (Show | Movie)[] }))
+          return req
+              .then(r => ({
+                  shelf,
+                  items: (r.items as (Show | Movie)[]).map(item => isShow(item) ? showToMixed(item) : movieToMixed(item))
+              }))
+              .catch(() => ({shelf, items: [] as MixedMediaItem[]}))
       })).then(results => {
-        const nonEmpty = results.filter(r => r.items.length > 0)
-        setCustomShelves(nonEmpty)
-        nonEmpty.forEach(r => r.items.forEach(item => allItemsRef.current.set(isShow(item) ? item.show_id : item.movie_id, item)))
+          setCustomShelves(results.filter(r => r.items.length > 0))
       })
     }).finally(() => {
       setLoading(false)
@@ -240,18 +323,44 @@ export default function HomePage() {
   // Row-level leave (not per-card) restores, so moving between adjacent cards
   // in the same shelf doesn't flicker restore-then-reswap on every card.
 
-  const handleShelfHover = (id: string) => {
-    if (detailOpen) return
-    const item = allItemsRef.current.get(id)
-    if (!item || !item.art) return
+    // Marks the currently-rotating hero as the one to restore on hover-end,
+    // if nothing's already pending one (moving straight from card to card
+    // shouldn't overwrite the *original* pre-hover hero with an intermediate
+    // hovered one).
+    const beginHeroOverride = () => {
     if (heroIntervalRef.current) clearInterval(heroIntervalRef.current)
     if (!hoverRestoreRef.current && heroItem) {
       hoverRestoreRef.current = { item: heroItem, detail: heroDetail, idx: heroIdx.current }
     }
-    transitionHeroTo(item, null)
+    }
+
+    const handleShelfHover = (item: ShelfEntry) => {
+        if (detailOpen) return
+        // Episode tiles (a custom smart-shelf's smart_expand_episodes items —
+        // see mixedToShelfEntry) have no Show|Movie shape for heroItem to hold,
+        // so they go through heroEpisode instead, fetched fresh the same way
+        // Continue Watching's episode entries do.
+        if (item.content_type === 'episode') {
+            beginHeroOverride()
+            api.getEpisodeBrief(item.id).then(ep => {
+                setHeroEpisode({
+                    title: ep.title,
+                    metaLine: `${ep.show_title}  ·  S${String(ep.season).padStart(2, '0')}E${String(ep.episode).padStart(2, '0')}`,
+                    overview: ep.overview,
+                    backdropUrl: mediaUrl(`/api/episodes/${ep.episode_id}/thumb`),
+                })
+            }).catch(() => {
+            })
+            return
+        }
+        const full = allItemsRef.current.get(item.id)
+        if (!full || !full.art) return
+        beginHeroOverride()
+        transitionHeroTo(full, null)
   }
 
   const handleShelfHoverEnd = () => {
+      setHeroEpisode(null)
     if (hoverRestoreRef.current) {
       const { item, detail, idx } = hoverRestoreRef.current
       heroIdx.current = idx
@@ -268,17 +377,14 @@ export default function HomePage() {
   // to shoehorn an episode into the Show|Movie-shaped heroItem.
   const handleContinueWatchingHover = (cw: WatchProgress) => {
     if (detailOpen) return
-    if (heroIntervalRef.current) clearInterval(heroIntervalRef.current)
 
     if (cw.content_type === 'movie') {
-      setHeroEpisode(null)
-      if (!hoverRestoreRef.current && heroItem) {
-        hoverRestoreRef.current = { item: heroItem, detail: heroDetail, idx: heroIdx.current }
-      }
+        beginHeroOverride()
       api.getMovie(cw.content_id).then(d => transitionHeroTo(d, d)).catch(() => {})
       return
     }
 
+      beginHeroOverride()
     api.getEpisodeBrief(cw.content_id).then(ep => {
       setHeroEpisode({
         title:       ep.title,
@@ -287,11 +393,6 @@ export default function HomePage() {
         backdropUrl: mediaUrl(`/api/episodes/${ep.episode_id}/thumb`),
       })
     }).catch(() => {})
-  }
-
-  const handleContinueWatchingHoverEnd = () => {
-    setHeroEpisode(null)
-    handleShelfHoverEnd()
   }
 
   // Per-card "Hide from Home" shortcut — flips the whole library's
@@ -304,6 +405,9 @@ export default function HomePage() {
     setRecentMovies(m => m.filter(x => x.library_id !== libraryId))
     setRecentlyReleased(m => m.filter(x => x.library_id !== libraryId))
     setRecentlyAired(s => s.filter(x => x.library_id !== libraryId))
+      // Episode tiles carry the parent show's library_id (see hydrateMixed),
+      // so this purges those too, not just show/movie tiles.
+      setCustomShelves(shelves => shelves.map(s => ({...s, items: s.items.filter(x => x.library_id !== libraryId)})))
   }
 
   const needsReview = stats ? stats.uncertain + stats.unmatched : 0
@@ -426,7 +530,7 @@ export default function HomePage() {
                 onItemHover={handleShelfHover}
                 onRowLeave={handleShelfHoverEnd}
                 onContinueWatchingHover={handleContinueWatchingHover}
-                onContinueWatchingHoverEnd={handleContinueWatchingHoverEnd}
+                onContinueWatchingHoverEnd={handleShelfHoverEnd}
                 libraryNames={libraryNames}
                 onHideLibrary={hideLibrary}
               />
@@ -635,10 +739,13 @@ function Shelves({
   // show_on_home=true (see PlaylistPage.tsx's "Show on Home" toggle); there's
   // no separate shelf-definition concept. Variable length, fetched as a
   // second wave once HomePage knows how many exist (see its data-load effect).
-  customShelves:    { shelf: HomePlaylistShelf; items: (Show | Movie)[] }[]
+    // One uniform MixedMediaItem shape regardless of the shelf's own
+    // smart_type or expand-to-episodes setting — see
+    // showToMixed/movieToMixed/mixedToShelfEntry.
+    customShelves: { shelf: HomePlaylistShelf; items: MixedMediaItem[] }[]
   onItemClick:      (id: string, type: 'show' | 'movie') => void
   onNavigate:       (path: string) => void
-  onItemHover:      (id: string) => void
+    onItemHover: (item: ShelfEntry) => void
   onRowLeave:       () => void
   onContinueWatchingHover:    (item: WatchProgress) => void
   onContinueWatchingHoverEnd: () => void
@@ -747,16 +854,18 @@ function Shelves({
             <Shelf
               key={shelf.playlist_id}
               title={shelf.title}
-              items={items.map(item => ({
-                id: isShow(item) ? item.show_id : item.movie_id, title: item.title, year: item.year,
-                thumb_url: proxyThumb(item), rating: item.audience_rating,
-                content_type: isShow(item) ? ('show' as const) : ('movie' as const),
-                library_id: item.library_id,
-              }))}
+              items={items.map(mixedToShelfEntry)}
               onItemClick={(id, type) => onItemClick(id, type)}
+              onNavigate={onNavigate}
               onViewAll={continueInLibrary({
-                title: shelf.title, contentType: shelf.smart_type, sort: shelf.smart_sort,
-                filter: shelf.filter_expr, limit: shelf.home_tile_limit,
+                  title: shelf.title,
+                  // The Library page's 'all' contentType is exactly "both
+                  // shows and movies" — the same thing 'mixed' means here.
+                  // A show+smart_expand_episodes shelf still lands on 'show'
+                  // (Library has no standalone "episodes" content type of its
+                  // own to flatten into).
+                  contentType: shelf.smart_type === 'mixed' ? 'all' : shelf.smart_type,
+                  sort: shelf.smart_sort, filter: shelf.filter_expr, limit: shelf.home_tile_limit,
               })}
               onItemHover={onItemHover}
               onRowLeave={onRowLeave}
@@ -774,13 +883,21 @@ function Shelves({
 
 interface ShelfEntry {
   id: string; title: string; year?: number
-  thumb_url?: string; rating?: number; content_type: 'show' | 'movie'
+    thumb_url?: string;
+    rating?: number;
+    content_type: 'show' | 'movie' | 'episode'
   library_id?: string
-  // Recently Aired only: when set, selecting the card jumps straight to
-  // playing this episode instead of opening the show's detail view (unlike
-  // a typical "recently aired episodes" list, this shelf is one tile per
-  // show — the tile itself carries which specific episode to play).
+    // Recently Aired (one tile per show) and any episode tile (mixedToShelfEntry)
+    // both use this: when set, selecting the card jumps straight to playing
+    // this episode instead of opening a detail view — episodes have no detail
+    // page of their own to open.
   directPlayPath?: string
+    // Episode tiles only — see mixedToShelfEntry. showTitle displays as the
+    // card's primary title (an episode's own title, often "Episode 12", isn't
+    // useful on its own) with the episode's own title as the subtitle instead,
+    // same convention as ContinueWatchingCard.
+    episodeCode?: string
+    showTitle?: string
 }
 
 function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, onRowLeave, libraryNames, onHideLibrary }: {
@@ -789,7 +906,7 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
   onItemClick: (id: string, type: 'show' | 'movie') => void
   onNavigate?: (path: string) => void
   onViewAll?:  () => void
-  onItemHover?: (id: string) => void
+    onItemHover?: (item: ShelfEntry) => void
   onRowLeave?:  () => void
   libraryNames: Map<string, string>
   onHideLibrary: (libraryId: string) => void
@@ -829,8 +946,14 @@ function Shelf({ title, items, onItemClick, onNavigate, onViewAll, onItemHover, 
         {items.map(item => (
           <ShelfCard
             key={item.id} item={item}
-            onClick={() => item.directPlayPath ? onNavigate?.(item.directPlayPath) : onItemClick(item.id, item.content_type)}
-            onHover={() => onItemHover?.(item.id)}
+            onClick={() => {
+                if (item.directPlayPath) {
+                    onNavigate?.(item.directPlayPath);
+                    return
+                }
+                if (item.content_type !== 'episode') onItemClick(item.id, item.content_type)
+            }}
+            onHover={() => onItemHover?.(item)}
             onActivate={travel.activate}
             onDeactivate={travel.deactivate}
             libraryName={item.library_id ? libraryNames.get(item.library_id) : undefined}
@@ -894,6 +1017,7 @@ function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate, libraryNa
   const [imgErr,  setImgErr]  = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const showImg = item.thumb_url && !imgErr
+    const displayTitle = item.content_type === 'episode' ? (item.showTitle || item.title) : item.title
 
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
     focusKey: `home-shelf-card-${item.content_type}-${item.id}`,
@@ -913,14 +1037,17 @@ function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate, libraryNa
       <div className={styles.shelfCardPoster}>
         {showImg ? (
           <img
-            src={item.thumb_url} alt={item.title} onError={() => setImgErr(true)}
+              src={item.thumb_url} alt={displayTitle} onError={() => setImgErr(true)}
             className={styles.shelfCardImg}
           />
         ) : (
           <span className={styles.shelfCardMonogram}>
-            {item.title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
+            {displayTitle.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
         )}
+          {item.episodeCode && (
+              <span className={styles.cwEpBadge}>{item.episodeCode}</span>
+          )}
         {libraryName && onHideLibrary && (hovered || focused) && (
           <button
             onClick={e => { e.stopPropagation(); setMenuOpen(o => !o) }}
@@ -941,7 +1068,7 @@ function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate, libraryNa
         )}
         {(hovered || focused) && (
           <div className={styles.shelfCardHoverOverlay}>
-            <div className={styles.shelfCardHoverTitle}>{item.title}</div>
+              <div className={styles.shelfCardHoverTitle}>{displayTitle}</div>
             {item.rating != null && (
               <div className={styles.shelfCardHoverRating}>★ {item.rating.toFixed(1)}</div>
             )}
@@ -949,23 +1076,38 @@ function ShelfCard({ item, onClick, onHover, onActivate, onDeactivate, libraryNa
         )}
       </div>
       <div className={styles.shelfCardInfo}>
-        <div className={styles.shelfCardTitle}>{item.title}</div>
+          <div className={styles.shelfCardTitle}>{displayTitle}</div>
         <div className={styles.shelfCardMeta}>
-          {item.year}{item.year && ' · '}{item.content_type}
+            {item.content_type === 'episode' ? item.title : <>{item.year}{item.year && ' · '}{item.content_type}</>}
         </div>
       </div>
     </div>
   )
 }
 
-function ContinueWatchingShelf({ items, onNavigate, onItemHover, onRowLeave }: {
+// The literal Continue Watching feed — actual in-progress position_ms/
+// resume behavior, hence its own card distinct from Shelf/ShelfCard's
+// (which every other shelf, including custom per-episode ones, renders
+// through instead — see mixedToShelfEntry). `id` disambiguates focusKeys
+// from a regular shelf row that happens to show the same content.
+function ContinueWatchingShelf({
+                                   id = 'continue-watching',
+                                   title = 'Continue Watching',
+                                   items,
+                                   onNavigate,
+                                   onItemHover,
+                                   onRowLeave,
+                                   onViewAll
+                               }: {
+    id?: string; title?: string
   items: WatchProgress[]; onNavigate: (path: string) => void
   onItemHover?: (item: WatchProgress) => void; onRowLeave?: () => void
+    onViewAll?: () => void
 }) {
   const [showArrows, setShowArrows] = useState(false)
   const travel = useTravelingFocus()
   const { ref: rowRef, focusKey: rowFocusKey } = useFocusable<object, HTMLDivElement>({
-    focusKey: 'home-shelf-row-continue-watching',
+      focusKey: `home-shelf-row-${id}`,
     trackChildren: true,
     isFocusBoundary: true,
     focusBoundaryDirections: ['left', 'right'],
@@ -980,7 +1122,7 @@ function ContinueWatchingShelf({ items, onNavigate, onItemHover, onRowLeave }: {
       onMouseLeave={() => { setShowArrows(false); onRowLeave?.() }}
     >
       <div className={styles.shelfHeaderRow}>
-        <span className={styles.shelfTitle}>Continue Watching</span>
+          <span className={styles.shelfTitle}>{title}</span>
       </div>
 
       {showArrows && <ShelfArrow side="left" onClick={() => scroll('left')} />}
@@ -989,16 +1131,17 @@ function ContinueWatchingShelf({ items, onNavigate, onItemHover, onRowLeave }: {
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
           <ContinueWatchingCard
-            key={`${p.content_type}:${p.content_id}`} item={p} onNavigate={onNavigate}
+              key={`${p.content_type}:${p.content_id}`} shelfId={id} item={p} onNavigate={onNavigate}
             onActivate={travel.activate} onDeactivate={travel.deactivate}
             onHover={onItemHover}
           />
         ))}
-        {/* No natural single filter for Continue Watching (mixed shows/movies/
-            episodes) — lands on an unfiltered Library, same as the other
-            shelves' "View All" did before this feature. */}
+            {/* No natural single filter for a mixed shows/movies/episodes feed
+            — lands on an unfiltered Library unless the caller has a more
+            specific place to send "View All" (e.g. a shelf backed by a
+            real smart playlist's own filter). */}
         <ShelfEndTile
-          focusKey="home-shelf-end-continue-watching" onClick={() => onNavigate('/library')}
+            focusKey={`home-shelf-end-${id}`} onClick={() => onViewAll ? onViewAll() : onNavigate('/library')}
           onActivate={travel.activate} onDeactivate={travel.deactivate}
         />
         </FocusContext.Provider>
@@ -1008,7 +1151,8 @@ function ContinueWatchingShelf({ items, onNavigate, onItemHover, onRowLeave }: {
   )
 }
 
-function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate, onHover }: {
+function ContinueWatchingCard({shelfId, item, onNavigate, onActivate, onDeactivate, onHover}: {
+    shelfId: string
   item: WatchProgress; onNavigate: (path: string) => void
   onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
   onHover?: (item: WatchProgress) => void
@@ -1026,7 +1170,7 @@ function ContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate, onHo
   const go = () => onNavigate(`/player/${item.content_type}/${item.content_id}?t=${item.position_ms}`)
 
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
-    focusKey: `home-cw-card-${item.content_type}-${item.content_id}`,
+      focusKey: `home-cw-card-${shelfId}-${item.content_type}-${item.content_id}`,
     onEnterPress: go,
     onFocus: () => { onActivate(ref.current); onHover?.(item) }, onBlur: onDeactivate,
   })

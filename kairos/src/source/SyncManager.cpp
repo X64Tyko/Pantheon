@@ -8,6 +8,7 @@
 #include "db/ChapterRepository.h"
 #include "db/Database.h"
 #include "db/FilterExpr.h"
+#include "db/MixedSort.h"
 #include "db/SubtitleTrackRepository.h"
 #include "detect/ChapterDetectionManager.h"
 #include "log/DebugLog.h"
@@ -2040,33 +2041,55 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
 // ---------------------------------------------------------------------------
 
 namespace {
-// Mirrors PlaylistRepository.cpp's identical (private) helper — duplicated
+// Mirrors PlaylistRepository.cpp's identical (private) helpers — duplicated
 // rather than shared because this runs against sync_db_ (a raw background-
 // thread connection) while PlaylistRepository is bound to the main-thread
 // Database&; same reasoning as syncPlexLinks/syncSourceListItems's existing
 // main-thread-vs-background-thread duplication.
-std::string smartOrderBySql(const std::string& sort, const std::string& alias) {
-    if (sort == "recently_added")  return " ORDER BY " + alias + ".added_at DESC";
-    if (sort == "year")            return " ORDER BY " + alias + ".year DESC";
-    if (sort == "audience_rating") return " ORDER BY " + alias + ".audience_rating DESC";
-    if (sort == "random")          return " ORDER BY RANDOM()";
-    return " ORDER BY " + alias + ".title ASC";
+struct SmartSortFieldSql { std::string expr; bool desc; };
+
+SmartSortFieldSql smartSortFieldSql(const std::string& sort, const std::string& alias, bool isShow) {
+    if (sort == "recently_added")  return { alias + ".added_at", true };
+    if (sort == "year")            return { "COALESCE(" + alias + ".year, 0)", true };
+    if (sort == "audience_rating") return { "COALESCE(" + alias + ".audience_rating, 0)", true };
+    if (sort == "duration")        return isShow
+        ? SmartSortFieldSql{ "COALESCE((SELECT AVG(e_d.duration_ms) FROM episode e_d WHERE e_d.show_id = " + alias + ".show_id), 0)", true }
+        : SmartSortFieldSql{ alias + ".duration_ms", true };
+    if (sort == "recently_released_or_aired") return isShow
+        ? SmartSortFieldSql{ "COALESCE((SELECT MAX(e2.air_date) FROM episode e2 WHERE e2.show_id = " + alias + ".show_id "
+                              "AND e2.air_date != '' AND e2.air_date <= date('now')), '0000-00-00')", true }
+        : SmartSortFieldSql{ "COALESCE(NULLIF(" + alias + ".release_date, ''), '0000-00-00')", true };
+    if (sort == "air_date") return isShow
+        ? SmartSortFieldSql{ "COALESCE(NULLIF(" + alias + ".originally_available_at, ''), '9999-99-99')", false }
+        : SmartSortFieldSql{ "COALESCE(NULLIF(" + alias + ".release_date, ''), '9999-99-99')", false };
+    if (sort == "random")          return { "RANDOM()", false };
+    return { alias + ".title", false }; // default: title ASC
+}
+
+std::string smartOrderBySql(const std::string& sort, const std::string& alias, bool isShow, const std::string& sort_dir = "") {
+    auto f = smartSortFieldSql(sort, alias, isShow);
+    bool desc = sort_dir.empty() ? f.desc : (sort_dir == "desc");
+    return " ORDER BY " + f.expr + (desc ? " DESC" : " ASC");
 }
 }
 
 void SyncManager::refreshSmartPlaylists() {
     const auto t_start = std::chrono::steady_clock::now();
-    struct SmartDef { std::string playlist_id, filter_expr, smart_type, smart_sort; int smart_limit; };
+    struct SmartDef {
+        std::string playlist_id, filter_expr, smart_type, smart_sort, smart_sort_dir;
+        int smart_limit; bool smart_expand_episodes;
+    };
     std::vector<SmartDef> defs;
     {
         SQLite::Statement q(sync_db_,
-            "SELECT playlist_id, filter_expr, smart_type, smart_sort, smart_limit "
+            "SELECT playlist_id, filter_expr, smart_type, smart_sort, smart_limit, smart_sort_dir, smart_expand_episodes "
             "FROM playlist WHERE membership = 'smart'");
         while (q.executeStep()) {
             defs.push_back({
                 q.getColumn(0).getString(), q.getColumn(1).getString(),
                 q.getColumn(2).getString(), q.getColumn(3).getString(),
-                q.getColumn(4).getInt()
+                q.getColumn(5).getString(),
+                q.getColumn(4).getInt(), q.getColumn(6).getInt() != 0
             });
         }
     }
@@ -2083,18 +2106,44 @@ void SyncManager::refreshSmartPlaylists() {
             struct Item { std::string item_type, item_id; };
             std::vector<Item> items;
 
-            if (def.smart_type == "movie") {
+            if (def.smart_type == "mixed") {
+                // mixedEntityOrder already returns movie/episode pairs (not
+                // shows) — see its header comment — so no per-show expansion
+                // loop is needed. No specific viewer on this background
+                // pass, so watch_state stays unresolved (empty user_id),
+                // same as the branches below.
+                for (const auto& [entity_type, id] : mixedEntityOrder(sync_db_, def.filter_expr, def.smart_sort, def.smart_limit, def.smart_sort_dir, "")) {
+                    items.push_back({entity_type, id});
+                }
+            } else if (def.smart_type == "movie") {
                 auto compiled = compileFilterExpr(def.filter_expr, FilterEntity::Movie, "m");
                 SQLite::Statement q(sync_db_,
                     "SELECT m.movie_id FROM movie m WHERE (" + compiled.sql + ")" +
-                    smartOrderBySql(def.smart_sort, "m") + limit_clause);
+                    smartOrderBySql(def.smart_sort, "m", false, def.smart_sort_dir) + limit_clause);
                 for (size_t i = 0; i < compiled.binds.size(); ++i) q.bind(static_cast<int>(i) + 1, compiled.binds[i]);
                 while (q.executeStep()) items.push_back({"movie", q.getColumn(0).getString()});
+            } else if (def.smart_expand_episodes) {
+                // See PlaylistRepository::refreshSmart's identical branch —
+                // flattens to a per-episode list under `smart_sort` (any
+                // mode) instead of shows-then-dump-each-show's-entire-run.
+                // smart_limit is an episode cap here. Unlike refreshSmart,
+                // this background pass has no specific viewer, so a
+                // `watch_state:X` clause in the filter stays a no-op here
+                // (fetchMixedEpisodeRows's user_id is empty) — only the
+                // interactive "Save & Refresh" button resolves it.
+                auto episodes = fetchMixedEpisodeRows(sync_db_, def.filter_expr, "");
+                bool desc = def.smart_sort_dir.empty() ? mixedRowNaturalDesc(def.smart_sort) : (def.smart_sort_dir == "desc");
+                sortMixedRows(episodes, def.smart_sort, desc);
+                if (def.smart_limit > 0 && static_cast<int>(episodes.size()) > def.smart_limit) episodes.resize(def.smart_limit);
+                for (auto& ep : episodes) items.push_back({"episode", ep.id});
             } else {
+                // Same no-viewer caveat as the flattened branch above —
+                // watch_state stays unresolved (no-op) for this background
+                // pass regardless of sort mode.
                 auto compiled = compileFilterExpr(def.filter_expr, FilterEntity::Show, "s");
                 SQLite::Statement q(sync_db_,
                     "SELECT s.show_id FROM show s WHERE (" + compiled.sql + ")" +
-                    smartOrderBySql(def.smart_sort, "s") + limit_clause);
+                    smartOrderBySql(def.smart_sort, "s", true, def.smart_sort_dir) + limit_clause);
                 for (size_t i = 0; i < compiled.binds.size(); ++i) q.bind(static_cast<int>(i) + 1, compiled.binds[i]);
                 std::vector<std::string> show_ids;
                 while (q.executeStep()) show_ids.push_back(q.getColumn(0).getString());

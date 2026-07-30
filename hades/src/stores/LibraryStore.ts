@@ -1,6 +1,15 @@
 import { makeAutoObservable, reaction, runInAction } from 'mobx'
 import { api } from '../api/client'
-import type { LibraryWithSource, Show, Movie, ScraperSearchResult, EpisodeSearchResult, PlaylistBrowseEntry } from '../api/types'
+import type {
+    LibraryWithSource,
+    Show,
+    Movie,
+    MixedIndexEntry,
+    MixedMediaItem,
+    ScraperSearchResult,
+    EpisodeSearchResult,
+    PlaylistBrowseEntry
+} from '../api/types'
 import type { LibraryDensity } from '../api/types'
 import type { FilterField } from '../components/PickerFilters'
 import { FilterTreeStore } from '../components/media/filterTree'
@@ -18,6 +27,14 @@ export class LibraryStore {
   libraries:    LibraryWithSource[] = []
   shows:        Show[] = []
   movies:       Movie[] = []
+    // contentType === 'all' browsing (see fetch()) — mixedIndex is the full,
+    // already-sorted show+movie result (see kairos's MixedSort.h); mixedItems
+    // is however much of it has been hydrated with render-ready tile data so
+    // far. loadMore() only ever hydrates the next slice of the existing
+    // index, never re-fetches/re-sorts it, so a "Random" sort doesn't
+    // reshuffle out from under an in-progress infinite scroll.
+    mixedIndex: MixedIndexEntry[] = []
+    mixedItems: MixedMediaItem[] = []
   // Library's "Include Episodes" toggle (default off/hidden) — a 3rd,
   // independent bucket alongside shows/movies rather than a 4th exclusive
   // contentType, so a mixed movie+episode playlist can render both kinds at
@@ -86,6 +103,13 @@ export class LibraryStore {
   discoverResults: ScraperSearchResult[] = []
   discoverLoading: boolean = false
 
+    // "Save as Smart Playlist" — captures the current filter+sort as a new
+    // smart playlist. savingSmartPlaylist just toggles the inline title
+    // prompt; the actual create+save is smartPlaylistBusy/saveSmartPlaylist.
+    savingSmartPlaylist: boolean = false
+    smartPlaylistTitle: string = ''
+    smartPlaylistBusy: boolean = false
+
   constructor() {
     makeAutoObservable(this)
     // Any change to the rule-builder tree (add/remove/edit a rule or group,
@@ -143,7 +167,12 @@ export class LibraryStore {
     this.fetch()
   }
 
-  setIncludeEpisodes(v: boolean) { this.includeEpisodes = v; this.page = 0; this.fetch() }
+    setIncludeEpisodes(v: boolean) {
+        this.includeEpisodes = v
+        if (!v && this.sort === 'episode_number') this.sort = 'recently_added'
+        this.page = 0
+        this.fetch()
+    }
 
   async loadLibraries() {
     const libs = await api.getAllLibraries()
@@ -195,11 +224,13 @@ export class LibraryStore {
   }
 
   private episodeSearchParams(page: number) {
+      const sort: 'title' | 'episode_number' | 'playlist_order' =
+          this.sort === 'playlist_order' || this.sort === 'episode_number' ? this.sort : 'title'
     return {
       q: this.query || undefined,
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
-      sort: (this.sort === 'playlist_order' ? 'playlist_order' : 'title') as 'title' | 'playlist_order',
+        sort,
       sort_dir: this.sortDir || undefined,
       playlist_id: this.activePlaylistId ?? undefined,
     }
@@ -221,33 +252,97 @@ export class LibraryStore {
   private showSort()  { return this.sort === 'recently_released_or_aired' ? 'recently_aired'    : this.sort }
   private movieSort() { return this.sort === 'recently_released_or_aired' ? 'recently_released' : this.sort }
 
+    // contentType 'all' truly interleaves shows+movies (see MixedSort.h) —
+    // one full sorted index fetch, then hydrate whichever slice is being
+    // rendered. Any other contentType has only one type to show, so plain
+    // getShows/getMovies (paginated server-side as always) is simpler and
+    // already sufficient — mixing only matters when both are in play.
+    private get isMixedBrowse() {
+        return this.contentType === 'all'
+    }
+
+    private async hydrateMixedSlice(index: MixedIndexEntry[], start: number, end: number): Promise<MixedMediaItem[]> {
+        const slice = index.slice(start, end)
+        if (slice.length === 0) return []
+        return (await api.getMixedMediaTiles(slice.map(e => ({content_type: e.content_type, id: e.id})))).items
+    }
+
   async fetch() {
     if (this.noLibrariesSelected) {
-      runInAction(() => { this.shows = []; this.movies = []; this.episodes = []; this.total = 0; this.loading = false; this.error = null })
+        runInAction(() => {
+            this.shows = [];
+            this.movies = [];
+            this.mixedIndex = [];
+            this.mixedItems = []
+            this.episodes = [];
+            this.total = 0;
+            this.loading = false;
+            this.error = null
+        })
       return
     }
     runInAction(() => { this.loading = true })
     const base = this.searchParams(this.page)
     try {
-      const [showRes, movieRes, episodeRes] = await Promise.all([
-        this.contentType !== 'movie' ? api.getShows({ ...base, sort: this.showSort() }) : Promise.resolve({ items: [] as Show[], total: 0 }),
-        this.contentType !== 'show'  ? api.getMovies({ ...base, sort: this.movieSort() }) : Promise.resolve({ items: [] as Movie[], total: 0 }),
-        this.includeEpisodes ? api.searchEpisodes(this.episodeSearchParams(this.page)) : Promise.resolve({ items: [] as EpisodeSearchResult[], total: 0 }),
-      ])
-      runInAction(() => {
-        this.shows    = showRes.items
-        this.movies   = movieRes.items
-        this.episodes = episodeRes.items
-        this.total    = showRes.total + movieRes.total + episodeRes.total
-        this.loading = false
-        this.error = null
-      })
+        if (this.isMixedBrowse) {
+            const [indexRes, episodeRes] = await Promise.all([
+                api.getMixedMediaIndex({
+                    library_ids: base.library_ids, q: base.q, filter: base.filter,
+                    sort: this.sort || undefined, sort_dir: base.sort_dir, hideEmpty: base.hideEmpty,
+                }),
+                this.includeEpisodes ? api.searchEpisodes(this.episodeSearchParams(this.page)) : Promise.resolve({
+                    items: [] as EpisodeSearchResult[],
+                    total: 0
+                }),
+            ])
+            const items = await this.hydrateMixedSlice(indexRes.items, 0, PAGE_SIZE)
+            runInAction(() => {
+                this.shows = [];
+                this.movies = []
+                this.mixedIndex = indexRes.items
+                this.mixedItems = items
+                this.episodes = episodeRes.items
+                this.total = indexRes.items.length + episodeRes.total
+                this.loading = false
+                this.error = null
+            })
+        } else {
+            const [showRes, movieRes, episodeRes] = await Promise.all([
+                this.contentType !== 'movie' ? api.getShows({
+                    ...base,
+                    sort: this.showSort()
+                }) : Promise.resolve({items: [] as Show[], total: 0}),
+                this.contentType !== 'show' ? api.getMovies({
+                    ...base,
+                    sort: this.movieSort()
+                }) : Promise.resolve({items: [] as Movie[], total: 0}),
+                this.includeEpisodes ? api.searchEpisodes(this.episodeSearchParams(this.page)) : Promise.resolve({
+                    items: [] as EpisodeSearchResult[],
+                    total: 0
+                }),
+            ])
+            runInAction(() => {
+                this.shows = showRes.items
+                this.movies = movieRes.items
+                this.mixedIndex = [];
+                this.mixedItems = []
+                this.episodes = episodeRes.items
+                this.total = showRes.total + movieRes.total + episodeRes.total
+                this.loading = false
+                this.error = null
+            })
+        }
     } catch (e: any) {
       // Cleared rather than left stale — a failed request used to just
       // leave whatever was on screen before, which reads exactly like "the
       // filter did nothing" instead of "this request failed."
       runInAction(() => {
-        this.shows = []; this.movies = []; this.episodes = []; this.total = 0
+          this.shows = [];
+          this.movies = [];
+          this.mixedIndex = [];
+          this.mixedItems = []
+          this.episodes = [];
+          this.total = 0
         this.loading = false
         this.error = e?.message ?? 'Failed to load library'
       })
@@ -256,24 +351,53 @@ export class LibraryStore {
 
   async loadMore() {
     if (this.loading || this.loadingMore || this.noLibrariesSelected) return
-    if (this.shows.length + this.movies.length + this.episodes.length >= this.total) return
+      const loadedCount = this.isMixedBrowse
+          ? this.mixedItems.length + this.episodes.length
+          : this.shows.length + this.movies.length + this.episodes.length
+      if (loadedCount >= this.total) return
     runInAction(() => { this.loadingMore = true })
     const nextPage = this.page + 1
-    const base = this.searchParams(nextPage)
     try {
-      const [showRes, movieRes, episodeRes] = await Promise.all([
-        this.contentType !== 'movie' ? api.getShows({ ...base, sort: this.showSort() }) : Promise.resolve({ items: [] as Show[], total: 0 }),
-        this.contentType !== 'show'  ? api.getMovies({ ...base, sort: this.movieSort() }) : Promise.resolve({ items: [] as Movie[], total: 0 }),
-        this.includeEpisodes ? api.searchEpisodes(this.episodeSearchParams(nextPage)) : Promise.resolve({ items: [] as EpisodeSearchResult[], total: 0 }),
-      ])
-      runInAction(() => {
-        this.shows      = [...this.shows, ...showRes.items]
-        this.movies     = [...this.movies, ...movieRes.items]
-        this.episodes   = [...this.episodes, ...episodeRes.items]
-        this.page       = nextPage
-        this.loadingMore = false
-        this.error = null
-      })
+        if (this.isMixedBrowse) {
+            const [newTiles, episodeRes] = await Promise.all([
+                this.hydrateMixedSlice(this.mixedIndex, this.mixedItems.length, this.mixedItems.length + PAGE_SIZE),
+                this.includeEpisodes ? api.searchEpisodes(this.episodeSearchParams(nextPage)) : Promise.resolve({
+                    items: [] as EpisodeSearchResult[],
+                    total: 0
+                }),
+            ])
+            runInAction(() => {
+                this.mixedItems = [...this.mixedItems, ...newTiles]
+                this.episodes = [...this.episodes, ...episodeRes.items]
+                this.page = nextPage
+                this.loadingMore = false
+                this.error = null
+            })
+        } else {
+            const base = this.searchParams(nextPage)
+            const [showRes, movieRes, episodeRes] = await Promise.all([
+                this.contentType !== 'movie' ? api.getShows({
+                    ...base,
+                    sort: this.showSort()
+                }) : Promise.resolve({items: [] as Show[], total: 0}),
+                this.contentType !== 'show' ? api.getMovies({
+                    ...base,
+                    sort: this.movieSort()
+                }) : Promise.resolve({items: [] as Movie[], total: 0}),
+                this.includeEpisodes ? api.searchEpisodes(this.episodeSearchParams(nextPage)) : Promise.resolve({
+                    items: [] as EpisodeSearchResult[],
+                    total: 0
+                }),
+            ])
+            runInAction(() => {
+                this.shows = [...this.shows, ...showRes.items]
+                this.movies = [...this.movies, ...movieRes.items]
+                this.episodes = [...this.episodes, ...episodeRes.items]
+                this.page = nextPage
+                this.loadingMore = false
+                this.error = null
+            })
+        }
     } catch (e: any) {
       runInAction(() => { this.loadingMore = false; this.error = e?.message ?? 'Failed to load more' })
     }
@@ -402,6 +526,50 @@ export class LibraryStore {
       runInAction(() => { this.discoverLoading = false })
     }
   }
+
+    startSaveSmartPlaylist() {
+        this.savingSmartPlaylist = true
+        this.smartPlaylistTitle = this.query.trim() || 'New Smart Playlist'
+    }
+
+    cancelSaveSmartPlaylist() {
+        this.savingSmartPlaylist = false
+    }
+
+    // Captures the current rule-builder filter + free-text query + sort as a
+    // new smart playlist — contentType 'all' becomes smart_type 'mixed' (see
+    // MixedSort.h), the same combined-filter convention withCombinedFilter
+    // already uses for every getShows/getMovies request. Refreshes immediately
+    // after saving so it's not left showing stale/empty membership until the
+    // next background sync — same reasoning as PlaylistPage's saveSmartDef.
+    // Returns the new playlist_id so the caller can navigate to it.
+    async saveSmartPlaylist(): Promise<string> {
+        const title = this.smartPlaylistTitle.trim() || 'New Smart Playlist'
+        const filter_expr = [this.searchParams(0).filter, this.query.trim()].filter(Boolean).join(' ')
+        const smart_type = this.contentType === 'all' ? 'mixed' : this.contentType
+
+        runInAction(() => {
+            this.smartPlaylistBusy = true
+        })
+        try {
+            const {playlist_id} = await api.createPlaylist({title})
+            await api.updatePlaylist(playlist_id, {
+                membership: 'smart', smart_type, smart_sort: this.sort || 'title', filter_expr,
+            })
+            await api.refreshSmartPlaylist(playlist_id)
+            runInAction(() => {
+                this.smartPlaylistBusy = false;
+                this.savingSmartPlaylist = false
+            })
+            return playlist_id
+        } catch (e: any) {
+            runInAction(() => {
+                this.smartPlaylistBusy = false;
+                this.error = e?.message ?? 'Failed to save smart playlist'
+            })
+            throw e
+        }
+    }
 }
 
 export const libraryStore = new LibraryStore()

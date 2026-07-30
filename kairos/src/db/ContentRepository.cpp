@@ -2,6 +2,7 @@
 #include "Database.h"
 #include "FilterExpr.h"
 #include "MetadataOverrideRepository.h"
+#include "MixedSort.h"
 #include "util/PathMatch.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <algorithm>
@@ -505,11 +506,15 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
     std::string extras;
     std::vector<std::string> extra_vals;
     if (!p.filter.empty()) {
-        auto compiled = compileFilterExpr(p.filter, FilterEntity::Show, "s");
-        extras += " AND (" + compiled.sql + ")";
+		auto compiled = compileFilterExpr(p.filter, FilterEntity::Show, "s", p.user_id);
+		extras        += " AND (" + compiled.sql + ")";
         for (auto& v : compiled.binds) extra_vals.push_back(v);
     }
-    appendRestriction(p.restriction, "show", "s.show_id", "s.content_rating", extras, extra_vals);
+    // NULLs sort first in SQLite's default ASC ordering — without this, a
+	// show with no known premiere date would show up FIRST in a
+	// chronological air_date browse instead of just being omitted.
+	if (p.sort == "air_date") extras += " AND s.originally_available_at != ''";
+	appendRestriction(p.restriction, "show", "s.show_id", "s.content_rating", extras, extra_vals);
 
     auto bindExtras = [&](SQLite::Statement& q, int& idx) {
         for (const auto& v : extra_vals) q.bind(idx++, v);
@@ -530,7 +535,12 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
     auto dirFor = [&](const char* natural) { return p.sort_dir.empty() ? natural : (p.sort_dir == "desc" ? "DESC" : "ASC"); };
     const std::string order_clause =
         (p.sort == "recently_added")    ? std::string(" ORDER BY s.added_at ") + dirFor("DESC") + ", s.rowid " + dirFor("DESC") :
-        (p.sort == "recently_aired")    ? std::string(R"( ORDER BY (
+        // recently_released_or_aired is the Library page's combined sort
+		// option (LibraryFilters.tsx) — shows and movies don't share a
+		// column for it, so each entity's search just treats it as its own
+		// native name; no frontend-side mapping needed to use it directly.
+		(p.sort == "recently_aired" || p.sort == "recently_released_or_aired")
+		? std::string(R"( ORDER BY (
                                              SELECT MAX(e2.air_date) FROM episode e2
                                              WHERE e2.show_id = s.show_id
                                                AND e2.air_date != '' AND e2.air_date <= date('now')
@@ -540,9 +550,15 @@ ShowListResult ContentRepository::searchShows(const ShowSearchParams& p) {
         (p.sort == "duration")           ? std::string(R"( ORDER BY (
                                              SELECT AVG(e3.duration_ms) FROM episode e3 WHERE e3.show_id = s.show_id
                                            ) )") + dirFor("DESC") :
-        (p.sort == "random")              ? (p.random_seed.has_value()
-                                                ? " ORDER BY ((s.rowid + ?) * 2654435761) % 2147483647"
-                                                : " ORDER BY RANDOM()") :
+        // Chronological (oldest-premiered-first) — unlike recently_aired
+		// (latest episode activity), this is the show's own premiere date,
+		// for building/browsing a release-order timeline.
+		(p.sort == "air_date")
+		? std::string(" ORDER BY NULLIF(s.originally_available_at,'') ") + dirFor("ASC")
+		: (p.sort == "random")
+		? (p.random_seed.has_value()
+			   ? " ORDER BY ((s.rowid + ?) * 2654435761) % 2147483647"
+			   : " ORDER BY RANDOM()") :
         // Guarded on playlist_id too, not just sort=="playlist_order" — the
         // ORDER BY's `?` placeholder is only ever bound (below) when
         // playlist_id is actually present; without this guard, a
@@ -655,18 +671,22 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     std::string extras;
     std::vector<std::string> extra_vals;
     if (!p.filter.empty()) {
-        auto compiled = compileFilterExpr(p.filter, FilterEntity::Movie, "m");
+        auto compiled = compileFilterExpr(p.filter, FilterEntity::Movie, "m", p.user_id);
         extras += " AND (" + compiled.sql + ")";
         for (auto& v : compiled.binds) extra_vals.push_back(v);
-    }
-    // recently_released is meaningless for movies the source never gave a
+	}
+	// recently_released is meaningless for movies the source never gave a
     // release_date (most commonly AniDB, which doesn't fetch one at all) —
     // exclude them rather than let them sort to one end of the list.
-    if (p.sort == "recently_released") extras += " AND m.release_date != ''";
-    appendRestriction(p.restriction, "movie", "m.movie_id", "m.content_rating", extras, extra_vals);
+    // Same reasoning as searchShows's air_date guard — recently_released_or_aired
+    // reaches this same release_date column, and it's a meaningless "N/A"
+    // result either way for a movie the source never gave a date for.
+	if (p.sort == "recently_released" || p.sort == "recently_released_or_aired" || p.sort == "air_date") extras += " AND m.release_date != ''";
+	appendRestriction(p.restriction, "movie", "m.movie_id", "m.content_rating", extras, extra_vals);
 
-    auto bindExtras = [&](SQLite::Statement& q, int& idx) {
-        for (const auto& v : extra_vals) q.bind(idx++, v);
+	auto bindExtras = [&](SQLite::Statement& q, int& idx)
+	{
+		for (const auto& v : extra_vals) q.bind(idx++, v);
     };
 
     const std::string msrc_subq = R"(
@@ -681,13 +701,23 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     auto mdirFor = [&](const char* natural) { return p.sort_dir.empty() ? natural : (p.sort_dir == "desc" ? "DESC" : "ASC"); };
     const std::string morder =
         (p.sort == "recently_added")    ? std::string(" ORDER BY m.added_at ") + mdirFor("DESC") + ", m.rowid " + mdirFor("DESC") :
-        (p.sort == "recently_released") ? std::string(" ORDER BY m.release_date ") + mdirFor("DESC") :
-        (p.sort == "year")              ? std::string(" ORDER BY m.year ") + mdirFor("DESC") :
-        (p.sort == "audience_rating")   ? std::string(" ORDER BY m.audience_rating ") + mdirFor("DESC") :
-        (p.sort == "duration")          ? std::string(" ORDER BY m.duration_ms ") + mdirFor("DESC") :
-        (p.sort == "random")             ? (p.random_seed.has_value()
-                                                ? " ORDER BY ((m.rowid + ?) * 2654435761) % 2147483647"
-                                                : " ORDER BY RANDOM()") :
+        // See searchShows's identical comment — recently_released_or_aired
+        // is the Library page's combined sort name; on the movie side it's
+        // just release_date, same as recently_released.
+		(p.sort == "recently_released" || p.sort == "recently_released_or_aired")
+		? std::string(" ORDER BY m.release_date ") + mdirFor("DESC")
+		: (p.sort == "year")
+		? std::string(" ORDER BY m.year ") + mdirFor("DESC")
+		: (p.sort == "audience_rating")
+		? std::string(" ORDER BY m.audience_rating ") + mdirFor("DESC")
+		: (p.sort == "duration")          ? std::string(" ORDER BY m.duration_ms ") + mdirFor("DESC") :
+        // Chronological (oldest-first) release order — see searchShows's
+        // identical comment.
+        (p.sort == "air_date")          ? std::string(" ORDER BY NULLIF(m.release_date,'') ") + mdirFor("ASC") :
+        (p.sort == "random")
+		? (p.random_seed.has_value()
+			   ? " ORDER BY ((m.rowid + ?) * 2654435761) % 2147483647"
+			   : " ORDER BY RANDOM()") :
         // See searchShows()'s identical guard comment above.
         (p.sort == "playlist_order" && p.playlist_id) ? std::string(R"( ORDER BY (
                                              SELECT MIN(pi.position) FROM playlist_item pi
@@ -776,8 +806,237 @@ MovieListResult ContentRepository::searchMovies(const MovieSearchParams& p) {
     return result;
 }
 
-std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& show_id, const std::string& user_id) {
-    SQLite::Statement q(db_.get(), R"(
+namespace {
+// library_ids scoping as EXISTS rather than JOIN — a JOIN could return the
+// same item twice if it's mapped from two sources both in the selected set.
+std::string mixedLibraryScope(const std::string& alias, const std::string& id_col, const std::string& item_type,
+                               const std::vector<std::string>& library_ids, std::vector<std::string>& vals)
+{
+	if (library_ids.empty()) return "";
+	for (auto& lid : library_ids) vals.push_back(lid);
+	return " AND EXISTS (SELECT 1 FROM source_mapping sm_lib WHERE sm_lib.kairos_id = " + alias + "." + id_col +
+		" AND sm_lib.item_type = '" + item_type + "' AND sm_lib.library_id IN (" + inPlaceholders(library_ids.size()) + "))";
+}
+}
+
+std::vector<MixedIndexEntry> ContentRepository::searchMixedIndex(const MixedSearchParams& p)
+{
+	std::vector<MixedRow> rows;
+
+	// Movies — lean pass: id/title/all sort keys, no thumb/rating/library_id.
+	// Skippable (include_movies=false): a show-typed shelf's filter_expr is
+	// written with only show fields in mind, but a generic field (genre:,
+	// year:, ...) compiles to valid — and matching — SQL against Movie too,
+	// the same cross-entity behavior a 'mixed' shelf deliberately relies on.
+	// Without this a smart_expand_episodes-only (non-mixed) shelf would
+	// silently pick up unrelated movies.
+	if (p.include_movies)
+	{
+		auto compiled                 = compileFilterExpr(p.filter, FilterEntity::Movie, "m", p.user_id);
+		std::string extras            = " AND (" + compiled.sql + ")";
+		std::vector<std::string> vals = compiled.binds;
+		appendRestriction(p.restriction_movie, "movie", "m.movie_id", "m.content_rating", extras, vals);
+		if (p.home_only)
+			extras += R"( AND NOT EXISTS (
+            SELECT 1 FROM source_mapping sm4 JOIN media_library ml4 ON ml4.library_id = sm4.library_id
+            WHERE sm4.kairos_id = m.movie_id AND sm4.item_type = 'movie' AND ml4.show_on_home = 0
+        ))";
+		if (p.hide_empty) extras += " AND m.file_path != ''";
+		extras += mixedLibraryScope("m", "movie_id", "movie", p.library_ids, vals);
+
+		std::string release_key = mixedDateToInt("m.release_date");
+		auto movie_rows         = fetchMixedRows(db_.get(), "movie", "m.movie_id", "movie", "m", "1=1" + extras, vals,
+												 "m.duration_ms", release_key, release_key);
+		rows.insert(rows.end(), std::make_move_iterator(movie_rows.begin()), std::make_move_iterator(movie_rows.end()));
+	}
+
+	// Shows — same lean pass. expand_episodes swaps this for the shows'
+	// individual episodes (via fetchMixedEpisodeRows), same "sort at the
+	// actual displayed granularity" reasoning as smart_expand_episodes.
+	if (p.expand_episodes)
+	{
+		std::string extras;
+		std::vector<std::string> vals;
+		appendRestriction(p.restriction_show, "show", "s.show_id", "s.content_rating", extras, vals);
+		if (p.home_only)
+			extras += R"( AND NOT EXISTS (
+            SELECT 1 FROM source_mapping sm4b JOIN media_library ml4b ON ml4b.library_id = sm4b.library_id
+            WHERE sm4b.kairos_id = s.show_id AND sm4b.item_type = 'show' AND ml4b.show_on_home = 0
+        ))";
+		extras += mixedLibraryScope("s", "show_id", "show", p.library_ids, vals);
+
+		auto episode_rows = fetchMixedEpisodeRows(db_.get(), p.filter, p.user_id, extras, vals);
+		rows.insert(rows.end(), std::make_move_iterator(episode_rows.begin()), std::make_move_iterator(episode_rows.end()));
+	}
+	else
+	{
+		auto compiled                 = compileFilterExpr(p.filter, FilterEntity::Show, "s", p.user_id);
+		std::string extras            = " AND (" + compiled.sql + ")";
+		std::vector<std::string> vals = compiled.binds;
+		appendRestriction(p.restriction_show, "show", "s.show_id", "s.content_rating", extras, vals);
+		if (p.home_only)
+			extras += R"( AND NOT EXISTS (
+            SELECT 1 FROM source_mapping sm4b JOIN media_library ml4b ON ml4b.library_id = sm4b.library_id
+            WHERE sm4b.kairos_id = s.show_id AND sm4b.item_type = 'show' AND ml4b.show_on_home = 0
+        ))";
+		if (p.hide_empty) extras += R"( AND EXISTS (SELECT 1 FROM episode e6 WHERE e6.show_id = s.show_id))";
+		extras += mixedLibraryScope("s", "show_id", "show", p.library_ids, vals);
+
+		std::string duration_expr = "(SELECT AVG(e_d.duration_ms) FROM episode e_d WHERE e_d.show_id = s.show_id)";
+		std::string recent_expr   = mixedDateToInt(
+			"(SELECT MAX(e2.air_date) FROM episode e2 WHERE e2.show_id = s.show_id "
+			"AND e2.air_date != '' AND e2.air_date <= date('now'))");
+		std::string premiere_expr = mixedDateToInt("s.originally_available_at");
+		auto show_rows            = fetchMixedRows(db_.get(), "show", "s.show_id", "show", "s", "1=1" + extras, vals,
+												   duration_expr, recent_expr, premiere_expr);
+		rows.insert(rows.end(), std::make_move_iterator(show_rows.begin()), std::make_move_iterator(show_rows.end()));
+	}
+
+	bool desc = p.sort_dir.empty() ? mixedRowNaturalDesc(p.sort) : (p.sort_dir == "desc");
+	sortMixedRows(rows, p.sort, desc);
+
+	std::vector<MixedIndexEntry> out;
+	out.reserve(rows.size());
+	for (auto& r : rows) out.push_back({std::move(r.entity_type), std::move(r.id), std::move(r.title)});
+	return out;
+}
+
+std::vector<MixedTileRow> ContentRepository::hydrateMixed(const std::vector<std::pair<std::string, std::string>>& ids,
+														  const RestrictionContext& restriction_show,
+														  const RestrictionContext& restriction_movie,
+														  const std::string& user_id)
+{
+	std::vector<std::string> movie_ids, show_ids, episode_ids;
+	for (auto& [content_type, id] : ids)
+	{
+		if (content_type == "movie") movie_ids.push_back(id);
+		else if (content_type == "episode") episode_ids.push_back(id);
+		else show_ids.push_back(id);
+	}
+
+	std::unordered_map<std::string, MixedTileRow> hydrated;
+	if (!movie_ids.empty())
+	{
+		std::string extras;
+		std::vector<std::string> vals;
+		appendRestriction(restriction_movie, "movie", "m.movie_id", "m.content_rating", extras, vals);
+		// Same watch_join/view_count convention as searchMovies.
+		SQLite::Statement q(db_.get(),
+							"SELECT m.movie_id, m.title, m.thumb, m.art, m.year, m.audience_rating, "
+							"COALESCE((SELECT sm3.library_id FROM source_mapping sm3 WHERE sm3.kairos_id = m.movie_id "
+							"AND sm3.item_type = 'movie' AND sm3.library_id IS NOT NULL LIMIT 1), ''), "
+							"COALESCE(wp.completed,0) AS view_count "
+							"FROM movie m LEFT JOIN watch_progress wp ON wp.user_id = ? AND wp.content_type = 'movie' AND wp.content_id = m.movie_id "
+							"WHERE m.movie_id IN (" + inPlaceholders(movie_ids.size()) + ")" + extras);
+		int idx = 1;
+		q.bind(idx++, user_id);
+		for (auto& id : movie_ids) q.bind(idx++, id);
+		for (auto& v : vals) q.bind(idx++, v);
+		while (q.executeStep())
+		{
+			MixedTileRow r;
+			r.content_type = "movie";
+			r.id           = q.getColumn(0).getString();
+			r.title        = q.getColumn(1).getString();
+			r.thumb        = q.getColumn(2).getString();
+			r.art          = q.getColumn(3).getString();
+			if (!q.getColumn(4).isNull()) r.year = q.getColumn(4).getInt();
+			if (!q.getColumn(5).isNull()) r.audience_rating = q.getColumn(5).getDouble();
+			r.library_id = q.getColumn(6).getString();
+			r.view_count = q.getColumn(7).getInt64();
+			r.watched    = r.view_count > 0;
+			hydrated.emplace(r.id, std::move(r));
+		}
+	}
+	if (!show_ids.empty())
+	{
+		std::string extras;
+		std::vector<std::string> vals;
+		appendRestriction(restriction_show, "show", "s.show_id", "s.content_rating", extras, vals);
+		// Same watched_episode_count/episode_count convention as searchShows.
+		SQLite::Statement q(db_.get(),
+							"SELECT s.show_id, s.title, s.thumb, s.art, s.year, s.audience_rating, "
+							"COALESCE((SELECT sm3b.library_id FROM source_mapping sm3b WHERE sm3b.kairos_id = s.show_id "
+							"AND sm3b.item_type = 'show' AND sm3b.library_id IS NOT NULL LIMIT 1), ''), "
+							"(SELECT COUNT(DISTINCT wp.content_id) FROM watch_progress wp JOIN episode e5 ON e5.episode_id = wp.content_id "
+							"WHERE wp.user_id = ? AND wp.content_type = 'episode' AND e5.show_id = s.show_id AND wp.completed > 0), "
+							"(SELECT COUNT(*) FROM episode e6 WHERE e6.show_id = s.show_id) "
+							"FROM show s WHERE s.show_id IN (" + inPlaceholders(show_ids.size()) + ")" + extras);
+		int idx = 1;
+		q.bind(idx++, user_id);
+		for (auto& id : show_ids) q.bind(idx++, id);
+		for (auto& v : vals) q.bind(idx++, v);
+		while (q.executeStep())
+		{
+			MixedTileRow r;
+			r.content_type = "show";
+			r.id           = q.getColumn(0).getString();
+			r.title        = q.getColumn(1).getString();
+			r.thumb        = q.getColumn(2).getString();
+			r.art          = q.getColumn(3).getString();
+			if (!q.getColumn(4).isNull()) r.year = q.getColumn(4).getInt();
+			if (!q.getColumn(5).isNull()) r.audience_rating = q.getColumn(5).getDouble();
+			r.library_id    = q.getColumn(6).getString();
+			r.view_count    = q.getColumn(7).getInt64();
+			r.episode_count = q.getColumn(8).getInt();
+			r.watched       = r.view_count > 0;
+			hydrated.emplace(r.id, std::move(r));
+		}
+	}
+	if (!episode_ids.empty())
+	{
+		// Restriction/library scoping is at the parent-show level (episodes
+		// carry no content_rating or source_mapping of their own — same as
+		// resolveForRestriction elsewhere).
+		std::string extras;
+		std::vector<std::string> vals;
+		appendRestriction(restriction_show, "show", "s.show_id", "s.content_rating", extras, vals);
+		SQLite::Statement q(db_.get(),
+							"SELECT e.episode_id, e.title, e.thumb, e.duration_ms, e.season, e.episode, e.show_id, s.title, s.art, "
+							"COALESCE((SELECT sm3c.library_id FROM source_mapping sm3c WHERE sm3c.kairos_id = s.show_id "
+							"AND sm3c.item_type = 'show' AND sm3c.library_id IS NOT NULL LIMIT 1), ''), "
+							"COALESCE(wp.completed,0) "
+							"FROM episode e JOIN show s ON s.show_id = e.show_id "
+							"LEFT JOIN watch_progress wp ON wp.user_id = ? AND wp.content_type = 'episode' AND wp.content_id = e.episode_id "
+							"WHERE e.episode_id IN (" + inPlaceholders(episode_ids.size()) + ")" + extras);
+		int idx = 1;
+		q.bind(idx++, user_id);
+		for (auto& id : episode_ids) q.bind(idx++, id);
+		for (auto& v : vals) q.bind(idx++, v);
+		while (q.executeStep())
+		{
+			MixedTileRow r;
+			r.content_type = "episode";
+			r.id           = q.getColumn(0).getString();
+			r.title        = q.getColumn(1).getString();
+			r.thumb        = q.getColumn(2).getString();
+			r.duration_ms  = q.getColumn(3).getInt64();
+			r.season       = q.getColumn(4).getInt();
+			r.episode      = q.getColumn(5).getInt();
+			r.show_id      = q.getColumn(6).getString();
+			r.show_title   = q.getColumn(7).getString();
+			r.art          = q.getColumn(8).getString(); // parent show's backdrop — an episode has none of its own
+			r.library_id   = q.getColumn(9).getString();
+			r.view_count   = q.getColumn(10).getInt64();
+			r.watched      = r.view_count > 0;
+			hydrated.emplace(r.id, std::move(r));
+		}
+	}
+
+	// Preserve `ids`' order, not whatever order the IN() lookups returned.
+	std::vector<MixedTileRow> result;
+	result.reserve(ids.size());
+	for (auto& [content_type, id] : ids)
+	{
+		auto it = hydrated.find(id);
+		if (it != hydrated.end()) result.push_back(it->second);
+	}
+	return result;
+}
+
+std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& show_id, const std::string& user_id)
+{
+	SQLite::Statement q(db_.get(), R"(
         SELECT s.show_id, s.title, s.content_rating, s.overview, s.studio, s.status,
                s.genres, s.thumb, s.art, s.imdb_id, s.tvdb_id, s.tmdb_id,
                s.originally_available_at, s.year, s.audience_rating, s.locked,
@@ -1460,6 +1719,10 @@ EpisodeListResult ContentRepository::searchEpisodes(const EpisodeSearchParams& p
                                           SELECT position FROM playlist_item pi2
                                           WHERE pi2.playlist_id = ? AND pi2.item_type = 'episode' AND pi2.item_id = e.episode_id
                                         ) )") + dirFor("ASC") :
+        // Pure season/episode order, ignoring show title — e.g. browsing
+        // episodes across multiple shows and wanting S1E1, S1E2... rather
+        // than every show's run grouped together first.
+        (p.sort == "episode_number")   ? std::string(" ORDER BY e.season ") + dirFor("ASC") + ", e.episode " + dirFor("ASC") :
                                         std::string(" ORDER BY s.title ") + dirFor("ASC") + ", e.season " + dirFor("ASC") + ", e.episode " + dirFor("ASC");
 
     auto bindWhere = [&](SQLite::Statement& q, int& idx) {
@@ -1482,16 +1745,18 @@ EpisodeListResult ContentRepository::searchEpisodes(const EpisodeSearchParams& p
                s.show_id, s.title AS show_title
         FROM episode e JOIN show s ON s.show_id = e.show_id
     )" + where + order_clause + " LIMIT ? OFFSET ?");
-    int idx = 1;
-    bindWhere(q, idx);
-    if (p.sort == "playlist_order" && p.playlist_id) q.bind(idx++, *p.playlist_id);
-    q.bind(idx++, p.limit); q.bind(idx++, p.offset);
+	int idx = 1;
+	bindWhere(q, idx);
+	if (p.sort == "playlist_order" && p.playlist_id) q.bind(idx++, *p.playlist_id);
+	q.bind(idx++, p.limit);
+	q.bind(idx++, p.offset);
 
-    while (q.executeStep()) {
-        EpisodeSearchRow r;
-        r.episode_id  = q.getColumn(0).getString();
-        r.season      = q.getColumn(1).getInt();
-        r.episode     = q.getColumn(2).getInt();
+	while (q.executeStep())
+	{
+		EpisodeSearchRow r;
+		r.episode_id  = q.getColumn(0).getString();
+		r.season      = q.getColumn(1).getInt();
+		r.episode     = q.getColumn(2).getInt();
         r.title       = q.getColumn(3).getString();
         r.duration_ms = q.getColumn(4).getInt64();
         r.show_id     = q.getColumn(5).getString();

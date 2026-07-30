@@ -10,10 +10,10 @@ import styles from './PickerFilters.module.css'
 // circular dependency on this file — re-exported here so existing call
 // sites importing from 'PickerFilters' don't all need new import paths.
 export {
-  FIELD_DEFS, RESOLUTIONS, DECADES,
+    FIELD_DEFS, RESOLUTIONS, DECADES, WATCH_STATES,
   type FilterField, type FilterOp, type ValueType, type FieldDef,
 } from './media/filterFields'
-import { FIELD_DEFS, RESOLUTIONS, DECADES, type FilterField } from './media/filterFields'
+import {FIELD_DEFS, RESOLUTIONS, DECADES, WATCH_STATES, type FilterField} from './media/filterFields'
 
 // Same disambiguation as SourceSwitcher.tsx's identical helper — two
 // libraries from different sources can share a display name (e.g. both a
@@ -185,6 +185,13 @@ const FilterRuleRow = observer(function FilterRuleRow({ rule, filteredLibs, play
           <option value="">Any</option>
           {DECADES.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
+      )}
+        {def.valueType === 'watch_state' && (
+            <select value={rule.value} onChange={e => set({value: e.target.value})}
+                    className={`${styles.input} ${styles.valueFlex}`}>
+                <option value="">Any</option>
+                {WATCH_STATES.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+            </select>
       )}
       {def.valueType === 'number' && (
         <input value={rule.value} onChange={e => set({ value: e.target.value })}

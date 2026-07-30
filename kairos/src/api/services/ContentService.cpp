@@ -105,8 +105,7 @@ namespace
 	bool startsWithCI(const std::string& v, const std::string& prefix)
 	{
 		if (v.size() < prefix.size()) return false;
-		for (size_t i = 0; i < prefix.size(); ++i)
-			if (std::tolower(static_cast<unsigned char>(v[i])) != std::tolower(static_cast<unsigned char>(prefix[i]))) return false;
+		for (size_t i = 0; i < prefix.size(); ++i) if (std::tolower(static_cast<unsigned char>(v[i])) != std::tolower(static_cast<unsigned char>(prefix[i]))) return false;
 		return true;
 	}
 
@@ -1277,6 +1276,75 @@ void ContentService::registerRoutes(httplib::Server& svr)
 			items.push_back(std::move(entry));
 		}
 		route::ok(res, json{{"items", items}, {"total", result.total}}.dump());
+	});
+
+	// Truly interleaved show+movie browsing (Library's "All" content type, a
+	// 'mixed' smart playlist's Home shelf) — index returns every match,
+	// already sorted; hydrate fills in tile data for whatever page of that
+	// index a caller wants to render. See ContentRepository::searchMixedIndex.
+	svr.Get("/api/mixed-media/index", [this](const Req& req, Res& res)
+	{
+		MixedSearchParams p;
+		if (req.has_param("library_ids")) p.library_ids = route::splitComma(req.get_param_value("library_ids"));
+		else if (req.has_param("library_id")) p.library_ids = {req.get_param_value("library_id")};
+		if (req.has_param("filter")) p.filter = req.get_param_value("filter");
+		if (req.has_param("sort")) p.sort = req.get_param_value("sort");
+		if (req.has_param("sort_dir")) p.sort_dir = req.get_param_value("sort_dir");
+		if (req.has_param("home")) p.home_only = req.get_param_value("home") == "1";
+		if (req.has_param("hide_empty")) p.hide_empty = req.get_param_value("hide_empty") == "1";
+		if (req.has_param("expand_episodes")) p.expand_episodes = req.get_param_value("expand_episodes") == "1";
+		if (req.has_param("include_movies")) p.include_movies = req.get_param_value("include_movies") == "1";
+		p.restriction_show  = restrictionFor("show");
+		p.restriction_movie = restrictionFor("movie");
+		auto user           = currentUser();
+		p.user_id           = user ? user->user_id : "";
+
+		ContentRepository repo(db_);
+		json items = json::array();
+		for (const auto& r : repo.searchMixedIndex(p)) items.push_back({{"content_type", r.content_type}, {"id", r.id}, {"title", r.title}});
+		route::ok(res, json{{"items", items}}.dump());
+	});
+
+	svr.Get("/api/mixed-media/hydrate", [this](const Req& req, Res& res)
+	{
+		// "movie:123,show:456,..."
+		std::vector<std::pair<std::string, std::string>> ids;
+		for (const auto& tok : route::splitComma(req.get_param_value("ids")))
+		{
+			auto colon = tok.find(':');
+			if (colon == std::string::npos) continue;
+			ids.push_back({tok.substr(0, colon), tok.substr(colon + 1)});
+		}
+
+		ContentRepository repo(db_);
+		auto user  = currentUser();
+		json items = json::array();
+		for (const auto& r : repo.hydrateMixed(ids, restrictionFor("show"), restrictionFor("movie"), user ? user->user_id : ""))
+		{
+			json entry = {
+				{"content_type", r.content_type},
+				{"id", r.id},
+				{"title", r.title},
+				{"thumb", r.thumb},
+				{"art", r.art},
+				{"library_id", r.library_id},
+				{"watched", r.watched},
+				{"view_count", r.view_count},
+			};
+			if (r.year) entry["year"] = *r.year;
+			if (r.audience_rating) entry["audience_rating"] = *r.audience_rating;
+			if (r.content_type == "show") entry["episode_count"] = r.episode_count;
+			if (r.content_type == "episode")
+			{
+				entry["duration_ms"] = r.duration_ms;
+				entry["season"]      = r.season;
+				entry["episode"]     = r.episode;
+				entry["show_id"]     = r.show_id;
+				entry["show_title"]  = r.show_title;
+			}
+			items.push_back(std::move(entry));
+		}
+		route::ok(res, json{{"items", items}}.dump());
 	});
 
 	// ── Show detail ───────────────────────────────────────────────────────────

@@ -262,6 +262,12 @@ function tryParseClause(raw: string): ClauseNode | null {
       // leave as-typed; backend range-check just won't match anything if bogus
     }
   }
+    if (field === 'watch_state') {
+        // Backend compares this exactly (watched/in_progress/unwatched) — the
+        // rule-builder dropdown always emits one of those already, but typed
+        // search-bar text ("Watched", "in-progress") should still match.
+        value = value.toLowerCase().replace(/[\s-]+/g, '_')
+    }
 
   return { type: 'clause', field, op, value }
 }

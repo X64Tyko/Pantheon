@@ -1,19 +1,21 @@
 import { observer } from 'mobx-react-lite'
 import { MediaCard } from './MediaCard'
 import { mediaUrl } from '../../api/client'
-import type { Show, Movie, EpisodeSearchResult, LibraryDensity } from '../../api/types'
+import type {Show, Movie, MixedMediaItem, EpisodeSearchResult, LibraryDensity} from '../../api/types'
 import styles from './MediaGrid.module.css'
 
 interface MediaGridProps {
-  shows:       Show[]
-  movies:      Movie[]
+    // Either shows+movies as two separate sections (single content-type
+    // browse, or a content-type-scoped filter), or mixedItems as one already
+    // globally-ordered interleaved list (contentType 'all' — see
+    // LibraryStore.fetch()/MixedSort.h) — never both at once.
+    shows?: Show[]
+    movies?: Movie[]
+    mixedItems?: MixedMediaItem[]
   // Library's "Include Episodes" toggle (default off/hidden — see
-  // LibraryStore.ts). Rendered as its own trailing section, same "shows
-  // section then movies section" sequential model this grid already used
-  // for those two — not truly interleaved by a single cross-type sort. A
-  // playlist's Playlist Order sort orders *within* each section (shows by
-  // earliest episode position, movies/episodes by their own position), not
-  // across all three as one sequence.
+    // LibraryStore.ts). Always its own trailing section — a show can have
+    // orders of magnitude more episodes than shows/movies combined, so this
+    // deliberately isn't folded into the mixed/interleaved order either.
   episodes?:      EpisodeSearchResult[]
   density:     LibraryDensity
   selectedId:  string | null
@@ -29,9 +31,42 @@ const DENSITY_CLASS: Record<LibraryDensity, string> = {
   rich: styles.gridRich,
 }
 
-export const MediaGrid = observer(function MediaGrid({ shows, movies, episodes = [], density, selectedId, onItemClick, onEpisodeClick }: MediaGridProps) {
+export const MediaGrid = observer(function MediaGrid({
+                                                         shows = [],
+                                                         movies = [],
+                                                         mixedItems,
+                                                         episodes = [],
+                                                         density,
+                                                         selectedId,
+                                                         onItemClick,
+                                                         onEpisodeClick
+                                                     }: MediaGridProps) {
   return (
     <div className={`${styles.grid} ${DENSITY_CLASS[density]}`}>
+        {mixedItems ? mixedItems.map(item => (
+            <MediaCard
+                key={item.id}
+                id={item.id}
+                title={item.title}
+                year={item.year}
+                content_type={item.content_type}
+                thumb_url={item.thumb ? mediaUrl(`/api/${item.content_type}s/${item.id}/thumb`) : undefined}
+                rating={item.audience_rating}
+                watched={item.watched}
+                watched_label={item.content_type === 'show' && item.watched && item.episode_count && item.view_count < item.episode_count
+                    ? `${item.view_count}/${item.episode_count}` : undefined}
+                view_count={item.view_count}
+                density={density}
+                selected={selectedId === item.id}
+                // Library's mixed browse never sets expandEpisodes, so mixedItems
+                // is always show/movie here — this narrows for TS since
+                // MixedMediaItem's content_type is shared with the (episode-
+                // capable) Home shelf use of the same type.
+                onClick={() => {
+                    if (item.content_type !== 'episode') onItemClick(item.id, item.content_type)
+                }}
+            />
+        )) : <>
       {shows.map(s => (
         <MediaCard
           key={s.show_id}
@@ -69,6 +104,7 @@ export const MediaGrid = observer(function MediaGrid({ shows, movies, episodes =
           onClick={() => onItemClick(m.movie_id, 'movie')}
         />
       ))}
+        </>}
       {episodes.map(ep => (
         <MediaCard
           key={ep.episode_id}

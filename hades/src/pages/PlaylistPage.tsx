@@ -57,6 +57,9 @@ class PlaylistPageStore {
   smartFilterTree: FilterTreeStore = new FilterTreeStore()
   smartType:    SmartPlaylistType = 'movie'
   smartSort:    string = 'title'
+    smartSortDir: '' | 'asc' | 'desc' = ''
+    // Show-typed only — see Playlist.smart_expand_episodes.
+    smartExpandEpisodes: boolean = false
   smartLimit:   string = '' // '' = unlimited
   smartSaving:  boolean = false
   // Free-text companion to smartFilterTree — typed canon filter syntax that
@@ -166,11 +169,13 @@ class PlaylistPageStore {
   // gets silently dropped on the next Save (a no-op on an empty string,
   // leaving a fresh/empty tree+text for a playlist with no filter yet).
   loadSmartEditor(p: Pick<Playlist,
-    'smart_type' | 'smart_sort' | 'smart_limit' | 'filter_expr'
+      'smart_type' | 'smart_sort' | 'smart_sort_dir' | 'smart_expand_episodes' | 'smart_limit' | 'filter_expr'
     | 'show_on_home' | 'home_tile_limit' | 'home_active_start' | 'home_active_end'>
   ) {
     this.smartType  = p.smart_type
     this.smartSort  = p.smart_sort
+      this.smartSortDir = p.smart_sort_dir
+      this.smartExpandEpisodes = p.smart_expand_episodes
     this.smartLimit = p.smart_limit > 0 ? String(p.smart_limit) : ''
     this.smartFilterTree.reset()
     this.smartFreeText = this.smartFilterTree.splitFromFilterString(p.filter_expr)
@@ -179,6 +184,43 @@ class PlaylistPageStore {
     this.homeActiveStart = p.home_active_start
     this.homeActiveEnd   = p.home_active_end
   }
+
+    // Same ordering HomePage.tsx's Home shelves actually render in — see
+    // PlaylistRepository::listHomeShelves's identical ORDER BY home_order, title.
+    get homeShelves(): Playlist[] {
+        return this.playlists
+            .filter(p => p.show_on_home)
+            .sort((a, b) => a.home_order - b.home_order || a.title.localeCompare(b.title))
+    }
+
+    // Swaps two adjacent shelves and persists fresh sequential home_order
+    // values for the whole list, rather than just the two moved playlists —
+    // every shelf starts at home_order=0 until first reordered, so the first
+    // move needs to assign everyone a real position, not just the pair being
+    // swapped (otherwise the "moved" pair would tie with everything else still
+    // sitting at 0 and the sort would fall back to title order regardless).
+    async moveHomeShelf(id: string, dir: 'up' | 'down') {
+        const list = [...this.homeShelves]
+        const idx = list.findIndex(p => p.playlist_id === id)
+        const swapWith = dir === 'up' ? idx - 1 : idx + 1
+        if (idx < 0 || swapWith < 0 || swapWith >= list.length) return
+            ;
+        [list[idx], list[swapWith]] = [list[swapWith], list[idx]]
+        try {
+            await Promise.all(list.map((p, i) => api.updatePlaylist(p.playlist_id, {home_order: i})))
+            runInAction(() => {
+                const orderOf = new Map(list.map((p, i) => [p.playlist_id, i]))
+                this.playlists = this.playlists.map(p => orderOf.has(p.playlist_id) ? {
+                    ...p,
+                    home_order: orderOf.get(p.playlist_id)!
+                } : p)
+            })
+        } catch (e: any) {
+            runInAction(() => {
+                this.error = e.message
+            })
+        }
+    }
 
   async setMembership(id: string, membership: PlaylistMembership) {
     try {
@@ -224,6 +266,12 @@ class PlaylistPageStore {
       await api.updatePlaylist(playlistId, {
         smart_type:  this.smartType,
         smart_sort:  this.smartSort,
+          smart_sort_dir: this.smartSortDir,
+          // Only show-typed playlists have a grouped-vs-flattened choice —
+          // the field's harmless to send either way (refreshSmart only reads
+          // it in the show-typed branch), but not showing/persisting a
+          // meaningless toggle for movie/mixed types keeps the editor honest.
+          smart_expand_episodes: this.smartType === 'show' ? this.smartExpandEpisodes : false,
         smart_limit: this.smartLimit.trim() ? parseInt(this.smartLimit, 10) : 0,
         filter_expr,
         ...(this.showOnHome ? {
@@ -730,6 +778,8 @@ export default observer(function PlaylistPage() {
         />
       )}
 
+        {store.homeShelves.length > 1 && <HomeShelvesPanel/>}
+
       <div className="space-y-2">
         {store.playlists.length === 0 && !store.loading && (
           <p className="text-zinc-600 text-sm">No playlists yet.</p>
@@ -818,6 +868,36 @@ const PosterUrlField = observer(function PosterUrlField({ playlist }: { playlist
       />
     </div>
   )
+})
+
+// Up/down buttons rather than pointer drag — matches how the rest of Hades
+// stays usable from a D-pad/remote (see the norigin-spatial-navigation focus
+// system elsewhere), and this list is short enough that drag adds
+// interaction cost without saving real clicks.
+const HomeShelvesPanel = observer(function HomeShelvesPanel() {
+    return (
+        <div className="card p-4 space-y-2">
+            <div className="text-sm font-medium text-zinc-300">Home Shelf Order</div>
+            <p className="text-xs text-zinc-500">Order these play on the Home page, top to bottom.</p>
+            <div className="space-y-1.5">
+                {store.homeShelves.map((pl, i) => (
+                    <div key={pl.playlist_id}
+                         className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-zinc-800/50 border border-zinc-700/30">
+                        <span className="text-sm text-zinc-300 flex-1 truncate">{pl.title}</span>
+                        <button onClick={() => store.moveHomeShelf(pl.playlist_id, 'up')} disabled={i === 0}
+                                className="text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:hover:text-zinc-500 text-xs px-1.5">
+                            ▲
+                        </button>
+                        <button onClick={() => store.moveHomeShelf(pl.playlist_id, 'down')}
+                                disabled={i === store.homeShelves.length - 1}
+                                className="text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:hover:text-zinc-500 text-xs px-1.5">
+                            ▼
+                        </button>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
 })
 
 const PlaylistCard = observer(function PlaylistCard({ playlist }: { playlist: Playlist }) {
@@ -1052,17 +1132,26 @@ function PlaylistItemRow({ item, idx, playlistId, readOnly }: {
 
 // ─── Smart playlist editor ──────────────────────────────────────────────────────
 
-const SMART_SORTS: { value: string; label: string }[] = [
-  { value: 'title',            label: 'Title' },
-  { value: 'recently_added',   label: 'Recently Added' },
-  { value: 'year',             label: 'Year' },
-  { value: 'audience_rating',  label: 'Audience Rating' },
-  { value: 'random',           label: 'Random' },
+const SMART_SORTS: { value: string; label: string; dirless?: boolean }[] = [
+    {value: 'title', label: 'Title'},
+    {value: 'recently_added', label: 'Recently Added'},
+    {value: 'year', label: 'Year'},
+    {value: 'audience_rating', label: 'Audience Rating'},
+    {value: 'duration', label: 'Duration'},
+    {value: 'recently_released_or_aired', label: 'Recently Aired/Released'},
+    // Chronological (oldest-first) — the natural sort for a "mixed" playlist
+    // meant to be watched in actual release order across movies and shows.
+    {value: 'air_date', label: 'Air/Release Date'},
+    {value: 'random', label: 'Random', dirless: true},
 ]
 
 const SmartPlaylistEditor = observer(function SmartPlaylistEditor({ playlist }: { playlist: Playlist }) {
+    // A 'mixed' smart playlist's filter can match either entity, so every
+    // library (show, movie, or already-mixed-content) is a valid scope hint —
+    // not just the ones matching one specific library_type.
   const filteredLibs = store.allLibraries.filter(l =>
-    l.library_type === store.smartType || l.library_type === 'mixed')
+      store.smartType === 'mixed' || l.library_type === store.smartType || l.library_type === 'mixed')
+    const sortDirless = SMART_SORTS.find(s => s.value === store.smartSort)?.dirless ?? false
 
   return (
     <div className="rounded-lg border border-violet-900/30 bg-zinc-950/60 p-3 space-y-3">
@@ -1070,11 +1159,14 @@ const SmartPlaylistEditor = observer(function SmartPlaylistEditor({ playlist }: 
         <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Type</label>
         <select
           value={store.smartType}
-          onChange={e => runInAction(() => { store.smartType = e.target.value as 'show' | 'movie' })}
+          onChange={e => runInAction(() => {
+              store.smartType = e.target.value as SmartPlaylistType
+          })}
           className="input text-xs py-1"
         >
           <option value="movie">Movies</option>
           <option value="show">Shows (expands to episodes)</option>
+            <option value="mixed">Mixed (movies + shows)</option>
         </select>
 
         <label className="text-[10px] text-zinc-500 uppercase tracking-widest ml-2">Sort</label>
@@ -1085,6 +1177,23 @@ const SmartPlaylistEditor = observer(function SmartPlaylistEditor({ playlist }: 
         >
           {SMART_SORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
+          {!sortDirless && (
+              <div className="flex gap-1">
+                  {(['asc', 'desc'] as const).map(d => (
+                      <button
+                          key={d}
+                          onClick={() => runInAction(() => {
+                              store.smartSortDir = store.smartSortDir === d ? '' : d
+                          })}
+                          className={`px-2 py-1 rounded text-[10px] font-mono tracking-wide border ${
+                              store.smartSortDir === d ? 'border-violet-600 bg-violet-950/50 text-violet-300' : 'border-zinc-700 text-zinc-500'
+                          }`}
+                      >
+                          {d === 'asc' ? 'ASC' : 'DESC'}
+                      </button>
+                  ))}
+              </div>
+          )}
 
         <label className="text-[10px] text-zinc-500 uppercase tracking-widest ml-2">Limit</label>
         <input
@@ -1092,6 +1201,24 @@ const SmartPlaylistEditor = observer(function SmartPlaylistEditor({ playlist }: 
           onChange={e => runInAction(() => { store.smartLimit = e.target.value.replace(/[^0-9]/g, '') })}
           placeholder="unlimited" className="input text-xs py-1 w-20"
         />
+
+          {/* Only meaningful for a show-typed playlist — mixed/movie playlists
+            are always per-item already. Off (default): sort the shows,
+            list each one's episodes in season order. On: flatten to a
+            single per-episode list ordered by the Sort field above (any
+            mode, not just the date-based ones). */}
+          {store.smartType === 'show' && (
+              <label className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase tracking-widest ml-2">
+                  <input
+                      type="checkbox"
+                      checked={store.smartExpandEpisodes}
+                      onChange={e => runInAction(() => {
+                          store.smartExpandEpisodes = e.target.checked
+                      })}
+                  />
+                  Include Episodes
+              </label>
+          )}
       </div>
 
       {/* Free-text companion to the rule builder below — same "type it

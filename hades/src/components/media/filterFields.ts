@@ -8,7 +8,7 @@ export type FilterField =
   | 'director' | 'actor' | 'writer' | 'country'
   | 'collection' | 'network' | 'label' | 'resolution' | 'decade'
   | 'audience_rating' | 'duration' | 'added'
-  | 'audio_language' | 'subtitle_language'
+    | 'audio_language' | 'subtitle_language' | 'watch_state'
 
 export type FilterOp =
   | 'is' | 'is_not'
@@ -16,10 +16,25 @@ export type FilterOp =
   | 'gt' | 'gte' | 'lt' | 'lte'
   | 'before' | 'after' | 'in_last'
 
-export type ValueType = 'text' | 'number' | 'days' | 'resolution' | 'decade' | 'library' | 'source' | 'playlist'
+export type ValueType =
+    'text'
+    | 'number'
+    | 'days'
+    | 'resolution'
+    | 'decade'
+    | 'library'
+    | 'source'
+    | 'playlist'
+    | 'watch_state'
 
 export const RESOLUTIONS = ['4K', '1080p', '720p', 'SD']
 export const DECADES     = ['2020s', '2010s', '2000s', '1990s', '1980s', '1970s', '1960s', '1950s', '1940s', '1930s']
+// Values match the backend's watch_state clause (FilterExpr.cpp) exactly.
+export const WATCH_STATES: { value: string; label: string }[] = [
+    {value: 'watched', label: 'Watched'},
+    {value: 'in_progress', label: 'In Progress'},
+    {value: 'unwatched', label: 'Unwatched'},
+]
 
 export type FieldDef = { label: string; valueType: ValueType; ops: { id: FilterOp; label: string }[] }
 
@@ -64,6 +79,7 @@ export const FIELD_DEFS: Record<FilterField, FieldDef> = {
   subtitle_language: { label: 'Subtitle Language', valueType: 'text', ops: TEXT_OPS },
   resolution:      { label: 'Resolution',      valueType: 'resolution', ops: [{ id: 'is', label: 'is' }, { id: 'is_not', label: 'is not' }] },
   decade:          { label: 'Decade',          valueType: 'decade',     ops: [{ id: 'is', label: 'is' }] },
+    watch_state: {label: 'Watch State', valueType: 'watch_state', ops: [{id: 'is', label: 'is'}]},
   audience_rating: { label: 'Audience Rating', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
   duration:        { label: 'Duration (mins)', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
   added:           { label: 'Date Added',      valueType: 'days',       ops: [{ id: 'in_last', label: 'in the last' }, { id: 'before', label: 'before' }, { id: 'after', label: 'after' }] },

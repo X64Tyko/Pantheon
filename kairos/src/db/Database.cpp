@@ -2199,7 +2199,7 @@ namespace
     -- existing advancement:'shuffle'|'sequential'.
     ALTER TABLE playlist ADD COLUMN membership  TEXT NOT NULL DEFAULT 'static' CHECK(membership IN ('static','smart'));
     ALTER TABLE playlist ADD COLUMN filter_expr TEXT NOT NULL DEFAULT '';
-    ALTER TABLE playlist ADD COLUMN smart_type  TEXT NOT NULL DEFAULT 'movie' CHECK(smart_type IN ('show','movie'));
+    ALTER TABLE playlist ADD COLUMN smart_type  TEXT NOT NULL DEFAULT 'movie' CHECK(smart_type IN ('show','movie','mixed'));
     ALTER TABLE playlist ADD COLUMN smart_sort  TEXT NOT NULL DEFAULT 'title';
     ALTER TABLE playlist ADD COLUMN smart_limit INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE playlist ADD COLUMN last_smart_refresh_at INTEGER;
@@ -2510,6 +2510,25 @@ namespace
     ALTER TABLE channel ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS idx_channel_owner ON channel(owner_user_id);
     ALTER TABLE user ADD COLUMN channel_builder_enabled INTEGER NOT NULL DEFAULT 0;
+)SQL"
+		}
+
+		// ── v102: smart_sort_dir (smart playlists had no direction override at
+		//         all — always each sort mode's own natural direction) and
+		//         smart_expand_episodes (explicit per-playlist toggle for a
+		//         show-typed playlist to flatten to a per-episode list under
+		//         any sort mode, not just the two date-based ones
+		//         PlaylistRepository::refreshSmart auto-detected before).
+		//         Backfill keeps existing show-typed date-sorted playlists on
+		//         their current (flattened) behavior instead of silently
+		//         reverting to the grouped-by-show list.
+		,
+		{
+			102, R"SQL(
+    ALTER TABLE playlist ADD COLUMN smart_sort_dir TEXT NOT NULL DEFAULT '' CHECK(smart_sort_dir IN ('','asc','desc'));
+    ALTER TABLE playlist ADD COLUMN smart_expand_episodes INTEGER NOT NULL DEFAULT 0;
+    UPDATE playlist SET smart_expand_episodes = 1
+        WHERE smart_type = 'show' AND smart_sort IN ('recently_released_or_aired', 'air_date');
 )SQL"
 		}
 

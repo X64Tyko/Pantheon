@@ -65,3 +65,28 @@
   font-size: var(--hds-font-size-tv-caption);
   letter-spacing: 0.04em;
 }
+
+.savePlaylistRow {
+    border-top: 1px solid var(--hds-line-s);
+    padding-top: var(--hds-space-3);
+}
+
+.savePlaylistRow :global(.btn-secondary) {
+    width: 100%;
+}
+
+.savePlaylistPrompt {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hds-space-2);
+}
+
+.savePlaylistActions {
+    display: flex;
+    gap: var(--hds-space-2);
+}
+
+.savePlaylistActions :global(.btn-primary),
+.savePlaylistActions :global(.btn-ghost) {
+    flex: 1;
+}
