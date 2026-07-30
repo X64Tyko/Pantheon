@@ -384,6 +384,34 @@ export interface Movie {
   view_count?:     number
 }
 
+// A truly interleaved show+movie result (see kairos's MixedSort.h) — used
+// by the Library page's "All" content type and mixed-shelf browsing, not a
+// separate "every movie before every show" section of the same grid.
+export interface MixedIndexEntry {
+    content_type: 'show' | 'movie' | 'episode'
+    id: string
+    title: string
+}
+
+export interface MixedMediaItem {
+    content_type: 'show' | 'movie' | 'episode'
+    id: string
+    title: string
+    thumb?: string
+    art?: string
+    library_id?: string
+    year?: number
+    audience_rating?: number
+    watched: boolean
+    view_count: number
+    episode_count?: number // shows only
+    duration_ms?: number // episodes only
+    season?: number // episodes only
+    episode?: number // episodes only
+    show_id?: string // episodes only
+    show_title?: string // episodes only
+}
+
 // ── Detail types (full metadata) ─────────────────────────────────────────────
 
 // One media_source (Plex/Jellyfin/local) a show/movie is mapped to — can be more than one.
@@ -832,7 +860,7 @@ export interface PlexLink {
 
 export type PlaylistMode       = 'sequential' | 'show_collection' | 'shuffle'
 export type PlaylistMembership = 'static' | 'smart'
-export type SmartPlaylistType  = 'show' | 'movie'
+export type SmartPlaylistType = 'show' | 'movie' | 'mixed'
 
 export interface Playlist {
   playlist_id: string
@@ -849,6 +877,14 @@ export interface Playlist {
   filter_expr: string
   smart_type:  SmartPlaylistType
   smart_sort:  string
+    // '' = the sort mode's own natural direction; 'asc'/'desc' overrides it
+    // (ignored by 'random'). Smart playlists had no direction control at all
+    // before kairos's Database.cpp migration 102.
+    smart_sort_dir: '' | 'asc' | 'desc'
+    // Show-typed only: flatten to a per-episode list under smart_sort (any
+    // mode) instead of "sort the shows, list each one's episodes in season
+    // order". See PlaylistRepository::refreshSmart.
+    smart_expand_episodes: boolean
   smart_limit: number
   last_smart_refresh_at: number | null
   // Home-shelf fields (Database.cpp migration 88) — a Home shelf is just a
@@ -903,6 +939,11 @@ export interface HomePlaylistShelf {
   smart_type:      SmartPlaylistType
   filter_expr:     string
   smart_sort:      string
+    smart_sort_dir: '' | 'asc' | 'desc'
+    // Show-typed only — when true, this shelf renders as a per-episode feed
+    // (see api.getMixedMediaIndex's expandEpisodes option) instead of one tile
+    // per matching show.
+    smart_expand_episodes: boolean
   home_tile_limit: number
 }
 

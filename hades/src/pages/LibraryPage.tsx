@@ -233,13 +233,14 @@ export default observer(function LibraryPage() {
               <MediaGrid
                 shows={store.shows}
                 movies={store.movies}
+                mixedItems={store.contentType === 'all' ? store.mixedItems : undefined}
                 episodes={store.episodes}
                 density={store.density}
                 selectedId={null}
                 onItemClick={(id, type) => openDetail(() => store.selectItem(id, type))}
                 onEpisodeClick={id => navigate(`/player/episode/${id}`)}
               />
-              {store.shows.length + store.movies.length + store.episodes.length < store.total && (
+                {(store.contentType === 'all' ? store.mixedItems.length : store.shows.length + store.movies.length) + store.episodes.length < store.total && (
                 <LoadMoreSentinel loading={store.loadingMore} onVisible={() => store.loadMore()} />
               )}
             </>

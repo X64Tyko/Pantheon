@@ -8,7 +8,14 @@ import type {
   Episode, EpisodeGroup, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, ExportDepth, GroupingCandidatesResult, ImportPreviewResult, ImportResult, MediaLanguages, ShowGroupingResult, StartScope,
   FillerEntry, FillerEntryAdvancement, FillerList, FillerListDetail, FillerSelectionMode,
   Library, LibraryInfo, LibraryWithSource,
-  Movie, MovieDetail, PagedResult, PathMap, PlexBrowseItem, PlexBrowseList,
+    Movie,
+    MovieDetail,
+    MixedIndexEntry,
+    MixedMediaItem,
+    PagedResult,
+    PathMap,
+    PlexBrowseItem,
+    PlexBrowseList,
   Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult, HomePlaylistShelf, UnresolvedSyncItem, PlaylistBrowseEntry, PlaylistItem,
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WatchTogetherSession, WritebackResult,
@@ -359,6 +366,34 @@ export const api = {
   getMovies:      (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean; playlist_id?: string } = {}) =>
                     request<PagedResult<Movie>>('GET', `/movies?${qs({ ...withCombinedFilter(p), hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
 
+    // Truly interleaved show+movie(+episode) browsing — see kairos's
+    // MixedSort.h. Always every match, already sorted; page by hydrating
+    // whatever slice a caller wants to render (getMixedMediaTiles).
+    // expandEpisodes swaps shows for their individual episodes in the result
+    // (a per-episode feed like "Recently Aired", still interleaved with
+    // movies under the same sort) instead of one tile per matching show.
+    getMixedMediaIndex: (p: {
+        library_ids?: string;
+        q?: string;
+        filter?: string;
+        sort?: string;
+        sort_dir?: 'asc' | 'desc';
+        home?: boolean;
+        hideEmpty?: boolean;
+        expandEpisodes?: boolean;
+        includeMovies?: boolean
+    } = {}) =>
+        request<{ items: MixedIndexEntry[] }>('GET', `/mixed-media/index?${qs({
+            ...withCombinedFilter(p), hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined,
+            expandEpisodes: undefined, expand_episodes: p.expandEpisodes ? 1 : undefined,
+            includeMovies: undefined, include_movies: p.includeMovies === false ? 0 : undefined,
+        })}`),
+    getMixedMediaTiles: (ids: { content_type: 'show' | 'movie' | 'episode'; id: string }[]) =>
+        ids.length === 0 ? Promise.resolve({items: [] as MixedMediaItem[]})
+            : request<{
+                items: MixedMediaItem[]
+            }>('GET', `/mixed-media/hydrate?${qs({ids: ids.map(i => `${i.content_type}:${i.id}`).join(',')})}`),
+
   // Watch progress
   getWatchProgress:   (limit?: number)                                     => request<WatchProgress[]>('GET', `/watch-progress${limit != null ? '?limit=' + limit : ''}`),
     // device_type/direct_stream (both optional) additionally feed the local
@@ -499,8 +534,9 @@ export const api = {
   searchEpisodes:    (p: {
                        q?: string; show_id?: string; season?: number; limit?: number; offset?: number
                        // 'playlist_order' only meaningful (and only offered by the UI) together with playlist_id —
-                       // see LibraryFilters.tsx's conditional sort option.
-                       sort?: 'title' | 'playlist_order'; sort_dir?: 'asc' | 'desc'; playlist_id?: string
+      // see LibraryFilters.tsx's conditional sort option. 'episode_number' is season/episode
+      // order ignoring show grouping, unlike 'title' which groups by show first.
+      sort?: 'title' | 'episode_number' | 'playlist_order'; sort_dir?: 'asc' | 'desc'; playlist_id?: string
                      } = {}) =>
                        request<PagedResult<EpisodeSearchResult>>('GET', `/episodes?${qs(p)}`),
 
@@ -520,7 +556,8 @@ export const api = {
   updatePlaylist:    (id: string, b: {
                        title?: string; mode?: string
                        membership?: 'static'|'smart'; filter_expr?: string
-                       smart_type?: 'show'|'movie'; smart_sort?: string; smart_limit?: number
+      smart_type?: 'show' | 'movie' | 'mixed'; smart_sort?: string
+      smart_sort_dir?: '' | 'asc' | 'desc'; smart_expand_episodes?: boolean; smart_limit?: number
                        show_on_home?: boolean; home_order?: number; home_tile_limit?: number
                        home_active_start?: string; home_active_end?: string
                        poster_source?: string
