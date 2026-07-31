@@ -50,6 +50,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Syncs aborted with `CHECK constraint failed: source IN ('tmdb','tvdb','anidb')` (Kairos)**: the
+  `item_match_candidate`/`content_request` source CHECK was last widened in migration v51, before the tvmaze/
+  trakt/anilist/wikidata scrapers existed — any match candidate or content request from one of those four sources
+  hit the constraint and killed the sync. New migration v104 rebuilds both tables with the full 7-source list
+  (`Database.cpp`).
 - **`TimeslotService.cpp` had no role or ownership check on any of its 9 routes** (`/api/blocks/:bid/slots...`) —
   any authenticated viewer, not just the new self-service channel builder below, could already mutate arbitrary
   channels' timeslot data via a direct API call; no viewer-facing UI happened to expose this, but nothing on the

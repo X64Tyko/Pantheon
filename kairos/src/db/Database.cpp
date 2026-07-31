@@ -2557,6 +2557,61 @@ namespace
 )SQL"
 		}
 
+		// ── v104: item_match_candidate/content_request source CHECK never grew past
+		//         v51's ('tmdb','tvdb','anidb') when the tvmaze/trakt/anilist/wikidata
+		//         scrapers were wired up (see the source list in
+		//         ScraperManager::getSettings) — every match candidate or content
+		//         request from those four sources hit "CHECK constraint failed:
+		//         source IN ('tmdb','tvdb','anidb')" and aborted the sync. SQLite
+		//         can't alter a CHECK in place, so rebuild both tables.
+		,
+		{
+			104, R"SQL(
+    CREATE TABLE item_match_candidate_v104 (
+        candidate_id TEXT    PRIMARY KEY,
+        item_type    TEXT    NOT NULL CHECK(item_type IN ('show','movie')),
+        kairos_id    TEXT    NOT NULL,
+        source       TEXT    NOT NULL CHECK(source IN ('tmdb','tvdb','anidb','tvmaze','trakt','anilist','wikidata')),
+        external_id  TEXT    NOT NULL,
+        title        TEXT    NOT NULL,
+        year         INTEGER,
+        score        REAL    NOT NULL DEFAULT 0,
+        accepted     INTEGER,
+        poster_url   TEXT    NOT NULL DEFAULT '',
+        overview     TEXT    NOT NULL DEFAULT '',
+        UNIQUE(item_type, kairos_id, source, external_id)
+    );
+    INSERT INTO item_match_candidate_v104
+        SELECT * FROM item_match_candidate;
+    DROP TABLE item_match_candidate;
+    ALTER TABLE item_match_candidate_v104 RENAME TO item_match_candidate;
+    CREATE INDEX IF NOT EXISTS idx_item_match_kairos
+        ON item_match_candidate(item_type, kairos_id);
+    CREATE INDEX IF NOT EXISTS idx_item_match_pending
+        ON item_match_candidate(accepted) WHERE accepted IS NULL;
+
+    CREATE TABLE content_request_v104 (
+        request_id   TEXT    PRIMARY KEY,
+        user_id      TEXT    NOT NULL,
+        content_type TEXT    NOT NULL CHECK(content_type IN ('show','movie')),
+        source       TEXT    NOT NULL CHECK(source IN ('tmdb','tvdb','anidb','tvmaze','trakt','anilist','wikidata')),
+        external_id  TEXT    NOT NULL,
+        title        TEXT    NOT NULL DEFAULT '',
+        year         INTEGER,
+        poster_url   TEXT    NOT NULL DEFAULT '',
+        status       TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+        created_at   INTEGER NOT NULL,
+        UNIQUE(user_id, content_type, source, external_id)
+    );
+    INSERT INTO content_request_v104
+        SELECT * FROM content_request;
+    DROP TABLE content_request;
+    ALTER TABLE content_request_v104 RENAME TO content_request;
+    CREATE INDEX IF NOT EXISTS idx_request_status ON content_request(status);
+    CREATE INDEX IF NOT EXISTS idx_request_user   ON content_request(user_id);
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 
