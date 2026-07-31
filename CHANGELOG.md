@@ -50,6 +50,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **yt-dlp downloads failed with "Sign in to confirm you're not a bot" on cloud/datacenter hosts (Kairos)**: this
+  is YouTube's IP-reputation bot-check, not a rate limit — the existing `--sleep-requests`/`--sleep-interval`
+  pacing (added for a separate large-playlist blocking issue) doesn't affect it. `DownloadManager.cpp` now passes
+  `--cookies <path>` to yt-dlp when `KAIROS_YTDLP_COOKIES` is set, letting an operator supply cookies exported from
+  a real logged-in browser session; unset behaves exactly as before. `docker-compose.yml` (and all 5 generated
+  variants) document the env var and add a commented-out volume mount for it.
+- **Episode-scope start-time alignment silently did nothing unless "Insert filler clips between programs" was
+  also enabled (Kairos)**: `RuleEngine.cpp`'s alignment step was gated on `block.inter_filler`, an unrelated
+  playback preference — Hades presents "Align Start" and filler insertion as two independent settings in separate
+  sections, so a channel with alignment configured but filler off just played episodes back-to-back off-grid with
+  no indication why. Alignment now always runs when `align_to_mins`/episode scope call for it, using the same
+  filler pool purely as its padding mechanism (falling back to a contentless snap when the pool is empty, as
+  before).
 - **Syncs aborted with `CHECK constraint failed: source IN ('tmdb','tvdb','anidb')` (Kairos)**: the
   `item_match_candidate`/`content_request` source CHECK was last widened in migration v51, before the tvmaze/
   trakt/anilist/wikidata scrapers existed — any match candidate or content request from one of those four sources

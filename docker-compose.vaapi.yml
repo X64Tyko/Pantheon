@@ -17,6 +17,13 @@
 #   FILLER_PATH — where yt-dlp downloads land; set this same path as the
 #                 Default Download Path in the Hades Downloads page.
 #
+# YouTube downloads failing with "Sign in to confirm you're not a bot"?
+# That's YouTube flagging this host's IP (common on cloud/datacenter hosts,
+# not just LAN ones) — pacing doesn't fix it. Export cookies.txt from a real
+# logged-in browser session (see the yt-dlp wiki: "exporting YouTube
+# cookies"), place it on the host, and point KAIROS_YTDLP_COOKIES at the
+# in-container path below. Leave unset for the old unauthenticated behavior.
+#
 # Kairos stores its database and config at whatever host path you mount to
 # /data below (default: /mnt/user/appdata/kairos). The paths in this file are
 # Unraid-style examples — any absolute host path works on any Docker host
@@ -81,10 +88,12 @@ services:
       - KAIROS_ADMIN_PASSWORD=${KAIROS_ADMIN_PASSWORD:-}
       # - KAIROS_DEBUG=1
       # - KAIROS_DEBUG_EPG=1
+      # - KAIROS_YTDLP_COOKIES=/data/ytdlp-cookies.txt   # see note above
     volumes:
       - /mnt/user/appdata/kairos:/data
       - /mnt/user/Media:/media:ro
       - /mnt/user/Media/Filler:/downloads
+      # - /mnt/user/appdata/kairos/ytdlp-cookies.txt:/data/ytdlp-cookies.txt:ro
     restart: unless-stopped
 
   hephaestus:

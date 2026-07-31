@@ -189,7 +189,7 @@ std::string RuleEngine::showCacheKey(const std::string& show_id, std::optional<i
 									 bool include_specials, const std::string& episode_order)
 {
 	return show_id + '\x01' + (season ? std::to_string(*season) : "") + '\x01'
-		 + (include_specials ? "1" : "0") + '\x01' + episode_order;
+		+ (include_specials ? "1" : "0") + '\x01' + episode_order;
 }
 
 const std::vector<Episode>& RuleEngine::getEpisodesCached(
@@ -198,16 +198,14 @@ const std::vector<Episode>& RuleEngine::getEpisodesCached(
 {
 	auto key = showCacheKey(show_id, season, include_specials, episode_order);
 	auto it  = cache.episodes.find(key);
-	if (it == cache.episodes.end())
-		it = cache.episodes.emplace(key, getEpisodes(show_id, season, include_specials, episode_order)).first;
+	if (it == cache.episodes.end()) it = cache.episodes.emplace(key, getEpisodes(show_id, season, include_specials, episode_order)).first;
 	return it->second;
 }
 
 const std::optional<Movie>& RuleEngine::getMovieCached(ContentCache& cache, const std::string& movie_id)
 {
 	auto it = cache.movies.find(movie_id);
-	if (it == cache.movies.end())
-		it = cache.movies.emplace(movie_id, getMovie(movie_id)).first;
+	if (it == cache.movies.end()) it = cache.movies.emplace(movie_id, getMovie(movie_id)).first;
 	return it->second;
 }
 
@@ -216,17 +214,15 @@ const std::vector<std::pair<std::string, std::string>>& RuleEngine::getListItems
 {
 	auto key = content_type + ":" + content_id;
 	auto it  = cache.list_items.find(key);
-	if (it == cache.list_items.end())
-		it = cache.list_items.emplace(key, loadListItems(content_type, content_id)).first;
+	if (it == cache.list_items.end()) it = cache.list_items.emplace(key, loadListItems(content_type, content_id)).first;
 	return it->second;
 }
 
 const std::optional<ScheduledItem>& RuleEngine::episodeByIdCached(ContentCache& cache,
-																   const std::string& episode_id)
+																  const std::string& episode_id)
 {
 	auto it = cache.episode_by_id.find(episode_id);
-	if (it == cache.episode_by_id.end())
-		it = cache.episode_by_id.emplace(episode_id, episodeById(episode_id)).first;
+	if (it == cache.episode_by_id.end()) it = cache.episode_by_id.emplace(episode_id, episodeById(episode_id)).first;
 	return it->second;
 }
 
@@ -238,11 +234,10 @@ std::string RuleEngine::showTitleCached(ContentCache& cache, const std::string& 
 }
 
 const std::vector<std::string>& RuleEngine::getPlaylistShowsCached(ContentCache& cache,
-																	const std::string& playlist_id)
+																   const std::string& playlist_id)
 {
 	auto it = cache.playlist_shows.find(playlist_id);
-	if (it == cache.playlist_shows.end())
-		it = cache.playlist_shows.emplace(playlist_id, getPlaylistShows(playlist_id)).first;
+	if (it == cache.playlist_shows.end()) it = cache.playlist_shows.emplace(playlist_id, getPlaylistShows(playlist_id)).first;
 	return it->second;
 }
 
@@ -251,8 +246,7 @@ const std::vector<Episode>& RuleEngine::getPlaylistShowEpisodesCached(
 {
 	auto key = playlist_id + ":" + show_id;
 	auto it  = cache.playlist_show_eps.find(key);
-	if (it == cache.playlist_show_eps.end())
-		it = cache.playlist_show_eps.emplace(key, getPlaylistShowEpisodes(playlist_id, show_id)).first;
+	if (it == cache.playlist_show_eps.end()) it = cache.playlist_show_eps.emplace(key, getPlaylistShowEpisodes(playlist_id, show_id)).first;
 	return it->second;
 }
 
@@ -588,8 +582,7 @@ bool RuleEngine::hasRealHistory(const std::string& channel_id, const Block& bloc
 // watermark get permanently stuck at the last episode of season 1.
 static bool isNaturalSuccessor(const Episode& from, const Episode& to)
 {
-	if (from.absolute_index && to.absolute_index)
-		return *to.absolute_index == *from.absolute_index + 1;
+	if (from.absolute_index && to.absolute_index) return *to.absolute_index == *from.absolute_index + 1;
 	if (to.season != from.season) return true;
 	return to.episode == from.episode + 1;
 }
@@ -618,7 +611,7 @@ RuleEngine::NaturalAdvance RuleEngine::advanceNatural(
 			isNaturalSuccessor(ordered_eps[from_idx], ordered_eps[to_idx]);
 	};
 
-	int wm_idx = indexOf(watermark_id);
+	int wm_idx                         = indexOf(watermark_id);
 	std::vector<std::string> cur_ahead = ahead;
 
 	// Phase 1: find what plays this call, walking forward one slot at a time
@@ -634,7 +627,7 @@ RuleEngine::NaturalAdvance RuleEngine::advanceNatural(
 	while (guard++ < n)
 	{
 		bool already_aired = std::find(cur_ahead.begin(), cur_ahead.end(),
-										ordered_eps[cursor].episode_id) != cur_ahead.end();
+									   ordered_eps[cursor].episode_id) != cur_ahead.end();
 		if (!(!contiguous(wm_idx, cursor) && already_aired)) break; // stop unless "skip past" case
 		cursor = (cursor + 1) % n;
 	}
@@ -647,9 +640,9 @@ RuleEngine::NaturalAdvance RuleEngine::advanceNatural(
 	int confirmed_idx = wm_idx;
 	if (contiguous(wm_idx, result_idx))
 	{
-		confirmed_idx  = result_idx;
-		int next       = (confirmed_idx + 1) % n;
-		int absorb_i   = 0;
+		confirmed_idx = result_idx;
+		int next      = (confirmed_idx + 1) % n;
+		int absorb_i  = 0;
 		while (absorb_i++ < n)
 		{
 			auto it = std::find(cur_ahead.begin(), cur_ahead.end(), ordered_eps[next].episode_id);
@@ -709,8 +702,7 @@ std::optional<ScheduledItem> RuleEngine::advanceShowCursor(
 
 	// Already caught up to the full catalog on some earlier call — stays free-random
 	// forever from here; no need to keep re-checking history.
-	if (state.hasCursor("show_rerun", entry.content_id, scope, scope_id, entry.episode_order))
-		return freeRandomPick();
+	if (state.hasCursor("show_rerun", entry.content_id, scope, scope_id, entry.episode_order)) return freeRandomPick();
 
 	// Fallback never tracks real history at all — always free-random.
 	if (block.no_history_behavior == NoHistoryBehavior::FallbackAll)
@@ -723,7 +715,7 @@ std::optional<ScheduledItem> RuleEngine::advanceShowCursor(
 	// has a cursor: advance one slot from the watermark via advanceNatural — pure
 	// in-memory and immune to `all` being resorted/regrown since the watermark was
 	// last set (see advanceNatural).
-	std::string watermark = state.getCursorEpisodeId("show", entry.content_id, scope, scope_id, entry.episode_order);
+	std::string watermark          = state.getCursorEpisodeId("show", entry.content_id, scope, scope_id, entry.episode_order);
 	std::vector<std::string> ahead = state.getCursorAhead("show", entry.content_id, scope, scope_id, entry.episode_order);
 
 	NaturalAdvance adv = advanceNatural(watermark, ahead, all);
@@ -740,8 +732,7 @@ std::optional<ScheduledItem> RuleEngine::advanceShowCursor(
 	// permanently (even if the catalog grows later) — same completion semantics as
 	// the old aired>=all.size() check, just derived from the watermark instead of a
 	// live history count.
-	if (adv.new_ahead.empty() && adv.new_watermark_id == all.back().episode_id)
-		state.setCursorPos("show_rerun", entry.content_id, scope, scope_id, 0, "", entry.episode_order);
+	if (adv.new_ahead.empty() && adv.new_watermark_id == all.back().episode_id) state.setCursorPos("show_rerun", entry.content_id, scope, scope_id, 0, "", entry.episode_order);
 
 	return itemFromShow(channel_id, block.block_id, all, adv.index, showTitleCached(cache, entry.content_id));
 }
@@ -894,10 +885,10 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
 			{
 				// Natural-order advance — pure watermark+ahead, immune to the episode
 				// list being resorted/regrown between calls (see advanceNatural).
-				std::string watermark = state.getCursorEpisodeId("show", entry.content_id, scope, scope_id, entry.episode_order);
+				std::string watermark          = state.getCursorEpisodeId("show", entry.content_id, scope, scope_id, entry.episode_order);
 				std::vector<std::string> ahead = state.getCursorAhead("show", entry.content_id, scope, scope_id, entry.episode_order);
-				NaturalAdvance adv = advanceNatural(watermark, ahead, all_eps);
-				item = itemFromShow(channel_id, block.block_id, all_eps, adv.index, showTitleCached(cache, entry.content_id));
+				NaturalAdvance adv             = advanceNatural(watermark, ahead, all_eps);
+				item                           = itemFromShow(channel_id, block.block_id, all_eps, adv.index, showTitleCached(cache, entry.content_id));
 				// See advanceShowCursor's identical comment on why `position` is
 				// still populated even though it's no longer the source of truth.
 				state.setCursorPos("show", entry.content_id, scope, scope_id,
@@ -911,7 +902,7 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
 
 			if (block.advancement == Advancement::Smart && block.smart_pct > 0)
 			{
-				auto eps = smartShufflePool(all_eps, entry.content_id, channel_id, block.smart_pct, state);
+				auto eps  = smartShufflePool(all_eps, entry.content_id, channel_id, block.smart_pct, state);
 				auto perm = shufflePermutation(entry.content_id + block.block_id,
 											   static_cast<int>(eps.size()));
 				item = itemFromShow(channel_id, block.block_id, eps,
@@ -957,7 +948,7 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
 		// ── Single episode ────────────────────────────────────────────────────────
 		const auto& ei = episodeByIdCached(cache, entry.content_id);
 		if (!ei) return std::nullopt;
-		item                = ei;
+		item             = ei;
 		item->channel_id = channel_id;
 		item->block_id   = block.block_id;
 	}
@@ -997,10 +988,10 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
 						// show_collection members use the same "show" cursor kind
 						// (season-order key, since a collection member has no
 						// per-entry episode_order of its own).
-						std::string watermark = state.getCursorEpisodeId("show", show_id, scope, scope_id);
+						std::string watermark          = state.getCursorEpisodeId("show", show_id, scope, scope_id);
 						std::vector<std::string> ahead = state.getCursorAhead("show", show_id, scope, scope_id);
-						NaturalAdvance adv = advanceNatural(watermark, ahead, pl_eps);
-						item = itemFromShow(channel_id, block.block_id, pl_eps, adv.index, showTitleCached(cache, show_id));
+						NaturalAdvance adv             = advanceNatural(watermark, ahead, pl_eps);
+						item                           = itemFromShow(channel_id, block.block_id, pl_eps, adv.index, showTitleCached(cache, show_id));
 						// See advanceShowCursor's identical comment on why `position` is
 						// still populated even though it's no longer the source of truth.
 						state.setCursorPos("show", show_id, scope, scope_id,
@@ -1082,7 +1073,7 @@ std::optional<ScheduledItem> RuleEngine::advanceAndGet(
 			{
 				const auto& ei = episodeByIdCached(cache, pid);
 				if (!ei) return std::nullopt;
-				item              = ei;
+				item             = ei;
 				item->channel_id = channel_id;
 				item->block_id   = block.block_id;
 			}
@@ -1190,8 +1181,7 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
 	{
 		// Build eligible set: clips that fit within max_ms.
 		std::vector<int> eligible;
-		for (int i = 0; i < static_cast<int>(items.size()); ++i)
-			if (items[i].dur > 0 && items[i].dur <= max_ms) eligible.push_back(i);
+		for (int i = 0; i < static_cast<int>(items.size()); ++i) if (items[i].dur > 0 && items[i].dur <= max_ms) eligible.push_back(i);
 		if (eligible.empty()) return std::nullopt;
 
 		// Prefer the least recently played eligible clip (never-played first).
@@ -1200,8 +1190,7 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
 		// filler_records.push_back), so the first occurrence of each item id is
 		// its most recent airing — no separate in-pass augmentation needed.
 		std::unordered_map<std::string, int64_t> last_played;
-		for (auto& [item_id, at] : state.recentPlays("filler:" + channel_id))
-			last_played.try_emplace(item_id, at);
+		for (auto& [item_id, at] : state.recentPlays("filler:" + channel_id)) last_played.try_emplace(item_id, at);
 
 		item_idx       = eligible[0];
 		int64_t oldest = last_played.contains(items[eligible[0]].id)
@@ -1248,8 +1237,7 @@ std::optional<ScheduledItem> RuleEngine::pickFillerSim(
 	if (fe.advancement != "sized" && block.smart_pct > 0)
 	{
 		std::unordered_map<std::string, int64_t> lp;
-		for (auto& [item_id, at] : state.recentPlays("filler:" + channel_id))
-			lp.try_emplace(item_id, at);
+		for (auto& [item_id, at] : state.recentPlays("filler:" + channel_id)) lp.try_emplace(item_id, at);
 
 		int hot_n = std::max(0, static_cast<int>(items.size()) * block.smart_pct / 100);
 		if (hot_n > 0 && !lp.empty())
@@ -1456,18 +1444,24 @@ bool RuleEngine::scheduleBlockStep(
 	// selection (not after the previous push) specifically so it also covers the
 	// first item of a window, where there is no previous push to react to (intro,
 	// or nothing, can easily leave pass.t mid-interval).
-	if (block.inter_filler && block.start_scope == "episode" && block.align_to_mins > 0)
+	//
+	// Independent of block.inter_filler ("insert filler clips between programs") —
+	// that setting is a separate playback preference, not a precondition for
+	// alignment. Alignment draws on the same filler pool purely as its padding
+	// mechanism (the only one implemented); if the pool is empty it falls back to
+	// a contentless snap to the boundary below.
+	if (block.start_scope == "episode" && block.align_to_mins > 0)
 	{
 		const auto& pool = block.filler_entries.empty()
 							   ? ctx.channel_filler
 							   : block.filler_entries;
-		
+
 		std::time_t step   = static_cast<std::time_t>(block.align_to_mins) * 60;
 		std::time_t prev_b = (pass.t / step) * step;
 		std::time_t next_b = prev_b + step;
 		bool in_early      = (next_b - pass.t) <= static_cast<std::time_t>(block.early_start_secs);
 		bool in_late       = (pass.t - prev_b) <= static_cast<std::time_t>(block.late_start_mins) * 60;
-		
+
 		if (!in_early && !in_late)
 		{
 			if (!pool.empty())
@@ -1488,7 +1482,7 @@ bool RuleEngine::scheduleBlockStep(
 					fi->block_id            = block.block_id;
 					const int64_t fi_dur    = fi->duration_ms;
 					pass.filler_records.push_back({ctx.channel_id, fi->item_type, fi->item_id, fi->show_id, block.block_id, pass.t});
-		ctx.state.recordRecentPlay("filler:" + ctx.channel_id, fi->item_id, pass.t);
+					ctx.state.recordRecentPlay("filler:" + ctx.channel_id, fi->item_id, pass.t);
 					ctx.result.push_back(std::move(*fi));
 					pass.t          += fi_dur / 1000;
 					std::time_t pb2 = (pass.t / step) * step, nb2 = pb2 + step;
@@ -1497,8 +1491,7 @@ bool RuleEngine::scheduleBlockStep(
 						break;
 				}
 			}
-			else
-				pass.t = next_b;
+			else pass.t = next_b;
 		}
 	}
 
@@ -1861,8 +1854,8 @@ std::vector<ScheduledItem> RuleEngine::project(const std::string& channel_id,
 		// (or, worse, colliding with a different week's key entirely).
 		if (ctx.anchors_out && next_monday <= t_end)
 		{
-			auto snap   = json::parse(ctx.state.serializeCursors());
-			snap["rng"] = ctx.rng.serialize();
+			auto snap                       = json::parse(ctx.state.serializeCursors());
+			snap["rng"]                     = ctx.rng.serialize();
 			(*ctx.anchors_out)[next_monday] = snap.dump();
 		}
 	}
@@ -2047,7 +2040,7 @@ std::optional<ScheduledItem> RuleEngine::pickTimeslotItem(
 	if (eps.empty()) return std::nullopt;
 
 	NaturalAdvance adv = advanceNatural(sc.episode_watermark_id, sc.episode_ahead, eps);
-	auto item = itemFromShow(channel_id, block.block_id, eps, adv.index, showTitleCached(cache, entry->content_id));
+	auto item          = itemFromShow(channel_id, block.block_id, eps, adv.index, showTitleCached(cache, entry->content_id));
 	if (!item) return std::nullopt;
 
 	if (advancing_queue)

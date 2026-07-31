@@ -10,166 +10,199 @@
 #include <random>
 #include <sstream>
 
-namespace {
+namespace
+{
+	std::string generateId()
+	{
+		thread_local Xoshiro256 rng(static_cast<uint64_t>(std::random_device{}()));
+		std::ostringstream ss;
+		ss << std::hex << std::setfill('0') << std::setw(16) << rng();
+		return ss.str();
+	}
 
-std::string generateId() {
-    thread_local Xoshiro256 rng(static_cast<uint64_t>(std::random_device{}()));
-    std::ostringstream ss;
-    ss << std::hex << std::setfill('0') << std::setw(16) << rng();
-    return ss.str();
-}
+	std::string nowIso()
+	{
+		auto now      = std::chrono::system_clock::now();
+		std::time_t t = std::chrono::system_clock::to_time_t(now);
+		std::tm tm{};
+		gmtime_r(&t, &tm);
+		std::ostringstream ss;
+		ss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+		return ss.str();
+	}
 
-std::string nowIso() {
-    auto now  = std::chrono::system_clock::now();
-    std::time_t t  = std::chrono::system_clock::to_time_t(now);
-    std::tm tm{};
-    gmtime_r(&t, &tm);
-    std::ostringstream ss;
-    ss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
-    return ss.str();
-}
+	// Wrap s in single quotes, escaping any interior single quotes.
+	std::string shellQuote(const std::string& s)
+	{
+		std::string r = "'";
+		for (char c : s)
+		{
+			if (c == '\'') r += "'\\''";
+			else r           += c;
+		}
+		return r + "'";
+	}
 
-// Wrap s in single quotes, escaping any interior single quotes.
-std::string shellQuote(const std::string& s) {
-    std::string r = "'";
-    for (char c : s) {
-        if (c == '\'') r += "'\\''";
-        else           r += c;
-    }
-    return r + "'";
-}
-
-// Parse a percentage from a yt-dlp progress line; returns -1 if not found.
-int parseProgress(const std::string& line) {
-    auto pct = line.find('%');
-    if (pct == std::string::npos) return -1;
-    size_t start = pct;
-    while (start > 0 && (std::isdigit(static_cast<unsigned char>(line[start - 1]))
-                         || line[start - 1] == '.'))
-        --start;
-    if (start == pct) return -1;
-    try {
-        return static_cast<int>(std::stof(line.substr(start, pct - start)));
-    } catch (...) {
-        return -1;
-    }
-}
-
+	// Parse a percentage from a yt-dlp progress line; returns -1 if not found.
+	int parseProgress(const std::string& line)
+	{
+		auto pct = line.find('%');
+		if (pct == std::string::npos) return -1;
+		size_t start = pct;
+		while (start > 0 && (std::isdigit(static_cast<unsigned char>(line[start - 1]))
+			|| line[start - 1] == '.'))
+			--start;
+		if (start == pct) return -1;
+		try
+		{
+			return static_cast<int>(std::stof(line.substr(start, pct - start)));
+		}
+		catch (...)
+		{
+			return -1;
+		}
+	}
 } // namespace
 
 // ---------------------------------------------------------------------------
 
 std::string DownloadManager::startJob(const std::string& url,
-                                       const std::string& dest_path) {
-    std::string id = generateId();
-    {
-        std::lock_guard lk(mu_);
-        // Prune the oldest finished job if at capacity.
-        if (jobs_.size() >= 50) {
-            for (auto it = jobs_.begin(); it != jobs_.end(); ++it) {
-                if (it->status == "done" || it->status == "error") {
-                    jobs_.erase(it);
-                    break;
-                }
-            }
-        }
-        DownloadJob job;
-        job.id         = id;
-        job.url        = url;
-        job.dest_path  = dest_path;
-        job.status     = "queued";
-        job.progress   = 0;
-        job.started_at = nowIso();
-        jobs_.push_back(std::move(job));
-    }
-    TaskRegistry::global().spawn([this, id]{ runJob(id); });
-    return id;
+									  const std::string& dest_path)
+{
+	std::string id = generateId();
+	{
+		std::lock_guard lk(mu_);
+		// Prune the oldest finished job if at capacity.
+		if (jobs_.size() >= 50)
+		{
+			for (auto it = jobs_.begin(); it != jobs_.end(); ++it)
+			{
+				if (it->status == "done" || it->status == "error")
+				{
+					jobs_.erase(it);
+					break;
+				}
+			}
+		}
+		DownloadJob job;
+		job.id         = id;
+		job.url        = url;
+		job.dest_path  = dest_path;
+		job.status     = "queued";
+		job.progress   = 0;
+		job.started_at = nowIso();
+		jobs_.push_back(std::move(job));
+	}
+	TaskRegistry::global().spawn([this, id] { runJob(id); });
+	return id;
 }
 
-std::vector<DownloadJob> DownloadManager::getJobs() const {
-    std::lock_guard lk(mu_);
-    return std::vector<DownloadJob>(jobs_.rbegin(), jobs_.rend());
+std::vector<DownloadJob> DownloadManager::getJobs() const
+{
+	std::lock_guard lk(mu_);
+	return std::vector<DownloadJob>(jobs_.rbegin(), jobs_.rend());
 }
 
-std::deque<DownloadJob>::iterator DownloadManager::findJob(const std::string& id) {
-    for (auto it = jobs_.begin(); it != jobs_.end(); ++it)
-        if (it->id == id) return it;
-    return jobs_.end();
+std::deque<DownloadJob>::iterator DownloadManager::findJob(const std::string& id)
+{
+	for (auto it = jobs_.begin(); it != jobs_.end(); ++it) if (it->id == id) return it;
+	return jobs_.end();
 }
 
-void DownloadManager::runJob(std::string id) {
-    std::string url, dest;
-    {
-        std::lock_guard lk(mu_);
-        auto it = findJob(id);
-        if (it == jobs_.end()) return;
-        it->status = "running";
-        url  = it->url;
-        dest = it->dest_path;
-    }
+void DownloadManager::runJob(std::string id)
+{
+	std::string url, dest;
+	{
+		std::lock_guard lk(mu_);
+		auto it = findJob(id);
+		if (it == jobs_.end()) return;
+		it->status = "running";
+		url        = it->url;
+		dest       = it->dest_path;
+	}
 
-    std::error_code ec;
-    std::filesystem::create_directories(dest, ec);
-    if (ec) {
-        std::lock_guard lk(mu_);
-        auto it = findJob(id);
-        if (it != jobs_.end()) {
-            it->status = "error";
-            it->log.push_back("Failed to create directory: " + dest + " — " + ec.message());
-        }
-        return;
-    }
+	std::error_code ec;
+	std::filesystem::create_directories(dest, ec);
+	if (ec)
+	{
+		std::lock_guard lk(mu_);
+		auto it = findJob(id);
+		if (it != jobs_.end())
+		{
+			it->status = "error";
+			it->log.push_back("Failed to create directory: " + dest + " — " + ec.message());
+		}
+		return;
+	}
 
-    // url is frequently a playlist/channel link (DownloadPage.tsx's own
-    // placeholder invites that), which yt-dlp expands into one HTTP request
-    // per video with no pacing of its own — real usage feedback: that gets
-    // the source IP blocked around the ~400-video mark on a big playlist/
-    // channel. --sleep-requests paces the per-video metadata lookups during
-    // playlist expansion; --sleep-interval/--max-sleep-interval add a
-    // randomized 3–8s pause between each actual download, mimicking human
-    // pacing rather than a script hammering the API back-to-back. A single
-    // video URL just eats one harmless extra sleep before its one download.
-    std::string cmd = "yt-dlp --newline --sleep-requests 1 --sleep-interval 3 --max-sleep-interval 8 --paths " + shellQuote(dest) +
-                      " --output '%(title)s.%(ext)s' " + shellQuote(url) + " 2>&1";
+	// url is frequently a playlist/channel link (DownloadPage.tsx's own
+	// placeholder invites that), which yt-dlp expands into one HTTP request
+	// per video with no pacing of its own — real usage feedback: that gets
+	// the source IP blocked around the ~400-video mark on a big playlist/
+	// channel. --sleep-requests paces the per-video metadata lookups during
+	// playlist expansion; --sleep-interval/--max-sleep-interval add a
+	// randomized 3–8s pause between each actual download, mimicking human
+	// pacing rather than a script hammering the API back-to-back. A single
+	// video URL just eats one harmless extra sleep before its one download.
+	std::string cmd = "yt-dlp --newline --sleep-requests 1 --sleep-interval 3 --max-sleep-interval 8 --paths " + shellQuote(dest) +
+		" --output '%(title)s.%(ext)s'";
 
-    std::cout << "[download] job " << id << " starting: " << url << "\n";
+	// Datacenter/cloud IPs (this service commonly runs on one) get YouTube's
+	// "Sign in to confirm you're not a bot" wall regardless of pacing — that's
+	// an IP-reputation check, not a rate limit, and sleeping harder doesn't fix
+	// it. A cookies file from a real logged-in browser session works around it.
+	// Optional: unset means unauthenticated requests, same as before.
+	if (const char* cookies = std::getenv("KAIROS_YTDLP_COOKIES"))
+	{
+		if (std::filesystem::exists(cookies)) cmd += " --cookies " + shellQuote(cookies);
+		else
+			std::cerr << "[download] KAIROS_YTDLP_COOKIES set to '" << cookies
+				<< "' but file not found — continuing without cookies\n";
+	}
 
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        std::lock_guard lk(mu_);
-        auto it = findJob(id);
-        if (it != jobs_.end()) {
-            it->status = "error";
-            it->log.push_back("Failed to start yt-dlp — is it installed?");
-        }
-        return;
-    }
+	cmd += " " + shellQuote(url) + " 2>&1";
 
-    char buf[4096];
-    while (fgets(buf, sizeof(buf), pipe)) {
-        std::string line(buf);
-        while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
-            line.pop_back();
-        if (line.empty()) continue;
+	std::cout << "[download] job " << id << " starting: " << url << "\n";
 
-        int pct = parseProgress(line);
+	FILE* pipe = popen(cmd.c_str(), "r");
+	if (!pipe)
+	{
+		std::lock_guard lk(mu_);
+		auto it = findJob(id);
+		if (it != jobs_.end())
+		{
+			it->status = "error";
+			it->log.push_back("Failed to start yt-dlp — is it installed?");
+		}
+		return;
+	}
 
-        std::lock_guard lk(mu_);
-        auto it = findJob(id);
-        if (it == jobs_.end()) break;
-        if (pct >= 0) it->progress = pct;
-        it->log.push_back(std::move(line));
-        if (it->log.size() > 100) it->log.pop_front();
-    }
+	char buf[4096];
+	while (fgets(buf, sizeof(buf), pipe))
+	{
+		std::string line(buf);
+		while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+		if (line.empty()) continue;
 
-    int ret = pclose(pipe);
+		int pct = parseProgress(line);
 
-    std::lock_guard lk(mu_);
-    auto it = findJob(id);
-    if (it != jobs_.end()) {
-        it->status   = (ret == 0) ? "done" : "error";
-        if (ret == 0) it->progress = 100;
-    }
-    std::cout << "[download] job " << id
-              << (ret == 0 ? " done\n" : " failed (exit " + std::to_string(ret) + ")\n");
+		std::lock_guard lk(mu_);
+		auto it = findJob(id);
+		if (it == jobs_.end()) break;
+		if (pct >= 0) it->progress = pct;
+		it->log.push_back(std::move(line));
+		if (it->log.size() > 100) it->log.pop_front();
+	}
+
+	int ret = pclose(pipe);
+
+	std::lock_guard lk(mu_);
+	auto it = findJob(id);
+	if (it != jobs_.end())
+	{
+		it->status = (ret == 0) ? "done" : "error";
+		if (ret == 0) it->progress = 100;
+	}
+	std::cout << "[download] job " << id
+		<< (ret == 0 ? " done\n" : " failed (exit " + std::to_string(ret) + ")\n");
 }
