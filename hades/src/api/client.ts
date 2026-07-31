@@ -19,7 +19,12 @@ import type {
   Playlist, PlaylistDetail, PlaylistExport, PlaylistImportPreviewResult, PlaylistImportResult, HomePlaylistShelf, UnresolvedSyncItem, PlaylistBrowseEntry, PlaylistItem,
   ReviewQueueItem, ScraperSearchResult, ScraperSettings, ScraperSource, ScraperStats, MergedInto, DuplicateCandidate,
   Show, ShowDetail, Source, SourceType, SpecialCandidate, LinkedSpecial, User, VideoInfo, WatchProgress, WatchTogetherSession, WritebackResult,
-  NextEpisode, ShowWatchState, ResolvedPlayTarget, TvManifest, ChannelNow,
+    NextEpisode,
+    ShowWatchState,
+    ResolvedPlayTarget,
+    TvManifest,
+    TvShelfTile,
+    ChannelNow,
   ItemMetadata, ExternalId, RokuDevice, RokuDeviceState, DeviceConnection, PlaybackHistoryEntry, CrashStatus, TrackPreference,
   UnmappedSourceUser, SourceUser, ImportUserResult, InviteUserResult, SmtpConfig,
     OperationMetricsResponse,
@@ -135,7 +140,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return text ? JSON.parse(text) : (undefined as unknown as T)
 }
 
-function qs(params: Record<string, string | number | undefined>): string {
+function qs(params: Record<string, unknown>): string {
   return Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== '')
     .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
@@ -464,6 +469,17 @@ export const api = {
 
   // Home row composition + Library/Detail/Guide zone layout — see hades/src/tv/useHomeManifest.ts.
   getTvManifest: ()                                                        => request<TvManifest>('GET', '/tv/manifest'),
+
+    // Resolves one Home row's opaque `filter` (TvHomeRow.filter) into
+    // render-ready tiles — the one generic call TvHome.tsx makes for every
+    // shelf and the hero row, regardless of what the filter's content_type
+    // says. `filter` is forwarded verbatim as query params; this function
+    // never inspects its keys, matching the "server decides what a shelf
+    // needs, client just renders it" split the whole /api/tv/manifest
+    // contract is built on.
+    getTvShelfItems: (filter: Record<string, unknown>) => request<{
+        items: TvShelfTile[]
+    }>('GET', `/tv/shelf-items?${qs(filter)}`),
 
   // Series continuation. Deliberately not ".../next" — see the Kairos route's
   // own comment (ContentService.cpp): that suffix is exempted from auth for

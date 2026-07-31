@@ -1034,6 +1034,41 @@ std::vector<MixedTileRow> ContentRepository::hydrateMixed(const std::vector<std:
 	return result;
 }
 
+MixedTileRow ContentRepository::toTile(const ShowRow& r)
+{
+	MixedTileRow t;
+	t.content_type    = "show";
+	t.id              = r.show_id;
+	t.title           = r.title;
+	t.thumb           = r.thumb;
+	t.art             = r.art;
+	t.library_id      = r.library_id;
+	t.year            = r.year;
+	t.audience_rating = r.audience_rating;
+	// Same watched_episode_count/episode_count convention as hydrateMixed's
+	// own show branch above.
+	t.view_count    = r.watched_episode_count;
+	t.watched       = t.view_count > 0;
+	t.episode_count = r.episode_count;
+	return t;
+}
+
+MixedTileRow ContentRepository::toTile(const MovieRow& r)
+{
+	MixedTileRow t;
+	t.content_type    = "movie";
+	t.id              = r.movie_id;
+	t.title           = r.title;
+	t.thumb           = r.thumb;
+	t.art             = r.art;
+	t.library_id      = r.library_id;
+	t.year            = r.year;
+	t.audience_rating = r.audience_rating;
+	t.watched         = r.watched;
+	t.view_count      = r.view_count;
+	return t;
+}
+
 std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& show_id, const std::string& user_id)
 {
 	SQLite::Statement q(db_.get(), R"(

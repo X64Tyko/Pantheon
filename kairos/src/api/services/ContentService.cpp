@@ -1659,6 +1659,7 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	});
 
 	// ── Movie detail ──────────────────────────────────────────────────────────
+https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(2008)/thumb?token=d8a641ba8dadd8f35dc39df081bedd56c9f6462efdad30659ba628ccf64a7aea 
 
 	svr.Get("/api/movies/:id", [this](const Req& req, Res& res)
 	{

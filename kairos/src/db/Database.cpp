@@ -2530,6 +2530,31 @@ namespace
     UPDATE playlist SET smart_expand_episodes = 1
         WHERE smart_type = 'show' AND smart_sort IN ('recently_released_or_aired', 'air_date');
 )SQL"
+		},
+
+		// ── v103: tv_shelf stops naming a REST endpoint per row and instead names
+		//         WHAT a shelf shows (content_type: show/movie/mixed/hero) — GET
+		//         /api/tv/manifest now emits an opaque `filter` object per shelf/
+		//         hero row instead of `dataSource: {endpoint, params}`, and clients
+		//         resolve it via the one new GET /api/tv/shelf-items instead of
+		//         picking which of /api/shows or /api/movies to call themselves.
+		//         Fixes a real bug this design invited: the old endpoint-selection
+		//         ternary in TvManifestService.cpp (smart_type=="movie" ? "/api/
+		//         movies" : "/api/shows") had no third branch for a "mixed"
+		//         smart-playlist home shelf, so it silently collapsed to shows-only
+		//         on /tv and every native client. See TvManifestService.cpp.
+		{
+			103, R"SQL(
+    ALTER TABLE tv_shelf DROP COLUMN endpoint;
+    ALTER TABLE tv_shelf ADD COLUMN content_type TEXT NOT NULL DEFAULT '';
+
+    UPDATE tv_shelf SET content_type = 'hero'  WHERE id = 'hero';
+    UPDATE tv_shelf SET content_type = 'show'  WHERE id IN ('recent-shows', 'recent-aired');
+    UPDATE tv_shelf SET content_type = 'movie' WHERE id IN ('recent-movies', 'recent-released');
+    -- continue-watching/guide: content_type left '' -- continue-watching is
+    -- special-cased by row id on every client (never resolved through the
+    -- generic filter mechanism), and guide rows never emit params/filter at all.
+)SQL"
 		}
 
 	}; // kMigrations

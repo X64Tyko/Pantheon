@@ -159,6 +159,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Home shelves are now server-resolved, fixing "mixed" shelves and closing off a whole class of client-parity
+  bug (Kairos, Hades, Android)**: `GET /api/tv/manifest` used to tell every manifest consumer (`/tv`, native
+  clients) *which REST endpoint to call* for a shelf's content (`dataSource: {endpoint, params}`) — so every time
+  the server gained a new shelf capability, every client needed new code to understand it. This bit twice in two
+  weeks: playlist-backed Home shelves silently never appeared on `/tv`/native until 2026-07-25's fix, and "mixed"
+  (interleaved show+movie) smart-playlist shelves silently rendered shows-only, because the old
+  `smart_type == "movie" ? "/api/movies" : "/api/shows"` selection in `TvManifestService.cpp` had no branch for
+  `"mixed"` at all. Home rows now carry an opaque `filter` object instead (content type, sort, canon filter
+  string, limit — the same fields `tv_shelf.params_json` already had, just without an endpoint telling the client
+  where to send them); every client implements exactly one generic "resolve a filter into tiles" call
+  (`GET /api/tv/shelf-items`, new — unlike the manifest itself this requires auth, for restriction/watch-state
+  scoping) instead of switching on an endpoint string, so a new shelf shape never needs a client-side change
+  again. The hero row's old two-source (shows+movies) client-side fetch-and-art-filter-merge collapses into one
+  `content_type: "hero"` filter resolved once, server-side, instead of being duplicated in both `TvHome.tsx` and
+  `HomeViewModel.kt`. `tv_shelf`'s `endpoint` column is gone (migration v103), replaced by `content_type`.
+  Mixed shelves resolve at movie + individual-episode granularity (never whole shows — same as everywhere else
+  "mixed" means in this codebase), which `/tv` and Android had no rendering concept for at all before now (mixed
+  shelves never worked there, so it never came up); both gained real episode-tile rendering (own thumbnail,
+  "Show — SxEy" caption, tapping jumps straight into that episode) matching desktop's existing
+  `HomePage.tsx`/`mixedToShelfEntry` behavior, rather than a lesser stopgap. Desktop `HomePage.tsx` itself is
+  unchanged — it already resolved shelves correctly and doesn't consume this manifest.
 - **Scheduled jobs + backup/restore, with a new Settings → Jobs tab (Kairos, Hades)**: sync, metadata refresh,
   chapter detection, and metadata writeback have always been fully-working manual operations with no way to run
   them on a timer — `JobScheduler` (`kairos/src/jobs/JobScheduler.h`) existed for exactly this since the

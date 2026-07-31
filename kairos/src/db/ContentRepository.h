@@ -225,6 +225,19 @@ struct MixedTileRow
 	int64_t duration_ms = 0;              // episodes only
 	int season          = 0, episode = 0; // episodes only
 	std::string show_id, show_title;      // episodes only
+
+	// Show tiles only, populated by callers that need "which episode to jump
+	// to" (e.g. the Home "Recently Aired" shelf's play-latest-episode
+	// itemAction) via getLatestAiredEpisode — mirrors the conditional N+1
+	// ContentService.cpp's GET /api/shows already does for the same reason.
+	// unset = not requested by the caller, not "this show has no episodes."
+	struct LatestEpisodeRef
+	{
+		std::string episode_id, air_date;
+		int season = 0, episode = 0;
+	};
+
+	std::optional<LatestEpisodeRef> latest_episode;
 };
 
 // No limit/offset — searchMixedIndex always returns every match; pagination
@@ -413,6 +426,15 @@ public:
 										   const RestrictionContext& restriction_show,
 										   const RestrictionContext& restriction_movie,
 										   const std::string& user_id = "");
+
+	// Project a ShowRow/MovieRow down to the same render-ready tile shape
+	// hydrateMixed() produces — lets a caller (see TvManifestService's
+	// GET /api/tv/shelf-items) return one uniform tile shape regardless of
+	// whether a shelf's content came from searchShows/searchMovies or the
+	// mixed index/hydrate path, without duplicating field-by-field mapping
+	// at each call site.
+	static MixedTileRow toTile(const ShowRow& r);
+	static MixedTileRow toTile(const MovieRow& r);
 
 	// user_id populates ShowDetail::watched_episode_count when non-empty
 	// (left at 0 otherwise) — same convention as getMovieDetail below.

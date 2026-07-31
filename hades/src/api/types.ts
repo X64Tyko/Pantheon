@@ -1359,9 +1359,16 @@ export type TvItemAction =
   | 'open-detail' | 'play-direct-with-position' | 'play-latest-episode'
   | 'play-resolved' | 'navigate-library' | 'watch-live'
 
+// Still used by TvZone (Library/Detail/Guide) — those carry a genuinely
+// different, per-zone endpoint/queryParam config (see kairos's tv_zone seed
+// data) that no client ever fetches through automatically the way Home rows
+// used to; only filterFields/fields are actually read. Home rows themselves
+// no longer use this — see TvHomeRow.filter below.
 export interface TvDataSource {
-  endpoint: string
-  params?:  Record<string, unknown>
+    endpoint?: string
+    endpoints?: string[]
+    params?: Record<string, unknown>
+    queryParam?: string
 }
 
 export interface TvHomeRow {
@@ -1369,8 +1376,13 @@ export interface TvHomeRow {
   order: number
   type:  'hero' | 'shelf' | 'guide'
   title?: string
-  dataSource?:  TvDataSource
-  dataSources?: { shows: TvDataSource; movies: TvDataSource }
+    // Opaque — forwarded verbatim as query params to GET /api/tv/shelf-items
+    // (via api.getTvShelfItems). Never inspected/branched on client-side; the
+    // server decides what each key means and how to resolve it into tiles, so
+    // a new shelf "shape" (e.g. today's mixed-media shelves, which the old
+    // dataSource.endpoint design couldn't express at all) never needs a
+    // client-side change to support.
+    filter?: Record<string, unknown>
   itemAction?:  TvItemAction
   endTile?:     TvItemAction
   emptyBehavior?: 'hide'
@@ -1391,6 +1403,19 @@ export interface TvZone {
     // empty means a manifest that predates it, so callers fall back to their
     // own fixed field set rather than rendering nothing.
     fields?: string[]
+}
+
+// GET /api/tv/shelf-items' response item shape — the same render-ready tile
+// MixedMediaItem already is, plus latest_episode (shows only, populated only
+// when the row's filter.sort is "recently_aired" — needed by the "Recently
+// Aired" shelf's play-latest-episode itemAction).
+export type TvShelfTile = MixedMediaItem & {
+    latest_episode?: {
+        episode_id: string
+        season: number
+        episode: number
+        air_date: string
+    }
 }
 
 export interface TvManifest {
