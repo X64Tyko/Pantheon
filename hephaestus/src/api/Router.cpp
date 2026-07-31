@@ -196,8 +196,8 @@ static void handleStream(const std::string& channel_id,
 }
 
 void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionManager& vodSessions,
-                    PreviewSessionManager& previewSessions,
-                    KairosClient& kairos, LogBuffer& logs, const Config& cfg,
+					PreviewSessionManager& previewSessions, ChannelViewerRegistry& channelViewers,
+					KairosClient& kairos, LogBuffer& logs, const Config& cfg,
                     ClientCapabilityCache& capabilityCache) {
 
     // ── Health ────────────────────────────────────────────────────────────────
@@ -403,7 +403,103 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         serveHlsFile(session->hlsDir() + "/" + req.matches[2].str(), "video/mp2t", res);
     });
 
-    // ── VOD (on-demand library playback) ──────────────────────────────────────
+    // ── Capability-bucketed live channel HLS (per-viewer, opt-in) ─────────────
+	// Additive: the legacy /stream/hls/channels/:id/... routes above are
+	// completely unchanged and remain what MPEG-TS/HDHomeRun/any
+	// not-yet-updated client uses. This is the opt-in path a client calls to
+	// get bucketed onto a copy-only ("native") session instead of the
+	// universal transcode when its declared capabilities allow it — see
+	// ChannelViewerRegistry's class comment.
+	svr.Post(R"(/stream/channel/([^/]+)/start$)", [&sessions, &channelViewers, &capabilityCache](
+			 const httplib::Request& req, httplib::Response& res)
+			 {
+				 std::string channel_id = req.matches[1];
+
+				 auto token = extractBearerToken(req);
+				 ClientCapabilities caps;
+				 if (!token.empty()) { if (auto c = capabilityCache.get(token)) caps = *c; }
+
+				 // Ensures the default bucket session exists/has spawned at least
+				 // once, so the initial bucket decision below can read back its
+				 // authoritative resolved audio track (the channel's own audio_lang
+				 // setting) instead of guessing track 0.
+				 auto session = sessions.getOrCreate(channel_id);
+				 if (!session)
+				 {
+					 res.status = 503;
+					 res.set_content(json{{"error", "channel unavailable"}}.dump(), "application/json");
+					 return;
+				 }
+
+				 auto info       = session->currentMediaInfo();
+				 int audio_track = session->currentAudioTrack();
+
+				 auto result = channelViewers.start(channel_id, caps, info ? &*info : nullptr, audio_track);
+
+				 res.set_content(json{
+									 {"viewer_session_id", result.viewer_session_id},
+									 {"manifest_url", "/stream/hls/channel-viewer/" + result.viewer_session_id + "/playlist.m3u8"},
+									 {"direct_stream", result.bucket == ChannelSession::kNativeBucket},
+								 }.dump(), "application/json");
+			 });
+
+	svr.Get(R"(/stream/hls/channel-viewer/([^/]+)/playlist\.m3u8$)", [&sessions, &channelViewers](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				std::string channel_id;
+				auto bucket = channelViewers.touch(req.matches[1], channel_id);
+				if (bucket.empty())
+				{
+					res.status = 404;
+					res.set_content(json{{"error", "viewer session not found"}}.dump(), "application/json");
+					return;
+				}
+				auto session = sessions.getOrCreate(channel_id, bucket);
+				if (!session)
+				{
+					res.status = 503;
+					res.set_content(json{{"error", "channel unavailable"}}.dump(), "application/json");
+					return;
+				}
+				session->touchHls();
+				auto path = session->hlsDir() + "/playlist.m3u8";
+				if (!waitForFile(path))
+				{
+					res.status = 503;
+					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
+					return;
+				}
+				serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+			});
+
+	svr.Get(R"(/stream/hls/channel-viewer/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &channelViewers](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				std::string channel_id;
+				auto bucket = channelViewers.touch(req.matches[1], channel_id);
+				if (bucket.empty())
+				{
+					res.status = 404;
+					return;
+				}
+				auto session = sessions.getOrCreate(channel_id, bucket);
+				if (!session)
+				{
+					res.status = 404;
+					return;
+				}
+				session->touchHls();
+				serveHlsFile(session->hlsDir() + "/" + req.matches[2].str(), "video/mp2t", res);
+			});
+
+	svr.Post(R"(/stream/channel/viewer/([^/]+)/stop$)", [&channelViewers](
+			 const httplib::Request& req, httplib::Response& res)
+			 {
+				 channelViewers.stop(req.matches[1]);
+				 res.set_content(json{{"ok", true}}.dump(), "application/json");
+			 });
+
+	// ── VOD (on-demand library playback) ──────────────────────────────────────
     // One session per viewer, one session_id/manifest for its whole life. A
     // TRACK SWITCH is still "stop this session, start a fresh one" (a
     // different audio/subtitle selection needs genuinely different ffmpeg

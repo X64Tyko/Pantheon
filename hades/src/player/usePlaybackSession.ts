@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { startVodPlayback, stopVodPlayback, liveChannelManifestUrl } from './playbackApi'
+import {
+    startVodPlayback,
+    stopVodPlayback,
+    liveChannelManifestUrl,
+    startChannelViewer,
+    stopChannelViewer
+} from './playbackApi'
 import type { VodTracks } from './playbackApi'
 import { api } from '../api/client'
 
@@ -88,6 +94,10 @@ export function usePlaybackSession(
   const [startPositionMs, setStartPositionMs] = useState(initialPositionMs)
 
   const sessionIdRef = useRef<string | null>(null)
+    // Capability-bucketed channel viewer identity — separate from sessionIdRef
+    // (VOD's session_id) since the two endpoints/id-spaces are unrelated; only
+    // one is ever populated for a given target.kind.
+    const viewerSessionIdRef = useRef<string | null>(null)
   const genRef        = useRef(0) // guards against a stale reload's response landing after a newer one starts
 
   const isLive = target.kind === 'channel'
@@ -96,8 +106,11 @@ export function usePlaybackSession(
     const gen = ++genRef.current
     const prevSession = sessionIdRef.current
     sessionIdRef.current = null
+      const prevViewerSession = viewerSessionIdRef.current
+      viewerSessionIdRef.current = null
 
     if (prevSession) stopVodPlayback(prevSession)
+      if (prevViewerSession) stopChannelViewer(prevViewerSession)
 
     // Set synchronously (not inside the .then() below) so it's already
     // correct by the time VideoPlayer's manifestUrl effect (re)creates its
@@ -114,10 +127,29 @@ export function usePlaybackSession(
           setLoading(false)
           return
         }
-        setManifestUrl(liveChannelManifestUrl(target.id))
+          // Capability-bucketed viewer session (may get a stream-copied
+          // "native" bucket instead of the universal transcode — see
+          // playbackApi.ts's startChannelViewer). Purely an optimization on
+          // top of a path that already works: any failure here silently falls
+          // back to the legacy anonymous manifest URL rather than surfacing
+          // an error, since the fallback below is exactly today's behavior.
+          startChannelViewer(target.id).then(viewerRes => {
+              if (genRef.current !== gen) {
+                  stopChannelViewer(viewerRes.viewer_session_id);
+                  return
+              }
+              viewerSessionIdRef.current = viewerRes.viewer_session_id
+              setManifestUrl(viewerRes.manifest_url)
+              setDirectStream(viewerRes.direct_stream)
+              setTracks(null)
+              setLoading(false)
+          }).catch(() => {
+              if (genRef.current !== gen) return
+              setManifestUrl(liveChannelManifestUrl(target.id))
           setDirectStream(null)
-        setTracks(null)
-        setLoading(false)
+              setTracks(null)
+              setLoading(false)
+          })
       }).catch(err => {
         if (genRef.current !== gen) return
         setError(err instanceof Error ? err.message : 'Failed to load channel')
@@ -166,6 +198,7 @@ export function usePlaybackSession(
     return () => {
       genRef.current++
       if (sessionIdRef.current) stopVodPlayback(sessionIdRef.current)
+        if (viewerSessionIdRef.current) stopChannelViewer(viewerSessionIdRef.current)
     }
     // Only re-run when the target itself changes — initialPositionMs/
     // initialAudioTrack/initialSubtitleTrack are mount-time seeds, not

@@ -631,6 +631,11 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 		proxyRequest(cfg.hephaestus_url, req, res);
 	};
 	svr.Get(R"(/stream/hls/channels/.*)", hephaestusProxy);
+	// Capability-bucketed per-viewer channel HLS (see Hephaestus's
+	// ChannelViewerRegistry) — plain pass-through same as the legacy channel
+	// HLS route above; all viewer-identity/bucket-resolution logic lives on
+	// the Hephaestus side, nothing here needs to be session-aware.
+	svr.Get(R"(/stream/hls/channel-viewer/.*)", hephaestusProxy);
 	svr.Get(R"(/stream/vod/.*)", hephaestusProxy);
 	svr.Get(R"(/stream/preview/.*)", hephaestusProxy);
 
@@ -710,6 +715,14 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 	};
 	svr.Post(R"(/stream/vod/.*)", authedHephaestusProxy);
 	svr.Post(R"(/stream/preview/.*)", authedHephaestusProxy);
+	// POST /stream/channel/:id/start and /stream/channel/viewer/:id/stop —
+	// same "no anonymous access to the private library" reasoning as VOD/
+	// preview above. Neither path matches the vod/preview access-check
+	// branches inside authedHephaestusProxy, so this only ever enforces the
+	// Bearer-token-valid check, not a per-content restriction — channels are
+	// schedule-driven broadcast, not a per-item selection the way VOD/
+	// preview are, so there's nothing else to check here.
+	svr.Post(R"(/stream/channel/.*)", authedHephaestusProxy);
 
 	// Client-declared decode capability (see ClientCapabilitiesRouter.cpp
 	// on the Hephaestus side, which validates the bearer token itself) —

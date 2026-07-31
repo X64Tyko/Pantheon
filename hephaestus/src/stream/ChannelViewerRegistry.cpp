@@ -1,0 +1,126 @@
+#include "ChannelViewerRegistry.h"
+#include "ChannelSession.h"
+#include "SessionManager.h"
+#include <algorithm>
+#include <chrono>
+#include <iomanip>
+#include <random>
+#include <sstream>
+
+bool isChannelDirectStreamable(const MediaInfo& info, int audio_track, const ClientCapabilities& caps)
+{
+	if (info.video.empty()) return false;
+	const auto& v = info.video[0];
+	if (caps.max_height && v.height > *caps.max_height) return false;
+	if (!caps.video_codecs.count(v.codec)) return false;
+
+	auto ai = std::find_if(info.audio.begin(), info.audio.end(),
+						   [&](const AudioTrack& t) { return t.relative_index == audio_track; });
+	if (ai == info.audio.end()) return false;
+	if (!caps.audio_codecs.count(ai->codec)) return false;
+
+	return true;
+}
+
+namespace
+{
+	std::string generateViewerId()
+	{
+		thread_local std::mt19937_64 rng(std::random_device{}());
+		std::ostringstream ss;
+		ss << std::hex << std::setfill('0') << std::setw(16) << rng();
+		return ss.str();
+	}
+
+	int64_t nowMs()
+	{
+		return std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::system_clock::now().time_since_epoch()).count();
+	}
+
+	constexpr int64_t kMaxIdleMs = 90'000;
+}
+
+ChannelViewerRegistry::ChannelViewerRegistry(SessionManager& sessions)
+	: sessions_(sessions)
+{
+	reaper_thread_ = std::thread([this] { reapLoop(); });
+}
+
+ChannelViewerRegistry::~ChannelViewerRegistry()
+{
+	stop_reaper_.store(true);
+	if (reaper_thread_.joinable()) reaper_thread_.join();
+}
+
+void ChannelViewerRegistry::reapLoop()
+{
+	while (!stop_reaper_.load())
+	{
+		for (int i = 0; i < 5 && !stop_reaper_.load(); ++i) std::this_thread::sleep_for(std::chrono::seconds(1));
+		if (stop_reaper_.load()) break;
+
+		int64_t cutoff = nowMs() - kMaxIdleMs;
+		std::lock_guard<std::mutex> lock(mtx_);
+		for (auto it = viewers_.begin(); it != viewers_.end();) it = (it->second.last_seen_ms < cutoff) ? viewers_.erase(it) : std::next(it);
+	}
+}
+
+ChannelViewerRegistry::StartResult ChannelViewerRegistry::start(
+	const std::string& channel_id, const ClientCapabilities& caps,
+	const MediaInfo* info, int audio_track)
+{
+	std::string bucket = (info && isChannelDirectStreamable(*info, audio_track, caps))
+							 ? ChannelSession::kNativeBucket
+							 : ChannelSession::kDefaultBucket;
+
+	std::string id = generateViewerId();
+	{
+		std::lock_guard<std::mutex> lock(mtx_);
+		viewers_[id] = ViewerEntry{channel_id, caps, bucket, nowMs()};
+	}
+
+	if (bucket == ChannelSession::kNativeBucket) sessions_.getOrCreate(channel_id, bucket); // spins up if this is the first native viewer
+
+	return {id, bucket};
+}
+
+std::string ChannelViewerRegistry::touch(const std::string& viewer_session_id, std::string& channel_id_out)
+{
+	std::lock_guard<std::mutex> lock(mtx_);
+	auto it = viewers_.find(viewer_session_id);
+	if (it == viewers_.end()) return "";
+	it->second.last_seen_ms = nowMs();
+	channel_id_out          = it->second.channel_id;
+	return it->second.bucket;
+}
+
+void ChannelViewerRegistry::stop(const std::string& viewer_session_id)
+{
+	std::lock_guard<std::mutex> lock(mtx_);
+	viewers_.erase(viewer_session_id);
+}
+
+void ChannelViewerRegistry::reassignForChannel(const std::string& channel_id,
+											   const std::optional<MediaInfo>& info, int audio_track)
+{
+	bool need_native = false;
+	{
+		std::lock_guard<std::mutex> lock(mtx_);
+		for (auto& [id, entry] : viewers_)
+		{
+			if (entry.channel_id != channel_id) continue;
+			std::string ideal = (info && isChannelDirectStreamable(*info, audio_track, entry.caps))
+									? ChannelSession::kNativeBucket
+									: ChannelSession::kDefaultBucket;
+			entry.bucket = ideal;
+			if (ideal == ChannelSession::kNativeBucket) need_native = true;
+		}
+	}
+	// Ensure the native bucket session exists if anyone now needs it — a
+	// no-op (existing active session returned) if it's already running.
+	// Called outside mtx_: SessionManager has its own independent lock, so
+	// there's no reentrancy concern, but no reason to hold this one any
+	// longer than needed either.
+	if (need_native) sessions_.getOrCreate(channel_id, ChannelSession::kNativeBucket);
+}

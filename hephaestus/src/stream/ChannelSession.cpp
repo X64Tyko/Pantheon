@@ -114,6 +114,7 @@ static std::vector<std::string> buildArgs(
 	const std::set<std::string>& decodable_codecs,
 	const std::string& source_codec,
 	const VideoTrack* source_video,
+	bool direct_stream,
 	bool verbose_transcode_logs,
 	double speed                      = 1.0,
 	const std::string& max_resolution = "source",
@@ -146,48 +147,67 @@ static std::vector<std::string> buildArgs(
 		a.push_back(ss.str());
 	}
 
-	pushHwAccelDecodeArgs(a, decode_hw_accel, decodable_codecs, source_codec);
+	// Decode offload is pointless (and unsupported by ffmpeg) on a pure
+	// stream copy — nothing here is ever decoded.
+	if (!direct_stream) pushHwAccelDecodeArgs(a, decode_hw_accel, decodable_codecs, source_codec);
 
 	a.push_back("-i");
 	a.push_back(item.file_path);
 
-	// Stream selection: first video (optional), selected audio track (optional)
-	a.insert(a.end(), {
-				 "-map", "0:v:0?",
-				 "-map", "0:a:" + std::to_string(audioTrackIndex) + "?"
-			 });
-	if (subtitleTrackIndex >= 0) a.insert(a.end(), {"-map", "0:s:" + std::to_string(subtitleTrackIndex) + "?"});
+	if (direct_stream)
+	{
+		// Native/copy bucket (ChannelSession::kNativeBucket) — no decode, no
+		// filters, no re-encode possible, so none of the machinery below
+		// applies. Subtitles aren't carried through this branch either
+		// (mirrors VOD's own direct-stream path, VodSession.cpp): muxing or
+		// burning a subtitle stream both require decoding video regardless,
+		// which would defeat the entire point of this bucket.
+		a.insert(a.end(), {
+					 "-map", "0:v:0?",
+					 "-map", "0:a:" + std::to_string(audioTrackIndex) + "?",
+					 "-dn", "-map_chapters", "-1",
+					 "-c:v", "copy", "-c:a", "copy"
+				 });
+	}
+	else
+	{
+		// Stream selection: first video (optional), selected audio track (optional)
+		a.insert(a.end(), {
+					 "-map", "0:v:0?",
+					 "-map", "0:a:" + std::to_string(audioTrackIndex) + "?"
+				 });
+		if (subtitleTrackIndex >= 0) a.insert(a.end(), {"-map", "0:s:" + std::to_string(subtitleTrackIndex) + "?"});
 
-	// No data streams, no chapter metadata in output
-	a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
+		// No data streams, no chapter metadata in output
+		a.insert(a.end(), {"-dn", "-map_chapters", "-1"});
 
-	// Force constant output frame rate. Without this, ffmpeg's per-version/
-	// per-input default fps_mode behavior governs how a source with
-	// irregular/variable frame timestamps (common on older syndicated TV
-	// masters — duplicate/dropped frames baked in from a telecine/pulldown-
-	// era encode) gets handled, feeding directly into -re's real-time
-	// pacing and -force_key_frames' segment-cutting decisions below —
-	// uncorrected irregular timing there means uneven segment durations
-	// against this channel's tight kLiveHlsSegmentSecs window, which shows
-	// up to viewers as stutter/rebuffering. Live channels always transcode
-	// (no direct-stream path the way VOD has), so this is safe to apply
-	// unconditionally rather than needing per-source VFR detection first.
-	a.insert(a.end(), {"-fps_mode", "cfr"});
+		// Force constant output frame rate. Without this, ffmpeg's per-version/
+		// per-input default fps_mode behavior governs how a source with
+		// irregular/variable frame timestamps (common on older syndicated TV
+		// masters — duplicate/dropped frames baked in from a telecine/pulldown-
+		// era encode) gets handled, feeding directly into -re's real-time
+		// pacing and -force_key_frames' segment-cutting decisions below —
+		// uncorrected irregular timing there means uneven segment durations
+		// against this channel's tight kLiveHlsSegmentSecs window, which shows
+		// up to viewers as stutter/rebuffering. Only the default (transcode)
+		// bucket needs this — a stream copy has no filter graph to feed it.
+		a.insert(a.end(), {"-fps_mode", "cfr"});
 
-	// Video encoder
-	std::vector<std::string> vfParts;
-	// Scale down to the configured max resolution — never upscales.
-	pushScaleFilter(vfParts, resolveMaxHeight(max_resolution));
-	if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
+		// Video encoder
+		std::vector<std::string> vfParts;
+		// Scale down to the configured max resolution — never upscales.
+		pushScaleFilter(vfParts, resolveMaxHeight(max_resolution));
+		if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
 
-	pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs, source_video);
-	pushVideoFilterArgs(a, vfParts);
-	// Optional bitrate cap: keeps CRF quality-based encoding but adds an
-	// upper bound, preventing huge spikes on complex/high-res content.
-	pushBitrateCapArgs(a, video_bitrate_kbps);
+		pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs, source_video);
+		pushVideoFilterArgs(a, vfParts);
+		// Optional bitrate cap: keeps CRF quality-based encoding but adds an
+		// upper bound, preventing huge spikes on complex/high-res content.
+		pushBitrateCapArgs(a, video_bitrate_kbps);
 
-	// Audio: AAC
-	pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
+		// Audio: AAC
+		pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
+	}
 
 	appendOutputArgs(a, hls_dir);
 	return a;
@@ -266,11 +286,12 @@ static std::vector<std::string> buildImageArgs(
 // ── ChannelSession ────────────────────────────────────────────────────────────
 
 ChannelSession::ChannelSession(std::string channel_id, KairosClient& kairos,
-							   std::string ffmpeg_path, StreamOptions opts)
+							   std::string ffmpeg_path, StreamOptions opts, std::string bucket)
 	: channel_id(std::move(channel_id))
 	, kairos(kairos)
 	, ffmpeg_path(std::move(ffmpeg_path))
 	, opts(std::move(opts))
+	, bucket(std::move(bucket))
 {
 }
 
@@ -286,7 +307,7 @@ ChannelSession::~ChannelSession()
 std::string ChannelSession::hlsDir() const
 {
 	if (opts.hls_root.empty()) return "";
-	return opts.hls_root + "/live/" + channel_id;
+	return opts.hls_root + "/live/" + channel_id + "/" + bucket;
 }
 
 void ChannelSession::touchHls()
@@ -750,7 +771,15 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
 		return;
 	}
 
-	std::cout << "[session:" << channel_id << "] spawning ffmpeg: \""
+	bool direct_stream = (bucket == kNativeBucket);
+	// A stream copy can't apply the setpts drift-correction filter
+	// transition()/applyResolvedItem() may have computed — this bucket falls
+	// back to offset-based seeking only (same tradeoff VOD's own direct-
+	// stream path already accepts: -ss before -i on a copy snaps to the
+	// nearest keyframe rather than landing exactly).
+	if (direct_stream) speed = 1.0;
+
+	std::cout << "[session:" << channel_id << ":" << bucket << "] spawning ffmpeg: \""
 		<< item.file_path << "\" offset=" << startOffsetMs << "ms";
 	if (speed != 1.0) std::cout << " speed=" << speed;
 	std::cout << "\n";
@@ -772,9 +801,22 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
 	}
 	const VideoTrack* source_video = (info && !info->video.empty()) ? &info->video[0] : nullptr;
 
+	{
+		std::lock_guard<std::mutex> lock(info_mtx);
+		current_info        = info;
+		current_audio_track = audioTrack;
+	}
+	// Notify a wired-up ChannelViewerRegistry (see onItemPlaying's own
+	// comment) what's now playing, so it can (re)assign capability-bucketed
+	// viewers of this channel. Harmless if more than one bucket instance
+	// calls this for the same item — idempotent recomputation against the
+	// same deterministic Kairos schedule.
+	if (onItemPlaying) onItemPlaying(channel_id, info, audioTrack);
+
 	auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack,
 						  opts.loudnorm, opts.hw_accel, opts.vaapi_device,
 						  opts.decode_hw_accel, opts.decodable_codecs, source_codec, source_video,
+						  direct_stream,
 						  opts.verbose_transcode_logs, speed,
 						  opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
 						  hlsDir());

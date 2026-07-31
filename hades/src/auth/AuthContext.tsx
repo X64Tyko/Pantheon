@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { api, TOKEN_KEY } from '../api/client'
 import type { User } from '../api/types'
+import {declareClientCapabilities, forgetClientCapabilities} from '../player/playbackApi'
+import {detectClientCapabilities} from '../player/deviceCapabilities'
 
 interface AuthContextValue {
   user:          User | null
@@ -133,6 +135,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (cancelled) return
             setUser(me)
             await loadProfiles()
+              // Hephaestus's capability cache is wiped on every restart (a
+              // frequent occurrence — redeployed on every push) — a stored
+              // session from before that must re-declare on this fresh load,
+              // not just on the original login.
+              declareClientCapabilities(detectClientCapabilities())
           } catch {
             localStorage.removeItem(TOKEN_KEY)
           }
@@ -163,6 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
     await loadProfiles()
+      declareClientCapabilities(detectClientCapabilities())
       return user
   }
 
@@ -172,9 +180,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSetupRequired(false)
     setUser(user)
     await loadProfiles()
+      declareClientCapabilities(detectClientCapabilities())
   }
 
   const logout = async () => {
+      forgetClientCapabilities()
     try { await api.logout() } catch { /* ignore network errors on logout */ }
     localStorage.removeItem(TOKEN_KEY)
     setUser(null)
@@ -208,6 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
     await loadProfiles()
+      declareClientCapabilities(detectClientCapabilities())
   }
 
     const completeGuestSetup = async (b: {
@@ -230,6 +241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const deleteGuestAccount = async () => {
+        forgetClientCapabilities()
         await api.deleteGuest()
         localStorage.removeItem(TOKEN_KEY)
         setUser(null)
@@ -242,6 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(TOKEN_KEY, token)
     setUser(user)
     setProfileChosenRaw(true)
+      declareClientCapabilities(detectClientCapabilities())
       return user
   }
 

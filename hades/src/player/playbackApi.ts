@@ -80,6 +80,65 @@ export function liveChannelManifestUrl(channelId: string): string {
   return url
 }
 
+// Capability-bucketed live channel HLS (Hephaestus's ChannelViewerRegistry) —
+// an opt-in per-viewer session on top of the legacy liveChannelManifestUrl
+// above, which stays exactly as-is as the fallback for a failed/declined
+// start call. Resolution is entirely server-side (against whatever this
+// caller's token most recently declared via declareClientCapabilities
+// below), no request body needed.
+export interface ChannelViewerStartResponse {
+    viewer_session_id: string
+    manifest_url: string
+    direct_stream: boolean
+}
+
+export async function startChannelViewer(channelId: string): Promise<ChannelViewerStartResponse> {
+    const res = await fetch(`/stream/channel/${channelId}/start`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', ...authHeaders()},
+    })
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({error: res.statusText}))
+        throw new Error((body as { error?: string }).error ?? res.statusText)
+    }
+    const data = await res.json()
+    if (typeof window !== 'undefined' && (window.location.protocol === 'https:' || window.location.hostname !== 'localhost')) {
+        if (data.manifest_url) data.manifest_url = window.location.origin + data.manifest_url
+    }
+    return data
+}
+
+// Fire-and-forget, same reasoning as stopVodPlayback above — the session
+// self-reaps on its own idle timeout if this doesn't land.
+export function stopChannelViewer(viewerSessionId: string) {
+    fetch(`/stream/channel/viewer/${viewerSessionId}/stop`, {method: 'POST', headers: authHeaders()}).catch(() => {
+    })
+}
+
+export interface DeclaredClientCapabilities {
+    video_codecs: string[]
+    audio_codecs: string[]
+    max_height?: number
+}
+
+// Re-declare on every app load, not just first-ever login — Hephaestus's
+// cache is wiped on every restart (frequent — redeployed on every push), so
+// a stale/never-declared token silently falls back to a conservative
+// h264/aac allowlist server-side rather than this client's real support.
+export function declareClientCapabilities(caps: DeclaredClientCapabilities) {
+    return fetch('/stream/client-capabilities', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', ...authHeaders()},
+        body: JSON.stringify(caps),
+    }).catch(() => {
+    })
+}
+
+export function forgetClientCapabilities() {
+    return fetch('/stream/client-capabilities', {method: 'DELETE', headers: authHeaders()}).catch(() => {
+    })
+}
+
 // Activity page "Now Playing" — see hephaestus/src/api/ActivityRouter.cpp.
 export interface ActivitySession {
   id:              string
