@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
+import {runInAction} from 'mobx'
 import type { Block, TimeslotSlot } from '../api/types'
 import type { ChannelDetailStore } from './store'
 import styles from './TimeslotEditor.module.css'
@@ -96,8 +97,21 @@ export const TimeslotEditor = observer(function TimeslotEditor({
     e.stopPropagation()
   }
 
+    const dragEntry = () => {
+        const c = store.dragContent
+        return c && (c.content_type === 'show' || c.content_type === 'movie')
+            ? {content_type: c.content_type, content_id: c.content_id, title: c.title}
+            : null
+    }
+
   const onRowDragOver = (e: React.DragEvent, id: string) => {
-    if (draggingId === null || draggingId === id) return
+      // Reordering an existing slot takes priority; otherwise accept an
+      // external show/movie dragged in from the library browser.
+      if (draggingId !== null) {
+          if (draggingId === id) return
+      } else if (!dragEntry()) {
+          return
+      }
     e.preventDefault()
     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
     setOverPos({ id, half: e.clientY < rect.top + rect.height / 2 ? 'top' : 'bottom' })
@@ -105,8 +119,19 @@ export const TimeslotEditor = observer(function TimeslotEditor({
 
   const onRowDrop = (e: React.DragEvent, id: string) => {
     e.preventDefault()
-    if (draggingId !== null && draggingId !== id) {
-      store.reorderSlots(draggingId, id, overPos?.half ?? 'bottom')
+      if (draggingId !== null) {
+          if (draggingId !== id) store.reorderSlots(draggingId, id, overPos?.half ?? 'bottom')
+      } else {
+          const entry = dragEntry()
+          if (entry) {
+              const idx = slots.findIndex(s => s.slot_id === id)
+              if (idx !== -1) {
+                  store.insertDraftSlotAt((overPos?.half ?? 'bottom') === 'top' ? idx : idx + 1, entry)
+              }
+              runInAction(() => {
+                  store.dragContent = null
+              })
+          }
     }
     setDraggingId(null)
     setOverPos(null)

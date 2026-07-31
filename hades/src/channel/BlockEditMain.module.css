@@ -34,9 +34,8 @@
 
 .weekGridChevronCollapsed { transform: none; }
 
-/* COMPACT_GRID_H (188) is a fixed module-level constant in BlockEditMain.tsx, not per-render. */
+/* height is user-resizable (BlockEditMain.tsx's gridHeight state) — set inline. */
 .weekGridScroll {
-  height: 188px;
   overflow: auto;
 }
 
@@ -128,14 +127,58 @@
 .leftPanel {
   flex: 1;
   min-width: 0;
-  border-right: 1px solid var(--hds-line-s);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
+.resizeHandle {
+    width: 6px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    position: relative;
+}
+
+.resizeHandle::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2.5px;
+    width: 1px;
+    background: var(--hds-line-s);
+}
+
+.resizeHandle:hover::after,
+.resizeHandle:active::after {
+    background: var(--hds-violet);
+}
+
+.gridResizeHandle {
+    height: 6px;
+    flex-shrink: 0;
+    cursor: row-resize;
+    position: relative;
+}
+
+.gridResizeHandle::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 2.5px;
+    height: 1px;
+    background: var(--hds-line-s);
+}
+
+.gridResizeHandle:hover::after,
+.gridResizeHandle:active::after {
+    background: var(--hds-violet);
+}
+
 .rightPanel {
-  width: 300px;
+    min-width: 220px;
+    max-width: 600px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;

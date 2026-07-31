@@ -32,11 +32,12 @@ const BUMPER_SLOTS = [
 // BlockEditMain.module.css's .weekGridScroll/.weekGridInner/.dayHeaderGutter/
 // .dayHeaderCell/.hourGutter — they're fixed constants, not per-render values.
 
-const CompactWeekGrid = observer(function CompactWeekGrid({ channelId, store, collapsed, onToggle }: {
+const CompactWeekGrid = observer(function CompactWeekGrid({channelId, store, collapsed, onToggle, height}: {
   channelId: string
   store:     ChannelDetailStore
   collapsed: boolean
   onToggle:  () => void
+    height: number
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const pph       = store.pxPerHour
@@ -61,7 +62,7 @@ const CompactWeekGrid = observer(function CompactWeekGrid({ channelId, store, co
       </div>
 
       {!collapsed && (
-        <div ref={scrollRef} className={`${styles.weekGridScroll} scrollbar-dark`}>
+          <div ref={scrollRef} className={`${styles.weekGridScroll} scrollbar-dark`} style={{height}}>
           <div className={styles.weekGridInner}>
             {/* Day header */}
             <div className={styles.dayHeaderRow}>
@@ -112,6 +113,56 @@ export const BlockEditMain = observer(function BlockEditMain({ channelId, store 
     return next
   })
 
+    const [rightWidth, setRightWidth] = useState(() =>
+        Number(localStorage.getItem('hds-block-right-width')) || 300
+    )
+    const splitRef = useRef<HTMLDivElement>(null)
+    const resizingRef = useRef(false)
+
+    const startResize = (e: React.MouseEvent) => {
+        e.preventDefault()
+        resizingRef.current = true
+        const onMove = (ev: MouseEvent) => {
+            if (!resizingRef.current || !splitRef.current) return
+            const rect = splitRef.current.getBoundingClientRect()
+            setRightWidth(Math.min(600, Math.max(220, rect.right - ev.clientX)))
+        }
+        const onUp = () => {
+            resizingRef.current = false
+            window.removeEventListener('mousemove', onMove)
+            window.removeEventListener('mouseup', onUp)
+            setRightWidth(w => {
+                localStorage.setItem('hds-block-right-width', String(w))
+                return w
+            })
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+    }
+
+    const [gridHeight, setGridHeight] = useState(() =>
+        Number(localStorage.getItem('hds-block-grid-height')) || 188
+    )
+
+    const startGridResize = (e: React.MouseEvent) => {
+        e.preventDefault()
+        const startY = e.clientY
+        const startH = gridHeight
+        const onMove = (ev: MouseEvent) => {
+            setGridHeight(Math.min(500, Math.max(100, startH + (ev.clientY - startY))))
+        }
+        const onUp = () => {
+            window.removeEventListener('mousemove', onMove)
+            window.removeEventListener('mouseup', onUp)
+            setGridHeight(h => {
+                localStorage.setItem('hds-block-grid-height', String(h))
+                return h
+            })
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+    }
+
   // Initialise the browser search when the editor opens.
   useEffect(() => {
     if (store.pickerShows.length === 0 && store.pickerMovies.length === 0) {
@@ -157,16 +208,20 @@ export const BlockEditMain = observer(function BlockEditMain({ channelId, store 
       </div>
 
       {/* ── Split panel ── */}
-      <div className={styles.splitPanel}>
+        <div className={styles.splitPanel} ref={splitRef}>
 
         {/* Left: compact week grid (collapsible) + library browser */}
         <div className={styles.leftPanel}>
-          <CompactWeekGrid channelId={channelId} store={store} collapsed={gridCollapsed} onToggle={toggleGrid} />
+            <CompactWeekGrid channelId={channelId} store={store} collapsed={gridCollapsed} onToggle={toggleGrid}
+                             height={gridHeight}/>
+            {!gridCollapsed && <div className={styles.gridResizeHandle} onMouseDown={startGridResize}/>}
           <LibraryBrowser channelId={channelId} store={store} onAdd={onAdd} />
         </div>
 
+            <div className={styles.resizeHandle} onMouseDown={startResize}/>
+
         {/* Right: tab-specific list (full height) */}
-        <div className={styles.rightPanel}>
+            <div className={styles.rightPanel} style={{width: rightWidth}}>
           {tab === 'content' && (
             isTimeslot && store.editing
               ? <SlotList store={store} />

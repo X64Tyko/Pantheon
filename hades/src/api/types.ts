@@ -1157,13 +1157,15 @@ export interface ArrServiceOptions {
 // ── Downloads ─────────────────────────────────────────────────────────────────
 
 export interface DownloadJob {
-  id:         string
-  url:        string
-  dest_path:  string
-  status:     'queued' | 'running' | 'done' | 'error'
-  progress:   number   // 0–100
-  log:        string[]
-  started_at: string   // ISO-8601
+    id: string
+    url: string
+    dest_path: string
+    status: 'queued' | 'running' | 'done' | 'error'
+    progress: number   // 0–100, current item
+    playlist_index: number   // current item number within a playlist (0 = not a playlist / unknown)
+    playlist_count: number   // total items in the playlist (0 = not a playlist / unknown)
+    log: string[]
+    started_at: string   // ISO-8601
 }
 
 // ── Library browser ──────────────────────────────────────────────────────────

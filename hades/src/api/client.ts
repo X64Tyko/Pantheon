@@ -282,6 +282,10 @@ export const api = {
                                                         request<{order: string[]}>('GET', `/sources/${sourceId}/libraries/${lid}/scraper-priority?item_type=${itemType}`),
   setScraperPriority: (sourceId: string, lid: string, itemType: 'show'|'movie', order: string[]) =>
                                                         request<{ok: boolean}>('PUT', `/sources/${sourceId}/libraries/${lid}/scraper-priority`, { item_type: itemType, order }),
+    // Immediate subfolder names under a local library's root (Downloads page show-folder picker)
+    getShowFolders: (sourceId: string, lid: string) => request<{
+        name: string
+    }[]>('GET', `/sources/${sourceId}/libraries/${lid}/show-folders`),
   // Focused sibling of patchLibrary for call sites that only have a
   // library_id (e.g. a Home shelf card) — patchLibrary needs source_id too.
   setLibraryShowOnHome: (libraryId: string, showOnHome: boolean) =>

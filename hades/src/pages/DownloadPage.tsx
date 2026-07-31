@@ -2,7 +2,7 @@ import { makeAutoObservable, runInAction } from 'mobx'
 import { observer } from 'mobx-react-lite'
 import { useEffect, useRef } from 'react'
 import { api } from '../api/client'
-import type { DownloadJob } from '../api/types'
+import type {DownloadJob, LibraryWithSource} from '../api/types'
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
@@ -19,8 +19,10 @@ class DownloadStore {
   submitting:   boolean = false
   submitError:  string | null = null
 
-  pathSuggestions: string[] = []
-  libNames:        string[] = []
+    pathSuggestions: string[] = []
+    libs: LibraryWithSource[] = []
+    selectedLibraryId: string = ''
+    showFolders: string[] = []
 
   jobs:         DownloadJob[] = []
   expandedJobs: Set<string> = new Set()
@@ -57,13 +59,30 @@ class DownloadStore {
   async loadSuggestions() {
     try {
       const libs = await api.getAllLibraries()
-      const names = [...new Set(libs.map(l => l.display_name))]
       runInAction(() => {
         this.pathSuggestions = this.defaultPath ? [this.defaultPath] : []
-        this.libNames = names
+          this.libs = libs
       })
     } catch {}
   }
+
+    get selectedLibrary(): LibraryWithSource | undefined {
+        return this.libs.find(l => l.library_id === this.selectedLibraryId)
+    }
+
+    async selectLibrary(id: string) {
+        this.selectedLibraryId = id
+        this.showFolders = []
+        const lib = this.libs.find(l => l.library_id === id)
+        if (!lib || lib.source_type !== 'local') return
+        try {
+            const folders = await api.getShowFolders(lib.source_id, lib.library_id)
+            runInAction(() => {
+                this.showFolders = folders.map(f => f.name)
+            })
+        } catch {
+        }
+    }
 
   async submit() {
     if (!this.url.trim()) return
@@ -216,18 +235,36 @@ const SubmitPanel = observer(function SubmitPanel() {
           {store.pathSuggestions.map(p => <option key={p} value={p} />)}
         </datalist>
 
+          {/* Library scope for the show-folder picker below */}
+          <select
+              className="input w-full font-mono text-xs"
+              value={store.selectedLibraryId}
+              onChange={e => store.selectLibrary(e.target.value)}
+          >
+              <option value="">Library (for show-folder suggestions)…</option>
+              {store.libs.map(l => (
+                  <option key={l.library_id} value={l.library_id}>
+                      {l.display_name}{l.source_type !== 'local' ? ` — ${l.source_name}` : ''}
+                  </option>
+              ))}
+          </select>
+
         {/* Show folder + Season folder */}
         <div className="flex gap-2">
           <input
-            list="dl-lib-names"
+              list="dl-show-folders"
             className="input flex-1 font-mono text-xs"
-            placeholder="Show folder (optional)"
+              placeholder={
+                  store.selectedLibraryId && store.selectedLibrary?.source_type !== 'local'
+                      ? 'Show folder (manual entry only for non-local libraries)'
+                      : 'Show folder (optional)'
+              }
             value={store.showFolder}
             onChange={e => runInAction(() => { store.showFolder = e.target.value })}
             onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
           />
-          <datalist id="dl-lib-names">
-            {store.libNames.map(n => <option key={n} value={n} />)}
+            <datalist id="dl-show-folders">
+                {store.showFolders.map(n => <option key={n} value={n}/>)}
           </datalist>
           <input
             className="input w-28 font-mono text-xs"
@@ -320,7 +357,10 @@ const JobRow = observer(function JobRow({ job }: { job: DownloadJob }) {
               style={{ width: `${job.progress}%` }}
             />
           </div>
-          <div className="text-[10px] text-zinc-600 mt-1">{job.progress}%</div>
+            <div className="text-[10px] text-zinc-600 mt-1">
+                {job.progress}%
+                {job.playlist_count > 1 && ` · item ${job.playlist_index} of ${job.playlist_count}`}
+            </div>
         </div>
       )}
 

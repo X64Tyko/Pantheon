@@ -831,8 +831,39 @@ export class ChannelDetailStore {
     const [moved] = items.splice(fromIdx, 1)
     const newTo   = items.findIndex(s => s.slot_id === toId)
     items.splice(half === 'top' ? newTo : newTo + 1, 0, moved)
-    recomputeSlotOffsets(items)
-    this.draftSlots = items
+      this.draftSlots = recomputeSlotOffsets(items)
+  }
+
+    // Drop a show/movie from the library browser at a specific position in the
+    // slot list (as opposed to addDraftSlot, which always appends).
+    insertDraftSlotAt(index: number, entry: { content_type: 'show' | 'movie'; content_id: string; title: string }) {
+        const items = [...this.draftSlots]
+        const idx = Math.max(0, Math.min(index, items.length))
+        const newSlot: TimeslotSlot = {
+            slot_id: `tmp_${Date.now()}_s${idx}`,
+            slot_index: idx,
+            slot_offset_mins: 0, // overwritten by recomputeSlotOffsets
+            slot_duration_mins: 30,
+            overflow: 'cutoff',
+            late_start_mins: 0,
+            early_start_secs: 0,
+            align_to_mins: 0,
+            start_scope: 'block',
+            queue_pos: 0,
+            episode_pos: 0,
+            queue: [{
+                entry_id: `tmp_${Date.now()}_q0`,
+                queue_index: 0,
+                content_type: entry.content_type,
+                content_id: entry.content_id,
+                title: entry.title,
+                premiere_date: '',
+                pre_premiere_behavior: 'replay_previous',
+            }],
+        }
+        items.splice(idx, 0, newSlot)
+        this.draftSlots = recomputeSlotOffsets(items)
+        this.contentDirty = true
   }
 
   updateContentField(channelId: string, cid: number, field: 'weight' | 'run_count' | 'episode_order' | 'include_specials', value: number | string | boolean) {

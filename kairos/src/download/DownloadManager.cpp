@@ -7,7 +7,9 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <random>
+#include <regex>
 #include <sstream>
 
 namespace
@@ -60,6 +62,23 @@ namespace
 		catch (...)
 		{
 			return -1;
+		}
+	}
+
+	// Parse "[download] Downloading item N of M" (emitted once per playlist entry);
+	// returns nullopt for non-playlist lines.
+	std::optional<std::pair<int, int>> parsePlaylistItem(const std::string& line)
+	{
+		static const std::regex re(R"(Downloading item (\d+) of (\d+))");
+		std::smatch m;
+		if (!std::regex_search(line, m, re)) return std::nullopt;
+		try
+		{
+			return std::make_pair(std::stoi(m[1]), std::stoi(m[2]));
+		}
+		catch (...)
+		{
+			return std::nullopt;
 		}
 	}
 } // namespace
@@ -184,12 +203,18 @@ void DownloadManager::runJob(std::string id)
 		while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
 		if (line.empty()) continue;
 
-		int pct = parseProgress(line);
+		int pct   = parseProgress(line);
+		auto item = parsePlaylistItem(line);
 
 		std::lock_guard lk(mu_);
 		auto it = findJob(id);
 		if (it == jobs_.end()) break;
 		if (pct >= 0) it->progress = pct;
+		if (item)
+		{
+			it->playlist_index = item->first;
+			it->playlist_count = item->second;
+		}
 		it->log.push_back(std::move(line));
 		if (it->log.size() > 100) it->log.pop_front();
 	}

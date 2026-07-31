@@ -50,6 +50,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **yt-dlp playlist downloads showed a misleading progress bar (Kairos, Hades)**: `parseProgress()` only ever read
+  the current video's own percentage, which yt-dlp resets to 0% at the start of every item, so a playlist download's
+  bar visibly reset and yo-yoed with no indication of overall position. `DownloadManager.cpp` now also parses
+  yt-dlp's `Downloading item N of M` line into new `playlist_index`/`playlist_count` fields on the job; the
+  Downloads page shows "item N of M" next to the per-file percentage whenever a job is a playlist.
+- **Timeslot blocks: dragging a show from the library browser onto the slot list could only append at the end
+  (Hades)**: `TimeslotEditor.tsx`'s row drag handlers only recognized in-list reorders and silently ignored an
+  external library drag, so the only way to place a new slot was the append-only drop zone below the whole list.
+  Rows now also accept a library drag and insert the new slot at the hovered position (`store.insertDraftSlotAt`).
+  Also fixed `reorderSlots` discarding `recomputeSlotOffsets`'s return value, leaving `slot_offset_mins` stale after
+  every reorder.
 - **yt-dlp downloads failed with "Sign in to confirm you're not a bot" on cloud/datacenter hosts (Kairos)**: this
   is YouTube's IP-reputation bot-check, not a rate limit — the existing `--sleep-requests`/`--sleep-interval`
   pacing (added for a separate large-playlist blocking issue) doesn't affect it. `DownloadManager.cpp` now passes
@@ -187,6 +198,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Downloads page: real show-folder picker instead of free text (Kairos, Hades)**: the "show folder" field was a
+  plain text input autocompleting over library *names*, with no way to see actual folders on disk. New
+  `GET /api/sources/:id/libraries/:lid/show-folders` lists a local library's immediate subfolders; the Downloads
+  page gained a library selector that scopes the folder dropdown to it (falls back to manual entry for non-local
+  libraries, which have no folder concept).
+- **Block editor's panel splits are now drag-resizable (Hades)**: `BlockEditMain.tsx`'s right panel (Content/
+  Filler/Bumpers) was hardcoded to `width: 300px`, and the left panel's week-grid schedule was a fixed 188px tall
+  over the library browser below it. Both splits now have a draggable divider (right panel 220–600px wide, schedule
+  100–500px tall, both clamped), persisted to `localStorage` the same way the week-grid collapse state already was.
 - **Home shelves are now server-resolved, fixing "mixed" shelves and closing off a whole class of client-parity
   bug (Kairos, Hades, Android)**: `GET /api/tv/manifest` used to tell every manifest consumer (`/tv`, native
   clients) *which REST endpoint to call* for a shelf's content (`dataSource: {endpoint, params}`) — so every time
