@@ -1,6 +1,7 @@
 #include "ChannelViewerRegistry.h"
 #include "ChannelSession.h"
 #include "SessionManager.h"
+#include "thread/TaskRegistry.h"
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
@@ -119,8 +120,24 @@ void ChannelViewerRegistry::reassignForChannel(const std::string& channel_id,
 	}
 	// Ensure the native bucket session exists if anyone now needs it — a
 	// no-op (existing active session returned) if it's already running.
-	// Called outside mtx_: SessionManager has its own independent lock, so
-	// there's no reentrancy concern, but no reason to hold this one any
-	// longer than needed either.
-	if (need_native) sessions_.getOrCreate(channel_id, ChannelSession::kNativeBucket);
+	//
+	// Dispatched asynchronously, NOT called inline: this function can itself
+	// run synchronously inside SessionManager::getOrCreate()'s own call to
+	// ChannelSession::start() (the fast-path item-resolution case, which is
+	// the common one) — that call holds SessionManager's mtx for its whole
+	// duration. Calling back into getOrCreate() from here on that same call
+	// stack would try to re-lock a non-recursive mutex already held by this
+	// thread (deadlock), and if that lock were dropped instead, would
+	// recurse without bound (this same callback fires again from the nested
+	// session's own start()). A background task breaks the cycle entirely:
+	// by the time it runs, the in-flight getOrCreate() call that triggered
+	// this has already returned and inserted its session, so this just
+	// finds it already active — the ordinary case — instead of racing its
+	// own caller.
+	if (need_native)
+	{
+		SessionManager* sessions = &sessions_;
+		std::string cid          = channel_id;
+		TaskRegistry::global().spawn([sessions, cid] { sessions->getOrCreate(cid, ChannelSession::kNativeBucket); });
+	}
 }
