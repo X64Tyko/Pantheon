@@ -63,10 +63,10 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// set_pre_routing_handler) — used below to surface this user's sticky
 	// per-show track preference (see migration v92), so a viewer's own client
 	// never has to pass show_id or a saved preference through itself.
-	svr.Get("/api/playback/:content_type/:id", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/playback/([^/]+)/(.+))", [this](const Req& req, Res& res)
 	{
-		auto content_type = req.path_params.at("content_type");
-		auto id           = req.path_params.at("id");
+		auto content_type = req.matches[1].str();
+		auto id           = req.matches[2].str();
 		if (!validContentType(content_type))
 		{
 			route::err(res, 400, "content_type must be movie or episode");
@@ -203,10 +203,10 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// check, and isPublicPath's blanket "/api/playback/" exemption would
 	// otherwise leave it wide open. Body: {"keyframes_ms": [0, 4004, ...],
 	// "size": 123, "mtime": 456}.
-	svr.Put("/api/playback/:content_type/:id/keyframes", [this](const Req& req, Res& res)
+	svr.Put(R"(/api/playback/([^/]+)/(.+)/keyframes)", [this](const Req& req, Res& res)
 	{
-		auto content_type = req.path_params.at("content_type");
-		auto id           = req.path_params.at("id");
+		auto content_type = req.matches[1].str();
+		auto id           = req.matches[2].str();
 		if (!validContentType(content_type))
 		{
 			route::err(res, 400, "content_type must be movie or episode");
@@ -269,7 +269,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// neither client needs to know or plumb show_id. Body: any of
 	// {"audio_lang": "eng", "subtitle_lang": "spa"} (a field absent/omitted
 	// leaves that side untouched — see ShowTrackPreferenceRepository::set).
-	svr.Put("/api/episodes/:id/track-preference", [this](const Req& req, Res& res)
+	svr.Put(R"(/api/episodes/(.+)/track-preference)", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -280,7 +280,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 
 		try
 		{
-			auto episode = ContentRepository(db_).getEpisode(req.path_params.at("id"));
+			auto episode = ContentRepository(db_).getEpisode(req.matches[1].str());
 			if (!episode)
 			{
 				route::err(res, 404, "not found");
@@ -310,7 +310,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// let the detail page read/write the same show_track_preference row
 	// directly by show_id, so a preference can be set before ever pressing
 	// play at all — the whole reason this pair exists.
-	svr.Get("/api/shows/:id/track-preference", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/shows/(.+)/track-preference)", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -318,14 +318,14 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			route::err(res, 401, "Unauthorized");
 			return;
 		}
-		auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, req.path_params.at("id"));
+		auto pref = ShowTrackPreferenceRepository(db_).get(user->user_id, req.matches[1].str());
 		route::ok(res, json{
 					  {"audio_lang", pref ? pref->audio_lang : ""},
 					  {"subtitle_lang", pref ? pref->subtitle_lang : ""},
 				  }.dump());
 	});
 
-	svr.Put("/api/shows/:id/track-preference", [this](const Req& req, Res& res)
+	svr.Put(R"(/api/shows/(.+)/track-preference)", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -340,7 +340,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			if (b.contains("audio_lang")) audio_lang = b.at("audio_lang").get<std::string>();
 			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
 			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
-			ShowTrackPreferenceRepository(db_).set(user->user_id, req.path_params.at("id"), audio_lang, subtitle_lang, now_ms);
+			ShowTrackPreferenceRepository(db_).set(user->user_id, req.matches[1].str(), audio_lang, subtitle_lang, now_ms);
 			route::ok(res, json{{"ok", true}}.dump());
 		}
 		catch (const std::exception& e)
@@ -356,7 +356,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// existing show/movie split everywhere else, e.g. subtitle_track uses
 	// media_type+media_id instead — the two conventions coexist for
 	// different reasons, this one following the narrower, older precedent).
-	svr.Get("/api/movies/:id/track-preference", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/movies/(.+)/track-preference)", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -364,14 +364,14 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			route::err(res, 401, "Unauthorized");
 			return;
 		}
-		auto pref = MovieTrackPreferenceRepository(db_).get(user->user_id, req.path_params.at("id"));
+		auto pref = MovieTrackPreferenceRepository(db_).get(user->user_id, req.matches[1].str());
 		route::ok(res, json{
 					  {"audio_lang", pref ? pref->audio_lang : ""},
 					  {"subtitle_lang", pref ? pref->subtitle_lang : ""},
 				  }.dump());
 	});
 
-	svr.Put("/api/movies/:id/track-preference", [this](const Req& req, Res& res)
+	svr.Put(R"(/api/movies/(.+)/track-preference)", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -386,7 +386,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			if (b.contains("audio_lang")) audio_lang = b.at("audio_lang").get<std::string>();
 			if (b.contains("subtitle_lang")) subtitle_lang = b.at("subtitle_lang").get<std::string>();
 			auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
-			MovieTrackPreferenceRepository(db_).set(user->user_id, req.path_params.at("id"), audio_lang, subtitle_lang, now_ms);
+			MovieTrackPreferenceRepository(db_).set(user->user_id, req.matches[1].str(), audio_lang, subtitle_lang, now_ms);
 			route::ok(res, json{{"ok", true}}.dump());
 		}
 		catch (const std::exception& e)
@@ -540,7 +540,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// its own session-start response) additionally feed PlaybackHistoryRepository
 	// — see migration v91's comment for why that's a separate append-only
 	// table rather than something bolted onto watch_progress itself.
-	svr.Put("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res)
+	svr.Put(R"(/api/watch-progress/([^/]+)/(.+))", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -549,8 +549,8 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			return;
 		}
 
-		auto content_type = req.path_params.at("content_type");
-		auto content_id   = req.path_params.at("id");
+		auto content_type = req.matches[1].str();
+		auto content_id   = req.matches[2].str();
 		if (!validContentType(content_type))
 		{
 			route::err(res, 400, "content_type must be movie or episode");
@@ -593,7 +593,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// from "the last episode was finished, continue at the next one" (see
 	// hades/src/player/resolvePlayTarget.ts). Unlike the Continue Watching
 	// list above, this deliberately does not filter out completed rows.
-	svr.Get("/api/shows/:id/watch-state", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/shows/(.+)/watch-state)", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -604,7 +604,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 
 		try
 		{
-			auto state = WatchProgressRepository(db_).getLatestForShow(user->user_id, req.path_params.at("id"));
+			auto state = WatchProgressRepository(db_).getLatestForShow(user->user_id, req.matches[1].str());
 			if (!state)
 			{
 				route::ok(res, "null");
@@ -635,7 +635,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// "don't need" this endpoint. A finished movie (completed, i.e. a
 	// rewatch-in-waiting) resolves to position_ms=0 same as a finished show's
 	// finale-with-no-next-episode case, rather than resuming at the very end.
-	svr.Get("/api/movies/:id/resolve-play-target", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/movies/(.+)/resolve-play-target)", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -644,7 +644,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			return;
 		}
 
-		auto movie_id = req.path_params.at("id");
+		auto movie_id = req.matches[1].str();
 		try
 		{
 			auto states         = WatchProgressRepository(db_).getStates(user->user_id, {{"movie", movie_id}});
@@ -668,7 +668,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	// (watch-state, then conditionally next-episode or the full episode list)
 	// into one internal query chain, and means no client (Android, eventually
 	// Roku) ever needs to re-implement this branch itself.
-	svr.Get("/api/shows/:id/resolve-play-target", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/shows/(.+)/resolve-play-target)", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -677,7 +677,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			return;
 		}
 
-		auto show_id = req.path_params.at("id");
+		auto show_id = req.matches[1].str();
 		try
 		{
 			ContentRepository content(db_);
@@ -726,7 +726,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 	});
 
 	// ── DELETE /api/watch-progress/:content_type/:id ──────────────────────────
-	svr.Delete("/api/watch-progress/:content_type/:id", [this](const Req& req, Res& res)
+	svr.Delete(R"(/api/watch-progress/([^/]+)/(.+))", [this](const Req& req, Res& res)
 	{
 		auto user = currentUser();
 		if (!user)
@@ -735,8 +735,8 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			return;
 		}
 
-		auto content_type = req.path_params.at("content_type");
-		auto content_id   = req.path_params.at("id");
+		auto content_type = req.matches[1].str();
+		auto content_id   = req.matches[2].str();
 
 		try
 		{

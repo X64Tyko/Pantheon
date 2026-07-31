@@ -674,7 +674,10 @@ void AuthService::registerRoutes(httplib::Server& svr)
 		route::ok(res, json{{"ok", true}}.dump());
 	});
 
-	svr.Delete("/api/users/:id/overrides/:entity_type/:entity_id", [this](const Req& req, Res& res)
+	// entity_id may be a show/movie kairos_id (contains '/' for a local-source
+	// item), hence (.+) — id and entity_type are always opaque/enum-shaped, so
+	// they stay [^/]+.
+	svr.Delete(R"(/api/users/([^/]+)/overrides/([^/]+)/(.+))", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
@@ -682,7 +685,7 @@ void AuthService::registerRoutes(httplib::Server& svr)
 			return;
 		}
 		RestrictionRepository(db_).removeOverride(
-			req.path_params.at("id"), req.path_params.at("entity_type"), req.path_params.at("entity_id"));
+			req.matches[1].str(), req.matches[2].str(), req.matches[3].str());
 		route::ok(res, json{{"ok", true}}.dump());
 	});
 

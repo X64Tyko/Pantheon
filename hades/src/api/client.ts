@@ -370,7 +370,7 @@ export const api = {
   // free-text match", same as `q` always did).
   getShows:       (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean; playlist_id?: string } = {}) =>
                     request<PagedResult<Show>>('GET', `/shows?${qs({ ...withCombinedFilter(p), hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
-  getEpisodes:    (showId: string, season?: number)     => request<Episode[]>('GET', `/shows/${showId}/episodes${season != null ? '?season=' + season : ''}`),
+    getEpisodes: (showId: string, season?: number) => request<Episode[]>('GET', `/shows/${encodeURIComponent(showId)}/episodes${season != null ? '?season=' + season : ''}`),
   getMovies:      (p: { limit?: number; offset?: number; library_id?: string; library_ids?: string; q?: string; filter?: string; sort?: string; sort_dir?: 'asc' | 'desc'; seed?: number; home?: boolean; hideEmpty?: boolean; playlist_id?: string } = {}) =>
                     request<PagedResult<Movie>>('GET', `/movies?${qs({ ...withCombinedFilter(p), hideEmpty: undefined, hide_empty: p.hideEmpty ? 1 : undefined })}`),
 
@@ -484,7 +484,7 @@ export const api = {
   // Series continuation. Deliberately not ".../next" — see the Kairos route's
   // own comment (ContentService.cpp): that suffix is exempted from auth for
   // the live-channel schedule lookup and would leak episode metadata unauthenticated.
-  getNextEpisode:     (episodeId: string)                                  => request<NextEpisode | null>('GET', `/episodes/${episodeId}/next-episode`),
+    getNextEpisode: (episodeId: string) => request<NextEpisode | null>('GET', `/episodes/${encodeURIComponent(episodeId)}/next-episode`),
 
   // Blocks
   getBlocks:         (channelId: string)                                          => request<Block[]>('GET', `/channels/${channelId}/blocks`),
@@ -517,9 +517,13 @@ export const api = {
   getLinkedSpecials:      (showId: string) => request<LinkedSpecial[]>('GET', `/shows/${showId}/specials`),
   acceptSpecialCandidate: (showId: string, candidateId: string) => request<{ ok: boolean }>('POST', `/shows/${showId}/specials/candidates/${candidateId}/accept`),
   rejectSpecialCandidate: (showId: string, candidateId: string) => request<{ ok: boolean }>('POST', `/shows/${showId}/specials/candidates/${candidateId}/reject`),
-  setShowFindSpecials:    (showId: string, find_specials: boolean) => request<{ ok: boolean }>('PATCH', `/shows/${showId}/find-specials`, { find_specials }),
+    setShowFindSpecials: (showId: string, find_specials: boolean) => request<{
+        ok: boolean
+    }>('PATCH', `/shows/${encodeURIComponent(showId)}/find-specials`, {find_specials}),
   setEpisodeDisplayOrder: (showId: string, episode_display_order: 'season' | 'aired') =>
-                            request<{ ok: boolean }>('PATCH', `/shows/${showId}/episode-display-order`, { episode_display_order }),
+      request<{
+          ok: boolean
+      }>('PATCH', `/shows/${encodeURIComponent(showId)}/episode-display-order`, {episode_display_order}),
 
   // Block filler entries
   addBlockFiller:    (channelId: string, blockId: string, b: { content_type: string; content_id: string; advancement: FillerEntryAdvancement; weight?: number; season_filter?: number }) =>
@@ -549,7 +553,9 @@ export const api = {
     }),
 
   // Episode search
-  getShowSeasons:    (showId: string)                                             => request<{seasons: {number: number; name: string}[]}>('GET', `/shows/${showId}/seasons`),
+    getShowSeasons: (showId: string) => request<{
+        seasons: { number: number; name: string }[]
+    }>('GET', `/shows/${encodeURIComponent(showId)}/seasons`),
   searchEpisodes:    (p: {
                        q?: string; show_id?: string; season?: number; limit?: number; offset?: number
                        // 'playlist_order' only meaningful (and only offered by the UI) together with playlist_id —
@@ -640,29 +646,40 @@ export const api = {
   browsePlexCollectionItems:   (sourceId: string, cid: string)      => request<PlexBrowseItem[]>('GET', `/sources/${sourceId}/browse/collections/${cid}/items`),
 
   // Content — detail + update
-  getShow:        (id: string)                          => request<ShowDetail>('GET',   `/shows/${id}`),
-  updateShow:     (id: string, b: Partial<ShowDetail>)  => request<void>      ('PATCH', `/shows/${id}`, b),
-  getMovie:       (id: string)                          => request<MovieDetail>('GET',  `/movies/${id}`),
+    // id is a kairos_id — for local-sourced items this is a raw filesystem
+    // path (contains '/'), hence encodeURIComponent on every id segment below
+    // (matches the backend's (.+) route capture in ContentService.cpp).
+    getShow: (id: string) => request<ShowDetail>('GET', `/shows/${encodeURIComponent(id)}`),
+    updateShow: (id: string, b: Partial<ShowDetail>) => request<void>('PATCH', `/shows/${encodeURIComponent(id)}`, b),
+    getMovie: (id: string) => request<MovieDetail>('GET', `/movies/${encodeURIComponent(id)}`),
   // Minimal single-episode lookup (title/overview/show_title/season/episode
   // only) — for resolving a display title (+ hero overview) from a bare
   // episode_id, e.g. the connections view and Home/TV's Continue Watching
   // hero. Not the full episode detail other pages might expect.
-  getEpisodeBrief: (id: string) => request<{ episode_id: string; season: number; episode: number; title: string; overview: string; show_id: string; show_title: string }>('GET', `/episodes/${id}`),
-  updateMovie:    (id: string, b: Partial<MovieDetail>) => request<void>       ('PATCH',`/movies/${id}`, b),
+    getEpisodeBrief: (id: string) => request<{
+        episode_id: string;
+        season: number;
+        episode: number;
+        title: string;
+        overview: string;
+        show_id: string;
+        show_title: string
+    }>('GET', `/episodes/${encodeURIComponent(id)}`),
+    updateMovie: (id: string, b: Partial<MovieDetail>) => request<void>('PATCH', `/movies/${encodeURIComponent(id)}`, b),
   pushToSources:  (id: string, contentType: 'show' | 'movie') =>
-                    request<WritebackResult>('POST', `/${contentType}s/${id}/writeback`),
+      request<WritebackResult>('POST', `/${contentType}s/${encodeURIComponent(id)}/writeback`),
   refreshMetadata: (id: string, contentType: 'show' | 'movie') =>
-                    request<{ ok: boolean }>('POST', `/${contentType}s/${id}/refresh-metadata`),
+      request<{ ok: boolean }>('POST', `/${contentType}s/${encodeURIComponent(id)}/refresh-metadata`),
   // Separate from updateShow/updateMovie, which always lock the record as a
   // side effect of a metadata edit — this flag is orthogonal to that.
   setShowSkipScraping:  (id: string, skip_scraping: boolean) =>
-                    request<{ ok: boolean }>('PATCH', `/shows/${id}/skip-scraping`, { skip_scraping }),
+      request<{ ok: boolean }>('PATCH', `/shows/${encodeURIComponent(id)}/skip-scraping`, {skip_scraping}),
   setMovieSkipScraping: (id: string, skip_scraping: boolean) =>
-                    request<{ ok: boolean }>('PATCH', `/movies/${id}/skip-scraping`, { skip_scraping }),
-  getShowLanguages:  (id: string) => request<MediaLanguages>('GET', `/shows/${id}/languages`),
-  getMovieLanguages: (id: string) => request<MediaLanguages>('GET', `/movies/${id}/languages`),
-  getShowVideoInfo:  (id: string) => request<VideoInfo>('GET', `/shows/${id}/videoinfo`),
-  getMovieVideoInfo: (id: string) => request<VideoInfo>('GET', `/movies/${id}/videoinfo`),
+      request<{ ok: boolean }>('PATCH', `/movies/${encodeURIComponent(id)}/skip-scraping`, {skip_scraping}),
+    getShowLanguages: (id: string) => request<MediaLanguages>('GET', `/shows/${encodeURIComponent(id)}/languages`),
+    getMovieLanguages: (id: string) => request<MediaLanguages>('GET', `/movies/${encodeURIComponent(id)}/languages`),
+    getShowVideoInfo: (id: string) => request<VideoInfo>('GET', `/shows/${encodeURIComponent(id)}/videoinfo`),
+    getMovieVideoInfo: (id: string) => request<VideoInfo>('GET', `/movies/${encodeURIComponent(id)}/videoinfo`),
 
   // Channel bumpers
   getBumpers:    (channelId: string)                                                           => request<ChannelBumper[]>('GET',    `/channels/${channelId}/bumpers`),
@@ -855,8 +872,12 @@ export const api = {
   syncShowChapters:  (id: string) => request<{ episode_count: number; processed: number; with_chapters: number }>('POST', `/shows/${id}/chapters/sync`, {}),
 
   // Throws ApiError(409, {target_folder, duplicate_folder}) if folders differ and !confirm.
-  mergeShow:  (id: string, duplicate_id: string, confirm = false) => request<{ok: boolean}>('POST', `/shows/${id}/merge`, { duplicate_id, confirm }),
-  mergeMovie: (id: string, duplicate_id: string, confirm = false) => request<{ok: boolean}>('POST', `/movies/${id}/merge`, { duplicate_id, confirm }),
+    mergeShow: (id: string, duplicate_id: string, confirm = false) => request<{
+        ok: boolean
+    }>('POST', `/shows/${encodeURIComponent(id)}/merge`, {duplicate_id, confirm}),
+    mergeMovie: (id: string, duplicate_id: string, confirm = false) => request<{
+        ok: boolean
+    }>('POST', `/movies/${encodeURIComponent(id)}/merge`, {duplicate_id, confirm}),
 
   // Sync-time "possible duplicate" review queue (see DuplicateCandidate).
   getDuplicatesQueue: (p: { item_type?: string; limit?: number; offset?: number } = {}) =>

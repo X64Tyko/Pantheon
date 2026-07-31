@@ -128,6 +128,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   e.g. `` `recent-shows`/`recent-movies`/ ``  →  `` `recent-released`/`recent-aired` ``) rather than at a real word
   boundary — the join script can't tell those apart from a normal wrap without guessing wrong, so the two rewrapped
   instead.
+- **Local-source-only libraries: detail pages, chapters, track preferences, and watch state all silently came back
+  empty**: local items' `kairos_id` embeds the raw filesystem path (unlike Plex/Jellyfin/Emby's opaque ratingKey/GUID
+  ids), which broke Kairos's path-segment-based route matching for any endpoint taking one as a URL parameter — the
+  request 404'd before ever reaching the database, so a scanned-and-matched item's detail view just rendered blank
+  with no visible error. Fixed the same way an equivalent gap in the scraper match routes was fixed previously (a
+  slash-tolerant route pattern instead of a single-segment one), applied everywhere else the same shape occurs. New
+  local-source items also get an opaque id instead of embedding the path directly, matching how every other source
+  already works, so this can't recur for anything scanned going forward — existing libraries are unblocked by the
+  route fix alone, no rescan needed. Closing this also surfaced and fixed a separate, source-agnostic route-ordering
+  bug in the same area that could shadow a more specific endpoint with a more general one regardless of source type.
 
 ### Changed
 

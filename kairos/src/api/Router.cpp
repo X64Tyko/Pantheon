@@ -243,6 +243,20 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<ChannelService>(ctx));
 	services_.push_back(std::make_unique<KairosService>(ctx, *scraper_mgr_));
 	services_.push_back(std::make_unique<BlockService>(ctx));
+	// ChapterService and PlaybackService are registered before ContentService
+	// on purpose: ContentService's /api/shows|movies|episodes/(.+) detail
+	// routes have to be slash-permissive (local-source kairos_ids are raw
+	// filesystem paths), which also makes them greedy with no trailing
+	// boundary — httplib tries every service's routes in one flat
+	// registration-order list (Server::dispatch_request), so if ContentService
+	// registered first, its catch-all would swallow ChapterService's
+	// /api/episodes/:id/chapters, /api/movies/:id/chapters and
+	// PlaybackService's /api/shows/:id/track-preference, .../watch-state,
+	// .../resolve-play-target etc. before those handlers ever ran, for every
+	// item regardless of source. Same reasoning as the specific-before-general
+	// ordering inside ContentService.cpp itself, just applied across files.
+	services_.push_back(std::make_unique<ChapterService>(ctx, *chapter_detect_mgr_));
+	services_.push_back(std::make_unique<PlaybackService>(ctx));
 	// Captured as a raw pointer before the unique_ptr moves into services_ so
 	// ScraperManager's match-confirmed callback (below) has something to call
 	// into — ContentService already depends on ScraperManager (previous
@@ -256,7 +270,6 @@ void Router::registerRoutes() {
 		content_service_ptr_->autoWritebackIfEnabled(item_type, kairos_id);
 	});
 	services_.push_back(std::move(content_service));
-	services_.push_back(std::make_unique<ChapterService>(ctx, *chapter_detect_mgr_));
 	services_.push_back(std::make_unique<JobService>(ctx, jobs_, sync_, *scraper_mgr_, *chapter_detect_mgr_, *content_service_ptr_));
 	services_.push_back(std::make_unique<BackupService>(ctx, jobs_, backups_));
 	services_.push_back(std::make_unique<SubtitleService>(ctx));
@@ -268,7 +281,6 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<SchedulerService>(ctx));
 	services_.push_back(std::make_unique<TimeslotService>(ctx));
 	services_.push_back(std::make_unique<RokuDeviceService>(ctx));
-	services_.push_back(std::make_unique<PlaybackService>(ctx));
 	services_.push_back(std::make_unique<TvManifestService>(ctx));
 	services_.push_back(std::make_unique<WatchTogetherService>(ctx));
 

@@ -42,6 +42,7 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   const [show,      setShow]      = useState<ShowDetail | null>(null)
   const [movie,     setMovie]     = useState<MovieDetail | null>(null)
   const [loading,   setLoading]   = useState(!discoverResult)
+    const [error, setError] = useState<string | null>(null)
   const [episodes,  setEpisodes]  = useState<Episode[]>([])
   const [languages, setLanguages] = useState<MediaLanguages | null>(null)
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
@@ -60,6 +61,7 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
     if (discoverResult) return
     if (!id || !content_type) return
     setLoading(true)
+      setError(null)
     setShow(null); setMovie(null); setEpisodes([]); setLanguages(null); setVideoInfo(null)
     // A hover left over from the *previous* item would otherwise outlive it
     // whenever this hook's caller reuses the same mounted instance across an
@@ -69,12 +71,12 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
     setFocusedEpisode(null)
 
     if (content_type === 'show') {
-      api.getShow(id).then(setShow).finally(() => setLoading(false))
+        api.getShow(id).then(setShow).catch(e => setError(e?.message || 'Failed to load')).finally(() => setLoading(false))
       api.getEpisodes(id).then(setEpisodes).catch(() => {})
       api.getShowLanguages(id).then(setLanguages).catch(() => {})
       api.getShowVideoInfo(id).then(setVideoInfo).catch(() => {})
     } else {
-      api.getMovie(id).then(setMovie).finally(() => setLoading(false))
+        api.getMovie(id).then(setMovie).catch(e => setError(e?.message || 'Failed to load')).finally(() => setLoading(false))
       api.getMovieLanguages(id).then(setLanguages).catch(() => {})
       api.getMovieVideoInfo(id).then(setVideoInfo).catch(() => {})
     }
@@ -153,7 +155,7 @@ export function useMediaDetail({ id, content_type, discoverResult }: UseMediaDet
   const matchScore  = detail?.match_score
 
   return {
-    show, movie, loading, episodes, languages, videoInfo,
+      show, movie, loading, error, episodes, languages, videoInfo,
     detail, contentType, posterUrl, backdropUrl,
     title, year, overview, genres, tags, rating, seasonsWithEpisodes,
     folderName, fileName, matchStatus, matchScore, refetch,
