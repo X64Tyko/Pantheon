@@ -63,7 +63,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, play
   useNavBack(onBack) // Escape/Backspace closes the detail view, same contract as PlayerPage
   const media = useMediaDetail({ id, content_type, discoverResult })
   const {
-    show, movie, loading, detail, contentType,
+      show, movie, loading, error, detail, contentType,
     posterUrl, backdropUrl, title, year, overview, genres, tags, rating,
     seasonsWithEpisodes, languages, videoInfo, folderName, fileName,
     setFocusedEpisode,
@@ -291,6 +291,8 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, play
         >
           {loading && !discoverResult ? (
             <DetailSkeleton />
+          ) : error && !detail ? (
+              <div className={styles.errorState}>{error}</div>
           ) : (
             <>
               <div className={`hds-media-detail-hero-row ${styles.heroRow}`}>

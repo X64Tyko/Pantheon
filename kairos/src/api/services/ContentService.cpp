@@ -777,17 +777,17 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	// session, so restriction is enforced at the one already-authenticated
 	// playback-start boundary rather than only hiding blocked items from
 	// browse/list views. type: "movie" | "episode" | "show".
-	svr.Get("/api/content/:type/:id/access-check", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/content/([^/]+)/(.+)/access-check)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser())
 		{
 			route::err(res, 401, "Unauthorized");
 			return;
 		}
-		auto type    = req.path_params.at("type");
-		auto id      = req.path_params.at("id");
-		auto lookup  = ContentRepository(db_).resolveForRestriction(type, id);
-		bool allowed = RestrictionRepository(db_).isAllowed(
+		std::string type = req.matches[1];
+		std::string id   = req.matches[2];
+		auto lookup      = ContentRepository(db_).resolveForRestriction(type, id);
+		bool allowed     = RestrictionRepository(db_).isAllowed(
 			*currentUser(), lookup.entity_type, lookup.entity_id, lookup.content_rating);
 		route::ok(res, json{{"allowed", allowed}}.dump());
 	});
@@ -833,14 +833,14 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	// image_cache_ttl_hours. Locked fields are still respected (same as any
 	// other match-apply path). 404 if the item has no confirmed match to
 	// refresh from — nothing to re-fetch.
-	svr.Post("/api/shows/:id/refresh-metadata", [this](const Req& req, Res& res)
+	svr.Post(R"(/api/shows/(.+)/refresh-metadata)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
 			route::err(res, 403, "Forbidden");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		if (!scraper_.refreshMetadata(id, "show"))
 		{
 			route::err(res, 404, "No confirmed match to refresh from");
@@ -851,14 +851,14 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		if (auto a = repo.getShowArt(id)) clearImageCache(a->image_path, a->source_id);
 		route::ok(res, json{{"ok", true}}.dump());
 	});
-	svr.Post("/api/movies/:id/refresh-metadata", [this](const Req& req, Res& res)
+	svr.Post(R"(/api/movies/(.+)/refresh-metadata)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
 			route::err(res, 403, "Forbidden");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		if (!scraper_.refreshMetadata(id, "movie"))
 		{
 			route::err(res, 404, "No confirmed match to refresh from");
@@ -874,14 +874,14 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	// (which always locks the record as a side effect of a metadata edit; this
 	// flag is orthogonal to that). Turning it on also clears any pending
 	// uncertain/unmatched state immediately (see ContentRepository::setShowSkipScraping).
-	svr.Patch("/api/shows/:id/skip-scraping", [this](const Req& req, Res& res)
+	svr.Patch(R"(/api/shows/(.+)/skip-scraping)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
 			route::err(res, 403, "Forbidden");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		try
 		{
 			auto b = json::parse(req.body);
@@ -890,14 +890,14 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		}
 		catch (const std::exception& e) { route::err(res, 400, e.what()); }
 	});
-	svr.Patch("/api/movies/:id/skip-scraping", [this](const Req& req, Res& res)
+	svr.Patch(R"(/api/movies/(.+)/skip-scraping)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
 			route::err(res, 403, "Forbidden");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		try
 		{
 			auto b = json::parse(req.body);
@@ -910,14 +910,14 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	// Per-show opt-in for the automatic specials scan (runs during normal
 	// sync — see SyncManager::scanSpecialsForEligibleShows). Separate route
 	// for the same reason as skip-scraping above.
-	svr.Patch("/api/shows/:id/find-specials", [this](const Req& req, Res& res)
+	svr.Patch(R"(/api/shows/(.+)/find-specials)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
 			route::err(res, 403, "Forbidden");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		try
 		{
 			auto b = json::parse(req.body);
@@ -930,14 +930,14 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	// 'season' (default) buckets season-0 episodes into one Specials group;
 	// 'aired' interleaves them between numbered seasons by air date — see
 	// useMediaDetail.ts's grouping logic on the frontend.
-	svr.Patch("/api/shows/:id/episode-display-order", [this](const Req& req, Res& res)
+	svr.Patch(R"(/api/shows/(.+)/episode-display-order)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
 			route::err(res, 403, "Forbidden");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		try
 		{
 			auto b            = json::parse(req.body);
@@ -1093,9 +1093,9 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		route::ok(res, json{{"items", items}, {"total", result.total}}.dump());
 	});
 
-	svr.Get("/api/shows/:id/episodes", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/shows/(.+)/episodes)", [this](const Req& req, Res& res)
 	{
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		std::string season_filter;
 		if (req.has_param("season")) season_filter = req.get_param_value("season");
 		auto user = currentUser();
@@ -1129,31 +1129,6 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	// Roku: setHeroEpisode) that only have a bare episode_id to resolve into
 	// something displayable. Not a full episode detail endpoint (no thumb/
 	// file_path) — add fields here only when another caller actually needs them.
-	svr.Get("/api/episodes/:id", [this](const Req& req, Res& res)
-	{
-		if (!currentUser())
-		{
-			route::err(res, 401, "Unauthorized");
-			return;
-		}
-		ContentRepository repo(db_);
-		auto e = repo.getEpisode(req.path_params.at("id"));
-		if (!e)
-		{
-			route::err(res, 404, "episode not found");
-			return;
-		}
-		route::ok(res, json{
-					  {"episode_id", e->episode_id},
-					  {"season", e->season},
-					  {"episode", e->episode},
-					  {"title", e->title},
-					  {"overview", e->overview},
-					  {"show_id", e->show_id},
-					  {"show_title", e->show_title},
-				  }.dump());
-	});
-
 	// Next playable episode after :id, honoring the show's episode_display_order
 	// (see ContentRepository::getNextEpisode) — used by the player's up-next/
 	// auto-advance and by resolvePlayTarget once the last-watched episode is
@@ -1163,10 +1138,10 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	// a live-channel schedule lookup Hephaestus/DVR clients hit with no
 	// session) — this route would otherwise silently leak episode metadata
 	// (including of restricted/parental-gated content) unauthenticated.
-	svr.Get("/api/episodes/:id/next-episode", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/episodes/(.+)/next-episode)", [this](const Req& req, Res& res)
 	{
 		ContentRepository repo(db_);
-		auto next = repo.getNextEpisode(req.path_params.at("id"));
+		auto next = repo.getNextEpisode(req.matches[1].str());
 		if (!next)
 		{
 			route::ok(res, "null");
@@ -1185,9 +1160,9 @@ void ContentService::registerRoutes(httplib::Server& svr)
 				  }.dump());
 	});
 
-	svr.Get("/api/shows/:id/seasons", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/shows/(.+)/seasons)", [this](const Req& req, Res& res)
 	{
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		ContentRepository repo(db_);
 		json seasons = json::array();
 		for (const auto& r : repo.listSeasons(id)) seasons.push_back({{"number", r.number}, {"name", r.name}});
@@ -1195,16 +1170,16 @@ void ContentService::registerRoutes(httplib::Server& svr)
 	});
 
 	// Audio/subtitle languages — see movieLanguagesFromDb/showLanguagesFromDb.
-	svr.Get("/api/shows/:id/languages", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/shows/(.+)/languages)", [this](const Req& req, Res& res)
 	{
-		route::ok(res, showLanguagesFromDb(db_, req.path_params.at("id")).dump());
+		route::ok(res, showLanguagesFromDb(db_, req.matches[1].str()).dump());
 	});
 
 	// Codec/resolution/bit-depth, probed from the same representative
 	// episode file the languages endpoint uses, same in-memory cache shape.
-	svr.Get("/api/shows/:id/videoinfo", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/shows/(.+)/videoinfo)", [this](const Req& req, Res& res)
 	{
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		std::string path;
 		try
 		{
@@ -1369,9 +1344,216 @@ void ContentService::registerRoutes(httplib::Server& svr)
 
 	// ── Show detail ───────────────────────────────────────────────────────────
 
-	svr.Get("/api/shows/:id", [this](const Req& req, Res& res)
+	svr.Patch(R"(/api/shows/(.+))", [this](const Req& req, Res& res)
 	{
-		auto id = req.path_params.at("id");
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		if (sync_.isMediaLocked())
+		{
+			route::err(res, 423, "sync in progress");
+			return;
+		}
+		auto id = req.matches[1].str();
+		try
+		{
+			auto b       = json::parse(req.body);
+			auto jsonStr = [](const json& j) { return j.is_array() ? j.dump() : j.get<std::string>(); };
+
+			std::vector<StrField> sf;
+			std::vector<IntField> intf;
+			if (b.contains("title")) sf.push_back({"title", b["title"].get<std::string>()});
+			if (b.contains("original_title")) sf.push_back({"original_title", b["original_title"].get<std::string>()});
+			if (b.contains("overview")) sf.push_back({"overview", b["overview"].get<std::string>()});
+			if (b.contains("studio")) sf.push_back({"studio", b["studio"].get<std::string>()});
+			if (b.contains("status")) sf.push_back({"status", b["status"].get<std::string>()});
+			if (b.contains("content_rating")) sf.push_back({"content_rating", b["content_rating"].get<std::string>()});
+			if (b.contains("originally_available_at")) sf.push_back({"originally_available_at", b["originally_available_at"].get<std::string>()});
+			if (b.contains("imdb_id")) sf.push_back({"imdb_id", b["imdb_id"].get<std::string>()});
+			if (b.contains("tvdb_id")) sf.push_back({"tvdb_id", b["tvdb_id"].get<std::string>()});
+			if (b.contains("tmdb_id")) sf.push_back({"tmdb_id", b["tmdb_id"].get<std::string>()});
+			if (b.contains("thumb"))
+			{
+				std::string v = b["thumb"].get<std::string>();
+				if (isLocalSentinel(v))
+				{
+					route::err(res, 400, "invalid thumb value");
+					return;
+				}
+				sf.push_back({"thumb", v});
+			}
+			if (b.contains("art"))
+			{
+				std::string v = b["art"].get<std::string>();
+				if (isLocalSentinel(v))
+				{
+					route::err(res, 400, "invalid art value");
+					return;
+				}
+				sf.push_back({"art", v});
+			}
+			if (b.contains("genres")) sf.push_back({"genres", jsonStr(b["genres"])});
+			if (b.contains("tags")) sf.push_back({"tags", jsonStr(b["tags"])});
+			if (b.contains("labels")) sf.push_back({"labels", jsonStr(b["labels"])});
+			if (b.contains("network")) sf.push_back({"network", b["network"].get<std::string>()});
+			if (b.contains("actors")) sf.push_back({"actors", jsonStr(b["actors"])});
+			if (b.contains("countries")) sf.push_back({"countries", jsonStr(b["countries"])});
+			if (b.contains("collections")) sf.push_back({"collections", jsonStr(b["collections"])});
+			if (b.contains("year")) intf.push_back({"year", b["year"].get<int>()});
+
+			ContentRepository(db_).updateShow(id, sf, intf);
+
+			// A manual edit is an explicit, human-confirmed correction — record it as a
+			// per-field override so it survives future syncs even if `locked` is later
+			// cleared, without freezing the whole row the way `locked` alone would.
+			MetadataOverrideRepository ovr(db_);
+			for (const auto& f : sf) ovr.set("show", id, f.col, f.val, "user");
+			for (const auto& f : intf) ovr.set("show", id, f.col, std::to_string(f.val), "user");
+
+			route::ok(res, json{{"ok", true}}.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("PATCH /api/shows/" + id, e);
+			route::err(res, 400, e.what());
+		}
+	});
+
+	svr.Post(R"(/api/shows/(.+)/writeback)", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		auto id = req.matches[1].str();
+		try
+		{
+			ContentRepository repo(db_);
+			auto d = repo.getShowDetail(id);
+			if (!d)
+			{
+				route::err(res, 404, "show not found");
+				return;
+			}
+			// Writeback is gated on a human-confirmed match, never an auto-accepted
+			// one — see acceptCandidate() and the "Push to Sources" plan.
+			if (!d->match_confirmed)
+			{
+				route::err(res, 403, "match not confirmed");
+				return;
+			}
+
+			route::ok(res, json{{"results", writebackShow(*d, "")}}.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("POST /api/shows/:id/writeback", e);
+			route::err(res, 500, e.what());
+		}
+	});
+
+	// `:id` survives; body.duplicate_id is absorbed and gone (see mergeShowInto).
+	svr.Post(R"(/api/shows/(.+)/merge)", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		if (sync_.isMediaLocked())
+		{
+			route::err(res, 423, "sync in progress");
+			return;
+		}
+		auto id = req.matches[1].str();
+		try
+		{
+			auto b             = json::parse(req.body);
+			std::string dup_id = b.value("duplicate_id", "");
+			if (dup_id.empty())
+			{
+				route::err(res, 400, "duplicate_id required");
+				return;
+			}
+			bool confirmed = b.value("confirm", false);
+
+			ContentRepository repo(db_);
+			auto d_target = repo.getShowDetail(id);
+			auto d_dup    = repo.getShowDetail(dup_id);
+			if (!d_target)
+			{
+				route::err(res, 404, "show not found");
+				return;
+			}
+			if (!d_dup)
+			{
+				route::err(res, 404, "duplicate show not found");
+				return;
+			}
+
+			// Compare via the same path-map + cheap-normalize logic
+			// SyncManager's own dedup already uses — comparing raw, unmapped
+			// paths (as before) could flag two folders as "different" that
+			// sync-time dedup already treats as the same file, once
+			// different sources' mount points are accounted for.
+			if (!confirmed && !d_target->folder_path.empty() && !d_dup->folder_path.empty()
+				&& pathutil::compareFolders(conf_.applyPathMap(d_target->folder_path),
+											conf_.applyPathMap(d_dup->folder_path)) != pathutil::FolderMatch::kExactCheap)
+			{
+				res.status = 409;
+				route::ok(res, json{
+							  {"error", "folder_mismatch"},
+							  {"target_folder", d_target->folder_path},
+							  {"duplicate_folder", d_dup->folder_path},
+						  }.dump());
+				return;
+			}
+
+			repo.mergeShowInto(id, dup_id);
+			route::ok(res, json{{"ok", true}}.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("POST /api/shows/:id/merge", e);
+			route::err(res, 400, e.what());
+		}
+	});
+
+	svr.Get(R"(/api/shows/(.+)/thumb)", [this](const Req& req, Res& res)
+	{
+		auto id   = req.matches[1].str();
+		auto item = ContentRepository(db_).getShowThumb(id);
+		if (!item)
+		{
+			res.status = 404;
+			return;
+		}
+		proxyImage(req, item->image_path, item->source_id, res);
+	});
+
+	svr.Get(R"(/api/shows/(.+)/art)", [this](const Req& req, Res& res)
+	{
+		auto id   = req.matches[1].str();
+		auto item = ContentRepository(db_).getShowArt(id);
+		if (!item)
+		{
+			res.status = 404;
+			return;
+		}
+		proxyImage(req, item->image_path, item->source_id, res);
+	});
+
+	// Registered after /thumb and /art (not where GET /api/shows/:id would
+	// normally sit): local kairos_ids contain '/', so this (.+) capture is
+	// greedy with no boundary against the routes above — it must come after
+	// them or it would swallow ".../thumb" and ".../art" requests too (see
+	// ScraperService.cpp's manual-match/metadata routes for the same pattern).
+	svr.Get(R"(/api/shows/(.+))", [this](const Req& req, Res& res)
+	{
+		std::string id = req.matches[1];
 		ContentRepository repo(db_);
 		auto user = currentUser();
 		auto d    = repo.getShowDetail(id, user ? user->user_id : "");
@@ -1444,211 +1626,9 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		route::ok(res, show.dump());
 	});
 
-	svr.Patch("/api/shows/:id", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/episodes/(.+)/thumb)", [this](const Req& req, Res& res)
 	{
-		if (!currentUser() || currentUser()->role != "admin")
-		{
-			route::err(res, 403, "Forbidden");
-			return;
-		}
-		if (sync_.isMediaLocked())
-		{
-			route::err(res, 423, "sync in progress");
-			return;
-		}
-		auto id = req.path_params.at("id");
-		try
-		{
-			auto b       = json::parse(req.body);
-			auto jsonStr = [](const json& j) { return j.is_array() ? j.dump() : j.get<std::string>(); };
-
-			std::vector<StrField> sf;
-			std::vector<IntField> intf;
-			if (b.contains("title")) sf.push_back({"title", b["title"].get<std::string>()});
-			if (b.contains("original_title")) sf.push_back({"original_title", b["original_title"].get<std::string>()});
-			if (b.contains("overview")) sf.push_back({"overview", b["overview"].get<std::string>()});
-			if (b.contains("studio")) sf.push_back({"studio", b["studio"].get<std::string>()});
-			if (b.contains("status")) sf.push_back({"status", b["status"].get<std::string>()});
-			if (b.contains("content_rating")) sf.push_back({"content_rating", b["content_rating"].get<std::string>()});
-			if (b.contains("originally_available_at")) sf.push_back({"originally_available_at", b["originally_available_at"].get<std::string>()});
-			if (b.contains("imdb_id")) sf.push_back({"imdb_id", b["imdb_id"].get<std::string>()});
-			if (b.contains("tvdb_id")) sf.push_back({"tvdb_id", b["tvdb_id"].get<std::string>()});
-			if (b.contains("tmdb_id")) sf.push_back({"tmdb_id", b["tmdb_id"].get<std::string>()});
-			if (b.contains("thumb"))
-			{
-				std::string v = b["thumb"].get<std::string>();
-				if (isLocalSentinel(v))
-				{
-					route::err(res, 400, "invalid thumb value");
-					return;
-				}
-				sf.push_back({"thumb", v});
-			}
-			if (b.contains("art"))
-			{
-				std::string v = b["art"].get<std::string>();
-				if (isLocalSentinel(v))
-				{
-					route::err(res, 400, "invalid art value");
-					return;
-				}
-				sf.push_back({"art", v});
-			}
-			if (b.contains("genres")) sf.push_back({"genres", jsonStr(b["genres"])});
-			if (b.contains("tags")) sf.push_back({"tags", jsonStr(b["tags"])});
-			if (b.contains("labels")) sf.push_back({"labels", jsonStr(b["labels"])});
-			if (b.contains("network")) sf.push_back({"network", b["network"].get<std::string>()});
-			if (b.contains("actors")) sf.push_back({"actors", jsonStr(b["actors"])});
-			if (b.contains("countries")) sf.push_back({"countries", jsonStr(b["countries"])});
-			if (b.contains("collections")) sf.push_back({"collections", jsonStr(b["collections"])});
-			if (b.contains("year")) intf.push_back({"year", b["year"].get<int>()});
-
-			ContentRepository(db_).updateShow(id, sf, intf);
-
-			// A manual edit is an explicit, human-confirmed correction — record it as a
-			// per-field override so it survives future syncs even if `locked` is later
-			// cleared, without freezing the whole row the way `locked` alone would.
-			MetadataOverrideRepository ovr(db_);
-			for (const auto& f : sf) ovr.set("show", id, f.col, f.val, "user");
-			for (const auto& f : intf) ovr.set("show", id, f.col, std::to_string(f.val), "user");
-
-			route::ok(res, json{{"ok", true}}.dump());
-		}
-		catch (const std::exception& e)
-		{
-			route::logErr("PATCH /api/shows/" + id, e);
-			route::err(res, 400, e.what());
-		}
-	});
-
-	svr.Post("/api/shows/:id/writeback", [this](const Req& req, Res& res)
-	{
-		if (!currentUser() || currentUser()->role != "admin")
-		{
-			route::err(res, 403, "Forbidden");
-			return;
-		}
-		auto id = req.path_params.at("id");
-		try
-		{
-			ContentRepository repo(db_);
-			auto d = repo.getShowDetail(id);
-			if (!d)
-			{
-				route::err(res, 404, "show not found");
-				return;
-			}
-			// Writeback is gated on a human-confirmed match, never an auto-accepted
-			// one — see acceptCandidate() and the "Push to Sources" plan.
-			if (!d->match_confirmed)
-			{
-				route::err(res, 403, "match not confirmed");
-				return;
-			}
-
-			route::ok(res, json{{"results", writebackShow(*d, "")}}.dump());
-		}
-		catch (const std::exception& e)
-		{
-			route::logErr("POST /api/shows/:id/writeback", e);
-			route::err(res, 500, e.what());
-		}
-	});
-
-	// `:id` survives; body.duplicate_id is absorbed and gone (see mergeShowInto).
-	svr.Post("/api/shows/:id/merge", [this](const Req& req, Res& res)
-	{
-		if (!currentUser() || currentUser()->role != "admin")
-		{
-			route::err(res, 403, "Forbidden");
-			return;
-		}
-		if (sync_.isMediaLocked())
-		{
-			route::err(res, 423, "sync in progress");
-			return;
-		}
-		auto id = req.path_params.at("id");
-		try
-		{
-			auto b             = json::parse(req.body);
-			std::string dup_id = b.value("duplicate_id", "");
-			if (dup_id.empty())
-			{
-				route::err(res, 400, "duplicate_id required");
-				return;
-			}
-			bool confirmed = b.value("confirm", false);
-
-			ContentRepository repo(db_);
-			auto d_target = repo.getShowDetail(id);
-			auto d_dup    = repo.getShowDetail(dup_id);
-			if (!d_target)
-			{
-				route::err(res, 404, "show not found");
-				return;
-			}
-			if (!d_dup)
-			{
-				route::err(res, 404, "duplicate show not found");
-				return;
-			}
-
-			// Compare via the same path-map + cheap-normalize logic
-			// SyncManager's own dedup already uses — comparing raw, unmapped
-			// paths (as before) could flag two folders as "different" that
-			// sync-time dedup already treats as the same file, once
-			// different sources' mount points are accounted for.
-			if (!confirmed && !d_target->folder_path.empty() && !d_dup->folder_path.empty()
-				&& pathutil::compareFolders(conf_.applyPathMap(d_target->folder_path),
-											conf_.applyPathMap(d_dup->folder_path)) != pathutil::FolderMatch::kExactCheap)
-			{
-				res.status = 409;
-				route::ok(res, json{
-							  {"error", "folder_mismatch"},
-							  {"target_folder", d_target->folder_path},
-							  {"duplicate_folder", d_dup->folder_path},
-						  }.dump());
-				return;
-			}
-
-			repo.mergeShowInto(id, dup_id);
-			route::ok(res, json{{"ok", true}}.dump());
-		}
-		catch (const std::exception& e)
-		{
-			route::logErr("POST /api/shows/:id/merge", e);
-			route::err(res, 400, e.what());
-		}
-	});
-
-	svr.Get("/api/shows/:id/thumb", [this](const Req& req, Res& res)
-	{
-		auto id   = req.path_params.at("id");
-		auto item = ContentRepository(db_).getShowThumb(id);
-		if (!item)
-		{
-			res.status = 404;
-			return;
-		}
-		proxyImage(req, item->image_path, item->source_id, res);
-	});
-
-	svr.Get("/api/shows/:id/art", [this](const Req& req, Res& res)
-	{
-		auto id   = req.path_params.at("id");
-		auto item = ContentRepository(db_).getShowArt(id);
-		if (!item)
-		{
-			res.status = 404;
-			return;
-		}
-		proxyImage(req, item->image_path, item->source_id, res);
-	});
-
-	svr.Get("/api/episodes/:id/thumb", [this](const Req& req, Res& res)
-	{
-		auto id   = req.path_params.at("id");
+		auto id   = req.matches[1].str();
 		auto item = ContentRepository(db_).getEpisodeThumb(id);
 		if (!item)
 		{
@@ -1658,81 +1638,37 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		proxyImage(req, item->image_path, item->source_id, res);
 	});
 
-	// ── Movie detail ──────────────────────────────────────────────────────────
-https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(2008)/thumb?token=d8a641ba8dadd8f35dc39df081bedd56c9f6462efdad30659ba628ccf64a7aea 
-
-	svr.Get("/api/movies/:id", [this](const Req& req, Res& res)
+	// Registered after /next-episode and /thumb for the same reason as the
+	// shows detail route above — a (.+) id capture is greedy, so the plain
+	// route must be registered last within this resource's GET routes.
+	svr.Get(R"(/api/episodes/(.+))", [this](const Req& req, Res& res)
 	{
-		auto id   = req.path_params.at("id");
-		auto user = currentUser();
+		if (!currentUser())
+		{
+			route::err(res, 401, "Unauthorized");
+			return;
+		}
 		ContentRepository repo(db_);
-		auto d = repo.getMovieDetail(id, user ? user->user_id : "");
-		if (!d)
+		auto e = repo.getEpisode(req.matches[1].str());
+		if (!e)
 		{
-			route::err(res, 404, "movie not found");
+			route::err(res, 404, "episode not found");
 			return;
 		}
-		// Same 404 as a genuinely missing movie — don't reveal existence of
-		// blocked content via a distinct "forbidden" response.
-		if (user && user->restricted
-			&& !RestrictionRepository(db_).isAllowed(*user, "movie", id, d->content_rating))
-		{
-			route::err(res, 404, "movie not found");
-			return;
-		}
-
-		auto parseArr = [](const std::string& s) -> json
-		{
-			try { return json::parse(s); }
-			catch (...) { return json::array(); }
-		};
-
-		json movie;
-		movie["movie_id"]       = d->movie_id;
-		movie["title"]          = d->title;
-		movie["original_title"] = d->original_title;
-		movie["content_rating"] = d->content_rating;
-		movie["duration_ms"]    = d->duration_ms;
-		if (d->year) movie["year"] = *d->year;
-		if (!d->release_date.empty()) movie["release_date"] = d->release_date;
-		if (d->audience_rating) movie["audience_rating"] = *d->audience_rating;
-		movie["overview"]        = d->overview;
-		movie["tagline"]         = d->tagline;
-		movie["studio"]          = d->studio;
-		movie["director"]        = d->director;
-		movie["writer"]          = d->writer;
-		movie["genres"]          = parseArr(d->genres);
-		movie["tags"]            = parseArr(d->tags);
-		movie["thumb"]           = d->thumb;
-		movie["art"]             = d->art;
-		movie["imdb_id"]         = d->imdb_id;
-		movie["tmdb_id"]         = d->tmdb_id;
-		movie["locked"]          = d->locked;
-		movie["skip_scraping"]   = d->skip_scraping;
-		movie["labels"]          = parseArr(d->labels);
-		movie["actors"]          = parseArr(d->actors);
-		movie["countries"]       = parseArr(d->countries);
-		movie["collections"]     = parseArr(d->collections);
-		movie["external_id"]     = d->external_id;
-		movie["source_id"]       = d->source_id;
-		movie["source_base_url"] = d->source_base_url;
-		if (!d->file_path.empty()) movie["file_path"] = d->file_path;
-		if (!d->folder_path.empty()) movie["folder_path"] = d->folder_path;
-		movie["match_status"] = d->match_status;
-		if (d->match_score) movie["match_score"] = *d->match_score;
-		movie["match_confirmed"] = d->match_confirmed;
-		movie["watched"]         = d->watched;
-		movie["view_count"]      = d->view_count;
-
-		// Full set of sources this movie is mapped to.
-		json sources = json::array();
-		for (const auto& t : SourceRepository(db_).getWritebackTargets("movie", id)) sources.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"display_name", t.display_name}, {"external_id", t.external_id}});
-		movie["sources"] = std::move(sources);
-
-		route::ok(res, movie.dump());
+		route::ok(res, json{
+					  {"episode_id", e->episode_id},
+					  {"season", e->season},
+					  {"episode", e->episode},
+					  {"title", e->title},
+					  {"overview", e->overview},
+					  {"show_id", e->show_id},
+					  {"show_title", e->show_title},
+				  }.dump());
 	});
 
-	svr.Patch("/api/movies/:id", [this](const Req& req, Res& res)
+	// ── Movie detail ──────────────────────────────────────────────────────────
+
+	svr.Patch(R"(/api/movies/(.+))", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
@@ -1744,7 +1680,7 @@ https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(
 			route::err(res, 423, "sync in progress");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		try
 		{
 			auto b       = json::parse(req.body);
@@ -1808,14 +1744,14 @@ https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(
 		}
 	});
 
-	svr.Post("/api/movies/:id/writeback", [this](const Req& req, Res& res)
+	svr.Post(R"(/api/movies/(.+)/writeback)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
 			route::err(res, 403, "Forbidden");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		try
 		{
 			ContentRepository repo(db_);
@@ -1892,7 +1828,7 @@ https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(
 	});
 
 	// Link a duplicate movie onto this one — see the analogous show route above.
-	svr.Post("/api/movies/:id/merge", [this](const Req& req, Res& res)
+	svr.Post(R"(/api/movies/(.+)/merge)", [this](const Req& req, Res& res)
 	{
 		if (!currentUser() || currentUser()->role != "admin")
 		{
@@ -1904,7 +1840,7 @@ https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(
 			route::err(res, 423, "sync in progress");
 			return;
 		}
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		try
 		{
 			auto b             = json::parse(req.body);
@@ -1955,9 +1891,9 @@ https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(
 		}
 	});
 
-	svr.Get("/api/movies/:id/thumb", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/movies/(.+)/thumb)", [this](const Req& req, Res& res)
 	{
-		auto id   = req.path_params.at("id");
+		auto id   = req.matches[1].str();
 		auto item = ContentRepository(db_).getMovieThumb(id);
 		if (!item)
 		{
@@ -1967,9 +1903,9 @@ https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(
 		proxyImage(req, item->image_path, item->source_id, res);
 	});
 
-	svr.Get("/api/movies/:id/art", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/movies/(.+)/art)", [this](const Req& req, Res& res)
 	{
-		auto id   = req.path_params.at("id");
+		auto id   = req.matches[1].str();
 		auto item = ContentRepository(db_).getMovieArt(id);
 		if (!item)
 		{
@@ -1979,14 +1915,14 @@ https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(
 		proxyImage(req, item->image_path, item->source_id, res);
 	});
 
-	svr.Get("/api/movies/:id/languages", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/movies/(.+)/languages)", [this](const Req& req, Res& res)
 	{
-		route::ok(res, movieLanguagesFromDb(db_, req.path_params.at("id")).dump());
+		route::ok(res, movieLanguagesFromDb(db_, req.matches[1].str()).dump());
 	});
 
-	svr.Get("/api/movies/:id/videoinfo", [this](const Req& req, Res& res)
+	svr.Get(R"(/api/movies/(.+)/videoinfo)", [this](const Req& req, Res& res)
 	{
-		auto id = req.path_params.at("id");
+		auto id = req.matches[1].str();
 		std::string path;
 		try
 		{
@@ -1999,6 +1935,79 @@ https: //pantheonmedia.app/api/movies/local:/media/movies/Big%20Buck%20Bunny%20(
 			route::logErr("GET /api/movies/" + id + "/videoinfo", e);
 		}
 		route::ok(res, probeVideoInfoCached("movie:" + id, path, conf_).dump());
+	});
+
+	// Registered after /thumb, /art, /languages and /videoinfo for the same
+	// reason as the shows detail route above.
+	svr.Get(R"(/api/movies/(.+))", [this](const Req& req, Res& res)
+	{
+		std::string id = req.matches[1];
+		auto user      = currentUser();
+		ContentRepository repo(db_);
+		auto d = repo.getMovieDetail(id, user ? user->user_id : "");
+		if (!d)
+		{
+			route::err(res, 404, "movie not found");
+			return;
+		}
+		// Same 404 as a genuinely missing movie — don't reveal existence of
+		// blocked content via a distinct "forbidden" response.
+		if (user && user->restricted
+			&& !RestrictionRepository(db_).isAllowed(*user, "movie", id, d->content_rating))
+		{
+			route::err(res, 404, "movie not found");
+			return;
+		}
+
+		auto parseArr = [](const std::string& s) -> json
+		{
+			try { return json::parse(s); }
+			catch (...) { return json::array(); }
+		};
+
+		json movie;
+		movie["movie_id"]       = d->movie_id;
+		movie["title"]          = d->title;
+		movie["original_title"] = d->original_title;
+		movie["content_rating"] = d->content_rating;
+		movie["duration_ms"]    = d->duration_ms;
+		if (d->year) movie["year"] = *d->year;
+		if (!d->release_date.empty()) movie["release_date"] = d->release_date;
+		if (d->audience_rating) movie["audience_rating"] = *d->audience_rating;
+		movie["overview"]        = d->overview;
+		movie["tagline"]         = d->tagline;
+		movie["studio"]          = d->studio;
+		movie["director"]        = d->director;
+		movie["writer"]          = d->writer;
+		movie["genres"]          = parseArr(d->genres);
+		movie["tags"]            = parseArr(d->tags);
+		movie["thumb"]           = d->thumb;
+		movie["art"]             = d->art;
+		movie["imdb_id"]         = d->imdb_id;
+		movie["tmdb_id"]         = d->tmdb_id;
+		movie["locked"]          = d->locked;
+		movie["skip_scraping"]   = d->skip_scraping;
+		movie["labels"]          = parseArr(d->labels);
+		movie["actors"]          = parseArr(d->actors);
+		movie["countries"]       = parseArr(d->countries);
+		movie["collections"]     = parseArr(d->collections);
+		movie["external_id"]     = d->external_id;
+		movie["source_id"]       = d->source_id;
+		movie["source_base_url"] = d->source_base_url;
+		if (!d->file_path.empty()) movie["file_path"] = d->file_path;
+		if (!d->folder_path.empty()) movie["folder_path"] = d->folder_path;
+		movie["match_status"] = d->match_status;
+		if (d->match_score) movie["match_score"] = *d->match_score;
+		movie["match_confirmed"] = d->match_confirmed;
+		movie["watched"]         = d->watched;
+		movie["view_count"]      = d->view_count;
+
+		// Full set of sources this movie is mapped to.
+		json sources = json::array();
+		for (const auto& t : SourceRepository(db_).getWritebackTargets("movie", id)) sources.push_back({{"source_id", t.source_id}, {"source_type", t.source_type}, {"display_name", t.display_name}, {"external_id", t.external_id}});
+		movie["sources"] = std::move(sources);
+
+		route::ok(res, movie.dump());
 	});
 
 	// GET /api/duplicates/queue — pending sync-time "possible duplicate" candidates

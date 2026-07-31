@@ -7,6 +7,7 @@
 #include "conf/ConfStore.h"
 #include "db/ChapterRepository.h"
 #include "db/Database.h"
+#include "db/DbHelpers.h"
 #include "db/FilterExpr.h"
 #include "db/MixedSort.h"
 #include "db/SubtitleTrackRepository.h"
@@ -499,8 +500,16 @@ void SyncManager::syncShows(IMediaSource& src,
 
     const std::string show_prefix = source_id + ":";
     const std::string ep_prefix   = source_id + ":";
+	// Local-source native ids are raw filesystem paths (contain '/'), which
+	// breaks httplib's path-param/regex-capture routes for anything built
+	// from them. Plex/Jellyfin/Emby native ids (ratingKey/GUID) never have
+	// this problem, so only local gets an opaque genID kairos_id here — the
+	// real path still lives in source_mapping.external_id (and file_path)
+	// for matching, so rescans of the same file keep resolving to the same
+	// kairos_id via the tier-1/tier-2 lookups above.
+	const bool is_local = src.sourceType() == "local";
 
-    // source_mapping for shows in this library: ext_id → kairos_id
+	// source_mapping for shows in this library: ext_id → kairos_id
     std::unordered_map<std::string, std::string> show_ext_to_kairos;
     {
         SQLite::Statement q(sync_db_,
@@ -759,9 +768,9 @@ void SyncManager::syncShows(IMediaSource& src,
             // Tier 3 — no match: mint a fresh id, same as always. Any pending
             // uncertain-duplicate note gets recorded against it below.
             if (kairos_id.empty()) {
-                kairos_id = show_prefix + ext_id;
-                pending_dup[i] = dup_note;
-            }
+                kairos_id      = show_prefix + (is_local ? db::generateId() : ext_id);
+				pending_dup[i] = dup_note;
+			}
 
             // Only a genuine cross-source dedup when the match belongs to
             // someone else's prefix. Any resolution above landing back on
@@ -1004,9 +1013,10 @@ void SyncManager::syncShows(IMediaSource& src,
     // In-memory episode ID resolution helpers — no DB reads during write phase.
     auto ep_resolve_id = [&](const std::string& ext) -> std::string {
         auto it = ep_ext_to_kairos.find(ext);
-        return it != ep_ext_to_kairos.end() ? it->second : ep_prefix + ext;
-    };
-    auto ep_resolve_by_path = [&](const std::string& path) -> std::string {
+        if (it != ep_ext_to_kairos.end()) return it->second;
+		return ep_prefix + (is_local ? db::generateId() : ext);
+	};
+	auto ep_resolve_by_path = [&](const std::string& path) -> std::string {
         if (path.empty()) return "";
         std::string mapped = conf_.applyPathMap(path);
         auto it = ep_path_to_id.find(mapped);
@@ -1127,8 +1137,13 @@ void SyncManager::syncShows(IMediaSource& src,
                     }
                 } else {
                     ep_kairos_id = ep_resolve_id(ext_ep_id);
-                    if (ep_kairos_id == ep_prefix + ext_ep_id) {
-                        const std::string existing = ep_resolve_by_path(ep.file_path);
+                    // Was ext_ep_id actually found in source_mapping? (Can't tell from
+					// ep_kairos_id alone anymore — for a local source, a freshly-minted
+					// id no longer has the deterministic ep_prefix+ext_ep_id shape that
+					// used to double as a "not found" sentinel here.)
+					if (!ep_ext_to_kairos.count(ext_ep_id))
+					{
+						const std::string existing = ep_resolve_by_path(ep.file_path);
                         if (!existing.empty()) {
                             ep_kairos_id = existing;
                             if (!existing.starts_with(ep_prefix)) ep_cross_ref = true;
@@ -1227,12 +1242,14 @@ void SyncManager::syncMovies(IMediaSource& src,
                               SyncLiveIds& live) {
     // ── Snapshot load ────────────────────────────────────────────────────────
     const std::string movie_prefix = source_id + ":";
+    // See syncShows()'s identical comment on is_local/db::generateId().
+    const bool is_local = src.sourceType() == "local";
 
-    std::unordered_map<std::string, std::string> ext_to_kairos;
-    {
-        SQLite::Statement q(sync_db_,
-            "SELECT external_id, kairos_id FROM source_mapping "
-            "WHERE item_type='movie' AND source_id=? AND library_id=?");
+	std::unordered_map<std::string, std::string> ext_to_kairos;
+	{
+		SQLite::Statement q(sync_db_,
+							"SELECT external_id, kairos_id FROM source_mapping "
+							"WHERE item_type='movie' AND source_id=? AND library_id=?");
         q.bind(1, source_id); q.bind(2, library_id);
         while (q.executeStep())
             ext_to_kairos[q.getColumn(0).getString()] = q.getColumn(1).getString();
@@ -1452,12 +1469,12 @@ void SyncManager::syncMovies(IMediaSource& src,
             }
 
             if (kairos_id.empty()) {
-                kairos_id = movie_prefix + ext_id;
+                kairos_id = movie_prefix + (is_local ? db::generateId() : ext_id);
                 pending_dup[i] = dup_note;
             }
 
-            // Same reasoning as the ext_id branch above: only cross-ref when
-            // the match belongs to another source's prefix. A self-match
+			// Same reasoning as the ext_id branch above: only cross-ref when
+			// the match belongs to another source's prefix. A self-match
             // (this source rediscovering its own row, e.g. after a hard
             // sync clears source_mapping) must still go through the
             // metadata upsert below.
