@@ -6,6 +6,7 @@
 class SessionManager;
 class VodSessionManager;
 class LogBuffer;
+class ChannelViewerRegistry;
 
 // Session-activity endpoints (currently-playing listing + per-session log
 // tail), for Hades' Activity page "Now Playing" panel. Kept in its own
@@ -33,5 +34,6 @@ class LogBuffer;
 // once at startup, then queried fresh on every /metrics request the same
 // way process CPU/RAM already is, not cached.
 void registerActivityRoutes(httplib::Server& svr, SessionManager& sessions,
-                             VodSessionManager& vodSessions, LogBuffer& logs,
-                             HwAccel gpu_backend, const std::string& vaapi_device);
+							VodSessionManager& vodSessions, LogBuffer& logs,
+							HwAccel gpu_backend, const std::string& vaapi_device,
+							ChannelViewerRegistry& channelViewers);

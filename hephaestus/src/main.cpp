@@ -124,7 +124,7 @@ int main(int argc, char* argv[])
 	// in question is the one whose live utilization/memory/temp the
 	// Activity page cares about (see ActivityRouter.h's own comment).
 	HwAccel gpu_backend = hw_caps.encode != HwAccel::none ? hw_caps.encode : hw_caps.decode;
-	registerActivityRoutes(svr, sessions, vodSessions, log_buffer, gpu_backend, cfg.vaapi_device);
+	registerActivityRoutes(svr, sessions, vodSessions, log_buffer, gpu_backend, cfg.vaapi_device, channelViewers);
 
 	std::cout << "[hephaestus] listening on :" << cfg.port
 		<< "  kairos=" << cfg.kairos_url

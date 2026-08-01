@@ -279,6 +279,7 @@ public:
 
 	bool isActive() const { return active.load(); }
 	const std::string& channelId() const { return channel_id; }
+	const std::string& bucketName() const { return bucket; }
 
 	// Best-effort snapshot for the activity/debugging view (ActivityRouter) —
 	// by value under current_item_mtx (see its own comment): the value can

@@ -1,6 +1,7 @@
 #include "ActivityRouter.h"
 #include "crash/CrashHandler.h"
 #include "log/LogBuffer.h"
+#include "../stream/ChannelViewerRegistry.h"
 #include "../stream/EncoderArgs.h" // hwAccelName
 #include "../stream/GpuMetrics.h"
 #include "../stream/SessionManager.h"
@@ -69,8 +70,19 @@ namespace
 		return std::filesystem::path(file_path).stem().string();
 	}
 
-	json channelSessionJson(const std::shared_ptr<ChannelSession>& s)
+	// bucketed_hls_counts: channel_id -> bucket -> exact viewer count, from
+	// ChannelViewerRegistry::viewerCounts() — the one source of a real count
+	// for HLS viewers (client_count is exact but MPEG-TS/DVR-only; plain HLS
+	// otherwise only ever has hls_viewer_active's presence signal, no
+	// per-viewer identity to count against at all).
+	json channelSessionJson(const std::shared_ptr<ChannelSession>& s,
+							const std::map<std::string, std::map<std::string, int>>& bucketed_hls_counts)
 	{
+		int hls_viewer_count = 0;
+		if (auto ch = bucketed_hls_counts.find(s->channelId()); ch != bucketed_hls_counts.end())
+		{
+			if (auto b = ch->second.find(s->bucketName()); b != ch->second.end()) hls_viewer_count = b->second;
+		}
 		return {
 			{"id", s->channelId()},
 			{"kind", "channel"},
@@ -79,14 +91,19 @@ namespace
 			{"hw_accel", hwAccelName(s->hwAccel())},
 			{"decode_hw_accel", hwAccelName(s->decodeHwAccel())},
 			{"started_at_ms", s->sessionStartMs()},
-			// client_count is exact (native MPEG-TS/DVR clients); hls_viewer_active
-			// is a presence signal only, not a count — see ChannelSession's own
-			// doc comments. A channel can be watched by several people at once,
-			// unlike a VOD session (always exactly one viewer), so this is what
-			// lets the activity view's viewer count actually reflect that instead
-			// of undercounting every channel as "1".
+			// bucket distinguishes this row when a channel has both a
+			// "default" (transcode) and "native" (direct-stream) session
+			// active at once — previously indistinguishable in this listing.
+			{"bucket", s->bucketName()},
+			// client_count is exact (native MPEG-TS/DVR clients). hls_viewer_active
+			// stays as a presence-only fallback for viewers on the legacy,
+			// non-bucketed HLS URL (no per-viewer identity there at all);
+			// hls_viewer_count is the real number for viewers who came through
+			// the capability-bucketed opt-in path (ChannelViewerRegistry) —
+			// together these replace the old "always shows >=1" HLS story.
 			{"client_count", s->clientCount()},
 			{"hls_viewer_active", s->hlsViewerActive()},
+			{"hls_viewer_count", hls_viewer_count},
 		};
 	}
 
@@ -115,13 +132,15 @@ namespace
 
 void registerActivityRoutes(httplib::Server& svr, SessionManager& sessions,
 							VodSessionManager& vodSessions, LogBuffer& logs,
-							HwAccel gpu_backend, const std::string& vaapi_device)
+							HwAccel gpu_backend, const std::string& vaapi_device,
+							ChannelViewerRegistry& channelViewers)
 {
-	svr.Get("/stream/activity/sessions", [&sessions, &vodSessions](
+	svr.Get("/stream/activity/sessions", [&sessions, &vodSessions, &channelViewers](
 			const httplib::Request&, httplib::Response& res)
 			{
-				json out = json::array();
-				for (auto& s : sessions.listActive()) out.push_back(channelSessionJson(s));
+				auto bucketed_hls_counts = channelViewers.viewerCounts();
+				json out                 = json::array();
+				for (auto& s : sessions.listActive()) out.push_back(channelSessionJson(s, bucketed_hls_counts));
 				for (auto& s : vodSessions.listActive()) out.push_back(vodSessionJson(s));
 				res.set_content(out.dump(), "application/json");
 			});

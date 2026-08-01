@@ -72,6 +72,13 @@ public:
 	// it anymore (see the plan's "reuse, don't rebuild" note).
 	void reassignForChannel(const std::string& channel_id, const std::optional<MediaInfo>& info, int audio_track);
 
+	// Exact per-channel, per-bucket viewer counts, for the activity/debugging
+	// view (ActivityRouter) — the one place this registry's identified
+	// viewers give a real count instead of the legacy MPEG-TS path's
+	// ClientSink-based client_count (exact but bucket-blind on its own) or
+	// HLS's own presence-only hlsViewerActive signal.
+	std::map<std::string, std::map<std::string, int>> viewerCounts() const;
+
 private:
 	struct ViewerEntry
 	{
@@ -83,7 +90,7 @@ private:
 
 	SessionManager& sessions_;
 
-	std::mutex mtx_;
+	mutable std::mutex mtx_;                     // viewerCounts() is const and still needs to lock this
 	std::map<std::string, ViewerEntry> viewers_; // key: viewer_session_id
 
 	// A viewer who stops polling without an explicit /stop (app kill,

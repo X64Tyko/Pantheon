@@ -108,6 +108,14 @@ void ChannelViewerRegistry::stop(const std::string& viewer_session_id)
 	viewers_.erase(viewer_session_id);
 }
 
+std::map<std::string, std::map<std::string, int>> ChannelViewerRegistry::viewerCounts() const
+{
+	std::map<std::string, std::map<std::string, int>> out;
+	std::lock_guard<std::mutex> lock(mtx_);
+	for (auto& [id, entry] : viewers_) out[entry.channel_id][entry.bucket]++;
+	return out;
+}
+
 void ChannelViewerRegistry::reassignForChannel(const std::string& channel_id,
 											   const std::optional<MediaInfo>& info, int audio_track)
 {

@@ -50,6 +50,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Activity page now shows which bucket a live channel session is using, and an exact HLS viewer count where
+  available (Hephaestus, Hades)**: the "Now Playing" panel previously had no way to tell a direct-stream session
+  from a transcode one (both looked identical), and every channel's HLS viewer count was a bare "someone's
+  watching" presence boolean floored to +1, regardless of how many people actually were. `ChannelSession` gained a
+  `bucketName()` accessor; `ChannelViewerRegistry` gained `viewerCounts()` (exact per-channel, per-bucket counts of
+  capability-bucketed HLS viewers — the same registry that already tracks each viewer's bucket assignment for
+  routing, just never had a query surface). `/stream/activity/sessions` now reports `bucket` and
+  `hls_viewer_count` per channel session; the Now Playing panel shows the bucket inline (Direct stream/Transcode)
+  and uses the exact count when available, only falling back to the old "≥" floor for a viewer on the legacy,
+  non-bucketed HLS URL (no per-viewer identity to count there at all). Covered by new tests in
+  `momus/hephaestus/test_channel_viewer_registry.cpp`.
 - **"Update Live" option when saving channel edits (Kairos, Hades)**: saving a channel normally leaves whatever's
   currently on-air alone and only applies the edit going forward (see the "currently-airing item yanked" fix
   below) — safe by default, but a broader edit (e.g. a shifted block boundary) can leave that untouched item

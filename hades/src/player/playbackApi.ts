@@ -150,11 +150,18 @@ export interface ActivitySession {
   started_at_ms:   number
     direct_stream?: boolean
   // channel sessions only — a VOD session is always exactly one viewer.
-  // client_count is exact (native MPEG-TS/DVR clients); hls_viewer_active is
-  // a presence signal only (HLS has no persistent connection to count
-  // distinct viewers against), not an addition to client_count.
+    // bucket is 'default' (transcode) or 'native' (direct-stream); a channel
+    // can have both active at once as two separate sessions, previously
+    // indistinguishable in this list. client_count is exact (native MPEG-TS/
+    // DVR clients). hls_viewer_count is exact for capability-bucketed HLS
+    // viewers on this session's own bucket (ChannelViewerRegistry); it can
+    // still be 0 while a viewer is present on the legacy, non-bucketed HLS
+    // URL, which has no per-viewer identity to count at all — hls_viewer_active
+    // is the only signal for that remaining case.
+    bucket?: string
   client_count?:      number
   hls_viewer_active?: boolean
+    hls_viewer_count?: number
 }
 
 export async function getActivitySessions(): Promise<ActivitySession[]> {

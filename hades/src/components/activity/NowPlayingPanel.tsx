@@ -23,14 +23,16 @@ function hwLabel(session: ActivitySession): string {
 
 // A VOD session is always exactly one viewer. A channel session can be
 // watched by several people at once — client_count (native MPEG-TS/DVR
-// clients) is exact, but HLS viewers (Hades web, Roku) have no persistent
-// connection to count distinct people against, only whether *someone* has
-// touched the playlist/segments recently (hls_viewer_active). Treating that
-// as "+1" is a floor, not a real count — the total below is a "≥", not
-// exact, whenever any channel has HLS viewers.
+// clients) is exact, and hls_viewer_count is now exact too for viewers who
+// came through the capability-bucketed opt-in path (ChannelViewerRegistry).
+// The one remaining unknown is a viewer on the legacy, non-bucketed HLS URL
+// (no per-viewer identity there at all) — hls_viewer_active is the only
+// signal for that, treated as a "+1" floor same as before. The total below
+// is only a "≥" when that legacy case is the *only* HLS signal present.
 function viewerCount(s: ActivitySession): number {
   if (s.kind === 'vod') return 1
-  return (s.client_count ?? 0) + (s.hls_viewer_active ? 1 : 0)
+    const hls = s.hls_viewer_count ? s.hls_viewer_count : (s.hls_viewer_active ? 1 : 0)
+    return (s.client_count ?? 0) + hls
 }
 
 function viewerLabel(s: ActivitySession): string {
@@ -38,8 +40,15 @@ function viewerLabel(s: ActivitySession): string {
   const dvr = s.client_count ?? 0
   const parts: string[] = []
   if (dvr > 0) parts.push(`${dvr} DVR client${dvr === 1 ? '' : 's'}`)
-  if (s.hls_viewer_active) parts.push('HLS viewer(s)')
+    if (s.hls_viewer_count) parts.push(`${s.hls_viewer_count} HLS viewer${s.hls_viewer_count === 1 ? '' : 's'}`)
+    else if (s.hls_viewer_active) parts.push('HLS viewer(s)')
   return parts.length > 0 ? parts.join(' + ') : 'no viewers detected'
+}
+
+// 'native' is direct-stream, everything else (including a manifest predating
+// this field) is transcode — matches ChannelSession::kNativeBucket/kDefaultBucket.
+function bucketLabel(bucket?: string): string {
+    return bucket === 'native' ? 'Direct stream' : 'Transcode'
 }
 
 export function NowPlayingPanel() {
@@ -86,9 +95,9 @@ export function NowPlayingPanel() {
   }, [logs])
 
   const totalViewers  = sessions.reduce((n, s) => n + viewerCount(s), 0)
-  // "≥" whenever any channel session's count includes an HLS floor rather
-  // than an exact client_count — see viewerCount's comment.
-  const isEstimate = sessions.some(s => s.kind === 'channel' && s.hls_viewer_active)
+    // "≥" only when a channel has an HLS presence signal with no exact count
+    // behind it (a legacy, non-bucketed HLS viewer) — see viewerCount's comment.
+    const isEstimate = sessions.some(s => s.kind === 'channel' && s.hls_viewer_active && !s.hls_viewer_count)
 
   return (
     <div className="rounded-lg border border-violet-900/50 bg-zinc-900 p-4 shrink-0">
@@ -122,6 +131,11 @@ export function NowPlayingPanel() {
                 {s.title || s.file_path || s.id}
               </span>
               <span className="text-zinc-600 uppercase shrink-0">{s.kind}</span>
+                {s.kind === 'channel' && (
+                    <span className={`shrink-0 ${s.bucket === 'native' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {bucketLabel(s.bucket)}
+                </span>
+                )}
               <span className="text-zinc-500 shrink-0">{hwLabel(s)}</span>
               <span className="text-violet-300 shrink-0">{viewerLabel(s)}</span>
               <span className="text-zinc-600 ml-auto shrink-0">{elapsed(s.started_at_ms)}</span>
@@ -141,6 +155,7 @@ export function NowPlayingPanel() {
               {selected.direct_stream !== undefined && (
                   <Stat label="Direct stream" value={selected.direct_stream ? 'yes' : 'no'}/>
             )}
+              {selected.kind === 'channel' && <Stat label="Bucket" value={bucketLabel(selected.bucket)}/>}
             {selected.kind === 'channel' && <Stat label="Viewers" value={viewerLabel(selected)} />}
             <Stat label="File" value={selected.file_path} wide />
           </div>
