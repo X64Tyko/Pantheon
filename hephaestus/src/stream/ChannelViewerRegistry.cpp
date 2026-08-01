@@ -82,7 +82,8 @@ ChannelViewerRegistry::StartResult ChannelViewerRegistry::start(
 	const std::string& channel_id, const ClientCapabilities& caps,
 	const MediaInfo* info, int audio_track)
 {
-	std::string bucket = (info && isChannelDirectStreamable(*info, audio_track, caps))
+	std::string bucket = (!sessions_.channelForcesTranscode(channel_id) && info &&
+							 isChannelDirectStreamable(*info, audio_track, caps))
 							 ? ChannelSession::kNativeBucket
 							 : ChannelSession::kDefaultBucket;
 
@@ -124,13 +125,14 @@ std::map<std::string, std::map<std::string, int>> ChannelViewerRegistry::viewerC
 void ChannelViewerRegistry::reassignForChannel(const std::string& channel_id,
 											   const std::optional<MediaInfo>& info, int audio_track)
 {
-	bool need_native = false;
+	bool force_transcode = sessions_.channelForcesTranscode(channel_id);
+	bool need_native     = false;
 	{
 		std::lock_guard<std::mutex> lock(mtx_);
 		for (auto& [id, entry] : viewers_)
 		{
 			if (entry.channel_id != channel_id) continue;
-			std::string ideal = (info && isChannelDirectStreamable(*info, audio_track, entry.caps))
+			std::string ideal = (!force_transcode && info && isChannelDirectStreamable(*info, audio_track, entry.caps))
 									? ChannelSession::kNativeBucket
 									: ChannelSession::kDefaultBucket;
 			entry.bucket = ideal;

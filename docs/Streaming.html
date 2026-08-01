@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pantheon — Channel Streaming</title>
+    <style>
+        :root {
+            --bg: oklch(0.152 0.016 286);
+            --bg2: oklch(0.19 0.018 286);
+            --bg3: oklch(0.21 0.026 290 / 0.6);
+            --line: oklch(0.45 0.05 290 / 0.32);
+            --txt: oklch(0.94 0.008 90);
+            --txt2: oklch(0.68 0.02 288);
+            --txt3: oklch(0.54 0.025 290);
+            --gold: oklch(0.83 0.13 84);
+            --violet: oklch(0.72 0.15 290);
+            --green: oklch(0.75 0.14 150);
+            --red: oklch(0.7 0.16 25);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+            color: var(--txt);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            padding: 60px 24px 100px;
+        }
+
+        main {
+            width: 100%;
+            max-width: 920px;
+        }
+
+        a {
+            color: var(--violet);
+        }
+
+        .back {
+            display: inline-block;
+            font-size: 13px;
+            color: var(--txt3);
+            text-decoration: none;
+            margin-bottom: 24px;
+        }
+
+        .back:hover {
+            color: var(--txt2);
+        }
+
+        h1 {
+            font-weight: 800;
+            font-size: 34px;
+            letter-spacing: 0.01em;
+            margin: 0 0 6px;
+        }
+
+        .sub {
+            color: var(--txt2);
+            font-size: 15px;
+            line-height: 1.55;
+            margin: 0 0 28px;
+            max-width: 680px;
+        }
+
+        .note {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 14px 16px;
+            border-radius: 10px;
+            margin: 0 0 32px;
+            border: 1px solid oklch(0.72 0.15 290 / 0.35);
+            background: oklch(0.72 0.15 290 / 0.08);
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--txt2);
+        }
+
+        .note b {
+            color: var(--txt);
+        }
+
+        .rec {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 14px 16px;
+            border-radius: 10px;
+            margin: 0 0 20px;
+            border: 1px solid oklch(0.75 0.14 150 / 0.4);
+            background: oklch(0.75 0.14 150 / 0.08);
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--txt2);
+        }
+
+        .rec b {
+            color: var(--txt);
+        }
+
+        code {
+            font-family: ui-monospace, 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            background: oklch(0.1 0.016 285 / 0.6);
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            padding: 1px 6px;
+            color: oklch(0.9 0.05 90);
+        }
+
+        .toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 0 0 44px;
+        }
+
+        .toc a {
+            font-size: 12.5px;
+            font-weight: 600;
+            text-decoration: none;
+            color: var(--txt2);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 7px 12px;
+            background: var(--bg3);
+        }
+
+        .toc a:hover {
+            color: var(--txt);
+            border-color: var(--violet);
+        }
+
+        section {
+            margin-bottom: 40px;
+            scroll-margin-top: 20px;
+        }
+
+        h2 {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--txt);
+            margin: 0 0 6px;
+        }
+
+        h2 a.hash {
+            font-size: 13px;
+            color: var(--txt3);
+            text-decoration: none;
+            font-weight: 400;
+        }
+
+        .group-desc {
+            color: var(--txt3);
+            font-size: 13px;
+            margin: 0 0 14px;
+            line-height: 1.5;
+        }
+
+        p {
+            color: var(--txt2);
+            font-size: 13.5px;
+            line-height: 1.65;
+            margin: 0 0 12px;
+        }
+
+        .tablewrap {
+            overflow-x: auto;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            margin-bottom: 4px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            min-width: 560px;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 9px 12px;
+            border-bottom: 1px solid var(--line);
+            vertical-align: top;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        th {
+            color: var(--txt3);
+            font-weight: 600;
+            font-size: 10.5px;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            background: var(--bg2);
+        }
+
+        td {
+            color: var(--txt2);
+        }
+
+        .yes {
+            color: var(--green);
+            font-weight: 700;
+        }
+
+        .no {
+            color: var(--red);
+            font-weight: 700;
+        }
+
+        footer {
+            margin-top: 20px;
+            font-size: 11px;
+            color: var(--txt3);
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+        }
+
+        footer a {
+            color: var(--txt3);
+        }
+    </style>
+</head>
+<body>
+<main>
+    <a class="back" href="index.html">← Docs</a>
+    <h1>Channel Streaming</h1>
+    <p class="sub">How Hephaestus actually serves a live channel to viewers, why two viewers of the same channel could
+        end up watching different moments of it, and the one setting that guarantees they won't.</p>
+
+    <nav class="toc">
+        <a href="#buckets">The Two Buckets</a>
+        <a href="#drift">Schedule Drift &amp; How Each Bucket Corrects It</a>
+        <a href="#always-transcode">Always Transcode</a>
+        <a href="#quality">Transcode Quality Settings</a>
+    </nav>
+
+    <section id="buckets">
+        <h2>The Two Buckets <a class="hash" href="#buckets">#</a></h2>
+        <p class="group-desc">Every viewer of a live channel is capability-matched into one of two independent encodes
+            Hephaestus runs for that channel. Which one a given viewer lands on is resolved automatically per-viewer
+            (declared codec/resolution support) — there's nothing to pick as a viewer.</p>
+        <div class="tablewrap">
+            <table>
+                <tr>
+                    <th>&nbsp;</th>
+                    <th>Direct Stream</th>
+                    <th>Transcode</th>
+                </tr>
+                <tr>
+                    <td>What happens</td>
+                    <td>Video is copied byte-for-byte from the source file (<code>-c:v copy</code>) — no re-encode</td>
+                    <td>Video is fully re-encoded to your configured resolution/bitrate</td>
+                </tr>
+                <tr>
+                    <td>CPU/GPU cost</td>
+                    <td>Minimal — no video encode at all</td>
+                    <td>A real encode per viewer/quality tier</td>
+                </tr>
+                <tr>
+                    <td>Resolution/bitrate control</td>
+                    <td class="no">None — always the source's own</td>
+                    <td class="yes">Full control (see <a href="#quality">Transcode Quality</a>)</td>
+                </tr>
+                <tr>
+                    <td>Loudness normalization</td>
+                    <td class="yes">Yes (audio is always re-encoded, even here)</td>
+                    <td class="yes">Yes</td>
+                </tr>
+                <tr>
+                    <td>Schedule drift correction</td>
+                    <td class="no">Coarse — can only skip ahead at the next item transition, never mid-item</td>
+                    <td class="yes">Smooth — a small, continuous speed nudge closes drift over an item's whole runtime
+                    </td>
+                </tr>
+                <tr>
+                    <td>Eligibility</td>
+                    <td>Only when a viewer's declared capabilities already support the source's video codec/resolution,
+                        and the source isn't variable-frame-rate
+                    </td>
+                    <td>Always available — the universal fallback</td>
+                </tr>
+            </table>
+        </div>
+        <p>A channel with direct-stream enabled can have <i>both</i> encodes running at once — some viewers on direct
+            stream, others on transcode, for the exact same nominal channel — Hephaestus doesn't pick one for the whole
+            channel, it picks per viewer.</p>
+    </section>
+
+    <section id="drift">
+        <h2>Schedule Drift &amp; How Each Bucket Corrects It <a class="hash" href="#drift">#</a></h2>
+        <p class="group-desc">A live channel simulates broadcast TV: Kairos computes what should be airing at any given
+            wall-clock moment, and Hephaestus's encode is supposed to match that exactly. In practice it drifts slightly
+            — every item transition costs a little real time to spin up the next encode, decode/output can hiccup under
+            load, and none of that is perfectly zero. Left uncorrected, a channel would slowly fall behind its own
+            schedule.</p>
+        <p><b>Transcode</b> corrects this the smooth way: when a real re-encode is already happening, ffmpeg's own
+            timing filter can play an item very slightly faster or slower (never more than a barely-perceptible couple
+            of percent) so a whole item plays start-to-finish exactly on schedule by the time it ends.</p>
+        <p><b>Direct stream</b> can't do this at all — a byte-for-byte copy has no filter graph to retime anything
+            through. It can only ever land on the mathematically-correct position when a <i>new</i> item starts
+            (skipping ahead into it if the channel has fallen behind), then rides through that entire item at normal
+            speed with no further correction until the next transition.</p>
+        <div class="note">💡 <span><b>Why this matters for more than one viewer:</b> if a channel has direct-stream viewers <i>and</i> transcode viewers at the same time, only the transcode side would be getting that continuous correction — so those two viewers, both nominally watching the same live channel, could gradually end up at different actual moments of the same content. Pantheon deliberately disables the smooth speed correction on a channel's transcode bucket too whenever that channel could also have direct-stream viewers, specifically so this can't happen — everyone watching a dual-bucket channel gets the same (coarser) skip-based correction, never a mix of the two.</span>
+        </div>
+    </section>
+
+    <section id="always-transcode">
+        <h2>Always Transcode <a class="hash" href="#always-transcode">#</a></h2>
+        <p class="group-desc">A per-channel toggle (Channel editor → Transcode Quality → <b>Always transcode (disable
+            direct stream)</b>) that removes direct stream from the equation for that channel entirely — every viewer,
+            regardless of what their device can decode natively, gets the transcode bucket.</p>
+        <div class="rec">✅ <span><b>Recommended for the smoothest, drift-free experience.</b> With direct stream disabled there's only one bucket in play, so the smooth speed-based correction above is always safe to use — every viewer of that channel stays exactly on schedule, continuously, instead of only being corrected at item boundaries. This is the only way to get that guarantee.</span>
+        </div>
+        <p>The tradeoff is real: every viewer now costs a real video encode instead of a free byte copy, so this uses
+            meaningfully more CPU/GPU per concurrent viewer. For a channel with few simultaneous viewers, or where
+            hardware headroom is tight and the occasional coarse correction at a scene/episode boundary is an acceptable
+            tradeoff, leaving direct stream enabled (the default) is still a reasonable choice.</p>
+    </section>
+
+    <section id="quality">
+        <h2>Transcode Quality Settings <a class="hash" href="#quality">#</a></h2>
+        <p class="group-desc">Also in the channel editor's Transcode Quality section — these only affect the transcode
+            bucket (direct stream, by definition, always uses the source's own resolution/bitrate).</p>
+        <div class="tablewrap">
+            <table>
+                <tr>
+                    <th>Setting</th>
+                    <th>Effect</th>
+                </tr>
+                <tr>
+                    <td>Max Resolution</td>
+                    <td>Scales down only, never upscales — useful for capping bandwidth on a channel built from
+                        mixed-resolution sources without hurting your best material.
+                    </td>
+                </tr>
+                <tr>
+                    <td>Video Bitrate Cap</td>
+                    <td><code>0</code> = quality-based (CRF/CQ) encoding with no cap; set a value to bound bandwidth
+                        (e.g. 3000 for ~3 Mbps).
+                    </td>
+                </tr>
+                <tr>
+                    <td>Audio Bitrate</td>
+                    <td>Applies to the audio encode on <i>both</i> buckets — direct stream's audio is always re-encoded
+                        too, for loudness normalization (see <a href="#buckets">above</a>).
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <p>Audio/Subtitle Language (in the channel editor's own section, alongside these) pick which embedded track
+            Hephaestus maps when a file has more than one — this applies to both buckets identically.</p>
+    </section>
+
+    <footer>Source of truth: <code>hephaestus/src/stream/ChannelViewerRegistry.cpp</code> (bucket eligibility), <code>hephaestus/src/stream/ChannelSession.cpp</code>
+        (drift correction), <code>hades/src/channel/ChannelDefaultsPanel.tsx</code> (the settings UI this describes) —
+        if this page and the code ever disagree, the code wins.
+    </footer>
+</main>
+</body>
+</html>

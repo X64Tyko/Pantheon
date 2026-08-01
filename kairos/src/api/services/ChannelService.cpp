@@ -89,6 +89,7 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 					{"stream_audio_bitrate", c.stream_audio_bitrate},
 					{"content_tag", c.content_tag},
 					{"is_demo", c.is_demo},
+					{"force_transcode", c.force_transcode},
 				};
 				if (c.owner_user_id.has_value()) channel["owner_user_id"] = *c.owner_user_id;
 				if (!c.anchor_hashes.empty())
@@ -266,6 +267,7 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 			}
 			if (b.contains("stream_video_bitrate")) updI("stream_video_bitrate", b["stream_video_bitrate"].get<int>());
 			if (b.contains("stream_audio_bitrate")) updI("stream_audio_bitrate", b["stream_audio_bitrate"].get<int>());
+			if (b.contains("force_transcode")) updI("force_transcode", b["force_transcode"].get<bool>() ? 1 : 0);
 			if (b.contains("seed")) updI("seed", b["seed"].get<int>());
 			if (b.contains("content_tag")) upd("content_tag", b["content_tag"]);
 			if (b.contains("anchor_hashes"))

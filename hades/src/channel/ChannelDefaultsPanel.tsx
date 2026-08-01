@@ -175,6 +175,19 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
         </CardSection>
 
         <CardSection title="TRANSCODE QUALITY" summary="Per-channel resolution and bitrate limits">
+            <div className={styles.fieldGroup10}>
+                <label className={styles.checkboxLabel}>
+                    <input type="checkbox"
+                           checked={store.channelDraft.force_transcode ?? false}
+                           onChange={e => store.setChannelDraft({force_transcode: e.target.checked})}/>
+                    <span className={styles.checkboxLabelText}>Always transcode (disable direct stream)</span>
+                </label>
+                <div className={styles.fieldHint}>
+                    Direct-stream viewers skip re-encoding video, but can only correct schedule drift by skipping ahead
+                    in small steps rather than smoothly. Enable this to force every viewer through the transcode path
+                    instead, trading away direct-stream's CPU/GPU savings for smooth, continuous drift correction.
+                </div>
+            </div>
         <div className={styles.fieldGroup8}>
           <div className={styles.fieldLabel}>MAX RESOLUTION</div>
           <select

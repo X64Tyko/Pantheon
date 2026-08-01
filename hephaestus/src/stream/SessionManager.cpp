@@ -101,6 +101,7 @@ std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& c
 				opts.video_bitrate_kbps = ch.stream_video_bitrate;
 				opts.audio_bitrate_kbps = ch.stream_audio_bitrate > 0 ? ch.stream_audio_bitrate : 192;
 				opts.logo_path          = ch.logo_path;
+				opts.force_transcode    = ch.force_transcode;
 				break;
 			}
 		}
@@ -144,6 +145,13 @@ std::shared_ptr<ChannelSession> SessionManager::peek(const std::string& channelI
 	std::lock_guard<std::mutex> lock(mtx);
 	auto it = sessions.find({channelId, bucket});
 	return (it != sessions.end() && it->second->isActive()) ? it->second : nullptr;
+}
+
+bool SessionManager::channelForcesTranscode(const std::string& channelId)
+{
+	std::lock_guard<std::mutex> lock(cache_mtx);
+	for (const auto& ch : cached_channels) if (ch.channel_id == channelId) return ch.force_transcode;
+	return false;
 }
 
 void SessionManager::reap()

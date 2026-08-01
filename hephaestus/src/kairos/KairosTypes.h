@@ -71,4 +71,7 @@ struct KairosChannel
 	std::string stream_resolution = "source"; // "source"|"1080p"|"720p"|"480p"
 	int stream_video_bitrate      = 0;        // kbps; 0 = CRF/CQ auto
 	int stream_audio_bitrate      = 192;      // kbps
+	// Disables the native/direct-stream bucket for this channel entirely —
+	// see ChannelViewerRegistry's own use of this (mirrors channel.force_transcode).
+	bool force_transcode = false;
 };

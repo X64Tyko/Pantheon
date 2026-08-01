@@ -314,7 +314,7 @@ export const api = {
     // preserveCursor — see ChannelService.cpp's ?preserve_cursor=true: keeps
     // accumulated cursor/RNG state across a timezone/seed change that would
     // otherwise hard-reset it (Hades' save-time "keep positions" prompt).
-    updateChannel: (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes' | 'audio_lang' | 'subtitle_lang' | 'stream_resolution' | 'stream_video_bitrate' | 'stream_audio_bitrate' | 'content_tag'>>, opts?: {
+    updateChannel: (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes' | 'audio_lang' | 'subtitle_lang' | 'stream_resolution' | 'stream_video_bitrate' | 'stream_audio_bitrate' | 'force_transcode' | 'content_tag'>>, opts?: {
         preserveCursor?: boolean
     }) =>
         request<void>('PATCH', `/channels/${id}${opts?.preserveCursor ? '?preserve_cursor=true' : ''}`, b),

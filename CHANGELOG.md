@@ -50,6 +50,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Android player pauses when the app is backgrounded (pantheon-android)**: nothing stopped playback (audio kept
+  running, and a live channel's HLS session kept being polled/billed as an active viewer) when the app left the
+  foreground — pressing Home mid-episode just kept playing unseen. New `PlaybackPreferences` (plain
+  `SharedPreferences`, per-device — this isn't the kind of setting that should sync across devices) gates a
+  `ProcessLifecycleOwner`-driven `ON_STOP` → `exoPlayer.pause()` in `PlayerScreen.kt`, shared by both the
+  google/mobile and TV flavors. `ProcessLifecycleOwner` (whole-app foreground/background), not this screen's own
+  Activity lifecycle, since an Activity's `onStop` also fires on ordinary in-app navigation, not just the app
+  actually backgrounding. Deliberately doesn't auto-resume on return (`ON_START`) — an unprompted resume would
+  restart audio/video the user didn't ask for. `pauseOnBackground` defaults to `true` and is a real persisted flag
+  (not a hardcoded constant) even though no settings screen exposes it yet — no general Settings UI exists on
+  Android today — specifically so a future audio/"radio" content type (which should keep playing backgrounded,
+  the way music apps do) has a real hook to flip instead of needing this behavior re-architected in later.
+- **"Always transcode" per-channel setting (Kairos, Hephaestus, Hades)**: direct-stream (Hephaestus's native
+  bucket) can't run a real filter graph, so it can only ever correct schedule drift in coarse, discrete jumps
+  (skipping ahead at the next item transition) rather than the transcode bucket's smooth, continuous speed-based
+  correction — and, until this session's audio-encode fix above, couldn't apply loudnorm at all. Some channels
+  need those smoother guarantees badly enough to be worth giving up direct-stream's CPU/GPU savings entirely.
+  New `channel.force_transcode` column (migration v106, default false — every existing channel keeps today's
+  dual-bucket behavior) flows through `KairosChannel`/`SessionManager::channelForcesTranscode()` into
+  `ChannelViewerRegistry::start()`/`reassignForChannel()`, which now short-circuit straight to the default
+  (transcode) bucket for such a channel regardless of viewer capability eligibility — the native bucket is never
+  resolved or spun up for it at all. New "Always transcode" toggle in the channel editor's Transcode Quality
+  section (Hades).
 - **Activity page now shows which bucket a live channel session is using, and an exact HLS viewer count where
   available (Hephaestus, Hades)**: the "Now Playing" panel previously had no way to tell a direct-stream session
   from a transcode one (both looked identical), and every channel's HLS viewer count was a bare "someone's
@@ -186,6 +209,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   cover the source's audio codec, since audio is no longer copied through unchanged — a source audio codec a
   client doesn't support used to bounce that viewer onto the far more expensive default bucket for an audio-only
   reason that no longer applies.
+- **A live channel's native (direct-stream) bucket could start an item from position 0 instead of its real,
+  correct wall-clock catch-up offset (Hephaestus)**: `start()`/`transition()` both compute a "gentle speed
+  correction" for small scheduling drift — when viable, they zero `startOffset` (the whole point: the item plays
+  from its beginning, just slightly faster/slower, closing the drift over its full runtime) and hand `speed` off to
+  `spawnFfmpeg()`. But `spawnFfmpeg()` unconditionally forces `speed` back to `1.0` for the native bucket (a stream
+  copy can't run the `setpts` filter this needs) *without* undoing the `startOffset` zeroing that decision already
+  caused — so a native-bucket item could silently start from the top even though the real, correct wall-clock
+  position (computed moments earlier) was nonzero. Most noticeable on short items, where a "small" discarded
+  offset is a large fraction of the whole runtime. Both call sites now skip the entire speed-correction branch
+  (not just its output) for the native bucket, so `startOffset` always keeps the real offset `computeOffset()`
+  produced. Diagnosed from a real production log showing a `default`-bucket transition applying `speed=1.00132`
+  while the concurrent `native`-bucket transition for the exact same item silently landed on `offset=0ms` instead.
+  Not yet independently confirmed as *the* cause of the still-open periodic stutter above — please retest.
+- **A dual-bucket channel's default-bucket viewers could drift apart in actual content position from its
+  native-bucket viewers of the "same" channel (Hephaestus)**: the speed-correction gate above was keyed on
+  "not the native bucket," not on whether a native bucket exists for this channel at all — so on a channel where
+  direct-stream is still enabled (`force_transcode=false`), a viewer on the default bucket kept getting smoothly
+  speed-corrected while a concurrent native-bucket viewer never does (a stream copy can't run `setpts`). Two
+  people nominally watching the same live channel would silently end up at different points in the same content,
+  which defeats the entire premise of it being one shared channel. Speed correction in `applyResolvedItem()`/
+  `transition()` is now gated on `opts.force_transcode` instead — only ever allowed when this channel has no
+  native bucket to stay in sync with in the first place. A dual-bucket channel's default bucket now uses the same
+  plain wall-clock seek/skip correction native does, so both buckets stay positionally identical; only a
+  force-transcode channel (single bucket, nothing to desync from) still gets the smooth speed nudge.
 
 - **A channel's configured filler never played as the last-resort gap-filler on `/now` (Kairos)**:
   `ScheduleRepository::getChannelFillerFallback()` joined `channel_filler_entry` to `filler_list_item` via the

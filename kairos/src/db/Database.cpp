@@ -2659,6 +2659,24 @@ namespace
 )SQL"
 		}
 
+		// ── v106: force_transcode — a channel-level escape hatch from the
+		//         two-bucket (direct-stream/transcode) model. Direct-stream
+		//         (Hephaestus's kNativeBucket, a pure `-c:v copy`) can't run a
+		//         real filter graph, so it can't do the smooth setpts-based
+		//         drift correction the transcode bucket uses, and — until this
+		//         session's audio-encode fix — couldn't apply loudnorm either.
+		//         Some channels need those guarantees badly enough that it's
+		//         worth giving up direct-stream's CPU/GPU savings entirely
+		//         rather than accepting its coarser (skip/seek-based, not
+		//         smooth) drift correction. Default false: existing channels
+		//         keep today's dual-bucket behavior unchanged.
+		,
+		{
+			106, R"SQL(
+    ALTER TABLE channel ADD COLUMN force_transcode INTEGER NOT NULL DEFAULT 0;
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

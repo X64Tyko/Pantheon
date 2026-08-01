@@ -290,6 +290,11 @@ export interface Channel {
   stream_resolution?:       'source' | '1080p' | '720p' | '480p'
   stream_video_bitrate?:    number  // kbps; 0 = CRF/CQ auto
   stream_audio_bitrate?:    number  // kbps; default 192
+    // Disables Hephaestus's native/direct-stream bucket for this channel
+    // entirely — every viewer gets the transcode bucket (smooth speed-based
+    // drift correction, always had loudnorm) at the cost of direct-stream's
+    // CPU/GPU savings. Default false/undefined: today's dual-bucket behavior.
+    force_transcode?: boolean
   content_tag?:             string  // admin-assigned rating tag, TV scale; empty = unrated (fails closed for restricted accounts)
     // Server-derived on create (see POST /api/channels), never client-set —
     // undefined/absent means an admin-owned channel, same as today.

@@ -57,6 +57,16 @@ struct StreamOptions
 	// MPEG-TS pipe:1 output only. When set, the live HLS directory is
 	// "<hls_root>/live/<channel_id>/".
 	std::string hls_root;
+	// True disables the native/direct-stream bucket for this channel
+	// entirely (ChannelViewerRegistry never resolves or spawns it) — mirrors
+	// channel.force_transcode. ChannelSession itself only needs this to gate
+	// speed-based drift correction (see applyResolvedItem()/transition()):
+	// that's only safe when it's the *only* bucket in play for this channel.
+	// A dual-bucket channel's default-bucket viewers must stay positionally
+	// identical to its native-bucket ones — speeding up only the default
+	// bucket would let two viewers of the "same" channel drift apart in
+	// actual content position, which defeats the point of it being live.
+	bool force_transcode = false;
 };
 
 // shared_ptr-owned by SessionManager, whose map entry can be overwritten with

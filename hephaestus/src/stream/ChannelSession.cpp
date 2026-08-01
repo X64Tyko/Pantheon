@@ -697,9 +697,21 @@ void ChannelSession::applyResolvedItem(std::optional<KairosNowResponse> item, in
 
 	// Prefer a gentle speed correction (whole item plays start-to-finish,
 	// just slightly faster/slower) over seeking into content when the drift
-	// is small enough to close that way.
+	// is small enough to close that way. Gated on opts.force_transcode, NOT
+	// just "not the native bucket": a dual-bucket channel (force_transcode
+	// false) can have both a default- and native-bucket viewer watching the
+	// "same" channel at once, and native can never speed-correct (a stream
+	// copy has no filter graph) — speeding up only the default bucket would
+	// let those two viewers silently drift apart in actual content position,
+	// defeating the point of it being the same live channel. Only safe to
+	// speed-correct when this channel has no other bucket to stay in sync
+	// with, i.e. direct-stream is disabled for it entirely. (bucket !=
+	// kNativeBucket is also checked as a defensive belt-and-suspenders — see
+	// spawnFfmpeg's own comment — since a native-bucket session should never
+	// have force_transcode=true in the first place: ChannelViewerRegistry
+	// never resolves or spawns native for such a channel.)
 	double speed = 1.0;
-	if (!item->is_filler && item->duration_ms > 0)
+	if (opts.force_transcode && bucket != kNativeBucket && !item->is_filler && item->duration_ms > 0)
 	{
 		int64_t rawDrift = at - item->wall_clock_start_ms;
 		if (auto s = computeSpeed(rawDrift, item->duration_ms))
@@ -901,9 +913,15 @@ void ChannelSession::transition()
 	// avoids ever cutting off the beginning of real programming just to
 	// stay synced. Fillers are excluded: their own loop-offset/skip logic
 	// already absorbs drift, and their short duration makes any speed nudge
-	// both less effective and more perceptible.
+	// both less effective and more perceptible. Gated on opts.force_transcode
+	// (not just "not the native bucket") — see applyResolvedItem()'s matching
+	// comment: a dual-bucket channel's default and native buckets must stay
+	// positionally identical, since native can never speed-correct at all —
+	// otherwise two viewers of the "same" channel could drift apart in actual
+	// content position. Only safe once this channel has no native bucket to
+	// stay in sync with.
 	double speed = 1.0;
-	if (!next->is_filler && next->duration_ms > 0)
+	if (opts.force_transcode && bucket != kNativeBucket && !next->is_filler && next->duration_ms > 0)
 	{
 		int64_t rawDrift = actualNowMs - next->wall_clock_start_ms;
 		if (auto s = computeSpeed(rawDrift, next->duration_ms))
@@ -952,10 +970,12 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
 
 	bool direct_stream = (bucket == kNativeBucket);
 	// A stream copy can't apply the setpts drift-correction filter
-	// transition()/applyResolvedItem() may have computed — this bucket falls
-	// back to offset-based seeking only (same tradeoff VOD's own direct-
-	// stream path already accepts: -ss before -i on a copy snaps to the
-	// nearest keyframe rather than landing exactly).
+	// transition()/applyResolvedItem() may compute — those callers now skip
+	// that decision entirely for this bucket (see their own comments) so
+	// startOffsetMs already reflects the real, correct wall-clock catch-up
+	// offset rather than one zeroed out by a since-discarded speed choice.
+	// This is just the defensive backstop in case a caller is ever added
+	// that doesn't know to skip it.
 	if (direct_stream) speed = 1.0;
 
 	// Pre-snap to a real keyframe using Kairos's sync-time probe, instead of

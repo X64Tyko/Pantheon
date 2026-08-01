@@ -66,6 +66,14 @@ public:
 	std::shared_ptr<ChannelSession> peek(const std::string& channelId,
 										 const std::string& bucket = ChannelSession::kDefaultBucket);
 
+	// Channel-level escape hatch from the two-bucket model (channel.force_transcode
+	// in Kairos) — true means this channel's viewers should never be resolved
+	// onto the native/direct-stream bucket at all, regardless of capability
+	// eligibility (see ChannelViewerRegistry's use of this). Reads the same
+	// periodically-refreshed cache getOrCreate() already applies per-channel
+	// settings from; false (including "unknown channel") is the safe default.
+	bool channelForcesTranscode(const std::string& channelId);
+
 	// Remove sessions that have been stopped.
 	void reap();
 

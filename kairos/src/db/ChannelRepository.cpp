@@ -46,7 +46,8 @@ Channel ChannelRepository::rowToChannel(SQLite::Statement& q)
 	c.stream_audio_bitrate = q.getColumn(19).getInt();
 	c.content_tag          = q.getColumn(20).getString();
 	if (!q.getColumn(21).isNull()) c.owner_user_id = q.getColumn(21).getString();
-	c.is_demo = q.getColumn(22).getInt() != 0;
+	c.is_demo         = q.getColumn(22).getInt() != 0;
+	c.force_transcode = q.getColumn(23).getInt() != 0;
 	return c;
 }
 
@@ -57,7 +58,7 @@ namespace
 		"offline_video_path, offline_image_path, offline_audio_id, offline_audio_type, "
 		"offline_audio_title, logo_path, anchor_hashes, audio_lang, subtitle_lang, "
 		"stream_resolution, stream_video_bitrate, stream_audio_bitrate, content_tag, "
-		"owner_user_id, is_demo";
+		"owner_user_id, is_demo, force_transcode";
 } // namespace
 
 std::vector<Channel> ChannelRepository::listChannels(const std::optional<std::string>& viewer_user_id,

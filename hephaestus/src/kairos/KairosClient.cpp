@@ -178,6 +178,7 @@ std::vector<KairosChannel> KairosClient::getChannels()
 			ch.stream_resolution    = item.value("stream_resolution", "source");
 			ch.stream_video_bitrate = item.value("stream_video_bitrate", 0);
 			ch.stream_audio_bitrate = item.value("stream_audio_bitrate", 192);
+			ch.force_transcode      = item.value("force_transcode", false);
 			if (!ch.channel_id.empty()) channels.push_back(std::move(ch));
 		}
 		return channels;
