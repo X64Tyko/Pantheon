@@ -14,6 +14,12 @@ bool isChannelDirectStreamable(const MediaInfo& info, int audio_track, const Cli
 	const auto& v = info.video[0];
 	if (caps.max_height && v.height > *caps.max_height) return false;
 	if (!caps.video_codecs.count(v.codec)) return false;
+	// A stream copy has no filter graph to run -fps_mode cfr through (see
+	// ChannelSession.cpp's own comment on that flag) — a VFR source (common
+	// on older syndicated TV masters with baked-in telecine/pulldown judder)
+	// needs the transcode bucket to get its frame timing normalized, or its
+	// irregular timestamps ride straight through into stutter/rebuffering.
+	if (isLikelyVfr(v)) return false;
 
 	auto ai = std::find_if(info.audio.begin(), info.audio.end(),
 						   [&](const AudioTrack& t) { return t.relative_index == audio_track; });

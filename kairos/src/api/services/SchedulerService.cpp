@@ -447,12 +447,17 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 			bool has_blocks = body.contains("blocks") && body["blocks"].is_array()
 				&& !body["blocks"].empty();
 
-			auto now     = std::time(nullptr);
-			auto horizon = static_cast<int64_t>(now + hours * 3600LL);
+			auto now = std::time(nullptr);
 
-			std::time_t days_since_epoch = static_cast<std::time_t>(now / 86400);
-			std::time_t day_of_week_mon0 = (days_since_epoch + 3) % 7;
-			std::time_t week_anchor      = (days_since_epoch - day_of_week_mon0) * 86400;
+			// Preview always starts from the current week's Monday 00:00 (channel-tz
+			// aware, matching RuleEngine::project()'s own week-walk), not "now" — a
+			// "now"-anchored start truncated every "today" view down to whatever's
+			// left of the day and made the whole preview a rolling `hours` window
+			// from the moment you happened to load it, rather than a stable
+			// Monday-through-`hours` schedule. week_anchor doubles as the projection
+			// start and the preview cache key below.
+			std::time_t week_anchor = engine_.weekMondayForChannel(channel_id, now);
+			auto horizon            = static_cast<int64_t>(week_anchor) + hours * 3600LL;
 
 			if (!has_blocks && !has_seed)
 			{
@@ -469,11 +474,11 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 			{
 				ScheduleRepository sched(db_);
 				gr = sched.withPreviewBlocks(channel_id, body["blocks"],
-											 [&]() { return materializer_.generate(channel_id, now, hours, req_seed); });
+											 [&]() { return materializer_.generate(channel_id, week_anchor, hours, req_seed); });
 			}
 			else
 			{
-				gr = materializer_.generate(channel_id, now, hours, req_seed);
+				gr = materializer_.generate(channel_id, week_anchor, hours, req_seed);
 			}
 
 			json arr = json::array();
@@ -486,7 +491,7 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 			{
 				std::time_t ws = item.wall_clock_start_ms / 1000;
 				std::time_t we = item.wall_clock_end_ms / 1000;
-				if (we <= now) continue;
+				if (we <= week_anchor) continue;
 				if (ws >= horizon) break;
 
 				json j = {

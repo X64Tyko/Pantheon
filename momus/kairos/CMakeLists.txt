@@ -34,6 +34,7 @@ add_executable(momus_kairos
     db/test_schema_constraints.cpp
     db/test_chapter_repository.cpp
     db/test_block_repository.cpp
+        db/test_schedule_repository.cpp
     db/test_source_repository.cpp
     db/test_content_repository_writeback.cpp
     db/test_filter_expr.cpp

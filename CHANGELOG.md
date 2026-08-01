@@ -50,6 +50,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **A channel's configured filler never played as the last-resort gap-filler on `/now` (Kairos)**:
+  `ScheduleRepository::getChannelFillerFallback()` joined `channel_filler_entry` to `filler_list_item` via the
+  legacy `filler_list_id` column — but `channel_filler_entry` has carried generic `content_type`/`content_id`
+  columns since migrations v35/v36, and `ChannelRepository::addFillerEntry()` (the only insert path) has never
+  populated `filler_list_id`. The join silently matched zero rows for every entry added through the current UI,
+  regardless of content type, so a channel that hit a real scheduling gap with no active block/window fell
+  straight through to the offline slate instead of playing its configured filler. Rewrote the query to resolve
+  each of the four content types (`filler_list`/`playlist`/`show`/`movie`) generically, mirroring how
+  `ContentRepository::loadFillerItems()`/`RuleEngine::pickFillerSim()` already handle them elsewhere. Covered by
+  new tests in `momus/kairos/db/test_schedule_repository.cpp`.
+- **Editing a channel's blocks while it was live could yank the currently-airing item out from under viewers
+  (Kairos)**: `ScheduleCache::clear()` (called from nearly every block/content mutation route in
+  `BlockService.cpp`) deleted every `scheduled_program` row for the channel unconditionally, including whatever
+  was actively on-air — Hephaestus's `ChannelSession` resolves what to stream via `/api/channels/:id/now`, so a
+  routine edit (reordering content, changing a weight, not just structural changes) could make the very next poll
+  either find nothing or re-resolve to a different item/timing under the freshly-edited blocks mid-playback.
+  `clear()` now excludes the row currently airing (`wall_clock_start <= now < wall_clock_end`) from the delete;
+  only not-yet-started rows get wiped and regenerated, which is what should pick up the edit.
+- **Channel EPG preview always started from "now" instead of the current week (Kairos)**: `POST
+  /api/channels/:id/epg/preview` anchored both its generation window and its item filter (`we <= now`) to the
+  request time, so a same-day preview showed a truncated view running from the moment of the request to end of
+  the 336-hour (2-week) window, instead of the intended full 2 weeks starting from that week's Monday. Preview
+  generation now starts from `RuleEngine::weekMondayForChannel()` (channel-timezone aware, matching
+  `project()`'s own week-walk) — a "today" preview now shows the whole current week from Monday through 2 weeks
+  out, not just the remainder of today.
 - **Live channel transitions carried avoidable buffer time (Kairos, Hephaestus)**: direct-stream channel items handed
   ffmpeg a raw start offset on every transition, leaving it to seek-and-search for the nearest real keyframe cold
   every time — `ChannelSession::snapToKeyframe()` now snaps to a real keyframe using the same sync-time keyframe
