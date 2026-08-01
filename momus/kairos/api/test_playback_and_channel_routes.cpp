@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "api/Router.h"
@@ -63,6 +64,12 @@ protected:
 	std::string viewer_id;
 	std::string viewer_token;
 
+	// GET /api/playback/:content_type/:id now 404s unless the resolved file
+	// actually exists on disk (see PlaybackService.cpp) — media_dir is a real
+	// temp directory /media gets path-mapped to, so tests exercising that
+	// route need to touch the file they expect to resolve into it first.
+	std::filesystem::path media_dir;
+
 	void SetUp() override
 	{
 		router = std::make_unique<Router>(svr, db, sync, conf, logs, engine, materializer, dl, auth, email, jobs, backups);
@@ -79,6 +86,10 @@ protected:
 		auth.createUser("pc_viewer", "pc-password-1", "viewer");
 		for (const auto& u : auth.listUsers()) if (u.username == "pc_viewer") viewer_id = u.user_id;
 		viewer_token = auth.login("pc_viewer", "pc-password-1");
+
+		media_dir = std::filesystem::temp_directory_path() / "momus_playback_channel_test_media";
+		std::filesystem::create_directories(media_dir);
+		conf.setPathMaps("_test_media", {{"/media", media_dir.string()}});
 	}
 
 	void TearDown() override
@@ -87,7 +98,12 @@ protected:
 		if (server_thread.joinable()) server_thread.join();
 		std::error_code ec;
 		std::filesystem::remove("./momus_playback_channel_test.conf", ec);
+		std::filesystem::remove_all(media_dir, ec);
 	}
+
+	// Touches an empty file at media_dir/name so a /media/name file_path
+	// resolves to something real after the path map above rewrites it.
+	void touchMediaFile(const std::string& name) { std::ofstream(media_dir / name).put('x'); }
 
 	httplib::Headers viewerHeaders() const { return {{"Authorization", "Bearer " + viewer_token}}; }
 };
@@ -186,13 +202,14 @@ TEST_F(PlaybackAndChannelRoutesTest, PlaybackWorksWithNoAuthAtAll)
 	SQLite::Statement m(db.get(),
 						"INSERT INTO movie(movie_id, title, file_path, duration_ms) VALUES ('m1','Movie One','/media/m1.mkv',5400000)");
 	m.exec();
+	touchMediaFile("m1.mkv");
 
 	// No Authorization header -- exactly how Hephaestus calls this.
 	auto r = cli->Get("/api/playback/movie/m1");
 	ASSERT_TRUE(r);
 	EXPECT_EQ(r->status, 200);
 	json body = json::parse(r->body);
-	EXPECT_EQ(body["file_path"], "/media/m1.mkv");
+	EXPECT_EQ(body["file_path"], (media_dir / "m1.mkv").string());
 	EXPECT_EQ(body["duration_ms"], 5400000);
 	EXPECT_EQ(body["title"], "Movie One");
 }
@@ -222,14 +239,31 @@ TEST_F(PlaybackAndChannelRoutesTest, PlaybackEpisodeResolvesToItsOwnFileWhenNotL
 						"INSERT INTO episode (episode_id, show_id, title, thumb, season, episode, duration_ms, file_path) "
 						"VALUES ('e1', 's1', 'Ep 1', '', 1, 1, 1200000, '/media/e1.mkv')");
 	e.exec();
+	touchMediaFile("e1.mkv");
 
 	auto r = cli->Get("/api/playback/episode/e1");
 	ASSERT_TRUE(r);
 	EXPECT_EQ(r->status, 200);
 	json body = json::parse(r->body);
-	EXPECT_EQ(body["file_path"], "/media/e1.mkv");
+	EXPECT_EQ(body["file_path"], (media_dir / "e1.mkv").string());
 	EXPECT_EQ(body["duration_ms"], 1200000);
 	EXPECT_EQ(body["title"], "Ep 1");
+}
+
+// New coverage for the existence check itself: a scheduled item whose file
+// isn't actually reachable (bad/absent path_map, unmounted share) must 404
+// with a clear reason instead of handing Hephaestus a file_path that's
+// guaranteed to fail with no diagnostic — see PlaybackService.cpp.
+TEST_F(PlaybackAndChannelRoutesTest, PlaybackMovieWithMissingFileOnDiskIs404)
+{
+	SQLite::Statement m(db.get(),
+						"INSERT INTO movie(movie_id, title, file_path, duration_ms) VALUES ('m1','Movie One','/media/does-not-exist.mkv',5400000)");
+	m.exec();
+	// Deliberately not touched — the whole point of this test.
+
+	auto r = cli->Get("/api/playback/movie/m1");
+	ASSERT_TRUE(r);
+	EXPECT_EQ(r->status, 404);
 }
 
 // The show-specials-linking feature: an episode with linked_movie_id set
@@ -248,12 +282,13 @@ TEST_F(PlaybackAndChannelRoutesTest, PlaybackLinkedSpecialEpisodeResolvesToLinke
 						"INSERT INTO episode (episode_id, show_id, title, thumb, season, episode, duration_ms, file_path, linked_movie_id) "
 						"VALUES ('e-special', 's1', 'OVA', '', 0, 1, 0, '', 'm1')");
 	e.exec();
+	touchMediaFile("special.mkv");
 
 	auto r = cli->Get("/api/playback/episode/e-special");
 	ASSERT_TRUE(r);
 	EXPECT_EQ(r->status, 200);
 	json body = json::parse(r->body);
-	EXPECT_EQ(body["file_path"], "/media/special.mkv");
+	EXPECT_EQ(body["file_path"], (media_dir / "special.mkv").string());
 	EXPECT_EQ(body["duration_ms"], 3600000);
 	// Title always comes from the episode row itself, even when the file
 	// resolves through the linked movie.

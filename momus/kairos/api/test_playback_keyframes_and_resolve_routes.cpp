@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "api/Router.h"
@@ -63,6 +64,14 @@ protected:
 	std::string viewer_id;
 	std::string viewer_token;
 
+	// GET /api/playback/:content_type/:id now 404s unless the resolved file
+	// actually exists on disk (see PlaybackService.cpp) — media_dir is a real
+	// temp directory /media gets path-mapped to; insertMovie/insertEpisode's
+	// default file_path values (x.mkv/e.mkv) plus special.mkv (used by the
+	// linked-special test) are touched into it below so the routes this
+	// fixture exercises keep resolving.
+	std::filesystem::path media_dir;
+
 	void SetUp() override
 	{
 		router = std::make_unique<Router>(svr, db, sync, conf, logs, engine, materializer, dl, auth, email, jobs, backups);
@@ -79,6 +88,11 @@ protected:
 		auth.createUser("kf_viewer", "kf-password-1", "viewer");
 		for (const auto& u : auth.listUsers()) if (u.username == "kf_viewer") viewer_id = u.user_id;
 		viewer_token = auth.login("kf_viewer", "kf-password-1");
+
+		media_dir = std::filesystem::temp_directory_path() / "momus_playback_keyframes_resolve_test_media";
+		std::filesystem::create_directories(media_dir);
+		conf.setPathMaps("_test_media", {{"/media", media_dir.string()}});
+		for (const char* name : {"x.mkv", "e.mkv", "special.mkv"}) std::ofstream(media_dir / name).put('x');
 	}
 
 	void TearDown() override
@@ -87,6 +101,7 @@ protected:
 		if (server_thread.joinable()) server_thread.join();
 		std::error_code ec;
 		std::filesystem::remove("./momus_playback_keyframes_resolve_test.conf", ec);
+		std::filesystem::remove_all(media_dir, ec);
 	}
 
 	httplib::Headers viewerHeaders() const { return {{"Authorization", "Bearer " + viewer_token}}; }

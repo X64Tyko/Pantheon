@@ -370,10 +370,26 @@ void EPGMaterializer::commit(
 	persistAnchors();
 }
 
+std::mutex& EPGMaterializer::channelLock(const std::string& channel_id)
+{
+	std::lock_guard<std::mutex> g(channel_locks_mtx_);
+	auto& slot = channel_locks_[channel_id];
+	if (!slot) slot = std::make_unique<std::mutex>();
+	return *slot;
+}
+
 void EPGMaterializer::ensureScheduled(const std::string& channel_id,
 									  std::time_t from, int horizon_hours,
 									  int seed)
 {
+	// Serializes concurrent callers for this one channel — see
+	// channelLock()'s own comment. A caller that loses the race just finds
+	// the horizon already covered (scheduled mode) or re-does a now-cheap
+	// regenerate against the cursor state the winner just committed
+	// (on_play mode) once it gets the lock, instead of duplicating the work
+	// in parallel.
+	std::lock_guard<std::mutex> channel_guard(channelLock(channel_id));
+
 	// ── on_play mode: regenerate from current cursor position on every call. ──
 	{
 		bool on_play = ChannelRepository(db_).getAdvanceMode(channel_id) == "on_play";

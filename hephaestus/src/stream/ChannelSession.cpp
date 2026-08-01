@@ -445,11 +445,13 @@ void ChannelSession::patchDiscontinuitySequence()
 // same class of fix as snapToKeyframe()/keyframes_ms, just for the audio/
 // subtitle/codec probe rather than keyframe timestamps (Kairos doesn't
 // sync-cache that half, so this warms it live instead of relying on sync).
-// current_item is read unsynchronized here — same accepted-staleness
-// tradeoff as currentTitle()/currentFilePath() (it's mutated on the
-// scheduling thread); worst case a torn read just means this tick prefetches
-// the wrong thing and the next one corrects it, no correctness impact since
-// spawnFfmpeg() always re-probes from item.file_path itself regardless.
+// current_item is read under current_item_mtx (see its own comment) — a
+// stale value here (the scheduling thread reassigning it moments after this
+// snapshot) is still fine, same tolerance as currentTitle()/currentFilePath():
+// worst case this tick prefetches the wrong thing and the next one corrects
+// it, no correctness impact since spawnFfmpeg() always re-probes from
+// item.file_path itself regardless. Only the read itself needed to stop
+// being racy.
 void ChannelSession::prefetchLoop()
 {
 	while (!prefetch_stop.load() && active.load())
@@ -457,8 +459,13 @@ void ChannelSession::prefetchLoop()
 		std::this_thread::sleep_for(std::chrono::seconds(kPrefetchTickSecs));
 		if (!active.load()) return;
 
-		const int64_t end_ms  = current_item.wall_clock_end_ms;
-		const std::string cur = current_item.file_path;
+		int64_t end_ms;
+		std::string cur;
+		{
+			std::lock_guard<std::mutex> l(current_item_mtx);
+			end_ms = current_item.wall_clock_end_ms;
+			cur    = current_item.file_path;
+		}
 		if (end_ms <= 0) continue;
 		if (nowMs() < end_ms - kPrefetchLeadMs) continue;
 		if (prefetched_for_end_ms.exchange(end_ms) == end_ms) continue; // already warmed this cycle
@@ -586,19 +593,43 @@ void ChannelSession::applyResolvedItem(std::optional<KairosNowResponse> item, in
 {
 	if (!item)
 	{
-		std::cerr << "[session:" << channel_id << "] /now failed at startup\n";
-		if (!in_splash.load())
+		// Same bounded-retry shape transition()'s own "Kairos has nothing at
+		// all" fallback uses (see its comment there) — deliberately NOT the
+		// unbounded cold-start splash (KairosNowResponse{}, wall_clock_end_ms
+		// == 0, loops forever) start()'s own kFastPathBudget branch spawns:
+		// that one only ever gets replaced by a second, independent /now
+		// resolution, and there isn't one here — this call *is* the
+		// resolution, and it just failed. Without this, a session whose
+		// very first /now lookup fails (Kairos down/restarting right as a
+		// viewer connects) got stuck in_splash forever, with nothing left to
+		// ever retry — current_item/in_splash=false are what let onExit()
+		// naturally chain into transition() (and so back into this same
+		// retry loop) once this bounded encode finishes, instead of landing
+		// in onExit()'s in_splash branch, which just respawns the same
+		// unbounded splash forever.
+		std::cerr << "[session:" << channel_id << "] /now failed at startup, showing default slate and retrying\n";
+		KairosNowResponse fallback;
+		fallback.item_type           = "offline";
+		fallback.wall_clock_start_ms = at;
+		fallback.wall_clock_end_ms   = at + kNoContentRetryMs;
 		{
-			in_splash = true;
-			spawnOffline(KairosNowResponse{});
+			std::lock_guard<std::mutex> l(current_item_mtx);
+			current_item = fallback;
 		}
+		item_start             = steady_::now();
+		current_item_offset_ms = 0;
+		in_splash              = false;
+		spawnFfmpeg(fallback, 0);
 		return;
 	}
 
 	// Compute how far into the item we are
 	int64_t startOffset = computeOffset(*item, at);
 
-	current_item           = *item;
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		current_item = *item;
+	}
 	item_start             = steady_::now();
 	current_item_offset_ms = startOffset;
 	in_splash              = false;
@@ -714,13 +745,24 @@ void ChannelSession::transition()
 	int64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
 		steady_::now() - item_start).count();
 
+	// Snapshot once under lock (see current_item_mtx's own comment) instead
+	// of re-reading the live member throughout this function — transition()
+	// only ever runs after the ffmpeg process for this exact item has
+	// already exited, so nothing else legitimately reassigns current_item
+	// out from under this snapshot before the writes further down; this
+	// just closes the torn-read window against prefetchLoop()/
+	// currentTitle()/currentFilePath() on other threads.
+	KairosNowResponse cur;
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		cur = current_item;
+	}
+
 	// Offline gap-fillers carry no item_id (nothing scheduled to mark played)
 	// — Kairos's /played rejects an empty one outright, so skip the call
 	// rather than firing a request guaranteed to log a spurious error on
 	// every bounded-offline recheck (see spawnOffline).
-	if (current_item.item_type != "offline")
-		kairos.markPlayed(channel_id, current_item.item_type, current_item.item_id,
-						  current_item.block_id, elapsed);
+	if (cur.item_type != "offline") kairos.markPlayed(channel_id, cur.item_type, cur.item_id, cur.block_id, elapsed);
 
 	// The item's *actual* real-time playback duration (elapsed) can drift
 	// from its scheduled duration_ms — rounding, edit lists, VFR content, or
@@ -731,12 +773,12 @@ void ChannelSession::transition()
 	// started at, so drift keeps accumulating correctly across repeated
 	// transitions instead of resetting each time) rather than trusting
 	// wall_clock_end_ms verbatim.
-	int64_t actualNowMs = current_item.wall_clock_start_ms + current_item_offset_ms + elapsed;
+	int64_t actualNowMs = cur.wall_clock_start_ms + current_item_offset_ms + elapsed;
 
 	// Look up the next item using the *scheduled* end time (not actualNowMs)
 	// so we request it deterministically and never skip ahead into real
 	// programming due to drift — only the resulting offset is drift-corrected.
-	auto next = kairos.getNow(channel_id, current_item.wall_clock_end_ms);
+	auto next = kairos.getNow(channel_id, cur.wall_clock_end_ms);
 	if (!next)
 	{
 		// Fallback: try current wall clock
@@ -758,9 +800,12 @@ void ChannelSession::transition()
 		fallback.item_type           = "offline";
 		fallback.wall_clock_start_ms = actualNowMs;
 		fallback.wall_clock_end_ms   = actualNowMs + kNoContentRetryMs;
-		current_item                 = fallback;
-		item_start                   = steady_::now();
-		current_item_offset_ms       = 0;
+		{
+			std::lock_guard<std::mutex> l(current_item_mtx);
+			current_item = fallback;
+		}
+		item_start             = steady_::now();
+		current_item_offset_ms = 0;
 		spawnFfmpeg(fallback, 0);
 		return;
 	}
@@ -783,7 +828,10 @@ void ChannelSession::transition()
 
 	int64_t startOffset = computeOffset(*next, actualNowMs);
 
-	current_item           = *next;
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		current_item = *next;
+	}
 	item_start             = steady_::now();
 	current_item_offset_ms = startOffset;
 

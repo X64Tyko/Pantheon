@@ -119,9 +119,21 @@ void PlaylistRepository::updateField(const std::string& playlist_id,
 
 void PlaylistRepository::remove(const std::string& playlist_id)
 {
+	// plex_list_link has no FK back to playlist (only to media_source), so
+	// nothing at the DB level stops this row from outliving the playlist it
+	// points at — leaving it behind means the next syncPlexLinks() pass tries
+	// to INSERT INTO playlist_item for a playlist_id that no longer exists
+	// and dies on the FK constraint. Deleting it here, not just in
+	// unlinkPlex(), makes "this playlist is gone" actually true regardless of
+	// which route the caller went through.
+	SQLite::Transaction tx(db_.get());
+	SQLite::Statement link(db_.get(), "DELETE FROM plex_list_link WHERE list_type = 'playlist' AND list_id = ?");
+	link.bind(1, playlist_id);
+	link.exec();
 	SQLite::Statement s(db_.get(), "DELETE FROM playlist WHERE playlist_id = ?");
 	s.bind(1, playlist_id);
 	s.exec();
+	tx.commit();
 }
 
 void PlaylistRepository::unlinkPlex(const std::string& playlist_id)

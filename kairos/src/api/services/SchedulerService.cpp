@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <ctime>
+#include <filesystem>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -67,6 +68,21 @@ namespace
 		catch (...)
 		{
 		}
+	}
+
+	// Neither /now nor /next ever confirmed the file behind a resolved item
+	// actually exists on Kairos's own filesystem — only that file_path was
+	// non-empty — so a source whose media isn't reachable here (a bad/absent
+	// path_map, an unmounted share) got served with total confidence,
+	// guaranteeing a downstream ffmpeg spawn failure in Hephaestus with no
+	// diagnostic short of its own stderr. mapped is the already path-mapped
+	// value (conf_.applyPathMap's output); empty is left alone (a pre-
+	// existing, differently-handled degenerate case Hephaestus's own
+	// spawnFfmpeg already checks for) — this only catches "non-empty but not
+	// actually there."
+	bool fileReachable(const std::string& mapped)
+	{
+		return mapped.empty() || std::filesystem::exists(mapped);
 	}
 } // namespace
 
@@ -153,32 +169,39 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 			ScheduleRepository sched(db_);
 			if (auto row = sched.getNowProgram(channel_id, t))
 			{
-				json j = {
-					{"item_type", row->item_type},
-					{"item_id", row->item_id},
-					{"file_path", conf_.applyPathMap(row->file_path)},
-					{"duration_ms", row->duration_ms},
-					{"title", row->title},
-					{"block_id", row->block_id},
-					{"wall_clock_start_ms", row->wall_clock_start * 1000LL},
-					{"wall_clock_end_ms", row->wall_clock_end * 1000LL},
-					{"is_filler", row->is_filler},
-				};
-				if (!row->show_title.empty())
+				std::string mapped = conf_.applyPathMap(row->file_path);
+				if (fileReachable(mapped))
 				{
-					j["show_title"]  = row->show_title;
-					j["show_id"]     = row->show_id;
-					j["season"]      = row->season;
-					j["episode_num"] = row->episode;
+					json j = {
+						{"item_type", row->item_type},
+						{"item_id", row->item_id},
+						{"file_path", mapped},
+						{"duration_ms", row->duration_ms},
+						{"title", row->title},
+						{"block_id", row->block_id},
+						{"wall_clock_start_ms", row->wall_clock_start * 1000LL},
+						{"wall_clock_end_ms", row->wall_clock_end * 1000LL},
+						{"is_filler", row->is_filler},
+					};
+					if (!row->show_title.empty())
+					{
+						j["show_title"]  = row->show_title;
+						j["show_id"]     = row->show_id;
+						j["season"]      = row->season;
+						j["episode_num"] = row->episode;
+					}
+					if (auto sm = SourceRepository(db_).getSourceMapping(row->item_id))
+					{
+						j["source_id"]   = sm->source_id;
+						j["external_id"] = sm->external_id;
+					}
+					attachKeyframes(db_, j, row->item_type, row->item_id);
+					route::ok(res, j.dump());
+					return;
 				}
-				if (auto sm = SourceRepository(db_).getSourceMapping(row->item_id))
-				{
-					j["source_id"]   = sm->source_id;
-					j["external_id"] = sm->external_id;
-				}
-				attachKeyframes(db_, j, row->item_type, row->item_id);
-				route::ok(res, j.dump());
-				return;
+				std::cerr << "[now] scheduled file missing on disk for channel " << channel_id
+					<< " (" << row->item_type << " " << row->item_id << "): " << mapped
+					<< " — falling through to the next tier\n";
 			}
 
 			auto block_opt = engine_.resolveBlock(channel_id, t);
@@ -187,52 +210,66 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 
 			if (block_opt && item_opt)
 			{
-				const auto& item = *item_opt;
-				json j           = {
-					{"item_type", item.item_type},
-					{"item_id", item.item_id},
-					{"file_path", conf_.applyPathMap(item.file_path)},
-					{"duration_ms", item.duration_ms},
-					{"title", item.title},
-					{"block_id", item.block_id},
-					{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
-					{"wall_clock_end_ms", static_cast<int64_t>(t) * 1000 + item.duration_ms},
-					{"is_filler", item.is_filler},
-				};
-				if (!item.show_title.empty())
+				const auto& item   = *item_opt;
+				std::string mapped = conf_.applyPathMap(item.file_path);
+				if (fileReachable(mapped))
 				{
-					j["show_title"]  = item.show_title;
-					j["show_id"]     = item.show_id;
-					j["season"]      = item.season;
-					j["episode_num"] = item.episode_num;
+					json j = {
+						{"item_type", item.item_type},
+						{"item_id", item.item_id},
+						{"file_path", mapped},
+						{"duration_ms", item.duration_ms},
+						{"title", item.title},
+						{"block_id", item.block_id},
+						{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+						{"wall_clock_end_ms", static_cast<int64_t>(t) * 1000 + item.duration_ms},
+						{"is_filler", item.is_filler},
+					};
+					if (!item.show_title.empty())
+					{
+						j["show_title"]  = item.show_title;
+						j["show_id"]     = item.show_id;
+						j["season"]      = item.season;
+						j["episode_num"] = item.episode_num;
+					}
+					if (auto sm = SourceRepository(db_).getSourceMapping(item.item_id))
+					{
+						j["source_id"]   = sm->source_id;
+						j["external_id"] = sm->external_id;
+					}
+					attachKeyframes(db_, j, item.item_type, item.item_id);
+					route::ok(res, j.dump());
+					return;
 				}
-				if (auto sm = SourceRepository(db_).getSourceMapping(item.item_id))
-				{
-					j["source_id"]   = sm->source_id;
-					j["external_id"] = sm->external_id;
-				}
-				attachKeyframes(db_, j, item.item_type, item.item_id);
-				route::ok(res, j.dump());
-				return;
+				std::cerr << "[now] scheduled file missing on disk for channel " << channel_id
+					<< " (" << item.item_type << " " << item.item_id << "): " << mapped
+					<< " — falling through to the next tier\n";
 			}
 
 			if (auto filler = sched.getChannelFillerFallback(channel_id))
 			{
-				int64_t dur = filler->duration_ms;
-				json j      = {
-					{"item_type", filler->item_type},
-					{"item_id", filler->item_id},
-					{"file_path", conf_.applyPathMap(filler->file_path)},
-					{"title", filler->title},
-					{"duration_ms", dur},
-					{"block_id", ""},
-					{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
-					{"wall_clock_end_ms", static_cast<int64_t>(t) * 1000 + dur},
-					{"is_filler", true},
-				};
-				attachKeyframes(db_, j, filler->item_type, filler->item_id);
-				route::ok(res, j.dump());
-				return;
+				std::string mapped = conf_.applyPathMap(filler->file_path);
+				if (fileReachable(mapped))
+				{
+					int64_t dur = filler->duration_ms;
+					json j      = {
+						{"item_type", filler->item_type},
+						{"item_id", filler->item_id},
+						{"file_path", mapped},
+						{"title", filler->title},
+						{"duration_ms", dur},
+						{"block_id", ""},
+						{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
+						{"wall_clock_end_ms", static_cast<int64_t>(t) * 1000 + dur},
+						{"is_filler", true},
+					};
+					attachKeyframes(db_, j, filler->item_type, filler->item_id);
+					route::ok(res, j.dump());
+					return;
+				}
+				std::cerr << "[now] filler fallback file missing on disk for channel " << channel_id
+					<< " (" << filler->item_type << " " << filler->item_id << "): " << mapped
+					<< " — falling through to offline\n";
 			}
 
 			if (auto offline = sched.getChannelOfflineConfig(channel_id))
@@ -298,10 +335,24 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 				return;
 			}
 
+			// No fallback tier to fall through to here (unlike /now) — this
+			// endpoint only ever backs ChannelSession::prefetchLoop()'s
+			// best-effort cache-warming, which already treats a 404 the same
+			// as "nothing to prefetch." Better that than handing back a
+			// file_path that doesn't actually resolve on disk.
+			std::string mapped = conf_.applyPathMap(row->file_path);
+			if (!fileReachable(mapped))
+			{
+				std::cerr << "[next] scheduled file missing on disk for channel " << channel_id
+					<< " (" << row->item_type << " " << row->item_id << "): " << mapped << "\n";
+				route::err(res, 404, "no next item available");
+				return;
+			}
+
 			json j = {
 				{"item_type", row->item_type},
 				{"item_id", row->item_id},
-				{"file_path", conf_.applyPathMap(row->file_path)},
+				{"file_path", mapped},
 				{"duration_ms", row->duration_ms},
 				{"title", row->title},
 				{"block_id", row->block_id},

@@ -107,7 +107,15 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 {
 	std::string safe_path = shellEscapeSingleQuoted(file_path);
 
-	std::string cmd = ffprobe_path
+	// timeout -k 2 <N>: same guard Kairos's own MediaProbe.cpp puts around
+	// every ffprobe invocation it runs — without it, a hung probe (a stalled/
+	// unreachable network mount, a corrupt file ffprobe spins on) blocks
+	// whichever caller ran this forever. On the TaskRegistry callers
+	// (spawnFfmpeg's own probe, ChannelSession::prefetchLoop()'s prefetch),
+	// that leaks a real OS thread permanently — TaskRegistry has no forced
+	// reaping of its own. -k 2 gives a stuck process 2s to honor SIGTERM
+	// before timeout escalates to SIGKILL.
+	std::string cmd = "timeout -k 2 15 " + ffprobe_path
 		+ " -v quiet -print_format json -show_streams -show_format '"
 		+ safe_path + "' 2>/dev/null";
 
@@ -248,7 +256,9 @@ std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
 	// column's leading 'K' marks a keyframe packet (ffmpeg's own convention,
 	// e.g. "K__" vs "__"). csv=p=0 drops the leading stream-index column
 	// ffprobe would otherwise prefix each line with.
-	std::string cmd = ffprobe_path
+	// Same timeout guard as probeMedia() above, longer (30s) since this scans
+	// every packet in the whole file, not just the header.
+	std::string cmd = "timeout -k 2 30 " + ffprobe_path
 		+ " -v quiet -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 '"
 		+ safe_path + "' 2>/dev/null";
 

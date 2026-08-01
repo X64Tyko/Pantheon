@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <ctime>
+#include <filesystem>
 #include <vector>
 
 using json = nlohmann::json;
@@ -108,6 +109,20 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 				route::err(res, 404, "no file for this item");
 				return;
 			}
+			// Only file_path.empty() was ever checked here — a non-empty path
+			// that doesn't actually resolve (bad/absent path_map, unmounted
+			// share) got handed to Hephaestus with total confidence,
+			// guaranteeing a downstream ffmpeg spawn failure with no
+			// diagnostic short of its own stderr. mapped is reused below
+			// instead of calling applyPathMap a second time.
+			std::string mapped = conf_.applyPathMap(file_path);
+			if (!std::filesystem::exists(mapped))
+			{
+				std::cerr << "[playback] file missing on disk for " << content_type << " " << id
+					<< ": " << mapped << "\n";
+				route::err(res, 404, "media file not found on disk");
+				return;
+			}
 
 			// subtitle_track rows don't share a column across movie/episode the
 			// way file_path/duration_ms do above (COALESCE works there because
@@ -174,7 +189,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			}
 
 			route::ok(res, json{
-						  {"file_path", conf_.applyPathMap(file_path)},
+						  {"file_path", mapped},
 						  {"duration_ms", q.getColumn(1).getInt64()},
 						  {"title", q.getColumn(2).getString()},
 						  {"external_subtitles", external_subtitles},

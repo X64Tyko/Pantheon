@@ -92,6 +92,15 @@ private:
 	std::mutex ffmpeg_mtx;
 	std::unique_ptr<FfmpegProcess> ffmpeg;
 
+	// current_item is a KairosNowResponse (several std::strings + a vector),
+	// whole-struct-assigned on the scheduling thread (applyResolvedItem()/
+	// transition()) while also read from other threads (prefetchLoop(),
+	// currentTitle()/currentFilePath() below) — an unsynchronized concurrent
+	// read during that assignment is a real data race (UB on the std::string
+	// fields, not just a stale-value risk), so every access goes through
+	// current_item_mtx: writers hold it only around the assignment itself
+	// (never across kairos.* network calls), readers take a copy under it.
+	mutable std::mutex current_item_mtx;
 	KairosNowResponse current_item;
 	std::chrono::steady_clock::time_point item_start;
 	int64_t current_item_offset_ms = 0; // offset into current_item's own file we started at
@@ -252,12 +261,21 @@ public:
 	const std::string& channelId() const { return channel_id; }
 
 	// Best-effort snapshot for the activity/debugging view (ActivityRouter) —
-	// current_item isn't otherwise synchronized (it's mutated on the
-	// scheduling thread during transition()), so a slightly stale read here
-	// is an accepted tradeoff for a monitoring-only view, not a correctness
-	// path.
-	const std::string& currentTitle() const { return current_item.title; }
-	const std::string& currentFilePath() const { return current_item.file_path; }
+	// by value under current_item_mtx (see its own comment): the value can
+	// still be a tick stale by the time the caller uses it, same tradeoff as
+	// before, but the read itself is now race-free.
+	std::string currentTitle() const
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		return current_item.title;
+	}
+
+	std::string currentFilePath() const
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		return current_item.file_path;
+	}
+
 	HwAccel hwAccel() const { return opts.hw_accel; }
 	HwAccel decodeHwAccel() const { return opts.decode_hw_accel; }
 	int64_t sessionStartMs() const { return session_start_ms; }
