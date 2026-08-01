@@ -138,6 +138,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   justified for this specific use, unlike nearly every other ffmpeg flag choice in this codebase. Dropped from all
   four call sites (`ChannelSession.cpp`, `VodSession.cpp` ×2, `PreviewSession.cpp`), keeping `+genpts`/`-flags
   low_delay`. Diagnosed from code review, not a captured incident — please retest live.
+- **Direct-stream (kNativeBucket) live channels could still stutter roughly every 12-15s after the fix above
+  (Hephaestus)**: `-force_key_frames` (which makes the transcode bucket's real segments land exactly on the
+  requested 2s) is unusable on a `-c:v copy` session — ffmpeg can only cut where the *source file's own* keyframes
+  actually are, which can easily be 5-15s+ apart for real-world files. `hls_list_size`/delete timing were sized
+  only for the intended 2s case, leaving too shallow a rolling window once real segments came out far longer —
+  raising the odds of a client's briefly-stale manifest racing the deletion of a segment it still legitimately
+  needs. Bumped `hls_list_size` 6→12 and added `hls_delete_threshold=8` (ffmpeg keeps a segment file on disk until
+  it's older than list_size+delete_threshold entries, specifically for this kind of client staleness). A blunt,
+  safe mitigation, not the precise fix — sizing `-hls_time` per item off that item's own real keyframe spacing
+  (already cached, see `snapToKeyframe`) would be the more correct follow-up.
 
 ### Fixed
 

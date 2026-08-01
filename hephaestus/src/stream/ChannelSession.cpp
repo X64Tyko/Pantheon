@@ -39,9 +39,21 @@ static constexpr double kMaxSpeed = 1.02;
 
 // Shared by appendOutputArgs' -hls_time and pushVideoEncoderArgs'
 // -force_key_frames so the two can never drift apart the way they did
-// before (HLS can only cut a segment at a keyframe, so a keyframe interval
-// looser than -hls_time silently overrides it).
+// before. Only the transcode bucket can actually honor this, though — a
+// direct-stream (kNativeBucket) `-c:v copy` session can't force keyframes
+// into a copy, so real segment length there is whatever the source file's
+// own GOP spacing is (can be 5-15s+). kLiveHlsListSize/kLiveHlsDeleteThreshold
+// below are sized generously to absorb that case rather than just the
+// intended 2s one.
 static constexpr int kLiveHlsSegmentSecs = 2;
+
+// Oversized vs. the 2s target so a direct-stream session's much-longer real
+// segments (see above) still get a safe rolling window instead of a client's
+// slightly-stale manifest racing a too-eager delete. Blunt fix, not the
+// precise one (which would size -hls_time per item off its real keyframe
+// spacing, already cached in keyframes_ms) — good follow-up, not done here.
+static constexpr int kLiveHlsListSize        = 12;
+static constexpr int kLiveHlsDeleteThreshold = 8;
 
 // How long transition()'s own default-slate fallback runs before rechecking
 // Kairos, when /now returns nothing at all (no scheduled item, no filler,
@@ -124,7 +136,10 @@ static void appendOutputArgs(std::vector<std::string>& a, const std::string& hls
 	// every reader see either the fully-old or fully-new file, never a mix.
 	std::string spec =
 		"[f=mpegts:avoid_negative_ts=make_zero]pipe:1"
-		"|[f=hls:hls_time=" + std::to_string(kLiveHlsSegmentSecs) + ":hls_list_size=6:hls_flags=delete_segments+append_list+omit_endlist+temp_file"
+		"|[f=hls:hls_time=" + std::to_string(kLiveHlsSegmentSecs) +
+		":hls_list_size=" + std::to_string(kLiveHlsListSize) +
+		":hls_delete_threshold=" + std::to_string(kLiveHlsDeleteThreshold) +
+		":hls_flags=delete_segments+append_list+omit_endlist+temp_file"
 		":hls_segment_filename=" + hls_dir + "/seg-%05d.ts]" + hls_dir + "/playlist.m3u8";
 	a.insert(a.end(), {"-f", "tee", spec});
 }
