@@ -969,6 +969,27 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
 						  opts.verbose_transcode_logs, speed,
 						  opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
 						  hlsDir());
+
+	// Re-anchor item_start here — right before the real ffmpeg process
+	// actually launches — overriding the caller's own (necessarily earlier)
+	// assignment. probeMediaCached() above is a cache hit almost always
+	// (prefetchLoop() warms it ahead of time), but on a miss (slow network
+	// share, prefetch lead too short) it's a real synchronous ffprobe call
+	// that can take real wall-clock time. transition()'s
+	// elapsed = steady_::now() - item_start feeds directly into
+	// actualNowMs's drift calculation, which decides whether the *next* item
+	// gets a gentle speed nudge or a hard seek into its content — counting
+	// probe latency as if it were real paced playback inflates that drift
+	// with time ffmpeg was never actually running, and can push an otherwise
+	// on-time transition over computeSpeed's ±2% bound, seeking into (and
+	// skipping the true beginning of) the next item for no real scheduling
+	// reason. NOTE: don't remove the caller's own earlier item_start
+	// assignment (applyResolvedItem()/transition()) as a "redundant write" —
+	// it's still load-bearing for the EOF-seek-guard path just above each
+	// call site, which calls transition() directly instead of this function
+	// and never reaches this line, so it needs its own fresh (near-zero
+	// elapsed, since nothing was ever actually played) anchor.
+	item_start = steady_::now();
 	launchFfmpeg(std::move(args), "ffmpeg");
 }
 

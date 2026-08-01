@@ -231,9 +231,22 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
         // re-entering the channel does). Detect the *pattern* directly instead
         // of waiting on an escalation that may never fire: repeated stall
         // reports in a short window force that same full reload ourselves.
+        //
+        // Confirmed via a live regression on the Android player (which used
+        // an analogous raw-event-count approach): counting bare event
+        // occurrences alone is too trigger-happy — a couple of ordinary,
+        // separate, self-resolving transition gaps can each report a stall
+        // without ever being genuinely stuck, and forcing a reload for that
+        // just adds its own re-buffering on top. Requiring currentTime to
+        // have made near-zero real progress across the whole window is the
+        // actual "wedged, not just jittery" signal, mirroring the
+        // position-based check the Android watchdog now uses instead of a
+        // raw STATE_BUFFERING count.
         const recentStalls: number[] = []
         const STALL_WINDOW_MS = 12_000
         const STALL_THRESHOLD = 3
+        const STALL_MIN_PROGRESS_S = 2
+        let positionAtFirstStall: number | null = null
       hls.on(Hls.Events.FRAG_LOADED, () => { networkRetries = 0; mediaRetries = 0 })
       hls.on(Hls.Events.ERROR, (_evt, data) => {
         console.warn('[player] hls ERROR fatal=', data.fatal, 'type=', data.type, 'details=', data.details,
@@ -242,12 +255,21 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
               if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
                   data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL) {
                   const now = Date.now()
+                  if (recentStalls.length === 0) positionAtFirstStall = video.currentTime
                   recentStalls.push(now)
                   while (recentStalls.length && now - recentStalls[0] > STALL_WINDOW_MS) recentStalls.shift()
-                  if (recentStalls.length >= STALL_THRESHOLD) {
-                      console.warn('[player] repeated non-fatal buffer stalls (', recentStalls.length, 'in', STALL_WINDOW_MS, 'ms) — forcing full player reload')
+                  if (recentStalls.length === 0) positionAtFirstStall = null
+                  else if (recentStalls.length >= STALL_THRESHOLD) {
+                      const progressed = positionAtFirstStall !== null &&
+                          video.currentTime - positionAtFirstStall >= STALL_MIN_PROGRESS_S
                       recentStalls.length = 0
-                      setReloadKey(k => k + 1)
+                      positionAtFirstStall = null
+                      if (!progressed) {
+                          console.warn('[player] repeated non-fatal buffer stalls with no real progress — forcing full player reload')
+                          setReloadKey(k => k + 1)
+                      } else {
+                          console.warn('[player] repeated non-fatal buffer stalls but currentTime is still advancing — treating as ordinary transition jitter, not reloading')
+                      }
                   }
               }
               return

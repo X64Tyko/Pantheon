@@ -94,6 +94,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   which doesn't affect this. A block with more than one filler list therefore always cycled them in the same
   fixed order regardless of intent, reading as "the same fillers keep repeating." Added a "Filler Selection"
   dropdown to `EditorForm.tsx`, shown whenever "Insert filler clips between programs" is checked.
+- **Android TV Detail's episode row didn't scroll with D-pad focus (pantheon-android)**: `DetailScreen.kt`'s
+  `NoOpBringIntoViewSpec` (added earlier to stop Compose's default focus-scroll from racing the screen's own
+  manual header-offset scroll) was provided at the top of the whole season/episode `LazyColumn`, which also
+  silently disabled the *nested* per-season `LazyRow`'s own horizontal bring-into-view — D-pad focus moved
+  episode-to-episode fine but the row never scrolled to reveal off-screen tiles. Scoped a real
+  (edge-aligned) `BringIntoViewSpec` back just to that inner `LazyRow`, restoring normal scrolling there while
+  the outer list still suppresses its own.
 - **Editing a channel's blocks while it was live could yank the currently-airing item out from under viewers
   (Kairos)**: `ScheduleCache::clear()` (called from nearly every block/content mutation route in
   `BlockService.cpp`) deleted every `scheduled_program` row for the channel unconditionally, including whatever
@@ -135,10 +142,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   all, so a stream that nudges past one hole, plays a few frames into the next, nudges again, etc. could repeat
   indefinitely without ever tripping the fatal path our existing recovery code was waiting on — the only fix was
   leaving and re-entering the channel. `VideoPlayer.tsx` (shared by `/player`, `/tv`, the Guide preview, and the
-  Cast receiver) now tracks these non-fatal stall events in a rolling window and forces a full hls.js reload
-  (fresh MediaSource, re-fetched manifest) once they repeat 3 times within 12 seconds — the same reset a manual
-  channel re-entry produces. Same pattern added to the Android player (`PlayerScreen.kt`), keyed off repeated
-  `STATE_BUFFERING` transitions on a live channel, forcing ExoPlayer to rebuild its HLS source the same way.
+  Cast receiver) now tracks these non-fatal stall events in a rolling window, and forces a full hls.js reload
+  (fresh MediaSource, re-fetched manifest — the same reset a manual channel re-entry produces) only if
+  `currentTime` has also made near-zero real progress across that window, so an ordinary run of separate,
+  self-resolving transition gaps isn't mistaken for one genuinely wedged stall. The Android player
+  (`PlayerScreen.kt`) needed the same reload mechanism, but keyed off ExoPlayer's own `STATE_BUFFERING`
+  instead: that state fires on every ordinary channel transition too (the brief expected gap while a new
+  ffmpeg process spins up), so an event-count version of this fix reloaded on essentially every transition in
+  practice — confirmed live, made the chirping worse than the bug it was meant to fix. Replaced with a
+  position-based watchdog: only reload if `exoPlayer.currentPosition` fails to advance for 10 straight seconds
+  while nominally playing, which a normal transition's brief gap is always well under.
+- **A slow cache-miss ffprobe at a channel transition could inflate Hephaestus's tracked schedule drift enough
+  to force an unnecessary hard seek into (skipping the true beginning of) the next program (Hephaestus)**:
+  `item_start` — the anchor `transition()` measures real elapsed playback time against, which feeds directly
+  into the drift calculation deciding between a gentle ±2% speed nudge and a hard seek — was set by the caller
+  *before* `spawnFfmpeg()`'s synchronous `probeMediaCached()` call, so any real ffprobe latency on a cache miss
+  (slow network share, `prefetchLoop()`'s warm-ahead window too short) was silently counted as real paced
+  playback time, inflating perceived drift by time ffmpeg wasn't even running yet. `spawnFfmpeg()` now
+  re-anchors `item_start` itself, right before the real process launches, after the probe.
 - **Deleting a Plex-linked playlist or filler list left an orphaned sync-link row, breaking the next sync with a
   `FOREIGN KEY constraint failed` (Kairos)**: `PlaylistRepository::remove()`/`FillerRepository::remove()` only ever
   deleted the parent row — the matching `plex_list_link` row was only cleaned up by a separate `unlinkPlex()` method
