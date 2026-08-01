@@ -51,6 +51,18 @@ static constexpr int kLiveHlsSegmentSecs = 2;
 // compute one from.
 static constexpr int64_t kNoContentRetryMs = 20'000;
 
+// How long before the current item's scheduled end prefetchLoop() starts
+// warming the next item's probe cache. Long enough that a slow probe
+// (network share, large file) has finished well before transition() actually
+// spawns ffmpeg for it; short enough that a short filler/bumper isn't
+// already over before this even fires.
+static constexpr int64_t kPrefetchLeadMs = 8'000;
+
+// How often prefetchLoop() checks whether it's inside the lead window —
+// coarser than hlsPatchLoop's cadence since this is a lookahead, not a
+// per-segment correction, and cheap headroom against a 20s+ lead is fine.
+static constexpr int kPrefetchTickSecs = 2;
+
 // ── ffmpeg arg construction ───────────────────────────────────────────────────
 // pushVideoEncoderArgs()/pushAudioEncoderArgs()/fmtSpeed() live in
 // EncoderArgs.h/.cpp so VodSession can share them too.
@@ -302,6 +314,8 @@ ChannelSession::~ChannelSession()
 	if (hls_watcher.joinable()) hls_watcher.join();
 	hls_patch_stop.store(true);
 	if (hls_patch_thread.joinable()) hls_patch_thread.join();
+	prefetch_stop.store(true);
+	if (prefetch_thread.joinable()) prefetch_thread.join();
 }
 
 std::string ChannelSession::hlsDir() const
@@ -424,6 +438,39 @@ void ChannelSession::patchDiscontinuitySequence()
 	for (auto& l : lines) out << l << "\n";
 }
 
+// Looks ahead to whatever Kairos has scheduled after the current item and
+// warms probeMediaCached()'s process-lifetime cache for it in the
+// background, so spawnFfmpeg()'s own probeMediaCached() call at the actual
+// transition is a cache hit instead of a cold ffprobe on the hot path — the
+// same class of fix as snapToKeyframe()/keyframes_ms, just for the audio/
+// subtitle/codec probe rather than keyframe timestamps (Kairos doesn't
+// sync-cache that half, so this warms it live instead of relying on sync).
+// current_item is read unsynchronized here — same accepted-staleness
+// tradeoff as currentTitle()/currentFilePath() (it's mutated on the
+// scheduling thread); worst case a torn read just means this tick prefetches
+// the wrong thing and the next one corrects it, no correctness impact since
+// spawnFfmpeg() always re-probes from item.file_path itself regardless.
+void ChannelSession::prefetchLoop()
+{
+	while (!prefetch_stop.load() && active.load())
+	{
+		std::this_thread::sleep_for(std::chrono::seconds(kPrefetchTickSecs));
+		if (!active.load()) return;
+
+		const int64_t end_ms  = current_item.wall_clock_end_ms;
+		const std::string cur = current_item.file_path;
+		if (end_ms <= 0) continue;
+		if (nowMs() < end_ms - kPrefetchLeadMs) continue;
+		if (prefetched_for_end_ms.exchange(end_ms) == end_ms) continue; // already warmed this cycle
+
+		auto next = kairos.getNext(channel_id);
+		if (!next || next->file_path.empty() || next->file_path == cur) continue;
+
+		std::string path = next->file_path, ffprobe = opts.ffprobe_path;
+		TaskRegistry::global().spawn([path, ffprobe] { probeMediaCached(ffprobe, path); });
+	}
+}
+
 // Computes how far into `item` playback should start, given true wall-clock
 // time `atMs`. Fillers loop on their own duration; non-fillers clamp to 0.
 int64_t ChannelSession::computeOffset(const KairosNowResponse& item, int64_t atMs)
@@ -432,6 +479,25 @@ int64_t ChannelSession::computeOffset(const KairosNowResponse& item, int64_t atM
 	return (item.is_filler && item.duration_ms > 0)
 			   ? rawOffset % item.duration_ms
 			   : rawOffset;
+}
+
+int64_t ChannelSession::snapToKeyframe(const KairosNowResponse& item, int64_t offsetMs)
+{
+	if (offsetMs <= 0 || item.keyframes_ms.empty() || item.file_path.empty()) return offsetMs;
+
+	std::error_code ec;
+	const auto file_size = std::filesystem::file_size(item.file_path, ec);
+	const bool cache_hit = !ec
+		&& item.keyframes_size == static_cast<int64_t>(file_size)
+		&& item.keyframes_mtime == statMtimeEpochSecs(item.file_path);
+	if (!cache_hit) return offsetMs;
+
+	// Largest keyframe timestamp <= offsetMs — never snap forward past the
+	// intended start point. keyframes_ms is sorted ascending (Kairos's own
+	// packet-level scan reads them in stream order).
+	auto it = std::upper_bound(item.keyframes_ms.begin(), item.keyframes_ms.end(), offsetMs);
+	if (it == item.keyframes_ms.begin()) return offsetMs; // no keyframe at/before offset
+	return *(--it);
 }
 
 std::optional<double> ChannelSession::computeSpeed(int64_t rawDriftMs, int64_t durationMs)
@@ -479,6 +545,10 @@ bool ChannelSession::start()
 			hls_patch_thread = std::thread([this] { hlsPatchLoop(); });
 		}
 	}
+
+	// Unlike hls_watcher/hls_patch_thread above, this isn't HLS-specific —
+	// MPEG-TS-only sessions get transitions too — so it always starts.
+	prefetch_thread = std::thread([this] { prefetchLoop(); });
 
 	// Kick off the /now lookup on its own thread and give it a short budget
 	// to answer before deciding whether to show the splash at all.
@@ -778,6 +848,12 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
 	// stream path already accepts: -ss before -i on a copy snaps to the
 	// nearest keyframe rather than landing exactly).
 	if (direct_stream) speed = 1.0;
+
+	// Pre-snap to a real keyframe using Kairos's sync-time probe, instead of
+	// leaving that same landing point for ffmpeg's own -ss seek-and-search to
+	// discover fresh on every single transition — see snapToKeyframe's own
+	// comment.
+	if (direct_stream) startOffsetMs = snapToKeyframe(item, startOffsetMs);
 
 	std::cout << "[session:" << channel_id << ":" << bucket << "] spawning ffmpeg: \""
 		<< item.file_path << "\" offset=" << startOffsetMs << "ms";

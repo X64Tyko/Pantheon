@@ -24,6 +24,16 @@ struct KairosNowResponse
 	std::optional<int> episode_num;
 	std::optional<std::string> offline_image_path;
 	std::optional<std::string> offline_audio_path;
+	// Cached direct-stream keyframe data from Kairos's own sync-time probe
+	// (Database.cpp's v98 migration) — same data PlaybackInfo::keyframes_ms
+	// already gives VOD sessions, exposed here too so ChannelSession can snap
+	// a direct-stream item's start offset to a real keyframe instead of
+	// handing ffmpeg a blind offset on every transition. Empty keyframes_ms
+	// means "not cached yet" (item_type isn't movie/episode, or Kairos
+	// hasn't sync-probed it) — callers must fall back to the raw offset.
+	std::vector<int64_t> keyframes_ms;
+	int64_t keyframes_size  = 0;
+	int64_t keyframes_mtime = 0;
 };
 
 // Resolved from Kairos's internal /api/playback/:content_type/:id endpoint

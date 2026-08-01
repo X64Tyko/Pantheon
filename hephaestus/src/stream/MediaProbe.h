@@ -104,6 +104,14 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
 											   const std::string& file_path);
 
+// Last-write-time of file_path, as epoch seconds — matches Kairos's own
+// SyncManager.cpp::statFingerprint so a cached probe's stashed mtime (e.g.
+// PlaybackInfo::keyframes_mtime, KairosNowResponse::keyframes_mtime) can be
+// compared against the file's current state. 0 on any stat error, which a
+// real file's mtime will practically never equal, so a stat failure here
+// just always misses the cache rather than risking a false "unchanged."
+int64_t statMtimeEpochSecs(const std::string& file_path);
+
 // Thread-safe cache in front of probeMedia(), keyed by file_path. Preview
 // channel-flips re-probe the same handful of files as viewers cycle through
 // channels, and live channel item transitions repeat across playlist loops

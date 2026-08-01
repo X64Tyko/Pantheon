@@ -20,21 +20,6 @@ static int64_t nowMs() {
 		std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// Same last_write_time-to-epoch conversion Kairos's own sync-time probe uses
-// to fingerprint a file (SyncManager.cpp's statFingerprint) — kept as a
-// separate copy for the same reason the rest of this file's MediaProbe is:
-// different service/binary, not shared code. 0 on any stat error, which a
-// real file's mtime will practically never equal, so a stat failure here
-// just always misses the cache rather than risking a false "unchanged."
-static int64_t statMtimeEpochSecs(const std::string& path)
-{
-	std::error_code ec;
-	auto ftime = std::filesystem::last_write_time(path, ec);
-	if (ec) return 0;
-	auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
-	return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
-}
-
 // Shared by buildVodArgs' -hls_time, pushVideoEncoderArgs' -force_key_frames,
 // and this file's own playlist synthesis — see the matching constant/comment
 // in ChannelSession.cpp for why these must stay in sync (HLS can only cut a

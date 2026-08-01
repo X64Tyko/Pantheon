@@ -1,37 +1,55 @@
 #include "MediaProbe.h"
 #include <nlohmann/json.hpp>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
 
 using json = nlohmann::json;
 
-static std::string runCommand(const std::string& cmd) {
-	std::array<char, 4096> buf{};
+int64_t statMtimeEpochSecs(const std::string& file_path)
+{
+	std::error_code ec;
+	auto ftime = std::filesystem::last_write_time(file_path, ec);
+	if (ec) return 0;
+	auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+	return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+}
+
+static std::string runCommand(const std::string& cmd)
+{
+	std::array < char, 4096 > buf{};
 	std::string result;
 	auto closer = [](FILE* f) { if (f) pclose(f); };
 	std::unique_ptr<FILE, decltype(closer)> pipe(popen(cmd.c_str(), "r"), closer);
 	if (!pipe) return "";
-	while (fgets(buf.data(), static_cast<int>(buf.size()), pipe.get()))
-		result += buf.data();
+	while (fgets(buf.data(), static_cast<int>(buf.size()), pipe.get())) result += buf.data();
 	return result;
 }
 
 // ffprobe reports "bits_per_raw_sample" as a JSON string (e.g. "10"), and
 // not every container/muxer populates it reliably — pix_fmt's "10le"/"12le"
 // suffix (e.g. "yuv420p10le") is a solid fallback when it's absent.
-static int parseBitDepth(const json& s) {
-	if (s.contains("bits_per_raw_sample")) {
-		try {
+static int parseBitDepth(const json& s)
+{
+	if (s.contains("bits_per_raw_sample"))
+	{
+		try
+		{
 			auto raw = s["bits_per_raw_sample"].get<std::string>();
 			if (!raw.empty()) return std::stoi(raw);
-		} catch (...) {}
+		}
+		catch (...)
+		{
+		}
 	}
 	std::string pix_fmt = s.value("pix_fmt", "");
 	if (pix_fmt.find("10le") != std::string::npos || pix_fmt.find("10be") != std::string::npos) return 10;
@@ -39,44 +57,54 @@ static int parseBitDepth(const json& s) {
 	return 8;
 }
 
-bool isHdrTransfer(const std::string& color_transfer) {
+bool isHdrTransfer(const std::string& color_transfer)
+{
 	return color_transfer == "smpte2084" || color_transfer == "arib-std-b67";
 }
 
 // ffprobe reports frame rates as "num/den" (e.g. "30000/1001"), occasionally
 // a bare integer, or "0/0" when it has no basis to compute one.
-static double parseFrameRateFraction(const std::string& s) {
+static double parseFrameRateFraction(const std::string& s)
+{
 	auto slash = s.find('/');
-	if (slash == std::string::npos) {
-		try { return std::stod(s); } catch (...) { return 0.0; }
+	if (slash == std::string::npos)
+	{
+		try { return std::stod(s); }
+		catch (...) { return 0.0; }
 	}
-	try {
+	try
+	{
 		double num = std::stod(s.substr(0, slash));
 		double den = std::stod(s.substr(slash + 1));
 		return den != 0.0 ? num / den : 0.0;
-	} catch (...) { return 0.0; }
+	}
+	catch (...) { return 0.0; }
 }
 
-bool isLikelyVfr(const VideoTrack& v) {
+bool isLikelyVfr(const VideoTrack& v)
+{
 	double r_fps   = parseFrameRateFraction(v.r_frame_rate);
 	double avg_fps = parseFrameRateFraction(v.avg_frame_rate);
 	if (r_fps <= 0.0 || avg_fps <= 0.0) return false; // insufficient data — don't guess
-	return std::abs(r_fps - avg_fps) > 0.05; // well beyond simple rounding noise
+	return std::abs(r_fps - avg_fps) > 0.05;          // well beyond simple rounding noise
 }
 
 // Shell-escape a path by wrapping in single quotes (works for paths without
 // embedded single quotes, which covers all sane media file names).
-static std::string shellEscapeSingleQuoted(const std::string& path) {
+static std::string shellEscapeSingleQuoted(const std::string& path)
+{
 	std::string safe;
-	for (char c : path) {
+	for (char c : path)
+	{
 		if (c == '\'') safe += "'\\''";
-		else safe += c;
+		else safe           += c;
 	}
 	return safe;
 }
 
 std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
-									 const std::string& file_path) {
+									const std::string& file_path)
+{
 	std::string safe_path = shellEscapeSingleQuoted(file_path);
 
 	std::string cmd = ffprobe_path
@@ -86,54 +114,62 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 	std::string output = runCommand(cmd);
 	if (output.empty()) return std::nullopt;
 
-	try {
+	try
+	{
 		auto j = json::parse(output);
 		MediaInfo info;
 		int audio_rel = 0, sub_rel = 0;
 
-		for (auto& s : j.value("streams", json::array())) {
+		for (auto& s : j.value("streams", json::array()))
+		{
 			std::string codec_type = s.value("codec_type", "");
 			std::string lang       = "";
 			std::string title      = "";
-			if (s.contains("tags")) {
+			if (s.contains("tags"))
+			{
 				auto& tags = s["tags"];
-				lang  = tags.value("language", tags.value("LANGUAGE", ""));
-				title = tags.value("title",    tags.value("TITLE",    ""));
+				lang       = tags.value("language", tags.value("LANGUAGE", ""));
+				title      = tags.value("title", tags.value("TITLE", ""));
 			}
 
-			if (codec_type == "video") {
+			if (codec_type == "video")
+			{
 				VideoTrack v;
-				v.stream_index = s.value("index", 0);
-				v.codec        = s.value("codec_name", "");
-				v.profile      = s.value("profile", "");
-				v.level        = s.value("level", 0);
-				v.width        = s.value("width",  0);
-				v.height       = s.value("height", 0);
+				v.stream_index    = s.value("index", 0);
+				v.codec           = s.value("codec_name", "");
+				v.profile         = s.value("profile", "");
+				v.level           = s.value("level", 0);
+				v.width           = s.value("width", 0);
+				v.height          = s.value("height", 0);
 				v.bit_depth       = parseBitDepth(s);
-				v.color_transfer  = s.value("color_transfer",  "");
+				v.color_transfer  = s.value("color_transfer", "");
 				v.color_primaries = s.value("color_primaries", "");
-				v.color_space     = s.value("color_space",     "");
-				v.r_frame_rate    = s.value("r_frame_rate",   "");
+				v.color_space     = s.value("color_space", "");
+				v.r_frame_rate    = s.value("r_frame_rate", "");
 				v.avg_frame_rate  = s.value("avg_frame_rate", "");
-				v.field_order     = s.value("field_order",    "");
+				v.field_order     = s.value("field_order", "");
 				info.video.push_back(v);
-			} else if (codec_type == "audio") {
+			}
+			else if (codec_type == "audio")
+			{
 				AudioTrack a;
-				a.stream_index  = s.value("index", 0);
+				a.stream_index   = s.value("index", 0);
 				a.relative_index = audio_rel++;
-				a.codec         = s.value("codec_name", "");
-				a.profile       = s.value("profile", "");
-				a.language      = lang;
-				a.title         = title;
-				a.channels      = s.value("channels", 0);
+				a.codec          = s.value("codec_name", "");
+				a.profile        = s.value("profile", "");
+				a.language       = lang;
+				a.title          = title;
+				a.channels       = s.value("channels", 0);
 				info.audio.push_back(a);
-			} else if (codec_type == "subtitle") {
+			}
+			else if (codec_type == "subtitle")
+			{
 				SubtitleTrack st;
-				st.stream_index  = s.value("index", 0);
+				st.stream_index   = s.value("index", 0);
 				st.relative_index = sub_rel++;
-				st.codec         = s.value("codec_name", "");
-				st.language      = lang;
-				st.title         = title;
+				st.codec          = s.value("codec_name", "");
+				st.language       = lang;
+				st.title          = title;
 				info.subtitles.push_back(st);
 			}
 		}
@@ -141,22 +177,30 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 		// format.duration is a JSON string, e.g. "1234.567000" — parse
 		// defensively and leave duration_ms at 0 (its default) on any
 		// failure/absence, same idiom as bits_per_raw_sample above.
-		if (j.contains("format") && j["format"].contains("duration")) {
-			try {
-				double secs = std::stod(j["format"]["duration"].get<std::string>());
+		if (j.contains("format") && j["format"].contains("duration"))
+		{
+			try
+			{
+				double secs      = std::stod(j["format"]["duration"].get<std::string>());
 				info.duration_ms = static_cast<int64_t>(secs * 1000.0 + 0.5);
-			} catch (...) {}
+			}
+			catch (...)
+			{
+			}
 		}
 
 		return info;
-	} catch (const std::exception& e) {
+	}
+	catch (const std::exception& e)
+	{
 		std::cerr << "[probe] JSON parse error: " << e.what() << "\n";
 		return std::nullopt;
 	}
 }
 
 std::optional<MediaInfo> probeMediaCached(const std::string& ffprobe_path,
-										   const std::string& file_path) {
+										  const std::string& file_path)
+{
 	static std::mutex cache_mtx;
 	static std::unordered_map<std::string, MediaInfo> cache;
 	{
@@ -171,29 +215,33 @@ std::optional<MediaInfo> probeMediaCached(const std::string& ffprobe_path,
 	return info;
 }
 
-int pickAudioTrack(const MediaInfo& info, const std::string& preferred_lang) {
+int pickAudioTrack(const MediaInfo& info, const std::string& preferred_lang)
+{
 	if (info.audio.empty()) return 0;
-	if (!preferred_lang.empty()) {
-		for (auto& a : info.audio) {
+	if (!preferred_lang.empty())
+	{
+		for (auto& a : info.audio)
+		{
 			// Compare first 3 chars for ISO 639-2 vs 639-1 tolerance
-			if (a.language.substr(0, 3) == preferred_lang.substr(0, 3))
-				return a.relative_index;
+			if (a.language.substr(0, 3) == preferred_lang.substr(0, 3)) return a.relative_index;
 		}
 	}
 	return 0;
 }
 
-int pickSubtitleTrack(const MediaInfo& info, const std::string& preferred_lang) {
+int pickSubtitleTrack(const MediaInfo& info, const std::string& preferred_lang)
+{
 	if (preferred_lang.empty() || info.subtitles.empty()) return -1;
-	for (auto& s : info.subtitles) {
-		if (s.language.substr(0, 3) == preferred_lang.substr(0, 3))
-			return s.relative_index;
+	for (auto& s : info.subtitles)
+	{
+		if (s.language.substr(0, 3) == preferred_lang.substr(0, 3)) return s.relative_index;
 	}
 	return -1;
 }
 
 std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
-												const std::string& file_path) {
+											   const std::string& file_path)
+{
 	std::string safe_path = shellEscapeSingleQuoted(file_path);
 	// Packet-level probing (no decode): -show_entries packet=pts_time,flags
 	// reads demuxed packet headers only, fast even on long files. The flags
@@ -208,14 +256,19 @@ std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
 	std::vector<int64_t> keyframes;
 	std::istringstream iss(output);
 	std::string line;
-	while (std::getline(iss, line)) {
+	while (std::getline(iss, line))
+	{
 		auto comma = line.find(',');
 		if (comma == std::string::npos || comma + 1 >= line.size()) continue;
 		if (line[comma + 1] != 'K') continue;
-		try {
+		try
+		{
 			double secs = std::stod(line.substr(0, comma));
 			keyframes.push_back(static_cast<int64_t>(secs * 1000.0 + 0.5));
-		} catch (...) {}
+		}
+		catch (...)
+		{
+		}
 	}
 	return keyframes;
 }

@@ -4,32 +4,41 @@
 #include <optional>
 #include <vector>
 
-class KairosClient {
-    std::string base_url;
+class KairosClient
+{
+	std::string base_url;
 	std::string internal_token_conf_path;
 
 public:
 	explicit KairosClient(std::string base_url, std::string internal_token_conf_path = "");
 
 	// atMs == -1 → omit the ?at= parameter (use server-side wall clock)
-    std::optional<KairosNowResponse> getNow(const std::string& channelId, int64_t atMs = -1);
+	std::optional<KairosNowResponse> getNow(const std::string& channelId, int64_t atMs = -1);
 
-    // Fire-and-forget; logs on failure but never throws.
-    void markPlayed(const std::string& channelId,
-                    const std::string& itemType,
-                    const std::string& itemId,
-                    const std::string& blockId,
-                    int64_t durationActualMs);
+	// Looks ahead to the item scheduled to air after whatever's currently
+	// playing — Kairos's /next (distinct from /now), used by ChannelSession's
+	// prefetch loop to warm Hephaestus's own file probe cache before a
+	// transition actually needs it. Reuses KairosNowResponse's shape; fields
+	// /next doesn't return (wall_clock_end_ms, is_filler, keyframes_*) stay
+	// at their defaults — callers needing those should go through getNow().
+	std::optional<KairosNowResponse> getNext(const std::string& channelId);
 
-    std::vector<KairosChannel> getChannels();
+	// Fire-and-forget; logs on failure but never throws.
+	void markPlayed(const std::string& channelId,
+					const std::string& itemType,
+					const std::string& itemId,
+					const std::string& blockId,
+					int64_t durationActualMs);
 
-    // Resolves a library item (movie/episode) to a playable file for VOD.
-    // contentType must be "movie" or "episode". bearerToken, when non-empty,
-    // is forwarded as Authorization so Kairos can resolve currentUser() and
-    // include this user's sticky per-show track preference in the response.
-    std::optional<PlaybackInfo> getPlaybackInfo(const std::string& contentType,
-                                                 const std::string& contentId,
-                                                 const std::string& bearerToken = "");
+	std::vector<KairosChannel> getChannels();
+
+	// Resolves a library item (movie/episode) to a playable file for VOD.
+	// contentType must be "movie" or "episode". bearerToken, when non-empty,
+	// is forwarded as Authorization so Kairos can resolve currentUser() and
+	// include this user's sticky per-show track preference in the response.
+	std::optional<PlaybackInfo> getPlaybackInfo(const std::string& contentType,
+												const std::string& contentId,
+												const std::string& bearerToken = "");
 
 	// Fire-and-forget (like markPlayed): persists a fresh keyframe probe back
 	// into Kairos so the next direct-stream session on this file skips its
@@ -44,12 +53,12 @@ public:
 						   int64_t mtime);
 
 	// Fetches the live stream_buffer_size from Kairos's /api/config/settings,
-    // in KB (matching the Hades UI unit) — callers must convert to bytes.
-    // Returns nullopt on any failure so callers can fall back to a local default.
-    std::optional<int> getBufferSize();
+	// in KB (matching the Hades UI unit) — callers must convert to bytes.
+	// Returns nullopt on any failure so callers can fall back to a local default.
+	std::optional<int> getBufferSize();
 
-    // Same /api/config/settings blob, plucking verbose_transcode_logs instead
-    // — lets operators flip on full ffmpeg command/-v verbose logging from
-    // the Hades settings page without restarting Hephaestus.
-    std::optional<bool> getVerboseTranscodeLogs();
+	// Same /api/config/settings blob, plucking verbose_transcode_logs instead
+	// — lets operators flip on full ffmpeg command/-v verbose logging from
+	// the Hades settings page without restarting Hephaestus.
+	std::optional<bool> getVerboseTranscodeLogs();
 };

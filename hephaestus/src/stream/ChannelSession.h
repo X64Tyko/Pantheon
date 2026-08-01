@@ -126,6 +126,21 @@ private:
 	void hlsPatchLoop();
 	void patchDiscontinuitySequence();
 
+	// Warms Hephaestus's own file probe cache (MediaProbe.cpp's process-
+	// lifetime probeMediaCached cache) for the *next* scheduled item a few
+	// seconds before transition() actually needs it, instead of paying for
+	// that ffprobe cold on the transition hot path — see prefetchLoop()'s own
+	// comment. Runs for the life of the session regardless of HLS/MPEG-TS
+	// output mode (unlike hls_watcher/hls_patch_thread above, which are
+	// HLS-only), so it's spawned/joined independently of hlsDir().
+	std::thread prefetch_thread;
+	std::atomic<bool> prefetch_stop{false};
+	// wall_clock_end_ms of the current item we've already issued a prefetch
+	// for — guards against re-issuing the same /next lookup on every tick
+	// while still inside the lead window.
+	std::atomic<int64_t> prefetched_for_end_ms{0};
+	void prefetchLoop();
+
 	// Last item's probed MediaInfo + resolved audio track, cached off the
 	// scheduling thread so a fresh POST /stream/channel/:id/start can read
 	// back this session's authoritative decision (real audio_lang-driven
@@ -162,6 +177,19 @@ private:
 	// or the drift is too large to close within a small, near-imperceptible
 	// speed adjustment — callers should fall back to offset-based seeking.
 	static std::optional<double> computeSpeed(int64_t rawDriftMs, int64_t durationMs);
+
+	// Snaps offsetMs down to the nearest real keyframe at/before it, using
+	// item's cached keyframes_ms (Kairos's own sync-time probe — see
+	// KairosNowResponse's own comment) if it's still valid for the file's
+	// current size/mtime. A direct-stream (stream copy) session can only ever
+	// start output at a real keyframe regardless — this makes that landing
+	// point a precomputed lookup instead of ffmpeg's own blind seek-and-
+	// search on every transition. Returns offsetMs unchanged (today's
+	// behavior) when the cache is empty or stale — deliberately no fallback
+	// probe here: an unsynced file just rides on the old behavior until the
+	// next Kairos sync populates the cache, rather than reintroducing the
+	// lazy-probe cost this exists to remove.
+	static int64_t snapToKeyframe(const KairosNowResponse& item, int64_t offsetMs);
 
 public:
 	// Exposed for testing

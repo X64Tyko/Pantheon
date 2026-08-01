@@ -62,11 +62,65 @@ std::optional<KairosNowResponse> KairosClient::getNow(const std::string& channel
 
 		if (j.contains("season") && j["season"].is_number()) r.season = j["season"].get<int>();
 		if (j.contains("episode_num") && j["episode_num"].is_number()) r.episode_num = j["episode_num"].get<int>();
+
+		r.keyframes_size  = j.value("keyframes_size", int64_t(0));
+		r.keyframes_mtime = j.value("keyframes_mtime", int64_t(0));
+		if (j.contains("keyframes_ms") && j["keyframes_ms"].is_array())
+		{
+			for (const auto& v : j["keyframes_ms"]) if (v.is_number_integer()) r.keyframes_ms.push_back(v.get<int64_t>());
+		}
 		return r;
 	}
 	catch (const std::exception& e)
 	{
 		std::cerr << "[kairos] getNow JSON parse error: " << e.what() << "\n";
+		return std::nullopt;
+	}
+}
+
+std::optional<KairosNowResponse> KairosClient::getNext(const std::string& channelId)
+{
+	auto cli         = makeClient(base_url);
+	std::string path = "/api/channels/" + channelId + "/next";
+
+	auto res = cli.Get(path);
+	if (!res || res->status != 200)
+	{
+		// 404 ("no next item available") is routine — a channel can be at
+		// the tail of its schedule cache — so this doesn't warrant the same
+		// noisy log getNow's failures get.
+		if (res && res->status != 404) std::cerr << "[kairos] GET " << path << " -> " << res->status << "\n";
+		return std::nullopt;
+	}
+
+	try
+	{
+		auto j = json::parse(res->body);
+		KairosNowResponse r;
+		r.item_type   = j.value("item_type", "");
+		r.item_id     = j.value("item_id", "");
+		r.file_path   = j.value("file_path", "");
+		r.title       = j.value("title", "");
+		r.block_id    = j.value("block_id", "");
+		r.duration_ms = j.value("duration_ms", int64_t(0));
+
+		auto optStr = [&](const char* k) -> std::optional<std::string>
+		{
+			if (j.contains(k) && j[k].is_string()) return j[k].get<std::string>();
+			return std::nullopt;
+		};
+		r.show_title  = optStr("show_title");
+		r.show_id     = optStr("show_id");
+		r.source_id   = optStr("source_id");
+		r.external_id = optStr("external_id");
+
+		if (j.contains("season") && j["season"].is_number()) r.season = j["season"].get<int>();
+		if (j.contains("episode_num") && j["episode_num"].is_number()) r.episode_num = j["episode_num"].get<int>();
+		return r;
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "[kairos] getNext JSON parse error: " << e.what() << "\n";
 		return std::nullopt;
 	}
 }
