@@ -209,6 +209,23 @@
 }
 .scheduleChangedIcon { opacity: 0.7; }
 
+.resetPromptBanner {
+    padding: 9px var(--hds-space-7);
+    background: oklch(0.2 0.05 22 / 0.3);
+    border-bottom: 1px solid oklch(0.4 0.1 22 / 0.4);
+    color: oklch(0.85 0.05 22);
+    font-size: var(--hds-font-size-tv-small-title);
+    letter-spacing: 0.01em;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--hds-space-tile-gap);
+}
+
+.resetPromptText {
+    flex: 1;
+}
+
 .bodyWrap {
   flex: 1;
   min-height: 0;

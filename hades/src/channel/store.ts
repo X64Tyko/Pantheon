@@ -17,6 +17,12 @@ let _debounce:  ReturnType<typeof setTimeout>
 let _epgTimer:  ReturnType<typeof setTimeout> | null = null
 let _searchCtrl: AbortController | null = null
 
+// Mirrors BlockService.cpp's kStructuralFields — see ChannelDetailStore::hasStructuralChanges.
+const STRUCTURAL_BLOCK_FIELDS: (keyof Block)[] = [
+    'day_mask', 'start_time', 'end_time', 'priority',
+    'play_style', 'advancement', 'cursor_scope', 'no_history_behavior',
+]
+
 // Slot offsets are purely derived — always the cumulative sum of preceding durations.
 function recomputeSlotOffsets(slots: TimeslotSlot[]): TimeslotSlot[] {
   let offset = 0
@@ -160,6 +166,30 @@ export class ChannelDetailStore {
 
   get isDirty(): boolean { return this.channelDirty || this.blocksDirty }
 
+    // True when the pending edit would hit one of the structural triggers that
+    // make Kairos hard-reset accumulated cursor state (block day_mask/start_time/
+    // end_time/priority/play_style/advancement/cursor_scope/no_history_behavior,
+    // an added/removed block, or channel timezone/seed) — see BlockService.cpp
+    // and ChannelService.cpp's kStructuralFields / timezone-seed checks. Used to
+    // decide whether saveChannel() needs to ask the user first, since a hard
+    // reset silently restarts every viewer's place in the channel from scratch.
+    hasStructuralChanges(channel: Channel): boolean {
+        if (channel.timezone !== this.channelDraft.timezone) return true
+        if ((channel.seed ?? 12345) !== this.channelDraft.seed) return true
+
+        const savedIds = new Set(this.savedBlocks.map(b => b.block_id))
+        const draftIds = new Set(this.blocks.map(b => b.block_id))
+        if (this.savedBlocks.some(b => !draftIds.has(b.block_id))) return true // removed a block
+
+        for (const b of this.blocks) {
+            const isNew = b.block_id.startsWith('tmp_') || !savedIds.has(b.block_id)
+            if (isNew) return true // added a block
+            const orig = this.savedBlocks.find(s => s.block_id === b.block_id)
+            if (orig && STRUCTURAL_BLOCK_FIELDS.some(f => orig[f] !== b[f])) return true
+        }
+        return false
+    }
+
   // Only flags weeks that are confirmed AND recomputed with a different
   // snapshot. Weeks the preview looks ahead into that aren't confirmed yet
   // are just unextended horizon, not a pending change.
@@ -213,10 +243,18 @@ export class ChannelDetailStore {
     // mutation calls below (which each still default to the safe, non-disruptive
     // clear), would just have a later mutation's own clear() re-cover the item
     // this one just exposed to the live edit.
-    async saveChannel(channelId: string, applyLive = false) {
+    //
+    // preserveCursor=true is the other user-confirmed override: it tells every
+    // mutation below to keep accumulated cursor/RNG state instead of the
+    // default hard reset a structural change would otherwise trigger (see
+    // hasStructuralChanges) — the "keep positions" choice in ChannelDetailPage's
+    // save-confirmation prompt. Harmless to send even for non-structural
+    // mutations; the server only consults it where it would have hard-reset
+    // anyway.
+    async saveChannel(channelId: string, applyLive = false, preserveCursor = false) {
     this.channelSaving = true; this.channelSaveErr = null
     try {
-      await api.updateChannel(channelId, { ...this.channelDraft })
+        await api.updateChannel(channelId, {...this.channelDraft}, {preserveCursor})
 
       const savedIds = new Set(this.savedBlocks.map(b => b.block_id))
       const draftIds = new Set(this.blocks.map(b => b.block_id))
@@ -224,7 +262,7 @@ export class ChannelDetailStore {
       // Delete blocks removed in draft.
       for (const b of this.savedBlocks) {
         if (!draftIds.has(b.block_id)) {
-          await api.deleteBlock(channelId, b.block_id)
+            await api.deleteBlock(channelId, b.block_id, {preserveCursor})
         }
       }
 
@@ -235,7 +273,7 @@ export class ChannelDetailStore {
         const payload = blockToDraft(b)
 
         if (isNew) {
-          const res = await api.createBlock(channelId, payload)
+            const res = await api.createBlock(channelId, payload, {preserveCursor})
           const realId = res.block_id
           idMap[b.block_id] = realId
           for (const c of b.content) {
@@ -269,7 +307,7 @@ export class ChannelDetailStore {
           }
         } else {
           const realId = b.block_id
-          await api.updateBlock(channelId, realId, payload)
+            await api.updateBlock(channelId, realId, payload, {preserveCursor})
           const savedBlock = this.savedBlocks.find(s => s.block_id === realId)
           if (savedBlock) {
             const toRemoveContent = savedBlock.content.filter(c => !b.content.some(dc => dc.id === c.id && dc.id > 0))

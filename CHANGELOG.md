@@ -60,6 +60,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   offers "Update Live…" next to "Save Channel" (behind an explicit confirm, since it visibly interrupts anyone
   currently watching) alongside the unchanged default save path. Covered by
   `momus/kairos/api/test_schedule_cache.cpp`.
+- **"Keep positions" option when a channel save would hard-reset cursor state (Kairos, Hades)**: a structural block
+  edit (day_mask/start_time/end_time/priority/play_style/advancement/cursor_scope/no_history_behavior, or an
+  added/removed block), or a channel timezone/seed change, has always triggered `ScheduleCache::hardReset()` —
+  wiping every accumulated media cursor so all of a channel's shows/movies resume from the beginning instead of
+  where they'd aired up to. That's the right default (old cursor state can be actively wrong for the new
+  configuration) but was previously silent and unconditional, so an otherwise-minor edit (e.g. nudging a block's
+  start time) could unexpectedly restart an entire channel's content. `ChannelService.cpp`'s `PATCH
+  /api/channels/:id` and `BlockService.cpp`'s block create/update/delete routes now accept `?preserve_cursor=true`,
+  downgrading the hard reset to the existing soft `clear()` — an explicit opt-out rather than automatic. Hades'
+  channel editor now detects a pending structural change before saving (`ChannelDetailStore::hasStructuralChanges`)
+  and prompts with "Reset positions & save" / "Keep positions & save" / "Cancel" instead of resetting silently;
+  non-structural saves are unaffected and still save without a prompt. Covered by new tests in
+  `momus/kairos/api/test_preserve_cursor.cpp`.
 
 ### Fixed
 

@@ -281,7 +281,18 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 			// state doesn't just look different afterward, it's for a different
 			// channel in all but name. default_filler_selection/advance_mode only
 			// shape future picks, so a soft clear is enough for those.
-			if (b.contains("timezone") || b.contains("seed")) schedule_cache_.hardReset(id);
+			//
+			// ?preserve_cursor=true downgrades the hard reset to a soft clear —
+			// an explicit, user-confirmed "keep everyone's place in this channel"
+			// choice (Hades' save-time prompt) for when the edit isn't judged
+			// worth restarting playback progress over. The projection may end up
+			// briefly inconsistent with the stale cursor state; that's the same
+			// tradeoff any manual cursor edit accepts.
+			if (b.contains("timezone") || b.contains("seed"))
+			{
+				if (route::wantsPreserveCursor(req)) schedule_cache_.clear(id);
+				else schedule_cache_.hardReset(id);
+			}
 			else if (b.contains("default_filler_selection") || b.contains("advance_mode")) schedule_cache_.clear(id);
 			route::ok(res, json{{"ok", true}}.dump());
 		}

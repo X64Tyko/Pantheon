@@ -24,6 +24,13 @@ export default observer(function ChannelDetailPage() {
   const channel   = channelStore.channels.find(c => c.channel_id === id)
   const scrollRef = useRef<HTMLDivElement>(null)
     const [confirmingLiveSave, setConfirmingLiveSave] = useState(false)
+    // 'ask-reset' gates a save that would hard-reset every viewer's place in
+    // this channel (see store.hasStructuralChanges) behind an explicit
+    // reset-vs-keep choice instead of doing it silently. pendingApplyLive
+    // carries along whichever save button (Save Channel vs Update Live…)
+    // triggered the prompt, since both can hit a structural change.
+    const [saveMode, setSaveMode] = useState<null | 'ask-reset'>(null)
+    const [pendingApplyLive, setPendingApplyLive] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -71,6 +78,27 @@ export default observer(function ChannelDetailPage() {
   const zoomPct = Math.round(pph / PPH_DEFAULT * 100) + '%'
 
   const editing = store.selectedId !== null || store.isNewMode
+
+    // Entry point for both "Save Channel" and "Update Live…" — routes into the
+    // reset-positions prompt when the pending edit is structural enough to wipe
+    // cursor state, otherwise falls back to the pre-existing behavior for each
+    // (a plain save, or the live-interrupt confirmation).
+    function requestSave(applyLive: boolean) {
+        if (channel && store.hasStructuralChanges(channel)) {
+            setPendingApplyLive(applyLive)
+            setSaveMode('ask-reset')
+        } else if (applyLive) {
+            setConfirmingLiveSave(true)
+        } else {
+            store.saveChannel(id!)
+        }
+    }
+
+    async function finalizeSave(preserveCursor: boolean) {
+        const applyLive = pendingApplyLive
+        setSaveMode(null)
+        await store.saveChannel(id!, applyLive, preserveCursor)
+    }
 
   // Merge the active draft into blocks so the EPG preview reacts to unsaved changes.
   const epgBlocks: Block[] = (() => {
@@ -126,7 +154,7 @@ export default observer(function ChannelDetailPage() {
           ⊞ Multi
         </button>
 
-          {store.isDirty && !confirmingLiveSave && (
+          {store.isDirty && !confirmingLiveSave && saveMode !== 'ask-reset' && (
           <button
             onClick={() => store.discardChanges(id)}
             disabled={store.channelSaving}
@@ -136,7 +164,9 @@ export default observer(function ChannelDetailPage() {
           </button>
         )}
 
-          {confirmingLiveSave ? (
+          {saveMode === 'ask-reset' ? (
+              <span className={styles.liveSaveWarning}>See prompt below ↓</span>
+          ) : confirmingLiveSave ? (
               <>
             <span className={styles.liveSaveWarning}>
               Interrupts anyone currently watching this channel — apply now?
@@ -163,7 +193,7 @@ export default observer(function ChannelDetailPage() {
               <>
                   {store.isDirty && (
                       <button
-                          onClick={() => setConfirmingLiveSave(true)}
+                          onClick={() => requestSave(true)}
                           disabled={store.channelSaving}
                           title="Save and also cut over anything currently streaming this channel to the new programming immediately, instead of only applying it going forward"
                           className={`${styles.headerBtn} ${styles.headerBtnNeutralMuted}`}
@@ -172,7 +202,7 @@ export default observer(function ChannelDetailPage() {
                       </button>
                   )}
                   <button
-                      onClick={() => store.saveChannel(id)}
+                      onClick={() => requestSave(false)}
                       disabled={store.channelSaving || !store.isDirty}
                       className={`${styles.saveBtn} ${store.isDirty ? styles.saveBtnDirty : styles.saveBtnClean}`}
                   >
@@ -210,6 +240,39 @@ export default observer(function ChannelDetailPage() {
           Schedule has changed since last save — weekly anchor seeds differ from confirmed. Save Channel to lock in the new schedule.
         </div>
       )}
+
+        {saveMode === 'ask-reset' && (
+            <div className={styles.resetPromptBanner}>
+                <span className={styles.scheduleChangedIcon}>⚠</span>
+                <span className={styles.resetPromptText}>
+            This changes the schedule's structure (timing, priority, cursor scope, or an added/removed block)
+                    {pendingApplyLive ? ' and will interrupt anyone watching this channel right now. ' : '. '}
+                    By default that resets every viewer's place in this channel's content back to the start —
+            you can keep everyone's current position instead, though the schedule around it may not line up as cleanly.
+          </span>
+                <button
+                    onClick={() => finalizeSave(false)}
+                    disabled={store.channelSaving}
+                    className={`${styles.headerBtn} ${styles.headerBtnWarning}`}
+                >
+                    {store.channelSaving ? 'Saving…' : 'Reset positions & save'}
+                </button>
+                <button
+                    onClick={() => finalizeSave(true)}
+                    disabled={store.channelSaving}
+                    className={`${styles.headerBtn} ${styles.headerBtnNeutral}`}
+                >
+                    {store.channelSaving ? 'Saving…' : 'Keep positions & save'}
+                </button>
+                <button
+                    onClick={() => setSaveMode(null)}
+                    disabled={store.channelSaving}
+                    className={`${styles.headerBtn} ${styles.headerBtnNeutralMuted}`}
+                >
+                    Cancel
+                </button>
+            </div>
+        )}
 
       {store.channelSaveErr && (
         <div className={styles.errorBanner}>

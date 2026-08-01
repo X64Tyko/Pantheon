@@ -69,8 +69,10 @@ void BlockService::registerRoutes(httplib::Server& svr)
 			std::string block_id = repo.createBlock(channel_id, b);
 			// A new block can shift the priority-cut windowing of every other
 			// block on the channel, not just add content — old cursor/anchor
-			// state can no longer be trusted.
-			schedule_cache_.hardReset(channel_id);
+			// state can no longer be trusted. ?preserve_cursor=true is the
+			// user-confirmed override; see RouteHelpers::wantsPreserveCursor.
+			if (route::wantsPreserveCursor(req)) schedule_cache_.clear(channel_id);
+			else schedule_cache_.hardReset(channel_id);
 			res.status = 201;
 			route::ok(res, json{{"block_id", block_id}}.dump());
 		}
@@ -146,13 +148,20 @@ void BlockService::registerRoutes(httplib::Server& svr)
 				"play_style", "advancement", "cursor_scope", "no_history_behavior",
 			};
 			bool structural = false;
-			for (const auto& field : kStructuralFields) if (b.contains(field))
-			{
-				structural = true;
-				break;
-			}
+			for (const auto& field : kStructuralFields)
+				if (b.contains(field))
+				{
+					structural = true;
+					break;
+				}
 
-			if (structural) schedule_cache_.hardReset(channel_id);
+			// ?preserve_cursor=true downgrades a would-be hard reset to a soft
+			// clear — see RouteHelpers::wantsPreserveCursor.
+			if (structural)
+			{
+				if (route::wantsPreserveCursor(req)) schedule_cache_.clear(channel_id);
+				else schedule_cache_.hardReset(channel_id);
+			}
 			else schedule_cache_.clear(channel_id);
 			route::ok(res, json{{"ok", true}}.dump());
 		}
@@ -178,7 +187,9 @@ void BlockService::registerRoutes(httplib::Server& svr)
 			repo.removeBlock(bid);
 			// Removing a block reshuffles every other block's priority-cut
 			// windowing, same as creating one — see the create handler above.
-			schedule_cache_.hardReset(channel_id);
+			// ?preserve_cursor=true downgrades this to a soft clear.
+			if (route::wantsPreserveCursor(req)) schedule_cache_.clear(channel_id);
+			else schedule_cache_.hardReset(channel_id);
 			route::ok(res, json{{"deleted", bid}}.dump());
 		}
 		catch (const std::exception& e)

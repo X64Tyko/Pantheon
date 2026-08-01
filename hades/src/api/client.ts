@@ -311,7 +311,13 @@ export const api = {
     createChannel: (b: Omit<Channel, 'channel_id' | 'default_filler_entries' | 'default_filler_selection' | 'owner_user_id' | 'is_demo'>) => request<{
         channel_id: string
     }>('POST', '/channels', b),
-  updateChannel:    (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes' | 'audio_lang' | 'subtitle_lang' | 'stream_resolution' | 'stream_video_bitrate' | 'stream_audio_bitrate' | 'content_tag'>>) => request<void>('PATCH', `/channels/${id}`, b),
+    // preserveCursor — see ChannelService.cpp's ?preserve_cursor=true: keeps
+    // accumulated cursor/RNG state across a timezone/seed change that would
+    // otherwise hard-reset it (Hades' save-time "keep positions" prompt).
+    updateChannel: (id: string, b: Partial<Pick<Channel, 'name' | 'number' | 'timezone' | 'seed' | 'default_filler_selection' | 'advance_mode' | 'offline_video_path' | 'offline_image_path' | 'offline_audio_id' | 'offline_audio_type' | 'offline_audio_title' | 'logo_path' | 'anchor_hashes' | 'audio_lang' | 'subtitle_lang' | 'stream_resolution' | 'stream_video_bitrate' | 'stream_audio_bitrate' | 'content_tag'>>, opts?: {
+        preserveCursor?: boolean
+    }) =>
+        request<void>('PATCH', `/channels/${id}${opts?.preserveCursor ? '?preserve_cursor=true' : ''}`, b),
   deleteChannel:    (id: string)                                                  => request<void>('DELETE', `/channels/${id}`),
   exportChannel:    (id: string, depth: ExportDepth)                              => request<ChannelExport>('GET', `/channels/${id}/export?depth=${depth}`),
   importChannel:    (data: ChannelExport)                                         => request<ImportResult>('POST', '/channels/import', data),
@@ -491,11 +497,22 @@ export const api = {
     getNextEpisode: (episodeId: string) => request<NextEpisode | null>('GET', `/episodes/${encodeURIComponent(episodeId)}/next-episode`),
 
   // Blocks
+    // preserveCursor on createBlock/updateBlock/deleteBlock — see BlockService.cpp's
+    // ?preserve_cursor=true: keeps accumulated cursor/RNG state across a
+    // structural change (or any add/remove) that would otherwise hard-reset it.
   getBlocks:         (channelId: string)                                          => request<Block[]>('GET', `/channels/${channelId}/blocks`),
-  createBlock:       (channelId: string, b: Omit<Block, 'block_id'|'channel_id'|'content'|'filler_entries'>) =>
-                       request<{block_id: string}>('POST', `/channels/${channelId}/blocks`, b),
-  updateBlock:       (channelId: string, blockId: string, b: Partial<Omit<Block, 'block_id'|'channel_id'|'content'|'filler_entries'>>) => request<void>('PATCH', `/channels/${channelId}/blocks/${blockId}`, b),
-  deleteBlock:       (channelId: string, blockId: string)                         => request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}`),
+    createBlock: (channelId: string, b: Omit<Block, 'block_id' | 'channel_id' | 'content' | 'filler_entries'>, opts?: {
+        preserveCursor?: boolean
+    }) =>
+        request<{
+            block_id: string
+        }>('POST', `/channels/${channelId}/blocks${opts?.preserveCursor ? '?preserve_cursor=true' : ''}`, b),
+    updateBlock: (channelId: string, blockId: string, b: Partial<Omit<Block, 'block_id' | 'channel_id' | 'content' | 'filler_entries'>>, opts?: {
+        preserveCursor?: boolean
+    }) =>
+        request<void>('PATCH', `/channels/${channelId}/blocks/${blockId}${opts?.preserveCursor ? '?preserve_cursor=true' : ''}`, b),
+    deleteBlock: (channelId: string, blockId: string, opts?: { preserveCursor?: boolean }) =>
+        request<void>('DELETE', `/channels/${channelId}/blocks/${blockId}${opts?.preserveCursor ? '?preserve_cursor=true' : ''}`),
   addBlockContent:   (channelId: string, blockId: string, b: { content_type: ContentType; content_id: string; season_filter?: number | null; weight?: number; run_count?: number; include_specials?: boolean; episode_order?: EpisodeOrder }) =>
                        request<{id: number, position: number}>('POST', `/channels/${channelId}/blocks/${blockId}/content`, b),
   updateBlockContent:(channelId: string, blockId: string, cid: number, b: { season_filter?: number | null; position?: number; weight?: number; run_count?: number; include_specials?: boolean; episode_order?: EpisodeOrder }) =>
