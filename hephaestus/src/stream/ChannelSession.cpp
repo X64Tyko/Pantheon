@@ -106,9 +106,25 @@ static void appendOutputArgs(std::vector<std::string>& a, const std::string& hls
 	// 'ended' event -- kicking the player out of the channel instead of
 	// riding through the transition. The ChannelSession itself (not any one
 	// ffmpeg process) owns when the stream actually ends.
+	// temp_file: ffmpeg writes each segment and the playlist itself to a
+	// "<name>.tmp" path and renames it into place only once the write is
+	// complete, instead of rewriting <name> in place. Without this, a reader
+	// (Router.cpp's serveHlsFile, or this same process's own
+	// patchDiscontinuitySequence poll below) can land mid-write and see a
+	// torn/garbled playlist.m3u8 — usually harmless (next poll/request
+	// retries against a settled file), but at the one moment it actually
+	// matters: append_list makes a brand-new transition's ffmpeg process
+	// parse the *existing* playlist.m3u8 at startup to continue segment
+	// numbering from where the previous process left off. A torn read there
+	// makes that parse fail, so the new process silently restarts numbering
+	// at seg-00000.ts — clobbering segment files a connected client's
+	// already-fetched playlist still points at mid-fetch. That's the
+	// mechanism behind "video/audio play the wrong content for several
+	// seconds right after a channel transition" — rename-based writes make
+	// every reader see either the fully-old or fully-new file, never a mix.
 	std::string spec =
 		"[f=mpegts:avoid_negative_ts=make_zero]pipe:1"
-		"|[f=hls:hls_time=" + std::to_string(kLiveHlsSegmentSecs) + ":hls_list_size=6:hls_flags=delete_segments+append_list+omit_endlist"
+		"|[f=hls:hls_time=" + std::to_string(kLiveHlsSegmentSecs) + ":hls_list_size=6:hls_flags=delete_segments+append_list+omit_endlist+temp_file"
 		":hls_segment_filename=" + hls_dir + "/seg-%05d.ts]" + hls_dir + "/playlist.m3u8";
 	a.insert(a.end(), {"-f", "tee", spec});
 }
@@ -387,10 +403,13 @@ void ChannelSession::patchDiscontinuitySequence()
 		lines.push_back(line);
 	}
 	in.close();
-	// ffmpeg (no hls_flags=temp_file) rewrites this file in place rather
-	// than atomically — a read can land mid-rewrite. A missing/garbled
-	// header is the unambiguous sign of that; skip and let the next tick
-	// (half a segment interval away) retry against a settled file.
+	// ffmpeg's own writes to this file are rename-based now (hls_flags
+	// +temp_file, see appendOutputArgs), so a torn read here would only ever
+	// come from this loop racing itself across ticks — shouldn't happen
+	// given the single-threaded poll below, but a missing/garbled header is
+	// still the unambiguous sign something upstream (e.g. mid-restart with
+	// the dir freshly created) isn't settled yet; skip and let the next
+	// tick (half a segment interval away) retry.
 	if (lines.empty() || lines[0] != "#EXTM3U") return;
 
 	int wanted = discontinuity_count_.load() - visible;
@@ -430,12 +449,18 @@ void ChannelSession::patchDiscontinuitySequence()
 		lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insertAt), wantedLine);
 	}
 
-	// Same non-atomic in-place rewrite ffmpeg itself does to this file —
-	// acceptable here for the same reason: worst case a reader catches one
-	// half-written read and this loop corrects it again next tick.
-	std::ofstream out(path, std::ios::trunc);
-	if (!out) return;
-	for (auto& l : lines) out << l << "\n";
+	// Rename-based write, same reasoning as ffmpeg's own +temp_file above:
+	// this file is read by Router.cpp's serveHlsFile and re-parsed at
+	// startup by every transition's new ffmpeg process (hls_flags=
+	// append_list), both of which must never observe a half-written file.
+	std::string tmpPath = path + ".tmp";
+	{
+		std::ofstream out(tmpPath, std::ios::trunc);
+		if (!out) return;
+		for (auto& l : lines) out << l << "\n";
+	}
+	std::error_code ec;
+	std::filesystem::rename(tmpPath, path, ec);
 }
 
 // Looks ahead to whatever Kairos has scheduled after the current item and

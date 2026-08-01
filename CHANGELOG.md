@@ -108,6 +108,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `ChannelSession::prefetchLoop()` also warms Hephaestus's own file-probe cache for the next scheduled item a few
   seconds before a transition needs it, so the audio/subtitle/codec probe is a cache hit instead of a cold ffprobe
   on the hot path.
+- **Live-channel HLS playlist rewrites raced ffmpeg's own writes, causing periodic stutter and, at transitions,
+  clients briefly playing mismatched old/new-program segments (Hephaestus)**: `playlist.m3u8` was rewritten in
+  place (no rename) both by ffmpeg's own HLS muxer and by `ChannelSession::patchDiscontinuitySequence()`'s ~1s
+  poll loop, so a reader (Router's file serving, or — the highest-stakes case — a brand-new transition's ffmpeg
+  process parsing the existing playlist at startup to continue segment numbering via `hls_flags=append_list`)
+  could land mid-write. A torn read there made the new process silently restart segment numbering at
+  `seg-00000.ts`, clobbering files a connected client's already-fetched playlist still pointed at. Fixed by adding
+  `hls_flags=+temp_file` (ffmpeg now writes segments/playlist to `<name>.tmp` then renames into place) and making
+  `patchDiscontinuitySequence()`'s own rewrite rename-based too, so every reader always sees either the fully-old
+  or fully-new file. Same `+temp_file` addition applied to `PreviewSession.cpp`'s Guide hover-preview output,
+  which has the identical kill-and-respawn-into-the-same-dir pattern on channel switch.
 - **Deleting a Plex-linked playlist or filler list left an orphaned sync-link row, breaking the next sync with a
   `FOREIGN KEY constraint failed` (Kairos)**: `PlaylistRepository::remove()`/`FillerRepository::remove()` only ever
   deleted the parent row — the matching `plex_list_link` row was only cleaned up by a separate `unlinkPlex()` method

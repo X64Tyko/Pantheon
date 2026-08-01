@@ -21,11 +21,19 @@ namespace
 
 	void appendPreviewOutputArgs(std::vector<std::string>& a, const std::string& dir)
 	{
+		// +temp_file: same reasoning as ChannelSession's own appendOutputArgs
+		// — switchChannel() kills the running ffmpeg and respawns a new one
+		// into this same dir, and append_list makes that new process parse
+		// the existing playlist.m3u8 at startup to continue segment
+		// numbering. A torn (non-atomic) read of that file on a bad-timing
+		// switch would make it restart numbering at seg-00000.ts instead,
+		// clobbering segments an already-connected viewer's stale playlist
+		// still points at.
 		a.insert(a.end(), {
 					 "-f", "hls",
 					 "-hls_time", std::to_string(kPreviewSegmentSecs),
 					 "-hls_list_size", "6",
-					 "-hls_flags", "delete_segments+append_list",
+					 "-hls_flags", "delete_segments+append_list+temp_file",
 					 "-hls_segment_filename", dir + "/seg-%05d.ts",
 					 dir + "/playlist.m3u8"
 				 });

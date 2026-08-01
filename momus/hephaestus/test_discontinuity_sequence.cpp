@@ -26,7 +26,12 @@ class DiscontinuitySequenceTest : public ::testing::Test {
 protected:
     void SetUp() override {
         root = std::filesystem::temp_directory_path() / ("momus_hls_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()) + "_" + testName());
-        channelDir = root / "live" / "ch-1";
+        // Must match ChannelSession::hlsDir()'s real layout (hls_root/live/
+        // channel_id/bucket) — the session below is constructed with the
+        // default bucket ("default"), so the fixture needs that same
+        // subfolder or patchDiscontinuitySequence()'s ifstream silently
+        // fails to open a nonexistent path and every test vacuously passes.
+        channelDir = root / "live" / "ch-1" / ChannelSession::kDefaultBucket;
         std::filesystem::create_directories(channelDir);
 
         kairos = std::make_unique<KairosClient>("http://unused.invalid");
