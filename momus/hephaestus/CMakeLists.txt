@@ -7,6 +7,7 @@ add_executable(momus_hephaestus
     test_discontinuity_sequence.cpp
         test_preview_session.cpp
         test_preview_session_manager.cpp
+        test_vod_encode_stream.cpp
 )
 
 target_link_libraries(momus_hephaestus

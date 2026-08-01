@@ -37,8 +37,9 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 ## Phase 2: Beta (Q3 2026)
 *Focus: Feature completeness, user experience, and expanded hardware support.*
 
-- [x] **Watch Together for Android:** The web (Hades) implementation shipped in Alpha (see above) — bringing
-  the same host/follower session sync to the native clients is still open.
+- [x] **Watch Together for Android:** The web (Hades) implementation shipped in Alpha (see above); `pantheon-android`
+  now has the same host/follower session sync (join/leave, host detection, live event stream, position drift
+  correction, and a Home-screen discovery shelf mirroring Hades' own). Roku support is still open.
 - [x] **Advanced Search:** Add more advanced search operators (e.g. filtering by watch state, sorting by episode, etc.)
 - [x] **Scheduled Sync & Scan Jobs:** Time-based (interval or daily-at-UTC-time) triggering for sync, metadata refresh,
   chapter detection, and metadata writeback, each independently enable/disable-toggleable with a "Run now" override,
@@ -66,14 +67,20 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] **Performance Benchmarking:** Optimization of the `kairos_core` scheduler for 100+ concurrent channels.
 - [ ] **User Notifications:** Alerts for sync failures or stream interruptions.
 - [ ] **Roku Manifest Update:** `pantheon-roku` has been tested and confirmed functional on real hardware, but needs to be updated to use the per-client capability manifest (see above) and re-verified before any public release.
-- [ ] **Scheduling Robustness for Placeholder Content:** Shows with no synced episodes yet, and movies still sitting on the Discovery "added" list, shouldn't be able to break channel scheduling if they end up selected into a block.
+- [x] **Scheduling Robustness for Placeholder Content:** Verified via a dedicated audit — `RuleEngine.cpp`'s
+  advancement/selection paths already return cleanly (no crash, no infinite loop) for a show with zero synced
+  episodes or an item with `duration_ms <= 0`, falling through to the next fallback tier instead. The one residual
+  gap: `BlockRepository::addContent` does no write-time validation that a `content_id` references a real, populated
+  show/movie — the safety is entirely at read-time in `RuleEngine`, so any future code path reading `block_content`
+  directly without going through its guards would reopen this.
 - [ ] **Cast Session Skip-to-Player:** Skip the profile picker when a cast originates from an already-authenticated account, especially when casting directly to a specific piece of media.
 - [ ] **Linked-ID Editor Title Confirmation:** The editable external-ID list (add/reorder/remove) currently shows only raw `source:id` pairs; it should resolve and display the matched title inline so a typo'd ID is caught before saving, not after. (The read-only badge row elsewhere already links out to the source — this only affects the editor.)
 - [ ] **VR Content Detection:** File-probe heuristic to flag VR video, plus a library toggle/filter to browse it — same tag/filter infrastructure as Scraper-Derived Tags.
 - [ ] **Chapter Classification Quality:** Reduce the "Unclassified" bucket in chapter detection — Episode/Credits already resolve well, but a lot of detected chapters fall through uncategorized. Worth doing before Chapter-Aware Scheduling (V1.0) depends on classification being trustworthy.
 - [ ] **Media Downloads:** Download media to device for offline playback.
 - [ ] **External ratings:** Add support for external rating systems (IMDb, Rotten Tomatoes, Metacritic, etc.)
-- [ ] **Home Screen Management:** Reorder shelves on the home screen.
+- [x] **Home Screen Management:** Reorder shelves on the home screen — `PlaylistPage.tsx`'s `HomeShelvesPanel`
+  (persisted `home_order` field, up/down reorder controls).
 
 ## Phase 3: V1.0 Release (Late 2026)
 *Focus: Production readiness, security auditing, and long-term support.*

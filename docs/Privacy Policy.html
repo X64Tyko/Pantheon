@@ -87,7 +87,29 @@
   </section>
 
   <section>
-    <h2><span class="n">2</span>What data this channel handles</h2>
+      <h2><span class="n">2</span>The public demo server (pantheonmedia.app)</h2>
+      <p>The above describes running your own Pantheon server. The developer also operates one public instance, at
+          <code>pantheonmedia.app</code>, so people can try Pantheon without installing anything. It's still just a
+          self-hosted-style server like any other — using it doesn't route your own separate install's data through it,
+          and it isn't a relay other Pantheon servers depend on. This section covers what that specific server retains
+          for people who use it directly.</p>
+      <p>Trying the demo uses a guest account: you pick a display name, nothing else — no email, no password, no payment
+          details. It can't sign in through the normal username/password path at all. While active, that account may
+          hold:</p>
+      <ul>
+          <li>A session token (no cookie — sent as a bearer token, same as any other Pantheon client)</li>
+          <li>A PIN and/or content-rating restrictions, only if you set them yourself</li>
+          <li>Watch history/playback position for anything you watch on the demo</li>
+          <li>One demo channel if you build one, private to you and never listed in the demo's public lineup</li>
+      </ul>
+      <p>Your IP address is checked momentarily against an in-memory rate limit when the account is created (to blunt
+          scripted abuse) and is never written to a database or linked to the account.</p>
+      <p>Guest accounts are pruned automatically after a period of inactivity (7 days by default) — once pruned, the
+          account and everything listed above is deleted permanently, with nothing further to request or undo.</p>
+  </section>
+
+    <section>
+        <h2><span class="n">3</span>What data this channel handles</h2>
     <table>
       <tr><th>Data</th><th>Where it's stored</th><th>What it's for</th></tr>
       <tr>
@@ -125,7 +147,7 @@
   </section>
 
   <section>
-    <h2><span class="n">3</span>What this app does not do</h2>
+      <h2><span class="n">4</span>What this app does not do</h2>
     <ul class="plain">
       <li>No advertising, and no ad SDKs of any kind.</li>
       <li>No analytics, telemetry, or crash-reporting sent to any third party.</li>
@@ -135,17 +157,17 @@
   </section>
 
   <section>
-    <h2><span class="n">4</span>Children's privacy</h2>
+      <h2><span class="n">5</span>Children's privacy</h2>
     <p>Pantheon isn't a public service directed at children — it's private software an adult installs and administers for their own household. That admin can configure restricted, content-rating-limited profiles for other members of the household (see the parental-control settings above), but the developer has no relationship with, or visibility into, any individual end user.</p>
   </section>
 
   <section>
-    <h2><span class="n">5</span>Changes to this policy</h2>
+      <h2><span class="n">6</span>Changes to this policy</h2>
     <p>If what this channel stores or sends changes, this page will be updated and the effective date above will move. Since there's no account system tying you to the developer, there's no mechanism (or need) to notify individual users directly — check back here if you want the current version.</p>
   </section>
 
   <section>
-    <h2><span class="n">6</span>Contact</h2>
+      <h2><span class="n">7</span>Contact</h2>
     <p>Questions about this policy or the software itself: <a href="https://github.com/X64Tyko/Pantheon/issues">open an issue on GitHub</a>, or email <a href="mailto:cmpederson89@gmail.com">cmpederson89@gmail.com</a>.</p>
   </section>
 

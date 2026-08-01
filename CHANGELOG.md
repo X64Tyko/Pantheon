@@ -50,6 +50,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Live channel transitions carried avoidable buffer time (Kairos, Hephaestus)**: direct-stream channel items handed
+  ffmpeg a raw start offset on every transition, leaving it to seek-and-search for the nearest real keyframe cold
+  every time — `ChannelSession::snapToKeyframe()` now snaps to a real keyframe using the same sync-time keyframe
+  cache VOD sessions already got (`Database.cpp`'s v98 migration), exposed on `/now`/`/next`. A new background
+  `ChannelSession::prefetchLoop()` also warms Hephaestus's own file-probe cache for the next scheduled item a few
+  seconds before a transition needs it, so the audio/subtitle/codec probe is a cache hit instead of a cold ffprobe
+  on the hot path.
+- **Deleting a Plex-linked playlist or filler list left an orphaned sync-link row, breaking the next sync with a
+  `FOREIGN KEY constraint failed` (Kairos)**: `PlaylistRepository::remove()`/`FillerRepository::remove()` only ever
+  deleted the parent row — the matching `plex_list_link` row was only cleaned up by a separate `unlinkPlex()` method
+  nobody called from the real delete path. The next `syncPlexLinks()` pass would then try to `INSERT INTO
+  playlist_item`/`filler_list_item` for a playlist/filler-list id that no longer existed. Both `remove()` methods now
+  delete the link row atomically in the same transaction.
+- **VOD concurrency hardening pass (Hephaestus)**: a from-scratch audit of `VodEncodeStream`'s multi-head design
+  (each a real ffmpeg process responsible for a segment window, shared across every concurrent viewer of the same
+  content) found two real ways two heads could end up writing colliding segment filenames under ordinary use — an
+  ordinary forward seek past a lagging head's progress, and direct-stream content whose real keyframe cadence
+  doesn't match the assumed-uniform one used when no sync-time keyframe cache is available. Fixed by clamping every
+  new head's window against other live heads' declared ranges, evicting a superseded lagging head instead of
+  leaving it running, and having `tick()` actively detect and stop a head that's overrun its own declared window.
+  Also fixed the shared per-content lock being held across `FfmpegProcess::kill()`'s blocking teardown, which could
+  stall every other concurrent viewer of that content for up to ~2s during an eviction.
+- **Live channel sessions could get stuck on the connect splash forever if Kairos was unreachable at the moment a
+  viewer connected (Hephaestus)**: `transition()` already retried on a mid-session Kairos outage, but `start()`'s
+  very first `/now` lookup had no retry path at all — a single failure left the session showing the unbounded
+  cold-start splash with nothing left to ever re-poll Kairos, even long after it recovered. `applyResolvedItem()`'s
+  failure branch now uses the same bounded-retry shape `transition()`'s own fallback already has.
+- **`ChannelSession::current_item` was read across threads with no synchronization (Hephaestus)**: a `KairosNowResponse`
+  (several `std::string` fields plus a `vector`) was whole-struct-reassigned on the scheduling thread while other
+  threads (the activity-view accessors, and the new prefetch loop above) read it directly — real undefined behavior
+  during a `std::string`'s internal reallocation, not just a stale-value risk. Now guarded by a dedicated mutex on
+  every read and write.
+- **Hephaestus's own ffprobe calls had no timeout (Hephaestus)**: unlike Kairos's own prober, `MediaProbe.cpp`'s
+  `runCommand()` ran ffprobe with no bound at all — a stalled/unreachable network mount could hang a probe
+  indefinitely, permanently leaking the OS thread it ran on (no per-task pool or reaping exists in `TaskRegistry`).
+  Now wrapped in the same `timeout -k 2 <n>` guard Kairos's prober already uses.
+- **Kairos handed out scheduled/VOD items with no check that the underlying file actually existed on disk (Kairos)**:
+  `/now`, `/next`, and `/playback/:content_type/:id` only ever checked that `file_path` was non-empty — an item
+  from a source Kairos can't actually reach on its own filesystem (bad/absent path map, unmounted share) was served
+  with total confidence, guaranteeing a downstream ffmpeg spawn failure in Hephaestus with no diagnostic beyond its
+  own stderr. All three routes now verify the mapped path resolves on disk, falling through to the next scheduling
+  tier (channels) or a clear 404 (VOD) instead.
+- **A Roku device re-paired to a different Pantheon account kept showing up under the previous owner (Hermes)**:
+  `DeviceSessionManager::getOrCreate()` reused the existing session (and its old `userId()`) on reconnect
+  regardless of what `user_id` was actually passed in, so a re-paired device stayed scoped to the previous
+  account's "my devices" list — and kept its stale queued commands/reported state — until the old session happened
+  to idle out on its own. Reconnecting under a different `user_id` now always gets a fresh session.
+- **Concurrent viewers on the same channel could each independently pay the full EPG re-projection cost (Kairos)**:
+  `EPGMaterializer::ensureScheduled()`'s "already covers the horizon, skip regenerate" check was a plain
+  check-then-act with no lock — several simultaneous `/now`/`/next`/`/epg` requests right as a channel's horizon
+  needed extending could each trigger the same (increasingly expensive by Thursday/Friday, per its own comment)
+  re-projection instead of one doing the work. Idempotent, not corrupting, but wasteful; now serialized per-channel.
 - **yt-dlp playlist downloads showed a misleading progress bar (Kairos, Hades)**: `parseProgress()` only ever read
   the current video's own percentage, which yt-dlp resets to 0% at the start of every item, so a playlist download's
   bar visibly reset and yo-yoed with no indication of overall position. `DownloadManager.cpp` now also parses

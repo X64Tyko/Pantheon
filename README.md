@@ -6,6 +6,15 @@ A media platform built around three pillars:
 - **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, dedicated premiere timeslots, and live EPG. Connect any IPTV client.
 - **Media player** — direct playback within Hades and native client applications.
 
+## Live Demo
+
+Try Pantheon without installing anything: **[pantheonmedia.app](http://pantheonmedia.app)**
+
+Hit "Continue as Guest" on the login screen for a passwordless, self-service account — browse the demo library, build
+your own live channel against it, and watch it right in the browser. Guest accounts are yours alone (nobody can modify
+your channel but you) and are automatically cleaned up after a period of inactivity, so there's nothing to reset on your
+way out.
+
 ## Screenshots
 
 <table>
@@ -41,14 +50,20 @@ Pantheon is currently **Alpha Complete**. This is a source-available engineering
 [![Hephaestus CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hephaestus.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hephaestus.yml)
 [![Hermes CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hermes.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hermes.yml)
 
-| Component | Status | Test Suite | Tests | Coverage (Target) |
-|---|---|---|---|---|
-| **Kairos** | Alpha | `momus_kairos` | 569 | ~85% (Core / Scheduler) |
-| **Hades** | Alpha | `vitest` | 133 | ~40% (API / Stores) |
-| **Hermes** | Alpha | `momus_hermes` | 25 | ~45% (Gateway — security surface covered via Kairos) |
-| **Hephaestus** | Alpha | `momus_hephaestus` | 30 | ~35% (Transcoder — Kairos-facing routes covered via Kairos) |
+| Component      | Status | Test Suite         | Tests | Risk Coverage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+|----------------|--------|--------------------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Kairos**     | Alpha  | `momus_kairos`     | 720   | ~80% — dedicated regression suites for auth/session security, injection/SSRF, ownership permissions, and scheduler determinism; gaps are mostly in narrower repository-level edge cases (e.g. cross-table cleanup on delete) rather than the core request/scheduling paths                                                                                                                                                                                                                                  |
+| **Hades**      | Alpha  | `vitest`           | 235   | ~45% — core stores/API client well exercised, but the suite currently has 9 known-failing tests (pre-existing, unrelated to recent changes) that haven't been triaged, which is its own coverage risk regardless of the pass count                                                                                                                                                                                                                                                                          |
+| **Hermes**     | Alpha  | `momus_hermes`     | 58    | ~68% — the auth boundary in front of VOD/preview streaming (token validation, parental-controls access-check, fail-open-vs-fail-closed policy on both its branches) now has a dedicated end-to-end suite against a real router, closing what had been its single biggest gap; the broadcaster retry/death-ordering invariant and a real reconnect-under-a-different-user bug (now fixed) are also covered. Device/Watch Together routers' own separate auth gates are the next-largest piece still untested |
+| **Hephaestus** | Alpha  | `momus_hephaestus` | 59    | ~50% — the two concurrency bugs with the widest blast radius (the multi-head segment-collision class, and the retry-on-unreachable-Kairos gap) now have real regression tests using actual spawned processes, not mocks. Still uncovered: the `current_item` data-race fix (races are inherently hard to pin in a deterministic test), the ffprobe-hang timeout, and `PreviewSession`'s/the HLS routes' real request-handling paths                                                                         |
 
-*Pantheon currently runs **757 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+*Risk coverage above is a qualitative estimate of how much of each component's actual failure surface (security,
+concurrency, data integrity) has real test coverage — not a line/branch coverage percentage. More lines executed by a
+test doesn't mean more risk is covered: Hephaestus's number moved from ~25% to ~50% by adding 9 tests, not by adding the
+most tests — they were aimed at the two specific gaps with the highest actual blast radius, and real gaps (the ones
+listed above) remain even after that.*
+
+*Pantheon currently runs **1,072 automated tests** across the stack using the **Momus** framework and **Vitest** *
 
 Kairos's suite includes endpoint-level security regression tests (`momus/kairos/api/test_content_service_security.cpp`) that spin up a real `Router` against a throwaway database and fire actual attack payloads at the running server — e.g. confirming an admin can't forge the locally-cached-poster path sentinel into an arbitrary local file read via `PATCH /api/shows/:id` or the public `/api/images/proxy` endpoint, and that no secret content ever appears in a response when the attack is (correctly) rejected.
 

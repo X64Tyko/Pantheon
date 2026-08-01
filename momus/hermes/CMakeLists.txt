@@ -6,6 +6,7 @@ add_executable(momus_hermes
     test_device_session_manager.cpp
         test_watch_together_session.cpp
         test_watch_together_manager.cpp
+        test_router_auth.cpp
 )
 
 target_link_libraries(momus_hermes

@@ -154,9 +154,17 @@
         </tr>
       <tr><td class="field"><code>source</code></td><td>Which media source (by ID) an item is mapped from</td><td>source ID</td></tr>
       <tr><td class="field"><code>library</code></td><td>Which library (by ID) an item belongs to</td><td>library ID</td></tr>
+        <tr>
+            <td class="field"><code>playlist</code></td>
+            <td>Membership in a specific playlist (by ID) — this is what the Library page's "click a playlist tile"
+                affordance compiles to under the hood
+            </td>
+            <td>playlist ID, <code>is</code> only</td>
+        </tr>
     </table></div>
     <p class="group-desc" style="margin-top:10px">
-      <code>source</code> and <code>library</code> take internal IDs, not display names — typing them by hand is impractical.
+        <code>source</code>, <code>library</code>, and <code>playlist</code> take internal IDs, not display names —
+        typing them by hand is impractical.
       Use the rule builder's "Source"/"Library" dropdowns to pick one visually; it fills in the right ID underneath, and the
       resulting rule is exactly the same <code>source:…</code> / <code>library:…</code> clause described here.
       (<code>library</code> composes fine alongside the Library page's separate multi-select source/library pills — one is

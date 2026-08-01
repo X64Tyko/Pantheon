@@ -215,6 +215,26 @@ public:
 	void setDiscontinuityCountForTest(int n) { discontinuity_count_.store(n); }
 	void patchDiscontinuitySequenceForTest() { patchDiscontinuitySequence(); }
 
+	// Exposed for testing the start()/applyResolvedItem() retry-on-
+	// unreachable-Kairos fix: whether the session is still showing the
+	// unbounded cold-start splash (should be false once the bounded-retry
+	// fallback has taken over) and the current_item snapshot it should have
+	// switched to instead (a synthetic "offline" item with a real, bounded
+	// wall_clock_end_ms) — see applyResolvedItem()'s own comment.
+	bool inSplashForTest() const { return in_splash.load(); }
+
+	std::string currentItemTypeForTest() const
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		return current_item.item_type;
+	}
+
+	int64_t currentItemWallClockEndMsForTest() const
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		return current_item.wall_clock_end_ms;
+	}
+
 	ChannelSession(std::string channel_id, KairosClient& kairos,
 				   std::string ffmpeg_path, StreamOptions opts = {},
 				   std::string bucket                          = kDefaultBucket);

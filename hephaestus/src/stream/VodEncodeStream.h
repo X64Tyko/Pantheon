@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // One elementary HLS stream (video-only or audio-only) within a VOD
@@ -110,6 +111,13 @@ public:
 	// for a debug view; not used for any real prepareSegment()/tick() logic,
 	// which is all per-head internally.
 	int highestGeneratedSegment() const;
+
+	// Exposed for testing only: each live head's [start_segment,
+	// window_end_segment) — the thing the overlap-prevention logic in
+	// spawnHead()/prepareSegment()/tick() exists to keep disjoint. No
+	// production caller needs a head's window directly (everything else
+	// works in terms of segment indices), so this has no non-test purpose.
+	std::vector<std::pair<int, int>> headWindowsForTest() const;
 
 private:
 	struct Head

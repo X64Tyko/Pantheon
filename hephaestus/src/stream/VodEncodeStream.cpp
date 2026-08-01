@@ -354,6 +354,15 @@ int VodEncodeStream::highestGeneratedSegment() const
 	return best;
 }
 
+std::vector<std::pair<int, int>> VodEncodeStream::headWindowsForTest() const
+{
+	std::lock_guard<std::mutex> lock(mtx_);
+	std::vector<std::pair<int, int>> windows;
+	windows.reserve(heads_.size());
+	for (auto& h : heads_) windows.emplace_back(h->start_segment, h->window_end_segment);
+	return windows;
+}
+
 void VodEncodeStream::stop()
 {
 	std::lock_guard<std::mutex> lock(mtx_);

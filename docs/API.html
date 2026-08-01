@@ -479,8 +479,25 @@ curl -s http://your-server:8081/api/channels \
       <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/playlist.m3u</code></td><td class="desc">The IPTV M3U playlist</td><td class="auth"><span class="a a-public">public</span></td></tr>
       <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/media/languages</code></td><td class="desc">Library-wide distinct audio/subtitle languages (sampled, cached 1h)</td><td class="auth"><span class="a a-public">public</span></td></tr>
       <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/epg.xml</code>, <code>/api/epg.xml</code>, <code>/api/xmltv.xml</code>, <code>/api/channels.xml</code></td><td class="desc">All four alias the same XMLTV generator<span class="fields">query: hours (max 72)</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
-      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/now</code></td><td class="desc">What's playing right now, with filler/offline fallback<span class="fields">query: at</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
-      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/channels/:id/next</code></td><td class="desc">What plays next</td><td class="auth"><span class="a a-public">public</span></td></tr>
+        <tr>
+            <td><span class="m m-get">GET</span></td>
+            <td class="path"><code>/api/channels/:id/now</code></td>
+            <td class="desc">What's playing right now, with filler/offline fallback. For a movie/episode item, also
+                includes the sync-time keyframe cache (<code>keyframes_ms</code>, <code>keyframes_size</code>, <code>keyframes_mtime</code>)
+                Hephaestus uses to snap a direct-stream transition to a real keyframe instead of probing cold. If the
+                resolved item's file doesn't actually exist on disk, falls through to the next scheduling tier (filler,
+                then offline) rather than returning a path that's guaranteed to fail downstream<span class="fields">query: at</span>
+            </td>
+            <td class="auth"><span class="a a-public">public</span></td>
+        </tr>
+        <tr>
+            <td><span class="m m-get">GET</span></td>
+            <td class="path"><code>/api/channels/:id/next</code></td>
+            <td class="desc">What plays next. Same missing-file behavior as <code>/now</code> — 404s instead of
+                returning an unplayable path
+            </td>
+            <td class="auth"><span class="a a-public">public</span></td>
+        </tr>
       <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/played</code></td><td class="desc">Report playback completion, advances the cursor<span class="fields">body: item_type, item_id, block_id, duration_actual_ms</span></td><td class="auth"><span class="a a-public">public</span></td></tr>
       <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/epg/preview</code></td><td class="desc">Preview a schedule without committing — supports draft blocks + a seed override<span class="fields">body: hours, seed, blocks[]</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
       <tr><td><span class="m m-post">POST</span></td><td class="path"><code>/api/channels/:id/epg/clear</code></td><td class="desc">Clear cached preview/materialization</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
@@ -522,7 +539,26 @@ curl -s http://your-server:8081/api/channels \
     <h2>Playback &amp; Watch Progress <a class="hash" href="#playback">#</a></h2>
     <div class="tablewrap"><table>
       <tr><th>Method</th><th>Path</th><th>Description</th><th>Auth</th></tr>
-      <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/playback/:content_type/:id</code></td><td class="desc">Resolve a library item to a playable file path — also resolves linked specials through their movie</td><td class="auth"><span class="a a-public">public</span> <span class="internal">(internal: called by Hephaestus)</span></td></tr>
+        <tr>
+            <td><span class="m m-get">GET</span></td>
+            <td class="path"><code>/api/playback/:content_type/:id</code></td>
+            <td class="desc">Resolve a library item to a playable file path — also resolves linked specials through
+                their movie, and includes the sync-time keyframe cache (<code>keyframes_ms</code>,
+                <code>keyframes_size</code>, <code>keyframes_mtime</code>) for a direct-stream VOD session. 404s if the
+                resolved file doesn't actually exist on disk (not just if <code>file_path</code> is empty)
+            </td>
+            <td class="auth"><span class="a a-public">public</span> <span class="internal">(internal: called by Hephaestus)</span>
+            </td>
+        </tr>
+        <tr>
+            <td><span class="m m-put">PUT</span></td>
+            <td class="path"><code>/api/playback/:content_type/:id/keyframes</code></td>
+            <td class="desc">Persist a freshly-probed keyframe cache back into the library item — Hephaestus's fallback
+                path when the GET above returned no cached data or the file's current size/mtime no longer match it<span
+                        class="fields">body: keyframes_ms, size, mtime</span></td>
+            <td class="auth"><span class="a a-public">public</span> <span class="internal">(internal: shared-secret token, called by Hephaestus)</span>
+            </td>
+        </tr>
       <tr><td><span class="m m-get">GET</span></td><td class="path"><code>/api/watch-progress</code></td><td class="desc">Caller's continue-watching list<span class="fields">query: limit</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
       <tr><td><span class="m m-put">PUT</span></td><td class="path"><code>/api/watch-progress/:content_type/:id</code></td><td class="desc">Upsert position, auto-clears at ≥95% watched<span class="fields">body: position_ms, duration_ms</span></td><td class="auth"><span class="a a-auth">auth</span></td></tr>
       <tr><td><span class="m m-delete">DELETE</span></td><td class="path"><code>/api/watch-progress/:content_type/:id</code></td><td class="desc">Clear saved progress</td><td class="auth"><span class="a a-auth">auth</span></td></tr>
