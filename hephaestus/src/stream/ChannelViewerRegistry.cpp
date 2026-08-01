@@ -21,10 +21,15 @@ bool isChannelDirectStreamable(const MediaInfo& info, int audio_track, const Cli
 	// irregular timestamps ride straight through into stutter/rebuffering.
 	if (isLikelyVfr(v)) return false;
 
+	// No client audio-codec check here (unlike video's caps.video_codecs
+	// check above) — ChannelSession::buildArgs now always re-encodes audio
+	// for this bucket rather than copying it (see its own comment on why:
+	// loudnorm needs a real filter graph), so the source's audio codec no
+	// longer has any bearing on eligibility. Still confirms the requested
+	// track actually exists — nothing to stream otherwise.
 	auto ai = std::find_if(info.audio.begin(), info.audio.end(),
 						   [&](const AudioTrack& t) { return t.relative_index == audio_track; });
 	if (ai == info.audio.end()) return false;
-	if (!caps.audio_codecs.count(ai->codec)) return false;
 
 	return true;
 }

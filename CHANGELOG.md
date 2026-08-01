@@ -176,6 +176,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   zero-real-viewer channel sessions (`client_count == 0` and no HLS activity) from `/stream/activity/sessions`
   entirely, so a transient info-only session — the unavoidable cold-start case, or anything like it — never
   renders as a phantom "channel" with nobody actually watching it.
+- **Direct-stream (kNativeBucket) live channels had no volume normalization at all (Hephaestus)**: the native
+  bucket's `-c:v copy -c:a copy` never ran any filter graph, so `dynaudnorm` (the loudness normalization used by
+  the default/transcode bucket) never applied — quiet content just stayed quiet for any direct-stream viewer.
+  Video stays a pure stream copy (the actual point of this bucket), but audio is now genuinely re-encoded through
+  the same `pushAudioEncoderArgs` path the transcode bucket already uses, so normalization applies there too —
+  an audio-only encode is cheap enough not to erode the CPU/GPU savings this bucket exists for. Also relaxed
+  `isChannelDirectStreamable`'s eligibility check: it no longer requires the *viewer's* declared capabilities to
+  cover the source's audio codec, since audio is no longer copied through unchanged — a source audio codec a
+  client doesn't support used to bounce that viewer onto the far more expensive default bucket for an audio-only
+  reason that no longer applies.
 
 - **A channel's configured filler never played as the last-resort gap-filler on `/now` (Kairos)**:
   `ScheduleRepository::getChannelFillerFallback()` joined `channel_filler_entry` to `filler_list_item` via the

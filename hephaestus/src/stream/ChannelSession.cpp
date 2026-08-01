@@ -210,18 +210,28 @@ static std::vector<std::string> buildArgs(
 
 	if (direct_stream)
 	{
-		// Native/copy bucket (ChannelSession::kNativeBucket) — no decode, no
-		// filters, no re-encode possible, so none of the machinery below
-		// applies. Subtitles aren't carried through this branch either
-		// (mirrors VOD's own direct-stream path, VodSession.cpp): muxing or
-		// burning a subtitle stream both require decoding video regardless,
-		// which would defeat the entire point of this bucket.
+		// Native/copy bucket (ChannelSession::kNativeBucket) — video stays a
+		// pure stream copy, the entire point of this bucket (avoid the
+		// CPU/GPU-heavy video encode). Audio is NOT copied though: a copy has
+		// no filter graph to run loudnorm through, so direct-stream viewers
+		// got no volume normalization at all, and requiring the *viewer's*
+		// declared capabilities to already cover whatever codec happened to
+		// be in the source file (isChannelDirectStreamable's old audio check)
+		// needlessly bounced viewers onto the far more expensive default
+		// bucket over an audio-only mismatch. An audio-only encode is cheap
+		// enough not to matter next to the video encode this bucket exists to
+		// avoid. Subtitles still aren't carried through this branch (mirrors
+		// VOD's own direct-stream path, VodSession.cpp): muxing or burning a
+		// subtitle stream both require decoding video regardless, which would
+		// defeat the point of this bucket the way an audio-only encode
+		// doesn't.
 		a.insert(a.end(), {
 					 "-map", "0:v:0?",
 					 "-map", "0:a:" + std::to_string(audioTrackIndex) + "?",
 					 "-dn", "-map_chapters", "-1",
-					 "-c:v", "copy", "-c:a", "copy"
+					 "-c:v", "copy"
 				 });
+		pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
 	}
 	else
 	{
