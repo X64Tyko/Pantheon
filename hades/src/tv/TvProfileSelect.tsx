@@ -34,6 +34,10 @@ export function TvProfileSelect() {
   const [error, setError] = useState('')
   const [busy,  setBusy]  = useState(false)
 
+    // Same guest-has-no-password gotcha as auth/ProfileSelectPage.tsx's own
+    // fix — see that file's comment.
+    const [confirmingGuestSignOut, setConfirmingGuestSignOut] = useState(false)
+
     // Same effective (already OR'd with guest_profiles_enabled) value
     // auth/ProfileSelectPage.tsx reads — the server enforces this regardless
     // of what this client sends, but without checking it here first, an
@@ -134,7 +138,20 @@ export function TvProfileSelect() {
       {error && !pinFor && !passwordFor && <div className={styles.pageError}>{error}</div>}
 
       {!pinFor && !passwordFor && (
-        <TvSignOutButton onClick={() => { logout().then(() => navigate('/login')) }} />
+          user?.is_guest ? (
+              <TvGuestSignOutControl
+                  confirming={confirmingGuestSignOut}
+                  onRequestConfirm={() => setConfirmingGuestSignOut(true)}
+                  onCancel={() => setConfirmingGuestSignOut(false)}
+                  onConfirm={() => {
+                      logout().then(() => navigate('/login'))
+                  }}
+              />
+          ) : (
+              <TvSignOutButton onClick={() => {
+                  logout().then(() => navigate('/login'))
+              }}/>
+          )
       )}
     </div>
   )
@@ -187,4 +204,45 @@ function TvSignOutButton({ onClick }: { onClick: () => void }) {
       Sign out completely
     </button>
   )
+}
+
+// Guest accounts have no password (AuthStore::createGuestUser) — structurally
+// unable to sign back in once signed out, unlike every other account this
+// same button handles. Cancel force-focuses (not Yes) so an extra D-pad
+// press after landing here is safe by default, same reasoning as
+// TvProfileTile force-focusing the current user's own tile.
+function TvGuestSignOutControl({confirming, onRequestConfirm, onCancel, onConfirm}: {
+    confirming: boolean; onRequestConfirm: () => void; onCancel: () => void; onConfirm: () => void
+}) {
+    const {ref: startRef, focused: startFocused} = useFocusable<object, HTMLButtonElement>({
+        focusKey: 'tv-profiles-sign-out', onEnterPress: onRequestConfirm,
+    })
+    const {ref: yesRef, focused: yesFocused} = useFocusable<object, HTMLButtonElement>({
+        focusKey: 'tv-profiles-sign-out-yes', onEnterPress: onConfirm,
+    })
+    const {ref: cancelRef, focused: cancelFocused} = useFocusable<object, HTMLButtonElement>({
+        focusKey: 'tv-profiles-sign-out-cancel', onEnterPress: onCancel, forceFocus: confirming,
+    })
+
+    if (!confirming) {
+        return (
+            <button ref={startRef} data-tv-focused={startFocused} type="button" onClick={onRequestConfirm}
+                    className={styles.signOutBtn}>
+                Sign out completely
+            </button>
+        )
+    }
+    return (
+        <div className={styles.signOutConfirmRow}>
+            <span className={styles.pageError}>Guest accounts have no password — you won't be able to sign back into this one.</span>
+            <button ref={cancelRef} data-tv-focused={cancelFocused} type="button" onClick={onCancel}
+                    className={styles.signOutBtn}>
+                Cancel
+            </button>
+            <button ref={yesRef} data-tv-focused={yesFocused} type="button" onClick={onConfirm}
+                    className={styles.signOutBtn}>
+                Yes, sign out
+            </button>
+        </div>
+    )
 }

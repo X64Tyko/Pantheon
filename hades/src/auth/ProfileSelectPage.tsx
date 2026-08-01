@@ -34,6 +34,14 @@ export default function ProfileSelectPage() {
   const [error,  setError]  = useState('')
   const [busy,   setBusy]   = useState(false)
 
+    // Guest accounts have no password (AuthStore::createGuestUser) — they're
+    // structurally unable to sign back in through the normal login path once
+    // signed out, unlike every other account this same button also handles.
+    // Gated on a confirm step instead of hiding the button outright: leaving
+    // is still the same one button for everyone, guests just get told first
+    // that this one is one-way for them specifically.
+    const [confirmingGuestSignOut, setConfirmingGuestSignOut] = useState(false)
+
     // "Add Guest" tile — a device that's already past a real login (that's
     // the whole precondition for reaching this picker at all) can mint a
     // brand-new guest profile right here, same idea as Netflix's own
@@ -276,13 +284,37 @@ export default function ProfileSelectPage() {
           inside the app only ever returns to this picker (see Layout.tsx).
           Ending the device's session entirely is a deliberate, separate step. */}
       {!pinFor && !passwordFor && (
-        <button
-          type="button"
-          onClick={() => { logout().then(() => navigate('/login')) }}
-          className={styles.signOutBtn}
-        >
-          Sign out completely
-        </button>
+          user?.is_guest && !confirmingGuestSignOut ? (
+              <button
+                  type="button"
+                  onClick={() => setConfirmingGuestSignOut(true)}
+                  className={styles.signOutBtn}
+              >
+                  Sign out completely
+              </button>
+          ) : user?.is_guest ? (
+              <div className={styles.signOutConfirmRow}>
+                  <span className={styles.signOutWarning}>Guest accounts have no password — you won't be able to sign back into this one. Sure?</span>
+                  <button type="button" onClick={() => {
+                      logout().then(() => navigate('/login'))
+                  }} className={styles.signOutBtnDanger}>
+                      Yes, sign out
+                  </button>
+                  <button type="button" onClick={() => setConfirmingGuestSignOut(false)} className={styles.signOutBtn}>
+                      Cancel
+                  </button>
+              </div>
+          ) : (
+              <button
+                  type="button"
+                  onClick={() => {
+                      logout().then(() => navigate('/login'))
+                  }}
+                  className={styles.signOutBtn}
+              >
+                  Sign out completely
+              </button>
+          )
       )}
     </div>
   )

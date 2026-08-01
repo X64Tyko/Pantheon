@@ -100,3 +100,20 @@
   font-size: var(--hds-font-size-tv-caption); cursor: pointer; font-family: var(--hds-font-mono-brand);
   letter-spacing: 0.05em; opacity: 0.7;
 }
+
+.signOutConfirmRow {
+    display: flex;
+    align-items: center;
+    gap: var(--hds-space-3);
+}
+
+.signOutWarning {
+    font-size: var(--hds-font-size-tv-caption);
+    color: oklch(0.72 0.18 22);
+}
+
+.signOutBtnDanger {
+    composes: signOutBtn;
+    color: oklch(0.72 0.18 22);
+    opacity: 1;
+}

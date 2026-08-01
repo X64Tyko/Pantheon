@@ -100,3 +100,10 @@
   transition: color var(--hds-transition-fast), opacity var(--hds-transition-fast), background var(--hds-transition-fast);
 }
 .signOutBtn[data-tv-focused="true"] { color: var(--hds-gold); opacity: 1; background: var(--hds-bg-3); }
+
+.signOutConfirmRow {
+    display: flex;
+    align-items: center;
+    gap: var(--hds-space-3);
+    flex-wrap: wrap;
+}
