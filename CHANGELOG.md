@@ -162,6 +162,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **A live channel always showed both a transcode and a direct-stream session active, and the Now Playing panel
+  could report more viewers than were actually watching (Hephaestus)**: `POST /stream/channel/:id/start` — the
+  capability-bucketed viewer opt-in — unconditionally called `SessionManager::getOrCreate()` for the *default*
+  (transcode) bucket on every single call, just to read back the channel's resolved audio track, even for a
+  viewer whose capabilities went on to resolve them onto the *native* (direct-stream) bucket instead. Every
+  native-eligible viewer therefore spun up a redundant, genuinely-unwatched default-bucket ffmpeg transcode
+  alongside the real native session, which then sat active in the Activity list (as a "no viewers detected"
+  channel row) until its own idle linger elapsed. Added `SessionManager::peek()` (look-without-create) and had
+  the handler reuse whichever bucket, if either, is already running before falling back to creating one — a
+  genuinely cold channel still creates a session to learn this, but a warm one (the common case: reconnects,
+  multiple viewers, a channel someone's already watching) no longer forces a duplicate. Also excluded
+  zero-real-viewer channel sessions (`client_count == 0` and no HLS activity) from `/stream/activity/sessions`
+  entirely, so a transient info-only session — the unavoidable cold-start case, or anything like it — never
+  renders as a phantom "channel" with nobody actually watching it.
+
 - **A channel's configured filler never played as the last-resort gap-filler on `/now` (Kairos)**:
   `ScheduleRepository::getChannelFillerFallback()` joined `channel_filler_entry` to `filler_list_item` via the
   legacy `filler_list_id` column — but `channel_filler_entry` has carried generic `content_type`/`content_id`

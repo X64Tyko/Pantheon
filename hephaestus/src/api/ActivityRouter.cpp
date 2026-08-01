@@ -140,7 +140,19 @@ void registerActivityRoutes(httplib::Server& svr, SessionManager& sessions,
 			{
 				auto bucketed_hls_counts = channelViewers.viewerCounts();
 				json out                 = json::array();
-				for (auto& s : sessions.listActive()) out.push_back(channelSessionJson(s, bucketed_hls_counts));
+				for (auto& s : sessions.listActive())
+				{
+					// A ChannelSession can be running (ffmpeg spawned, warm) with
+					// genuinely nobody attached to it — e.g. the default bucket,
+					// briefly created just to resolve a cold channel's current
+					// item/audio track for a viewer who then actually landed on
+					// the native bucket instead (see Router.cpp's
+					// /stream/channel/:id/start). Skipping these keeps this
+					// listing to real "someone is watching this" channels, not
+					// every warm-but-unwatched encoder instance.
+					if (s->clientCount() == 0 && !s->hlsViewerActive()) continue;
+					out.push_back(channelSessionJson(s, bucketed_hls_counts));
+				}
 				for (auto& s : vodSessions.listActive()) out.push_back(vodSessionJson(s));
 				res.set_content(out.dump(), "application/json");
 			});

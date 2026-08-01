@@ -58,6 +58,14 @@ public:
 	std::shared_ptr<ChannelSession> getOrCreate(const std::string& channelId,
 												const std::string& bucket = ChannelSession::kDefaultBucket);
 
+	// Look-without-touch counterpart to getOrCreate() — returns an already-
+	// running session for (channelId, bucket), or nullptr. Never spawns one.
+	// Used where a caller wants to reuse whatever's already active instead of
+	// forcing a fresh (and possibly redundant) session into existence just to
+	// ask it a question.
+	std::shared_ptr<ChannelSession> peek(const std::string& channelId,
+										 const std::string& bucket = ChannelSession::kDefaultBucket);
+
 	// Remove sessions that have been stopped.
 	void reap();
 

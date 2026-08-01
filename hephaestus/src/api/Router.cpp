@@ -419,11 +419,18 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				 ClientCapabilities caps;
 				 if (!token.empty()) { if (auto c = capabilityCache.get(token)) caps = *c; }
 
-				 // Ensures the default bucket session exists/has spawned at least
-				 // once, so the initial bucket decision below can read back its
-				 // authoritative resolved audio track (the channel's own audio_lang
-				 // setting) instead of guessing track 0.
-				 auto session = sessions.getOrCreate(channel_id);
+				 // Reuse whichever bucket is already running to read back the
+				 // channel's authoritative resolved audio track (instead of
+				 // guessing track 0) — reaching for the default bucket
+				 // unconditionally here used to force a redundant transcode
+				 // session into existence for every viewer, even ones who go on
+				 // to resolve to the native bucket below, so the channel showed
+				 // both buckets "always" active regardless of who was actually
+				 // watching. Only a genuinely cold channel (neither bucket
+				 // running for anyone yet) needs a fresh spawn to learn this.
+				 auto session = sessions.peek(channel_id, ChannelSession::kDefaultBucket);
+				 if (!session) session = sessions.peek(channel_id, ChannelSession::kNativeBucket);
+				 if (!session) session = sessions.getOrCreate(channel_id);
 				 if (!session)
 				 {
 					 res.status = 503;

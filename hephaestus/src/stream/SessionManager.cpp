@@ -139,6 +139,13 @@ std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& c
 	return session;
 }
 
+std::shared_ptr<ChannelSession> SessionManager::peek(const std::string& channelId, const std::string& bucket)
+{
+	std::lock_guard<std::mutex> lock(mtx);
+	auto it = sessions.find({channelId, bucket});
+	return (it != sessions.end() && it->second->isActive()) ? it->second : nullptr;
+}
+
 void SessionManager::reap()
 {
 	std::lock_guard<std::mutex> lock(mtx);
