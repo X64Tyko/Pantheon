@@ -9,7 +9,7 @@ ScheduleCache::ScheduleCache(Database& db)
 {
 }
 
-void ScheduleCache::clear(const std::string& channel_id)
+void ScheduleCache::clear(const std::string& channel_id, bool preserve_current)
 {
 	auto now = static_cast<int64_t>(std::time(nullptr));
 
@@ -21,13 +21,26 @@ void ScheduleCache::clear(const std::string& channel_id)
 	// different item/offset under the freshly-edited blocks (a jarring
 	// mid-playback switch). Rows that haven't started yet still get wiped
 	// unconditionally, which is exactly what should pick up the edit.
-	SQLite::Statement d1(db_.get(),
-						 "DELETE FROM scheduled_program WHERE channel_id = ? "
-						 "AND NOT (wall_clock_start <= ? AND wall_clock_end > ?)");
-	d1.bind(1, channel_id);
-	d1.bind(2, now);
-	d1.bind(3, now);
-	d1.exec();
+	//
+	// preserve_current=false drops that carve-out for an explicit "apply to the
+	// live stream now" confirmation instead — see the header comment for why
+	// that's the safer choice there despite the visible interruption.
+	if (preserve_current)
+	{
+		SQLite::Statement d1(db_.get(),
+							 "DELETE FROM scheduled_program WHERE channel_id = ? "
+							 "AND NOT (wall_clock_start <= ? AND wall_clock_end > ?)");
+		d1.bind(1, channel_id);
+		d1.bind(2, now);
+		d1.bind(3, now);
+		d1.exec();
+	}
+	else
+	{
+		SQLite::Statement d1(db_.get(), "DELETE FROM scheduled_program WHERE channel_id = ?");
+		d1.bind(1, channel_id);
+		d1.exec();
+	}
 
 	SQLite::Statement d2(db_.get(),
 						 "DELETE FROM play_history WHERE channel_id = ? AND is_scheduled = 1 AND aired_at >= ?");
@@ -38,9 +51,9 @@ void ScheduleCache::clear(const std::string& channel_id)
 	evictPreview(channel_id);
 }
 
-void ScheduleCache::hardReset(const std::string& channel_id)
+void ScheduleCache::hardReset(const std::string& channel_id, bool preserve_current)
 {
-	clear(channel_id);
+	clear(channel_id, preserve_current);
 
 	CursorRepository(db_).clear(channel_id);
 

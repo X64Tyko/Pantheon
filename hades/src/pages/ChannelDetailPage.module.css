@@ -132,6 +132,18 @@
 }
 .headerBtnDisabledCursor { cursor: default; }
 
+.headerBtnWarning {
+    border: 1px solid var(--hds-match-red);
+    background: oklch(0.62 0.2 22 / 0.15);
+    color: var(--hds-match-red);
+}
+
+.liveSaveWarning {
+    font-size: var(--hds-font-size-tv-label);
+    color: var(--hds-match-red);
+    max-width: 240px;
+}
+
 .saveBtn {
   display: flex;
   align-items: center;

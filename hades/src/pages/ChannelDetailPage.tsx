@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite'
-import { useEffect, useRef } from 'react'
+import {useEffect, useRef, useState} from 'react'
 import {useParams, useNavigate, Link} from 'react-router-dom'
 import { channelStore } from '../stores'
 import {useAuth} from '../auth/AuthContext'
@@ -23,6 +23,7 @@ export default observer(function ChannelDetailPage() {
     const {user} = useAuth()
   const channel   = channelStore.channels.find(c => c.channel_id === id)
   const scrollRef = useRef<HTMLDivElement>(null)
+    const [confirmingLiveSave, setConfirmingLiveSave] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -125,7 +126,7 @@ export default observer(function ChannelDetailPage() {
           ⊞ Multi
         </button>
 
-        {store.isDirty && (
+          {store.isDirty && !confirmingLiveSave && (
           <button
             onClick={() => store.discardChanges(id)}
             disabled={store.channelSaving}
@@ -135,13 +136,50 @@ export default observer(function ChannelDetailPage() {
           </button>
         )}
 
-        <button
-          onClick={() => store.saveChannel(id)}
-          disabled={store.channelSaving || !store.isDirty}
-          className={`${styles.saveBtn} ${store.isDirty ? styles.saveBtnDirty : styles.saveBtnClean}`}
-        >
-          {store.channelSaving ? 'Saving…' : 'Save Channel'}
-        </button>
+          {confirmingLiveSave ? (
+              <>
+            <span className={styles.liveSaveWarning}>
+              Interrupts anyone currently watching this channel — apply now?
+            </span>
+                  <button
+                      onClick={async () => {
+                          await store.saveChannel(id, true);
+                          setConfirmingLiveSave(false)
+                      }}
+                      disabled={store.channelSaving}
+                      className={`${styles.headerBtn} ${styles.headerBtnWarning}`}
+                  >
+                      {store.channelSaving ? 'Saving…' : 'Yes, update live'}
+                  </button>
+                  <button
+                      onClick={() => setConfirmingLiveSave(false)}
+                      disabled={store.channelSaving}
+                      className={`${styles.headerBtn} ${styles.headerBtnNeutralMuted}`}
+                  >
+                      Cancel
+                  </button>
+              </>
+          ) : (
+              <>
+                  {store.isDirty && (
+                      <button
+                          onClick={() => setConfirmingLiveSave(true)}
+                          disabled={store.channelSaving}
+                          title="Save and also cut over anything currently streaming this channel to the new programming immediately, instead of only applying it going forward"
+                          className={`${styles.headerBtn} ${styles.headerBtnNeutralMuted}`}
+                      >
+                          Update Live…
+                      </button>
+                  )}
+                  <button
+                      onClick={() => store.saveChannel(id)}
+                      disabled={store.channelSaving || !store.isDirty}
+                      className={`${styles.saveBtn} ${store.isDirty ? styles.saveBtnDirty : styles.saveBtnClean}`}
+                  >
+                      {store.channelSaving ? 'Saving…' : 'Save Channel'}
+                  </button>
+              </>
+          )}
 
         <button
           onClick={() => store.clearEpgCache(id)}

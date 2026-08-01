@@ -564,14 +564,22 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 	// ?hard=true also wipes CursorState + the RNG/cursor anchor snapshot, not just
 	// scheduled_program — use when a structural change (or anything else) makes
 	// the accumulated cursor state itself suspect, not just the materialized rows.
+	//
+	// ?live=true additionally drops ScheduleCache's usual carve-out for whatever's
+	// currently on-air (see ScheduleCache::clear()'s own comment) — an explicit,
+	// user-confirmed "apply my edits to the live stream now" action, not something
+	// any route fires as a side effect of an ordinary edit. Hades only sends this
+	// after the user has agreed to interrupt live playback; every other mutation
+	// route still calls schedule_cache_.clear()/hardReset() with the safe default.
 	svr.Post(R"(/api/channels/([^/]+)/epg/clear)", [this](const Req& req, Res& res)
 	{
 		try
 		{
 			bool hard = req.has_param("hard") && req.get_param_value("hard") == "true";
-			if (hard) schedule_cache_.hardReset(req.matches[1]);
-			else schedule_cache_.clear(req.matches[1]);
-			route::ok(res, json{{"ok", true}, {"hard", hard}}.dump());
+			bool live = req.has_param("live") && req.get_param_value("live") == "true";
+			if (hard) schedule_cache_.hardReset(req.matches[1], !live);
+			else schedule_cache_.clear(req.matches[1], !live);
+			route::ok(res, json{{"ok", true}, {"hard", hard}, {"live", live}}.dump());
 		}
 		catch (const std::exception& e)
 		{

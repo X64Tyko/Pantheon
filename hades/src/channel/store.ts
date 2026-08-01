@@ -202,7 +202,18 @@ export class ChannelDetailStore {
 
   // Commits all in-memory block changes + channel settings to the DB.
   // After success, sets savedBlocks = blocks and confirms anchor hashes.
-  async saveChannel(channelId: string) {
+    //
+    // applyLive=true additionally interrupts any currently-live stream on this
+    // channel to pick up the edit immediately (POST epg/clear?live=true, sent
+    // only once, after every individual block/content mutation below has already
+    // committed) — the user-confirmed alternative to the default behavior, where
+    // whatever's already on-air keeps playing out under the old programming and
+    // only the schedule going forward reflects the edit. Only meaningful once the
+    // whole edit is committed: firing it earlier, interleaved with the per-block
+    // mutation calls below (which each still default to the safe, non-disruptive
+    // clear), would just have a later mutation's own clear() re-cover the item
+    // this one just exposed to the live edit.
+    async saveChannel(channelId: string, applyLive = false) {
     this.channelSaving = true; this.channelSaveErr = null
     try {
       await api.updateChannel(channelId, { ...this.channelDraft })
@@ -364,6 +375,8 @@ export class ChannelDetailStore {
       if (Object.keys(this.previewAnchors).length > 0) {
         await api.updateChannel(channelId, { anchor_hashes: this.previewAnchors })
       }
+
+        if (applyLive) await api.clearChannelEpgCache(channelId, {live: true})
 
       await channelStore.fetchAll()
       const blocks = await api.getBlocks(channelId)

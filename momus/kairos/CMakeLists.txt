@@ -21,6 +21,7 @@ add_executable(momus_kairos
     api/test_auth_service_routes.cpp
     api/test_restriction_access_check.cpp
     api/test_playback_and_channel_routes.cpp
+        api/test_schedule_cache.cpp
         api/test_channel_ownership_routes.cpp
         api/test_config_service_library_reset.cpp
         api/test_playback_keyframes_and_resolve_routes.cpp

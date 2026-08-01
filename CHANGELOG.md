@@ -48,6 +48,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   wrong (especially Cast, unverifiable without real hardware) is worse for a live public demo than not having one;
   flagged as a follow-up needing real device testing.
 
+### Added
+
+- **"Update Live" option when saving channel edits (Kairos, Hades)**: saving a channel normally leaves whatever's
+  currently on-air alone and only applies the edit going forward (see the "currently-airing item yanked" fix
+  below) — safe by default, but a broader edit (e.g. a shifted block boundary) can leave that untouched item
+  overlapping with the freshly-regenerated schedule after it, since the regeneration has no awareness the old row
+  is still occupying part of its window. `ScheduleCache::clear()`/`hardReset()` gained a `preserve_current`
+  parameter (default `true`, the existing behavior); `POST /api/channels/:id/epg/clear?live=true` passes `false`,
+  dropping the carve-out so the live stream picks up the edit immediately instead. The channel editor's header now
+  offers "Update Live…" next to "Save Channel" (behind an explicit confirm, since it visibly interrupts anyone
+  currently watching) alongside the unchanged default save path. Covered by
+  `momus/kairos/api/test_schedule_cache.cpp`.
+
 ### Fixed
 
 - **A channel's configured filler never played as the last-resort gap-filler on `/now` (Kairos)**:
