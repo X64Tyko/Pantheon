@@ -545,8 +545,16 @@ export const api = {
     const qs = params.toString()
     return request<EpgProgram[]>('GET', `/channels/${channelId}/epg${qs ? `?${qs}` : ''}`)
   },
-  clearChannelEpgCache: (channelId: string) =>
-    request<{ ok: boolean }>('POST', `/channels/${channelId}/epg/clear`),
+    // live=true also drops the schedule cache's usual carve-out for whatever's
+    // currently on-air (Kairos's ScheduleCache::clear()) — only send it after the
+    // user has explicitly agreed to interrupt live playback with this edit.
+    clearChannelEpgCache: (channelId: string, opts?: { hard?: boolean; live?: boolean }) => {
+        const params = new URLSearchParams()
+        if (opts?.hard) params.set('hard', 'true')
+        if (opts?.live) params.set('live', 'true')
+        const qs = params.toString()
+        return request<{ ok: boolean }>('POST', `/channels/${channelId}/epg/clear${qs ? `?${qs}` : ''}`)
+    },
   // EPG preview — POST with optional seed, hours, and draft blocks.
   // Returns { programs, anchors } where anchors maps week-anchor timestamps to mutated seeds.
   previewChannelEpg: (channelId: string, hours?: number, seed?: number, blocks?: Block[]) =>
