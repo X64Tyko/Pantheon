@@ -1,7 +1,15 @@
 import { observer } from 'mobx-react-lite'
-import type { Advancement, BlockType, CursorScope, NoHistoryBehavior, PlayStyle, StartScope } from '../api/types'
+import type {
+    Advancement,
+    BlockType,
+    CursorScope,
+    FillerSelectionMode,
+    NoHistoryBehavior,
+    PlayStyle,
+    StartScope
+} from '../api/types'
 import {
-  ALIGN_OPTS, BLOCK_META, DAYS, DAY_BITS, DELAY_OPTS, EARLY_OPTS, NO_HISTORY_OPTS,
+    ALIGN_OPTS, BLOCK_META, DAYS, DAY_BITS, DELAY_OPTS, EARLY_OPTS, FILLER_SEL_OPTS, NO_HISTORY_OPTS,
 } from './constants'
 import { getLimitMode } from './utils'
 import { HelpTip, HelpSection, GifSlot } from './HelpTip'
@@ -304,6 +312,36 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
             <span className={styles.checkboxLabelText}>Insert filler clips between programs</span>
           </label>
         </div>
+          {d.inter_filler && (
+              <div className={styles.mt9}>
+                  <div className={styles.fieldLabelRow}>
+                      FILLER SELECTION
+                      <HelpTip title="Filler Selection"
+                               tip="How this block picks which filler list to draw from when multiple are attached">
+                          <HelpSection title="Round-robin (default)">
+                              Cycles through the block's filler lists in a fixed order. With only one list attached,
+                              this always draws from the same (only) list.
+                          </HelpSection>
+                          <HelpSection title="Random">
+                              Picks a filler list at random each time. With only one list attached, this has no effect —
+                              attach more than one to see variety here.
+                          </HelpSection>
+                          <HelpSection title="Weighted">
+                              Picks a filler list at random, weighted by each list's own weight value.
+                          </HelpSection>
+                      </HelpTip>
+                  </div>
+                  <select value={d.filler_selection ?? 'round_robin'}
+                          onChange={e => store.setDraft('filler_selection', e.target.value as FillerSelectionMode)}
+                          className={shared.input}>
+                      {FILLER_SEL_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                  {sh && <div className={styles.hintTextTight}>
+                      This picks which filler list to use — the clips within a list are ordered by that list's own
+                      advancement setting (Sequential/Shuffle/Sized) on the Filler tab.
+                  </div>}
+              </div>
+          )}
         {d.advancement === 'smart' && (
           <div className={styles.mt9}>
             <div className={styles.fieldLabel}>COOLDOWN THRESHOLD</div>

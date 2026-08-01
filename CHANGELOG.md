@@ -86,6 +86,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   each of the four content types (`filler_list`/`playlist`/`show`/`movie`) generically, mirroring how
   `ContentRepository::loadFillerItems()`/`RuleEngine::pickFillerSim()` already handle them elsewhere. Covered by
   new tests in `momus/kairos/db/test_schedule_repository.cpp`.
+- **A block's between-episode filler selection mode had no UI control, silently staying on "round-robin" (Hades)**:
+  `block.filler_selection` (which filler *list* a block draws from between episodes when more than one is
+  attached — separate from the channel-level fallback-filler setting above, and separate from each list's own
+  Sequential/Shuffle/Sized clip ordering) was fully wired through the backend and block draft, but no input
+  anywhere let a user actually change it — only the channel-level fallback filler's dropdown was reachable,
+  which doesn't affect this. A block with more than one filler list therefore always cycled them in the same
+  fixed order regardless of intent, reading as "the same fillers keep repeating." Added a "Filler Selection"
+  dropdown to `EditorForm.tsx`, shown whenever "Insert filler clips between programs" is checked.
 - **Editing a channel's blocks while it was live could yank the currently-airing item out from under viewers
   (Kairos)**: `ScheduleCache::clear()` (called from nearly every block/content mutation route in
   `BlockService.cpp`) deleted every `scheduled_program` row for the channel unconditionally, including whatever
@@ -119,6 +127,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `patchDiscontinuitySequence()`'s own rewrite rename-based too, so every reader always sees either the fully-old
   or fully-new file. Same `+temp_file` addition applied to `PreviewSession.cpp`'s Guide hover-preview output,
   which has the identical kill-and-respawn-into-the-same-dir pattern on channel switch.
+- **Live-channel playback could stall and "chirp" repeatedly after a transition until it failed outright, even
+  though the backing encode was still running fine (Hades, Android)**: hls.js's own gap-controller recovers from a
+  buffer hole by nudging `currentTime` forward as a *non-fatal* error (`bufferNudgeOnStall`/`bufferSeekOverHole`) —
+  each nudge is a tiny forced seek, audible as a chirp — and only escalates to a fatal error after several
+  *consecutive* failed nudges within one stall period. That per-stall counter resets the moment playback moves at
+  all, so a stream that nudges past one hole, plays a few frames into the next, nudges again, etc. could repeat
+  indefinitely without ever tripping the fatal path our existing recovery code was waiting on — the only fix was
+  leaving and re-entering the channel. `VideoPlayer.tsx` (shared by `/player`, `/tv`, the Guide preview, and the
+  Cast receiver) now tracks these non-fatal stall events in a rolling window and forces a full hls.js reload
+  (fresh MediaSource, re-fetched manifest) once they repeat 3 times within 12 seconds — the same reset a manual
+  channel re-entry produces. Same pattern added to the Android player (`PlayerScreen.kt`), keyed off repeated
+  `STATE_BUFFERING` transitions on a live channel, forcing ExoPlayer to rebuild its HLS source the same way.
 - **Deleting a Plex-linked playlist or filler list left an orphaned sync-link row, breaking the next sync with a
   `FOREIGN KEY constraint failed` (Kairos)**: `PlaylistRepository::remove()`/`FillerRepository::remove()` only ever
   deleted the parent row — the matching `plex_list_link` row was only cleaned up by a separate `unlinkPlex()` method

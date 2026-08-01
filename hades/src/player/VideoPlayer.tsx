@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type RefObject } from 'react'
+import {useCallback, useEffect, useRef, useState, type RefObject} from 'react'
 import Hls from 'hls.js'
 import { registerReceiverVideoElement } from '../cast/CastReceiverProvider'
 import styles from './VideoPlayer.module.css'
@@ -42,6 +42,11 @@ interface VideoPlayerProps {
 
 export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1, subtitleLanguage = null, audioTrack = -1, startPositionSec, autoPlay = true, controls = false, onTimeUpdate, onEnded, onError }: VideoPlayerProps) {
   const hlsRef = useRef<Hls | null>(null)
+    // Forces the mount effect below to tear down and rebuild the whole hls.js
+    // instance (fresh MediaSource/SourceBuffers, re-fetch the manifest from
+    // scratch) — the same reset a viewer gets by leaving and re-entering a
+    // channel. See recentStallsRef's own comment for why this exists.
+    const [reloadKey, setReloadKey] = useState(0)
 
   // Maps our subtitleTrack index onto whichever of hls.js's own
   // subtitleTracks[] actually corresponds to it — hls.js assigns its own
@@ -211,11 +216,42 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       let networkRetries = 0
       let mediaRetries   = 0
       const MAX_RETRIES  = 3
+        // hls.js's own gap-controller nudges/skips over buffer holes via
+        // *non-fatal* MEDIA_ERROR events (bufferStalledError/bufferNudgeOnStall)
+        // and only escalates to fatal after nudgeMaxRetry consecutive failed
+        // nudges *within one stall period* — but that per-stall nudge counter
+        // resets the moment currentTime moves at all (gap-controller.ts), so a
+        // stream that nudges past one hole, plays a few frames into the next
+        // hole, nudges again, etc. never accumulates enough consecutive
+        // failures to trip the fatal path — it can repeat indefinitely.
+        // Server-side this reads as "stream still running" (the encode never
+        // stopped); client-side it's a real repeating stall — each nudge is a
+        // tiny forced seek, audible as a "chirp" — that only clears once the
+        // whole hls.js instance is torn down and rebuilt (what leaving and
+        // re-entering the channel does). Detect the *pattern* directly instead
+        // of waiting on an escalation that may never fire: repeated stall
+        // reports in a short window force that same full reload ourselves.
+        const recentStalls: number[] = []
+        const STALL_WINDOW_MS = 12_000
+        const STALL_THRESHOLD = 3
       hls.on(Hls.Events.FRAG_LOADED, () => { networkRetries = 0; mediaRetries = 0 })
       hls.on(Hls.Events.ERROR, (_evt, data) => {
         console.warn('[player] hls ERROR fatal=', data.fatal, 'type=', data.type, 'details=', data.details,
           'url=', (data as { url?: string }).url, 'response=', data.response, 'frag=', data.frag?.url)
-        if (!data.fatal) return
+          if (!data.fatal) {
+              if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                  data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL) {
+                  const now = Date.now()
+                  recentStalls.push(now)
+                  while (recentStalls.length && now - recentStalls[0] > STALL_WINDOW_MS) recentStalls.shift()
+                  if (recentStalls.length >= STALL_THRESHOLD) {
+                      console.warn('[player] repeated non-fatal buffer stalls (', recentStalls.length, 'in', STALL_WINDOW_MS, 'ms) — forcing full player reload')
+                      recentStalls.length = 0
+                      setReloadKey(k => k + 1)
+                  }
+              }
+              return
+          }
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
             console.warn('[player] fatal NETWORK_ERROR, retry', networkRetries + 1, 'of', MAX_RETRIES)
@@ -286,8 +322,11 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       hlsRef.current = null
       hls?.destroy()
     }
+      // reloadKey has no meaning of its own — bumping it just re-runs this
+      // effect (cleanup destroys the old hls instance, then a fresh one is
+      // built below) as a forced full reload, see recentStalls' own comment.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifestUrl])
+  }, [manifestUrl, reloadKey])
 
   return (
     <video
