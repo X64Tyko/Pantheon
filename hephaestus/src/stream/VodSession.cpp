@@ -232,7 +232,17 @@ static std::vector<std::string> buildVodVideoArgs(
 	a.push_back(ffmpeg_path);
 	pushLogLevelArgs(a, verbose_transcode_logs);
 
-	a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt"});
+	// +discardcorrupt removed (was here from the original scaffold commit,
+	// part of a generic "low latency streaming" flag combo, never justified
+	// for this specific use — see ChannelSession.cpp's own buildArgs for the
+	// full writeup). It's a demuxer heuristic meant for genuinely lossy
+	// sources (flaky network capture); against a well-formed local file it
+	// can false-positive on legitimate-but-unusual timestamp patterns (VFR,
+	// edit lists, telecine-era masters) and silently drop real reference
+	// frames, which matches real-world reports of periodic
+	// black-frame/stutter/resync glitches far better than any genuine
+	// corruption would.
+	a.insert(a.end(), {"-fflags", "+genpts"});
 
 	pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
 
@@ -321,7 +331,17 @@ static std::vector<std::string> buildVodAudioArgs(
 	a.push_back(ffmpeg_path);
 	pushLogLevelArgs(a, verbose_transcode_logs);
 
-	a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt"});
+	// +discardcorrupt removed (was here from the original scaffold commit,
+	// part of a generic "low latency streaming" flag combo, never justified
+	// for this specific use — see ChannelSession.cpp's own buildArgs for the
+	// full writeup). It's a demuxer heuristic meant for genuinely lossy
+	// sources (flaky network capture); against a well-formed local file it
+	// can false-positive on legitimate-but-unusual timestamp patterns (VFR,
+	// edit lists, telecine-era masters) and silently drop real reference
+	// frames, which matches real-world reports of periodic
+	// black-frame/stutter/resync glitches far better than any genuine
+	// corruption would.
+	a.insert(a.end(), {"-fflags", "+genpts"});
 
 	if (positionMs > 0) {
 		std::ostringstream ss;

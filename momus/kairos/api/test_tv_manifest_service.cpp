@@ -191,7 +191,12 @@ TEST_F(TvManifestServiceTest, StaticHeroAndGuideRowsAreUnaffected)
 	auto guide = findRow(rows, "guide");
 	ASSERT_FALSE(guide.is_null());
 	EXPECT_EQ(guide["type"], "guide");
-	EXPECT_EQ(guide["order"], 6);
+	EXPECT_EQ(guide["order"], 7); // shifted by v105's watch-together row insertion at order 1
+
+	auto watchTogether = findRow(rows, "watch-together");
+	ASSERT_FALSE(watchTogether.is_null());
+	EXPECT_EQ(watchTogether["type"], "watch-together");
+	EXPECT_EQ(watchTogether["order"], 1);
 }
 
 TEST_F(TvManifestServiceTest, StaticShelfRowShapeCarriesAFilterNotADataSource)
@@ -210,6 +215,36 @@ TEST_F(TvManifestServiceTest, StaticShelfRowShapeCarriesAFilterNotADataSource)
 	EXPECT_EQ(shelf["itemAction"], "open-detail");
 	EXPECT_EQ(shelf["endTile"], "navigate-library");
 	EXPECT_EQ(shelf["emptyBehavior"], "hide");
+}
+
+// v105: detail's play-button zone declares which action buttons it offers,
+// same pattern as the hero row's own `actions` — see Database.cpp's v105 comment.
+TEST_F(TvManifestServiceTest, DetailPlayButtonZoneDeclaresActions)
+{
+	auto manifest = fetchManifest();
+	auto zones    = manifest["detail"]["zones"];
+	auto zone     = findRow(zones, "play-button");
+	ASSERT_FALSE(zone.is_null());
+	ASSERT_TRUE(zone.contains("actions"));
+	std::vector<std::string> actions = zone["actions"];
+	EXPECT_EQ(actions, (std::vector<std::string>{"play", "play-from-beginning", "watch-together"}));
+}
+
+// v105: dataSource was dead on every client (confirmed by grep — nothing
+// ever read the `.dataSource` property) and is now gone from the zones that
+// used to carry one.
+TEST_F(TvManifestServiceTest, LibraryZonesNoLongerCarryADataSource)
+{
+	auto manifest = fetchManifest();
+	auto zones    = manifest["library"]["zones"];
+	for (const char* id : {"search-bar", "library-pills", "tile-grid"})
+	{
+		auto zone = findRow(zones, id);
+		ASSERT_FALSE(zone.is_null()) << id;
+		EXPECT_FALSE(zone.contains("dataSource")) << id;
+	}
+	// tile-grid's real (still-used) itemAction survives the cleanup.
+	EXPECT_EQ(findRow(zones, "tile-grid")["itemAction"], "open-detail");
 }
 
 TEST_F(TvManifestServiceTest, PlaylistWithShowOnHomeAppearsAsShelfRow)
@@ -293,17 +328,18 @@ TEST_F(TvManifestServiceTest, PlaylistShelvesOrderAfterStaticRowsPreservingHomeO
 	auto manifest = fetchManifest();
 	auto rows     = manifest["home"]["rows"];
 
-	// 7 static rows (orders 0..6) + 2 playlist rows = 9 total.
-	ASSERT_EQ(rows.size(), 9u);
+	// 8 static rows (orders 0..7, since v105 added watch-together at order 1)
+	// + 2 playlist rows = 10 total.
+	ASSERT_EQ(rows.size(), 10u);
 
 	auto first_row  = findRow(rows, "playlist-" + first_id);
 	auto second_row = findRow(rows, "playlist-" + second_id);
 	ASSERT_FALSE(first_row.is_null());
 	ASSERT_FALSE(second_row.is_null());
 
-	// Both come strictly after every static row's order (max static order = 6).
-	EXPECT_GT(first_row["order"].get<int>(), 6);
-	EXPECT_GT(second_row["order"].get<int>(), 6);
+	// Both come strictly after every static row's order (max static order = 7).
+	EXPECT_GT(first_row["order"].get<int>(), 7);
+	EXPECT_GT(second_row["order"].get<int>(), 7);
 
 	// home_order=0 ("A Shelf") sorts before home_order=1 ("B Shelf") in
 	// listHomeShelves, so its manifest row order must be lower too, even

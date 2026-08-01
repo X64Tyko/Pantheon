@@ -82,6 +82,8 @@
   --hds-space-7: 24px;
   --hds-space-tile-gap: 10px; /* episode tile row gap, season header padding — doesn't fall on the space-1..7 scale */
   --hds-tile-width-shelf: 108px; /* Home shelf card / end-tile width */
+    --hds-tile-hero-height-tv: 320px; /* TvLibraryDetail's hero backdrop min-height floor (paired with a 36vh responsive scale — see that component) and Android TV Detail's own hero height, kept as one shared token instead of two independently-hardcoded 320s */
+    --hds-tile-hero-overlap-tv: 40px; /* TvLibraryDetail's sticky header overlap into the hero backdrop's lower edge */
 
   --hds-font-display:    'Chakra Petch', sans-serif;  /* headings/titles */
   --hds-font-mono-brand: 'JetBrains Mono', monospace; /* meta text/badges — distinct from the base UI's ui-monospace stack */

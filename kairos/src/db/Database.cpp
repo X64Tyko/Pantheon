@@ -2612,6 +2612,53 @@ namespace
 )SQL"
 		}
 
+		// ── v105: three independent SDUI-manifest completeness fixes, done together
+		//         since all three came out of the same Android-vs-Roku manifest audit
+		//         (see project memory) and touch the same two seed tables.
+		//
+		//         1. Watch Together shelf was never a real `home.rows` entry — every
+		//            client hardcoded its existence/position instead of gating and
+		//            ordering it off the manifest the way every other row already is.
+		//            New row_type 'watch-together' (handled identically to 'guide':
+		//            TvManifestService.cpp just signals presence, the client fetches
+		//            its own data — GET /api/watch-together/active — since a session's
+		//            host/member_count shape doesn't fit the uniform ShelfTile GET
+		//            /api/tv/shelf-items already serves). Existing rows shifted down
+		//            one slot so it lands right after hero, matching where every
+		//            client's own hardcoded version already placed it.
+		//
+		//         2. detail-play-button zone gains `actions` — until now Play/Play
+		//            from Beginning/Watch Together were one hardcoded bundle behind a
+		//            single hasZone("play-button") check, unlike `TvHomeRow.actions`
+		//            (already used by the hero row) which lets a client show a subset.
+		//            Listing all three preserves exactly today's behavior; a future
+		//            "hide Watch Together for guests" type feature is now a data
+		//            change, not a client release.
+		//
+		//         3. Drops the `dataSource` key from the three zones that still had
+		//            one (library-search-bar/library-library-pills/library-tile-grid)
+		//            — confirmed dead on every client (Android's own TvManifest.kt
+		//            said as much; grepping hades/src for an actual `.dataSource`
+		//            property read turns up zero). A half-implemented field the
+		//            client-side type models but never reads is worse for Roku to
+		//            reason about while porting than one that's simply absent.
+		,
+		{
+			105, R"SQL(
+    UPDATE tv_shelf SET row_order = row_order + 1 WHERE id != 'hero';
+    INSERT INTO tv_shelf (id, row_order, row_type, title, content_type, params_json, item_action, end_tile, empty_behavior) VALUES
+        ('watch-together', 1, 'watch-together', '', '', '{}', '', '', 'hide');
+
+    UPDATE tv_zone
+    SET config_json = '{"itemAction":"play-resolved","actions":["play","play-from-beginning","watch-together"]}'
+    WHERE id = 'detail-play-button';
+
+    UPDATE tv_zone SET config_json = '{}' WHERE id = 'library-search-bar';
+    UPDATE tv_zone SET config_json = '{}' WHERE id = 'library-library-pills';
+    UPDATE tv_zone SET config_json = '{"itemAction":"open-detail"}' WHERE id = 'library-tile-grid';
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

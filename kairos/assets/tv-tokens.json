@@ -229,6 +229,8 @@
     },
     "sizing": {
       "hds-tile-width-shelf": "108px",
+      "hds-tile-hero-height-tv": "320px",
+      "hds-tile-hero-overlap-tv": "40px",
       "hds-control-height": "38px"
     },
     "other": {}

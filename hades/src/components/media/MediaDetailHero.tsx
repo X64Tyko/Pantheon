@@ -51,8 +51,8 @@ interface MediaDetailHeroProps {
   content_type?:   'show' | 'movie'
   discoverResult?: ScraperSearchResult
   onBack:          () => void
-  /** Rendered inside the sticky header, right after secondaryInfo (studio/folder/sources) — stays locked alongside poster/title rather than scrolling with the admin tooling in `actions`. */
-  playButton?:     ReactNode
+    /** Rendered inside the sticky header, right after secondaryInfo (studio/folder/sources) — stays locked alongside poster/title rather than scrolling with the admin tooling in `actions`. Render-prop (like `actions`) so Play-from-Beginning can read `media.seasonsWithEpisodes` without a second fetch. */
+    playButton?: (media: MediaDetailResult) => ReactNode
   /** Heavier admin/library-management controls (match status, Fix Match, Push to Sources, etc.), rendered between the sticky header and the season shelves as plain scrolling content. Render-prop so it shares this component's own useMediaDetail() result. */
   actions?:        (media: MediaDetailResult) => ReactNode
   /** Admin/details tooling, rendered at the very bottom, after the season shelves. */
@@ -302,7 +302,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, play
               <div className={styles.alignUnderInfo}>
                 <div className={styles.secondaryInfoCol}>
                   {secondaryInfo}
-                  {playButton}
+                    {playButton?.(media)}
                 </div>
               </div>
             </>

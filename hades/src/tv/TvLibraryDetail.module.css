@@ -59,11 +59,11 @@
 }
 
 .heroSpacer {
-  /* mirrors TvLibraryDetail.tsx's HERO_HEIGHT_CSS ('max(36vh, 320px)') minus
-     HERO_OVERLAP (40px) — both are fixed module constants, not runtime
-     state, so this can be a static rule rather than an inline style. If
-     either constant ever changes, update both places. */
-  height: calc(max(36vh, 320px) - 40px);
+    /* mirrors TvLibraryDetail.tsx's HERO_HEIGHT_CSS (36vh, floored at the same
+       --hds-tile-hero-height-tv token) minus --hds-tile-hero-overlap-tv — both
+       sides now read the same two real tokens instead of two independently-
+       hardcoded literals that used to need manual syncing (see index.css). */
+    height: calc(max(36vh, var(--hds-tile-hero-height-tv, 320px)) - var(--hds-tile-hero-overlap-tv, 40px));
 }
 
 .header {
@@ -202,6 +202,52 @@
   font-family: var(--hds-font-display);
   font-size: var(--hds-font-size-tv-title);
   font-weight: 700;
+}
+
+/* Play/Play from Beginning/Watch Together — icon-only while unfocused,
+   expanding to icon+label on remote focus (mirrors the Android TV Detail
+   treatment added for the same reason: three full-text buttons crowded this
+   row once Play from Beginning/Watch Together joined Play). Padding stays
+   fixed so only the label's own max-width/opacity animate, matching
+   Android's CollapsibleActionButton — the surrounding button never jumps. */
+.actionButton {
+    display: flex;
+    align-items: center;
+    gap: var(--hds-space-tile-gap);
+    cursor: pointer;
+    padding: var(--hds-space-4) var(--hds-space-5);
+    border-radius: var(--hds-radius-md);
+    border: none;
+    background: var(--hds-glass);
+    color: var(--hds-txt-hero);
+    font-family: var(--hds-font-display);
+    font-size: var(--hds-font-size-tv-title);
+    font-weight: 600;
+}
+
+.actionButtonFilled {
+    background: var(--hds-gold);
+    color: oklch(0.15 0.02 90);
+    font-weight: 700;
+}
+
+.actionButtonDisabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.actionLabel {
+    display: inline-block;
+    max-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    opacity: 0;
+    transition: max-width var(--hds-transition-fast) ease, opacity var(--hds-transition-fast) ease;
+}
+
+.actionLabelExpanded {
+    max-width: 280px;
+    opacity: 1;
 }
 
 .backButtonDetail {

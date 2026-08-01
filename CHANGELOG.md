@@ -73,6 +73,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and prompts with "Reset positions & save" / "Keep positions & save" / "Cancel" instead of resetting silently;
   non-structural saves are unaffected and still save without a prompt. Covered by new tests in
   `momus/kairos/api/test_preserve_cursor.cpp`.
+- **SDUI manifest completeness pass — Watch Together as a real Home row, per-zone action gating, dead field
+  removed (Kairos, Hades, Android)**: a from-scratch audit comparing how much of the Android client is actually
+  manifest-driven vs hardcoded (prep work for eventually porting Roku onto the same system) turned up three real
+  gaps, all fixed in Kairos migration v105: (1) the Android Watch Together shelf was fully hardcoded (fixed
+  position, unconditional fetch) instead of gated/positioned by the manifest the way every other Home row is —
+  `home.rows` gains a `watch-together` row type, handled like `guide` (presence is the whole signal; the client
+  fetches its own data since a session's host/member_count shape doesn't fit the uniform shelf-tile response every
+  other row resolves through). (2) Detail's Play/Play from Beginning/Watch Together buttons were one hardcoded
+  bundle behind a single zone check — `TvZone` gains an `actions` list (mirroring `TvHomeRow.actions`, which
+  already existed but had no zone equivalent) so each button is independently controllable server-side. (3)
+  `TvZone.dataSource`/`TvDataSource` — confirmed dead on every client (Android's own comments already said as
+  much; grepping hades/src turned up zero actual `.dataSource` reads) — removed entirely rather than left
+  half-implemented. Android also gates its "Library" quick-action on the manifest actually declaring library
+  zones, the same treatment "Guide" already had. Along the way, Android's theme-token model
+  (`TvThemeTokens`/`PantheonColors`) — previously colors-only even though `generate-tv-tokens.mjs` has always
+  emitted spacing/radii/transitions/sizing/fontSizes too — gained a parsed, typed `PantheonMetrics` counterpart
+  (`LocalPantheonMetrics`) for those categories, wired into both flavors' theme providers; this is infrastructure
+  only in this pass (positioning/animation *values*, never behavior — see the audit's own reasoning on why a
+  generic layout DSL isn't the right lever), no existing hardcoded dp/duration constants were retargeted to it yet
+  pending verifying each one against hades' actual CSS individually — except one real consumer added alongside it:
+  Android TV Detail's Play/Play from Beginning/Watch Together buttons (now independently toggleable per the
+  `actions` list above) now collapse to just an icon while unfocused and expand to icon+label on D-pad focus
+  (`CollapsibleActionButton`, animated via `animateContentSize` using the new `hds-transition-fast` token) so all
+  three sit comfortably inline instead of competing for row width as full-text buttons. Covered by new tests in
+  `momus/kairos/api/test_tv_manifest_service.cpp` and `DetailViewModelTest.kt`.
+- **Detail page consistency pass across every client, "first test" for the broader consistency effort (Hades,
+  Android)**: comparing all four Detail implementations (desktop web, web `/tv`, Android mobile, Android TV) found
+  "Play from Beginning" existed only on Android, and web `/tv` was additionally missing "Watch Together" entirely
+  — two clients had 3 actions, one had 2, one had 1. Added `PlayFromBeginningAction` to desktop web
+  (`LibraryDetailActions.tsx`, wired into both its callers — `MediaDetail.tsx` and `HomePage.tsx`'s own inline
+  detail view — via `MediaDetailHero`'s `playButton` prop, now a render-prop like `actions` already was, so it can
+  read `seasonsWithEpisodes` without a second fetch) and both `PlayFromBeginningAction`/a new Watch Together
+  handler to web `/tv` (`TvLibraryDetail.tsx`), which also now honors the `play-button` zone's `actions` list
+  (kairos v105) the same way Android does — previously it rendered Play unconditionally with no zone-actions
+  awareness at all. Web `/tv`'s three buttons also collapse to icon-only while unfocused and expand on remote
+  focus, mirroring Android TV's own treatment above (`.actionButton`/`.actionLabel` in
+  `TvLibraryDetail.module.css`, transitioning on `hds-transition-fast`).
+- **Web `/tv`'s episode row could scroll to the wrong position (or not visibly move at all) the first time D-pad
+  focus entered a collapsed season (Hades)**: `EpisodeShelf.tsx` expands a season's episode row via `useDebounce`
+  on `hovered || hasFocusedChild` (150ms, meant to stop a mouse sweeping across several collapsed seasons from
+  firing a burst of expand/collapse) — but `useFocusable`'s own `scrollIntoView()` fires synchronously the instant
+  a tile receives focus, with no debounce of its own. A discrete D-pad focus landing on an episode inside a still-
+  collapsed season therefore scrolled *before* the row had expanded, computing against its still-near-zero-height
+  CSS grid geometry. Split the debounce to apply only to the hover half (`debouncedHovered`) — `hasFocusedChild`
+  now expands the row instantly, so the scroll and the expand are no longer racing. Hover-driven expansion (mouse)
+  is unaffected.
+- **Android TV Detail's hero height was an independently-hardcoded `320.dp`, one manual edit away from silently
+  drifting from web's own matching value (Hades, Android)**: promoted web's `HERO_HEIGHT_CSS` floor and
+  `HERO_OVERLAP` (both previously plain TS module constants, duplicated a second time as hardcoded literals in
+  `TvLibraryDetail.module.css`'s `.heroSpacer` with a code comment warning "if either constant ever changes,
+  update both places") to real tokens — `--hds-tile-hero-height-tv`/`--hds-tile-hero-overlap-tv` in `index.css`,
+  picked up by `generate-tv-tokens.mjs` automatically. Android's new `PantheonMetrics.heroHeightTv` reads the same
+  token (`DetailScreen.kt` no longer has its own separate `HERO_HEIGHT` constant); web's own two previously-manual
+  duplicate spots (the TS constant and the CSS module) now both read the one token too, closing that
+  drift-by-hand-edit gap on the web side as well.
+- **Live channels (and possibly VOD — one unconfirmed report) periodically showed a black frame/stutter, sometimes
+  recovering cleanly and sometimes appearing to replay the last ~0.25s of frames (Hephaestus)**: every real-content
+  ffmpeg invocation set `-fflags +genpts+discardcorrupt`. `discardcorrupt` is a demuxer heuristic for dropping
+  packets it judges corrupt — appropriate for a genuinely lossy source (flaky network capture, RTSP packet loss),
+  not a well-formed local file, where it can false-positive on legitimate-but-unusual timestamp patterns (VFR
+  content, edit lists, telecine-era masters) and silently drop real reference frames. Traced to the very first
+  Hephaestus scaffold commit — part of a generic "reduce startup latency" flag combo, never independently
+  justified for this specific use, unlike nearly every other ffmpeg flag choice in this codebase. Dropped from all
+  four call sites (`ChannelSession.cpp`, `VodSession.cpp` ×2, `PreviewSession.cpp`), keeping `+genpts`/`-flags
+  low_delay`. Diagnosed from code review, not a captured incident — please retest live.
 
 ### Fixed
 

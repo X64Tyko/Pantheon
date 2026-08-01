@@ -15,7 +15,12 @@ import type {
 import { resolvePlayPath } from '../player/resolvePlayTarget'
 import {joinWatchTogether} from '../player/watchTogetherApi'
 import { MediaDetailHero } from '../components/media/MediaDetailHero'
-import { LibraryDetailActions, PlayAction, WatchTogetherAction } from '../components/media/LibraryDetailActions'
+import {
+    LibraryDetailActions,
+    PlayAction,
+    PlayFromBeginningAction,
+    WatchTogetherAction
+} from '../components/media/LibraryDetailActions'
 import { getScrollPos, saveScrollPos } from '../hooks/scrollMemory'
 import {useAuth} from '../auth/AuthContext'
 import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
@@ -507,8 +512,9 @@ export default function HomePage() {
               id={detailId}
               content_type={detailType}
               onBack={closeDetail}
-              playButton={<>
+              playButton={media => <>
                 <PlayAction id={detailId} content_type={detailType} />
+                  <PlayFromBeginningAction id={detailId} content_type={detailType} media={media}/>
                 <WatchTogetherAction id={detailId} content_type={detailType} />
               </>}
               actions={media => <LibraryDetailActions id={detailId} content_type={detailType} media={media} />}

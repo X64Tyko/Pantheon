@@ -54,7 +54,11 @@ namespace
 	{
 		std::vector<std::string> a{ffmpeg_path};
 		pushLogLevelArgs(a, verbose_transcode_logs);
-		a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt", "-flags", "low_delay", "-re"});
+		// +discardcorrupt dropped — see ChannelSession.cpp's buildArgs for
+		// the full writeup (a leftover generic low-latency flag, not a
+		// deliberate fix, that can false-positive and drop real frames on
+		// legitimate-but-unusual source timestamps).
+		a.insert(a.end(), {"-fflags", "+genpts", "-flags", "low_delay", "-re"});
 		pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
 		if (startOffsetMs > 0)
 		{

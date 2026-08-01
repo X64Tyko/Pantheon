@@ -157,6 +157,17 @@ void TvManifestService::registerRoutes(httplib::Server& svr)
 						home_rows.push_back({{"id", id}, {"order", order}, {"type", "guide"}});
 						continue;
 					}
+					if (row_type == "watch-together")
+					{
+						// No filter/dataSource — a Watch Together session's shape
+						// (host/member_count) doesn't fit the uniform ShelfTile GET
+						// /api/tv/shelf-items already serves every other row through,
+						// so the client fetches its own data (GET
+						// /api/watch-together/active) whenever this row is present,
+						// same "presence is the whole signal" pattern as 'guide' above.
+						home_rows.push_back({{"id", id}, {"order", order}, {"type", "watch-together"}});
+						continue;
+					}
 
 					auto title          = q.getColumn(3).getString();
 					auto content_type   = q.getColumn(4).getString();

@@ -1,12 +1,13 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import {useEffect, useState, type CSSProperties, type ReactNode, type RefObject} from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import {api} from '../api/client'
 import { useMediaDetail } from '../components/media/useMediaDetail'
 import { useScrollCollapse } from '../components/media/useScrollCollapse'
 import { useElementHeight } from '../components/media/useElementHeight'
 import { EpisodeShelf } from '../components/media/EpisodeShelf'
 import { useFocusable } from '../nav/useFocusable'
 import { useNavBack } from '../nav/back'
-import { resolvePlayPath } from '../player/resolvePlayTarget'
+import {resolvePlayPath, resolvePlayTarget} from '../player/resolvePlayTarget'
 import { peekDetailReturnTo, clearPendingDetailReturn } from './tvDetailNav'
 import { useZoneManifest } from './useZoneManifest'
 import styles from './TvLibraryDetail.module.css'
@@ -26,8 +27,16 @@ import styles from './TvLibraryDetail.module.css'
 // max(52vh, 460px)/460px overlap — real-hardware feedback (a TV, not the
 // dev-machine browser this was first tuned in) found that blocked almost
 // all content above the fold with a visibly hard edge where it ended.
-const HERO_HEIGHT_CSS = 'max(36vh, 320px)'
-const HERO_OVERLAP    = 40
+// Floor (320px) and overlap (40px) are real shared tokens now
+// (--hds-tile-hero-height-tv/--hds-tile-hero-overlap-tv, index.css) — Android
+// TV Detail reads the same two values via PantheonMetrics instead of its own
+// independently-hardcoded 320.dp, so the two clients can't silently drift
+// apart on this again. The 36vh responsive scale itself stays local — it's
+// meaningful only for a resizable browser viewport, not a fixed-resolution
+// TV/native surface (see the SDUI-manifest audit's own reasoning for why
+// this kind of viewport-relative sizing isn't a good cross-platform token).
+const HERO_HEIGHT_CSS = 'max(36vh, var(--hds-tile-hero-height-tv, 320px))'
+const HERO_OVERLAP = 40 // mirrors --hds-tile-hero-overlap-tv — see .heroSpacer in the module CSS, the only place this JS constant's value actually needs to match
 
 export function TvLibraryDetail() {
   const navigate = useNavigate()
@@ -60,6 +69,17 @@ export function TvLibraryDetail() {
     // Which fields the meta-block zone renders (kairos v97) — falls back to
     // today's fixed set for a manifest that predates the `fields` key.
     const metaFields = zone('meta-block')?.fields?.length ? zone('meta-block')!.fields! : ['year', 'rating', 'content_type']
+    // Which of play/play-from-beginning/watch-together the play-button zone
+    // offers (kairos v105's `actions` list) — mirrors Android's
+    // DetailViewModel.hasAction exactly: a zone that exists but predates
+    // this field (actions undefined) defaults to showing all three; a
+    // missing zone entirely shows none (callers already gate on hasZone
+    // first, same as before this field existed).
+    const hasAction = (action: string) => {
+        const z = zone('play-button')
+        if (!z) return false
+        return z.actions ? z.actions.includes(action) : true
+    }
 
   const { scrollRef, sentinelRef, collapsed } = useScrollCollapse()
   const { ref: headerRef, height: headerHeight } = useElementHeight<HTMLDivElement>()
@@ -69,9 +89,48 @@ export function TvLibraryDetail() {
     const path = await resolvePlayPath(contentType, id)
     if (path) navigate(path)
   }
+    // Mirrors Android's playFromBeginningTarget(): movie always restarts at 0;
+    // show goes to the first episode of the first shelf as currently
+    // displayed (respects aired-order interleaving the same way the shelves
+    // themselves do), never resolve-play-target's resume logic.
+    const goPlayFromBeginning = () => {
+        if (!id || !contentType) return
+        if (contentType === 'movie') {
+            navigate(`/player/movie/${id}`);
+            return
+        }
+        const first = seasonsWithEpisodes[0]?.episodes[0]
+        if (first) navigate(`/player/episode/${first.episode_id}`)
+    }
+    const [watchTogetherLoading, setWatchTogetherLoading] = useState(false)
+    const goWatchTogether = async () => {
+        if (!id || !contentType) return
+        setWatchTogetherLoading(true)
+        try {
+            const target = await resolvePlayTarget(contentType, id)
+            if (!target) return
+            const session = await api.createWatchTogether(target.kind, target.id)
+            const t = target.positionMs > 0 ? `&t=${target.positionMs}` : ''
+            navigate(`/player/${target.kind}/${target.id}?wt=${session.session_id}${t}`)
+        } catch {
+            // Best-effort, same as desktop web's WatchTogetherAction — a failed
+            // create just leaves the button clickable again.
+        } finally {
+            setWatchTogetherLoading(false)
+        }
+    }
   const goBack = () => navigate(returnTo)
 
   const play = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-detail-play', forceFocus: true, onEnterPress: goPlay })
+    const playFromBeginning = useFocusable<object, HTMLButtonElement>({
+        focusKey: 'tv-detail-play-from-beginning',
+        onEnterPress: goPlayFromBeginning
+    })
+    const watchTogether = useFocusable<object, HTMLButtonElement>({
+        focusKey: 'tv-detail-watch-together',
+        onEnterPress: goWatchTogether,
+        focusable: !watchTogetherLoading
+    })
   const back = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-detail-back', onEnterPress: goBack })
 
   if (loading) {
@@ -163,15 +222,32 @@ export function TvLibraryDetail() {
               )}
 
               <div className={styles.buttonRow}>
-                {hasZone('play-button') && (
-                  <button
-                    ref={play.ref} data-tv-focused={play.focused}
-                    onClick={goPlay}
-                    className={styles.playButton}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
-                    Play
-                  </button>
+                  {/* Each button independently gated on the zone's `actions`
+                    list (kairos v105) — see hasAction above. Icon-only while
+                    unfocused, expanding to icon+label on remote focus
+                    (CollapsibleActionButton) so all three sit comfortably
+                    inline instead of competing for row width, matching the
+                    same treatment Android TV Detail got. */}
+                  {hasZone('play-button') && hasAction('play') && (
+                      <CollapsibleActionButton
+                          focus={play} onClick={goPlay} filled
+                          icon={<svg width="16" height="16" viewBox="0 0 14 14" fill="currentColor">
+                              <path d="M3 1.5v11l9-5.5-9-5.5z"/>
+                          </svg>}
+                          label="Play"
+                      />
+                  )}
+                  {hasZone('play-button') && hasAction('play-from-beginning') && (
+                      <CollapsibleActionButton
+                          focus={playFromBeginning} onClick={goPlayFromBeginning}
+                          icon="↺" label="Play from Beginning"
+                      />
+                  )}
+                  {hasZone('play-button') && hasAction('watch-together') && (
+                      <CollapsibleActionButton
+                          focus={watchTogether} onClick={goWatchTogether} disabled={watchTogetherLoading}
+                          icon="👥" label={watchTogetherLoading ? 'Starting…' : 'Watch Together'}
+                      />
                 )}
                 <button
                   ref={back.ref} data-tv-focused={back.focused}
@@ -206,4 +282,32 @@ export function TvLibraryDetail() {
       </div>
     </div>
   )
+}
+
+// Play/Play from Beginning/Watch Together, collapsed to just `icon` while
+// unfocused and expanding to icon+label on remote focus — see
+// TvLibraryDetail.module.css's .actionButton/.actionLabel for the actual
+// max-width/opacity transition (hds-transition-fast), and Android's
+// CollapsibleActionButton (DetailScreen.kt) for the equivalent on that
+// platform. `focus` is one of this screen's own useFocusable() results
+// (play/playFromBeginning/watchTogether) so each button keeps its own
+// stable focusKey/ref rather than this component creating a new one itself.
+function CollapsibleActionButton({focus, icon, label, onClick, filled, disabled}: {
+    focus: { ref: RefObject<HTMLButtonElement>; focused: boolean }
+    icon: ReactNode
+    label: string
+    onClick: () => void
+    filled?: boolean
+    disabled?: boolean
+}) {
+    return (
+        <button
+            ref={focus.ref} data-tv-focused={focus.focused}
+            onClick={onClick} disabled={disabled}
+            className={`${styles.actionButton} ${filled ? styles.actionButtonFilled : ''} ${disabled ? styles.actionButtonDisabled : ''}`}
+        >
+            {icon}
+            <span className={`${styles.actionLabel} ${focus.focused ? styles.actionLabelExpanded : ''}`}>{label}</span>
+        </button>
+    )
 }

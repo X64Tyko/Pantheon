@@ -154,8 +154,19 @@ static std::vector<std::string> buildArgs(
 	a.push_back(ffmpeg_path);
 	pushLogLevelArgs(a, verbose_transcode_logs);
 
-	// Reduce startup latency / buffer
-	a.insert(a.end(), {"-fflags", "+genpts+discardcorrupt", "-flags", "low_delay"});
+	// Reduce startup latency / buffer. +discardcorrupt deliberately dropped
+	// from the original "+genpts+discardcorrupt" combo (a generic low-
+	// latency-streaming recipe copied into the very first Hephaestus
+	// scaffold commit, never actually justified for this specific use) —
+	// it's a demuxer heuristic for discarding packets it judges corrupt,
+	// appropriate for a genuinely lossy source (flaky network capture, RTSP
+	// packet loss), not a well-formed local file. Real-world reports of
+	// periodic (every few seconds) black-frame/stutter/resync glitches on
+	// live channels match a false-positive drop of a legitimate-but-unusual
+	// packet (VFR content, edit lists, telecine-era masters — real,
+	// documented characteristics of this library elsewhere in this file)
+	// far better than genuine corruption would explain.
+	a.insert(a.end(), {"-fflags", "+genpts", "-flags", "low_delay"});
 
 	// Pace input reads to the source's native frame rate. Without this ffmpeg
 	// transcodes as fast as the CPU/GPU allows (often many times real-time),

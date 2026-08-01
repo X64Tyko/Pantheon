@@ -7,218 +7,379 @@
   <channel id="kairos-2">
     <display-name>Movie Night</display-name>
   </channel>
-  <programme start="20260716000000 +0000" stop="20260716004500 +0000" channel="kairos-1">
-    <title lang="en">Breaking Chemistry</title>
-    <sub-title lang="en">Pilot</sub-title>
-    <episode-num system="xmltv_ns">0.0.0/1</episode-num>
-    <episode-num system="onscreen">S1E1</episode-num>
-    <desc lang="en">Walt meets Jesse.</desc>
-  </programme>
-  <programme start="20260716004500 +0000" stop="20260716013000 +0000" channel="kairos-1">
-    <title lang="en">Breaking Chemistry</title>
-    <sub-title lang="en">Cat's in the Bag</sub-title>
-    <episode-num system="xmltv_ns">0.1.0/1</episode-num>
-    <episode-num system="onscreen">S1E2</episode-num>
-    <desc lang="en">The duo deal with consequences.</desc>
-  </programme>
-  <programme start="20260716013000 +0000" stop="20260716021500 +0000" channel="kairos-1">
-    <title lang="en">Breaking Chemistry</title>
-    <sub-title lang="en">...And the Bag's in the River</sub-title>
-    <episode-num system="xmltv_ns">0.2.0/1</episode-num>
-    <episode-num system="onscreen">S1E3</episode-num>
-    <desc lang="en">A decision must be made.</desc>
-  </programme>
-  <programme start="20260716021500 +0000" stop="20260716030000 +0000" channel="kairos-1">
-    <title lang="en">Breaking Chemistry</title>
-    <sub-title lang="en">Seven Thirty-Seven</sub-title>
-    <episode-num system="xmltv_ns">1.0.0/1</episode-num>
-    <episode-num system="onscreen">S2E1</episode-num>
-    <desc lang="en">A new threat emerges.</desc>
-  </programme>
-  <programme start="20260716030000 +0000" stop="20260716034500 +0000" channel="kairos-1">
+  <programme start="20260801000000 +0000" stop="20260801004500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Down</sub-title>
     <episode-num system="xmltv_ns">1.1.0/1</episode-num>
     <episode-num system="onscreen">S2E2</episode-num>
     <desc lang="en">Walt struggles with his choices.</desc>
   </programme>
-  <programme start="20260716034500 +0000" stop="20260716043000 +0000" channel="kairos-1">
+  <programme start="20260801004500 +0000" stop="20260801013000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Over</sub-title>
     <episode-num system="xmltv_ns">1.2.0/1</episode-num>
     <episode-num system="onscreen">S2E3</episode-num>
     <desc lang="en">The situation escalates.</desc>
   </programme>
-  <programme start="20260716043000 +0000" stop="20260716051500 +0000" channel="kairos-1">
+  <programme start="20260801013000 +0000" stop="20260801021500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Pilot</sub-title>
     <episode-num system="xmltv_ns">0.0.0/1</episode-num>
     <episode-num system="onscreen">S1E1</episode-num>
     <desc lang="en">Walt meets Jesse.</desc>
   </programme>
-  <programme start="20260716051500 +0000" stop="20260716060000 +0000" channel="kairos-1">
+  <programme start="20260801021500 +0000" stop="20260801030000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Cat's in the Bag</sub-title>
     <episode-num system="xmltv_ns">0.1.0/1</episode-num>
     <episode-num system="onscreen">S1E2</episode-num>
     <desc lang="en">The duo deal with consequences.</desc>
   </programme>
-  <programme start="20260716060000 +0000" stop="20260716064500 +0000" channel="kairos-1">
+  <programme start="20260801030000 +0000" stop="20260801034500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">...And the Bag's in the River</sub-title>
     <episode-num system="xmltv_ns">0.2.0/1</episode-num>
     <episode-num system="onscreen">S1E3</episode-num>
     <desc lang="en">A decision must be made.</desc>
   </programme>
-  <programme start="20260716064500 +0000" stop="20260716073000 +0000" channel="kairos-1">
+  <programme start="20260801034500 +0000" stop="20260801043000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Seven Thirty-Seven</sub-title>
     <episode-num system="xmltv_ns">1.0.0/1</episode-num>
     <episode-num system="onscreen">S2E1</episode-num>
     <desc lang="en">A new threat emerges.</desc>
   </programme>
-  <programme start="20260716073000 +0000" stop="20260716081500 +0000" channel="kairos-1">
+  <programme start="20260801043000 +0000" stop="20260801051500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Down</sub-title>
     <episode-num system="xmltv_ns">1.1.0/1</episode-num>
     <episode-num system="onscreen">S2E2</episode-num>
     <desc lang="en">Walt struggles with his choices.</desc>
   </programme>
-  <programme start="20260716081500 +0000" stop="20260716090000 +0000" channel="kairos-1">
+  <programme start="20260801051500 +0000" stop="20260801060000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Over</sub-title>
     <episode-num system="xmltv_ns">1.2.0/1</episode-num>
     <episode-num system="onscreen">S2E3</episode-num>
     <desc lang="en">The situation escalates.</desc>
   </programme>
-  <programme start="20260716090000 +0000" stop="20260716094500 +0000" channel="kairos-1">
+  <programme start="20260801060000 +0000" stop="20260801064500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Pilot</sub-title>
     <episode-num system="xmltv_ns">0.0.0/1</episode-num>
     <episode-num system="onscreen">S1E1</episode-num>
     <desc lang="en">Walt meets Jesse.</desc>
   </programme>
-  <programme start="20260716094500 +0000" stop="20260716103000 +0000" channel="kairos-1">
+  <programme start="20260801064500 +0000" stop="20260801073000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Cat's in the Bag</sub-title>
     <episode-num system="xmltv_ns">0.1.0/1</episode-num>
     <episode-num system="onscreen">S1E2</episode-num>
     <desc lang="en">The duo deal with consequences.</desc>
   </programme>
-  <programme start="20260716103000 +0000" stop="20260716111500 +0000" channel="kairos-1">
+  <programme start="20260801073000 +0000" stop="20260801081500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">...And the Bag's in the River</sub-title>
     <episode-num system="xmltv_ns">0.2.0/1</episode-num>
     <episode-num system="onscreen">S1E3</episode-num>
     <desc lang="en">A decision must be made.</desc>
   </programme>
-  <programme start="20260716111500 +0000" stop="20260716120000 +0000" channel="kairos-1">
+  <programme start="20260801081500 +0000" stop="20260801090000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Seven Thirty-Seven</sub-title>
     <episode-num system="xmltv_ns">1.0.0/1</episode-num>
     <episode-num system="onscreen">S2E1</episode-num>
     <desc lang="en">A new threat emerges.</desc>
   </programme>
-  <programme start="20260716120000 +0000" stop="20260716124500 +0000" channel="kairos-1">
+  <programme start="20260801090000 +0000" stop="20260801094500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Down</sub-title>
     <episode-num system="xmltv_ns">1.1.0/1</episode-num>
     <episode-num system="onscreen">S2E2</episode-num>
     <desc lang="en">Walt struggles with his choices.</desc>
   </programme>
-  <programme start="20260716124500 +0000" stop="20260716133000 +0000" channel="kairos-1">
+  <programme start="20260801094500 +0000" stop="20260801103000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Over</sub-title>
     <episode-num system="xmltv_ns">1.2.0/1</episode-num>
     <episode-num system="onscreen">S2E3</episode-num>
     <desc lang="en">The situation escalates.</desc>
   </programme>
-  <programme start="20260716133000 +0000" stop="20260716141500 +0000" channel="kairos-1">
+  <programme start="20260801103000 +0000" stop="20260801111500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Pilot</sub-title>
     <episode-num system="xmltv_ns">0.0.0/1</episode-num>
     <episode-num system="onscreen">S1E1</episode-num>
     <desc lang="en">Walt meets Jesse.</desc>
   </programme>
-  <programme start="20260716141500 +0000" stop="20260716150000 +0000" channel="kairos-1">
+  <programme start="20260801111500 +0000" stop="20260801120000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Cat's in the Bag</sub-title>
     <episode-num system="xmltv_ns">0.1.0/1</episode-num>
     <episode-num system="onscreen">S1E2</episode-num>
     <desc lang="en">The duo deal with consequences.</desc>
   </programme>
-  <programme start="20260716150000 +0000" stop="20260716154500 +0000" channel="kairos-1">
+  <programme start="20260801120000 +0000" stop="20260801124500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">...And the Bag's in the River</sub-title>
     <episode-num system="xmltv_ns">0.2.0/1</episode-num>
     <episode-num system="onscreen">S1E3</episode-num>
     <desc lang="en">A decision must be made.</desc>
   </programme>
-  <programme start="20260716154500 +0000" stop="20260716163000 +0000" channel="kairos-1">
+  <programme start="20260801124500 +0000" stop="20260801133000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Seven Thirty-Seven</sub-title>
     <episode-num system="xmltv_ns">1.0.0/1</episode-num>
     <episode-num system="onscreen">S2E1</episode-num>
     <desc lang="en">A new threat emerges.</desc>
   </programme>
-  <programme start="20260716163000 +0000" stop="20260716171500 +0000" channel="kairos-1">
+  <programme start="20260801133000 +0000" stop="20260801141500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Down</sub-title>
     <episode-num system="xmltv_ns">1.1.0/1</episode-num>
     <episode-num system="onscreen">S2E2</episode-num>
     <desc lang="en">Walt struggles with his choices.</desc>
   </programme>
-  <programme start="20260716171500 +0000" stop="20260716180000 +0000" channel="kairos-1">
+  <programme start="20260801141500 +0000" stop="20260801150000 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Over</sub-title>
     <episode-num system="xmltv_ns">1.2.0/1</episode-num>
     <episode-num system="onscreen">S2E3</episode-num>
     <desc lang="en">The situation escalates.</desc>
   </programme>
-  <programme start="20260716180000 +0000" stop="20260716184500 +0000" channel="kairos-1">
+  <programme start="20260801150000 +0000" stop="20260801154500 +0000" channel="kairos-1">
     <title lang="en">Breaking Chemistry</title>
     <sub-title lang="en">Pilot</sub-title>
     <episode-num system="xmltv_ns">0.0.0/1</episode-num>
     <episode-num system="onscreen">S1E1</episode-num>
     <desc lang="en">Walt meets Jesse.</desc>
   </programme>
-  <programme start="20260716000000 +0000" stop="20260716020000 +0000" channel="kairos-2">
+  <programme start="20260801154500 +0000" stop="20260801163000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Cat's in the Bag</sub-title>
+    <episode-num system="xmltv_ns">0.1.0/1</episode-num>
+    <episode-num system="onscreen">S1E2</episode-num>
+    <desc lang="en">The duo deal with consequences.</desc>
+  </programme>
+  <programme start="20260801163000 +0000" stop="20260801171500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">...And the Bag's in the River</sub-title>
+    <episode-num system="xmltv_ns">0.2.0/1</episode-num>
+    <episode-num system="onscreen">S1E3</episode-num>
+    <desc lang="en">A decision must be made.</desc>
+  </programme>
+  <programme start="20260801171500 +0000" stop="20260801180000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Seven Thirty-Seven</sub-title>
+    <episode-num system="xmltv_ns">1.0.0/1</episode-num>
+    <episode-num system="onscreen">S2E1</episode-num>
+    <desc lang="en">A new threat emerges.</desc>
+  </programme>
+  <programme start="20260801180000 +0000" stop="20260801184500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Down</sub-title>
+    <episode-num system="xmltv_ns">1.1.0/1</episode-num>
+    <episode-num system="onscreen">S2E2</episode-num>
+    <desc lang="en">Walt struggles with his choices.</desc>
+  </programme>
+  <programme start="20260801184500 +0000" stop="20260801193000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Over</sub-title>
+    <episode-num system="xmltv_ns">1.2.0/1</episode-num>
+    <episode-num system="onscreen">S2E3</episode-num>
+    <desc lang="en">The situation escalates.</desc>
+  </programme>
+  <programme start="20260801193000 +0000" stop="20260801201500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Pilot</sub-title>
+    <episode-num system="xmltv_ns">0.0.0/1</episode-num>
+    <episode-num system="onscreen">S1E1</episode-num>
+    <desc lang="en">Walt meets Jesse.</desc>
+  </programme>
+  <programme start="20260801201500 +0000" stop="20260801210000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Cat's in the Bag</sub-title>
+    <episode-num system="xmltv_ns">0.1.0/1</episode-num>
+    <episode-num system="onscreen">S1E2</episode-num>
+    <desc lang="en">The duo deal with consequences.</desc>
+  </programme>
+  <programme start="20260801210000 +0000" stop="20260801214500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">...And the Bag's in the River</sub-title>
+    <episode-num system="xmltv_ns">0.2.0/1</episode-num>
+    <episode-num system="onscreen">S1E3</episode-num>
+    <desc lang="en">A decision must be made.</desc>
+  </programme>
+  <programme start="20260801214500 +0000" stop="20260801223000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Seven Thirty-Seven</sub-title>
+    <episode-num system="xmltv_ns">1.0.0/1</episode-num>
+    <episode-num system="onscreen">S2E1</episode-num>
+    <desc lang="en">A new threat emerges.</desc>
+  </programme>
+  <programme start="20260801223000 +0000" stop="20260801231500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Down</sub-title>
+    <episode-num system="xmltv_ns">1.1.0/1</episode-num>
+    <episode-num system="onscreen">S2E2</episode-num>
+    <desc lang="en">Walt struggles with his choices.</desc>
+  </programme>
+  <programme start="20260801231500 +0000" stop="20260802000000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Over</sub-title>
+    <episode-num system="xmltv_ns">1.2.0/1</episode-num>
+    <episode-num system="onscreen">S2E3</episode-num>
+    <desc lang="en">The situation escalates.</desc>
+  </programme>
+  <programme start="20260802000000 +0000" stop="20260802004500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Pilot</sub-title>
+    <episode-num system="xmltv_ns">0.0.0/1</episode-num>
+    <episode-num system="onscreen">S1E1</episode-num>
+    <desc lang="en">Walt meets Jesse.</desc>
+  </programme>
+  <programme start="20260802004500 +0000" stop="20260802013000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Cat's in the Bag</sub-title>
+    <episode-num system="xmltv_ns">0.1.0/1</episode-num>
+    <episode-num system="onscreen">S1E2</episode-num>
+    <desc lang="en">The duo deal with consequences.</desc>
+  </programme>
+  <programme start="20260802013000 +0000" stop="20260802021500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">...And the Bag's in the River</sub-title>
+    <episode-num system="xmltv_ns">0.2.0/1</episode-num>
+    <episode-num system="onscreen">S1E3</episode-num>
+    <desc lang="en">A decision must be made.</desc>
+  </programme>
+  <programme start="20260802021500 +0000" stop="20260802030000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Seven Thirty-Seven</sub-title>
+    <episode-num system="xmltv_ns">1.0.0/1</episode-num>
+    <episode-num system="onscreen">S2E1</episode-num>
+    <desc lang="en">A new threat emerges.</desc>
+  </programme>
+  <programme start="20260802030000 +0000" stop="20260802034500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Down</sub-title>
+    <episode-num system="xmltv_ns">1.1.0/1</episode-num>
+    <episode-num system="onscreen">S2E2</episode-num>
+    <desc lang="en">Walt struggles with his choices.</desc>
+  </programme>
+  <programme start="20260802034500 +0000" stop="20260802043000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Over</sub-title>
+    <episode-num system="xmltv_ns">1.2.0/1</episode-num>
+    <episode-num system="onscreen">S2E3</episode-num>
+    <desc lang="en">The situation escalates.</desc>
+  </programme>
+  <programme start="20260802043000 +0000" stop="20260802051500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Pilot</sub-title>
+    <episode-num system="xmltv_ns">0.0.0/1</episode-num>
+    <episode-num system="onscreen">S1E1</episode-num>
+    <desc lang="en">Walt meets Jesse.</desc>
+  </programme>
+  <programme start="20260802051500 +0000" stop="20260802060000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Cat's in the Bag</sub-title>
+    <episode-num system="xmltv_ns">0.1.0/1</episode-num>
+    <episode-num system="onscreen">S1E2</episode-num>
+    <desc lang="en">The duo deal with consequences.</desc>
+  </programme>
+  <programme start="20260802060000 +0000" stop="20260802064500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">...And the Bag's in the River</sub-title>
+    <episode-num system="xmltv_ns">0.2.0/1</episode-num>
+    <episode-num system="onscreen">S1E3</episode-num>
+    <desc lang="en">A decision must be made.</desc>
+  </programme>
+  <programme start="20260802064500 +0000" stop="20260802073000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Seven Thirty-Seven</sub-title>
+    <episode-num system="xmltv_ns">1.0.0/1</episode-num>
+    <episode-num system="onscreen">S2E1</episode-num>
+    <desc lang="en">A new threat emerges.</desc>
+  </programme>
+  <programme start="20260802073000 +0000" stop="20260802081500 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Down</sub-title>
+    <episode-num system="xmltv_ns">1.1.0/1</episode-num>
+    <episode-num system="onscreen">S2E2</episode-num>
+    <desc lang="en">Walt struggles with his choices.</desc>
+  </programme>
+  <programme start="20260802081500 +0000" stop="20260802090000 +0000" channel="kairos-1">
+    <title lang="en">Breaking Chemistry</title>
+    <sub-title lang="en">Over</sub-title>
+    <episode-num system="xmltv_ns">1.2.0/1</episode-num>
+    <episode-num system="onscreen">S2E3</episode-num>
+    <desc lang="en">The situation escalates.</desc>
+  </programme>
+  <programme start="20260801000000 +0000" stop="20260801020000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716020000 +0000" stop="20260716040000 +0000" channel="kairos-2">
+  <programme start="20260801020000 +0000" stop="20260801040000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716040000 +0000" stop="20260716060000 +0000" channel="kairos-2">
+  <programme start="20260801040000 +0000" stop="20260801060000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716060000 +0000" stop="20260716080000 +0000" channel="kairos-2">
+  <programme start="20260801060000 +0000" stop="20260801080000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716080000 +0000" stop="20260716100000 +0000" channel="kairos-2">
+  <programme start="20260801080000 +0000" stop="20260801100000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716100000 +0000" stop="20260716120000 +0000" channel="kairos-2">
+  <programme start="20260801100000 +0000" stop="20260801120000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716120000 +0000" stop="20260716140000 +0000" channel="kairos-2">
+  <programme start="20260801120000 +0000" stop="20260801140000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716140000 +0000" stop="20260716160000 +0000" channel="kairos-2">
+  <programme start="20260801140000 +0000" stop="20260801160000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716160000 +0000" stop="20260716180000 +0000" channel="kairos-2">
+  <programme start="20260801160000 +0000" stop="20260801180000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>
-  <programme start="20260716180000 +0000" stop="20260716200000 +0000" channel="kairos-2">
+  <programme start="20260801180000 +0000" stop="20260801200000 +0000" channel="kairos-2">
+    <title lang="en">Galactic Voyage</title>
+    <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
+  </programme>
+  <programme start="20260801200000 +0000" stop="20260801220000 +0000" channel="kairos-2">
+    <title lang="en">Galactic Voyage</title>
+    <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
+  </programme>
+  <programme start="20260801220000 +0000" stop="20260802000000 +0000" channel="kairos-2">
+    <title lang="en">Galactic Voyage</title>
+    <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
+  </programme>
+  <programme start="20260802000000 +0000" stop="20260802020000 +0000" channel="kairos-2">
+    <title lang="en">Galactic Voyage</title>
+    <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
+  </programme>
+  <programme start="20260802020000 +0000" stop="20260802040000 +0000" channel="kairos-2">
+    <title lang="en">Galactic Voyage</title>
+    <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
+  </programme>
+  <programme start="20260802040000 +0000" stop="20260802060000 +0000" channel="kairos-2">
+    <title lang="en">Galactic Voyage</title>
+    <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
+  </programme>
+  <programme start="20260802060000 +0000" stop="20260802080000 +0000" channel="kairos-2">
+    <title lang="en">Galactic Voyage</title>
+    <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
+  </programme>
+  <programme start="20260802080000 +0000" stop="20260802100000 +0000" channel="kairos-2">
     <title lang="en">Galactic Voyage</title>
     <desc lang="en">An astronaut crew ventures beyond the solar system.</desc>
   </programme>

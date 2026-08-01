@@ -538,6 +538,50 @@ function WatchTogetherButton({ onClick, loading }: { onClick: () => void; loadin
   )
 }
 
+// "Play from Beginning" — ignores watch progress entirely, unlike PlayAction/
+// WatchTogetherAction above. Mirrors Android's DetailViewModel.
+// playFromBeginningTarget() exactly: a movie always restarts at position 0;
+// a show goes to the first episode of the first shelf as currently
+// displayed (media.seasonsWithEpisodes[0] — respects aired-order
+// interleaving the same way the shelves the viewer actually sees do,
+// whatever season/special genuinely renders first). Computed from
+// MediaDetailHero's own already-fetched useMediaDetail() result (the
+// `media` render-prop, same one `actions` already receives) rather than a
+// second fetch or a server round-trip — there's no resume logic to
+// delegate to resolve-play-target for here.
+export function PlayFromBeginningAction({id, content_type, discoverResult, media}: {
+    id?: string; content_type?: 'show' | 'movie'; discoverResult?: ScraperSearchResult; media: MediaDetailResult
+}) {
+    const navigate = useNavigate()
+    const contentType: 'show' | 'movie' = discoverResult?.content_type ?? content_type ?? 'show'
+    if (discoverResult || !id || !content_type) return null
+
+    const firstEpisodeId = media.seasonsWithEpisodes[0]?.episodes[0]?.episode_id
+    const disabled = contentType === 'show' && !firstEpisodeId
+
+    const handleClick = () => {
+        if (contentType === 'movie') navigate(`/player/movie/${id}`)
+        else if (firstEpisodeId) navigate(`/player/episode/${firstEpisodeId}`)
+    }
+    return <PlayFromBeginningButton onClick={handleClick} disabled={disabled}/>
+}
+
+function PlayFromBeginningButton({onClick, disabled}: { onClick: () => void; disabled?: boolean }) {
+    const {ref, focused} = useFocusable<object, HTMLButtonElement>({
+        focusKey: 'detail-play-from-beginning',
+        onEnterPress: onClick,
+        focusable: !disabled
+    })
+    return (
+        <button
+            ref={ref} data-tv-focused={focused}
+            onClick={onClick} disabled={disabled}
+            className={`${styles.secondaryActionButton} ${disabled ? styles.secondaryActionButtonDisabled : ''}`}>
+            ↺ Play from Beginning
+        </button>
+    )
+}
+
 function PlayButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
   const { ref, focused, focusSelf } = useFocusable<object, HTMLButtonElement>({ focusKey: 'detail-play', onEnterPress: onClick, focusable: !loading })
   // Whenever this button exists, it's the detail view's primary action —

@@ -15,9 +15,16 @@ function toQueueItems(episodes: Episode[]): QueueItem[] {
   }))
 }
 
-// Debounces both directions of the expand/collapse trigger — sweeping the
-// mouse across several collapsed season tiles on the way to somewhere else
-// no longer fires a burst of expand/collapse for each one it passes over.
+// Debounces both directions of *hover*-driven expand/collapse — sweeping
+// the mouse across several collapsed season tiles on the way to somewhere
+// else no longer fires a burst of expand/collapse for each one it passes
+// over. Deliberately NOT applied to focus-driven expansion (hasFocusedChild
+// below) — useFocusable's own scrollIntoView() fires synchronously the
+// moment a tile receives focus, with no debounce of its own, so a debounced
+// expand would still have the row visually collapsed (CSS grid-rows: 0fr,
+// near-zero real height) at the exact moment the scroll runs, computing
+// against the wrong geometry. A discrete D-pad/keyboard focus landing is a
+// one-shot event anyway, not a rapid sweep — there's nothing to debounce.
 const HOVER_DEBOUNCE_MS = 150
 
 interface EpisodeShelfProps {
@@ -58,8 +65,9 @@ export function EpisodeShelf({ seasonNumber, seasonName, episodes, onEpisodeHove
     trackChildren: true,
     saveLastFocusedChild: true,
   })
-  const rawExpanded = hovered || hasFocusedChild
-  const expanded = useDebounce(rawExpanded, HOVER_DEBOUNCE_MS)
+    // Only the hover half is debounced — see HOVER_DEBOUNCE_MS's own comment.
+    const debouncedHovered = useDebounce(hovered, HOVER_DEBOUNCE_MS)
+    const expanded = debouncedHovered || hasFocusedChild
 
   return (
     <div

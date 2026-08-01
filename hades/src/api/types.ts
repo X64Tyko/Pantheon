@@ -1354,36 +1354,34 @@ export interface ResolvedPlayTarget {
 // Guide's zone layout, shared identically by /tv and (eventually) native
 // clients. See kairos/src/db/Database.cpp's v81 migration + TvManifestService
 // for the server side; hades/src/tv/useHomeManifest.ts for how /tv consumes
-// it. Deliberately loose typing on dataSource.params/zone config (Record<string,
-// unknown>) — the manifest is data describing composition, not a typed
-// contract for every possible future field.
+// it. Deliberately loose typing on zone config (Record<string, unknown>) —
+// the manifest is data describing composition, not a typed contract for
+// every possible future field.
 export type TvItemAction =
   | 'open-detail' | 'play-direct-with-position' | 'play-latest-episode'
   | 'play-resolved' | 'navigate-library' | 'watch-live'
 
-// Still used by TvZone (Library/Detail/Guide) — those carry a genuinely
-// different, per-zone endpoint/queryParam config (see kairos's tv_zone seed
-// data) that no client ever fetches through automatically the way Home rows
-// used to; only filterFields/fields are actually read. Home rows themselves
-// no longer use this — see TvHomeRow.filter below.
-export interface TvDataSource {
-    endpoint?: string
-    endpoints?: string[]
-    params?: Record<string, unknown>
-    queryParam?: string
-}
+// TvDataSource/TvZone.dataSource removed in kairos v105 — confirmed dead on
+// every client (nothing anywhere ever read `.dataSource`, on this client or
+// Android's), a stale leftover from before Home rows moved to the opaque
+// `filter` shape below. Was a half-implemented per-zone endpoint/queryParam
+// config that no client ever actually fetched through automatically.
 
 export interface TvHomeRow {
   id:    string
   order: number
-  type:  'hero' | 'shelf' | 'guide'
+    type: 'hero' | 'shelf' | 'guide' | 'watch-together'
   title?: string
     // Opaque — forwarded verbatim as query params to GET /api/tv/shelf-items
     // (via api.getTvShelfItems). Never inspected/branched on client-side; the
     // server decides what each key means and how to resolve it into tiles, so
     // a new shelf "shape" (e.g. today's mixed-media shelves, which the old
     // dataSource.endpoint design couldn't express at all) never needs a
-    // client-side change to support.
+    // client-side change to support. Absent for 'guide'/'watch-together' rows
+    // — those carry no filter at all, since neither resolves through GET
+    // /api/tv/shelf-items (a session's host/member_count shape doesn't fit
+    // the uniform tile shape every other row's filter resolves to); the row's
+    // mere presence in `home.rows` is the whole signal, same as 'guide'.
     filter?: Record<string, unknown>
   itemAction?:  TvItemAction
   endTile?:     TvItemAction
@@ -1395,7 +1393,6 @@ export interface TvHomeRow {
 export interface TvZone {
   id:    string
   order: number
-  dataSource?:   TvDataSource
   filterFields?: string[]
   itemAction?:   TvItemAction
   showOnly?:     boolean
@@ -1405,6 +1402,15 @@ export interface TvZone {
     // empty means a manifest that predates it, so callers fall back to their
     // own fixed field set rather than rendering nothing.
     fields?: string[]
+    // Which action buttons this zone offers — currently only detail's
+    // play-button zone declares this (kairos v105: "play"/"play-from-beginning"/
+    // "watch-together"). A loose string[] rather than a closed union, same
+    // "server owns the vocabulary" reasoning as filterFields/fields — a zone
+    // this generic can't assume every future consumer wants the same set of
+    // action ids. undefined means a manifest predating this field (or a zone
+    // that's never declared it), so callers should default to showing
+    // whatever they showed before this field existed rather than nothing.
+    actions?: string[]
 }
 
 // GET /api/tv/shelf-items' response item shape — the same render-ready tile
