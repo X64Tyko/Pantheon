@@ -35,6 +35,7 @@ interface Settings {
   stream_buffer_size:     number
   image_cache_ttl_hours:  number
   verbose_transcode_logs: boolean
+    ffmpeg_debug_logs: boolean
   verbose_gateway_logs:   boolean
   hades_debug:            boolean
   cast_app_id:            string
@@ -1612,6 +1613,17 @@ const applyBuffer = () => {
                 disabled={!settings || saving}
                 onChange={v => patch({ verbose_transcode_logs: v })}
               />
+            </SettingRow>
+              <SettingRow
+                  label="Ffmpeg Debug Logging"
+                  hint="Streams every spawned ffmpeg's stderr live into this Activity page instead of only capturing it for an on-failure dump — combine with Verbose Transcode Logging above for the full picture (command line, -v verbose detail, periodic stats) while diagnosing a live transcode issue. Applies to new streams within ~15s, no restart needed."
+              >
+                  <Toggle
+                      id="ffmpeg_debug_logs"
+                      checked={settings?.ffmpeg_debug_logs ?? false}
+                      disabled={!settings || saving}
+                      onChange={v => patch({ffmpeg_debug_logs: v})}
+                  />
             </SettingRow>
             <SettingRow
               label="Verbose Gateway Logging"

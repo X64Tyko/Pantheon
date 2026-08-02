@@ -152,10 +152,19 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
 // applies once nothing here is actually targeting a browser — but only when
 // source_audio says there's actually more than stereo to preserve; a
 // surround codec buys nothing for an already-stereo source.
+// debug_showinfo: appends the `ashowinfo` filter, which logs each audio
+// frame's pts_time to stderr — paired with the `showinfo` video filter a
+// caller can push into its own vfParts, this gives a directly comparable
+// per-stream timestamp trail for diagnosing A/V drift (see
+// FfmpegProcess.cpp's stderr timestamp-prefixing, added for the same
+// purpose). Off by default: at normal per-frame audio rates this is one line
+// per ~20-40ms of audio, far too chatty to leave on outside active
+// diagnosis.
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
 						  int audio_bitrate_kbps,
 						  const std::optional<ClientCapabilities>& client_caps = std::nullopt,
-						  const AudioTrack* source_audio                       = nullptr);
+						  const AudioTrack* source_audio                       = nullptr,
+						  bool debug_showinfo                                  = false);
 
 // Joins vfParts with commas and appends "-vf <joined>" to `a` if non-empty.
 void pushVideoFilterArgs(std::vector<std::string>& a, const std::vector<std::string>& vfParts);

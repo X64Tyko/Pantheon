@@ -317,3 +317,29 @@ std::optional<bool> KairosClient::getVerboseTranscodeLogs()
 		return std::nullopt;
 	}
 }
+
+std::optional<bool> KairosClient::getFfmpegDebugLogs()
+{
+	auto cli = makeClient(base_url);
+	auto res = cli.Get("/api/config/public-settings");
+	if (!res || res->status != 200)
+	{
+		std::cerr << "[kairos] GET /api/config/public-settings -> "
+			<< (res ? std::to_string(res->status) : "no response") << "\n";
+		return std::nullopt;
+	}
+	try
+	{
+		auto j = json::parse(res->body);
+		if (j.contains("ffmpeg_debug_logs") && j["ffmpeg_debug_logs"].is_boolean())
+		{
+			return j["ffmpeg_debug_logs"].get<bool>();
+		}
+		return std::nullopt;
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "[kairos] getFfmpegDebugLogs JSON parse error: " << e.what() << "\n";
+		return std::nullopt;
+	}
+}

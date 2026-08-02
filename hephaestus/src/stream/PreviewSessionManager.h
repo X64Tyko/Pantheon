@@ -41,6 +41,7 @@ private:
 	// its own either, just these two global scalars.
 	std::mutex settings_mtx;
 	std::optional<bool> cached_verbose_transcode_logs;
+	std::optional<bool> cached_ffmpeg_debug_logs;
 	int cached_buffer_size = 0;
 	std::atomic<bool> stop_settings_refresh{false};
 	std::thread settings_refresh_thread;

@@ -7,50 +7,91 @@
 #include <sys/wait.h>
 #include <thread>
 #include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+
+// Wall-clock (not stream-relative) timestamp for each forwarded ffmpeg
+// stderr line. ffmpeg's own timings in this output (showinfo/ashowinfo's
+// pts_time, -stats' time=) are all relative to the stream's own start, not
+// wall time — without this prefix there's no way to line up "video frame at
+// pts_time X" against "audio frame at pts_time Y" to see which one is
+// actually arriving late in real time, which is the whole point of turning
+// this logging on to diagnose A/V drift.
+static std::string timestampNow()
+{
+	using namespace std::chrono;
+	auto now      = system_clock::now();
+	auto ms       = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+	std::time_t t = system_clock::to_time_t(now);
+	std::tm tm{};
+	localtime_r(&t, &tm);
+	std::ostringstream ss;
+	ss << std::put_time(&tm, "%H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << ms.count();
+	return ss.str();
+}
 
 FfmpegProcess::FfmpegProcess(std::vector<std::string> args,
-							  DataCallback on_data,
-							  ExitCallback on_exit,
-							  int buf_size,
-							  bool log_stderr,
-							  bool verbose)
+							 DataCallback on_data,
+							 ExitCallback on_exit,
+							 int buf_size,
+							 bool log_stderr,
+							 bool verbose)
 	: args(std::move(args))
 	, on_data(std::move(on_data))
 	, on_exit(std::move(on_exit))
 	, log_stderr(log_stderr)
 	, verbose(verbose)
 	, buffer_size(buf_size)
-	, stderr_tail_max(verbose ? kStderrTailMaxVerbose : kStderrTailMaxDefault) {}
+	, stderr_tail_max(verbose ? kStderrTailMaxVerbose : kStderrTailMaxDefault)
+{
+}
 
-FfmpegProcess::~FfmpegProcess() {
+FfmpegProcess::~FfmpegProcess()
+{
 	kill();
 	if (stderr_thread.joinable()) stderr_thread.join();
 	if (reader_thread.joinable()) reader_thread.join();
 }
 
-bool FfmpegProcess::start() {
-	if (verbose) {
+bool FfmpegProcess::start()
+{
+	if (verbose)
+	{
 		std::string cmd;
-		for (auto& a : args) { if (!cmd.empty()) cmd += ' '; cmd += a; }
+		for (auto& a : args)
+		{
+			if (!cmd.empty()) cmd += ' ';
+			cmd += a;
+		}
 		std::cerr << "[ffmpeg] spawning: " << cmd << "\n";
 	}
 
 	int out_pipe[2], err_pipe[2];
 	if (pipe(out_pipe) == -1) return false;
-	if (pipe(err_pipe) == -1) { close(out_pipe[0]); close(out_pipe[1]); return false; }
+	if (pipe(err_pipe) == -1)
+	{
+		close(out_pipe[0]);
+		close(out_pipe[1]);
+		return false;
+	}
 
 	// Read ends are not inherited by child
 	fcntl(out_pipe[0], F_SETFD, FD_CLOEXEC);
 	fcntl(err_pipe[0], F_SETFD, FD_CLOEXEC);
 
 	pid = fork();
-	if (pid == -1) {
-		close(out_pipe[0]); close(out_pipe[1]);
-		close(err_pipe[0]); close(err_pipe[1]);
+	if (pid == -1)
+	{
+		close(out_pipe[0]);
+		close(out_pipe[1]);
+		close(err_pipe[0]);
+		close(err_pipe[1]);
 		return false;
 	}
 
-	if (pid == 0) {
+	if (pid == 0)
+	{
 		// Child: wire stdout and stderr to their respective pipes
 		close(out_pipe[0]);
 		close(err_pipe[0]);
@@ -77,42 +118,47 @@ bool FfmpegProcess::start() {
 	// by the LogTee in main and forwarded to /api/logs/stream in Hades. Regardless of
 	// that flag, the last few KB are always kept in stderr_tail so a failed exit can
 	// print ffmpeg's real reason (see reader_thread below) instead of just a code.
-	stderr_thread = std::thread([this] {
+	stderr_thread = std::thread([this]
+	{
 		char buf[4096];
 		std::string partial;
-		while (true) {
+		while (true)
+		{
 			ssize_t n = read(stderr_fd, buf, sizeof(buf));
 			if (n <= 0) break;
 			{
 				std::lock_guard<std::mutex> lock(stderr_mtx);
 				stderr_tail.append(buf, static_cast<size_t>(n));
-				if (stderr_tail.size() > stderr_tail_max)
-					stderr_tail.erase(0, stderr_tail.size() - stderr_tail_max);
+				if (stderr_tail.size() > stderr_tail_max) stderr_tail.erase(0, stderr_tail.size() - stderr_tail_max);
 			}
 			if (!log_stderr) continue; // still captured above, just not streamed live
-			for (ssize_t i = 0; i < n; ++i) {
-				if (buf[i] == '\n') {
-					if (!partial.empty())
-						std::cerr << "[ffmpeg] " << partial << "\n";
+			for (ssize_t i = 0; i < n; ++i)
+			{
+				if (buf[i] == '\n')
+				{
+					if (!partial.empty()) std::cerr << "[ffmpeg] " << timestampNow() << " " << partial << "\n";
 					partial.clear();
-				} else {
+				}
+				else
+				{
 					partial += buf[i];
 				}
 			}
 		}
-		if (log_stderr && !partial.empty())
-			std::cerr << "[ffmpeg] " << partial << "\n";
+		if (log_stderr && !partial.empty()) std::cerr << "[ffmpeg] " << timestampNow() << " " << partial << "\n";
 		// stderr_fd closed by kill()
 	});
 
-	reader_thread = std::thread([this] {
+	reader_thread = std::thread([this]
+	{
 		uint8_t* buf = new uint8_t[buffer_size];
-		while (true) {
+		while (true)
+		{
 			ssize_t n = read(stdout_fd, buf, buffer_size);
 			if (n <= 0) break;
 			if (on_data) on_data(buf, static_cast<size_t>(n));
 		}
-		
+
 		delete[] buf;
 		// stdout_fd closed by kill() — reader thread must not close it to
 		// avoid a double-close race.
@@ -125,11 +171,19 @@ bool FfmpegProcess::start() {
 		// join, and doing it from both places races. stderr_tail is read
 		// under its own mutex instead, which is safe even if stderr_thread
 		// is still appending its last chunk (worst case: a few bytes short).
-		if (code != 0 && !killed.load()) {
+		if (code != 0 && !killed.load())
+		{
 			std::string cmd;
-			for (auto& a : args) { if (!cmd.empty()) cmd += ' '; cmd += a; }
+			for (auto& a : args)
+			{
+				if (!cmd.empty()) cmd += ' ';
+				cmd += a;
+			}
 			std::string tail;
-			{ std::lock_guard<std::mutex> lock(stderr_mtx); tail = stderr_tail; }
+			{
+				std::lock_guard<std::mutex> lock(stderr_mtx);
+				tail = stderr_tail;
+			}
 			std::cerr << "[ffmpeg] failed (code=" << code << "): " << cmd << "\n";
 			if (!tail.empty()) std::cerr << "[ffmpeg] stderr:\n" << tail << "\n";
 		}
@@ -137,7 +191,8 @@ bool FfmpegProcess::start() {
 		// Only fire on_exit for natural/crash exits, never for intentional kills.
 		// When killed=true the session is already tearing down; calling on_exit
 		// would race with stop() and could spawn a new ffmpeg after cleanup.
-		if (on_exit && !killed.load()) {
+		if (on_exit && !killed.load())
+		{
 			auto cb = on_exit;
 			TaskRegistry::global().spawn([cb, code] { cb(code); });
 		}
@@ -146,25 +201,29 @@ bool FfmpegProcess::start() {
 	return true;
 }
 
-bool FfmpegProcess::pause() {
+bool FfmpegProcess::pause()
+{
 	if (killed.load()) return false;
 	if (paused.exchange(true)) return true; // already paused
 	if (pid > 0) ::kill(pid, SIGSTOP);
 	return true;
 }
 
-bool FfmpegProcess::resume() {
+bool FfmpegProcess::resume()
+{
 	if (killed.load()) return false;
 	if (!paused.exchange(false)) return true; // wasn't paused
 	if (pid > 0) ::kill(pid, SIGCONT);
 	return true;
 }
 
-bool FfmpegProcess::isAlive() const {
+bool FfmpegProcess::isAlive() const
+{
 	return !killed.load() && pid > 0 && ::kill(pid, 0) == 0;
 }
 
-void FfmpegProcess::kill() {
+void FfmpegProcess::kill()
+{
 	if (killed.exchange(true)) return; // already killed
 	// SIGCONT first: POSIX leaves SIGTERM pending/undelivered against a
 	// stopped (SIGSTOP'd) process until it's continued — without this, killing
@@ -175,8 +234,16 @@ void FfmpegProcess::kill() {
 	if (pid > 0) ::kill(pid, SIGCONT);
 	if (pid > 0) ::kill(pid, SIGTERM);
 	// Closing read ends unblocks the read() calls in reader_thread and stderr_thread
-	if (stdout_fd != -1) { close(stdout_fd); stdout_fd = -1; }
-	if (stderr_fd != -1) { close(stderr_fd); stderr_fd = -1; }
+	if (stdout_fd != -1)
+	{
+		close(stdout_fd);
+		stdout_fd = -1;
+	}
+	if (stderr_fd != -1)
+	{
+		close(stderr_fd);
+		stderr_fd = -1;
+	}
 
 	// Don't return until the process is actually gone. reader_thread owns
 	// the real waitpid() (reaping happens once its read() unblocks above),
@@ -185,10 +252,12 @@ void FfmpegProcess::kill() {
 	// freed until the process really exits, and callers like
 	// PreviewSession::switchChannel() spawn a replacement immediately after
 	// kill() returns, wanting that same limited slot.
-	if (pid > 0) {
+	if (pid > 0)
+	{
 		constexpr int kGraceMs = 2000, kPollMs = 50;
-		int waited = 0;
-		while (waited < kGraceMs && ::kill(pid, 0) == 0) {
+		int waited             = 0;
+		while (waited < kGraceMs && ::kill(pid, 0) == 0)
+		{
 			std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
 			waited += kPollMs;
 		}

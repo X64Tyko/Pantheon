@@ -74,6 +74,7 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			{"stream_buffer_size", g_buffer_size.load()},
 			{"image_cache_ttl_hours", conf_.getImageCacheTtlHours()},
 			{"verbose_transcode_logs", g_verbose_transcode_logs.load()},
+			{"ffmpeg_debug_logs", g_ffmpeg_debug_logs.load()},
 			{"verbose_gateway_logs", g_verbose_gateway_logs.load()},
 			{"hades_debug", g_hades_debug.load()},
 			{"cast_app_id", castAppId()},
@@ -113,6 +114,7 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 		route::ok(res, json{
 					  {"stream_buffer_size", g_buffer_size.load()},
 					  {"verbose_transcode_logs", g_verbose_transcode_logs.load()},
+					  {"ffmpeg_debug_logs", g_ffmpeg_debug_logs.load()},
 					  {"verbose_gateway_logs", g_verbose_gateway_logs.load()},
 					  {"cast_app_id", castAppId()},
 					  {"default_landing_page", defaultLandingPage()},
@@ -195,6 +197,12 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 				bool v = b["verbose_transcode_logs"].get<bool>();
 				g_verbose_transcode_logs.store(v);
 				persistFlag("verbose_transcode_logs", v);
+			}
+			if (b.contains("ffmpeg_debug_logs") && b["ffmpeg_debug_logs"].is_boolean())
+			{
+				bool v = b["ffmpeg_debug_logs"].get<bool>();
+				g_ffmpeg_debug_logs.store(v);
+				persistFlag("ffmpeg_debug_logs", v);
 			}
 			if (b.contains("verbose_gateway_logs") && b["verbose_gateway_logs"].is_boolean())
 			{

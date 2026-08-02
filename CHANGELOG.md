@@ -50,6 +50,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Diagnostics for tracking down A/V drift on live channels, specifically software (non-hardware-accelerated)
+  transcoding under real CPU contention (Hephaestus)**: reported on the public demo server as audio and video
+  slowly desyncing on a software-transcoded channel — a plausible mechanism given the codebase already had no
+  `-thread_queue_size`/`-max_muxing_queue_size` tuning and no per-stream drift correction, but not yet confirmed
+  against real evidence. Turning on the existing `verbose_transcode_logs` setting now gets meaningfully more to look
+  at: `-stats -stats_period 2` (ffmpeg only auto-prints `-stats` on a real tty, never true here since stderr is
+  always piped, so it needs to be requested explicitly) for periodic fps/speed/drop/dup counters, plus `showinfo`/
+  `ashowinfo` filters on the live-channel transcode bucket's video and audio chains reporting each frame's
+  `pts_time` right before it reaches its encoder. Every captured ffmpeg stderr line (when Ffmpeg Debug Logging,
+  below, is also on) is now prefixed with a wall-clock timestamp (`FfmpegProcess.cpp`) — ffmpeg's own timings here
+  are all stream-relative, so without this there was no way to line up "video frame at pts_time X" against "audio
+  frame at pts_time Y" to see which stream is actually falling behind in real time. All of this is diagnostic-only,
+  gated behind `verbose_transcode_logs` (too chatty to leave on otherwise), and expected to come back out once the
+  actual root cause is confirmed and fixed. Covered by a new
+  `PushAudioEncoderArgs_DebugShowinfoAppendsAshowinfoFilter` test in `momus/hephaestus/test_encoder_args.cpp`;
+  `PushLogLevelArgs`'s existing test updated for the new `-stats` args.
+- **`HEPH_FFMPEG_DEBUG` (whether ffmpeg's stderr streams live into the Activity page vs. only being tail-captured
+  for an on-failure dump) is now a runtime Settings toggle ("Ffmpeg Debug Logging"), not a Hephaestus-startup-only
+  env var (Kairos, Hephaestus, Hades)**: needed a restart to flip while diagnosing the A/V drift issue just above,
+  unlike its neighboring `verbose_transcode_logs` ("Verbose Transcode Logging") which was already live-toggleable —
+  an inconsistency once the two are meant to be used together. Wired through the exact same path as that setting:
+  a new Kairos-owned, DB-persisted `g_ffmpeg_debug_logs` flag (`RuntimeFlags.h`/`.cpp`), exposed on both
+  `GET /api/config/settings` (admin) and `GET /api/config/public-settings` (unauthenticated, for Hephaestus) and
+  settable via `PATCH /api/config/settings`; a new `KairosClient::getFfmpegDebugLogs()` polled by all three of
+  Hephaestus's session managers (`SessionManager`/`VodSessionManager`/`PreviewSessionManager`) on their existing
+  ~15s/5min cache-refresh cadence, same as `getVerboseTranscodeLogs()`. `HEPH_FFMPEG_DEBUG` still sets the
+  pre-first-poll default at cold start, same role `HEPH_VERBOSE_TRANSCODE` already had.
 - **Live-channel viewing now shows up in Play History / "who's watching" telemetry (Kairos, Hades, pantheon-android)**:
   `PUT /api/watch-progress/:content_type/:id`'s `validContentType` only ever accepted `movie`/`episode` — a channel
   viewer produced no `playback_history` row at all, so the Activity tab's Play History table and "who's actively
@@ -242,6 +269,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   explanatory hint whenever episode-scope alignment is active (`start_scope === 'episode' && align_to_mins > 0`),
   and keeps Filler Selection visible in that case too, instead of gating both on a setting the scheduler doesn't
   actually consult there.
+- **Syncing a Plex/Jellyfin/Emby-linked playlist or filler list failed with "FOREIGN KEY constraint failed" every
+  single sync, for as long as the link existed (Kairos)**: `plex_list_link` has no FK constraint tying its `list_id`
+  back to `playlist`/`filler_list` (only to `media_source`), so a link whose target got deleted through a path that
+  bypasses `PlaylistRepository::remove()`/`FillerRepository::remove()` — both of which already correctly clean up
+  their own `plex_list_link` row — survives as an orphan. `POST /api/config/library/reset` was exactly such a path:
+  it wipes `playlist`/`playlist_item` with raw SQL and never touched `plex_list_link`. The next `syncPlexLinks()`
+  pass then tried to `INSERT INTO playlist_item`/`filler_list_item` for a `playlist_id`/`filler_list_id` that no
+  longer existed, which does have a real FK, and died — reported as "sync all silently fails partway through, right
+  when it gets to re-syncing linked lists," reproducing on every sync thereafter with no way to recover short of a
+  manual DB fix. `syncPlexLinks()` now checks whether each link's target still exists before syncing it and
+  self-heals by deleting the stale `plex_list_link` row instead of retrying forever; the library-reset route also
+  now deletes `plex_list_link` rows for playlists it wipes, closing the leak at the source. Covered by 3 new tests
+  in `momus/kairos/source/test_sync_manager.cpp` (stale playlist link, stale filler-list link, and a sanity check
+  that a still-valid link is left alone) — verified the two stale-link tests fail with a real FK-constraint crash
+  without the fix before confirming they pass with it.
 - **A live channel always showed both a transcode and a direct-stream session active, and the Now Playing panel
   could report more viewers than were actually watching (Hephaestus)**: `POST /stream/channel/:id/start` — the
   capability-bucketed viewer opt-in — unconditionally called `SessionManager::getOrCreate()` for the *default*

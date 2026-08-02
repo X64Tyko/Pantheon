@@ -42,6 +42,9 @@ class SessionManager
 	// nullopt = not yet fetched (or Kairos unreachable) — keep whatever
 	// Config/--verbose-transcode/HEPH_VERBOSE_TRANSCODE set at startup.
 	std::optional<bool> cached_verbose_transcode_logs;
+	// Same shape, for ffmpeg_debug_logs (was HEPH_FFMPEG_DEBUG, env-only
+	// until this) — see KairosClient::getFfmpegDebugLogs()'s own comment.
+	std::optional<bool> cached_ffmpeg_debug_logs;
 	std::atomic<bool> stop_refresh{false};
 	std::thread refresh_thread;
 

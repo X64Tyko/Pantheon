@@ -292,6 +292,11 @@ static std::vector<std::string> buildArgs(
 		if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
 
 		pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs, source_video);
+		// Last in the chain: reports pts_time right before the frame hits the
+		// encoder, paired with pushAudioEncoderArgs' ashowinfo below — see
+		// that flag's own comment. Diagnostic only; off outside
+		// verbose_transcode_logs.
+		if (verbose_transcode_logs) vfParts.push_back("showinfo");
 		pushVideoFilterArgs(a, vfParts);
 		// Bitrate cap: keeps CQ/VBR quality-based encoding but adds an upper
 		// bound, preventing huge spikes on complex/high-res content — a real,
@@ -307,7 +312,9 @@ static std::vector<std::string> buildArgs(
 		pushBitrateCapArgs(a, effective_bitrate_kbps);
 
 		// Audio: AAC
-		pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
+		pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps,
+							 /*client_caps=*/std::nullopt, /*source_audio=*/nullptr,
+							 /*debug_showinfo=*/verbose_transcode_logs);
 	}
 
 	appendOutputArgs(a, hls_dir);

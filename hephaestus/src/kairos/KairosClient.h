@@ -61,4 +61,11 @@ public:
 	// — lets operators flip on full ffmpeg command/-v verbose logging from
 	// the Hades settings page without restarting Hephaestus.
 	std::optional<bool> getVerboseTranscodeLogs();
+
+	// Same blob again, plucking ffmpeg_debug_logs — was HEPH_FFMPEG_DEBUG, an
+	// env var fixed at startup, until this; same "no restart needed" treatment
+	// as getVerboseTranscodeLogs(), and controls a genuinely independent
+	// thing (whether ffmpeg's stderr is forwarded live at all, vs just
+	// tail-captured for an on-failure dump) — see FfmpegProcess's log_stderr.
+	std::optional<bool> getFfmpegDebugLogs();
 };

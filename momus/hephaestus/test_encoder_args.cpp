@@ -65,11 +65,53 @@ TEST(EncoderArgsTest, PushLogLevelArgs)
 	pushLogLevelArgs(a, false);
 	EXPECT_TRUE(a.empty());
 
-	// true -> -v verbose
+	// true -> -v verbose, plus periodic -stats (ffmpeg only prints -stats
+	// automatically on a tty, never true here since stderr is always piped
+	// to FfmpegProcess — see pushLogLevelArgs' own comment)
 	pushLogLevelArgs(a, true);
-	ASSERT_EQ(a.size(), 2);
+	ASSERT_EQ(a.size(), 5);
 	EXPECT_EQ(a[0], "-v");
 	EXPECT_EQ(a[1], "verbose");
+	EXPECT_EQ(a[2], "-stats");
+	EXPECT_EQ(a[3], "-stats_period");
+	EXPECT_EQ(a[4], "2");
+}
+
+// ashowinfo pairs with the `showinfo` video filter a caller pushes into its
+// own vfParts (ChannelSession.cpp's live-channel transcode branch) — together
+// they give a per-stream pts_time trail for diagnosing A/V drift under
+// verbose_transcode_logs. Off by default: too chatty (one line per audio
+// frame) to leave on outside active diagnosis.
+TEST(EncoderArgsTest, PushAudioEncoderArgs_DebugShowinfoAppendsAshowinfoFilter)
+{
+	// Off (default): no -af at all when nothing else needs the filter graph.
+	{
+		std::vector<std::string> a;
+		pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, 192);
+		EXPECT_EQ(std::find(a.begin(), a.end(), "-af"), a.end());
+	}
+	// On, nothing else in the filter chain: -af ashowinfo appears on its own.
+	{
+		std::vector<std::string> a;
+		pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, 192,
+							 std::nullopt, nullptr, /*debug_showinfo=*/true);
+		auto it = std::find(a.begin(), a.end(), "-af");
+		ASSERT_NE(it, a.end());
+		ASSERT_NE(it + 1, a.end());
+		EXPECT_EQ(*(it + 1), "ashowinfo");
+	}
+	// On alongside loudnorm: appended last, after dynaudnorm.
+	{
+		std::vector<std::string> a;
+		pushAudioEncoderArgs(a, /*loudnorm=*/true, /*speed=*/1.0, 192,
+							 std::nullopt, nullptr, /*debug_showinfo=*/true);
+		auto it = std::find(a.begin(), a.end(), "-af");
+		ASSERT_NE(it, a.end());
+		ASSERT_NE(it + 1, a.end());
+		const std::string& af = *(it + 1);
+		EXPECT_NE(af.find("dynaudnorm"), std::string::npos);
+		EXPECT_EQ(af.substr(af.size() - std::string(",ashowinfo").size()), ",ashowinfo");
+	}
 }
 
 TEST(EncoderArgsTest, PushVaapiDeviceArg)

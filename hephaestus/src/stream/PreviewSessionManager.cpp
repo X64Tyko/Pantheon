@@ -59,10 +59,12 @@ PreviewSessionManager::~PreviewSessionManager()
 
 void PreviewSessionManager::refreshSettings()
 {
-	auto verbose = kairos.getVerboseTranscodeLogs();
-	auto bs      = kairos.getBufferSize();
+	auto verbose    = kairos.getVerboseTranscodeLogs();
+	auto ffmpeg_dbg = kairos.getFfmpegDebugLogs();
+	auto bs         = kairos.getBufferSize();
 	std::lock_guard<std::mutex> lock(settings_mtx);
 	if (verbose) cached_verbose_transcode_logs = verbose;
+	if (ffmpeg_dbg) cached_ffmpeg_debug_logs = ffmpeg_dbg;
 	if (bs) cached_buffer_size = *bs * 1024; // KB -> bytes
 }
 
@@ -79,6 +81,7 @@ std::shared_ptr<PreviewSession> PreviewSessionManager::create(const std::string&
 	{
 		std::lock_guard<std::mutex> lock(settings_mtx);
 		if (cached_verbose_transcode_logs) session_opts.verbose_transcode_logs = *cached_verbose_transcode_logs;
+		if (cached_ffmpeg_debug_logs) session_opts.ffmpeg_debug_logs = *cached_ffmpeg_debug_logs;
 		if (cached_buffer_size > 0) session_opts.buffer_size = cached_buffer_size;
 	}
 

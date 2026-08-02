@@ -358,7 +358,8 @@ const AudioCodecOption& chooseAudioCodec(const AudioTrack* source_audio,
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
 						  int audio_bitrate_kbps,
 						  const std::optional<ClientCapabilities>& client_caps,
-						  const AudioTrack* source_audio)
+						  const AudioTrack* source_audio,
+						  bool debug_showinfo)
 {
 	std::vector<std::string> afParts;
 	// dynaudnorm, not loudnorm: loudnorm's single-pass mode is a real-time
@@ -404,6 +405,10 @@ void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double spe
 		// surround passthrough anyway, so downmixing here costs nothing real.
 		a.insert(a.end(), {"-c:a", "aac", "-ac", "2", "-b:a", std::to_string(bitrate_kbps) + "k"});
 	}
+	// Last in the chain: reports pts_time after any dynaudnorm/atempo filter
+	// above has already run, i.e. the timing actually handed to the encoder.
+	if (debug_showinfo) afParts.push_back("ashowinfo");
+
 	if (!afParts.empty())
 	{
 		std::string af;
@@ -469,5 +474,14 @@ int effectiveOutputHeight(int max_height_cap, const VideoTrack* source_video)
 
 void pushLogLevelArgs(std::vector<std::string>& a, bool verbose_transcode_logs)
 {
-	if (verbose_transcode_logs) a.insert(a.end(), {"-v", "verbose"});
+	// -stats_period default is 0.5s — far chattier than useful for a
+	// long-running live channel; 2s still gives fine-grained enough
+	// frame/fps/speed/drop/dup counters to correlate against a reported drift
+	// window without flooding the log. `-stats` isn't implied by `-v verbose`
+	// (they're independent ffmpeg switches — verbose raises the log *level*,
+	// stats is a separate periodic progress line ffmpeg only prints
+	// automatically when stderr is a tty, which it never is here since it's
+	// piped to FfmpegProcess), so it needs to be requested explicitly to show
+	// up at all in a piped/Docker deployment.
+	if (verbose_transcode_logs) a.insert(a.end(), {"-v", "verbose", "-stats", "-stats_period", "2"});
 }

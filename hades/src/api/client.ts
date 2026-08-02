@@ -733,6 +733,7 @@ export const api = {
         stream_buffer_size: number;
         image_cache_ttl_hours: number;
         verbose_transcode_logs: boolean;
+        ffmpeg_debug_logs: boolean;
         verbose_gateway_logs: boolean;
         hades_debug: boolean;
         cast_app_id: string;
@@ -752,6 +753,7 @@ export const api = {
     getPublicSettings: () => request<{
         stream_buffer_size: number;
         verbose_transcode_logs: boolean;
+        ffmpeg_debug_logs: boolean;
         verbose_gateway_logs: boolean;
         cast_app_id: string;
         default_landing_page: string;
@@ -774,6 +776,7 @@ export const api = {
         stream_buffer_size: number;
         image_cache_ttl_hours: number;
         verbose_transcode_logs: boolean;
+        ffmpeg_debug_logs: boolean;
         verbose_gateway_logs: boolean;
         hades_debug: boolean;
         cast_app_id: string;
@@ -793,6 +796,7 @@ export const api = {
         stream_buffer_size: number;
         image_cache_ttl_hours: number;
         verbose_transcode_logs: boolean;
+        ffmpeg_debug_logs: boolean;
         verbose_gateway_logs: boolean;
         hades_debug: boolean;
         cast_app_id: string;
