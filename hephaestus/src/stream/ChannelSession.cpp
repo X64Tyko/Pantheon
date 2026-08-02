@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <filesystem>
 #include <fstream>
+#include <cmath>
 
 using clock_t_ = std::chrono::system_clock;
 using steady_  = std::chrono::steady_clock;
@@ -490,6 +491,39 @@ void ChannelSession::patchDiscontinuitySequence()
 		lines.push_back(line);
 	}
 	in.close();
+
+	// Segment-duration sanity check, piggybacked on the read above (no extra
+	// I/O): flags a newly-appeared segment whose actual muxed EXTINF duration
+	// deviates meaningfully from the requested hls_time (kLiveHlsSegmentSecs)
+	// — evidence the HLS muxer itself, not per-frame encode timing (already
+	// ruled clean by the showinfo/ashowinfo filters), is cutting segments
+	// irregularly, e.g. off-GOP-boundary at short segment durations. Only
+	// checks the newest segment each tick (cheap, and sufficient to catch a
+	// pattern over time); diagnostic only, gated on verbose_transcode_logs
+	// like showinfo/ashowinfo.
+	if (opts.verbose_transcode_logs)
+	{
+		int lastExtinfIdx = -1;
+		for (size_t i = 0; i < lines.size(); ++i)
+			if (lines[i].rfind("#EXTINF:", 0) == 0) lastExtinfIdx = static_cast<int>(i);
+		if (lastExtinfIdx >= 0 && static_cast<size_t>(lastExtinfIdx) + 1 < lines.size())
+		{
+			const std::string& uri = lines[static_cast<size_t>(lastExtinfIdx) + 1];
+			if (uri != last_extinf_uri_)
+			{
+				last_extinf_uri_ = uri;
+				double dur = 0.0;
+				try { dur = std::stod(lines[static_cast<size_t>(lastExtinfIdx)].substr(8)); } catch (...) {}
+				double expected = static_cast<double>(kLiveHlsSegmentSecs);
+				if (dur > 0.0 && std::fabs(dur - expected) > expected * 0.2)
+				{
+					std::cerr << "[session:" << channel_id << "] segment " << uri
+						<< " duration=" << dur << "s deviates from hls_time=" << expected << "s\n";
+				}
+			}
+		}
+	}
+
 	// ffmpeg's own writes to this file are rename-based now (hls_flags
 	// +temp_file, see appendOutputArgs), so a torn read here would only ever
 	// come from this loop racing itself across ticks — shouldn't happen
