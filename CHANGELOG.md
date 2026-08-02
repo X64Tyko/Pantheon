@@ -222,6 +222,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   produced. Diagnosed from a real production log showing a `default`-bucket transition applying `speed=1.00132`
   while the concurrent `native`-bucket transition for the exact same item silently landed on `offset=0ms` instead.
   Not yet independently confirmed as *the* cause of the still-open periodic stutter above — please retest.
+- **Periodic black-frame/stutter on live channels, isolated to the transcode bucket specifically (Hephaestus)**:
+  confirmed via the new "Always Transcode" setting — with direct-stream removed from the equation entirely, the
+  same glitch still reproduced, ruling out everything native-bucket-specific investigated above. The transcode
+  bucket's `-fps_mode cfr` had no explicit `-r` alongside it, leaving ffmpeg to *guess* a target output frame rate
+  from the input's own timestamps — the exact timing this same code already didn't trust enough to add `-fps_mode
+  cfr` in the first place (VFR/irregular sources). A wrong guess (e.g. rounding a 23.976fps source to a nearby
+  rate) means the CFR conversion duplicates/drops frames to correct for a mismatch that doesn't really exist, at a
+  periodic beat frequency — a plausible match for a content-independent, repeating glitch. Now pins `-r` to the
+  source's own already-probed declared frame rate (`r_frame_rate`) so CFR conversion has a precise target instead
+  of guessing one from the same untrustworthy timing it exists to correct. Diagnosed from the user isolating the
+  bug to the transcode bucket via live testing. **Confirmed NOT the fix** — user retested live, glitch unchanged.
+  Kept the explicit `-r` regardless (still strictly more correct than leaving `-fps_mode cfr` to guess), but the
+  actual root cause of the transcode-bucket stutter remains open.
 - **A dual-bucket channel's default-bucket viewers could drift apart in actual content position from its
   native-bucket viewers of the "same" channel (Hephaestus)**: the speed-correction gate above was keyed on
   "not the native bucket," not on whether a native bucket exists for this channel at all — so on a channel where
