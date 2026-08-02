@@ -269,7 +269,7 @@
                 <tr>
                     <td>CPU/GPU cost</td>
                     <td>Minimal — no video encode at all</td>
-                    <td>A real encode per viewer/quality tier</td>
+                    <td>A real encode per channel</td>
                 </tr>
                 <tr>
                     <td>Resolution/bitrate control</td>
@@ -326,10 +326,10 @@
             regardless of what their device can decode natively, gets the transcode bucket.</p>
         <div class="rec">✅ <span><b>Recommended for the smoothest, drift-free experience.</b> With direct stream disabled there's only one bucket in play, so the smooth speed-based correction above is always safe to use — every viewer of that channel stays exactly on schedule, continuously, instead of only being corrected at item boundaries. This is the only way to get that guarantee.</span>
         </div>
-        <p>The tradeoff is real: every viewer now costs a real video encode instead of a free byte copy, so this uses
-            meaningfully more CPU/GPU per concurrent viewer. For a channel with few simultaneous viewers, or where
-            hardware headroom is tight and the occasional coarse correction at a scene/episode boundary is an acceptable
-            tradeoff, leaving direct stream enabled (the default) is still a reasonable choice.</p>
+        <p>The tradeoff is real: every channel now costs a real video encode instead of a free byte copy, so this uses
+            meaningfully more CPU/GPU per active channel. For a channel where hardware headroom is tight and the
+            occasional coarse correction at a scene/episode boundary is an acceptable tradeoff, leaving direct
+            stream enabled (the default) is still a reasonable choice.</p>
     </section>
 
     <section id="quality">

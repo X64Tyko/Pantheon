@@ -257,6 +257,21 @@ static std::vector<std::string> buildArgs(
 		// bucket needs this — a stream copy has no filter graph to feed it.
 		a.insert(a.end(), {"-fps_mode", "cfr"});
 
+		// -fps_mode cfr with no explicit -r leaves ffmpeg to *guess* a target
+		// rate from the input's own timestamps — the exact timing this whole
+		// comment block just said can't be trusted. A wrong guess (e.g.
+		// rounding a 23.976fps source to 24, or landing on some other nearby
+		// rate) means cfr's own duplicate/drop-frame conversion now has to
+		// correct for a mismatch that doesn't really exist, at a beat
+		// frequency determined by however far off the guess is — periodic,
+		// content-independent stutter that would show up as a repeating
+		// glitch every so often for the entire life of the stream, matching
+		// real reports of exactly that on the transcode bucket. Pin it to the
+		// source's own declared nominal rate (already probed) instead, so cfr
+		// has a precise target instead of guessing one from the same
+		// untrustworthy timing it exists to correct.
+		if (source_video && !source_video->r_frame_rate.empty()) a.insert(a.end(), {"-r", source_video->r_frame_rate});
+
 		// Video encoder
 		std::vector<std::string> vfParts;
 		// Scale down to the configured max resolution — never upscales.
