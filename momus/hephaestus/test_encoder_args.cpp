@@ -152,6 +152,75 @@ TEST(EncoderArgsTest, PushVideoEncoderArgs)
 	ASSERT_FALSE(vf.empty());
 }
 
+// Regression coverage for the scene-cut-disable fix: NVENC's own scene-cut
+// heuristic isn't disabled by -force_key_frames, so a real scene change
+// between two forced keyframes could still insert an extra, unplanned one —
+// irregular GOP structure the segmenter isn't expecting. -sc_threshold is
+// confirmed silently ignored by h264_nvenc/hevc_nvenc; -no-scenecut is the
+// flag that actually works there. libx264/libx265 use -sc_threshold/
+// x265-params scenecut correctly instead.
+TEST(EncoderArgsTest, PushVideoEncoderArgs_DisablesEncoderOwnSceneCutDetection)
+{
+	std::vector<std::string> a;
+	std::vector<std::string> vf;
+
+	pushVideoEncoderArgs(a, vf, HwAccel::nvidia, 2);
+	auto it = std::find(a.begin(), a.end(), "-no-scenecut");
+	ASSERT_NE(it, a.end()) << "NVENC ignores -sc_threshold; -no-scenecut is the flag that works";
+	EXPECT_EQ(*(it + 1), "1");
+	EXPECT_EQ(std::find(a.begin(), a.end(), "-sc_threshold"), a.end())
+		<< "-sc_threshold is a silent no-op on NVENC — shouldn't be relied on there";
+
+	a.clear();
+	vf.clear();
+	pushVideoEncoderArgs(a, vf, HwAccel::none, 2);
+	auto it2 = std::find(a.begin(), a.end(), "-sc_threshold");
+	ASSERT_NE(it2, a.end()) << "libx264 genuinely respects -sc_threshold, unlike NVENC";
+	EXPECT_EQ(*(it2 + 1), "0");
+}
+
+// Regression coverage for the default bitrate cap: leaving CQ/VBR genuinely
+// uncapped (channel.stream_video_bitrate == 0, the default) is a documented
+// live-streaming anti-pattern — a real-time (-re-paced) pipeline has no
+// slack to absorb an unbounded I-frame bitrate spike. defaultBitrateCapKbps
+// must still scale with resolution (a 4K cap that's fine for 4K would be a
+// real quality ceiling at 480p, and vice versa a 480p-sized cap would visibly
+// constrain 4K).
+TEST(EncoderArgsTest, DefaultBitrateCapKbps_ScalesWithResolution)
+{
+	EXPECT_EQ(defaultBitrateCapKbps(0), 8000) << "unknown height assumes ~1080p-ish";
+	EXPECT_EQ(defaultBitrateCapKbps(480), 4000);
+	EXPECT_EQ(defaultBitrateCapKbps(720), 6000);
+	EXPECT_EQ(defaultBitrateCapKbps(1080), 10000);
+	EXPECT_EQ(defaultBitrateCapKbps(2160), 20000); // 4K
+	// Monotonically non-decreasing — a cap that got smaller at a higher
+	// resolution would be a real bug (the whole point is to bound headroom,
+	// not to visibly constrain quality).
+	EXPECT_LE(defaultBitrateCapKbps(480), defaultBitrateCapKbps(720));
+	EXPECT_LE(defaultBitrateCapKbps(720), defaultBitrateCapKbps(1080));
+	EXPECT_LE(defaultBitrateCapKbps(1080), defaultBitrateCapKbps(2160));
+}
+
+TEST(EncoderArgsTest, EffectiveOutputHeight_SmallerOfConfiguredCapAndSourceHeight)
+{
+	VideoTrack source_1080p;
+	source_1080p.height = 1080;
+	VideoTrack source_4k;
+	source_4k.height = 2160;
+
+	// No configured cap ("source") — real output is the source's own height.
+	EXPECT_EQ(effectiveOutputHeight(0, &source_1080p), 1080);
+	// Configured cap above the source's own height — never upscales, so the
+	// source's real height still governs.
+	EXPECT_EQ(effectiveOutputHeight(1080, &source_4k), 1080);
+	// Configured cap below the source's own height — the cap governs.
+	EXPECT_EQ(effectiveOutputHeight(720, &source_4k), 720);
+	// No source_video probed at all — falls back to whatever cap is
+	// configured, or 0 (unknown) if there isn't one either.
+	EXPECT_EQ(effectiveOutputHeight(720, nullptr), 720);
+	EXPECT_EQ(effectiveOutputHeight(0, nullptr), 0);
+}
+
 // -g regression coverage: a hardware encoder (verified on NVENC) left to plan
 // its own default GOP length instead of being told the real forced-keyframe
 // cadence can stall/replan every time -force_key_frames actually fires —

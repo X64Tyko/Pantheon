@@ -58,7 +58,7 @@ static constexpr double kMaxSpeed = 1.02;
 // full history) — costs some cold-start/channel-switch latency (first
 // segment takes longer to produce), accepted as the tradeoff for now.
 // Revisit lowering this again once the real cause is found and fixed.
-static constexpr int kLiveHlsSegmentSecs = 6;
+static constexpr int kLiveHlsSegmentSecs = 2;
 
 // Oversized vs. the 2s target so a direct-stream session's much-longer real
 // segments (see above) still get a safe rolling window instead of a client's
@@ -293,9 +293,18 @@ static std::vector<std::string> buildArgs(
 
 		pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs, source_video);
 		pushVideoFilterArgs(a, vfParts);
-		// Optional bitrate cap: keeps CRF quality-based encoding but adds an
-		// upper bound, preventing huge spikes on complex/high-res content.
-		pushBitrateCapArgs(a, video_bitrate_kbps);
+		// Bitrate cap: keeps CQ/VBR quality-based encoding but adds an upper
+		// bound, preventing huge spikes on complex/high-res content — a real,
+		// per-channel admin-configured value if one is set, otherwise a
+		// generous resolution-sized default (see defaultBitrateCapKbps's own
+		// comment) rather than leaving this genuinely uncapped. A -re-paced
+		// live encode has no slack to absorb an unbounded spike the way
+		// file-based encoding would; a forced/scene-cut I-frame with no
+		// ceiling at all is a known live-streaming anti-pattern.
+		int effective_bitrate_kbps = video_bitrate_kbps > 0
+										 ? video_bitrate_kbps
+										 : defaultBitrateCapKbps(effectiveOutputHeight(resolveMaxHeight(max_resolution), source_video));
+		pushBitrateCapArgs(a, effective_bitrate_kbps);
 
 		// Audio: AAC
 		pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
@@ -359,7 +368,14 @@ static std::vector<std::string> buildImageArgs(
 
 	pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs);
 	pushVideoFilterArgs(a, vfParts);
-	pushBitrateCapArgs(a, video_bitrate_kbps);
+	// Same "don't leave this genuinely uncapped" reasoning as the real-content
+	// branch above, even though a static image's own real bitrate need is
+	// negligible regardless — consistency, not because this path is expected
+	// to ever actually hit the cap.
+	int effective_bitrate_kbps = video_bitrate_kbps > 0
+									 ? video_bitrate_kbps
+									 : defaultBitrateCapKbps(effectiveOutputHeight(resolveMaxHeight(max_resolution), nullptr));
+	pushBitrateCapArgs(a, effective_bitrate_kbps);
 
 	pushAudioEncoderArgs(a, /*loudnorm=*/false, /*speed=*/1.0, audio_bitrate_kbps);
 

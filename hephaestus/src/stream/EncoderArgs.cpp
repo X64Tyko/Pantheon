@@ -1,4 +1,5 @@
 #include "EncoderArgs.h"
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 #include <iomanip>
@@ -93,15 +94,17 @@ const std::vector<VideoCodecOption>& videoCodecPriority()
 					case HwAccel::nvidia: a.insert(a.end(), {
 													   "-c:v", "hevc_nvenc", "-preset", "p4",
 													   "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p",
-													   "-forced-idr", "1"
-												   }); // see the h264 entry below for why
+													   "-forced-idr", "1",
+													   "-no-scenecut", "1" // see the h264 entry below for why
+												   });
 						break;
 					case HwAccel::amd: vfParts.push_back("format=nv12,hwupload");
 						a.insert(a.end(), {"-c:v", "hevc_vaapi"});
 						break;
 					default: a.insert(a.end(), {
 										  "-c:v", "libx265", "-preset", "veryfast",
-										  "-crf", "23", "-pix_fmt", "yuv420p"
+										  "-crf", "23", "-pix_fmt", "yuv420p",
+										  "-sc_threshold", "0" // see the h264 entry below for why
 									  });
 				}
 			}
@@ -126,7 +129,19 @@ const std::vector<VideoCodecOption>& videoCodecPriority()
 													   // exactly 250 frames' worth of playback time.
 													   // -forced-idr makes NVENC emit a true IDR frame
 													   // for every forced keyframe instead.
-													   "-forced-idr", "1"
+													   "-forced-idr", "1",
+													   // NVENC has its own scene-cut heuristic that
+													   // -force_key_frames does NOT disable, so a real
+													   // scene change landing between two forced keyframes
+													   // can still get an extra, unplanned one on top —
+													   // irregular GOP structure the segmenter isn't
+													   // expecting. The obvious fix, -sc_threshold, is
+													   // silently ignored by h264_nvenc/hevc_nvenc
+													   // (confirmed: https://forums.developer.nvidia.com/
+													   // t/ffmpeg-encoder-h264-nvenc-ignores-sc-threshold-
+													   // value/212726) — -no-scenecut is the flag that
+													   // actually works for this encoder family.
+													   "-no-scenecut", "1"
 												   });
 						break;
 					case HwAccel::amd: vfParts.push_back("format=nv12,hwupload");
@@ -134,7 +149,12 @@ const std::vector<VideoCodecOption>& videoCodecPriority()
 						break;
 					default: a.insert(a.end(), {
 										  "-c:v", "libx264", "-preset", "veryfast",
-										  "-crf", "23", "-pix_fmt", "yuv420p"
+										  "-crf", "23", "-pix_fmt", "yuv420p",
+										  // libx264/libx265 (unlike NVENC) genuinely respect
+										  // -sc_threshold — same "no unplanned extra keyframes
+										  // between our own forced ones" reasoning as -no-scenecut
+										  // above, just the correct flag for this encoder family.
+										  "-sc_threshold", "0"
 									  });
 				}
 			}
@@ -237,8 +257,9 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
 			case HwAccel::nvidia: a.insert(a.end(), {
 											   "-c:v", "hevc_nvenc", "-preset", "p4", "-profile:v", "main10",
 											   "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "p010le",
-											   "-forced-idr", "1"
-										   }); // see the 8-bit nvenc branch below for why
+											   "-forced-idr", "1",
+											   "-no-scenecut", "1" // see the 8-bit nvenc branch below for why
+										   });
 				break;
 			case HwAccel::amd: vfParts.push_back("format=p010le,hwupload");
 				a.insert(a.end(), {"-c:v", "hevc_vaapi", "-profile:v", "main10"});
@@ -246,7 +267,10 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
 			default: a.insert(a.end(), {
 								  "-c:v", "libx265", "-preset", "veryfast", "-crf", "23",
 								  "-pix_fmt", "yuv420p10le",
-								  "-x265-params", "hdr10=1:repeat-headers=1"
+								  // x265-params takes scenecut, not a top-level ffmpeg option,
+								  // for this encoder — same "no unplanned extra keyframes
+								  // between our own forced ones" reasoning as the 8-bit branch.
+								  "-x265-params", "hdr10=1:repeat-headers=1:scenecut=0"
 							  });
 		}
 		a.insert(a.end(), {
@@ -424,6 +448,23 @@ void pushBitrateCapArgs(std::vector<std::string>& a, int video_bitrate_kbps)
 	std::string maxrate = std::to_string(video_bitrate_kbps) + "k";
 	std::string bufsize = std::to_string(video_bitrate_kbps * 2) + "k";
 	a.insert(a.end(), {"-maxrate", maxrate, "-bufsize", bufsize});
+}
+
+int defaultBitrateCapKbps(int effective_height)
+{
+	if (effective_height <= 0) return 8000; // unknown — assume ~1080p-ish
+	if (effective_height <= 480) return 4000;
+	if (effective_height <= 720) return 6000;
+	if (effective_height <= 1080) return 10000;
+	return 20000; // >1080p (4K etc.)
+}
+
+int effectiveOutputHeight(int max_height_cap, const VideoTrack* source_video)
+{
+	int source_height = source_video ? source_video->height : 0;
+	if (max_height_cap <= 0) return source_height;
+	if (source_height <= 0) return max_height_cap;
+	return std::min(max_height_cap, source_height);
 }
 
 void pushLogLevelArgs(std::vector<std::string>& a, bool verbose_transcode_logs)

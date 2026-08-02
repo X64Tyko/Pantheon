@@ -295,6 +295,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   chased, `kLiveHlsSegmentSecs` is bumped 2→6 (confirmed effective via the earlier live A/B/A test) — the tradeoff
   fast-channel-switching vs. glitch-free playback this session hoped to avoid is back in effect for now, until the
   real root cause is found.
+- **Two more candidate fixes for the transcode-bucket stutter above, from a deep web research pass (Hephaestus)**:
+  found real precedent for this failure class (Jellyfin issue #10283, a near-identical periodic-repeat symptom on
+  a different hw backend; ErsatzTV shipping a custom-patched ffmpeg specifically for live-simulated-channel
+  encoding reliability) plus two concrete, well-evidenced gaps in our own command line. (1) The live transcode
+  bucket ran CQ/VBR with no `-maxrate`/`-bufsize` at all whenever a channel had no admin-configured bitrate
+  (`stream_video_bitrate == 0`, the default) — multiple independent sources flag uncapped VBR/CQ as a live-
+  streaming anti-pattern specifically because a complex or forced I-frame can spike bitrate arbitrarily, and a
+  `-re`-paced real-time pipeline has no slack to absorb that the way file-based encoding would. `ChannelSession`'s
+  two `buildArgs`/`buildImageArgs` call sites now fall back to a generous, resolution-scaled default cap
+  (`defaultBitrateCapKbps`/`effectiveOutputHeight`, new in `EncoderArgs.cpp`) instead of leaving this genuinely
+  uncapped — sized well above normal CQ-23 output so it should never visibly constrain quality, purely bounding
+  the pathological spike case. (2) NVENC has its own scene-cut detection that `-force_key_frames` does not
+  disable, so a real scene change between two forced keyframes could still insert an extra, unplanned one —
+  irregular GOP structure the segmenter isn't expecting. The obvious fix, `-sc_threshold`, is confirmed
+  **silently ignored** by `h264_nvenc`/`hevc_nvenc` (NVIDIA developer forum); the flag that actually works there is
+  `-no-scenecut 1`, now added to all three NVENC branches (H.264, HEVC, HEVC HDR10 passthrough).
+  `libx264`/`libx265` genuinely respect `-sc_threshold`/`x265-params scenecut=0` and now set it explicitly too, for
+  the same reason. Both fixes also apply to VOD transcodes for free (shared `pushVideoEncoderArgs`). Covered by
+  three new tests in `momus/hephaestus/test_encoder_args.cpp`. Not yet retested live — still at `kLiveHlsSegmentSecs
+  = 6` pending confirmation these hold up at the original 2s interval.
 - **A dual-bucket channel's default-bucket viewers could drift apart in actual content position from its
   native-bucket viewers of the "same" channel (Hephaestus)**: the speed-correction gate above was keyed on
   "not the native bucket," not on whether a native bucket exists for this channel at all — so on a channel where

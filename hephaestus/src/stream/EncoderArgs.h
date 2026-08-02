@@ -174,6 +174,25 @@ void pushScaleFilter(std::vector<std::string>& vfParts, int maxHeight);
 // a no-op otherwise.
 void pushBitrateCapArgs(std::vector<std::string>& a, int video_bitrate_kbps);
 
+// A sane default -maxrate ceiling (kbps) for a live channel's transcode
+// bucket when no admin-configured bitrate exists (channel.stream_video_bitrate
+// == 0, "quality-based/CRF auto"). Leaving CQ/VBR truly uncapped is a
+// documented live-streaming anti-pattern: a complex or forced I-frame can
+// spike bitrate arbitrarily, and a real-time (-re-paced) pipeline has no
+// slack to absorb that the way file-based encoding would. Generous enough
+// that ordinary CQ-23 output for real content should never actually hit
+// it — this exists purely to bound the pathological spike case, not to
+// meaningfully constrain quality. effective_height <= 0 (unknown, e.g. no
+// source_video probed yet) assumes ~1080p-ish.
+int defaultBitrateCapKbps(int effective_height);
+
+// The real output height a channel's transcode will land on: the smaller of
+// the configured max_resolution cap (resolveMaxHeight() — 0 = uncapped, i.e.
+// whatever the source is) and the source's own real height. Needed because
+// defaultBitrateCapKbps() has to size itself off what will actually be
+// encoded, not just whichever of those two happens to be set.
+int effectiveOutputHeight(int max_height_cap, const VideoTrack* source_video);
+
 // Appends "-v verbose" when verbose_transcode_logs is true (see
 // Config::verbose_transcode_logs / *StreamOptions::verbose_transcode_logs),
 // a no-op otherwise — ffmpeg's own default log level is left untouched when
