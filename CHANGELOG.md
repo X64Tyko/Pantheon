@@ -185,6 +185,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Episode-scope Align Start silently abandoned alignment (and any filler) whenever nothing fit the remaining
+  gap (Kairos)**: `RuleEngine.cpp`'s episode-alignment padding tries to bridge the gap up to the next
+  `align_to_mins` boundary with real filler content, but if `pickFillerSim` couldn't find anything eligible for
+  what was left (nothing short enough, or the pool ran dry partway through) it just `break`'d out of the loop —
+  leaving `pass.t` wherever it had gotten to instead of snapping the rest of the way to the boundary. The next
+  item then started immediately, completely unaligned, with no filler at all — confirmed via a real EPG export
+  showing consecutive episodes back-to-back with zero gap on a channel that had filler configured, on transitions
+  where the remaining gap was shorter than every available filler clip. Added a `reached_boundary` flag
+  distinguishing a genuine success (gap fully closed, or landed within tolerance of a boundary after inserting
+  filler) from a failure exit, and a fallback that snaps `pass.t` to the boundary on failure — the same behavior
+  the empty-pool case already had, now applied consistently whenever filler can't fully do the job. Covered by a
+  new test in `momus/kairos/scheduler/test_rule_engine.cpp` (verified it actually fails without the fix before
+  confirming the fix passes it).
+- **A block's "Insert filler clips between programs" checkbox did nothing while Episode-scope Align Start was
+  active, and its Filler Selection control disappeared even though it still mattered (Hades)**: `RuleEngine.cpp`'s
+  episode-alignment padding (snapping each episode to the next `align_to_mins` clock boundary) always fills the
+  gap with real filler content to reach that boundary — a deliberate backend design, independent of
+  `block.inter_filler` (alignment needs *some* padding mechanism regardless of that separate playback preference).
+  But the editor's checkbox for `inter_filler` had no idea about that: unchecking it while episode-scope alignment
+  was on had zero effect (dead control), and the "Filler Selection" dropdown right below it — which *does* still
+  apply, since alignment padding draws from the same filler pool via the same `pickFillerSim` call — was hidden
+  whenever the checkbox read unchecked. `EditorForm.tsx` now shows the checkbox as checked-and-disabled with an
+  explanatory hint whenever episode-scope alignment is active (`start_scope === 'episode' && align_to_mins > 0`),
+  and keeps Filler Selection visible in that case too, instead of gating both on a setting the scheduler doesn't
+  actually consult there.
 - **A live channel always showed both a transcode and a direct-stream session active, and the Now Playing panel
   could report more viewers than were actually watching (Hephaestus)**: `POST /stream/channel/:id/start` — the
   capability-bucketed viewer opt-in — unconditionally called `SessionManager::getOrCreate()` for the *default*

@@ -53,6 +53,13 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
 
   const isTimeslot = d.block_type === 'timeslot'
   const isRerun    = d.play_style === 'rerun'
+    // Episode-scope Align Start always pads gaps with real filler content to
+    // reach each boundary (RuleEngine.cpp), independently of inter_filler —
+    // that's a deliberate backend design (alignment needs *some* padding
+    // mechanism, filler is the only one implemented), but it left the
+    // checkbox below looking dead: unchecking it has no effect while this is
+    // true, since the scheduler never consults it in this mode.
+    const alignmentForcesFiller = (d.start_scope ?? 'block') === 'episode' && d.align_to_mins > 0
 
   const daysOn    = DAYS.filter((_, i) => (d.day_mask & DAY_BITS[i]) !== 0).map(([s]) => s)
   const daysStr   = daysOn.length === 7 ? 'Every day'
@@ -305,14 +312,19 @@ export const EditorForm = observer(function EditorForm({ channelId, store, limit
           </div>
         </div>
         <div className={styles.mt9}>
-          <label className={styles.checkboxLabel}>
+            <label className={`${styles.checkboxLabel} ${alignmentForcesFiller ? styles.checkboxLabelDisabled : ''}`}>
             <input type="checkbox"
-              checked={d.inter_filler ?? false}
+                   checked={alignmentForcesFiller || (d.inter_filler ?? false)}
+                   disabled={alignmentForcesFiller}
               onChange={e => store.setDraft('inter_filler', e.target.checked)} />
             <span className={styles.checkboxLabelText}>Insert filler clips between programs</span>
           </label>
+            {alignmentForcesFiller && sh && <div className={styles.hintTextTight}>
+                Automatic — Episode-scope Align Start already pads gaps with filler to reach each boundary,
+                regardless of this setting.
+            </div>}
         </div>
-          {d.inter_filler && (
+          {(alignmentForcesFiller || d.inter_filler) && (
               <div className={styles.mt9}>
                   <div className={styles.fieldLabelRow}>
                       FILLER SELECTION

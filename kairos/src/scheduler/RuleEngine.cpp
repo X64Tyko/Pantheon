@@ -1469,12 +1469,20 @@ bool RuleEngine::scheduleBlockStep(
 				const std::time_t fill_target   = next_b;
 				const std::time_t late_boundary = next_b
 					+ static_cast<std::time_t>(block.late_start_mins) * 60;
+				// True once filler has closed the gap (loop's own exit condition)
+				// or landed close enough to a boundary to count as aligned (the
+				// tolerance break below) — anything else means the loop gave up
+				// with pass.t still short of fill_target, which used to fall
+				// through and let the next item start wherever that shortfall
+				// happened to be: no filler AND no alignment, silently abandoning
+				// both. See the snap-to-boundary fallback after the loop.
+				bool reached_boundary = false;
 				while (pass.t < fill_target && pass.t < window_end)
 				{
 					int64_t rem_ms = (fill_target - pass.t) * 1000;
 					int64_t max_ms = (late_boundary - pass.t) * 1000;
 					auto fi        = pickFillerSim(ctx.channel_id, block, pool, rem_ms, ctx.state, ctx.rng, pass.filler_items_cache, pass.content_cache);
-					if (!fi || fi->duration_ms <= 0 || fi->duration_ms > max_ms) break;
+					if (!fi || fi->duration_ms <= 0 || fi->duration_ms > max_ms) break; // nothing eligible fits what's left of the gap
 					fi->wall_clock_start_ms = static_cast<int64_t>(pass.t) * 1000;
 					fi->wall_clock_end_ms   = fi->wall_clock_start_ms + fi->duration_ms;
 					fi->cursor_json         = "{}";
@@ -1488,8 +1496,16 @@ bool RuleEngine::scheduleBlockStep(
 					std::time_t pb2 = (pass.t / step) * step, nb2 = pb2 + step;
 					if ((nb2 - pass.t) <= static_cast<std::time_t>(block.early_start_secs) ||
 						(pass.t - pb2) <= static_cast<std::time_t>(block.late_start_mins) * 60)
+					{
+						reached_boundary = true;
 						break;
+					}
 				}
+				// Filler ran out (nothing available, or nothing short enough for
+				// the remainder) before actually closing the gap or a window
+				// ended — same fallback as the empty-pool case below: snap the
+				// rest of the way rather than leave the next item unaligned.
+				if (!reached_boundary && pass.t < fill_target && pass.t < window_end) pass.t = next_b;
 			}
 			else pass.t = next_b;
 		}
