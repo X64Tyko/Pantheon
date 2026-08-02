@@ -289,10 +289,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   live channels, VOD, and preview sessions) now computes `-g` in frames from the source's own real, already-probed
   frame rate (`VideoTrack::r_frame_rate`, via a newly-exposed `parseFrameRateFraction`) and passes it alongside
   `-force_key_frames`, so the encoder knows the real cadence upfront instead of being repeatedly surprised by it.
-  Segment interval kept at 2s (not permanently loosened) — this fix means fast channel-switch latency and glitch-free
-  playback no longer have to trade off against each other. Covered by two new tests in
-  `momus/hephaestus/test_encoder_args.cpp`. Not yet independently confirmed as the final fix on real hardware — please
-  retest.
+  Covered by two new tests in `momus/hephaestus/test_encoder_args.cpp`. **Confirmed NOT sufficient on its own** —
+  user retested live with `-g` in place at the normal 2s interval, glitch still reproduced. Kept the `-g` fix
+  regardless (still strictly more correct). As an interim mitigation while the actual mechanism is still being
+  chased, `kLiveHlsSegmentSecs` is bumped 2→6 (confirmed effective via the earlier live A/B/A test) — the tradeoff
+  fast-channel-switching vs. glitch-free playback this session hoped to avoid is back in effect for now, until the
+  real root cause is found.
 - **A dual-bucket channel's default-bucket viewers could drift apart in actual content position from its
   native-bucket viewers of the "same" channel (Hephaestus)**: the speed-correction gate above was keyed on
   "not the native bucket," not on whether a native bucket exists for this channel at all — so on a channel where

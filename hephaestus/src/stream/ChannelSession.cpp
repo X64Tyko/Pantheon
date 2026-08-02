@@ -44,16 +44,21 @@ static constexpr double kMaxSpeed = 1.02;
 // into a copy, so real segment length there is whatever the source file's
 // own GOP spacing is (can be 5-15s+). kLiveHlsListSize/kLiveHlsDeleteThreshold
 // below are sized generously to absorb that case rather than just the
-// intended 2s one.
-// TEMPORARY DIAGNOSTIC — back to 2 (was bumped to 6 briefly) to confirm the
-// glitch reappears now that the segment/forced-keyframe interval is back to
-// its normal value. At 6s the user reported the stutter stopped happening
-// entirely, not just less often — reverting to establish that was actually
-// causal (the interval change) and not just a short/lucky observation
-// window before concluding anything. See project memory for the full
-// back-and-forth — do not read anything into this constant's value alone
-// without checking there for the latest result.
-static constexpr int kLiveHlsSegmentSecs = 2;
+// intended segment length.
+//
+// SHIPPED MITIGATION, NOT THE ROOT-CAUSE FIX — bumped 2->6. A live A/B/A
+// test (2s glitches, 6s doesn't, 2s glitches again) confirmed the transcode
+// bucket's periodic stutter is tied to this interval. The leading theory —
+// missing `-g` letting the encoder replan its internal GOP structure every
+// forced keyframe — was implemented (EncoderArgs.cpp now sizes `-g` off the
+// source's real frame rate) but confirmed NOT sufficient on its own: the
+// glitch still reproduces at 2s with that fix in place. Bumping the segment
+// interval itself is the blunt, confirmed-effective mitigation while the
+// actual mechanism is still being investigated (see project memory for the
+// full history) — costs some cold-start/channel-switch latency (first
+// segment takes longer to produce), accepted as the tradeoff for now.
+// Revisit lowering this again once the real cause is found and fixed.
+static constexpr int kLiveHlsSegmentSecs = 6;
 
 // Oversized vs. the 2s target so a direct-stream session's much-longer real
 // segments (see above) still get a safe rolling window instead of a client's
