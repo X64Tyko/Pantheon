@@ -504,16 +504,18 @@ void ChannelSession::patchDiscontinuitySequence()
 	if (opts.verbose_transcode_logs)
 	{
 		int lastExtinfIdx = -1;
-		for (size_t i = 0; i < lines.size(); ++i)
-			if (lines[i].rfind("#EXTINF:", 0) == 0) lastExtinfIdx = static_cast<int>(i);
+		for (size_t i = 0; i < lines.size(); ++i) if (lines[i].rfind("#EXTINF:", 0) == 0) lastExtinfIdx = static_cast<int>(i);
 		if (lastExtinfIdx >= 0 && static_cast<size_t>(lastExtinfIdx) + 1 < lines.size())
 		{
 			const std::string& uri = lines[static_cast<size_t>(lastExtinfIdx) + 1];
 			if (uri != last_extinf_uri_)
 			{
 				last_extinf_uri_ = uri;
-				double dur = 0.0;
-				try { dur = std::stod(lines[static_cast<size_t>(lastExtinfIdx)].substr(8)); } catch (...) {}
+				double dur       = 0.0;
+				try { dur = std::stod(lines[static_cast<size_t>(lastExtinfIdx)].substr(8)); }
+				catch (...)
+				{
+				}
 				double expected = static_cast<double>(kLiveHlsSegmentSecs);
 				if (dur > 0.0 && std::fabs(dur - expected) > expected * 0.2)
 				{
