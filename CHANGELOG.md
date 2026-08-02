@@ -258,8 +258,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   source's own already-probed declared frame rate (`r_frame_rate`) so CFR conversion has a precise target instead
   of guessing one from the same untrustworthy timing it exists to correct. Diagnosed from the user isolating the
   bug to the transcode bucket via live testing. **Confirmed NOT the fix** — user retested live, glitch unchanged.
-  Kept the explicit `-r` regardless (still strictly more correct than leaving `-fps_mode cfr` to guess), but the
-  actual root cause of the transcode-bucket stutter remains open.
+  Kept the explicit `-r` regardless (still strictly more correct than leaving `-fps_mode cfr` to guess).
+- **Root cause found and fixed for the transcode-bucket stutter above (Hephaestus)**: with verbose ffmpeg logs
+  showing nothing unusual near glitch moments, and the glitch timing described as "fairly consistent... within a
+  window, not exactly" any fixed interval, bisected it directly: temporarily tripled `kLiveHlsSegmentSecs` (the
+  forced-keyframe interval) from 2s to 6s as a live test — user confirmed the glitch disappeared entirely at 6s,
+  then confirmed it came back at 2s, then confirmed it was gone again at 6s. That conclusively ties the stutter to
+  the forced-keyframe cadence itself, not anything content- or frame-rate-related. No `-g` (GOP size) was ever set
+  alongside `-force_key_frames`/`-forced-idr`, leaving the encoder to plan its own default GOP length internally
+  (NVENC's default is far longer than a 2-second live segment) and then interrupt/replan that structure every
+  single time the forced keyframe actually fires — a real, periodic cost landing exactly on the interval, which
+  wouldn't produce any log output (consistent with the clean verbose logs). `pushVideoEncoderArgs` (shared by
+  live channels, VOD, and preview sessions) now computes `-g` in frames from the source's own real, already-probed
+  frame rate (`VideoTrack::r_frame_rate`, via a newly-exposed `parseFrameRateFraction`) and passes it alongside
+  `-force_key_frames`, so the encoder knows the real cadence upfront instead of being repeatedly surprised by it.
+  Segment interval kept at 2s (not permanently loosened) — this fix means fast channel-switch latency and glitch-free
+  playback no longer have to trade off against each other. Covered by two new tests in
+  `momus/hephaestus/test_encoder_args.cpp`. Not yet independently confirmed as the final fix on real hardware — please
+  retest.
 - **A dual-bucket channel's default-bucket viewers could drift apart in actual content position from its
   native-bucket viewers of the "same" channel (Hephaestus)**: the speed-correction gate above was keyed on
   "not the native bucket," not on whether a native bucket exists for this channel at all — so on a channel where

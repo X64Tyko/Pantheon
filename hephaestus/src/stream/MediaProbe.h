@@ -61,6 +61,13 @@ bool isHdrTransfer(const std::string& color_transfer);
 // something to gate correctness-critical behavior on.
 bool isLikelyVfr(const VideoTrack& v);
 
+// Parses ffprobe's "num/den" frame rate strings (e.g. "30000/1001"),
+// occasionally a bare integer, or "0/0"/empty when ffprobe had no basis to
+// compute one (returns 0.0 in that case, and on any parse failure — never
+// throws). Exposed (not MediaProbe.cpp-local) so EncoderArgs.cpp can size
+// -g/-r off the same real source frame rate isLikelyVfr already uses.
+double parseFrameRateFraction(const std::string& s);
+
 // Internal parser exposed for testing.
 int parseBitDepthForTest(const std::string& json_str);
 

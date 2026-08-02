@@ -64,7 +64,7 @@ bool isHdrTransfer(const std::string& color_transfer)
 
 // ffprobe reports frame rates as "num/den" (e.g. "30000/1001"), occasionally
 // a bare integer, or "0/0" when it has no basis to compute one.
-static double parseFrameRateFraction(const std::string& s)
+double parseFrameRateFraction(const std::string& s)
 {
 	auto slash = s.find('/');
 	if (slash == std::string::npos)

@@ -257,7 +257,6 @@
 .checkboxLabelDisabled {
     cursor: default;
 }
-
 .checkboxLabelDisabled .checkboxLabelText {
     opacity: 0.7;
 }
