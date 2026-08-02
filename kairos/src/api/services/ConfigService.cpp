@@ -362,6 +362,14 @@ void ConfigService::registerRoutes(httplib::Server& svr)
 			db_.get().exec("DELETE FROM chapter");
 
 			// Playlists are source-synced; they'll be recreated on next sync.
+			// plex_list_link has no FK back to playlist (see
+			// PlaylistRepository::remove()'s own comment on this), so it must
+			// be cleared here too — otherwise a Plex-linked playlist wiped by
+			// this raw-SQL delete (instead of going through
+			// PlaylistRepository::remove(), which already handles this)
+			// leaves behind a stale link that fails syncPlexLinks()'s FK
+			// constraint forever afterward.
+			db_.get().exec("DELETE FROM plex_list_link WHERE list_type = 'playlist'");
 			db_.get().exec("DELETE FROM playlist_item");
 			db_.get().exec("DELETE FROM playlist");
 

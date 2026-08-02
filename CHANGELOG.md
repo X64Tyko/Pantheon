@@ -202,6 +202,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **`Sync All` silently died partway through whenever it reached a source with a genuinely empty library —
+  crashing and restarting the whole Kairos process, not returning a clean error (Kairos)**: `JellyfinBaseSource::
+  fetchShows()`/`fetchMovies()` (shared by Jellyfin and Emby) and `PlexSource::fetchShows()`/`fetchMovies()` each
+  had a debug log line — `"Queried <first> to <last>"` — that indexed `items[0]` and `items[page_count - 1]`
+  without checking the page actually had any items. A present-but-empty result page (a real, valid response shape
+  — an empty library, or the final page landing exactly on a pagination boundary) triggered unchecked indexing
+  into an empty `nlohmann::json` array: undefined behavior, not a catchable `json::exception`, so the existing
+  per-page `try`/`catch` never saw it. Reported as "every sync-all run dies right when it reaches Emby" — diagnosed
+  from real log output showing the process's own startup lines appearing again immediately after "fetching shows:
+  Emby / Tutorials," with nothing in between (a clean crash-and-restart, not a hung/slow request). Also fixed the
+  same unguarded pattern in `PlexSource`'s device-discovery path (`device_list[0]` on an account with zero
+  registered devices). All four fetch call sites now skip the debug line entirely when the page is empty; the
+  device-list one now checks `!device_list.empty()` before indexing. Covered by 4 new tests (2 Jellyfin/Emby, 2
+  Plex) — manually verified each fails with a real out-of-bounds crash before the fix and passes after, not just
+  trusting the diagnosis.
 - **Episode-scope Align Start silently abandoned alignment (and any filler) whenever nothing fit the remaining
   gap (Kairos)**: `RuleEngine.cpp`'s episode-alignment padding tries to bridge the gap up to the next
   `align_to_mins` boundary with real filler content, but if `pickFillerSim` couldn't find anything eligible for

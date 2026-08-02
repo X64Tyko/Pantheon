@@ -1992,7 +1992,34 @@ void SyncManager::syncPlexLinks(const std::string& source_id) {
     std::cout << "[sync] re-syncing " << links.size() << " linked list(s) (source=" << source_id << ")" << std::endl;
 
     for (const auto& link : links) {
-        try {
+		// Self-heal stale links: plex_list_link has no FK back to playlist/
+		// filler_list (see PlaylistRepository::remove()'s own comment on this
+		// exact hazard), so a link whose target was deleted through a path
+		// that doesn't clean it up (e.g. POST /api/config/library/reset, which
+		// wipes `playlist` via raw SQL instead of going through
+		// PlaylistRepository::remove()) survives and would otherwise fail the
+		// real FK constraint on playlist_item/filler_list_item on every
+		// single sync, forever, with no way to recover short of a manual DB
+		// fix. Detect and remove the orphan here instead of retrying
+		// indefinitely.
+		const std::string parent_tbl = (link.list_type == "playlist") ? "playlist" : "filler_list";
+		const std::string parent_col = (link.list_type == "playlist") ? "playlist_id" : "filler_list_id";
+		{
+			SQLite::Statement chk(sync_db_, "SELECT 1 FROM " + parent_tbl + " WHERE " + parent_col + " = ?");
+			chk.bind(1, link.list_id);
+			if (!chk.executeStep())
+			{
+				std::cerr << "[sync] linked " << link.list_type << " \"" << link.list_id
+					<< "\" no longer exists — removing its stale Plex link" << std::endl;
+				SQLite::Statement del_link(sync_db_,
+										   "DELETE FROM plex_list_link WHERE list_type = ? AND list_id = ?");
+				del_link.bind(1, link.list_type);
+				del_link.bind(2, link.list_id);
+				del_link.exec();
+				continue;
+			}
+		}
+		try {
             auto raw = (link.plex_type == "collection")
                 ? src->browseCollectionItems(link.external_id)
                 : src->browsePlaylistItems(link.external_id);
