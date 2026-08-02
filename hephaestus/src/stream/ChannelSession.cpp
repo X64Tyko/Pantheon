@@ -45,16 +45,15 @@ static constexpr double kMaxSpeed = 1.02;
 // own GOP spacing is (can be 5-15s+). kLiveHlsListSize/kLiveHlsDeleteThreshold
 // below are sized generously to absorb that case rather than just the
 // intended 2s one.
-// TEMPORARY DIAGNOSTIC — bumped 2->6 to test whether the still-open
-// transcode-bucket stutter's interval scales with the forced-keyframe
-// cadence (see project memory). If the glitch interval scales to roughly
-// 3x whatever it was at 2s, that confirms the forced-IDR-every-N-seconds
-// itself as the trigger (NVENC encoder-pipeline stall on the forced IDR,
-// not logged as an error/warning, matching the clean verbose-log result).
-// If the interval stays the same regardless, this isn't it — revert to 2
-// either way once the test result is in; 6s hurts channel-switch/cold-start
-// latency too much to ship.
-static constexpr int kLiveHlsSegmentSecs = 6;
+// TEMPORARY DIAGNOSTIC — back to 2 (was bumped to 6 briefly) to confirm the
+// glitch reappears now that the segment/forced-keyframe interval is back to
+// its normal value. At 6s the user reported the stutter stopped happening
+// entirely, not just less often — reverting to establish that was actually
+// causal (the interval change) and not just a short/lucky observation
+// window before concluding anything. See project memory for the full
+// back-and-forth — do not read anything into this constant's value alone
+// without checking there for the latest result.
+static constexpr int kLiveHlsSegmentSecs = 2;
 
 // Oversized vs. the 2s target so a direct-stream session's much-longer real
 // segments (see above) still get a safe rolling window instead of a client's
