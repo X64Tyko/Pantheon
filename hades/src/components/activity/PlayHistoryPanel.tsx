@@ -94,10 +94,14 @@ export const PlayHistoryPanel = observer(function PlayHistoryPanel() {
             <tbody>
               {rows.map(r => {
                 const user = userStore.users.find(u => u.user_id === r.user_id)
+                  const isChannel = r.content_type === 'channel'
                 const pct = r.duration_ms > 0 ? Math.min(1, r.last_position_ms / r.duration_ms) : 0
                 return (
                   <tr key={r.event_id} className="border-t border-zinc-800/60">
-                    <td className="py-2 pr-4 text-zinc-300 max-w-[280px] truncate">{r.title || r.content_id}</td>
+                      <td className="py-2 pr-4 text-zinc-300 max-w-[280px] truncate">
+                          {isChannel && <span className="text-emerald-500 mr-1.5" title="Live channel">&#9679;</span>}
+                          {r.title || r.content_id}
+                      </td>
                     <td className="py-2 pr-4 text-zinc-400 whitespace-nowrap">{user?.username ?? r.user_id.slice(0, 8)}</td>
                     <td className="py-2 pr-4 text-zinc-500 whitespace-nowrap">{DEVICE_LABELS[r.device_type]}</td>
                     <td className="py-2 pr-4 whitespace-nowrap">
@@ -106,17 +110,25 @@ export const PlayHistoryPanel = observer(function PlayHistoryPanel() {
                       </span>
                     </td>
                     <td className="py-2 pr-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 h-1.5 rounded-full bg-zinc-800 overflow-hidden shrink-0">
-                          <div
-                            className={`h-full ${r.completed ? 'bg-emerald-500' : 'bg-violet-500'}`}
-                            style={{ width: `${Math.round(pct * 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-zinc-500">
-                          {r.completed ? 'Watched' : `${Math.round(pct * 100)}% · ${formatDuration(r.duration_ms)}`}
-                        </span>
-                      </div>
+                        {isChannel ? (
+                            // Channels have no fixed duration/position — a
+                            // progress bar makes no sense, so this shows how
+                            // long the sitting lasted instead.
+                            <span
+                                className="text-zinc-500">Watched {formatDuration(r.ended_at_ms - r.started_at_ms)}</span>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <div className="w-20 h-1.5 rounded-full bg-zinc-800 overflow-hidden shrink-0">
+                                    <div
+                                        className={`h-full ${r.completed ? 'bg-emerald-500' : 'bg-violet-500'}`}
+                                        style={{width: `${Math.round(pct * 100)}%`}}
+                                    />
+                                </div>
+                                <span className="text-zinc-500">
+                            {r.completed ? 'Watched' : `${Math.round(pct * 100)}% · ${formatDuration(r.duration_ms)}`}
+                          </span>
+                            </div>
+                        )}
                     </td>
                     <td className="py-2 pr-4 text-zinc-600 whitespace-nowrap" title={new Date(r.started_at_ms).toLocaleString()}>
                       {relativeTime(r.started_at_ms)}

@@ -50,6 +50,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Live-channel viewing now shows up in Play History / "who's watching" telemetry (Kairos, Hades, pantheon-android)**:
+  `PUT /api/watch-progress/:content_type/:id`'s `validContentType` only ever accepted `movie`/`episode` — a channel
+  viewer produced no `playback_history` row at all, so the Activity tab's Play History table and "who's actively
+  playing" view had no idea live channels were being watched, by whom, on what device, or on which bucket
+  (direct-stream/transcode). Added a dedicated `content_type == "channel"` branch to the watch-progress handler
+  that feeds `PlaybackHistoryRepository` exactly like a movie/episode ping does (title resolved from the channel's
+  own name; `recordPing`'s existing (user, content_type, content_id) session-extension logic needed no changes to
+  correctly treat a channel switch as a new sitting) — but deliberately skips `WatchProgressRepository` entirely,
+  since a channel has no position/duration/resume concept and upserting one would incorrectly surface live TV in
+  Continue Watching. Hades' web player (`PlayerPage.tsx`) previously skipped progress pings entirely for channels
+  (`if (kind === 'channel') return`) — now pings this new endpoint on the same interval instead. Android had the
+  identical gap (`PlayerViewModel.reportProgress`'s `if (isLive ...) return`) — fixed the same way, reusing the
+  existing `putWatchProgress` endpoint/DTO with `contentType="channel"` rather than adding new API surface there.
+  `PlayHistoryPanel.tsx`'s Progress column showed a meaningless "0% · 0s" for a zero-duration channel row; now
+  shows total sitting length instead, with a live-channel indicator on the title. Covered by three new route-level
+  tests in `momus/kairos/api/test_playback_and_channel_routes.cpp`. Roku not yet covered — no time to audit its
+  equivalent ping path this pass.
 - **Android player pauses when the app is backgrounded (pantheon-android)**: nothing stopped playback (audio kept
   running, and a live channel's HLS session kept being polled/billed as an active viewer) when the app left the
   foreground — pressing Home mid-episode just kept playing unseen. New `PlaybackPreferences` (plain

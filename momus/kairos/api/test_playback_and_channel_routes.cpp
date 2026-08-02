@@ -29,6 +29,7 @@
 #include "auth/AuthStore.h"
 #include "conf/ConfStore.h"
 #include "db/Database.h"
+#include "db/PlaybackHistoryRepository.h"
 #include "db/RestrictionRepository.h"
 #include "download/DownloadManager.h"
 #include "email/EmailService.h"
@@ -340,4 +341,66 @@ TEST_F(PlaybackAndChannelRoutesTest, PlayedAcceptsRequestWithCorrectInternalToke
 	// no matching schedule row is that handler's own business logic, not
 	// this test's concern.
 	EXPECT_NE(r->status, 401);
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/watch-progress/channel/:id — Kairos never tracked who was
+// watching a live channel at all (validContentType only ever accepted
+// movie/episode); this content_type="channel" branch should feed
+// PlaybackHistoryRepository (the Activity tab's "who's watching what") the
+// same way a movie/episode ping does, while deliberately never touching
+// WatchProgressRepository — a channel has no position/duration/resume
+// concept to upsert there, and doing so would incorrectly surface a
+// live channel in Continue Watching.
+// ---------------------------------------------------------------------------
+
+TEST_F(PlaybackAndChannelRoutesTest, WatchProgressChannelRecordsPlaybackHistory)
+{
+	SQLite::Statement c(db.get(), "INSERT INTO channel (channel_id, name, number) VALUES ('c1','News',1)");
+	c.exec();
+
+	auto r = cli->Put("/api/watch-progress/channel/c1", viewerHeaders(),
+					  R"({"device_type":"web","direct_stream":true})", "application/json");
+	ASSERT_TRUE(r);
+	EXPECT_EQ(r->status, 200);
+
+	auto rows = PlaybackHistoryRepository(db).list("", 0, 0, 100);
+	ASSERT_EQ(rows.size(), 1u);
+	EXPECT_EQ(rows[0].user_id, viewer_id);
+	EXPECT_EQ(rows[0].content_type, "channel");
+	EXPECT_EQ(rows[0].content_id, "c1");
+	EXPECT_EQ(rows[0].title, "News") << "should resolve the channel's own name, not leave it blank";
+	EXPECT_TRUE(rows[0].direct_stream);
+}
+
+TEST_F(PlaybackAndChannelRoutesTest, WatchProgressChannelNeverWritesWatchProgressRepository)
+{
+	SQLite::Statement c(db.get(), "INSERT INTO channel (channel_id, name, number) VALUES ('c1','News',1)");
+	c.exec();
+
+	auto r = cli->Put("/api/watch-progress/channel/c1", viewerHeaders(),
+					  R"({"device_type":"web"})", "application/json");
+	ASSERT_TRUE(r);
+	ASSERT_EQ(r->status, 200);
+
+	SQLite::Statement q(db.get(), "SELECT COUNT(*) FROM watch_progress WHERE content_type='channel'");
+	ASSERT_TRUE(q.executeStep());
+	EXPECT_EQ(q.getColumn(0).getInt(), 0)
+		<< "a channel ping must never create/upsert a watch_progress row — no position/resume concept applies";
+}
+
+TEST_F(PlaybackAndChannelRoutesTest, WatchProgressChannelRepeatedPingsExtendOneSitting)
+{
+	SQLite::Statement c(db.get(), "INSERT INTO channel (channel_id, name, number) VALUES ('c1','News',1)");
+	c.exec();
+
+	for (int i = 0; i < 3; ++i)
+	{
+		auto r = cli->Put("/api/watch-progress/channel/c1", viewerHeaders(), R"({})", "application/json");
+		ASSERT_TRUE(r);
+		ASSERT_EQ(r->status, 200);
+	}
+
+	auto rows = PlaybackHistoryRepository(db).list("", 0, 0, 100);
+	ASSERT_EQ(rows.size(), 1u) << "pings close together on the same channel should extend one sitting, not create three";
 }

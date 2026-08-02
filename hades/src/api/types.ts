@@ -119,7 +119,7 @@ export interface DeviceConnection {
 export interface PlaybackHistoryEntry {
   event_id:            string
   user_id:             string
-  content_type:        'movie' | 'episode'
+    content_type: 'movie' | 'episode' | 'channel'
   content_id:           string
   title:                string
   device_type:          '' | 'web' | 'android-mobile' | 'android-tv' | 'roku' | 'cast'

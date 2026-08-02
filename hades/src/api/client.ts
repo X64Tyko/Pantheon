@@ -427,6 +427,13 @@ export const api = {
     }) =>
                         request<{ ok: boolean; watched: boolean }>('PUT', `/watch-progress/${contentType}/${id}`, b),
   clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
+    // Live channels have no position/duration to report — this only ever
+    // feeds Kairos's PlaybackHistoryRepository ("who's watching what" in the
+    // Activity tab), not WatchProgressRepository, so it's a separate call
+    // rather than widening putWatchProgress's contentType union onto a shape
+    // that doesn't fit (no position_ms/duration_ms, no "watched" response).
+    pingChannelActivity: (channelId: string, b: { device_type?: string; direct_stream?: boolean }) =>
+        request<{ ok: boolean }>('PUT', `/watch-progress/channel/${channelId}`, b),
   getShowWatchState:  (showId: string)                                     => request<ShowWatchState | null>('GET', `/shows/${showId}/watch-state`),
 
   // Watch Together — identity/discovery only (Kairos owns this half; live

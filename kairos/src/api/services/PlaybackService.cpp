@@ -42,6 +42,8 @@ namespace
 		{
 			const char* sql = content_type == "movie"
 								  ? "SELECT title FROM movie WHERE movie_id = ?"
+								  : content_type == "channel"
+								  ? "SELECT name FROM channel WHERE channel_id = ?"
 								  : "SELECT title FROM episode WHERE episode_id = ?";
 			SQLite::Statement q(db.get(), sql);
 			q.bind(1, content_id);
@@ -566,6 +568,39 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 
 		auto content_type = req.matches[1].str();
 		auto content_id   = req.matches[2].str();
+
+		// Live channels have no position/duration/resume concept at all —
+		// telemetry previously stopped here entirely for them (validContentType
+		// rejects "channel", same as every other route in this file, since none
+		// of movie/episode's position-tracking or resolve-to-file logic applies
+		// to a live schedule). This branch only ever feeds
+		// PlaybackHistoryRepository (the "who's watching what" Activity view),
+		// deliberately skipping WatchProgressRepository so a channel never
+		// pollutes Continue Watching or "played" state the way a movie/episode
+		// ping does — recordPing's own (user, content_type, content_id) keying
+		// already does the right thing here unmodified: continuous pings on the
+		// same channel extend one sitting, switching channels starts a new one.
+		if (content_type == "channel")
+		{
+			try
+			{
+				auto b      = json::parse(req.body);
+				auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
+				PlaybackHistoryRepository(db_).recordPing(
+					user->user_id, "channel", content_id,
+					lookupTitle(db_, "channel", content_id),
+					b.value("device_type", ""), b.value("direct_stream", false),
+					0, 0, now_ms, false);
+				route::ok(res, json{{"ok", true}}.dump());
+			}
+			catch (const std::exception& e)
+			{
+				route::logErr("PUT /api/watch-progress/channel/:id", e);
+				route::err(res, 400, e.what());
+			}
+			return;
+		}
+
 		if (!validContentType(content_type))
 		{
 			route::err(res, 400, "content_type must be movie or episode");

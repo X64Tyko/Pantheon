@@ -280,6 +280,33 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, targetId, session.durationMs])
 
+    // Periodic + on-unmount channel-activity pings (channels only) — the live
+    // counterpart to the VOD-only watch-progress effect above, which
+    // deliberately skips channels entirely (see its own comment). Channels have
+    // no position/duration to report, so this feeds Kairos's
+    // PlaybackHistoryRepository directly via a dedicated endpoint instead of
+    // reusing putWatchProgress. Unlike the VOD effect, this never suppresses
+    // itself during Watch Together/cast mirroring — there's no position field
+    // here a receiver's own state could be more authoritative than, so there's
+    // nothing for a local ping to incorrectly overwrite.
+    useEffect(() => {
+        if (kind !== 'channel') return
+        const ping = () => {
+            api.pingChannelActivity(targetId, {
+                device_type: 'web',
+                direct_stream: session.directStream ?? undefined,
+            }).catch(() => {
+            })
+        }
+        ping() // register promptly rather than waiting a full interval to show up as watching
+        const interval = setInterval(ping, PROGRESS_PING_MS)
+        return () => {
+            clearInterval(interval);
+            ping()
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [kind, targetId, session.directStream])
+
   // ── Watch Together ───────────────────────────────────────────────────────────
 
   // Session identity/host — Kairos-owned (see WatchTogetherService.cpp); this
