@@ -41,6 +41,7 @@ export default observer(function ChannelDetailPage() {
         if (scrollRef.current) scrollRef.current.scrollTop = Math.round(15.5 * store.pxPerHour)
       }, 80)
     })
+      return () => store.dispose()
   }, [id])
 
     // The full drag-and-drop editor below assumes write access to whatever

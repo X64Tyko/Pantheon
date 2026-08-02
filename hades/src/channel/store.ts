@@ -578,6 +578,35 @@ export class ChannelDetailStore {
     this.selectedBumperSlot    = null
   }
 
+    // Called when ChannelDetailPage unmounts (or switches to a different
+    // channel id). The store is a module-level singleton, so without this its
+    // block list, EPG preview, and content-picker results just sit in memory
+    // — and its debounce/EPG-refresh timers keep firing — until the next
+    // load() happens to overwrite them.
+    dispose() {
+        if (_epgTimer) {
+            clearTimeout(_epgTimer);
+            _epgTimer = null
+        }
+        clearTimeout(_debounce)
+        _searchCtrl?.abort()
+        _searchCtrl = null
+
+        this.closeEditor()
+        this.blocks = []
+        this.savedBlocks = []
+        this.blocksDirty = false
+        this.epgItems = []
+        this.confirmedAnchors = {}
+        this.previewAnchors = {}
+        this.pickerQuery = ''
+        this.pickerShows = []
+        this.pickerMovies = []
+        this.pickerEpisodes = []
+        this.pickerPlaylists = []
+        this.contentPlaylists = []
+    }
+
   setActiveBlockTab(tab: 'content' | 'filler' | 'bumpers') {
     this.activeBlockTab        = tab
     this.selectedContentItemId = null

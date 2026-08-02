@@ -1,6 +1,9 @@
 import {useCallback, useEffect, useRef, useState, type RefObject} from 'react'
 import Hls from 'hls.js'
 import { registerReceiverVideoElement } from '../cast/CastReceiverProvider'
+import {api} from '../api/client'
+import {statusStore} from '../stores'
+import {currentUserRef} from '../auth/AuthContext'
 import styles from './VideoPlayer.module.css'
 
 interface VideoPlayerProps {
@@ -255,6 +258,19 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
               if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
                   data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL) {
                   const now = Date.now()
+                  // These are otherwise invisible outside this tab's own devtools —
+                  // console.warn above never reaches remoteLog.ts's forwarding (that
+                  // only patches console.error). Forwarding every raw occurrence
+                  // (not just the 3-in-12s escalation below) is the point while
+                  // hunting the segment-boundary-correlated live-channel stutter —
+                  // frequency-over-time is exactly the signal that's missing
+                  // server-side. Gated on hades_debug like other opt-in diagnostics.
+                  if (isLive && statusStore.hadesDebug) {
+                      api.sendClientLog('warn',
+                          `hls ${data.details} at t=${video.currentTime.toFixed(2)}s frag=${data.frag?.url ?? 'n/a'}`,
+                          currentUserRef.id).catch(() => {
+                      })
+                  }
                   if (recentStalls.length === 0) positionAtFirstStall = video.currentTime
                   recentStalls.push(now)
                   while (recentStalls.length && now - recentStalls[0] > STALL_WINDOW_MS) recentStalls.shift()

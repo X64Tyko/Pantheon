@@ -144,6 +144,10 @@ private:
 	std::atomic<bool> hls_patch_stop{false};
 	void hlsPatchLoop();
 	void patchDiscontinuitySequence();
+	// Last segment URI whose EXTINF duration was already checked/logged by
+	// patchDiscontinuitySequence's verbose_transcode_logs diagnostic — not
+	// synchronized, only ever touched from the single hlsPatchLoop thread.
+	std::string last_extinf_uri_;
 
 	// Warms Hephaestus's own file probe cache (MediaProbe.cpp's process-
 	// lifetime probeMediaCached cache) for the *next* scheduled item a few

@@ -50,6 +50,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Diagnostics for the periodic live-channel transcode stutter, targeting the layer below ffmpeg's own frame
+  encoding (Hades, Hephaestus)**: the segment-duration bisection (glitch present at `kLiveHlsSegmentSecs=2`, absent
+  at `6`) plus clean `showinfo`/`ashowinfo` per-frame `pts_time` output (see the A/V-drift diagnostics entry just
+  below) together point away from ffmpeg's encode timing and toward the HLS muxer/segmenter or the player's
+  handling of frequent segment boundaries — neither of which had any instrumentation. Two additions: (1) hls.js's
+  non-fatal `BUFFER_STALLED_ERROR`/`BUFFER_NUDGE_ON_STALL` events (`VideoPlayer.tsx`) — already detected client-side
+  as the "chirp" nudges described in that code's own comment, but only ever `console.warn`'d, which `remoteLog.ts`
+  never forwards (it only patches `console.error`) — are now sent to `POST /api/logs/client` for every live-channel
+  occurrence, not just the escalation after 3-in-12s, gated on the existing "Hades Console Error Logging"
+  (`hades_debug`) toggle; frequency-over-time is exactly the signal missing server-side, and it should scale with
+  segment count the same way the glitch itself does. (2) `ChannelSession::patchDiscontinuitySequence` now also
+  checks each newly-appeared HLS segment's actual `#EXTINF` duration against the requested `hls_time`
+  (`kLiveHlsSegmentSecs`), piggybacked on the playlist read it already does every tick, and logs a mismatch beyond
+  20% — evidence the muxer itself is cutting segments irregularly (e.g. off-GOP-boundary) rather than a frame-level
+  problem. Gated on `verbose_transcode_logs`, same as the diagnostics below.
 - **Diagnostics for tracking down A/V drift on live channels, specifically software (non-hardware-accelerated)
   transcoding under real CPU contention (Hephaestus)**: reported on the public demo server as audio and video
   slowly desyncing on a software-transcoded channel — a plausible mechanism given the codebase already had no
