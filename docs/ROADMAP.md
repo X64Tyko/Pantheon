@@ -37,64 +37,58 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 ## Phase 2: Beta (Q3 2026)
 *Focus: Feature completeness, user experience, and expanded hardware support.*
 
-- [x] **Watch Together for Android:** The web (Hades) implementation shipped in Alpha (see above); `pantheon-android`
-  now has the same host/follower session sync (join/leave, host detection, live event stream, position drift
-  correction, and a Home-screen discovery shelf mirroring Hades' own). Roku support is still open.
-- [x] **Advanced Search:** Add more advanced search operators (e.g. filtering by watch state, sorting by episode, etc.)
-- [x] **Scheduled Sync & Scan Jobs:** Time-based (interval or daily-at-UTC-time) triggering for sync, metadata refresh,
-  chapter detection, and metadata writeback, each independently enable/disable-toggleable with a "Run now" override,
-  configured from Settings → Jobs. All default off — new background behavior on an existing server shouldn't silently
-  start on upgrade. Orphan cleanup didn't get its own job: it only runs as a phase of a real sync pass (it needs that
-  pass's live-source snapshot), so it rides along with sync's own schedule instead.
-- [x] **Offline Backup & Restore:** On-demand or scheduled SQLite-safe backup of the Kairos database and `kairos.conf` (
-  SQLite's online-backup API, safe against a live/actively-written DB), with admin-configurable retention and a
-  Settings → Jobs restore action. Restore stages the chosen backup over the live files and restarts the Kairos container
-  to apply it — there's no safe way to hot-swap a SQLite file under an open connection.
-- [ ] **True Direct Play:** Direct streaming is up and running, but requires the server to do work that the end client
-  can do. We need Direct Play to serve files directly to clients, this should work for VOD and channels when possible.
-- [ ] **Plex External-ID Writeback:** Plex's GUID is only changeable via a "match" call that re-scrapes the whole item under a new agent result, not a field edit like everything else in the writeback system — needs its own design before it's safe to automate.
-- [ ] **Full .ass/.ssa Subtitle Styling:** Embedded/sidecar `.ass`/`.ssa` tracks are already recognized as text
-  subtitles and extracted into an HLS sidecar, but only as plain dialogue — ffmpeg's WebVTT conversion doesn't preserve
-  ASS/SSA's own styling (positioning, karaoke, custom fonts/colors), so anything relying on those renders as flat text
-  today.
-- [ ] **TTML Subtitle Support:** Timed Text Markup Language — a common broadcast/DASH subtitle format not currently
-  recognized as either a text or bitmap subtitle codec at all, as an additional format alongside the existing `.srt`/
-  `.ass`/`.ssa`/`.vtt` set.
-- [ ] **fMP4 Segment Support:** Fragmented MP4 (CMAF-style `.m4s` segments) as an alternative to the current MPEG-TS (
-  `.ts`) HLS segment output — broader codec compatibility, needed for some codec/player combinations MPEG-TS doesn't
-  cleanly support, and a step toward Low-Latency HLS.
-- [ ] **Expanded IPTV Support:** Native support for more complex M3U8 attributes and XMLTV extensions.
-- [ ] **Performance Benchmarking:** Optimization of the `kairos_core` scheduler for 100+ concurrent channels.
-- [ ] **User Notifications:** Alerts for sync failures or stream interruptions.
-- [ ] **Roku Manifest Update:** `pantheon-roku` has been tested and confirmed functional on real hardware, but needs to be updated to use the per-client capability manifest (see above) and re-verified before any public release.
-- [x] **Scheduling Robustness for Placeholder Content:** Verified via a dedicated audit — `RuleEngine.cpp`'s
-  advancement/selection paths already return cleanly (no crash, no infinite loop) for a show with zero synced
-  episodes or an item with `duration_ms <= 0`, falling through to the next fallback tier instead. The one residual
-  gap: `BlockRepository::addContent` does no write-time validation that a `content_id` references a real, populated
-  show/movie — the safety is entirely at read-time in `RuleEngine`, so any future code path reading `block_content`
-  directly without going through its guards would reopen this.
-- [ ] **Cast Session Skip-to-Player:** Skip the profile picker when a cast originates from an already-authenticated account, especially when casting directly to a specific piece of media.
-- [ ] **Linked-ID Editor Title Confirmation:** The editable external-ID list (add/reorder/remove) currently shows only raw `source:id` pairs; it should resolve and display the matched title inline so a typo'd ID is caught before saving, not after. (The read-only badge row elsewhere already links out to the source — this only affects the editor.)
-- [ ] **VR Content Detection:** File-probe heuristic to flag VR video, plus a library toggle/filter to browse it — same tag/filter infrastructure as Scraper-Derived Tags.
-- [ ] **Chapter Classification Quality:** Reduce the "Unclassified" bucket in chapter detection — Episode/Credits already resolve well, but a lot of detected chapters fall through uncategorized. Worth doing before Chapter-Aware Scheduling (V1.0) depends on classification being trustworthy.
-- [ ] **Media Downloads:** Download media to device for offline playback.
-- [ ] **External ratings:** Add support for external rating systems (IMDb, Rotten Tomatoes, Metacritic, etc.)
-- [x] **Home Screen Management:** Reorder shelves on the home screen — `PlaylistPage.tsx`'s `HomeShelvesPanel`
-  (persisted `home_order` field, up/down reorder controls).
+*The checklist below is generated from the [Beta Complete milestone](https://github.com/X64Tyko/Pantheon/milestone/1)
+— don't hand-edit it, edit the issue instead. See `.github/scripts/generate_roadmap.sh`.*
+
+<!-- roadmap-sync:start beta -->
+- [ ] [Multi-part movie support (playback + scheduling)](https://github.com/X64Tyko/Pantheon/issues/3) (#3)
+- [ ] [fMP4 (fragmented MP4/CMAF) HLS segment support](https://github.com/X64Tyko/Pantheon/issues/4) (#4)
+- [ ] [True Direct Play for VOD and channels](https://github.com/X64Tyko/Pantheon/issues/5) (#5)
+- [ ] [Bitrate management and user-configurable quality/bitrate caps](https://github.com/X64Tyko/Pantheon/issues/6) (#6)
+- [ ] [Native casting (Chromecast) support from pantheon-android](https://github.com/X64Tyko/Pantheon/issues/7) (#7)
+- [ ] [External ratings sources (IMDb, Rotten Tomatoes, Metacritic)](https://github.com/X64Tyko/Pantheon/issues/9) (#9)
+- [ ] [Webhook-driven sync ingestion (Plex library.new/media.play/media.scrobble, extend to Jellyfin/Emby)](https://github.com/X64Tyko/Pantheon/issues/13) (#13)
+- [ ] [Chapter classification quality: reduce the Unclassified bucket](https://github.com/X64Tyko/Pantheon/issues/14) (#14)
+- [ ] [User-adjustable subtitle timing offset](https://github.com/X64Tyko/Pantheon/issues/15) (#15)
+- [ ] [Player-side subtitle style customization (font, color, outline, drop shadow)](https://github.com/X64Tyko/Pantheon/issues/16) (#16)
+- [x] [Demo mode: rate-limit account creation per IP](https://github.com/X64Tyko/Pantheon/issues/17) (#17)
+- [x] [Watch Together for Android](https://github.com/X64Tyko/Pantheon/issues/20) (#20)
+- [x] [Advanced Search operators (watch state, episode sort, etc.)](https://github.com/X64Tyko/Pantheon/issues/21) (#21)
+- [x] [Scheduled Sync & Scan Jobs](https://github.com/X64Tyko/Pantheon/issues/22) (#22)
+- [x] [Offline Backup & Restore](https://github.com/X64Tyko/Pantheon/issues/23) (#23)
+- [x] [Scheduling robustness for placeholder/empty content](https://github.com/X64Tyko/Pantheon/issues/24) (#24)
+- [x] [Home screen shelf reordering](https://github.com/X64Tyko/Pantheon/issues/25) (#25)
+- [ ] [Plex external-ID writeback](https://github.com/X64Tyko/Pantheon/issues/26) (#26)
+- [ ] [Full .ass/.ssa subtitle styling preservation](https://github.com/X64Tyko/Pantheon/issues/27) (#27)
+- [ ] [TTML subtitle support](https://github.com/X64Tyko/Pantheon/issues/28) (#28)
+- [ ] [Expanded IPTV support (M3U8 attributes, XMLTV extensions)](https://github.com/X64Tyko/Pantheon/issues/29) (#29)
+- [ ] [Performance benchmarking for 100+ concurrent channels](https://github.com/X64Tyko/Pantheon/issues/30) (#30)
+- [ ] [User notifications for sync failures and stream interruptions](https://github.com/X64Tyko/Pantheon/issues/31) (#31)
+- [ ] [Roku per-client capability manifest update](https://github.com/X64Tyko/Pantheon/issues/32) (#32)
+- [ ] [Cast session skip-to-player for authenticated senders](https://github.com/X64Tyko/Pantheon/issues/33) (#33)
+- [ ] [Linked-ID editor: resolve and show matched title inline](https://github.com/X64Tyko/Pantheon/issues/34) (#34)
+- [ ] [VR content detection and filtering](https://github.com/X64Tyko/Pantheon/issues/35) (#35)
+- [ ] [Media downloads for offline playback](https://github.com/X64Tyko/Pantheon/issues/36) (#36)
+<!-- roadmap-sync:end beta -->
 
 ## Phase 3: V1.0 Release (Late 2026)
 *Focus: Production readiness, security auditing, and long-term support.*
 
-- [ ] **Chapter-Aware Scheduling:** Use detected chapters for precise program start/end and bumper placement. Deferred out of Beta — this consumes chapter data as a scheduling input rather than just displaying it, which touches the scheduler core and EPG projection directly; architecturally it belongs with the other foundational items below, not alongside Beta's smaller UX/format items.
-- [ ] **Watch-History-Driven Automated Channels:** Let a channel's rerun/advancement logic read from actual VOD watch history instead of only shuffle/sequential rules. Bigger than a normal advancement mode: channels are shared broadcast entities, so it needs its own design pass on whose watch state drives a shared schedule before it's safe to build — similar in spirit to the Plex external-ID deferral above, but larger in scope.
-- [ ] **Security Audit:** Full review of the Hermes gateway and authentication flow.
-- [ ] **Public Plugin API:** Allow community-developed scrapers and source providers.
-- [ ] **Stable API:** Versioned REST API for third-party integrations.
-- [ ] **Client Ecosystem:** Native applications for TV and mobile. `pantheon-android` (4 build flavors) and
-  `pantheon-relay` are public and installable today — Android is verified on real Android/Android TV hardware, with only
-  the Amazon/Fire TV flavor still emulator-only and unverified on real Fire TV hardware. `pantheon-roku` is functionally
-  verified on real hardware but stays private pending the per-client capability manifest update tracked in Beta above.
-  Apple TV and a self-hosted/managed relay connection-broker mode remain future work.
+*The checklist below is generated from the [V1.0 milestone](https://github.com/X64Tyko/Pantheon/milestone/2) — don't
+hand-edit it, edit the issue instead. See `.github/scripts/generate_roadmap.sh`.*
+
+<!-- roadmap-sync:start v1 -->
+- [ ] [Self-hosted watch telemetry to power real recommendations](https://github.com/X64Tyko/Pantheon/issues/8) (#8)
+- [ ] [Split Users/Sources/Media into separate databases (blast-radius isolation)](https://github.com/X64Tyko/Pantheon/issues/10) (#10)
+- [ ] [Tailscale as an alternative/complement to Cloudflare Tunnel](https://github.com/X64Tyko/Pantheon/issues/11) (#11)
+- [ ] [Native (non-Docker) hosting on Windows/Linux/macOS](https://github.com/X64Tyko/Pantheon/issues/12) (#12)
+- [ ] [Chapter-aware scheduling](https://github.com/X64Tyko/Pantheon/issues/37) (#37)
+- [ ] [Watch-history-driven automated channels](https://github.com/X64Tyko/Pantheon/issues/38) (#38)
+- [ ] [Security audit: Hermes gateway and auth flow](https://github.com/X64Tyko/Pantheon/issues/39) (#39)
+- [ ] [Public plugin API (scrapers and sources)](https://github.com/X64Tyko/Pantheon/issues/40) (#40)
+- [ ] [Versioned stable REST API for third-party integrations](https://github.com/X64Tyko/Pantheon/issues/41) (#41)
+- [ ] [Client ecosystem: Apple TV client + pantheon-relay connection-broker mode](https://github.com/X64Tyko/Pantheon/issues/42) (#42)
+<!-- roadmap-sync:end v1 -->
 
 ---
 

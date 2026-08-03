@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **`docs/ROADMAP.md`'s Beta/V1.0 checklists are now generated from the Beta Complete/V1.0 GitHub Milestones**
+  (`.github/scripts/generate_roadmap.sh`, run by `.github/workflows/roadmap-sync.yml` on issue/milestone changes) —
+  the milestones are the source of truth now, not a hand-maintained parallel list.
 - **"About Pantheon" page** (Hades `/about`, `docs/About.html`): contribution model, financial support (placeholder
   for now), and credits. Both render the same `docs/About.md`, fetched live from GitHub and cached server-side
   (`GET /api/about`, public) so the two can never drift apart.
