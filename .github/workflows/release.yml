@@ -57,10 +57,23 @@ jobs:
           PRERELEASE_FLAG=()
           if [[ "$VERSION" == *-* ]]; then PRERELEASE_FLAG=(--prerelease); fi
 
+          # The repo's own docker-compose*.yml pin our four images to :latest —
+          # right for building/running off master, wrong for a release asset:
+          # someone deploying from the vX.Y.Z release page should get the
+          # images that tag actually built (docker-*.yml already pushes a
+          # :vX.Y.Z tag alongside :latest on every version-tag push), not
+          # whatever :latest happens to resolve to by the time they pull.
+          # Rewritten into a staging dir so the in-repo files stay on :latest.
+          mkdir -p /tmp/release-compose
+          for f in docker-compose*.yml; do
+            sed -E "s#(ghcr\.io/x64tyko/(kairos|hephaestus|hades|hermes)):latest#\1:${TAG}#g" \
+              "$f" > "/tmp/release-compose/$f"
+          done
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TAG" --notes-file /tmp/release-notes.md "${PRERELEASE_FLAG[@]}"
-            gh release upload "$TAG" docker-compose*.yml --clobber
+            gh release upload "$TAG" /tmp/release-compose/docker-compose*.yml --clobber
           else
             gh release create "$TAG" --title "$TAG" --notes-file /tmp/release-notes.md \
-              "${PRERELEASE_FLAG[@]}" docker-compose*.yml
+              "${PRERELEASE_FLAG[@]}" /tmp/release-compose/docker-compose*.yml
           fi

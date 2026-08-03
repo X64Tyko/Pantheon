@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
 ### Security
 
 - **Public-demo hardening pass**: a full audit (5 parallel workstreams across auth, DDoS/resource-exhaustion,
@@ -866,6 +868,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `v0.3.0-beta.1`) as a pre-release. Fails loudly rather than publishing an empty release if that CHANGELOG section
   doesn't exist yet. Re-runnable via `workflow_dispatch` (with a `tag` input) to backfill a release for a tag pushed
   before this workflow existed, or to republish after a CHANGELOG fix.
+- **NFO writeback for local sources, plus match-confirmation recovery after a DB wipe (Kairos, Hades)**: local
+  sources were a writeback target in name only — `LocalSource::pushMetadata` was unimplemented, so a `source_mapping`
+  row of `source_type='local'` always failed silently. It now writes `movie.nfo`/`<video>.nfo`/`tvshow.nfo` plus
+  poster/fanart sidecars (new `SidecarMetadata::saveMovieSidecar`/`saveShowSidecar`), wired into the existing generic
+  writeback pipeline (confirmed-match gate, per-source `auto_writeback`/`writeback_update_*` toggles all apply
+  unchanged) with zero changes to that pipeline itself. Two tags round-trip through the existing
+  `WritebackFields.match_confirmed`/`.locked`: Kodi's own `<lockdata>` convention, and a new Pantheon-specific
+  `<pantheon_confirmed>` tag (harmless to other Kodi/Jellyfin/Plex tools, which ignore unknown tags) — new
+  `show.nfo_confirmed`/`movie.nfo_confirmed` columns (migration v107) carry that on-disk tag from sync time through
+  to the next matching pass, and `matchShow`/`matchMovie`'s existing trusted-ID short-circuit now also restores
+  `match_confirmed` (not just `match_status`) when it's set — so wiping the DB and rescanning a local library no
+  longer forces re-matching everything that was already confirmed. Safe by construction: that short-circuit only
+  ever runs for rows not already `match_status='matched'`, so an explicit later un-confirm can never be silently
+  re-applied by a future resync just because the on-disk tag is still sitting there. Ships with a new safety valve
+  for the risk this recovery path accepts (a stray/copied NFO could otherwise grant an unearned confirmation):
+  `ScraperManager::unconfirmMatch`/`unconfirmAllMatches`, `POST /api/scrapers/queue/:id/unconfirm` /
+  `/api/scrapers/unconfirm-all`, and an "Unconfirm All Matches" button in Hades Settings, mirroring the existing
+  "Confirm All Matches" flow. **Deployment note:** every `docker-compose*.yml` now mounts the Media volume writable
+  (`/media` instead of `/media:ro`) — required for NFO/sidecar writes to reach local libraries at all. Existing
+  deployments won't pick this up automatically; re-pull the compose file (or drop `:ro` yourself) to enable it, and
+  local-source writeback stays off by default (`auto_writeback`) regardless.
 
 ## [0.2.1] - 2026-07-25
 
