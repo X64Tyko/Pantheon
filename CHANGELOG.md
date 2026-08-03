@@ -8,9 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- **`docs/ROADMAP.md`'s Beta/V1.0 checklists are now generated from the Beta Complete/V1.0 GitHub Milestones**
-  (`.github/scripts/generate_roadmap.sh`, run by `.github/workflows/roadmap-sync.yml` on issue/milestone changes) —
-  the milestones are the source of truth now, not a hand-maintained parallel list.
 - **"About Pantheon" page** (Hades `/about`, `docs/About.html`): contribution model, financial support (placeholder
   for now), and credits. Both render the same `docs/About.md`, fetched live from GitHub and cached server-side
   (`GET /api/about`, public) so the two can never drift apart.
@@ -21,14 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Sidebar profile controls looked like static text, not buttons (Hades)**: `usernameLinkBtn`/`sidebarExitBtn` had
   no resting border or hover background, unlike their already-correct mobile-drawer equivalents. Both now match the
   drawer's affordance; the new About link sits alongside them as a matching icon button.
-- **9 long-failing `LibraryStore` tests (Hades)**: not app bugs — the tests still asserted against the pre-mixed-browse
-  `getShows`/`getMovies` fetch path, never updated when `contentType='all'` (the default) moved to the
-  `getMixedMediaIndex`/`getMixedMediaTiles` path. Rewritten to match; the mixed-browse path — the default view every
-  user hits first — now has real test coverage for the first time.
-- **Hades CI never actually ran `vitest`** — `docker-hades.yml` was a pure Docker build with no test gate, unlike
-  Kairos CI's `test`-before-`build` structure, which is how the 9 failures above went unnoticed. Added a `test` job
-  (typecheck + `vitest run`) that `build` now depends on, and widened the path trigger to include `momus/hades/**`
-  (test-only changes previously didn't trigger this workflow at all).
 
 ### Changed
 
