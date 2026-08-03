@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **"About Pantheon" page** (Hades `/about`, `docs/About.html`): contribution model, financial support (placeholder
+  for now), and credits. Both render the same `docs/About.md`, fetched live from GitHub and cached server-side
+  (`GET /api/about`, public) so the two can never drift apart.
+- **SECURITY.md**: vulnerability disclosure policy, `security@pantheonmedia.app`.
+
+### Fixed
+
+- **Sidebar profile controls looked like static text, not buttons (Hades)**: `usernameLinkBtn`/`sidebarExitBtn` had
+  no resting border or hover background, unlike their already-correct mobile-drawer equivalents. Both now match the
+  drawer's affordance; the new About link sits alongside them as a matching icon button.
+
+### Changed
+
+- **README/CONTRIBUTING**: corrected stale "Alpha" status to Beta, reworded the PR policy around maintainer
+  bandwidth instead of "no unsolicited PRs," and refreshed the test count (1,072 → 1,128, re-counted from a clean
+  run rather than carried forward).
+
 ## [0.3.0] - 2026-08-03
 
 ### Security

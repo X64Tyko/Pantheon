@@ -1,5 +1,5 @@
 import {useEffect, useState, type FormEvent} from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import {useNavigate, useLocation, Link} from 'react-router-dom'
 import {api} from '../api/client'
 import { useAuth } from './AuthContext'
 import styles from './LoginPage.module.css'
@@ -150,6 +150,8 @@ export default function LoginPage() {
                   </button>
               </form>
           )}
+
+          <Link to="/about" className={styles.guestLink}>About Pantheon</Link>
       </div>
     </div>
   )

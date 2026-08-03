@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import {Link, NavLink, Outlet, useLocation, useNavigate} from 'react-router-dom'
 import { FocusContext } from '@noriginmedia/norigin-spatial-navigation'
 import { useFocusable } from '../nav/useFocusable'
 import { useAuth } from '../auth/AuthContext'
@@ -270,13 +270,26 @@ export default observer(function Layout() {
                       {user.role === 'admin' && <span className={styles.adminBadgeSmall}>ADMIN</span>}
                     </span>
                   </button>
-                  <button
-                    onClick={async () => { await reopenProfilePicker(); navigate('/profiles') }}
-                    title="Exit to profile picker"
-                    className={styles.sidebarExitBtn}
-                  >
-                    exit
-                  </button>
+                    <div className={styles.userRowActions}>
+                        <Link to="/about" title="About Pantheon" className={styles.iconActionBtn}>
+                            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                                 strokeWidth="1.4">
+                                <circle cx="8" cy="8" r="6.3"/>
+                                <path d="M8 7.3v4.3" strokeLinecap="round"/>
+                                <circle cx="8" cy="4.9" r="0.7" fill="currentColor" stroke="none"/>
+                            </svg>
+                        </Link>
+                        <button
+                            onClick={async () => {
+                                await reopenProfilePicker();
+                                navigate('/profiles')
+                            }}
+                            title="Exit to profile picker"
+                            className={styles.sidebarExitBtn}
+                        >
+                            exit
+                        </button>
+                    </div>
                 </div>
               )}
             </>
@@ -337,6 +350,7 @@ export default observer(function Layout() {
                   </span>
                 </button>
                 <div className={styles.drawerButtonRow}>
+                    <Link to="/about" title="About Pantheon" className={styles.drawerExitBtn}>About</Link>
                   <button
                     onClick={async () => { await reopenProfilePicker(); navigate('/profiles') }}
                     className={styles.drawerExitBtn}

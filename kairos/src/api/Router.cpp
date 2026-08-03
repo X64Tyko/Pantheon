@@ -12,6 +12,7 @@
 #include "scheduler/RuleEngine.h"
 #include "scraper/ScraperManager.h"
 #include "source/SyncManager.h"
+#include "services/AboutService.h"
 #include "services/ActivityService.h"
 #include "services/ArrService.h"
 #include "services/RequestService.h"
@@ -76,6 +77,10 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	// public-settings above. Consumed by /tv (unauthenticated on first paint,
 	// before any session exists) and eventually native clients.
 	if (method == "GET" && path == "/api/tv/manifest") return true;
+	// About page — reachable pre-login (Hades' /about route, off the login
+	// page's footer link) since its audience is prospective contributors and
+	// supporters, not necessarily existing users.
+	if (method == "GET" && path == "/api/about") return true;
 	// Home shelves (smart playlists with show_on_home=1) — same "structural,
 	// not per-user" reasoning as the TV manifest above, consumed by the web
 	// Home page on first paint the same way.
@@ -235,6 +240,7 @@ void Router::registerRoutes() {
 		guest_mutation_limiter_
 	};
 
+	services_.push_back(std::make_unique<AboutService>());
 	services_.push_back(std::make_unique<AuthService>(ctx));
 	services_.push_back(std::make_unique<SourceService>(ctx));
 	services_.push_back(std::make_unique<ConfigService>(ctx));

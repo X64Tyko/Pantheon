@@ -4,12 +4,27 @@ Thank you for your interest in Pantheon. This project is a **source-available en
 
 ## Governance & Interaction Model
 
-Pantheon is led by a Principal Architect who defines the technical roadmap and implementation details. To ensure the stability and architectural integrity of the system:
+Pantheon is led by a Principal Architect who defines the technical roadmap and implementation details. That's a
+bandwidth reality, not a closed-door policy: reviewing and integrating a pull request against a fast-moving,
+tightly-coupled architecture takes real, uninterruptible focus time, and there's only one person doing that review
+today. To keep that sustainable:
 
-1.  **No Unsolicited Pull Requests:** We do **not** accept direct pull requests for features or refactors. Unsolicited PRs will be closed.
-2.  **Issue-Driven Fixes:** If you find a bug or have a specific technical fix, please **open an issue** first. Provide detailed logs, environment information, and clear reproduction steps.
-3.  **Architectural Review:** If an issue is verified, the Architect will either implement the fix or, in rare cases, invite a specific contribution based on a pre-approved design.
-4.  **Feature Requests:** Feature requests are welcome as issues but will be prioritized strictly according to the Architect's roadmap.
+1. **Pull requests come from two paths:** official contributors with standing write access, and invited
+   contributions — when a reported issue is verified and a fix fits a specific, pre-approved design, the Architect
+   will invite someone to submit exactly that. A PR opened outside either path will be closed, not out of
+   unfriendliness, just because it wasn't scoped against the current architecture first — open an issue instead and
+   it may well turn into an invitation.
+2. **Issue-Driven Fixes:** If you find a bug or have a specific technical fix in mind, please **open an issue**
+   first. Provide detailed logs, environment information, and clear reproduction steps — this is genuinely the
+   highest-value contribution available to anyone outside the two paths above, and a good one is very likely to get
+   picked up.
+3. **Architectural Review:** If an issue is verified, the Architect will either implement the fix directly or issue
+   one of the invitations described above.
+4. **Feature Requests:** Feature requests are welcome as issues but will be prioritized strictly according to the
+   Architect's roadmap.
+
+See [About Pantheon](https://x64tyko.github.io/Pantheon/About.html) for the full contribution model, financial
+support (not yet set up), and contributor credits.
 
 ## Rules of Engagement
 

@@ -38,9 +38,14 @@ way out.
 
 More in the full gallery — chapter review, per-account sync, multi-user & parental controls: **[x64tyko.github.io/Pantheon/Screenshots.html](https://x64tyko.github.io/Pantheon/Screenshots.html)**
 
-## Alpha Release Notice
+## Release Notice
 
-Pantheon is currently **Alpha Complete**. This is a source-available engineering artifact. We do not accept unsolicited pull requests. If you encounter an issue, please read our [Contributing Guidelines](CONTRIBUTING.md), check the [Roadmap](docs/ROADMAP.md), and use the [Issue Template](.github/ISSUE_TEMPLATE/bug_report.yml).
+Pantheon is currently in **Beta** ([v0.3.0](https://github.com/X64Tyko/Pantheon/releases/latest) — Alpha completed
+at v0.2.0; track Beta progress on the [Beta Complete milestone](https://github.com/X64Tyko/Pantheon/milestone/1)).
+Pull requests come from official contributors and by invitation —
+see [About Pantheon](https://x64tyko.github.io/Pantheon/About.html)
+for why and how that works. If you encounter an issue, please read our [Contributing Guidelines](CONTRIBUTING.md),
+check the [Roadmap](docs/ROADMAP.md), and use the [Issue Template](.github/ISSUE_TEMPLATE/bug_report.yml).
 
 ---
 
@@ -52,10 +57,10 @@ Pantheon is currently **Alpha Complete**. This is a source-available engineering
 
 | Component      | Status | Test Suite         | Tests | Risk Coverage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 |----------------|--------|--------------------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Kairos**     | Alpha  | `momus_kairos`     | 720   | ~80% — dedicated regression suites for auth/session security, injection/SSRF, ownership permissions, and scheduler determinism; gaps are mostly in narrower repository-level edge cases (e.g. cross-table cleanup on delete) rather than the core request/scheduling paths                                                                                                                                                                                                                                  |
-| **Hades**      | Alpha  | `vitest`           | 235   | ~45% — core stores/API client well exercised, but the suite currently has 9 known-failing tests (pre-existing, unrelated to recent changes) that haven't been triaged, which is its own coverage risk regardless of the pass count                                                                                                                                                                                                                                                                          |
-| **Hermes**     | Alpha  | `momus_hermes`     | 58    | ~68% — the auth boundary in front of VOD/preview streaming (token validation, parental-controls access-check, fail-open-vs-fail-closed policy on both its branches) now has a dedicated end-to-end suite against a real router, closing what had been its single biggest gap; the broadcaster retry/death-ordering invariant and a real reconnect-under-a-different-user bug (now fixed) are also covered. Device/Watch Together routers' own separate auth gates are the next-largest piece still untested |
-| **Hephaestus** | Alpha  | `momus_hephaestus` | 59    | ~50% — the two concurrency bugs with the widest blast radius (the multi-head segment-collision class, and the retry-on-unreachable-Kairos gap) now have real regression tests using actual spawned processes, not mocks. Still uncovered: the `current_item` data-race fix (races are inherently hard to pin in a deterministic test), the ffprobe-hang timeout, and `PreviewSession`'s/the HLS routes' real request-handling paths                                                                         |
+| **Kairos**     | Beta   | `momus_kairos`     | 766   | ~80% — dedicated regression suites for auth/session security, injection/SSRF, ownership permissions, and scheduler determinism; gaps are mostly in narrower repository-level edge cases (e.g. cross-table cleanup on delete) rather than the core request/scheduling paths                                                                                                                                                                                                                                  |
+| **Hades**      | Beta   | `vitest`           | 235   | ~45% — core stores/API client well exercised, but the suite currently has 9 known-failing tests (pre-existing, unrelated to recent changes) that haven't been triaged, which is its own coverage risk regardless of the pass count                                                                                                                                                                                                                                                                          |
+| **Hermes**     | Beta   | `momus_hermes`     | 58    | ~68% — the auth boundary in front of VOD/preview streaming (token validation, parental-controls access-check, fail-open-vs-fail-closed policy on both its branches) now has a dedicated end-to-end suite against a real router, closing what had been its single biggest gap; the broadcaster retry/death-ordering invariant and a real reconnect-under-a-different-user bug (now fixed) are also covered. Device/Watch Together routers' own separate auth gates are the next-largest piece still untested |
+| **Hephaestus** | Beta   | `momus_hephaestus` | 69    | ~50% — the two concurrency bugs with the widest blast radius (the multi-head segment-collision class, and the retry-on-unreachable-Kairos gap) now have real regression tests using actual spawned processes, not mocks. Still uncovered: the `current_item` data-race fix (races are inherently hard to pin in a deterministic test), the ffprobe-hang timeout, and `PreviewSession`'s/the HLS routes' real request-handling paths                                                                         |
 
 *Risk coverage above is a qualitative estimate of how much of each component's actual failure surface (security,
 concurrency, data integrity) has real test coverage — not a line/branch coverage percentage. More lines executed by a
@@ -63,7 +68,7 @@ test doesn't mean more risk is covered: Hephaestus's number moved from ~25% to ~
 most tests — they were aimed at the two specific gaps with the highest actual blast radius, and real gaps (the ones
 listed above) remain even after that.*
 
-*Pantheon currently runs **1,072 automated tests** across the stack using the **Momus** framework and **Vitest** *
+*Pantheon currently runs **1,128 automated tests** across the stack using the **Momus** framework and **Vitest** *
 
 Kairos's suite includes endpoint-level security regression tests (`momus/kairos/api/test_content_service_security.cpp`) that spin up a real `Router` against a throwaway database and fire actual attack payloads at the running server — e.g. confirming an admin can't forge the locally-cached-poster path sentinel into an arbitrary local file read via `PATCH /api/shows/:id` or the public `/api/images/proxy` endpoint, and that no secret content ever appears in a response when the attack is (correctly) rejected.
 

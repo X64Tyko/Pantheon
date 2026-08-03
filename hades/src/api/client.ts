@@ -763,6 +763,10 @@ export const api = {
         viewer_max_channels: number;
         require_admin_password_switch: boolean
     }>('GET', '/config/public-settings'),
+    // Public, unauthenticated — docs/About.md fetched+cached server-side from
+    // GitHub (AboutService.cpp), so this and the published docs site page can
+    // never drift out of sync with each other.
+    getAbout: () => request<{ content: string }>('GET', '/about'),
   // user_id: best-effort attribution (see auth/AuthContext.tsx's
   // currentUserRef) — the server just logs it alongside the message,
   // nothing queries by it yet, but it means a future admin-facing view over

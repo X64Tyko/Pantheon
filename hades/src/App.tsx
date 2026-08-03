@@ -14,6 +14,7 @@ import Layout                 from './components/Layout'
 import { FocusRoot }          from './nav/FocusRoot'
 import { CastProvider }       from './cast/CastProvider'
 import { CastReceiverProvider } from './cast/CastReceiverProvider'
+import AboutPage from './pages/AboutPage'
 import AccountPage            from './pages/AccountPage'
 import ActivityPage           from './pages/ActivityPage'
 import ChannelDetailPage      from './pages/ChannelDetailPage'
@@ -60,6 +61,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
+          <Route path="/about" element={<AboutPage/>}/>
         {/* Unauthenticated invite-claim flow — only actionable with the
             unguessable token in the URL itself; see AuthStore::claimInvite. */}
         <Route path="/invite/:token" element={<InvitePage />} />

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pantheon — About</title>
+    <style>
+        :root {
+            --bg: oklch(0.152 0.016 286);
+            --bg2: oklch(0.19 0.018 286);
+            --bg3: oklch(0.21 0.026 290 / 0.6);
+            --line: oklch(0.45 0.05 290 / 0.32);
+            --txt: oklch(0.94 0.008 90);
+            --txt2: oklch(0.68 0.02 288);
+            --txt3: oklch(0.54 0.025 290);
+            --gold: oklch(0.83 0.13 84);
+            --violet: oklch(0.72 0.15 290);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: radial-gradient(120% 90% at 72% -12%, oklch(0.27 0.07 292) 0%, oklch(0.17 0.03 288) 42%, oklch(0.1 0.016 285) 100%);
+            color: var(--txt);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            padding: 60px 24px 100px;
+        }
+
+        main {
+            width: 100%;
+            max-width: 760px;
+        }
+
+        a {
+            color: var(--violet);
+        }
+
+        .back {
+            display: inline-block;
+            font-size: 13px;
+            color: var(--txt3);
+            text-decoration: none;
+            margin-bottom: 24px;
+        }
+
+        .back:hover {
+            color: var(--txt2);
+        }
+
+        h1 {
+            font-weight: 800;
+            font-size: 34px;
+            letter-spacing: 0.01em;
+            margin: 0 0 6px;
+        }
+
+        .sub {
+            color: var(--txt2);
+            font-size: 15px;
+            line-height: 1.5;
+            margin: 0 0 6px;
+            max-width: 620px;
+        }
+
+        .note {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 14px 16px;
+            border-radius: 10px;
+            margin: 24px 0 40px;
+            border: 1px solid oklch(0.72 0.15 290 / 0.35);
+            background: oklch(0.72 0.15 290 / 0.08);
+            font-size: 13px;
+            line-height: 1.55;
+            color: var(--txt2);
+        }
+
+        .note b {
+            color: var(--txt);
+        }
+
+        section {
+            margin-bottom: 44px;
+        }
+
+        h2 {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 19px;
+            font-weight: 700;
+            color: var(--txt);
+            margin: 0 0 14px;
+        }
+
+        h2 .n {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            width: 26px;
+            height: 26px;
+            border-radius: 8px;
+            background: linear-gradient(180deg, var(--gold), oklch(0.7 0.15 60));
+            color: oklch(0.2 0.04 70);
+            font-size: 13px;
+            font-weight: 800;
+            font-family: ui-monospace, monospace;
+        }
+
+        p {
+            color: var(--txt2);
+            font-size: 14px;
+            line-height: 1.65;
+            margin: 0 0 12px;
+        }
+
+        ul.plain {
+            margin: 0 0 12px;
+            padding-left: 20px;
+        }
+
+        ul.plain li {
+            color: var(--txt2);
+            font-size: 14px;
+            line-height: 1.65;
+            margin-bottom: 6px;
+        }
+
+        code {
+            font-family: ui-monospace, 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            background: oklch(0.1 0.016 285 / 0.6);
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            padding: 1px 6px;
+            color: oklch(0.9 0.05 90);
+        }
+
+        footer {
+            margin-top: 40px;
+            font-size: 11px;
+            color: var(--txt3);
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+        }
+
+        footer a {
+            color: var(--txt3);
+        }
+    </style>
+</head>
+<body>
+<main>
+    <a class="back" href="index.html">← Docs</a>
+    <h1>About Pantheon</h1>
+    <p class="sub">Who builds it, how contributions work, and where credit goes. This same content is also what
+        Hades' in-app "About Pantheon" page renders, pulled live from this file.</p>
+
+    <section>
+        <h2><span class="n">1</span>What Pantheon is</h2>
+        <p>Pantheon is a self-hosted media platform built around three pillars: library management across Plex/Jellyfin/
+            Emby/local sources with bidirectional metadata correction, deterministic IPTV channel scheduling, and a
+            native
+            player across web, Android, and Roku. See the <a href="https://github.com/X64Tyko/Pantheon">README</a> for
+            the
+            full picture, or try the <a href="http://pantheonmedia.app">live demo</a> without installing anything.</p>
+    </section>
+
+    <section>
+        <h2><span class="n">2</span>How contributions work</h2>
+        <p>Pantheon is designed and maintained by a single Principal Architect. That's not a statement about anyone
+            else's code — it's a bandwidth reality. Reviewing and integrating a pull request against a fast-moving,
+            tightly-coupled architecture takes real, uninterruptible focus time, and there's only one person doing that
+            review today. Two paths exist for direct code contribution:</p>
+        <ul class="plain">
+            <li><b style="color:var(--txt)">Official contributors</b> — people who've worked with the project directly
+                and
+                hold standing write access.
+            </li>
+            <li><b style="color:var(--txt)">Invited contributions</b> — when a reported issue is verified and a fix fits
+                a
+                specific, pre-approved design, the Architect will invite someone to submit exactly that.
+            </li>
+        </ul>
+        <p>Outside of those two paths, the highest-value contribution is a good bug report: real logs, a clear
+            reproduction case, and environment details. <a href="https://github.com/X64Tyko/Pantheon/issues/new/choose">Open
+                an issue</a> — a well-documented one is very likely to get picked up.</p>
+        <p>Pantheon's code is licensed under <a
+                href="https://github.com/X64Tyko/Pantheon/blob/master/LICENSE">AGPLv3</a>
+            — free to self-host, audit, and modify.</p>
+    </section>
+
+    <section>
+        <h2><span class="n">3</span>Supporting Pantheon financially</h2>
+        <div class="note">💛 <span><b>Not set up yet.</b> This section is a placeholder — when a direct way to support
+      development (e.g. GitHub Sponsors) goes live, it'll be listed here first.</span></div>
+    </section>
+
+    <section>
+        <h2><span class="n">4</span>Credits</h2>
+        <p>Pantheon is designed and built by <b style="color:var(--txt)">X64Tyko</b>, Principal Architect.</p>
+        <p><i>This list grows as official contributors and invited contributions land.</i></p>
+    </section>
+
+    <footer>Part of the <a href="https://github.com/X64Tyko/Pantheon">Pantheon</a> docs — source for this page is
+        <a href="https://github.com/X64Tyko/Pantheon/blob/master/docs/About.md">About.md</a>, kept in sync with Hades'
+        in-app About page.
+    </footer>
+</main>
+</body>
+</html>

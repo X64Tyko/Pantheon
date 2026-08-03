@@ -85,9 +85,19 @@
 .userRow { display: flex; align-items: center; justify-content: space-between; gap: var(--hds-space-3); }
 .usernameText { font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usernameLinkBtn {
-  background: none; border: none; padding: 0; cursor: pointer;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px var(--hds-space-2);
+    margin: -4px calc(var(--hds-space-2) * -1);
+    border-radius: var(--hds-radius-sm);
   font-family: inherit; text-align: left; overflow: hidden; min-width: 0;
   display: flex; align-items: center; gap: var(--hds-space-2);
+    transition: background 0.15s ease;
+}
+
+.usernameLinkBtn:hover {
+    background: var(--hds-bg-3);
 }
 .usernameLinkBtn:hover .usernameText { color: var(--hds-txt); }
 .profileIconBadge {
@@ -100,12 +110,53 @@
   color: var(--hds-gold); border-color: var(--hds-gold);
 }
 .adminBadgeSmall { margin-left: var(--hds-space-2); color: var(--hds-gold); opacity: 0.7; font-size: var(--hds-font-size-tv-badge); }
+
+.userRowActions {
+    display: flex;
+    align-items: center;
+    gap: var(--hds-space-2);
+    flex-shrink: 0;
+}
+
+.iconActionBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--hds-bg-3);
+    border: 1px solid var(--hds-line-s);
+    color: var(--hds-txt-3);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.iconActionBtn:hover {
+    color: var(--hds-gold);
+    border-color: var(--hds-gold);
+    background: var(--hds-bg-4);
+}
 .sidebarExitBtn {
-  background: none; border: none; cursor: pointer;
-  color: var(--hds-txt-3); font-size: var(--hds-font-size-tv-caption); padding: 2px var(--hds-space-1);
-  border-radius: var(--hds-radius-xs); flex-shrink: 0;
+    background: none;
+    border: 1px solid var(--hds-line-s);
+    cursor: pointer;
+    color: var(--hds-txt-3);
+    font-size: var(--hds-font-size-tv-caption);
+    padding: 3px var(--hds-space-3);
+    border-radius: var(--hds-radius-sm);
+    flex-shrink: 0;
   font-family: var(--hds-font-mono-brand);
   letter-spacing: 0.05em;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.sidebarExitBtn:hover {
+    color: var(--hds-txt);
+    border-color: var(--hds-txt-3);
+    background: var(--hds-bg-3);
 }
 
 /* ── Mobile top bar ───────────────────────────────────────────────────────── */
