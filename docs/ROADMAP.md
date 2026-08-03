@@ -69,6 +69,7 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] [Linked-ID editor: resolve and show matched title inline](https://github.com/X64Tyko/Pantheon/issues/34) (#34)
 - [ ] [VR content detection and filtering](https://github.com/X64Tyko/Pantheon/issues/35) (#35)
 - [ ] [Media downloads for offline playback](https://github.com/X64Tyko/Pantheon/issues/36) (#36)
+- [ ] [Plex sign-in (PIN-based OAuth) instead of manual token/URL entry](https://github.com/X64Tyko/Pantheon/issues/43) (#43)
 <!-- roadmap-sync:end beta -->
 
 ## Phase 3: V1.0 Release (Late 2026)
