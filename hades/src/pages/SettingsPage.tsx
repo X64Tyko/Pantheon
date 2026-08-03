@@ -210,6 +210,10 @@ export default observer(function SettingsPage() {
   const [confirmingAll,     setConfirmingAll]     = useState(false)
   const [confirmAllMsg,     setConfirmAllMsg]     = useState<string | null>(null)
 
+    const [unconfirmAllPending, setUnconfirmAllPending] = useState(false)
+    const [unconfirmingAll, setUnconfirmingAll] = useState(false)
+    const [unconfirmAllMsg, setUnconfirmAllMsg] = useState<string | null>(null)
+
   const loadCastSessions = () => api.getCastSessions().then(setCastSessions).catch(() => setCastSessions([]))
 
   // Self-terminating poll chain, not a standing interval — only ever ticks
@@ -271,6 +275,24 @@ export default observer(function SettingsPage() {
       setConfirmingAll(false)
     }
   }
+
+    // Undo button for an accidental Confirm All Matches — same synchronous
+    // plain-DB-flip shape as confirmAllMatches() above.
+    const unconfirmAllMatches = async () => {
+        setUnconfirmingAll(true)
+        setUnconfirmAllMsg(null)
+        try {
+            const {unconfirmed} = await api.unconfirmAllMatches()
+            setUnconfirmAllMsg(`Un-confirmed ${unconfirmed} match${unconfirmed !== 1 ? 'es' : ''}.`)
+            setUnconfirmAllPending(false)
+            api.getScraperStats().then(setScraperStats).catch(() => {
+            })
+        } catch (e: any) {
+            setUnconfirmAllMsg(`Error: ${e.message ?? 'Unknown error'}`)
+        } finally {
+            setUnconfirmingAll(false)
+        }
+    }
 
   const revokeCastSession = async (sessionId: string) => {
     setRevokingCast(sessionId)
@@ -1180,6 +1202,51 @@ const applyBuffer = () => {
                 {confirmAllMsg}
               </div>
             )}
+
+              <SettingRow
+                  label="Unconfirm All Matches"
+                  hint="Undo button for an accidental Confirm All Matches (or any other bulk-confirm mistake) — clears human-confirmed status on every currently-confirmed item. Matches stay matched (no re-scrape, nothing re-enters the review queue); they just go back to needing a Confirm Match before Push to Sources will run for them again."
+              >
+                  {!unconfirmAllPending ? (
+                      <NavButton
+                          id="unconfirm-all-matches"
+                          onClick={() => {
+                              setUnconfirmAllPending(true);
+                              setUnconfirmAllMsg(null)
+                          }}
+                          className={`${styles.navBtn} ${styles.navBtnNeutral16} ${styles.navBtnNeutral16TxtA} ${styles.navBtnCursorPointer}`}
+                      >
+                          Unconfirm All Matches
+                      </NavButton>
+                  ) : (
+                      <div className={styles.inlineRow}>
+                  <span className={styles.confirmText}>
+                    This will un-confirm every currently confirmed match in the library. Sure?
+                  </span>
+                          <NavButton
+                              id="unconfirm-all-matches-confirm"
+                              onClick={unconfirmAllMatches}
+                              disabled={unconfirmingAll}
+                              className={`${styles.navBtn} ${styles.navBtnGreen14} ${unconfirmingAll ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${unconfirmingAll ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+                          >
+                              {unconfirmingAll ? 'Un-confirming…' : 'Yes, unconfirm all'}
+                          </NavButton>
+                          <NavButton
+                              id="unconfirm-all-matches-cancel"
+                              onClick={() => setUnconfirmAllPending(false)}
+                              disabled={unconfirmingAll}
+                              className={`${styles.navBtn} ${styles.navBtnCancel10} ${styles.navBtnCursorPointer}`}
+                          >
+                              Cancel
+                          </NavButton>
+                      </div>
+                  )}
+              </SettingRow>
+              {unconfirmAllMsg && (
+                  <div className={`${styles.msgRow} ${unconfirmAllMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
+                      {unconfirmAllMsg}
+                  </div>
+              )}
           </Section>
 
           <div className={styles.inlineRowGap12}>

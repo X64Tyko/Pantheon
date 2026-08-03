@@ -443,6 +443,50 @@ void ScraperService::registerRoutes(httplib::Server& svr)
 		ok(res, json{{"ok", true}, {"confirmed", n}});
 	});
 
+	// POST /api/scrapers/queue/:kairos_id/unconfirm
+	// Reverses a confirm — see ScraperManager::unconfirmMatch(). Uses (.+) for
+	// the same reason as confirm/manual-match above: local kairos_ids contain '/'.
+	svr.Post(R"(/api/scrapers/queue/(.+)/unconfirm)", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			err(res, 403, "Forbidden");
+			return;
+		}
+		std::string kairos_id = req.matches[1];
+		try
+		{
+			auto body             = json::parse(req.body.empty() ? "{}" : req.body);
+			std::string item_type = body.value("item_type", "");
+			if (item_type.empty())
+			{
+				err(res, 400, "item_type is required");
+				return;
+			}
+			if (scraper_.unconfirmMatch(item_type, kairos_id)) ok(res, json{{"ok", true}});
+			else err(res, 404, "item has no confirmed match");
+		}
+		catch (const std::exception& e)
+		{
+			err(res, 400, e.what());
+		}
+	});
+
+	// POST /api/scrapers/unconfirm-all
+	// Bulk-clears match_confirmed on every currently-confirmed show/movie —
+	// see ScraperManager::unconfirmAllMatches(). The undo button for an
+	// accidental "Confirm All Matches". Pure DB flip, synchronous like confirm-all.
+	svr.Post("/api/scrapers/unconfirm-all", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			err(res, 403, "Forbidden");
+			return;
+		}
+		int n = scraper_.unconfirmAllMatches();
+		ok(res, json{{"ok", true}, {"unconfirmed", n}});
+	});
+
 	// GET /api/scrapers/anidb/poster/:aid — public, no auth (loaded by <img> tags)
 	svr.Get(R"(/api/scrapers/anidb/poster/([^/]+))", [this](const Req& req, Res& res)
 	{

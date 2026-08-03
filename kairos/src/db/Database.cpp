@@ -2677,6 +2677,24 @@ namespace
 )SQL"
 		}
 
+		// ── v107: nfo_confirmed — carries a local-source item's on-disk
+		//         <pantheon_confirmed> NFO tag (see SidecarMetadata.h) from sync
+		//         time through to the next matching pass. Lets matchShow()/
+		//         matchMovie()'s existing trusted-ID short-circuit restore
+		//         match_confirmed itself (not just match_status) after a DB wipe
+		//         + rescan, for any item whose confirmed match was previously
+		//         written back to its NFO. Only ever read by that trusted-ID
+		//         branch, and only fires for items not already 'matched' — see
+		//         its call site — so it can't silently re-confirm an item a
+		//         human has since un-confirmed in a still-'matched' row.
+		,
+		{
+			107, R"SQL(
+    ALTER TABLE show  ADD COLUMN nfo_confirmed INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE movie ADD COLUMN nfo_confirmed INTEGER NOT NULL DEFAULT 0;
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

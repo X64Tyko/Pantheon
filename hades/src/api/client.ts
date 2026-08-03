@@ -875,6 +875,15 @@ export const api = {
   // background job/polling — it's a plain DB flip, not a network operation).
   confirmAllMatches:   ()                                          =>
                          request<{ok: boolean; confirmed: number}>('POST', '/scrapers/confirm-all', {}),
+    // Reverses confirmMatch() — see ScraperManager::unconfirmMatch(). Leaves
+    // match_status alone (still "matched"), only clears match_confirmed.
+    unconfirmMatch: (kairos_id: string, item_type: 'show' | 'movie') =>
+        request<{ ok: boolean }>('POST', `/scrapers/queue/${kairos_id}/unconfirm`, {item_type}),
+    // Bulk undo for an accidental "Confirm All Matches" — see
+    // ScraperManager::unconfirmAllMatches(). Same synchronous plain-DB-flip
+    // shape as confirmAllMatches().
+    unconfirmAllMatches: () =>
+        request<{ ok: boolean; unconfirmed: number }>('POST', '/scrapers/unconfirm-all', {}),
   scraperSearch:       (q: string, type?: 'show' | 'movie')       =>
                          request<{items: ScraperSearchResult[]}>('GET', `/scrapers/search?${qs({ q, type })}`),
 

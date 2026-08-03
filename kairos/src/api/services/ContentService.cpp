@@ -631,6 +631,10 @@ namespace
 			fields.imdb_id.clear();
 			fields.tvdb_id.clear();
 			fields.tmdb_id.clear();
+			// match_confirmed only round-trips meaningfully alongside the provider
+			// ids it's confirming — a target that's opted out of pushing ids has
+			// nothing for a future rescan to trust, so there's nothing to mark.
+			fields.match_confirmed = false;
 		}
 		if (!t.writeback_update_collections) fields.collections.clear();
 		return fields;
@@ -658,6 +662,8 @@ json ContentService::writebackShow(const ShowDetail& d, const std::string& sourc
 	fields.release_date    = d.originally_available_at;
 	fields.thumb           = fetchImageBytes(d.thumb, d.source_id);
 	fields.art             = fetchImageBytes(d.art, d.source_id);
+	fields.match_confirmed = d.match_confirmed;
+	fields.locked          = d.locked;
 
 	auto targets = SourceRepository(db_).getWritebackTargets("show", d.show_id);
 	json results = json::array();
@@ -694,6 +700,8 @@ json ContentService::writebackMovie(const MovieDetail& d, const std::string& sou
 	fields.release_date    = d.release_date;
 	fields.thumb           = fetchImageBytes(d.thumb, d.source_id);
 	fields.art             = fetchImageBytes(d.art, d.source_id);
+	fields.match_confirmed = d.match_confirmed;
+	fields.locked          = d.locked;
 
 	auto targets = SourceRepository(db_).getWritebackTargets("movie", d.movie_id);
 	json results = json::array();

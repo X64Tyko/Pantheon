@@ -6,9 +6,10 @@
 // Show/Movie.thumb|art was in (CDN URL, source-relative path, or a "local:"
 // on-disk file — see ContentService::fetchImageBytes) — IMediaSource
 // implementations just upload bytes, they don't resolve paths themselves.
-struct WritebackImage {
-    std::string bytes;
-    std::string content_type;   // e.g. "image/jpeg" — sent as-is as the upload's Content-Type
+struct WritebackImage
+{
+	std::string bytes;
+	std::string content_type; // e.g. "image/jpeg" — sent as-is as the upload's Content-Type
 };
 
 // Metadata pushed back into a source library by IMediaSource::pushMetadata.
@@ -54,26 +55,37 @@ struct WritebackImage {
 // thumb/art: unset optional means "don't touch"; set means "replace with
 // these bytes" (images have no partial-clear concept, unlike the text
 // fields' empty-string convention).
-struct WritebackFields {
-    std::string title;
-    std::string original_title;
-    std::string overview;
-    std::string genres;         // JSON array string, same encoding as Show/Movie.genres
-    std::string content_rating;
-    std::string studio;
-    std::string network;        // show-only
-    std::string director;       // movie-only
-    std::string writer;         // movie-only
-    std::string tagline;        // movie-only
-    std::string actors;         // JSON array string
-    std::string countries;      // JSON array string
-    std::string collections;    // JSON array string
-    std::string labels;         // JSON array string
-    std::optional<double> audience_rating;
-    std::string imdb_id;
-    std::string tvdb_id;        // show-only (movies don't carry a tvdb_id — see MovieDetail)
-    std::string tmdb_id;
-    std::string release_date;   // movie: release_date; show: originally_available_at
-    std::optional<WritebackImage> thumb; // poster
-    std::optional<WritebackImage> art;   // backdrop/fanart
+struct WritebackFields
+{
+	std::string title;
+	std::string original_title;
+	std::string overview;
+	std::string genres; // JSON array string, same encoding as Show/Movie.genres
+	std::string content_rating;
+	std::string studio;
+	std::string network;     // show-only
+	std::string director;    // movie-only
+	std::string writer;      // movie-only
+	std::string tagline;     // movie-only
+	std::string actors;      // JSON array string
+	std::string countries;   // JSON array string
+	std::string collections; // JSON array string
+	std::string labels;      // JSON array string
+	std::optional<double> audience_rating;
+	std::string imdb_id;
+	std::string tvdb_id; // show-only (movies don't carry a tvdb_id — see MovieDetail)
+	std::string tmdb_id;
+	std::string release_date;            // movie: release_date; show: originally_available_at
+	std::optional<WritebackImage> thumb; // poster
+	std::optional<WritebackImage> art;   // backdrop/fanart
+
+	// match_confirmed / locked as they stand in Pantheon's own DB right now —
+	// only meaningful to LocalSource::pushMetadata, which round-trips them
+	// into a movie.nfo/tvshow.nfo's <pantheon_confirmed>/<lockdata> tags so a
+	// DB wipe + rescan can restore match_confirmed (not just the match
+	// itself) via the trusted-ID short-circuit in matchShow()/matchMovie().
+	// Every other IMediaSource ignores these — Plex/Jellyfin have no
+	// equivalent "human reviewed this" concept to write into.
+	bool match_confirmed = false;
+	bool locked          = false;
 };

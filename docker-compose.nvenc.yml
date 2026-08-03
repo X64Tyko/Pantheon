@@ -91,7 +91,7 @@ services:
       # - KAIROS_YTDLP_COOKIES=/data/ytdlp-cookies.txt   # see note above
     volumes:
       - /mnt/user/appdata/kairos:/data
-      - /mnt/user/Media:/media:ro
+      - /mnt/user/Media:/media   # writable: Kairos writes NFO/poster/fanart sidecars back to local libraries
       - /mnt/user/Media/Filler:/downloads
       # - /mnt/user/appdata/kairos/ytdlp-cookies.txt:/data/ytdlp-cookies.txt:ro
     restart: unless-stopped

@@ -815,9 +815,10 @@ void SyncManager::syncShows(IMediaSource& src,
                           genres, thumb, art, imdb_id, tvdb_id, tmdb_id,
                           originally_available_at, year, audience_rating,
                           labels, network, actors, countries, collections, folder_path,
-                          added_at, added_at_source, primary_source, original_title)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          added_at, added_at_source, primary_source, original_title, nfo_confirmed)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(show_id) DO UPDATE SET
+            nfo_confirmed           = CASE WHEN locked THEN nfo_confirmed ELSE excluded.nfo_confirmed END,
             title                   = CASE WHEN locked THEN title                   WHEN ? AND excluded.title<>''                   THEN excluded.title                   WHEN title=''                   THEN excluded.title                   ELSE title                   END,
             content_rating          = CASE WHEN locked THEN content_rating          WHEN ? AND excluded.content_rating<>''          THEN excluded.content_rating          WHEN content_rating=''          THEN excluded.content_rating          ELSE content_rating          END,
             overview                = CASE WHEN locked THEN overview                WHEN ? AND excluded.overview<>''                THEN excluded.overview                WHEN overview=''                THEN excluded.overview                ELSE overview                END,
@@ -866,7 +867,8 @@ void SyncManager::syncShows(IMediaSource& src,
             COALESCE(added_at,       -1) != COALESCE(excluded.added_at,       -1) OR
             added_at_source         != excluded.added_at_source         OR
             primary_source          != excluded.primary_source                     OR
-            original_title          != excluded.original_title
+            original_title          != excluded.original_title                    OR
+            nfo_confirmed           != excluded.nfo_confirmed
         )
     )");
     SQLite::Statement s_show_mapping(sync_db_, R"(
@@ -925,8 +927,9 @@ void SyncManager::syncShows(IMediaSource& src,
                     s_upsert_show.bind(23, show.added_at_source);
                     s_upsert_show.bind(24, source_id); // primary_source for a brand-new row
                     s_upsert_show.bind(25, show.original_title);
-                    for (int p = 26; p <= 49; ++p) s_upsert_show.bind(p, wins);
-                    s_upsert_show.exec();
+					s_upsert_show.bind(26, show.nfo_confirmed);
+					for (int p = 27; p <= 50; ++p) s_upsert_show.bind(p, wins);
+					s_upsert_show.exec();
                 }
                 s_show_mapping.reset();
                 s_show_mapping.bind(1, show.show_id);
@@ -1506,9 +1509,10 @@ void SyncManager::syncMovies(IMediaSource& src,
                            imdb_id, tmdb_id, audience_rating,
                            labels, actors, countries, collections,
                            added_at, added_at_source, resolution_label, primary_source, original_title,
-                           audio_languages, embedded_subtitle_languages)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           audio_languages, embedded_subtitle_languages, nfo_confirmed)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(movie_id) DO UPDATE SET
+            nfo_confirmed    = CASE WHEN locked THEN nfo_confirmed ELSE excluded.nfo_confirmed END,
             title            = CASE WHEN locked THEN title            WHEN ? AND excluded.title<>''            THEN excluded.title            WHEN title=''                     THEN excluded.title            ELSE title            END,
             content_rating   = CASE WHEN locked THEN content_rating   WHEN ? AND excluded.content_rating<>''   THEN excluded.content_rating   WHEN content_rating=''            THEN excluded.content_rating   ELSE content_rating   END,
             file_path        = CASE WHEN locked THEN file_path        WHEN ? AND excluded.file_path<>''        THEN excluded.file_path        WHEN file_path=''                 THEN excluded.file_path        ELSE file_path        END,
@@ -1563,10 +1567,11 @@ void SyncManager::syncMovies(IMediaSource& src,
             primary_source  != excluded.primary_source  OR
             original_title  != excluded.original_title  OR
             audio_languages             != excluded.audio_languages             OR
-            embedded_subtitle_languages != excluded.embedded_subtitle_languages
+            embedded_subtitle_languages != excluded.embedded_subtitle_languages OR
+            nfo_confirmed               != excluded.nfo_confirmed
         )
     )");
-    SQLite::Statement s_movie_mapping(sync_db_, R"(
+	SQLite::Statement s_movie_mapping(sync_db_, R"(
         INSERT INTO source_mapping (item_type, kairos_id, source_id, library_id, external_id)
         VALUES ('movie',?,?,?,?)
         ON CONFLICT(item_type, kairos_id, source_id) DO UPDATE SET
@@ -1646,18 +1651,17 @@ void SyncManager::syncMovies(IMediaSource& src,
                     s_upsert_movie.bind(26, movie.original_title);
                     s_upsert_movie.bind(27, movie.audio_languages);
                     s_upsert_movie.bind(28, movie.embedded_subtitle_languages);
-                    // 27 wins-flag placeholders (one per SET column above) at
-                    // positions 29..55. Was previously 27..50 (24 of the then
-                    // 25 needed binds) — off by one, leaving the last column's
-                    // (original_title's) wins-flag permanently unbound/NULL,
-                    // so original_title could never be won over by a higher-
-                    // priority source, only backfilled when blank. Fixed here
-                    // while extending this statement for the 2 new columns.
-                    for (int p = 29; p <= 55; ++p) s_upsert_movie.bind(p, wins);
-                    s_upsert_movie.exec();
-                }
+                    s_upsert_movie.bind(29, movie.nfo_confirmed);
+					// 27 wins-flag placeholders (one per SET column above) at
+                    // positions 30..56 (shifted by the nfo_confirmed VALUES
+					// slot added at 29, which has no wins-flag of its own —
+					// see its CASE above, which reads `excluded` unconditionally
+					// instead of gating on priority-wins like everything else).
+					for (int p = 30; p <= 56; ++p) s_upsert_movie.bind(p, wins);
+					s_upsert_movie.exec();
+				}
 
-                s_movie_mapping.reset();
+				s_movie_mapping.reset();
                 s_movie_mapping.bind(1, movie.movie_id);
                 s_movie_mapping.bind(2, source_id);
                 s_movie_mapping.bind(3, library_id);

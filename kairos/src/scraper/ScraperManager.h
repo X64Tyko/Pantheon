@@ -16,65 +16,70 @@ class TraktScraper;
 class AnilistScraper;
 class WikidataScraper;
 
-struct ScraperCandidate {
-    std::string candidate_id;
-    std::string item_type;     // "show" | "movie"
-    std::string kairos_id;
-    std::string source;        // "tmdb" | "tvdb"
-    std::string external_id;
-    std::string title;
-    int         year        = 0;
-    double      score       = 0.0;
-    int         accepted    = -1;  // -1=pending, 1=accepted, 0=rejected
-    std::string poster_url;
-    std::string overview;
+struct ScraperCandidate
+{
+	std::string candidate_id;
+	std::string item_type; // "show" | "movie"
+	std::string kairos_id;
+	std::string source; // "tmdb" | "tvdb"
+	std::string external_id;
+	std::string title;
+	int year     = 0;
+	double score = 0.0;
+	int accepted = -1; // -1=pending, 1=accepted, 0=rejected
+	std::string poster_url;
+	std::string overview;
 };
 
-struct QueueItem {
-    std::string kairos_id;
-    std::string item_type;
-    std::string title;
-    int         year        = 0;
-    std::string thumb;
-    std::string source_id;
-    std::string source_base_url;
-    std::string match_status;
-    double      match_score = 0.0;
-    std::vector<ScraperCandidate> candidates;
-    // On-disk folder for this item — movie.file_path's parent dir, or (for
-    // shows) the common ancestor across all episode file_paths. Lets a
-    // reviewer tell which physical folder a queue entry corresponds to.
-    std::string folder_path;
+struct QueueItem
+{
+	std::string kairos_id;
+	std::string item_type;
+	std::string title;
+	int year = 0;
+	std::string thumb;
+	std::string source_id;
+	std::string source_base_url;
+	std::string match_status;
+	double match_score = 0.0;
+	std::vector<ScraperCandidate> candidates;
+	// On-disk folder for this item — movie.file_path's parent dir, or (for
+	// shows) the common ancestor across all episode file_paths. Lets a
+	// reviewer tell which physical folder a queue entry corresponds to.
+	std::string folder_path;
 };
 
-struct ScraperStats {
-    int total     = 0;
-    int matched   = 0;
-    int uncertain = 0;
-    int unmatched = 0;
-    int unscraped = 0;
-    // skip_scraping items (item-level or via their library) — never queued,
-    // counted separately so they don't read as permanently-stuck "unscraped".
-    int skipped   = 0;
+struct ScraperStats
+{
+	int total     = 0;
+	int matched   = 0;
+	int uncertain = 0;
+	int unmatched = 0;
+	int unscraped = 0;
+	// skip_scraping items (item-level or via their library) — never queued,
+	// counted separately so they don't read as permanently-stuck "unscraped".
+	int skipped = 0;
 };
 
-struct SpecialCandidate {
-    std::string candidate_id, show_id;
-    int         episode_number = 0;
-    std::string special_title, special_overview, special_air_date, special_thumb;
-    std::string source, source_episode_id;
-    std::string movie_id, movie_title;
-    int         movie_year = 0;
-    double      score = 0.0;
-    int         accepted = -1; // -1=pending, 1=accepted, 0=rejected
+struct SpecialCandidate
+{
+	std::string candidate_id, show_id;
+	int episode_number = 0;
+	std::string special_title, special_overview, special_air_date, special_thumb;
+	std::string source, source_episode_id;
+	std::string movie_id, movie_title;
+	int movie_year = 0;
+	double score   = 0.0;
+	int accepted   = -1; // -1=pending, 1=accepted, 0=rejected
 };
 
-struct LinkedSpecial {
-    std::string episode_id;
-    int         episode_number = 0;
-    std::string title;
-    std::string linked_movie_id;
-    std::string linked_movie_title;
+struct LinkedSpecial
+{
+	std::string episode_id;
+	int episode_number = 0;
+	std::string title;
+	std::string linked_movie_id;
+	std::string linked_movie_title;
 };
 
 // Result of acceptCandidate()/manualMatch(). merged_into_kairos_id is
@@ -82,301 +87,336 @@ struct LinkedSpecial {
 // already owned by a different item — in that case `kairos_id` was merged
 // into merged_into_kairos_id and deleted, and callers must not touch it
 // further (e.g. re-fetch its detail).
-struct AcceptResult {
-    bool        found = false;              // false = candidate/item not found
-    std::string item_type;                  // "show" | "movie"
-    std::string merged_into_kairos_id;
-    std::string merged_into_title;
-    bool        folder_mismatch = false;    // merge auto-forced past a folder_path mismatch
+struct AcceptResult
+{
+	bool found = false;    // false = candidate/item not found
+	std::string item_type; // "show" | "movie"
+	std::string merged_into_kairos_id;
+	std::string merged_into_title;
+	bool folder_mismatch = false; // merge auto-forced past a folder_path mismatch
 };
 
-struct ScraperConfig {
-    std::string source;
-    std::string api_key;
-    std::string language;
-    std::string pin;      // TVDB subscriber pin (optional)
-    bool        enabled         = false;
-    double      language_weight = 0.1;
+struct ScraperConfig
+{
+	std::string source;
+	std::string api_key;
+	std::string language;
+	std::string pin; // TVDB subscriber pin (optional)
+	bool enabled           = false;
+	double language_weight = 0.1;
 };
 
-struct ScraperSettings {
-    std::vector<ScraperConfig> configs;
-    double match_threshold = 0.8;
-    // Sync-time cross-source dedup thresholds (SyncManager) — not proven
-    // constants like match_threshold, proposed defaults expecting real-world
-    // tuning after rollout. A fuzzy (non-exact) title match at or above
-    // dedup_fuzzy_title_threshold, or an exact folder match paired with title
-    // similarity below dedup_folder_corroboration_threshold, is flagged as an
-    // uncertain duplicate candidate for human review rather than auto-merged.
-    double dedup_fuzzy_title_threshold          = 0.80;
-    double dedup_folder_corroboration_threshold = 0.30;
-    // Off by default: AniDB's title-dump search has no poster field, so any
-    // poster for an AniDB-matched item is fetched live through the
-    // rate-limited, hotlink-guarded CDN proxy on every cache expiry. Turning
-    // this on persists a confirmed match's poster to disk once (see
-    // ScraperManager::persistAnidbThumbLocally), trading a one-time 2.1s
-    // download for no further network dependency on that item's art.
-    bool anidb_download_posters = false;
+struct ScraperSettings
+{
+	std::vector<ScraperConfig> configs;
+	double match_threshold = 0.8;
+	// Sync-time cross-source dedup thresholds (SyncManager) — not proven
+	// constants like match_threshold, proposed defaults expecting real-world
+	// tuning after rollout. A fuzzy (non-exact) title match at or above
+	// dedup_fuzzy_title_threshold, or an exact folder match paired with title
+	// similarity below dedup_folder_corroboration_threshold, is flagged as an
+	// uncertain duplicate candidate for human review rather than auto-merged.
+	double dedup_fuzzy_title_threshold          = 0.80;
+	double dedup_folder_corroboration_threshold = 0.30;
+	// Off by default: AniDB's title-dump search has no poster field, so any
+	// poster for an AniDB-matched item is fetched live through the
+	// rate-limited, hotlink-guarded CDN proxy on every cache expiry. Turning
+	// this on persists a confirmed match's poster to disk once (see
+	// ScraperManager::persistAnidbThumbLocally), trading a one-time 2.1s
+	// download for no further network dependency on that item's art.
+	bool anidb_download_posters = false;
 };
 
-class ScraperManager {
+class ScraperManager
+{
 public:
-    ScraperManager(Database& db, ConfStore& conf);
-    ~ScraperManager();
+	ScraperManager(Database& db, ConfStore& conf);
+	~ScraperManager();
 
-    // Fired at the end of acceptCandidate() and refreshMetadata() (and
-    // therefore also runRefreshAll()'s per-item sweep, which calls the
-    // latter) once that item's metadata has actually been (re)applied —
-    // never before, so this never fires with stale pre-scrape data. Wired
-    // in Router.cpp to ContentService::autoWritebackIfEnabled() after both
-    // are constructed, rather than ScraperManager holding a ContentService&
-    // directly — ContentService already holds a ScraperManager&, so a
-    // direct reference back would be circular; a std::function set post-
-    // construction isn't. autoWritebackIfEnabled() itself is what actually
-    // checks match_confirmed and each target's auto_writeback setting —
-    // this class doesn't know or care about either.
-    using MatchConfirmedCallback = std::function<void(const std::string& item_type, const std::string& kairos_id)>;
-    void setOnMatchConfirmed(MatchConfirmedCallback cb) { on_match_confirmed_ = std::move(cb); }
+	// Fired at the end of acceptCandidate() and refreshMetadata() (and
+	// therefore also runRefreshAll()'s per-item sweep, which calls the
+	// latter) once that item's metadata has actually been (re)applied —
+	// never before, so this never fires with stale pre-scrape data. Wired
+	// in Router.cpp to ContentService::autoWritebackIfEnabled() after both
+	// are constructed, rather than ScraperManager holding a ContentService&
+	// directly — ContentService already holds a ScraperManager&, so a
+	// direct reference back would be circular; a std::function set post-
+	// construction isn't. autoWritebackIfEnabled() itself is what actually
+	// checks match_confirmed and each target's auto_writeback setting —
+	// this class doesn't know or care about either.
+	using MatchConfirmedCallback = std::function<void(const std::string & item_type, const std::string & kairos_id)>;
+	void setOnMatchConfirmed(MatchConfirmedCallback cb) { on_match_confirmed_ = std::move(cb); }
 
-    // Kick off a background match pass.  target_id + item_type optionally scope
-    // the pass to a single item; empty strings → match all unscraped items.
-    void triggerMatch(const std::string& target_id   = "",
-                      const std::string& item_type   = "");
+	// Kick off a background match pass.  target_id + item_type optionally scope
+	// the pass to a single item; empty strings → match all unscraped items.
+	void triggerMatch(const std::string& target_id = "",
+					  const std::string& item_type = "");
 
-    // Synchronous variant — runs inline on the calling thread.
-    // Used by SyncManager so matching completes before chapter detection begins.
-    void runMatchSync(const std::string& target_id   = "",
-                      const std::string& item_type   = "");
+	// Synchronous variant — runs inline on the calling thread.
+	// Used by SyncManager so matching completes before chapter detection begins.
+	void runMatchSync(const std::string& target_id = "",
+					  const std::string& item_type = "");
 
-    bool isMatching() const { return matching_.load(); }
+	bool isMatching() const { return matching_.load(); }
 
-    // Re-pulls full metadata (title, overview, posters, ratings, ...) from
-    // each already-linked source for every matched show/movie — same
-    // per-item logic as refreshMetadata(), just swept across the whole
-    // library in the background. For catching drift after a manual match
-    // fix, or after applyShowMetadata/applyMovieMetadata gain new fields.
-    void triggerRefreshAll();
-    bool isRefreshingAll() const { return refreshing_all_.load(); }
+	// Re-pulls full metadata (title, overview, posters, ratings, ...) from
+	// each already-linked source for every matched show/movie — same
+	// per-item logic as refreshMetadata(), just swept across the whole
+	// library in the background. For catching drift after a manual match
+	// fix, or after applyShowMetadata/applyMovieMetadata gain new fields.
+	void triggerRefreshAll();
+	bool isRefreshingAll() const { return refreshing_all_.load(); }
 
-    // Progress snapshot for the currently running (or just-finished)
-    // refresh-all pass — total/processed/refreshed/failed, so the client can
-    // render an actual progress bar instead of just a static "running" flag
-    // (real feedback: a library-wide refresh iterates every matched show/
-    // movie against rate-limited scraper APIs and can run for many minutes
-    // with the old boolean-only status giving zero indication of whether
-    // it's stuck, barely started, or nearly done). Reads are a handful of
-    // independent atomics (no lock) — a caller can see momentarily
-    // inconsistent numbers mid-increment (processed ticks up a beat before
-    // refreshed/failed does), which is fine for a progress display and
-    // never used for control flow.
-    struct RefreshAllProgress {
-        bool running   = false;
-        int  total     = 0;
-        int  processed = 0;
-        int  refreshed = 0;
-        int  failed    = 0;
-    };
-    RefreshAllProgress refreshAllProgress() const;
+	// Progress snapshot for the currently running (or just-finished)
+	// refresh-all pass — total/processed/refreshed/failed, so the client can
+	// render an actual progress bar instead of just a static "running" flag
+	// (real feedback: a library-wide refresh iterates every matched show/
+	// movie against rate-limited scraper APIs and can run for many minutes
+	// with the old boolean-only status giving zero indication of whether
+	// it's stuck, barely started, or nearly done). Reads are a handful of
+	// independent atomics (no lock) — a caller can see momentarily
+	// inconsistent numbers mid-increment (processed ticks up a beat before
+	// refreshed/failed does), which is fine for a progress display and
+	// never used for control flow.
+	struct RefreshAllProgress
+	{
+		bool running  = false;
+		int total     = 0;
+		int processed = 0;
+		int refreshed = 0;
+		int failed    = 0;
+	};
 
-    // Settings
-    ScraperSettings getSettings() const;
-    void            updateSettings(const ScraperSettings& s);
+	RefreshAllProgress refreshAllProgress() const;
 
-    // Multi-ID and alternate titles
-    struct ExternalId {
-        std::string source;
-        std::string external_id;
-        int         priority = 0;
-    };
-    std::vector<ExternalId> getExternalIds(const std::string& kairos_id, const std::string& item_type) const;
-    void                    setExternalIds(const std::string& kairos_id, const std::string& item_type, const std::vector<ExternalId>& ids);
+	// Settings
+	ScraperSettings getSettings() const;
+	void updateSettings(const ScraperSettings& s);
 
-    std::vector<std::string> getAlternateTitles(const std::string& kairos_id, const std::string& item_type) const;
-    void                     setAlternateTitles(const std::string& kairos_id, const std::string& item_type, const std::vector<std::string>& titles);
+	// Multi-ID and alternate titles
+	struct ExternalId
+	{
+		std::string source;
+		std::string external_id;
+		int priority = 0;
+	};
 
-    // Review queue
-    std::vector<QueueItem> getQueue(const std::string& status_filter, // "uncertain"|"unmatched"|"all"
-                                    int limit, int offset) const;
-    int queueTotal(const std::string& status_filter) const;
+	std::vector<ExternalId> getExternalIds(const std::string& kairos_id, const std::string& item_type) const;
+	void setExternalIds(const std::string& kairos_id, const std::string& item_type, const std::vector<ExternalId>& ids);
 
-    // Accept / reject a single candidate
-    AcceptResult acceptCandidate(const std::string& candidate_id);
-    bool rejectCandidate(const std::string& candidate_id);
+	std::vector<std::string> getAlternateTitles(const std::string& kairos_id, const std::string& item_type) const;
+	void setAlternateTitles(const std::string& kairos_id, const std::string& item_type, const std::vector<std::string>& titles);
 
-    // Manually pin a specific external result as the match for an item.
-    // Stores a candidate at score 1.0 then accepts it.
-    AcceptResult manualMatch(const std::string& kairos_id,
-                     const std::string& item_type,
-                     const std::string& source,
-                     const std::string& external_id,
-                     const std::string& title,
-                     int year,
-                     const std::string& poster_url,
-                     const std::string& overview);
+	// Review queue
+	std::vector<QueueItem> getQueue(const std::string& status_filter, // "uncertain"|"unmatched"|"all"
+									int limit, int offset) const;
+	int queueTotal(const std::string& status_filter) const;
 
-    // Confirms an item's *current* match (already auto-accepted by matchShow/
-    // matchMovie, or picked earlier via manualMatch) as human-reviewed,
-    // without forcing a re-search + re-pick round trip through Fix Match.
-    // Sets match_confirmed and re-pulls fresh metadata from the already-
-    // linked source(s) (same as refreshMetadata()). False if item_type is
-    // invalid or the item isn't currently match_status='matched'.
-    bool confirmMatch(const std::string& item_type, const std::string& kairos_id);
+	// Accept / reject a single candidate
+	AcceptResult acceptCandidate(const std::string& candidate_id);
+	bool rejectCandidate(const std::string& candidate_id);
 
-    // Bulk-confirms every currently-matched-but-unconfirmed show and movie in
-    // one shot. Pure DB flip, no metadata re-fetch (see .cpp). Returns the
-    // number of items confirmed.
-    int confirmAllMatches();
+	// Manually pin a specific external result as the match for an item.
+	// Stores a candidate at score 1.0 then accepts it.
+	AcceptResult manualMatch(const std::string& kairos_id,
+							 const std::string& item_type,
+							 const std::string& source,
+							 const std::string& external_id,
+							 const std::string& title,
+							 int year,
+							 const std::string& poster_url,
+							 const std::string& overview);
 
-    // Re-fetches and re-applies full metadata (overview, genres, images, etc.)
-    // from whichever scraper is already matched to this item — same
-    // fetch-and-apply path as accepting a candidate, just re-run against the
-    // existing match instead of a newly-searched one. Locked fields are still
-    // respected. False if the item has never had a confirmed match to refresh.
-    bool refreshMetadata(const std::string& kairos_id, const std::string& item_type);
+	// Confirms an item's *current* match (already auto-accepted by matchShow/
+	// matchMovie, or picked earlier via manualMatch) as human-reviewed,
+	// without forcing a re-search + re-pick round trip through Fix Match.
+	// Sets match_confirmed and re-pulls fresh metadata from the already-
+	// linked source(s) (same as refreshMetadata()). False if item_type is
+	// invalid or the item isn't currently match_status='matched'.
+	bool confirmMatch(const std::string& item_type, const std::string& kairos_id);
 
-    // Live search of enabled scrapers
-    struct SearchResult {
-        std::string source;
-        std::string external_id;
-        std::string title;
-        int         year = 0;
-        std::string overview;
-        std::string poster_url;
-        std::string content_type;  // "show" | "movie"
-        bool        in_library = false;
-        std::string library_id;      // this library's show_id/movie_id when in_library; empty otherwise
-        std::string request_status;  // most relevant existing content_request status ("pending"|"approved"|"rejected"), by ANY user; empty = never requested
-    };
-    std::vector<SearchResult> search(const std::string& query,
-                                     const std::string& content_type) const;
+	// Bulk-confirms every currently-matched-but-unconfirmed show and movie in
+	// one shot. Pure DB flip, no metadata re-fetch (see .cpp). Returns the
+	// number of items confirmed.
+	int confirmAllMatches();
 
-    ScraperStats stats() const;
+	// Reverses confirmMatch(): clears match_confirmed without touching
+	// match_status/the linked external id, so the item stays "matched" (no
+	// re-scrape, doesn't re-enter the pending queue) but is no longer
+	// writeback-eligible until a human re-confirms it. Does NOT touch
+	// nfo_confirmed — a local item's on-disk <pantheon_confirmed> tag is left
+	// as-is (only ever re-applied by the trusted-ID branch on a *new* row, see
+	// matchShow()/matchMovie(), so it can't silently undo this). False if
+	// item_type is invalid or the item has no confirmed match to clear.
+	bool unconfirmMatch(const std::string& item_type, const std::string& kairos_id);
 
-    // Show specials <-> movie-library-file linking. Scans every scraper the
-    // show has a confirmed ID with for season-0 (specials/OVA/TV-movie)
-    // entries, merges duplicates found across sources, and scores them
-    // against the movie catalog. Never auto-links — always goes through
-    // accept/reject, same as the main review queue.
-    std::vector<SpecialCandidate> scanSpecialsForShow(const std::string& show_id);
-    std::vector<SpecialCandidate> getSpecialCandidates(const std::string& show_id) const;
-    std::vector<LinkedSpecial>    getLinkedSpecials(const std::string& show_id) const;
-    bool acceptSpecialCandidate(const std::string& candidate_id);
-    bool rejectSpecialCandidate(const std::string& candidate_id);
+	// Bulk counterpart — clears match_confirmed on every currently-confirmed
+	// show/movie. The undo button for an accidental "Confirm All Matches".
+	// Returns the number of items un-confirmed.
+	int unconfirmAllMatches();
 
-    // Returns the CDN poster URL for an AniDB AID, or empty if unavailable/disabled.
-    std::string anidbPosterUrl(const std::string& aid) const;
+	// Re-fetches and re-applies full metadata (overview, genres, images, etc.)
+	// from whichever scraper is already matched to this item — same
+	// fetch-and-apply path as accepting a candidate, just re-run against the
+	// existing match instead of a newly-searched one. Locked fields are still
+	// respected. False if the item has never had a confirmed match to refresh.
+	bool refreshMetadata(const std::string& kairos_id, const std::string& item_type);
 
-    // See AnidbScraper::rateLimitImageWait(). No-op if AniDB isn't configured.
-    void anidbRateLimitImage() const;
+	// Live search of enabled scrapers
+	struct SearchResult
+	{
+		std::string source;
+		std::string external_id;
+		std::string title;
+		int year = 0;
+		std::string overview;
+		std::string poster_url;
+		std::string content_type; // "show" | "movie"
+		bool in_library = false;
+		std::string library_id;     // this library's show_id/movie_id when in_library; empty otherwise
+		std::string request_status; // most relevant existing content_request status ("pending"|"approved"|"rejected"), by ANY user; empty = never requested
+	};
+
+	std::vector<SearchResult> search(const std::string& query,
+									 const std::string& content_type) const;
+
+	ScraperStats stats() const;
+
+	// Show specials <-> movie-library-file linking. Scans every scraper the
+	// show has a confirmed ID with for season-0 (specials/OVA/TV-movie)
+	// entries, merges duplicates found across sources, and scores them
+	// against the movie catalog. Never auto-links — always goes through
+	// accept/reject, same as the main review queue.
+	std::vector<SpecialCandidate> scanSpecialsForShow(const std::string& show_id);
+	std::vector<SpecialCandidate> getSpecialCandidates(const std::string& show_id) const;
+	std::vector<LinkedSpecial> getLinkedSpecials(const std::string& show_id) const;
+	bool acceptSpecialCandidate(const std::string& candidate_id);
+	bool rejectSpecialCandidate(const std::string& candidate_id);
+
+	// Returns the CDN poster URL for an AniDB AID, or empty if unavailable/disabled.
+	std::string anidbPosterUrl(const std::string& aid) const;
+
+	// See AnidbScraper::rateLimitImageWait(). No-op if AniDB isn't configured.
+	void anidbRateLimitImage() const;
 
 private:
-    void buildScrapers();
-    void runMatch(const std::string& target_id, const std::string& item_type);
-    void runRefreshAll();
+	void buildScrapers();
+	void runMatch(const std::string& target_id, const std::string& item_type);
+	void runRefreshAll();
 
-    MatchConfirmedCallback on_match_confirmed_;
+	MatchConfirmedCallback on_match_confirmed_;
 
-    // Downloads a just-applied AniDB thumb to the item's own media folder
-    // (as aniThumb.jpg) and rewrites the DB thumb column to a "local:" path
-    // so ContentService::proxyImage serves it straight off disk from then
-    // on. No-op unless anidb_download_posters is enabled (see
-    // ScraperSettings) — called right after applyShowMetadata/
-    // applyMovieMetadata in the two places a confirmed AniDB match's
-    // metadata gets (re)applied: acceptCandidate() and refreshMetadata().
-    // Silently does nothing on any failure (locked item, no on-disk folder
-    // yet, download error) — a live-fetched poster is still a working
-    // fallback, so this is best-effort, not required for a match to "succeed".
-    void persistAnidbThumbLocally(const std::string& item_type, const std::string& kairos_id);
+	// Downloads a just-applied AniDB thumb to the item's own media folder
+	// (as aniThumb.jpg) and rewrites the DB thumb column to a "local:" path
+	// so ContentService::proxyImage serves it straight off disk from then
+	// on. No-op unless anidb_download_posters is enabled (see
+	// ScraperSettings) — called right after applyShowMetadata/
+	// applyMovieMetadata in the two places a confirmed AniDB match's
+	// metadata gets (re)applied: acceptCandidate() and refreshMetadata().
+	// Silently does nothing on any failure (locked item, no on-disk folder
+	// yet, download error) — a live-fetched poster is still a working
+	// fallback, so this is best-effort, not required for a match to "succeed".
+	void persistAnidbThumbLocally(const std::string& item_type, const std::string& kairos_id);
 
-    // An item can be mapped to more than one media_library (cross-source
-    // dedup — e.g. the same show synced from both a Plex library and a Local
-    // library that disagree on preferred_language/scraper priority). There is
-    // deliberately no single "winning" library: settings are merged instead —
-    // scraper priority lists concatenated de-duplicated (earlier-mapped
-    // library's order wins ties), include_anidb is true if ANY mapped library
-    // wants it, and preferred_language becomes a set (a scraper matching ANY
-    // member gets the language bonus) rather than one value silently
-    // overwriting the other. See resolveMatchSettings().
-    struct MatchSettings {
-        std::set<std::string>    preferred_languages;
-        std::vector<std::string> priority;
-        bool                     include_anidb = false;
-    };
-    MatchSettings resolveMatchSettings(const std::string& item_type, const std::string& kairos_id) const;
+	// An item can be mapped to more than one media_library (cross-source
+	// dedup — e.g. the same show synced from both a Plex library and a Local
+	// library that disagree on preferred_language/scraper priority). There is
+	// deliberately no single "winning" library: settings are merged instead —
+	// scraper priority lists concatenated de-duplicated (earlier-mapped
+	// library's order wins ties), include_anidb is true if ANY mapped library
+	// wants it, and preferred_language becomes a set (a scraper matching ANY
+	// member gets the language bonus) rather than one value silently
+	// overwriting the other. See resolveMatchSettings().
+	struct MatchSettings
+	{
+		std::set<std::string> preferred_languages;
+		std::vector<std::string> priority;
+		bool include_anidb = false;
+	};
 
-    void matchShow (const MatchSettings& settings, const std::string& kairos_id, const std::string& title,
-                    int year, const std::string& tmdb_id, const std::string& tvdb_id);
-    void matchMovie(const MatchSettings& settings, const std::string& kairos_id, const std::string& title,
-                    int year, const std::string& tmdb_id, const std::string& file_path);
+	MatchSettings resolveMatchSettings(const std::string& item_type, const std::string& kairos_id) const;
 
-    void  storeCandidate(const std::string& item_type, const std::string& kairos_id,
-                         const std::string& source,    const std::string& external_id,
-                         const std::string& title,     int year, double score,
-                         const std::string& poster_url = "",
-                         const std::string& overview   = "");
-    void  setMatchStatus(const std::string& item_type, const std::string& kairos_id,
-                         const std::string& status,   double score);
-    void  upsertExternalId(const std::string& item_type, const std::string& kairos_id,
-                           const std::string& source,    const std::string& external_id,
-                           int priority);
-    void  linkExternalId(const std::string& item_type, const std::string& kairos_id,
-                         const std::string& source,    const std::string& external_id,
-                         bool promote_to_primary);
-    void  upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
-                               const std::string& title);
-    double threshold() const;
+	// nfo_confirmed: this item's show.nfo_confirmed/movie.nfo_confirmed column
+	// (set at sync time from a local item's on-disk <pantheon_confirmed> NFO
+	// tag — see SidecarMetadata.h). Only consulted in the trusted-ID
+	// short-circuit branch (an existing tmdb_id/tvdb_id whose folder name
+	// still agrees with the source title) — when true there, match_confirmed
+	// is restored alongside match_status, not just the match itself. Ignored
+	// everywhere else so it can never grant confirmation via a fresh scraper
+	// search/pick.
+	void matchShow(const MatchSettings& settings, const std::string& kairos_id, const std::string& title,
+				   int year, const std::string& tmdb_id, const std::string& tvdb_id, bool nfo_confirmed = false);
+	void matchMovie(const MatchSettings& settings, const std::string& kairos_id, const std::string& title,
+					int year, const std::string& tmdb_id, const std::string& file_path, bool nfo_confirmed = false);
 
-    // Returns the kairos_id of a DIFFERENT show/movie already linked to
-    // (source, external_id) in item_external_id, or "" if none. Excludes
-    // exclude_kairos_id. Inner-joins against the live show/movie table so a
-    // stale/orphaned item_external_id row can never be reported as an owner.
-    std::string findExternalIdOwner(const std::string& item_type,
-                                     const std::string& source,
-                                     const std::string& external_id,
-                                     const std::string& exclude_kairos_id) const;
+	void storeCandidate(const std::string& item_type, const std::string& kairos_id,
+						const std::string& source, const std::string& external_id,
+						const std::string& title, int year, double score,
+						const std::string& poster_url = "",
+						const std::string& overview   = "");
+	void setMatchStatus(const std::string& item_type, const std::string& kairos_id,
+						const std::string& status, double score);
+	void upsertExternalId(const std::string& item_type, const std::string& kairos_id,
+						  const std::string& source, const std::string& external_id,
+						  int priority);
+	void linkExternalId(const std::string& item_type, const std::string& kairos_id,
+						const std::string& source, const std::string& external_id,
+						bool promote_to_primary);
+	void upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
+							  const std::string& title);
+	double threshold() const;
 
-    struct DuplicateMergeResult {
-        std::string merged_into_kairos_id;
-        std::string merged_into_title;
-        bool        folder_mismatch = false;
-    };
+	// Returns the kairos_id of a DIFFERENT show/movie already linked to
+	// (source, external_id) in item_external_id, or "" if none. Excludes
+	// exclude_kairos_id. Inner-joins against the live show/movie table so a
+	// stale/orphaned item_external_id row can never be reported as an owner.
+	std::string findExternalIdOwner(const std::string& item_type,
+									const std::string& source,
+									const std::string& external_id,
+									const std::string& exclude_kairos_id) const;
 
-    // If (item_type, source, external_id) is already owned by a different
-    // kairos_id, merges `kairos_id` into that owner (deleting `kairos_id`)
-    // and returns the outcome. Otherwise returns a default-constructed
-    // (empty) result. Callers must stop all further processing of
-    // `kairos_id` when merged_into_kairos_id is non-empty.
-    DuplicateMergeResult mergeIfDuplicateExternalId(const std::string& item_type,
-                                                     const std::string& kairos_id,
-                                                     const std::string& source,
-                                                     const std::string& external_id);
+	struct DuplicateMergeResult
+	{
+		std::string merged_into_kairos_id;
+		std::string merged_into_title;
+		bool folder_mismatch = false;
+	};
 
-    // Every (source, external_id) this show is confirmed to be identified by,
-    // merging all three places that fact can live: item_external_id (richest —
-    // populated once a human confirms via acceptCandidate, and since the auto-
-    // match paths now also call linkExternalId(), most auto-matches too), the
-    // winning item_match_candidate row (belt-and-suspenders for any auto-match
-    // predating that), and the show's own tvdb_id/tmdb_id columns (covers rows
-    // synced before either code path ran). De-duplicated by source, richest-first.
-    std::vector<std::pair<std::string, std::string>>
-        confirmedShowSourceIds(const std::string& show_id) const;
+	// If (item_type, source, external_id) is already owned by a different
+	// kairos_id, merges `kairos_id` into that owner (deleting `kairos_id`)
+	// and returns the outcome. Otherwise returns a default-constructed
+	// (empty) result. Callers must stop all further processing of
+	// `kairos_id` when merged_into_kairos_id is non-empty.
+	DuplicateMergeResult mergeIfDuplicateExternalId(const std::string& item_type,
+													const std::string& kairos_id,
+													const std::string& source,
+													const std::string& external_id);
 
-    Database&    db_;
-    ConfStore&   conf_;
+	// Every (source, external_id) this show is confirmed to be identified by,
+	// merging all three places that fact can live: item_external_id (richest —
+	// populated once a human confirms via acceptCandidate, and since the auto-
+	// match paths now also call linkExternalId(), most auto-matches too), the
+	// winning item_match_candidate row (belt-and-suspenders for any auto-match
+	// predating that), and the show's own tvdb_id/tmdb_id columns (covers rows
+	// synced before either code path ran). De-duplicated by source, richest-first.
+	std::vector<std::pair<std::string, std::string>> confirmedShowSourceIds(const std::string& show_id) const;
 
-    class SourceRepository& sourceRepo() const;
+	Database& db_;
+	ConfStore& conf_;
 
-    std::unique_ptr<AnidbScraper> anidb_;
-    std::unique_ptr<TmdbScraper> tmdb_;
-    std::unique_ptr<TvdbScraper> tvdb_;
-    std::unique_ptr<TvmazeScraper> tvmaze_;
-    std::unique_ptr<TraktScraper> trakt_;
-    std::unique_ptr<AnilistScraper> anilist_;
-    std::unique_ptr<WikidataScraper> wikidata_;
-    std::atomic<bool>            matching_{false};
-    std::atomic<bool>            refreshing_all_{false};
-    std::atomic<int>             refresh_all_total_{0};
-    std::atomic<int>             refresh_all_processed_{0};
-    std::atomic<int>             refresh_all_refreshed_{0};
-    std::atomic<int>             refresh_all_failed_{0};
+	class SourceRepository& sourceRepo() const;
+
+	std::unique_ptr<AnidbScraper> anidb_;
+	std::unique_ptr<TmdbScraper> tmdb_;
+	std::unique_ptr<TvdbScraper> tvdb_;
+	std::unique_ptr<TvmazeScraper> tvmaze_;
+	std::unique_ptr<TraktScraper> trakt_;
+	std::unique_ptr<AnilistScraper> anilist_;
+	std::unique_ptr<WikidataScraper> wikidata_;
+	std::atomic<bool> matching_{false};
+	std::atomic<bool> refreshing_all_{false};
+	std::atomic<int> refresh_all_total_{0};
+	std::atomic<int> refresh_all_processed_{0};
+	std::atomic<int> refresh_all_refreshed_{0};
+	std::atomic<int> refresh_all_failed_{0};
 };
