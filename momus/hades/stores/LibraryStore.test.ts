@@ -4,20 +4,31 @@ import { api } from '@/api/client'
 
 vi.mock('@/api/client', () => ({
   api: {
-    getAllLibraries: vi.fn(),
-    getShows:         vi.fn(),
-    getMovies:        vi.fn(),
-    scraperSearch:    vi.fn(),
+    getAllLibraries:    vi.fn(),
+    getShows:           vi.fn(),
+    getMovies:          vi.fn(),
+    getMixedMediaIndex: vi.fn(),
+    getMixedMediaTiles: vi.fn(),
+    scraperSearch:      vi.fn(),
   },
 }))
 
 const mockApi = api as Record<
-  'getAllLibraries' | 'getShows' | 'getMovies' | 'scraperSearch',
+  'getAllLibraries' | 'getShows' | 'getMovies' | 'getMixedMediaIndex' | 'getMixedMediaTiles' | 'scraperSearch',
   ReturnType<typeof vi.fn>
 >
 
 const SHOW_1  = { show_id: 'sh1', title: 'Foo Show', year: 2020, audience_rating: 8.1 }
 const MOVIE_1 = { movie_id: 'mv1', title: 'Bar Movie', year: 2019, audience_rating: 7.4 }
+
+// contentType defaults to 'all', which fetch()/loadMore() serve via the
+// mixed-index path (isMixedBrowse), not plain getShows/getMovies — those
+// stay reserved for a single-type browse (contentType='show'/'movie'). See
+// LibraryStore.fetch()'s isMixedBrowse branch.
+const IDX_SHOW_1  = { content_type: 'show' as const,  id: 'sh1', title: 'Foo Show' }
+const IDX_MOVIE_1 = { content_type: 'movie' as const, id: 'mv1', title: 'Bar Movie' }
+const TILE_SHOW_1  = { content_type: 'show' as const,  id: 'sh1', title: 'Foo Show',  year: 2020, audience_rating: 8.1, watched: false }
+const TILE_MOVIE_1 = { content_type: 'movie' as const, id: 'mv1', title: 'Bar Movie', year: 2019, audience_rating: 7.4, watched: false }
 
 describe('LibraryStore', () => {
   let store: LibraryStore
@@ -26,6 +37,8 @@ describe('LibraryStore', () => {
     vi.resetAllMocks()
     mockApi.getShows.mockResolvedValue({ items: [], total: 0 })
     mockApi.getMovies.mockResolvedValue({ items: [], total: 0 })
+    mockApi.getMixedMediaIndex.mockResolvedValue({ items: [] })
+    mockApi.getMixedMediaTiles.mockResolvedValue({ items: [] })
     store = new LibraryStore()
   })
 
@@ -40,10 +53,11 @@ describe('LibraryStore', () => {
   // ── fetch() — content type gating ───────────────────────────────────────
 
   describe('fetch', () => {
-    it('fetches both shows and movies when contentType=all', async () => {
+    it('fetches the mixed index (not getShows/getMovies) when contentType=all', async () => {
       await store.fetch()
-      expect(mockApi.getShows).toHaveBeenCalledTimes(1)
-      expect(mockApi.getMovies).toHaveBeenCalledTimes(1)
+      expect(mockApi.getMixedMediaIndex).toHaveBeenCalledTimes(1)
+      expect(mockApi.getShows).not.toHaveBeenCalled()
+      expect(mockApi.getMovies).not.toHaveBeenCalled()
     })
 
     it('skips getMovies when contentType=show', async () => {
@@ -60,24 +74,39 @@ describe('LibraryStore', () => {
       expect(mockApi.getShows).not.toHaveBeenCalled()
     })
 
-    it('passes sort through to both getShows and getMovies', async () => {
+    it('passes sort through to the mixed index fetch when contentType=all', async () => {
+      store.setSort('recently_released')
+      await store.fetch()
+      expect(mockApi.getMixedMediaIndex).toHaveBeenCalledWith(expect.objectContaining({ sort: 'recently_released' }))
+    })
+
+    it('passes sort through to both getShows and getMovies for a single content type', async () => {
+      store.setContentType('show')
       store.setSort('recently_released')
       await store.fetch()
       expect(mockApi.getShows).toHaveBeenCalledWith(expect.objectContaining({ sort: 'recently_released' }))
-      expect(mockApi.getMovies).toHaveBeenCalledWith(expect.objectContaining({ sort: 'recently_released' }))
     })
 
-    it('populates shows/movies/total from the API results', async () => {
-      mockApi.getShows.mockResolvedValue({ items: [SHOW_1], total: 1 })
-      mockApi.getMovies.mockResolvedValue({ items: [MOVIE_1], total: 1 })
+    it('populates mixedItems/total from the index+hydrate results when contentType=all', async () => {
+      mockApi.getMixedMediaIndex.mockResolvedValue({ items: [IDX_SHOW_1, IDX_MOVIE_1] })
+      mockApi.getMixedMediaTiles.mockResolvedValue({ items: [TILE_SHOW_1, TILE_MOVIE_1] })
       await store.fetch()
-      expect(store.shows).toEqual([SHOW_1])
-      expect(store.movies).toEqual([MOVIE_1])
+      expect(store.mixedItems).toEqual([TILE_SHOW_1, TILE_MOVIE_1])
+      expect(store.shows).toEqual([])
+      expect(store.movies).toEqual([])
       expect(store.total).toBe(2)
     })
 
+    it('populates shows/movies/total from getShows/getMovies for a single content type', async () => {
+      store.setContentType('show')
+      mockApi.getShows.mockResolvedValue({ items: [SHOW_1], total: 1 })
+      await store.fetch()
+      expect(store.shows).toEqual([SHOW_1])
+      expect(store.total).toBe(1)
+    })
+
     it('clears loading even when the API call rejects', async () => {
-      mockApi.getShows.mockRejectedValue(new Error('boom'))
+      mockApi.getMixedMediaIndex.mockRejectedValue(new Error('boom'))
       await store.fetch()
       expect(store.loading).toBe(false)
     })
@@ -92,7 +121,7 @@ describe('LibraryStore', () => {
       await Promise.resolve()
       expect(store.sort).toBe('recently_aired')
       expect(store.page).toBe(0)
-      expect(mockApi.getShows).toHaveBeenCalledWith(expect.objectContaining({ sort: 'recently_aired' }))
+      expect(mockApi.getMixedMediaIndex).toHaveBeenCalledWith(expect.objectContaining({ sort: 'recently_aired' }))
     })
 
     it('setContentType updates contentType and resets page', () => {
@@ -108,7 +137,7 @@ describe('LibraryStore', () => {
       // other rule-builder clause. See LibraryStore.fetch's `filter` build.
       store.setFilterGenre('Horror')
       await Promise.resolve()
-      expect(mockApi.getShows).toHaveBeenCalledWith(expect.objectContaining({ filter: 'genre:Horror' }))
+      expect(mockApi.getMixedMediaIndex).toHaveBeenCalledWith(expect.objectContaining({ filter: 'genre:Horror' }))
     })
   })
 
@@ -116,29 +145,44 @@ describe('LibraryStore', () => {
 
   describe('loadMore', () => {
     it('does nothing if already at the end of the result set', async () => {
-      mockApi.getShows.mockResolvedValue({ items: [SHOW_1], total: 1 })
+      // Mixed browse (default contentType=all): fetch() fetches the whole
+      // index up front and hydrates only the first PAGE_SIZE tiles — a
+      // single index entry means there's nothing left to page into.
+      mockApi.getMixedMediaIndex.mockResolvedValue({ items: [IDX_SHOW_1] })
+      mockApi.getMixedMediaTiles.mockResolvedValue({ items: [TILE_SHOW_1] })
       await store.fetch()
       await store.loadMore()
-      // Only the initial fetch's call, no second page requested
-      expect(mockApi.getShows).toHaveBeenCalledTimes(1)
+      // Only the initial fetch's calls, no second hydrate requested
+      expect(mockApi.getMixedMediaIndex).toHaveBeenCalledTimes(1)
+      expect(mockApi.getMixedMediaTiles).toHaveBeenCalledTimes(1)
     })
 
     it('advances the page and appends results when more are available', async () => {
-      mockApi.getShows.mockResolvedValueOnce({ items: [SHOW_1], total: 2 })
+      // fetch() hydrates only the first PAGE_SIZE (48) tiles of the index it
+      // fetched, regardless of the index's own total size — so a 50-entry
+      // index leaves 2 unhydrated until loadMore() asks for the next slice.
+      const index = Array.from({ length: 50 }, (_, i) => ({
+        content_type: 'show' as const, id: `sh${i}`, title: `Show ${i}`,
+      }))
+      mockApi.getMixedMediaIndex.mockResolvedValue({ items: index })
+      mockApi.getMixedMediaTiles.mockImplementation((ids: { content_type: string; id: string }[]) =>
+        Promise.resolve({ items: ids.map(({ id }) => ({ ...TILE_SHOW_1, id })) }))
+
       await store.fetch()
-      mockApi.getShows.mockResolvedValueOnce({ items: [{ ...SHOW_1, show_id: 'sh2' }], total: 2 })
+      expect(store.mixedItems).toHaveLength(48)
+
       await store.loadMore()
-      expect(store.shows).toHaveLength(2)
+      expect(store.mixedItems).toHaveLength(50)
       expect(store.page).toBe(1)
     })
 
     it('is a no-op while a fetch is already loading', async () => {
-      let resolveFetch: (v: unknown) => void = () => {}
-      mockApi.getShows.mockReturnValue(new Promise(res => { resolveFetch = res }))
+      let resolveIndex: (v: unknown) => void = () => {}
+      mockApi.getMixedMediaIndex.mockReturnValue(new Promise(res => { resolveIndex = res }))
       const first = store.fetch()
       await store.loadMore() // should bail immediately — store.loading is true
-      expect(mockApi.getShows).toHaveBeenCalledTimes(1)
-      resolveFetch({ items: [], total: 0 })
+      expect(mockApi.getMixedMediaTiles).not.toHaveBeenCalled()
+      resolveIndex({ items: [] })
       await first
     })
   })
@@ -189,7 +233,7 @@ describe('LibraryStore', () => {
       store.toggleDiscoverMode() // -> true, no query, no fetch
       store.toggleDiscoverMode() // -> false, should fetch()
       await Promise.resolve()
-      expect(mockApi.getShows).toHaveBeenCalled()
+      expect(mockApi.getMixedMediaIndex).toHaveBeenCalled()
     })
   })
 

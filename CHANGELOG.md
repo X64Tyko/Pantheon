@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Sidebar profile controls looked like static text, not buttons (Hades)**: `usernameLinkBtn`/`sidebarExitBtn` had
   no resting border or hover background, unlike their already-correct mobile-drawer equivalents. Both now match the
   drawer's affordance; the new About link sits alongside them as a matching icon button.
+- **9 long-failing `LibraryStore` tests (Hades)**: not app bugs — the tests still asserted against the pre-mixed-browse
+  `getShows`/`getMovies` fetch path, never updated when `contentType='all'` (the default) moved to the
+  `getMixedMediaIndex`/`getMixedMediaTiles` path. Rewritten to match; the mixed-browse path — the default view every
+  user hits first — now has real test coverage for the first time.
 
 ### Changed
 
