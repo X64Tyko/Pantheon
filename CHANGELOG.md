@@ -25,6 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `getShows`/`getMovies` fetch path, never updated when `contentType='all'` (the default) moved to the
   `getMixedMediaIndex`/`getMixedMediaTiles` path. Rewritten to match; the mixed-browse path — the default view every
   user hits first — now has real test coverage for the first time.
+- **Hades CI never actually ran `vitest`** — `docker-hades.yml` was a pure Docker build with no test gate, unlike
+  Kairos CI's `test`-before-`build` structure, which is how the 9 failures above went unnoticed. Added a `test` job
+  (typecheck + `vitest run`) that `build` now depends on, and widened the path trigger to include `momus/hades/**`
+  (test-only changes previously didn't trigger this workflow at all).
 
 ### Changed
 

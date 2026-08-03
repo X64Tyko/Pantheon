@@ -10,6 +10,7 @@ on:
     tags: ["v*.*.*"]
     paths:
       - "hades/**"
+      - "momus/hades/**"
       - "VERSION"
       - ".github/workflows/docker-hades.yml"
   workflow_dispatch:
@@ -24,7 +25,36 @@ env:
   IMAGE_NAME: x64tyko/hades
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: hades/pnpm-lock.yaml
+
+      - name: Install deps
+        working-directory: hades
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: hades
+        run: pnpm exec tsc -b
+
+      - name: Run tests
+        working-directory: hades
+        run: pnpm test:run
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
