@@ -70,7 +70,7 @@ This document outlines the planned development trajectory for Pantheon. As an ar
 - [ ] [VR content detection and filtering](https://github.com/X64Tyko/Pantheon/issues/35) (#35)
 - [ ] [Media downloads for offline playback](https://github.com/X64Tyko/Pantheon/issues/36) (#36)
 - [ ] [Plex sign-in (PIN-based OAuth) instead of manual token/URL entry](https://github.com/X64Tyko/Pantheon/issues/43) (#43)
-- [ ] [Channel launch seeding: stagger rerun cursors so new channels don't start every show at episode 1](https://github.com/X64Tyko/Pantheon/issues/44) (#44)
+- [x] [Channel launch seeding: stagger rerun cursors so new channels don't start every show at episode 1](https://github.com/X64Tyko/Pantheon/issues/44) (#44)
 <!-- roadmap-sync:end beta -->
 
 ## Phase 3: V1.0 Release (Late 2026)
