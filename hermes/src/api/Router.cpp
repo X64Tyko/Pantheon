@@ -55,15 +55,24 @@ public:
 			if (statm >> dummy >> rss) m.ram_bytes = rss * sysconf(_SC_PAGESIZE);
 		}
 
-		// CPU: expressed as a fraction of one core (100% = one full core),
-		// matching Docker's scale. /proc/stat totals span all host CPUs, so
-		// multiply proc_delta by nproc to normalize to per-core percentage.
+		// CPU: expressed as a fraction of the service's thread capacity
+		// (100% = all threads fully busy), preventing e.g. a 10-thread sync
+		// from showing 1000%. /proc/stat totals span all host CPUs, so we
+		// first multiply by nproc (per-core normalisation) then divide by the
+		// process's current thread count.
 		static long last_utime = 0, last_stime = 0, last_total_time = 0;
 		std::ifstream stat("/proc/self/stat");
 		std::string dummy;
 		for (int i = 0; i < 13; ++i) stat >> dummy;
 		long utime, stime;
 		stat >> utime >> stime;
+		// Skip cutime, cstime, priority, nice (fields 16–19) to reach
+		// num_threads (field 20).
+		long skip4;
+		stat >> skip4 >> skip4 >> skip4 >> skip4;
+		long num_threads = 1;
+		stat >> num_threads;
+		if (num_threads < 1) num_threads = 1;
 		std::ifstream uptime("/proc/stat");
 		std::string cpu;
 		uptime >> cpu;
@@ -77,7 +86,7 @@ public:
 			if (total_delta > 0)
 			{
 				int nproc   = static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN));
-				m.cpu_usage = 100.0 * proc_delta * nproc / total_delta;
+				m.cpu_usage = 100.0 * proc_delta * nproc / total_delta / num_threads;
 			}
 		}
 		last_utime      = utime;
