@@ -7,9 +7,10 @@
 // Returns a validated duration_ms for a media file.
 //
 // If dur is already in [1 000, 86 400 000] ms (1 s – 24 h) it is returned
-// unchanged.  Otherwise ffprobe is invoked on file_path to obtain the real
-// container duration.  If ffprobe succeeds and the result is in range, the
-// probed value is returned; if not, 0 is returned and a warning is emitted.
+// unchanged.  Otherwise the container is probed natively via libavformat
+// (avformat_open_input), falling back to ffprobe on any open failure.
+// Returns the probed value when it is in range, or 0 when it is not, with a
+// warning emitted.
 //
 // Intended to be called before writing duration_ms to the DB so that stale,
 // missing, or corrupt source metadata does not silently produce zero-duration
@@ -21,7 +22,7 @@ int64_t validateDurationMs(int64_t dur, const std::string& file_path);
 // paying for a probe just to find out. Used by SyncManager's
 // syncMediaProbeFromFiles to fold duration re-validation into the same
 // combined probeFileInfo() call it needs anyway for resolution/languages,
-// rather than a separate ffprobe spawn via validateDurationMs.
+// rather than a separate probe spawn via validateDurationMs.
 bool durationLooksValid(int64_t ms);
 
 // Reads chapter markers embedded in a media file via ffprobe.
@@ -57,24 +58,18 @@ struct VideoInfo
 
 VideoInfo probeVideoInfo(const std::string& file_path);
 
-// Combined probe: one ffprobe invocation (-show_format -show_streams) for
-// everything sync-time file inspection needs — duration (format-level,
-// falling back to the longest per-stream duration exactly like
-// validateDurationMs's own two-tier fallback), video codec/resolution/bit-
-// depth, and audio/subtitle stream languages — instead of separately
-// spawning ffprobe for each. validateDurationMs/probeVideoInfo remain
-// available as-is for other callers (e.g. ContentService.cpp's on-demand
-// /videoinfo endpoint); the language half has no such standalone caller
-// anymore — SyncManager::syncMediaProbeFromFiles persists this probe's
-// langs into audio_languages/embedded_subtitle_languages, and
-// ContentService.cpp's /languages endpoints just read those columns.
-// duration_ms is 0 if undeterminable. keyframes_ms is every real keyframe
-// timestamp in the primary video stream (packet-level scan, no decode) —
-// added here so it rides along with the rest of this sync-time probe instead
-// of Hephaestus paying for this same scan again on every direct-stream
-// playback start (see Database.cpp's v98 migration comment and
-// VodSession.cpp's computeSegmentBoundaries()). Empty if the file has no
-// video stream or the scan failed.
+// Combined probe: one avformat_open_input + avformat_find_stream_info call
+// for everything sync-time file inspection needs — duration (format-level,
+// falling back to the longest per-stream duration), video codec/resolution/
+// bit-depth, audio/subtitle stream languages, and keyframe timestamps.
+// Falls back to ffprobe subprocesses only when avformat_open_input itself
+// fails (exotic or unsupported container).
+// keyframes_ms is every keyframe timestamp in the primary video stream read
+// directly from the container's seek index (MP4 stss/stts atoms, MKV Cues
+// element) — no packet scan or decode needed for well-formed files.  When the
+// seek index is absent a packet-level ffprobe scan is used as a fallback.
+// duration_ms is 0 if undeterminable. keyframes_ms is empty if the file has
+// no video stream or the scan failed.
 struct FileProbeInfo
 {
 	int64_t duration_ms = 0;

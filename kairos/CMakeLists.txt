@@ -62,12 +62,22 @@ list(FILTER ALL_SOURCES EXCLUDE REGEX ".*[/\\\\]main\\.cpp$")
 
 find_package(OpenSSL REQUIRED)
 
+# ── libavformat / libavcodec / libavutil (native media probing) ───────────────
+# Used by MediaProbe.cpp to read container headers directly instead of spawning
+# ffprobe subprocesses — avoids JSON serialization overhead and lets us read the
+# keyframe index directly from the MP4 stss/stts atoms or MKV Cues element.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAVFORMAT REQUIRED libavformat)
+pkg_check_modules(LIBAVCODEC REQUIRED libavcodec)
+pkg_check_modules(LIBAVUTIL REQUIRED libavutil)
+
 # Guard: during the Docker layer-split build the configure step runs before
 # src/ is copied in, leaving ALL_SOURCES empty. Use INTERFACE in that case so
 # the target exists for the executable to link against unconditionally.
 if(ALL_SOURCES)
     add_library(kairos_core STATIC ${ALL_SOURCES})
-    target_include_directories(kairos_core PUBLIC src "${CMAKE_SOURCE_DIR}/shared")
+    target_include_directories(kairos_core PUBLIC src "${CMAKE_SOURCE_DIR}/shared"
+            ${LIBAVFORMAT_INCLUDE_DIRS} ${LIBAVCODEC_INCLUDE_DIRS} ${LIBAVUTIL_INCLUDE_DIRS})
     target_link_libraries(kairos_core
         PUBLIC
         nlohmann_json::nlohmann_json
@@ -75,6 +85,7 @@ if(ALL_SOURCES)
         httplib::httplib
         pugixml
         OpenSSL::SSL OpenSSL::Crypto
+            ${LIBAVFORMAT_LIBRARIES} ${LIBAVCODEC_LIBRARIES} ${LIBAVUTIL_LIBRARIES}
     )
     if(UNIX)
         target_link_libraries(kairos_core PUBLIC pthread dl crypt)
@@ -82,7 +93,8 @@ if(ALL_SOURCES)
     target_compile_definitions(kairos_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
 else()
     add_library(kairos_core INTERFACE)
-    target_include_directories(kairos_core INTERFACE src "${CMAKE_SOURCE_DIR}/shared")
+    target_include_directories(kairos_core INTERFACE src "${CMAKE_SOURCE_DIR}/shared"
+            ${LIBAVFORMAT_INCLUDE_DIRS} ${LIBAVCODEC_INCLUDE_DIRS} ${LIBAVUTIL_INCLUDE_DIRS})
     target_link_libraries(kairos_core
         INTERFACE
         nlohmann_json::nlohmann_json
@@ -90,6 +102,7 @@ else()
         httplib::httplib
         pugixml
         OpenSSL::SSL OpenSSL::Crypto
+            ${LIBAVFORMAT_LIBRARIES} ${LIBAVCODEC_LIBRARIES} ${LIBAVUTIL_LIBRARIES}
     )
     if(UNIX)
         target_link_libraries(kairos_core INTERFACE pthread dl crypt)
