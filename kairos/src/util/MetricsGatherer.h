@@ -24,29 +24,52 @@ public:
 	{
 		ProcessMetrics m;
 
-		// RAM: prefer cgroup memory for container-accurate reporting.
-		// Docker reports cgroup memory, not per-process RSS.
-		// Try cgroup v2, then v1, then fall back to /proc/self/statm RSS.
-		bool ram_set = false;
-		for (const char* path : {
-				 "/sys/fs/cgroup/memory.current", // cgroup v2
-				 "/sys/fs/cgroup/memory/memory.usage_in_bytes"
-			 }) // cgroup v1
+		// RAM: match Docker's "working set" calculation:
+		//   displayed = memory.current − inactive_file  (from memory.stat)
+		// The raw cgroup value includes the reclaimable page-cache; subtracting
+		// inactive_file gives the same figure docker stats reports.
 		{
-			std::ifstream f(path);
-			long val;
-			if (f >> val)
+			// Try cgroup v2
+			std::ifstream f2("/sys/fs/cgroup/memory.current");
+			long raw = 0;
+			if (f2 >> raw)
 			{
-				m.ram_bytes = val;
-				ram_set     = true;
-				break;
+				long inactive_file = 0;
+				std::ifstream stat2("/sys/fs/cgroup/memory.stat");
+				std::string key;
+				long val;
+				while (stat2 >> key >> val) if (key == "inactive_file")
+				{
+					inactive_file = val;
+					break;
+				}
+				m.ram_bytes = raw > inactive_file ? raw - inactive_file : 0;
 			}
-		}
-		if (!ram_set)
-		{
-			std::ifstream statm("/proc/self/statm");
-			long dummy, rss;
-			if (statm >> dummy >> rss) m.ram_bytes = rss * sysconf(_SC_PAGESIZE);
+			else
+			{
+				// Try cgroup v1
+				std::ifstream f1("/sys/fs/cgroup/memory/memory.usage_in_bytes");
+				if (f1 >> raw)
+				{
+					long inactive_file = 0;
+					std::ifstream stat1("/sys/fs/cgroup/memory/memory.stat");
+					std::string key;
+					long val;
+					while (stat1 >> key >> val) if (key == "total_inactive_file")
+					{
+						inactive_file = val;
+						break;
+					}
+					m.ram_bytes = raw > inactive_file ? raw - inactive_file : 0;
+				}
+				else
+				{
+					// Fallback: /proc/self/statm RSS
+					std::ifstream statm("/proc/self/statm");
+					long dummy, rss;
+					if (statm >> dummy >> rss) m.ram_bytes = rss * sysconf(_SC_PAGESIZE);
+				}
+			}
 		}
 
 		// CPU: expressed as a fraction of the service's thread capacity
