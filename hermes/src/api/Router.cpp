@@ -29,12 +29,35 @@ public:
 	static ProcessMetrics getProcessMetrics()
 	{
 		ProcessMetrics m;
-		std::ifstream statm("/proc/self/statm");
-		long rss_pages = 0;
-		if (statm >> rss_pages >> rss_pages)
+
+		// RAM: prefer cgroup memory for container-accurate reporting.
+		// Docker reports cgroup memory, not per-process RSS.
+		// Try cgroup v2, then v1, then fall back to /proc/self/statm RSS.
+		bool ram_set = false;
+		for (const char* path : {
+				 "/sys/fs/cgroup/memory.current", // cgroup v2
+				 "/sys/fs/cgroup/memory/memory.usage_in_bytes"
+			 }) // cgroup v1
 		{
-			m.ram_bytes = rss_pages * sysconf(_SC_PAGESIZE);
+			std::ifstream f(path);
+			long val;
+			if (f >> val)
+			{
+				m.ram_bytes = val;
+				ram_set     = true;
+				break;
+			}
 		}
+		if (!ram_set)
+		{
+			std::ifstream statm("/proc/self/statm");
+			long dummy, rss;
+			if (statm >> dummy >> rss) m.ram_bytes = rss * sysconf(_SC_PAGESIZE);
+		}
+
+		// CPU: expressed as a fraction of one core (100% = one full core),
+		// matching Docker's scale. /proc/stat totals span all host CPUs, so
+		// multiply proc_delta by nproc to normalize to per-core percentage.
 		static long last_utime = 0, last_stime = 0, last_total_time = 0;
 		std::ifstream stat("/proc/self/stat");
 		std::string dummy;
@@ -51,7 +74,11 @@ public:
 		{
 			long total_delta = total_time - last_total_time;
 			long proc_delta  = (utime + stime) - (last_utime + last_stime);
-			if (total_delta > 0) m.cpu_usage = 100.0 * proc_delta / total_delta;
+			if (total_delta > 0)
+			{
+				int nproc   = static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN));
+				m.cpu_usage = 100.0 * proc_delta * nproc / total_delta;
+			}
 		}
 		last_utime      = utime;
 		last_stime      = stime;
