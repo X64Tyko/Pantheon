@@ -1,9 +1,9 @@
 # About Pantheon
 
-Pantheon is a self-hosted media platform built around three pillars: library management across Plex/Jellyfin/Emby/local
-sources with bidirectional metadata correction, deterministic IPTV channel scheduling, and a native player across web,
-Android, and Roku. See the [README](https://github.com/X64Tyko/Pantheon) for the full picture, or try the
-[live demo](http://pantheonmedia.app) without installing anything.
+Pantheon is a self-hosted media platform built around three pillars — library management across Plex/Jellyfin/Emby/local
+sources with bidirectional metadata correction, deterministic block-based IPTV channel scheduling, and a native player
+across web, Android, and Roku. See the [README](https://github.com/X64Tyko/Pantheon) for the full picture, or try
+the [live demo](http://pantheonmedia.app) without installing anything.
 
 ## How contributions work
 

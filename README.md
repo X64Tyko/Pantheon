@@ -1,10 +1,17 @@
 # Pantheon
 
-A media platform built around three pillars:
+A self-hosted media platform that goes further than library management. Three things it does that nothing else does the
+same way:
 
-- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections and playlists (static or smart/filter-driven, synced and written back to source playlists), fix incorrect matches, enrich metadata, and write back to original libraries.
-- **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, dedicated premiere timeslots, and live EPG. Connect any IPTV client.
-- **Media player** — direct playback within Hades and native client applications.
+- **Block-based channel scheduling** — build the *structure* of a 24/7 channel (blocks, rerun rules, true
+  Toonami/OSM-style timeslots with intro/outro/interstitials) and let Pantheon project a deterministic, memory-first EPG
+  from it. No manual slot filling, no drift, no surprises.
+- **Unified library with cross-source intelligence** — movies and shows live in one library, not separate ones. Filter
+  by Horror released after 2000, sort by audience rating, and you get a single list across your entire server not a
+  movie result and a separate TV result. Pantheon also deduplicates across sources, links specials automatically,
+  enriches metadata with extra tags, and writes corrections back to your original libraries.
+- **Native clients, not webview wrappers** — web, Android, and Roku are built on SDUI manifests with real capability
+  detection so each client direct-streams what it can and transcodes only what it must.
 
 ## Live Demo
 
@@ -175,11 +182,16 @@ Enter the connection details and test the connection.
 
 ### 2. Add libraries and sync
 
-After saving the source, go back into it and add the libraries you want Kairos to know about (TV Shows, Movies). Hit **Sync** — Kairos fetches all episode metadata and file paths. 
+After saving the source, go back into it and add the libraries you want Kairos to know about (TV Shows, Movies). Hit *
+*Sync** — Kairos fetches all episode metadata and file paths. Watch state, play counts, and added dates are pulled from
+Plex/Jellyfin/Emby automatically, so your history comes with it.
 
-> **Important:** If you have the same media on multiple sources (e.g., Plex and a local mount), make sure to configure **Path Maps** (Step 3) *before* syncing. This allows Pantheon to deduplicate items and register them as the same piece of media rather than creating duplicates.
+> **Important:** If you have the same media on multiple sources (e.g., Plex and a local mount), make sure to configure *
+*Path Maps** (Step 3) *before* syncing. This allows Pantheon to deduplicate items across sources and register them as a
+> single canonical piece of media — one entry in your library, not two. Source priority controls which version plays back.
 
-Large libraries take a few minutes; progress is visible in the **Activity** log.
+Large libraries take a few minutes; progress is visible in the **Activity** log. Specials are linked across libraries
+automatically — no manual intervention needed.
 
 ### 3. Set the path map
 
@@ -234,14 +246,16 @@ TiViMate, Channels DVR, and most IPTV apps can consume the M3U and XMLTV endpoin
 
 Channels are built from **blocks** — recurring time slots on chosen days, each with a content list and an advancement rule.
 
-| Concept | What it does |
-|---|---|
-| **Block** | Owns a time window on specific days. Higher priority wins when blocks overlap. |
-| **Advancement** | How the block walks its list: `sequential`, `shuffle`, `smart_shuffle`, `rerun_shuffle`, `rerun_smart` |
-| **Cursor** | Bookmark inside a show — global (shared everywhere), channel (shared on this channel), or block (private). |
-| **Timeslot block** | Allows fixed-time programming slots (e.g. "Toonami") with multiple rotating shows and premiere dates. |
-| **Filler** | Patches gaps between programs so the channel never goes dark. Duration-aware: fits clips to the seam. |
-| **Bumpers** | Intro/outro branding clips at block boundaries, plus interstitials every N programs. |
+| Concept                 | What it does                                                                                                                               |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| **Block**               | Owns a time window on specific days. Higher priority wins when blocks overlap.                                                             |
+| **Advancement**         | How the block walks its list: `sequential`, `shuffle`, `smart_shuffle`, `rerun_shuffle`, `rerun_smart`                                     |
+| **Cursor**              | Bookmark inside a show — global (shared everywhere), channel (shared on this channel), or block (private).                                 |
+| **Timeslot block**      | Fixed-time programming slots (e.g. "Toonami") with multiple rotating shows, premiere dates, and per-block intro, outro, and interstitials. |
+| **Rerun blocks**        | True independent reruns — not linked slots replaying the same file, but a separate block advancing its own cursor through the content.     |
+| **Filler**              | Patches gaps between programs so the channel never goes dark. Duration-aware: fits clips to the seam.                                      |
+| **Bumpers**             | Intro/outro branding clips at block boundaries, plus interstitials every N programs.                                                       |
+| **Shareable structure** | Channel layouts can be exported and shared — the structure, not a snapshot of the EPG.                                                     |
 
 For a full visual breakdown of how all these interact, see the scheduling diagram in `/docs`.
 
@@ -251,8 +265,29 @@ For a full visual breakdown of how all these interact, see the scheduling diagra
 
 Kairos includes yt-dlp integration and *arr stack support:
 
-- **Discovery:** Search TMDB, TVDB, or AniDB directly from Hades and request new content. Requests can be approved to automatically push the media to your Sonarr or Radarr stack.
+- **Discovery:** Search TMDB, TVDB, or AniDB directly from Hades and request new content. Requests flow through a review
+  queue before being approved and pushed to your Sonarr or Radarr stack — nothing lands in your library without a human
+  sign-off.
 - **yt-dlp:** Paste a URL (YouTube playlist, video, etc.) in the Downloads page to pull bumpers and filler directly to your local media folders.
+
+The same review queue surfaces uncertain scraper matches, chapter detections, and duplicate flags — so edge cases get
+human eyes instead of silently writing bad data.
+
+---
+
+## Multi-user, parental controls & guest access
+
+Pantheon is multi-user by design. Each account has its own watch state, home screen, and playlists. Access controls are
+enforced server-side:
+
+- **Parental controls** with separate gates for movies, TV shows, and channels — so a kids' profile can have full access
+  to the channel grid but a rating cap on the library.
+- **Profile PINs** — Netflix-style "Who's watching?" switcher with per-profile PIN protection.
+- **Guest mode** — passwordless guest accounts for shared installs. The [live demo](http://pantheonmedia.app) runs on
+  this; hit "Continue as Guest" to try it without creating an account.
+
+Seasonal and filter-driven smart playlists (e.g. "currently airing", "added this month") can be pinned to the home
+screen per-profile.
 
 ---
 
