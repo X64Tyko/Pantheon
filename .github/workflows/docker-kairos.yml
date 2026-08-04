@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install build deps
-        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ libssl-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ libssl-dev libavformat-dev libavcodec-dev libavutil-dev
 
       - name: Cache FetchContent deps
         uses: actions/cache@v4
