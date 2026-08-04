@@ -54,6 +54,15 @@ namespace
 
 		~MediaLockGuard() { flag.store(false); }
 	};
+
+	// Thrown by yieldIfRequested() when a cancel has been requested. Caught
+	// specifically in triggerSync/triggerHardSync before the generic
+	// std::exception handler so cancellation is logged as a clean stop
+	// rather than an error.
+	struct SyncCancelledException : std::exception
+	{
+		const char* what() const noexcept override { return "sync cancelled by request"; }
+	};
 } // namespace
 
 SyncManager::SyncManager(Database& db, ConfStore& conf)
@@ -125,11 +134,16 @@ void SyncManager::triggerSync(const std::string& source_id, const std::string& l
 	}
 	TaskRegistry::global().spawn([this, source_id, library_id]()
 	{
+		cancel_requested_.store(false, std::memory_order_relaxed);
 		try
 		{
 			if (!library_id.empty()) syncLibrary(source_id, library_id);
 			else if (source_id.empty()) syncAll();
 			else syncSource(source_id);
+		}
+		catch (const SyncCancelledException&)
+		{
+			std::cout << "[sync] cancelled by request" << std::endl;
 		}
 		catch (const std::exception& e)
 		{
@@ -153,11 +167,16 @@ void SyncManager::triggerHardSync(const std::string& source_id)
 	}
 	TaskRegistry::global().spawn([this, source_id]()
 	{
+		cancel_requested_.store(false, std::memory_order_relaxed);
 		try
 		{
 			clearSourceMapping(source_id);
 			if (source_id.empty()) syncAll();
 			else syncSource(source_id);
+		}
+		catch (const SyncCancelledException&)
+		{
+			std::cout << "[sync] cancelled by request" << std::endl;
 		}
 		catch (const std::exception& e)
 		{
@@ -228,6 +247,7 @@ void SyncManager::syncAll()
 	// Phase 1b: orphan cleanup — runs after ALL sources are known so a show
 	// present in source B is never deleted because source A dropped it.
 	std::cout << "[sync] === phase 1b: orphan cleanup ===\n";
+	yieldIfRequested();
 	{
 		OperationRecorder phase_rec("sync.phase.orphan_cleanup");
 		runOrphanCleanup(live);
@@ -235,6 +255,7 @@ void SyncManager::syncAll()
 
 	// Phase 2: scraper matching — blocking so chapters don't race against it.
 	std::cout << "[sync] === phase 2: scraper match ===\n";
+	yieldIfRequested();
 	{
 		OperationRecorder phase_rec("sync.phase.scraper_match");
 		if (scraper_) scraper_->runMatchSync();
@@ -242,6 +263,7 @@ void SyncManager::syncAll()
 
 	// Phase 2b: specials scan — opt-in per show, only for shows already matched.
 	std::cout << "[sync] === phase 2b: specials scan ===\n";
+	yieldIfRequested();
 	{
 		OperationRecorder phase_rec("sync.phase.specials");
 		scanSpecialsForEligibleShows();
@@ -249,10 +271,12 @@ void SyncManager::syncAll()
 
 	// Phase 3: media probe (duration/resolution/languages) + subtitle sidecar scan.
 	std::cout << "[sync] === phase 3: media probe ===\n";
+	yieldIfRequested();
 	{
 		OperationRecorder phase_rec("sync.phase.media_probe");
 		for (const auto& src : sources_)
 		{
+			yieldIfRequested();
 			if (src->isSupported()) syncMediaProbeFromFiles(src->sourceId());
 		}
 	}
@@ -262,6 +286,7 @@ void SyncManager::syncAll()
 	// after every source's content is freshly ingested/matched so filters
 	// see up-to-date data.
 	std::cout << "[sync] === phase 4: smart playlist refresh ===\n";
+	yieldIfRequested();
 	{
 		OperationRecorder phase_rec("sync.phase.smart_playlists");
 		refreshSmartPlaylists();
@@ -269,10 +294,12 @@ void SyncManager::syncAll()
 
 	// Phase 5: chapter sync last because it's going to be the most time consuming.
 	std::cout << "[sync] === phase 5: chapter sync ===\n";
+	yieldIfRequested();
 	{
 		OperationRecorder phase_rec("sync.phase.chapters");
 		for (const auto& src : sources_)
 		{
+			yieldIfRequested();
 			if (src->isSupported()) syncChaptersFromFiles(src->sourceId());
 		}
 	}
@@ -2105,6 +2132,7 @@ std::vector<std::string> SyncManager::sourceIds() const
 
 void SyncManager::yieldIfRequested()
 {
+	if (cancel_requested_.load(std::memory_order_relaxed)) throw SyncCancelledException{};
 	if (!yield_requested_.load(std::memory_order_relaxed)) return;
 	DLOG << "[sync-advanced] yielding — coordinator requested DB write window\n";
 	while (yield_requested_.load(std::memory_order_relaxed)) std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -2725,6 +2753,7 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id)
 			{
 				for (size_t i = next.fetch_add(1); i < items.size(); i = next.fetch_add(1))
 				{
+					if (cancel_requested_.load(std::memory_order_relaxed)) return;
 					auto ch = probeChapters(items[i].mapped_path);
 					if (!ch.empty()) results[i] = {items[i].kairos_id, items[i].media_type, std::move(ch)};
 				}
@@ -2732,6 +2761,7 @@ void SyncManager::syncChaptersFromFiles(const std::string& source_id)
 		}
 		for (auto& t : workers) t.join();
 	}
+	yieldIfRequested(); // propagate cancel to the main sync thread after workers exit cleanly
 
 	// ── Write ────────────────────────────────────────────────────────────────
 	ChapterRepository repo(db_);
@@ -2904,11 +2934,16 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id)
 		{
 			workers.emplace_back([&]()
 			{
-				for (size_t d = next.fetch_add(1); d < dirs.size(); d = next.fetch_add(1)) dir_results[d] = scanDirectoryForSubtitles(dirs[d], dir_to_stems.at(dirs[d]));
+				for (size_t d = next.fetch_add(1); d < dirs.size(); d = next.fetch_add(1))
+				{
+					if (cancel_requested_.load(std::memory_order_relaxed)) return;
+					dir_results[d] = scanDirectoryForSubtitles(dirs[d], dir_to_stems.at(dirs[d]));
+				}
 			});
 		}
 		for (auto& t : workers) t.join();
 	}
+	yieldIfRequested(); // propagate cancel before the probe phase begins
 	std::unordered_map<std::string, size_t> dir_index;
 	for (size_t d = 0; d < dirs.size(); ++d) dir_index[dirs[d]] = d;
 
@@ -3046,6 +3081,8 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id)
 			{
 				for (size_t j = next.fetch_add(1); j < probe_tasks.size(); j = next.fetch_add(1))
 				{
+					if (cancel_requested_.load(std::memory_order_relaxed)) return;
+
 					const auto& task = probe_tasks[j];
 					const auto& it   = items[task.item_idx];
 
@@ -3096,6 +3133,8 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id)
 		}
 		for (auto& t : workers) t.join();
 	}
+	// Propagate to the main sync thread now that all workers have exited cleanly.
+	yieldIfRequested();
 
 	// Log in a deterministic order (sort by mapped_path for reproducibility).
 	{

@@ -71,6 +71,22 @@ void ActivityService::registerRoutes(httplib::Server& svr)
 		route::ok(res, json{{"status", "started"}}.dump());
 	});
 
+	svr.Post("/api/sync/cancel", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		if (!sync_.isSyncing())
+		{
+			route::ok(res, json{{"status", "not_running"}}.dump());
+			return;
+		}
+		sync_.requestCancel();
+		route::ok(res, json{{"status", "cancel_requested"}}.dump());
+	});
+
 	// Wipes source_mapping for every source first, so the whole library is
 	// re-resolved from scratch — same as triggering a Hard Sync per source,
 	// just all at once. Admin-gated, unlike the plain sync-all above, since
