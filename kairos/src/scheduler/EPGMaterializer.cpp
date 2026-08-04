@@ -370,6 +370,54 @@ void EPGMaterializer::commit(
 	persistAnchors();
 }
 
+void EPGMaterializer::preSeed(const std::string& channel_id, int weeks)
+{
+	using json = nlohmann::json;
+
+	if (weeks <= 0) return;
+
+	std::lock_guard<std::mutex> channel_guard(channelLock(channel_id));
+
+	auto now   = std::time(nullptr);
+	auto start = now - static_cast<std::time_t>(weeks) * 7 * 24 * 3600;
+	// Slightly over-horizon so the final anchor snapshot is captured.
+	int horizon_hours = weeks * 7 * 24 + 2;
+
+	auto result = generate(channel_id, start, horizon_hours);
+
+	// Persist only cursor state and anchors — no scheduled_program rows.
+	CursorRepository(db_).apply(channel_id, result.cursor_state);
+
+	if (!result.anchors.empty())
+	{
+		json existing = json::object();
+		{
+			SQLite::Statement qa(db_.get(),
+								 "SELECT anchor_hashes FROM channel WHERE channel_id=?");
+			qa.bind(1, channel_id);
+			if (qa.executeStep() && !qa.getColumn(0).isNull())
+			{
+				try { existing = json::parse(qa.getColumn(0).getString()); }
+				catch (...) {}
+			}
+		}
+		for (auto& [ts, snap_str] : result.anchors)
+		{
+			try { existing[std::to_string(ts)] = json::parse(snap_str); }
+			catch (...) {}
+		}
+		SQLite::Statement upd(db_.get(),
+							  "UPDATE channel SET anchor_hashes=? WHERE channel_id=?");
+		upd.bind(1, existing.dump());
+		upd.bind(2, channel_id);
+		upd.exec();
+	}
+
+	if (epgDebug())
+		std::cout << "[epg] preSeed() channel=" << channel_id
+			<< " weeks=" << weeks << '\n';
+}
+
 std::mutex& EPGMaterializer::channelLock(const std::string& channel_id)
 {
 	std::lock_guard<std::mutex> g(channel_locks_mtx_);

@@ -77,6 +77,32 @@ const ChannelDefaultsPanel = observer(function ChannelDefaultsPanel({ channel, c
             Controls the starting position for EPG simulation when no live schedule exists. Change to get a different ordering.
           </div>
         </div>
+        <div className={styles.fieldGroup8}>
+          <div className={styles.fieldLabel}>PRE-SEED WEEKS</div>
+          <input
+            type="number" min={0} max={52}
+            value={store.channelDraft.pre_seed_weeks}
+            onChange={e => store.setChannelDraft({ pre_seed_weeks: Math.max(0, Math.min(52, +e.target.value || 0)) })}
+            className={shared.input}
+            placeholder="0 = disabled"
+          />
+          <div className={`${styles.fieldHint} ${styles.fieldHintTight}`}>
+            Number of weeks to simulate in the past at launch so rerun shows start mid-rotation instead of all at episode 1. Applied automatically on new channels; use <span className={styles.goldInline}>Apply Pre-seed</span> to re-run on this channel (resets all cursor positions).
+          </div>
+          {channel && store.channelDraft.pre_seed_weeks > 0 && (
+            <div className={styles.preSeedRow}>
+              <button
+                onClick={() => store.applyPreSeed(channelId, store.channelDraft.pre_seed_weeks)}
+                disabled={store.preSeedApplying}
+                className={styles.preSeedBtn}
+                title="Hard-reset cursor positions and re-run the virtual pre-seed projection"
+              >
+                {store.preSeedApplying ? 'Applying…' : 'Apply Pre-seed'}
+              </button>
+              {store.preSeedErr && <span className={styles.preSeedErr}>{store.preSeedErr}</span>}
+            </div>
+          )}
+        </div>
         <div className={styles.fieldGroup14}>
           <div className={styles.fieldLabel}>CONTENT TAG</div>
           <select

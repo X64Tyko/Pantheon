@@ -43,4 +43,9 @@ struct Channel
 	// max_channel_rating the same way a show's content_rating is. Empty =
 	// unrated, which fails closed for a restricted account (see RatingSeverity.h).
 	std::string content_tag;
+	// Number of weeks to project backward from "now" to pre-populate cursor
+	// positions at launch. 0 = disabled (every show starts at episode 1).
+	// Applied automatically on new channels; requires explicit "Apply Pre-seed"
+	// action (trigger_pre_seed in PATCH) to re-run on an existing channel.
+	int pre_seed_weeks = 0;
 };

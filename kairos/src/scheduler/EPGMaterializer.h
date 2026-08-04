@@ -67,6 +67,13 @@ public:
 				std::time_t horizon,
 				GenerateResult& result);
 
+	// Run a virtual projection over the past N weeks and commit only the
+	// resulting cursor state and anchor snapshots — no scheduled_program rows
+	// are written. Designed for new-channel seeding (called automatically on
+	// create when pre_seed_weeks > 0) and explicit re-seed resets (triggered
+	// via PATCH trigger_pre_seed=true after a hardReset). No-op if weeks <= 0.
+	void preSeed(const std::string& channel_id, int weeks);
+
 	// Ensure the schedule for `channel_id` is populated from `from` through
 	// `from + horizon_hours`. Calls generate() + commit() for scheduled mode;
 	// handles on_play mode separately.

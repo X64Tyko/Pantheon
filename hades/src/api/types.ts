@@ -302,6 +302,10 @@ export interface Channel {
     // real lineup); a real viewer's owned channel has is_demo=false.
     owner_user_id?: string
     is_demo?: boolean
+  // Number of weeks to project backward on launch to stagger rerun cursors.
+  // 0 (default) = disabled; applied automatically at channel creation and
+  // manually via trigger_pre_seed in PATCH for an existing channel.
+  pre_seed_weeks?: number
 }
 
 export interface AnchorSnapshot {

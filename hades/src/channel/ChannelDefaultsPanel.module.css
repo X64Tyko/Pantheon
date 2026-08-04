@@ -79,6 +79,40 @@
   font-size: var(--hds-font-size-tv-small-title);
 }
 
+.preSeedRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  margin-top: var(--hds-space-3);
+  flex-wrap: wrap;
+}
+
+.preSeedBtn {
+  padding: 6px 14px;
+  border: 1px solid var(--hds-border);
+  border-radius: var(--hds-radius-tile);
+  background: var(--hds-bg-3);
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-meta);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.preSeedBtn:hover:not(:disabled) {
+  background: var(--hds-bg-4);
+  border-color: var(--hds-gold);
+  color: var(--hds-txt-1);
+}
+
+.preSeedBtn:disabled { opacity: 0.6; cursor: default; }
+
+.preSeedErr {
+  color: var(--hds-danger-text);
+  font-size: var(--hds-font-size-tv-small-title);
+}
+
 .saveBtn {
   width: 100%;
   padding: 9px 0;

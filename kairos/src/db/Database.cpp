@@ -2693,6 +2693,13 @@ namespace
     ALTER TABLE show  ADD COLUMN nfo_confirmed INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE movie ADD COLUMN nfo_confirmed INTEGER NOT NULL DEFAULT 0;
 )SQL"
+		},
+
+		// ── v108: channel pre-seed weeks ────────────────────────────────────────────
+		{
+			108, R"SQL(
+    ALTER TABLE channel ADD COLUMN pre_seed_weeks INTEGER NOT NULL DEFAULT 0;
+)SQL"
 		}
 
 	}; // kMigrations

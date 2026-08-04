@@ -141,6 +141,7 @@ export class ChannelDetailStore {
     stream_audio_bitrate: number
       force_transcode: boolean
     content_tag:         string
+    pre_seed_weeks:      number
   } = {
     name: '', number: 1, timezone: 'UTC', seed: 12345, advance_mode: 'scheduled',
     offline_video_path: '', offline_image_path: '',
@@ -149,11 +150,14 @@ export class ChannelDetailStore {
     stream_resolution: 'source', stream_video_bitrate: 0, stream_audio_bitrate: 192,
       force_transcode: false,
     content_tag: '',
+    pre_seed_weeks: 0,
   }
   channelDirty:   boolean     = false
   channelSaving:        boolean = false
   channelSaveErr:       string | null = null
   epgClearing:          boolean = false
+  preSeedApplying:      boolean = false
+  preSeedErr:           string | null = null
 
   constructor() {
     makeAutoObservable(this)
@@ -221,6 +225,7 @@ export class ChannelDetailStore {
       stream_audio_bitrate: channel.stream_audio_bitrate ?? 192,
         force_transcode: channel.force_transcode ?? false,
       content_tag:         channel.content_tag ?? '',
+      pre_seed_weeks:      channel.pre_seed_weeks ?? 0,
     }
     this.channelDirty    = false
     this.confirmedAnchors = channel.anchor_hashes ?? {}
@@ -463,6 +468,22 @@ export class ChannelDetailStore {
       await this.loadEpg(channelId)
     } finally {
       runInAction(() => { this.epgClearing = false })
+    }
+  }
+
+  // Triggers a server-side hard reset + virtual pre-seed projection. Saves
+  // the supplied weeks value first so both the setting and the run are atomic
+  // from the user's perspective. Only meaningful when weeks > 0.
+  async applyPreSeed(channelId: string, weeks: number) {
+    this.preSeedApplying = true; this.preSeedErr = null
+    try {
+      await api.updateChannel(channelId, { pre_seed_weeks: weeks, trigger_pre_seed: true })
+      runInAction(() => { this.channelDraft = { ...this.channelDraft, pre_seed_weeks: weeks } })
+      await channelStore.fetchAll()
+    } catch (e: any) {
+      runInAction(() => { this.preSeedErr = e.message })
+    } finally {
+      runInAction(() => { this.preSeedApplying = false })
     }
   }
 

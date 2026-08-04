@@ -9,6 +9,7 @@
 #include "../../db/ChannelRepository.h"
 #include "../../db/ChannelSerializer.h"
 #include "../../db/RestrictionRepository.h"
+#include "../../scheduler/EPGMaterializer.h"
 #include "log/LogBuffer.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
@@ -34,6 +35,7 @@ static bool isValidTimezone(const std::string& tz)
 ChannelService::ChannelService(const ServiceContext& ctx)
 	: db_(ctx.db)
 	, conf_(ctx.conf)
+	, materializer_(ctx.materializer)
 	, schedule_cache_(ctx.schedule_cache)
 	, logs_(ctx.logs)
 	, guest_mutation_limiter_(ctx.guest_mutation_limiter)
@@ -90,6 +92,7 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 					{"content_tag", c.content_tag},
 					{"is_demo", c.is_demo},
 					{"force_transcode", c.force_transcode},
+					{"pre_seed_weeks", c.pre_seed_weeks},
 				};
 				if (c.owner_user_id.has_value()) channel["owner_user_id"] = *c.owner_user_id;
 				if (!c.anchor_hashes.empty())
@@ -188,6 +191,7 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 			int number               = b.value("number", 0);
 			std::string timezone     = b.value("timezone", "UTC");
 			std::string advance_mode = b.value("advance_mode", "scheduled");
+			int pre_seed_weeks       = std::max(0, b.value("pre_seed_weeks", 0));
 			if (name.empty() || number == 0)
 			{
 				route::err(res, 400, "name and number required");
@@ -200,6 +204,11 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 			}
 			std::string channel_id = ChannelRepository(db_).create(
 				name, number, timezone, advance_mode, owner_user_id, is_demo);
+			if (pre_seed_weeks > 0)
+			{
+				ChannelRepository(db_).updateField(channel_id, "pre_seed_weeks", pre_seed_weeks);
+				materializer_.preSeed(channel_id, pre_seed_weeks);
+			}
 			res.status = 201;
 			route::ok(res, json{{"channel_id", channel_id}}.dump());
 		}
@@ -270,6 +279,7 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 			if (b.contains("force_transcode")) updI("force_transcode", b["force_transcode"].get<bool>() ? 1 : 0);
 			if (b.contains("seed")) updI("seed", b["seed"].get<int>());
 			if (b.contains("content_tag")) upd("content_tag", b["content_tag"]);
+			if (b.contains("pre_seed_weeks")) updI("pre_seed_weeks", std::max(0, b["pre_seed_weeks"].get<int>()));
 			if (b.contains("anchor_hashes"))
 			{
 				std::string ah = b["anchor_hashes"].is_string()
@@ -296,6 +306,18 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 				else schedule_cache_.hardReset(id);
 			}
 			else if (b.contains("default_filler_selection") || b.contains("advance_mode")) schedule_cache_.clear(id);
+			// trigger_pre_seed: hard-reset cursor/anchors then run a virtual
+			// projection over pre_seed_weeks of past airtime. Only honoured when
+			// pre_seed_weeks > 0 (either just set above or already stored).
+			if (b.value("trigger_pre_seed", false))
+			{
+				auto ch = ChannelRepository(db_).findById(id);
+				if (ch && ch->pre_seed_weeks > 0)
+				{
+					schedule_cache_.hardReset(id, false);
+					materializer_.preSeed(id, ch->pre_seed_weeks);
+				}
+			}
 			route::ok(res, json{{"ok", true}}.dump());
 		}
 		catch (const std::exception& e)
