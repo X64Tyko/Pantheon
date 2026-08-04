@@ -3,8 +3,8 @@
 #include <cstdio>
 #include <iostream>
 #include <nlohmann/json.hpp>
-#include <sstream>
 #include <string>
+#include <string_view>
 
 using json = nlohmann::json;
 
@@ -277,21 +277,22 @@ namespace
 			DLOG << "[probe] keyframes popen failed: " << file_path << '\n';
 			return keyframes;
 		}
-		std::string out;
-		char buf[4096];
-		while (fgets(buf, sizeof(buf), pipe)) out += buf;
-		pclose(pipe);
-
-		std::istringstream iss(out);
-		std::string line;
-		while (std::getline(iss, line))
+		// Stream-parse line-by-line — do NOT buffer the full output into a
+		// string first. For a 2-hour movie at 24fps this is ~170 000 lines;
+		// buffering them all before parsing bloats RSS by hundreds of MB per
+		// concurrent worker thread.
+		char buf[256];
+		while (fgets(buf, sizeof(buf), pipe))
 		{
+			std::string_view line(buf);
+			// Strip trailing newline so the flag check below works on the last char.
+			while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.remove_suffix(1);
 			auto comma = line.find(',');
-			if (comma == std::string::npos || comma + 1 >= line.size()) continue;
+			if (comma == std::string_view::npos || comma + 1 >= line.size()) continue;
 			if (line[comma + 1] != 'K') continue;
 			try
 			{
-				const double secs = std::stod(line.substr(0, comma));
+				const double secs = std::stod(std::string(line.substr(0, comma)));
 				keyframes.push_back(static_cast<int64_t>(secs * 1000.0 + 0.5));
 			}
 			catch (...)

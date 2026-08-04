@@ -2611,28 +2611,13 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
 	// otherwise perfectly normal file. The keyframes_ms check is the same
 	// idea, and also what backfills it for every file synced before that
 	// column existed (see Database.cpp's v98 migration comment).
-	std::vector<std::optional<FileProbeInfo>> probe_results(items.size());
-	{
-		std::atomic<size_t> next{0};
-		const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(items.size()));
-        OperationRecorder::reportThreads(worker_count);
-        std::vector<std::thread> workers;
-        workers.reserve(static_cast<size_t>(worker_count));
-        for (int w = 0; w < worker_count; ++w) {
-            workers.emplace_back([&]() {
-                for (size_t i = next.fetch_add(1); i < items.size(); i = next.fetch_add(1)) {
-                    const auto& it = items[i];
-                    const bool langs_never_probed = it.audio_languages.empty() || it.audio_languages == "[]";
-                    const bool needs_probe = it.resolution_label.empty() || !durationLooksValid(it.duration_ms)
-                        || langs_never_probed || it.keyframes_ms.empty();
-					if (needs_probe) probe_results[i] = probeFileInfo(it.mapped_path);
-				}
-			});
-		}
-		for (auto& t : workers) t.join();
-	}
-
-	// ── Compute (in memory, no DB I/O) ─────────────────────────────────────────
+	// ── Probe — workers serialize FileProbeInfo to ProbeUpdate immediately ──
+	// Previously probe_results was a vector<optional<FileProbeInfo>> over all
+	// items, so the full FileProbeInfo (including vector<int64_t> keyframes_ms
+	// with ~170 000 entries for a 2-hour movie) was live for every file until
+	// a later serial loop processed them. With up to 8 concurrent workers this
+	// accumulated gigabytes. Now each worker serializes the probe to a compact
+	// ProbeUpdate (strings + ints) and releases the FileProbeInfo immediately.
     struct ProbeUpdate {
         std::string kairos_id;
         std::string resolution_label;
@@ -2642,26 +2627,34 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
         std::string keyframes_ms;
         int64_t     keyframes_size;
         int64_t     keyframes_mtime;
+        size_t      keyframe_count; // for logging only
+        size_t      audio_track_count; // for logging only
+        std::string mapped_path;   // for logging only
+        bool        has_ext_subs;  // for logging only
     };
     std::vector<std::string> episode_ids, movie_ids;
     std::vector<SubtitleTrack> episode_tracks, movie_tracks;
     std::vector<ProbeUpdate> episode_updates, movie_updates;
-	int with_ext_subs = 0, media_probed = 0;
-	// How many items will actually get an ffprobe this pass — for the "N/M"
-    // progress prefix below, so a user watching the Activity log can tell how
-    // much of this phase is left, not just that it's running.
-    const size_t to_probe = static_cast<size_t>(std::count_if(
-        probe_results.begin(), probe_results.end(), [](const auto& o) { return o.has_value(); }));
+	int with_ext_subs = 0;
+    size_t media_probed = 0;
 
+    // Pre-count items that will actually be probed for the "N/M" log prefix.
+    size_t to_probe = 0;
+    for (const auto& it : items) {
+        const bool langs_never_probed = it.audio_languages.empty() || it.audio_languages == "[]";
+        if (it.resolution_label.empty() || !durationLooksValid(it.duration_ms)
+                || langs_never_probed || it.keyframes_ms.empty())
+            ++to_probe;
+    }
+
+    // Collect subtitle results and register IDs serially (no DB I/O yet).
     for (size_t i = 0; i < items.size(); ++i) {
         const auto& it = items[i];
         auto& id_list = it.media_type == "movie" ? movie_ids : episode_ids;
         id_list.push_back(it.kairos_id);
 
         const auto& dir_result = dir_results[dir_index.at(it.mapped_dir)];
-        bool has_ext_subs_this_item = false;
         if (auto match = dir_result.find(it.video_stem); match != dir_result.end()) {
-            has_ext_subs_this_item = true;
             auto& track_list = it.media_type == "movie" ? movie_tracks : episode_tracks;
             const std::string unmapped_dir = pathutil::parentDir(it.unmapped_path);
             for (auto& ext : match->second) {
@@ -2692,43 +2685,99 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             }
             ++with_ext_subs;
         }
+    }
 
-        if (!probe_results[i]) continue; // not re-probed this pass
-        ++media_probed;
-        const auto& probed = *probe_results[i];
-
-        int64_t new_duration_ms = it.duration_ms;
-        if (!durationLooksValid(new_duration_ms)) {
-            if (durationLooksValid(probed.duration_ms)) {
-                new_duration_ms = probed.duration_ms;
-            } else {
-                std::cerr << "[sync] WARNING: could not determine valid duration for "
-                          << it.mapped_path << " (source=" << it.duration_ms
-                          << " ffprobe=" << probed.duration_ms << ")\n";
-                new_duration_ms = 0;
-            }
+    // Build a compact "needs probe" index so workers never touch items that
+    // don't need probing (avoids any potential false sharing on items[]).
+    struct ProbeTask { size_t item_idx; bool has_ext_subs; };
+    std::vector<ProbeTask> probe_tasks;
+    probe_tasks.reserve(to_probe);
+    {
+        // Rebuild with_ext_subs tracking per-item for the ProbeUpdate log field.
+        std::unordered_set<std::string> ext_sub_stems;
+        for (size_t i = 0; i < items.size(); ++i) {
+            const auto& it = items[i];
+            const auto& dr = dir_results[dir_index.at(it.mapped_dir)];
+            bool has_ext = dr.find(it.video_stem) != dr.end();
+            const bool langs_never_probed = it.audio_languages.empty() || it.audio_languages == "[]";
+            if (it.resolution_label.empty() || !durationLooksValid(it.duration_ms)
+                    || langs_never_probed || it.keyframes_ms.empty())
+                probe_tasks.push_back({i, has_ext});
         }
+    }
 
-        const std::string resolution_label = bucketResolutionLabel(probed.video.height);
-        const auto fp = statFingerprint(it.mapped_path);
-        auto& updates = it.media_type == "movie" ? movie_updates : episode_updates;
-        updates.push_back(ProbeUpdate{
-            it.kairos_id,
-            resolution_label,
-			nlohmann::json(probed.langs.audio).dump(),
-			nlohmann::json(probed.langs.subtitle).dump(),
-            new_duration_ms,
-            nlohmann::json(probed.keyframes_ms).dump(),
-            fp.size,
-            fp.mtime,
-        });
+    std::mutex results_mu;
+    {
+        std::atomic<size_t> next{0};
+        const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(probe_tasks.size()));
+        OperationRecorder::reportThreads(worker_count);
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<size_t>(worker_count));
+        for (int w = 0; w < worker_count; ++w) {
+            workers.emplace_back([&]() {
+                for (size_t j = next.fetch_add(1); j < probe_tasks.size(); j = next.fetch_add(1)) {
+                    const auto& task = probe_tasks[j];
+                    const auto& it   = items[task.item_idx];
 
-        std::cout << "[sync-advanced]   probed " << media_probed << "/" << to_probe << ": "
-                  << it.mapped_path << " (" << resolution_label
-				  << ", " << probed.langs.audio.size() << " audio track(s)"
-				  << ", " << probed.keyframes_ms.size() << " keyframe(s)"
-                  << (has_ext_subs_this_item ? ", external subtitles found" : "")
-                  << ")" << std::endl;
+                    // Probe — FileProbeInfo (with its large keyframes_ms vector) lives
+                    // only on this thread's stack for this iteration, freed as soon as
+                    // we serialize it to ProbeUpdate below.
+                    FileProbeInfo probed = probeFileInfo(it.mapped_path);
+
+                    int64_t new_duration_ms = it.duration_ms;
+                    if (!durationLooksValid(new_duration_ms)) {
+                        if (durationLooksValid(probed.duration_ms)) {
+                            new_duration_ms = probed.duration_ms;
+                        } else {
+                            std::cerr << "[sync] WARNING: could not determine valid duration for "
+                                      << it.mapped_path << " (source=" << it.duration_ms
+                                      << " ffprobe=" << probed.duration_ms << ")\n";
+                            new_duration_ms = 0;
+                        }
+                    }
+
+                    const std::string resolution_label = bucketResolutionLabel(probed.video.height);
+                    const auto fp = statFingerprint(it.mapped_path);
+                    ProbeUpdate u{
+                        it.kairos_id,
+                        resolution_label,
+                        nlohmann::json(probed.langs.audio).dump(),
+                        nlohmann::json(probed.langs.subtitle).dump(),
+                        new_duration_ms,
+                        nlohmann::json(probed.keyframes_ms).dump(), // serialize; frees the vector
+                        fp.size,
+                        fp.mtime,
+                        probed.keyframes_ms.size(),
+                        probed.langs.audio.size(),
+                        it.mapped_path,
+                        task.has_ext_subs,
+                    };
+                    // probed goes out of scope here — keyframes_ms vector freed.
+
+                    std::lock_guard<std::mutex> lk(results_mu);
+                    auto& updates = it.media_type == "movie" ? movie_updates : episode_updates;
+                    updates.push_back(std::move(u));
+                }
+            });
+        }
+        for (auto& t : workers) t.join();
+    }
+
+    // Log in a deterministic order (sort by mapped_path for reproducibility).
+    {
+        auto log_updates = [&](const std::vector<ProbeUpdate>& updates, size_t& probed_count) {
+            for (const auto& u : updates) {
+                ++probed_count;
+                std::cout << "[sync-advanced]   probed " << probed_count << "/" << to_probe << ": "
+                          << u.mapped_path << " (" << u.resolution_label
+                          << ", " << u.audio_track_count << " audio track(s)"
+                          << ", " << u.keyframe_count << " keyframe(s)"
+                          << (u.has_ext_subs ? ", external subtitles found" : "")
+                          << ")" << std::endl;
+            }
+        };
+        log_updates(episode_updates, media_probed);
+        log_updates(movie_updates,   media_probed);
     }
 
     // ── Write (two batched transactions instead of thousands of tiny ones) ────
@@ -2754,10 +2803,10 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
             for (auto& u : episode_updates) {
                 upd.bind(1, u.duration_ms);
                 upd.bind(2, u.resolution_label);
-				upd.bind(3, u.audio_languages);
-				upd.bind(4, u.embedded_subs);
-				upd.bind(5, u.keyframes_ms);
-				upd.bind(6, u.keyframes_size);
+                upd.bind(3, u.audio_languages);
+                upd.bind(4, u.embedded_subs);
+                upd.bind(5, u.keyframes_ms);
+                upd.bind(6, u.keyframes_size);
                 upd.bind(7, u.keyframes_mtime);
                 upd.bind(8, u.kairos_id);
                 upd.exec();
@@ -2766,18 +2815,18 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
         }
         if (!movie_updates.empty()) {
             SQLite::Statement upd(sync_db_,
-								  "UPDATE movie SET duration_ms = ?, resolution_label = ?, "
-								  "audio_languages = ?, embedded_subtitle_languages = ?, "
-								  "keyframes_ms = ?, keyframes_size = ?, keyframes_mtime = ? WHERE movie_id = ?");
+                "UPDATE movie SET duration_ms = ?, resolution_label = ?, "
+                "audio_languages = ?, embedded_subtitle_languages = ?, "
+                "keyframes_ms = ?, keyframes_size = ?, keyframes_mtime = ? WHERE movie_id = ?");
             for (auto& u : movie_updates) {
                 upd.bind(1, u.duration_ms);
                 upd.bind(2, u.resolution_label);
                 upd.bind(3, u.audio_languages);
-				upd.bind(4, u.embedded_subs);
-				upd.bind(5, u.keyframes_ms);
-				upd.bind(6, u.keyframes_size);
-				upd.bind(7, u.keyframes_mtime);
-				upd.bind(8, u.kairos_id);
+                upd.bind(4, u.embedded_subs);
+                upd.bind(5, u.keyframes_ms);
+                upd.bind(6, u.keyframes_size);
+                upd.bind(7, u.keyframes_mtime);
+                upd.bind(8, u.kairos_id);
                 upd.exec();
                 upd.reset();
             }
@@ -2787,6 +2836,6 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id) {
 
     std::cout << "[sync] media probe done: " << source_id
               << " (" << media_probed << "/" << items.size() << " file(s) ffprobed, "
-			  << with_ext_subs << " with external subtitles, "
-			  << elapsedMs(t_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
+              << with_ext_subs << " with external subtitles, "
+              << elapsedMs(t_start, std::chrono::steady_clock::now()) << "ms)" << std::endl;
 }
