@@ -285,6 +285,32 @@ TEST_F(RuleEngineTest, NextItem_MovieBlock)
 	EXPECT_EQ(item->duration_ms, 7200000);
 }
 
+// Multi-part movies (GitHub #3): RuleEngine has no movie_part awareness at
+// all — it schedules purely off movie.duration_ms (see movieItem() in
+// RuleEngine.cpp), which SyncManager keeps as the SUM of part durations for
+// a multi-part movie. This confirms that single choke point really is
+// sufficient: a multi-part movie schedules as one correctly-durationed
+// block with zero RuleEngine changes.
+TEST_F(RuleEngineTest, NextItem_MultiPartMovie_UsesSummedDuration)
+{
+	auto& raw = db.get();
+	raw.exec("INSERT INTO movie (movie_id,title,file_path,duration_ms,is_multi_part)"
+		" VALUES ('m2','Multi Part Movie','/m2-cd1.mkv',10800000,1)");
+	raw.exec("INSERT INTO movie_part (movie_id,part_num,file_path,duration_ms)"
+		" VALUES ('m2',1,'/m2-cd1.mkv',5400000)");
+	raw.exec("INSERT INTO movie_part (movie_id,part_num,file_path,duration_ms)"
+		" VALUES ('m2',2,'/m2-cd2.mkv',5400000)");
+
+	insertBlock("b1", "movie", "08:00");
+	addContent("b1", "movie", "m2");
+	auto blocks = engine.loadBlocks("c1");
+	auto item   = engine.nextItem("c1", blocks[0], kMonNoon);
+	ASSERT_TRUE(item.has_value());
+	EXPECT_EQ(item->item_type, "movie");
+	EXPECT_EQ(item->item_id, "m2");
+	EXPECT_EQ(item->duration_ms, 10800000) << "must schedule using the summed part duration, not either part alone";
+}
+
 TEST_F(RuleEngineTest, NextItem_DirectEpisodeContent)
 {
 	insertBlock("b1", "episode", "08:00");

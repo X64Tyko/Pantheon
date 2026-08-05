@@ -72,6 +72,9 @@ export function PlayerPage({ kind }: PlayerPageProps) {
   // this fresh session — see usePlaybackSession's initialAudioTrack param.
   const initialAudioTrack = searchParams.has('audio') ? Number(searchParams.get('audio')) : -1
   const initialSubtitleTrack = searchParams.has('subtitle') ? Number(searchParams.get('subtitle')) : -1
+  // Multi-part movies (GitHub #3) — set by resolvePlayPath when GET
+  // /api/movies/:id/resolve-play-target says which part to start in.
+  const initialPartNum = searchParams.has('part') ? Number(searchParams.get('part')) : 0
 
   // Playlist / shuffle-play queue (see playQueue.ts) — takes priority over
   // the default same-show "next episode" continuation below whenever one is
@@ -107,7 +110,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     ? { kind: 'channel', id: targetId }
     : { kind, id: targetId }
 
-  const session = usePlaybackSession(target, initialPositionMs, initialAudioTrack, initialSubtitleTrack)
+  const session = usePlaybackSession(target, initialPositionMs, initialAudioTrack, initialSubtitleTrack, initialPartNum)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const [currentMs,   setCurrentMs]   = useState(initialPositionMs)
@@ -261,7 +264,8 @@ export function PlayerPage({ kind }: PlayerPageProps) {
               position_ms: Math.round(currentMsRef.current),
               duration_ms: Math.round(session.durationMs),
               device_type: 'web',
-              direct_stream: session.directStream ?? undefined
+              direct_stream: session.directStream ?? undefined,
+              part_num: session.isMultiPart ? session.partNum : undefined,
           }).catch(() => {
           })
     }, PROGRESS_PING_MS)
@@ -273,12 +277,13 @@ export function PlayerPage({ kind }: PlayerPageProps) {
               position_ms: Math.round(currentMsRef.current),
               duration_ms: Math.round(session.durationMs),
               device_type: 'web',
-              direct_stream: session.directStream ?? undefined
+              direct_stream: session.directStream ?? undefined,
+              part_num: session.isMultiPart ? session.partNum : undefined,
           }).catch(() => {
           })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, targetId, session.durationMs])
+  }, [kind, targetId, session.durationMs, session.isMultiPart, session.partNum])
 
     // Periodic + on-unmount channel-activity pings (channels only) — the live
     // counterpart to the VOD-only watch-progress effect above, which
@@ -590,6 +595,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
       api.putWatchProgress(kind, targetId, {
         position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
           device_type: 'web', direct_stream: session.directStream ?? undefined,
+          part_num: session.isMultiPart ? session.partNum : undefined,
       }).catch(() => {})
     }
     // replace, not push: this is a continuation of the same viewing session,
@@ -599,7 +605,30 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     const qs = queueToken ? `?queue=${queueToken}` : ''
     navigate(`/player/${next.kind}/${next.id}${qs}`, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queueNextItem, nextEpisode, kind, targetId, session.durationMs, navigate, queueToken])
+  }, [queueNextItem, nextEpisode, kind, targetId, session.durationMs, session.isMultiPart, session.partNum, navigate, queueToken])
+
+  // Multi-part movies (GitHub #3): advances to the next part of the SAME
+  // movie, at position 0, with no Up Next interstitial — a completely
+  // different continuation from handleAdvanceToNext (which moves to a
+  // DIFFERENT item and marks the current one fully watched). Finishing part
+  // N doesn't mean the movie is watched, so no completed:true write here;
+  // the final part ending instead falls through to the normal handleAdvanceToNext/
+  // handleNaturalEnd path in handleVideoEnded below, which already marks
+  // completed correctly against the movie's summed duration.
+  const handleAdvanceToNextPart = useCallback(() => {
+    if (kind === 'channel' || !session.isMultiPart || session.partNum >= session.totalParts) return
+    skipCleanupPingRef.current = true
+    if (session.durationMs > 0) {
+      api.putWatchProgress(kind, targetId, {
+        position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs),
+        device_type: 'web', direct_stream: session.directStream ?? undefined, part_num: session.partNum,
+      }).catch(() => {})
+    }
+    session.advanceToNextPart()
+    setCurrentMs(0)
+    currentMsRef.current = 0
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.isMultiPart, session.partNum, session.totalParts, session.durationMs, session.directStream, kind, targetId])
 
   // Movie, or last episode of a series: nothing to auto-advance into, so
   // (unlike handleAdvanceToNext) explicitly mark this item completed rather
@@ -610,11 +639,12 @@ export function PlayerPage({ kind }: PlayerPageProps) {
       api.putWatchProgress(kind, targetId, {
         position_ms: Math.round(session.durationMs), duration_ms: Math.round(session.durationMs), completed: true,
           device_type: 'web', direct_stream: session.directStream ?? undefined,
+          part_num: session.isMultiPart ? session.partNum : undefined,
       }).catch(() => {})
     }
     navigate(-1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, targetId, session.durationMs, navigate])
+  }, [kind, targetId, session.durationMs, session.isMultiPart, session.partNum, navigate])
 
   // The native <video> `ended` event has fired away from the file's actual
   // end — observed after a seek lands right on the edge of the currently
@@ -633,9 +663,10 @@ export function PlayerPage({ kind }: PlayerPageProps) {
       videoRef.current?.play().catch(() => {})
       return
     }
+    if (session.isMultiPart && session.partNum < session.totalParts) { handleAdvanceToNextPart(); return }
     if ((queueNextItem || nextEpisode) && !upNextDismissed) handleAdvanceToNext()
     else handleNaturalEnd()
-  }, [kind, session.durationMs, queueNextItem, nextEpisode, upNextDismissed, handleAdvanceToNext, handleNaturalEnd])
+  }, [kind, session.durationMs, session.isMultiPart, session.partNum, session.totalParts, queueNextItem, nextEpisode, upNextDismissed, handleAdvanceToNext, handleNaturalEnd, handleAdvanceToNextPart])
 
   // Re-evaluated on every render (piggybacking on the live video's own
   // onTimeUpdate-driven re-renders for freshness — a live channel has no

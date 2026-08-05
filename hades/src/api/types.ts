@@ -391,6 +391,7 @@ export interface Movie {
   match_score?:    number | null
   watched?:        boolean
   view_count?:     number
+    is_multi_part?: boolean
 }
 
 // A truly interleaved show+movie result (see kairos's MixedSort.h) — used
@@ -499,6 +500,30 @@ export interface MovieDetail {
   sources:          MediaSourceRef[]
   watched?:         boolean
   view_count?:      number
+    is_multi_part?: boolean
+    parts?: MoviePart[]
+}
+
+// ── Multi-part movies (GitHub #3) ─────────────────────────────────────────────
+
+export interface MoviePart {
+    part_num: number
+    file_path: string
+    duration_ms: number
+}
+
+export interface MovieGroupingCandidatePart {
+    movie_id: string
+    title: string
+    file_path: string
+    year?: number
+    part_num: number
+}
+
+export interface MovieGroupingCandidate {
+    base_title: string
+    confidence: number // 0-100
+    parts: MovieGroupingCandidatePart[]
 }
 
 export interface WritebackResult {
@@ -1357,6 +1382,11 @@ export interface ResolvedPlayTarget {
   kind:       'movie' | 'episode'
   id:         string
   position_ms: number
+    // Multi-part movies (GitHub #3) — present only when the movie is
+    // multi-part; position_ms above is already the offset WITHIN part_num,
+    // not the summed position across parts.
+    part_num?: number
+    total_parts?: number
 }
 
 // GET /api/tv/manifest — backs Home's row composition and Library/Detail/

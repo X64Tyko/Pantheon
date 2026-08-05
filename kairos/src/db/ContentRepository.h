@@ -19,6 +19,24 @@ struct FillerItem
 	int64_t duration_ms = 0;
 };
 
+// Multi-part movie grouping candidate (GitHub #3) — a heuristic-detected
+// group of standalone movie rows whose files look like sibling parts of one
+// movie (CD1/CD2, Part 1/Part 2, ...), surfaced for an admin to confirm via
+// ContentRepository::linkMovieParts.
+struct MovieGroupingCandidatePart
+{
+	std::string movie_id, title, file_path;
+	std::optional<int> year;
+	int part_num = 0;
+};
+
+struct MovieGroupingCandidate
+{
+	std::string base_title;
+	int confidence = 0;
+	std::vector<MovieGroupingCandidatePart> parts;
+};
+
 // ── API-layer result structs ──────────────────────────────────────────────────
 
 struct LibraryRow
@@ -181,6 +199,9 @@ struct MovieDetail
 	// just view_count > 0 — see ContentRepository::getMovieDetail.
 	bool watched       = false;
 	int64_t view_count = 0;
+	// Multi-part movies (GitHub #3) — empty/false for the common single-file case.
+	bool is_multi_part = false;
+	std::vector<MoviePart> parts;
 };
 
 struct ItemSource
@@ -496,6 +517,19 @@ public:
 	void mergeMovieInto(const std::string& target_id, const std::string& dup_id);
 	void mergeShowInto(const std::string& target_id, const std::string& dup_id);
 
+	// Multi-part movies (GitHub #3): links other_movie_ids into target_id as
+	// ordered parts (target becomes part 1), reusing mergeMovieInto's FK
+	// cleanup for each absorbed movie. Throws std::runtime_error if
+	// other_movie_ids is empty, contains target_id, or any id doesn't exist.
+	void linkMovieParts(const std::string& target_id, const std::vector<std::string>& other_movie_ids);
+	// Splits part_num back out of movie_id into its own standalone movie
+	// row. Throws std::runtime_error if movie_id has no parts or part_num
+	// doesn't exist among them.
+	void unlinkMoviePart(const std::string& movie_id, int part_num);
+	// Heuristic candidates among standalone (is_multi_part=0) movie rows —
+	// see linkMovieParts. Read-only; confidence-sorted descending.
+	std::vector<MovieGroupingCandidate> getMovieGroupingCandidates();
+
 	// user_id populates EpisodeRow::watched/view_count when non-empty (left
 	// at their defaults otherwise) — see MovieSearchParams::user_id.
 	std::vector<EpisodeRow> listEpisodesForShow(const std::string& show_id,
@@ -549,4 +583,8 @@ private:
 
 	static Episode rowToEpisode(SQLite::Statement& q);
 	static Episode rowToEpisodeFull(SQLite::Statement& q);
+
+	// Body of mergeMovieInto with no transaction of its own — see its .cpp
+	// comment for why linkMovieParts needs this instead of the public wrapper.
+	void mergeMovieIntoNoTxn(const std::string& target_id, const std::string& dup_id);
 };

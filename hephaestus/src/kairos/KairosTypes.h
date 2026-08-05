@@ -57,6 +57,15 @@ struct PlaybackInfo
 	std::vector<int64_t> keyframes_ms;
 	int64_t keyframes_size  = 0;
 	int64_t keyframes_mtime = 0;
+	// Multi-part movies (GitHub #3) — is_multi_part false/part_num 0 for the
+	// common single-file case. duration_ms above is always THIS part's
+	// duration (what VodSession needs for fallback_duration_ms); movie_
+	// duration_ms is the summed total across all parts, surfaced so Hades
+	// can compute the next-part offset without a second round-trip.
+	bool is_multi_part        = false;
+	int part_num              = 0;
+	int total_parts           = 0;
+	int64_t movie_duration_ms = 0;
 };
 
 struct KairosChannel

@@ -6,6 +6,9 @@ export interface PlayTarget {
   kind:       'movie' | 'episode'
   id:         string
   positionMs: number
+  // Multi-part movies (GitHub #3) — present only when the movie is multi-part.
+  partNum?:    number
+  totalParts?: number
 }
 
 // Movie: play directly. Show: resume the most recently touched episode if
@@ -26,7 +29,12 @@ export interface PlayTarget {
 // navigating/starting a session — same route-stability/reload/cast-handoff
 // guarantees as before, just one round-trip instead of 2-3.
 export async function resolvePlayTarget(contentType: 'show' | 'movie', id: string): Promise<PlayTarget | null> {
-  if (contentType === 'movie') return { kind: 'movie', id, positionMs: 0 }
+  if (contentType === 'movie') {
+    const target = await api.getMovieResolvedPlayTarget(id)
+    return target
+      ? { kind: 'movie', id, positionMs: target.position_ms, partNum: target.part_num, totalParts: target.total_parts }
+      : { kind: 'movie', id, positionMs: 0 }
+  }
 
   const target = await api.getResolvedPlayTarget(id)
   return target ? { kind: target.kind, id: target.id, positionMs: target.position_ms } : null
@@ -35,9 +43,11 @@ export async function resolvePlayTarget(contentType: 'show' | 'movie', id: strin
 export async function resolvePlayPath(contentType: 'show' | 'movie', id: string): Promise<string | null> {
   const target = await resolvePlayTarget(contentType, id)
   if (!target) return null
-  return target.positionMs > 0
-    ? `/player/${target.kind}/${target.id}?t=${target.positionMs}`
-    : `/player/${target.kind}/${target.id}`
+  const params = new URLSearchParams()
+  if (target.positionMs > 0) params.set('t', String(target.positionMs))
+  if (target.partNum) params.set('part', String(target.partNum))
+  const qs = params.toString()
+  return qs ? `/player/${target.kind}/${target.id}?${qs}` : `/player/${target.kind}/${target.id}`
 }
 
 function playlistQueueItems(items: PlaylistItem[]): QueueItem[] {

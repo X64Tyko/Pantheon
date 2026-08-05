@@ -10,6 +10,7 @@ import type {
   Library, LibraryInfo, LibraryWithSource,
     Movie,
     MovieDetail,
+    MovieGroupingCandidate,
     MixedIndexEntry,
     MixedMediaItem,
     PagedResult,
@@ -931,6 +932,17 @@ export const api = {
     mergeMovie: (id: string, duplicate_id: string, confirm = false) => request<{
         ok: boolean
     }>('POST', `/movies/${encodeURIComponent(id)}/merge`, {duplicate_id, confirm}),
+
+    // Multi-part movies (GitHub #3) — auto-detect (at sync time) + manual link/unlink.
+    getMovieGroupingCandidates: () => request<{
+        candidates: MovieGroupingCandidate[]
+    }>('GET', '/movies/grouping-candidates'),
+    linkMovieParts: (id: string, movie_ids: string[]) => request<{
+        ok: boolean
+    }>('POST', `/movies/${encodeURIComponent(id)}/parts/link`, {movie_ids}),
+    unlinkMoviePart: (id: string, part_num: number) => request<{
+        ok: boolean
+    }>('POST', `/movies/${encodeURIComponent(id)}/parts/unlink`, {part_num}),
 
   // Sync-time "possible duplicate" review queue (see DuplicateCandidate).
   getDuplicatesQueue: (p: { item_type?: string; limit?: number; offset?: number } = {}) =>

@@ -33,6 +33,7 @@ add_executable(momus_kairos
     auth/test_auth_store.cpp
     conf/test_conf_store.cpp
     db/test_migrations.cpp
+        db/test_movie_parts.cpp
     db/test_schema_constraints.cpp
     db/test_chapter_repository.cpp
     db/test_block_repository.cpp
@@ -57,6 +58,7 @@ add_executable(momus_kairos
     source/test_local_source.cpp
     source/test_sync_manager.cpp
         source/test_media_probe_resource_release.cpp
+        util/test_title_match.cpp
 )
 
 # kairos_core brings in SQLiteCpp, nlohmann_json, httplib, and the src/ include

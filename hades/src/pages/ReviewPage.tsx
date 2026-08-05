@@ -595,6 +595,7 @@ function CandidatePanel({
   const [linkingId,   setLinkingId]   = useState<string | null>(null)
   const [folderWarning, setFolderWarning] = useState<{ kairos_id: string; targetFolder: string; duplicateFolder: string } | null>(null)
   const [linkError,   setLinkError]   = useState<string | null>(null)
+    const [partLinkingId, setPartLinkingId] = useState<string | null>(null)
   const [metadata,    setMetadata]    = useState<ItemMetadata | null>(null)
   const [loadingMeta, setLoadingMeta] = useState(false)
 
@@ -686,6 +687,21 @@ function CandidatePanel({
       setLinkingId(null)
     }
   }
+
+    // Multi-part movies (GitHub #3): the picked target survives and becomes
+    // part 1, this queue item becomes part 2 — distinct from handleLink's
+    // "these are duplicates, collapse into one" merge.
+    const handleLinkAsPart = async (target: LinkTarget) => {
+        setPartLinkingId(target.kairos_id)
+        setLinkError(null)
+        try {
+            await api.linkMovieParts(target.kairos_id, [item.kairos_id])
+            onMatched()
+        } catch (e) {
+            setLinkError(e instanceof ApiError ? (e.body?.error || 'Unable to link as multi-part — please try again.') : 'Unable to link as multi-part — please try again.')
+            setPartLinkingId(null)
+        }
+    }
 
   const switchMode = (m: 'candidates'|'search'|'link') => {
     setMode(m)
@@ -795,13 +811,25 @@ function CandidatePanel({
                           {r.year && <div className={styles.resultYear}>{r.year}</div>}
                         </div>
                         {!warning && (
-                          <button
-                            onClick={() => handleLink(r)}
-                            disabled={isLinking}
-                            className={`${styles.linkBtn} ${isLinking ? styles.linkBtnDisabled : ''}`}
-                          >
-                            {isLinking ? '…' : 'Link'}
-                          </button>
+                            <>
+                                <button
+                                    onClick={() => handleLink(r)}
+                                    disabled={isLinking}
+                                    className={`${styles.linkBtn} ${isLinking ? styles.linkBtnDisabled : ''}`}
+                                >
+                                    {isLinking ? '…' : 'Link'}
+                                </button>
+                                {item.item_type === 'movie' && (
+                                    <button
+                                        onClick={() => handleLinkAsPart(r)}
+                                        disabled={partLinkingId === r.kairos_id}
+                                        title="Keep both files, presented as one movie's parts (e.g. CD1/CD2) — instead of merging duplicates."
+                                        className={`${styles.linkBtn} ${partLinkingId === r.kairos_id ? styles.linkBtnDisabled : ''}`}
+                                    >
+                                        {partLinkingId === r.kairos_id ? '…' : 'Link as multi-part'}
+                                    </button>
+                                )}
+                            </>
                         )}
                       </div>
                       {warning && (

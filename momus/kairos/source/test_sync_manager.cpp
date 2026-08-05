@@ -118,6 +118,44 @@ protected:
 		}
 		return row;
 	}
+
+	// A movie folder with 2 CD-marked files instead of writeMovie()'s single
+	// file — exercises LocalSource's multi-part grouping (see GitHub #3)
+	// through the real syncMovies()/s_upsert_movie fan-out.
+	void writeMultiPartMovie(const std::string& source_id, const std::string& folder)
+	{
+		fs::path dir = root_ / source_id / folder;
+		fs::create_directories(dir);
+		std::ofstream(dir / (folder + ".CD1.mkv")).close();
+		std::ofstream(dir / (folder + ".CD2.mkv")).close();
+
+		std::ofstream nfo(dir / "movie.nfo");
+		nfo << "<?xml version=\"1.0\"?><movie><title>Alien</title><year>1979</year></movie>";
+		nfo.close();
+	}
+
+	struct MoviePartRow
+	{
+		int part_num;
+		std::string file_path;
+	};
+
+	std::vector<MoviePartRow> readMovieParts()
+	{
+		std::vector<MoviePartRow> rows;
+		SQLite::Statement q(db_->get(),
+							"SELECT mp.part_num, mp.file_path FROM movie_part mp "
+							"JOIN movie m ON m.movie_id = mp.movie_id "
+							"WHERE m.title='Alien' ORDER BY mp.part_num");
+		while (q.executeStep()) rows.push_back({q.getColumn(0).getInt(), q.getColumn(1).getString()});
+		return rows;
+	}
+
+	bool readIsMultiPart()
+	{
+		SQLite::Statement q(db_->get(), "SELECT is_multi_part FROM movie WHERE title='Alien'");
+		return q.executeStep() && q.getColumn(0).getInt() != 0;
+	}
 };
 
 // plex_list_link has no FK back to playlist/filler_list (see
@@ -300,4 +338,105 @@ TEST_F(SyncManagerTest, CrossSourceMerge_ConfirmedMatchBlocksReclaim)
 	EXPECT_EQ(row.tagline, "High-priority tagline.")
 		<< "backfilling a genuine gap must still work even on a confirmed item";
 	EXPECT_EQ(row.primary_source, "lo") << "ownership must not change once confirmed";
+}
+
+// Multi-part movies (GitHub #3): a movie folder with CD1/CD2-marked files
+// must land as one movie row with is_multi_part=1 and a movie_part row per
+// file, through the real LocalSource::fetchMovies -> SyncManager::syncMovies
+// -> s_upsert_movie fan-out — not as duplicate/orphan movie rows.
+TEST_F(SyncManagerTest, MultiPartMovie_FansOutIntoMoviePartRows)
+{
+	addSource("src1", 1);
+	addLibrary("src1", (root_ / "src1").string());
+	writeMultiPartMovie("src1", "Alien (1979)");
+
+	sync_->loadSources();
+	sync_->syncAll();
+
+	auto row = readMergedMovie();
+	ASSERT_EQ(row.count, 1) << "multi-part files must merge onto one movie row, not create duplicates";
+	EXPECT_TRUE(readIsMultiPart());
+
+	auto parts = readMovieParts();
+	ASSERT_EQ(parts.size(), 2u);
+	EXPECT_EQ(parts[0].part_num, 1);
+	EXPECT_EQ(parts[1].part_num, 2);
+	EXPECT_EQ(parts[0].file_path, (root_ / "src1" / "Alien (1979)" / "Alien (1979).CD1.mkv").string());
+	EXPECT_EQ(parts[1].file_path, (root_ / "src1" / "Alien (1979)" / "Alien (1979).CD2.mkv").string());
+}
+
+// Re-syncing (e.g. a part renamed/removed) must not leave stale movie_part
+// rows behind — s_delete_parts/s_insert_part's delete-then-reinsert should
+// converge movie_part to exactly what the current fetch reports.
+TEST_F(SyncManagerTest, MultiPartMovie_ResyncConvergesPartsToCurrentState)
+{
+	addSource("src1", 1);
+	addLibrary("src1", (root_ / "src1").string());
+	writeMultiPartMovie("src1", "Alien (1979)");
+
+	sync_->loadSources();
+	sync_->syncAll();
+	ASSERT_EQ(readMovieParts().size(), 2u);
+
+	// Drop CD2 — now looks like a single-file movie on disk.
+	fs::remove(root_ / "src1" / "Alien (1979)" / "Alien (1979).CD2.mkv");
+	sync_->syncAll();
+
+	EXPECT_FALSE(readIsMultiPart());
+	EXPECT_TRUE(readMovieParts().empty());
+}
+
+// A manually-linked multi-part movie (ContentRepository::linkMovieParts sets
+// movie.locked=1 and writes origin='manual' movie_part rows) must survive a
+// resync of the target's own source untouched — otherwise the source's own
+// single-file reality would silently overwrite the admin's manual grouping
+// every sync, exactly the bug this locked/origin scoping exists to prevent.
+TEST_F(SyncManagerTest, MultiPartMovie_ManuallyLinkedSurvivesResync)
+{
+	addSource("src1", 1);
+	addLibrary("src1", (root_ / "src1").string());
+	writeMovie("src1", "Alien (1979)", "", "");
+
+	sync_->loadSources();
+	sync_->syncAll();
+
+	std::string movie_id;
+	{
+		SQLite::Statement q(db_->get(), "SELECT movie_id FROM movie WHERE title='Alien'");
+		ASSERT_TRUE(q.executeStep());
+		movie_id = q.getColumn(0).getString();
+	}
+
+	// Simulate ContentRepository::linkMovieParts having absorbed a second,
+	// unrelated file into this movie as manual part 2.
+	{
+		SQLite::Statement upd(db_->get(),
+							  "UPDATE movie SET is_multi_part = 1, duration_ms = 999999, locked = 1 WHERE movie_id = ?");
+		upd.bind(1, movie_id);
+		upd.exec();
+	}
+	{
+		SQLite::Statement ins(db_->get(), R"(
+            INSERT INTO movie_part (movie_id, part_num, file_path, duration_ms, origin)
+            VALUES (?,1,?,500000,'manual'), (?,2,'/elsewhere/part2.mkv',499999,'manual')
+        )");
+		ins.bind(1, movie_id);
+		ins.bind(2, (root_ / "src1" / "Alien (1979)" / "Alien (1979).mkv").string());
+		ins.bind(3, movie_id);
+		ins.exec();
+	}
+
+	sync_->syncAll();
+
+	SQLite::Statement q(db_->get(), "SELECT is_multi_part, locked, duration_ms FROM movie WHERE movie_id = ?");
+	q.bind(1, movie_id);
+	ASSERT_TRUE(q.executeStep());
+	EXPECT_EQ(q.getColumn(0).getInt(), 1);
+	EXPECT_EQ(q.getColumn(1).getInt(), 1);
+	EXPECT_EQ(q.getColumn(2).getInt64(), 999999) << "locked movie's admin-set duration must not be rederived from the single on-disk file";
+
+	SQLite::Statement pq(db_->get(), "SELECT COUNT(*) FROM movie_part WHERE movie_id = ? AND origin = 'manual'");
+	pq.bind(1, movie_id);
+	ASSERT_TRUE(pq.executeStep());
+	EXPECT_EQ(pq.getColumn(0).getInt(), 2) << "manual parts must survive a resync of the target's own source";
 }

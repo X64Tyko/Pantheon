@@ -3,9 +3,12 @@
 #include "model/Movie.h"
 #include "model/Playlist.h"
 #include "model/Show.h"
+#include "util/TitleMatch.h"
 #include <algorithm>
 #include <ctime>
+#include <filesystem>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <openssl/evp.h>
 #include <unordered_map>
@@ -148,6 +151,71 @@ namespace
 								  static_cast<int>(in.size()));
 		out.resize(static_cast<size_t>(len));
 		return out;
+	}
+
+	// Jellyfin/Emby catalog a multi-part movie (CD1/CD2, Part 1/Part 2, Disc
+	// 1/Disc 2 naming) as separate library items — MediaSources[] here means
+	// alternate versions/qualities of one item, not sequential parts — so
+	// group sibling items sharing a filename marker the same way LocalSource
+	// groups bare root-level files. Any item that doesn't end up in a
+	// validated 2+-member group is left alone (its own movie, as before this
+	// feature). Merged movies keep the part-1 item's own metadata/ID; the
+	// other items' fetched Movie structs are otherwise discarded — they're
+	// the same title cataloged once per file. See GitHub #3.
+	void groupJellyfinMovieParts(std::vector<Movie>& result)
+	{
+		namespace fs = std::filesystem;
+
+		std::map<std::string, std::vector<size_t>> byBase;
+		for (size_t i = 0; i < result.size(); ++i)
+		{
+			auto marker = titlematch::detectFilePart(fs::path(result[i].file_path).stem().string());
+			if (!marker) continue;
+			byBase[titlematch::normalizeTitle(marker->first)].push_back(i);
+		}
+
+		std::vector<bool> merged_away(result.size(), false);
+		for (auto& [base, idxs] : byBase)
+		{
+			if (idxs.size() < 2) continue;
+
+			std::vector<std::string> stems;
+			stems.reserve(idxs.size());
+			for (size_t i : idxs) stems.push_back(fs::path(result[i].file_path).stem().string());
+
+			auto part_nums = titlematch::groupFileParts(stems);
+			if (part_nums.empty()) continue;
+
+			// Sort this bucket's indices by part number so the lowest part
+			// becomes the surviving/primary Movie.
+			std::vector<size_t> order(idxs.size());
+			for (size_t k = 0; k < idxs.size(); ++k) order[k] = k;
+			std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return part_nums[a] < part_nums[b]; });
+
+			Movie& primary        = result[idxs[order.front()]];
+			primary.is_multi_part = true;
+			int64_t total_ms      = 0;
+			for (size_t k : order)
+			{
+				MoviePart mp;
+				mp.part_num    = part_nums[k];
+				mp.file_path   = result[idxs[k]].file_path;
+				mp.duration_ms = result[idxs[k]].duration_ms;
+				total_ms       += mp.duration_ms;
+				primary.parts.push_back(std::move(mp));
+			}
+			primary.duration_ms = total_ms;
+			primary.file_path   = primary.parts.front().file_path;
+
+			for (size_t k = 1; k < order.size(); ++k) merged_away[idxs[order[k]]] = true;
+		}
+
+		if (std::none_of(merged_away.begin(), merged_away.end(), [](bool b) { return b; })) return;
+
+		std::vector<Movie> kept;
+		kept.reserve(result.size());
+		for (size_t i = 0; i < result.size(); ++i) if (!merged_away[i]) kept.push_back(std::move(result[i]));
+		result = std::move(kept);
 	}
 } // namespace
 
@@ -413,6 +481,7 @@ std::vector<Movie> JellyfinBaseSource::fetchMovies(const std::string& external_l
 		start_index += page_count;
 	}
 
+	groupJellyfinMovieParts(result);
 	return result;
 }
 

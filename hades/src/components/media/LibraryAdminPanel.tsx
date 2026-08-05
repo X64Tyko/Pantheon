@@ -3,11 +3,21 @@ import { api } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import { AccordionSection } from '../../channel/sections'
 import { goldBtnStyle, inputStyle } from '../../channel/styles'
-import type { GroupingCandidate, EpisodeGroup, MovieDetail, ShowDetail, ExternalId, ItemMetadata, SpecialCandidate, LinkedSpecial } from '../../api/types'
+import type {
+    GroupingCandidate,
+    EpisodeGroup,
+    MovieDetail,
+    MovieGroupingCandidate,
+    ShowDetail,
+    ExternalId,
+    ItemMetadata,
+    SpecialCandidate,
+    LinkedSpecial
+} from '../../api/types'
 import styles from './LibraryAdminPanel.module.css'
 
 type Detail = ShowDetail | MovieDetail
-type Section = 'details' | 'grouping' | 'specials' | 'edit' | null
+type Section = 'details' | 'grouping' | 'movie-parts' | 'specials' | 'edit' | null
 
 const SOURCE_LINK_CLASS: Record<string, string> = {
   tmdb: styles.externalLinkTmdb,
@@ -47,6 +57,13 @@ export function LibraryAdminPanel({ id, content_type }: { id: string; content_ty
           <GroupingSection showId={(detail as ShowDetail).show_id} isAdmin={isAdmin} active={open === 'grouping'} />
         </AccordionSection>
       )}
+
+        {!isShow && (
+            <AccordionSection title="MOVIE PARTS" open={open === 'movie-parts'} onToggle={() => toggle('movie-parts')}>
+                <MoviePartsSection movie={detail as MovieDetail} isAdmin={isAdmin} active={open === 'movie-parts'}
+                                   onMovieChanged={setDetail}/>
+            </AccordionSection>
+        )}
 
       {isShow && (
         <AccordionSection title="SPECIALS" open={open === 'specials'} onToggle={() => toggle('specials')}>
@@ -440,6 +457,123 @@ function GroupingSection({ showId, isAdmin, active }: { showId: string; isAdmin:
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Movie parts (GitHub #3) ─────────────────────────────────────────────────
+// Auto-detection groups multi-part movies at sync time; this is the manual
+// safety valve — grouping-candidates is a global (not per-movie) heuristic
+// scan, filtered here to candidates touching the movie this panel is open
+// on, mirroring GroupingSection's confirm/reject shape.
+
+function MoviePartsSection({movie, isAdmin, active, onMovieChanged}: {
+    movie: MovieDetail; isAdmin: boolean; active: boolean; onMovieChanged: (d: Detail) => void
+}) {
+    const [candidates, setCandidates] = useState<MovieGroupingCandidate[]>([])
+    const [loading, setLoading] = useState(false)
+    const [saving, setSaving] = useState(false)
+
+    const load = () => {
+        setLoading(true)
+        api.getMovieGroupingCandidates()
+            .then(r => setCandidates(r.candidates.filter(c => c.parts.some(p => p.movie_id === movie.movie_id))))
+            .finally(() => setLoading(false))
+    }
+
+    useEffect(() => {
+        if (active) load()
+    }, [active, movie.movie_id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const refreshMovie = () => {
+        api.getMovie(movie.movie_id).then(onMovieChanged).catch(() => {
+        })
+    }
+
+    const confirm = async (c: MovieGroupingCandidate) => {
+        setSaving(true)
+        try {
+            const sorted = [...c.parts].sort((a, b) => a.part_num - b.part_num)
+            const [target, ...rest] = sorted
+            await api.linkMovieParts(target.movie_id, rest.map(p => p.movie_id))
+        } catch { /* surfaced via unchanged list on reload */
+        }
+        setSaving(false)
+        load()
+        refreshMovie()
+    }
+
+    const unlink = async (partNum: number) => {
+        setSaving(true)
+        try {
+            await api.unlinkMoviePart(movie.movie_id, partNum)
+        } catch {
+        }
+        setSaving(false)
+        load()
+        refreshMovie()
+    }
+
+    if (loading) return <div className={styles.metaTextSm}>Loading…</div>
+
+    const parts = movie.is_multi_part ? (movie.parts ?? []) : []
+
+    return (
+        <div className={styles.sectionBodyWide}>
+            <div>
+                <span className={styles.fieldLabel}>Parts</span>
+                {parts.length === 0 ? (
+                    <p className={styles.metaText}>Not a multi-part movie.</p>
+                ) : (
+                    <div className={styles.stack8}>
+                        {parts.map(p => (
+                            <div key={p.part_num} className={styles.confirmedCard}>
+                                <div className={styles.confirmedCardHeader}>
+                                    <span className={styles.confirmedCardTitle}>Part {p.part_num}</span>
+                                    {isAdmin && (
+                                        <button disabled={saving} onClick={() => unlink(p.part_num)}
+                                                className={styles.textButton}>Unlink</button>
+                                    )}
+                                </div>
+                                <div className={styles.confirmedCardMembers}>
+                                    <div className={styles.confirmedCardMember}>{p.file_path}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            <div>
+                <span className={styles.fieldLabel}>Detected Candidates</span>
+                {candidates.length === 0 ? (
+                    <p className={styles.metaText}>No multi-part patterns detected involving this movie.</p>
+                ) : (
+                    <div className={styles.stack8}>
+                        {candidates.sort((a, b) => b.confidence - a.confidence).map((c, i) => (
+                            <div key={i}
+                                 className={`${styles.candidateCard} ${c.confidence >= 80 ? styles.candidateCardConfident : ''}`}>
+                                <div className={styles.confirmedCardHeader}>
+                                    <span className={styles.confirmedCardTitle}>{c.base_title}</span>
+                                    <span
+                                        className={`${styles.candidatePill} ${c.confidence >= 80 ? styles.candidatePillConfident : ''}`}>{c.confidence}%</span>
+                                    {isAdmin && (
+                                        <button disabled={saving} onClick={() => confirm(c)}
+                                                className={styles.candidateOutlineButton}>Link as multi-part</button>
+                                    )}
+                                </div>
+                                <div className={styles.confirmedCardMembers}>
+                                    {c.parts.map(p => (
+                                        <div key={p.movie_id} className={styles.confirmedCardMember}>
+                                            Part {p.part_num} · {p.title}{p.year ? ` (${p.year})` : ''}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
           </div>
         )}
       </div>

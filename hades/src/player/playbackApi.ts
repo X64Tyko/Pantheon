@@ -37,6 +37,12 @@ export interface VodStartResponse {
   // with what's really playing instead of guessing.
   audio_track:    number
   subtitle_track: number
+  // Multi-part movies (GitHub #3) — present only when the movie is
+  // multi-part; duration_ms above is always THIS part's duration.
+  is_multi_part?:     boolean
+  part_num?:          number
+  total_parts?:       number
+  movie_duration_ms?: number
 }
 
 export interface VodStartParams {
@@ -45,6 +51,9 @@ export interface VodStartParams {
   audio_track?:    number
   subtitle_track?: number
   position_ms?:    number
+  // Requests a specific part of a multi-part movie directly — see
+  // resolvePlayTarget.ts's PlayTarget.partNum.
+  part_num?:       number
 }
 
 export async function startVodPlayback(params: VodStartParams): Promise<VodStartResponse> {

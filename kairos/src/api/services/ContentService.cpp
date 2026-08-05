@@ -1899,6 +1899,109 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		}
 	});
 
+	// Multi-part movies (GitHub #3): auto-detect (at sync time) + manual
+	// link/unlink. Registered ahead of the generic GET /api/movies/(.+)
+	// detail route below so "grouping-candidates" isn't captured as an :id.
+	svr.Get(R"(/api/movies/grouping-candidates)", [this](const Req&, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		try
+		{
+			ContentRepository repo(db_);
+			json out = json::array();
+			for (const auto& cand : repo.getMovieGroupingCandidates())
+			{
+				json parts = json::array();
+				for (const auto& p : cand.parts)
+				{
+					json pj{{"movie_id", p.movie_id}, {"title", p.title}, {"file_path", p.file_path}, {"part_num", p.part_num}};
+					if (p.year.has_value()) pj["year"] = *p.year;
+					parts.push_back(std::move(pj));
+				}
+				out.push_back(json{{"base_title", cand.base_title}, {"confidence", cand.confidence}, {"parts", parts}});
+			}
+			route::ok(res, json{{"candidates", out}}.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("GET /api/movies/grouping-candidates", e);
+			route::err(res, 400, e.what());
+		}
+	});
+
+	svr.Post(R"(/api/movies/(.+)/parts/link)", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		if (sync_.isMediaLocked())
+		{
+			route::err(res, 423, "sync in progress");
+			return;
+		}
+		auto id = req.matches[1].str();
+		try
+		{
+			auto b = json::parse(req.body);
+			std::vector<std::string> other_ids;
+			for (const auto& v : b.value("movie_ids", json::array())) other_ids.push_back(v.get<std::string>());
+			if (other_ids.empty())
+			{
+				route::err(res, 400, "movie_ids required");
+				return;
+			}
+
+			ContentRepository repo(db_);
+			repo.linkMovieParts(id, other_ids);
+			route::ok(res, json{{"ok", true}}.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("POST /api/movies/:id/parts/link", e);
+			route::err(res, 400, e.what());
+		}
+	});
+
+	svr.Post(R"(/api/movies/(.+)/parts/unlink)", [this](const Req& req, Res& res)
+	{
+		if (!currentUser() || currentUser()->role != "admin")
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		if (sync_.isMediaLocked())
+		{
+			route::err(res, 423, "sync in progress");
+			return;
+		}
+		auto id = req.matches[1].str();
+		try
+		{
+			auto b = json::parse(req.body);
+			if (!b.contains("part_num"))
+			{
+				route::err(res, 400, "part_num required");
+				return;
+			}
+			int part_num = b.at("part_num").get<int>();
+
+			ContentRepository repo(db_);
+			repo.unlinkMoviePart(id, part_num);
+			route::ok(res, json{{"ok", true}}.dump());
+		}
+		catch (const std::exception& e)
+		{
+			route::logErr("POST /api/movies/:id/parts/unlink", e);
+			route::err(res, 400, e.what());
+		}
+	});
+
 	svr.Get(R"(/api/movies/(.+)/thumb)", [this](const Req& req, Res& res)
 	{
 		auto id   = req.matches[1].str();
@@ -2009,6 +2112,13 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		movie["match_confirmed"] = d->match_confirmed;
 		movie["watched"]         = d->watched;
 		movie["view_count"]      = d->view_count;
+		movie["is_multi_part"]   = d->is_multi_part;
+		if (d->is_multi_part)
+		{
+			json parts = json::array();
+			for (const auto& p : d->parts) parts.push_back({{"part_num", p.part_num}, {"file_path", p.file_path}, {"duration_ms", p.duration_ms}});
+			movie["parts"] = std::move(parts);
+		}
 
 		// Full set of sources this movie is mapped to.
 		json sources = json::array();

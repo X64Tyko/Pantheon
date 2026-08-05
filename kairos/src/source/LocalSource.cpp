@@ -9,6 +9,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <regex>
 #include <string>
@@ -188,6 +189,61 @@ namespace
 	bool looksLikeMovieDir(const fs::path& dir)
 	{
 		return !looksLikeShowDir(dir) && !videosIn(dir).empty();
+	}
+
+	// Attempts to detect that every file in `files` is one part of the same
+	// multi-part movie (CD1/CD2, Part 1/Part 2, Disc 1/Disc 2 naming) — see
+	// titlematch::groupFileParts. Requires >=2 files, a consistent base title
+	// across all of them, and distinct part numbers; anything less consistent
+	// returns nullopt so the caller falls back to the old single-file
+	// behavior rather than risk grouping unrelated files (e.g. a trailer
+	// alongside the main feature) into a bogus movie. Result is sorted by
+	// part number. See GitHub #3.
+	std::optional<std::vector<std::pair<int, fs::path>>> tryGroupParts(const std::vector<fs::path>& files)
+	{
+		std::vector<std::string> stems;
+		stems.reserve(files.size());
+		for (const auto& f : files) stems.push_back(f.stem().string());
+
+		auto part_nums = titlematch::groupFileParts(stems);
+		if (part_nums.empty()) return std::nullopt;
+
+		std::vector<std::pair<int, fs::path>> parts;
+		parts.reserve(files.size());
+		for (size_t i = 0; i < files.size(); ++i) parts.emplace_back(part_nums[i], files[i]);
+		std::sort(parts.begin(), parts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		return parts;
+	}
+
+	// Clusters bare root-level video files (siblings of the library directory
+	// itself, not inside a per-movie folder) into multi-part groups by shared
+	// base title. Any file that doesn't end up in a validated 2+-member group
+	// — including one whose bucket has duplicate part numbers, per
+	// tryGroupParts — comes back as its own one-element group, i.e. treated
+	// exactly as before this feature (one Movie per file).
+	std::vector<std::vector<fs::path>> clusterRootMovieParts(const std::vector<fs::path>& files)
+	{
+		std::map<std::string, std::vector<fs::path>> byBase;
+		std::vector<fs::path> standalone;
+		for (const auto& f : files)
+		{
+			auto marker = titlematch::detectFilePart(f.stem().string());
+			if (!marker)
+			{
+				standalone.push_back(f);
+				continue;
+			}
+			byBase[titlematch::normalizeTitle(marker->first)].push_back(f);
+		}
+
+		std::vector<std::vector<fs::path>> groups;
+		for (auto& [base, bucket] : byBase)
+		{
+			if (bucket.size() >= 2 && tryGroupParts(bucket)) groups.push_back(std::move(bucket));
+			else for (auto& f : bucket) standalone.push_back(f);
+		}
+		for (auto& f : standalone) groups.push_back({f});
+		return groups;
 	}
 
 	// A movie.nfo (or "<video>.nfo") is authoritative when present, same "NFO
@@ -424,6 +480,8 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id)
 	if (!fs::is_directory(external_lib_id, ec)) return {};
 
 	std::vector<Movie> result;
+	std::vector<fs::path> rootVideos; // bare files at library root — grouped after the loop, see below
+
 	for (const auto& entry : fs::directory_iterator(external_lib_id, ec))
 	{
 		const fs::path p = entry.path();
@@ -438,7 +496,6 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id)
 			Movie movie;
 			movie.movie_id    = conf_.applyPathMap(p.string());
 			movie.title       = title;
-			movie.file_path   = conf_.applyPathMap(vfiles.front().string());
 			movie.genres      = "[]";
 			movie.labels      = "[]";
 			movie.actors      = "[]";
@@ -450,11 +507,46 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id)
 				movie.added_at        = added;
 				movie.added_at_source = source_id_;
 			}
-			applyMovieSidecar(movie, loadMovieSidecar(vfiles.front(), p, /*has_own_folder=*/true));
+
+			// A movie folder holding 2+ video files that all carry a
+			// consistent CD1/CD2-style marker is a multi-part movie, not
+			// duplicate/orphan entries — see GitHub #3.
+			fs::path sidecar_file = vfiles.front();
+			if (auto grouped = tryGroupParts(vfiles); grouped && grouped->size() >= 2)
+			{
+				movie.is_multi_part = true;
+				for (const auto& [part_num, path] : *grouped)
+				{
+					MoviePart mp;
+					mp.part_num  = part_num;
+					mp.file_path = conf_.applyPathMap(path.string());
+					movie.parts.push_back(std::move(mp));
+				}
+				sidecar_file    = grouped->front().second;
+				movie.file_path = movie.parts.front().file_path;
+			}
+			else
+			{
+				movie.file_path = conf_.applyPathMap(vfiles.front().string());
+			}
+			applyMovieSidecar(movie, loadMovieSidecar(sidecar_file, p, /*has_own_folder=*/true));
 			result.push_back(std::move(movie));
 		}
 		else if (isVideo(p))
 		{
+			rootVideos.push_back(p);
+		}
+	}
+
+	// Bare video files directly at the library root: cluster siblings that
+	// share a multi-part marker into one Movie each, same as a movie
+	// folder's videos above; everything else stays one Movie per file,
+	// unchanged from before this feature.
+	for (const auto& group : clusterRootMovieParts(rootVideos))
+	{
+		if (group.size() < 2)
+		{
+			const fs::path& p  = group.front();
 			auto [title, year] = parseTitle(p.stem().string());
 			Movie movie;
 			movie.movie_id    = conf_.applyPathMap(p.string());
@@ -473,8 +565,43 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id)
 			}
 			applyMovieSidecar(movie, loadMovieSidecar(p, p.parent_path(), /*has_own_folder=*/false));
 			result.push_back(std::move(movie));
+			continue;
 		}
+
+		auto grouped = tryGroupParts(group);
+		if (!grouped) continue; // shouldn't happen — clusterRootMovieParts already validated this bucket
+
+		const fs::path& part1 = grouped->front().second;
+		auto marker           = titlematch::detectFilePart(part1.stem().string());
+		auto [title, year]    = parseTitle(marker ? marker->first : part1.stem().string());
+
+		Movie movie;
+		movie.movie_id      = conf_.applyPathMap(part1.string());
+		movie.title         = title;
+		movie.genres        = "[]";
+		movie.labels        = "[]";
+		movie.actors        = "[]";
+		movie.countries     = "[]";
+		movie.collections   = "[]";
+		movie.is_multi_part = true;
+		if (year) movie.year = year;
+		if (int64_t added = fsAddedAtEpoch(part1); added > 0)
+		{
+			movie.added_at        = added;
+			movie.added_at_source = source_id_;
+		}
+		for (const auto& [part_num, path] : *grouped)
+		{
+			MoviePart mp;
+			mp.part_num  = part_num;
+			mp.file_path = conf_.applyPathMap(path.string());
+			movie.parts.push_back(std::move(mp));
+		}
+		movie.file_path = movie.parts.front().file_path;
+		applyMovieSidecar(movie, loadMovieSidecar(part1, part1.parent_path(), /*has_own_folder=*/false));
+		result.push_back(std::move(movie));
 	}
+
 	std::sort(result.begin(), result.end(), [](const Movie& a, const Movie& b)
 	{
 		return a.title < b.title;

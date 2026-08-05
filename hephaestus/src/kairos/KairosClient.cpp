@@ -192,10 +192,12 @@ std::vector<KairosChannel> KairosClient::getChannels()
 
 std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& contentType,
 														  const std::string& contentId,
-														  const std::string& bearerToken)
+														  const std::string& bearerToken,
+														  int partNum)
 {
 	auto cli         = makeClient(base_url);
 	std::string path = "/api/playback/" + contentType + "/" + contentId;
+	if (partNum > 0) path += "?part=" + std::to_string(partNum);
 	httplib::Headers headers;
 	if (!bearerToken.empty()) headers.emplace("Authorization", "Bearer " + bearerToken);
 	auto res = cli.Get(path, headers);
@@ -216,6 +218,10 @@ std::optional<PlaybackInfo> KairosClient::getPlaybackInfo(const std::string& con
 		info.preferred_subtitle_lang = j.value("preferred_subtitle_lang", "");
 		info.keyframes_size          = j.value("keyframes_size", int64_t(0));
 		info.keyframes_mtime         = j.value("keyframes_mtime", int64_t(0));
+		info.is_multi_part           = j.value("is_multi_part", false);
+		info.part_num                = j.value("part_num", 0);
+		info.total_parts             = j.value("total_parts", 0);
+		info.movie_duration_ms       = j.value("movie_duration_ms", int64_t(0));
 		if (j.contains("keyframes_ms") && j["keyframes_ms"].is_array())
 		{
 			for (const auto& v : j["keyframes_ms"]) if (v.is_number_integer()) info.keyframes_ms.push_back(v.get<int64_t>());

@@ -292,6 +292,83 @@ TEST_F(LocalSourceTest, FetchMovies_MixedLayouts)
 }
 
 // ============================================================================
+// fetchMovies — multi-part grouping (GitHub #3)
+// ============================================================================
+
+TEST_F(LocalSourceTest, FetchMovies_FolderLayout_MultiPartGrouped)
+{
+	touch(root_ / "movies" / "Movie Title (2020)" / "Movie.Title.CD1.mkv");
+	touch(root_ / "movies" / "Movie Title (2020)" / "Movie.Title.CD2.mkv");
+	const auto movies = src_->fetchMovies((root_ / "movies").string());
+	ASSERT_EQ(movies.size(), 1u);
+	EXPECT_TRUE(movies[0].is_multi_part);
+	ASSERT_EQ(movies[0].parts.size(), 2u);
+	EXPECT_EQ(movies[0].parts[0].part_num, 1);
+	EXPECT_EQ(movies[0].parts[1].part_num, 2);
+	EXPECT_EQ(movies[0].parts[0].file_path, (root_ / "movies" / "Movie Title (2020)" / "Movie.Title.CD1.mkv").string());
+	EXPECT_EQ(movies[0].parts[1].file_path, (root_ / "movies" / "Movie Title (2020)" / "Movie.Title.CD2.mkv").string());
+	EXPECT_EQ(movies[0].file_path, movies[0].parts[0].file_path);
+}
+
+TEST_F(LocalSourceTest, FetchMovies_FolderLayout_SingleFileNotMultiPart)
+{
+	touch(root_ / "movies" / "The Matrix (1999)" / "The.Matrix.1999.mkv");
+	const auto movies = src_->fetchMovies((root_ / "movies").string());
+	ASSERT_EQ(movies.size(), 1u);
+	EXPECT_FALSE(movies[0].is_multi_part);
+	EXPECT_TRUE(movies[0].parts.empty());
+}
+
+TEST_F(LocalSourceTest, FetchMovies_FolderLayout_InconsistentFilesNotGrouped)
+{
+	// A trailer alongside the main feature carries no part marker at all —
+	// must not be swept into a bogus 2-part movie.
+	touch(root_ / "movies" / "Movie Title (2020)" / "Movie.Title.CD1.mkv");
+	touch(root_ / "movies" / "Movie Title (2020)" / "trailer.mkv");
+	const auto movies = src_->fetchMovies((root_ / "movies").string());
+	ASSERT_EQ(movies.size(), 1u);
+	EXPECT_FALSE(movies[0].is_multi_part);
+	EXPECT_TRUE(movies[0].parts.empty());
+}
+
+TEST_F(LocalSourceTest, FetchMovies_BareFileLayout_MultiPartGrouped)
+{
+	touch(root_ / "movies" / "Movie Title (2020) CD1.mkv");
+	touch(root_ / "movies" / "Movie Title (2020) CD2.mkv");
+	const auto movies = src_->fetchMovies((root_ / "movies").string());
+	ASSERT_EQ(movies.size(), 1u);
+	EXPECT_EQ(movies[0].title, "Movie Title");
+	ASSERT_TRUE(movies[0].year.has_value());
+	EXPECT_EQ(*movies[0].year, 2020);
+	EXPECT_TRUE(movies[0].is_multi_part);
+	ASSERT_EQ(movies[0].parts.size(), 2u);
+	EXPECT_EQ(movies[0].parts[0].part_num, 1);
+	EXPECT_EQ(movies[0].parts[1].part_num, 2);
+}
+
+TEST_F(LocalSourceTest, FetchMovies_BareFileLayout_UnrelatedFilesStayIndependent)
+{
+	touch(root_ / "movies" / "Alien.mkv");
+	touch(root_ / "movies" / "Zodiac.mkv");
+	const auto movies = src_->fetchMovies((root_ / "movies").string());
+	ASSERT_EQ(movies.size(), 2u);
+	EXPECT_FALSE(movies[0].is_multi_part);
+	EXPECT_FALSE(movies[1].is_multi_part);
+}
+
+TEST_F(LocalSourceTest, FetchMovies_BareFileLayout_DuplicatePartNumbersNotGrouped)
+{
+	// Two files with the exact same base title both claiming "Part 1" is
+	// more likely a naming collision than a real multi-part movie.
+	touch(root_ / "movies" / "Movie Title Part 1.mkv");
+	touch(root_ / "movies" / "Movie Title Part 1.mp4");
+	const auto movies = src_->fetchMovies((root_ / "movies").string());
+	ASSERT_EQ(movies.size(), 2u);
+	EXPECT_FALSE(movies[0].is_multi_part);
+	EXPECT_FALSE(movies[1].is_multi_part);
+}
+
+// ============================================================================
 // fetchEpisodes
 // ============================================================================
 

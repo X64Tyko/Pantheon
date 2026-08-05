@@ -2702,6 +2702,51 @@ namespace
 )SQL"
 		}
 
+		// ── v109: multi-part movies — a movie split across several video files
+		//         (CD1/CD2, Part 1/Part 2, Disc 1/Disc 2 naming) presented as one
+		//         logical, schedulable movie row instead of duplicate/orphan
+		//         entries. Purely additive: single-file movies keep using
+		//         movie.file_path/duration_ms exactly as before. Only movies with
+		//         2+ files get movie_part rows; for those, movie.duration_ms is
+		//         kept as the SUM of part durations (see SyncManager's upsert) so
+		//         RuleEngine's single duration read site keeps working unchanged,
+		//         and is_multi_part lets callers avoid a join just to know
+		//         whether a movie has parts at all.
+		,
+		{
+			109, R"SQL(
+    ALTER TABLE movie ADD COLUMN is_multi_part INTEGER NOT NULL DEFAULT 0;
+
+    CREATE TABLE movie_part (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        movie_id    TEXT    NOT NULL REFERENCES movie(movie_id) ON DELETE CASCADE,
+        part_num    INTEGER NOT NULL,
+        file_path   TEXT    NOT NULL,
+        duration_ms INTEGER,
+        UNIQUE(movie_id, part_num),
+        UNIQUE(file_path)
+    );
+
+    CREATE INDEX idx_movie_part_movie ON movie_part(movie_id);
+)SQL"
+		}
+
+		// ── v110: movie_part.origin — distinguishes auto-detected parts
+		//         (SyncManager re-derives these from disk/source every sync —
+		//         see s_delete_parts/s_insert_part) from parts an admin
+		//         manually linked via ContentRepository::linkMovieParts.
+		//         SyncManager only ever deletes/reinserts origin='auto' rows
+		//         and skips locked movies entirely, so a manual link — which
+		//         also sets movie.locked=1 — survives every future sync
+		//         instead of being silently undone the next time the
+		//         target's own source reports its (single-file) reality.
+		,
+		{
+			110, R"SQL(
+    ALTER TABLE movie_part ADD COLUMN origin TEXT NOT NULL DEFAULT 'auto';
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

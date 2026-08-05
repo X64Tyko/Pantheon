@@ -2,6 +2,15 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
+
+// One physical file belonging to a multi-part movie (see Movie::parts).
+struct MoviePart
+{
+	int part_num = 0;
+	std::string file_path;
+	int64_t duration_ms = 0;
+};
 
 struct Movie
 {
@@ -9,8 +18,15 @@ struct Movie
 	std::string title;
 	std::string original_title; // title in the movie's original language, when a source distinguishes it
 	std::string content_rating;
+	// Single-file movies: the file. Multi-part movies: left as sync last set
+	// it (unused for playback) — use `parts` instead, and note duration_ms
+	// becomes the SUM of part durations for scheduling. is_multi_part/parts
+	// are populated at sync time when a source's fetchMovies() detects
+	// sibling files (CD1/CD2, Part 1/Part 2, Disc 1/Disc 2) for one title.
 	std::string file_path;
 	int64_t duration_ms = 0;
+	bool is_multi_part  = false;
+	std::vector<MoviePart> parts;
 	std::optional<int> year;
 	std::string release_date; // "YYYY-MM-DD" when known; empty if the source never provided one
 

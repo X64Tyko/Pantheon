@@ -1748,10 +1748,11 @@ void SyncManager::syncMovies(IMediaSource& src,
                            imdb_id, tmdb_id, audience_rating,
                            labels, actors, countries, collections,
                            added_at, added_at_source, resolution_label, primary_source, original_title,
-                           audio_languages, embedded_subtitle_languages, nfo_confirmed)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           audio_languages, embedded_subtitle_languages, nfo_confirmed, is_multi_part)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(movie_id) DO UPDATE SET
             nfo_confirmed    = CASE WHEN locked THEN nfo_confirmed ELSE excluded.nfo_confirmed END,
+            is_multi_part    = CASE WHEN locked THEN is_multi_part ELSE excluded.is_multi_part END,
             title            = CASE WHEN locked THEN title            WHEN ? AND excluded.title<>''            THEN excluded.title            WHEN title=''                     THEN excluded.title            ELSE title            END,
             content_rating   = CASE WHEN locked THEN content_rating   WHEN ? AND excluded.content_rating<>''   THEN excluded.content_rating   WHEN content_rating=''            THEN excluded.content_rating   ELSE content_rating   END,
             file_path        = CASE WHEN locked THEN file_path        WHEN ? AND excluded.file_path<>''        THEN excluded.file_path        WHEN file_path=''                 THEN excluded.file_path        ELSE file_path        END,
@@ -1807,7 +1808,8 @@ void SyncManager::syncMovies(IMediaSource& src,
             original_title  != excluded.original_title  OR
             audio_languages             != excluded.audio_languages             OR
             embedded_subtitle_languages != excluded.embedded_subtitle_languages OR
-            nfo_confirmed               != excluded.nfo_confirmed
+            nfo_confirmed               != excluded.nfo_confirmed OR
+            is_multi_part               != excluded.is_multi_part
         )
     )");
 	SQLite::Statement s_movie_mapping(sync_db_, R"(
@@ -1822,6 +1824,21 @@ void SyncManager::syncMovies(IMediaSource& src,
             (candidate_id, item_type, kairos_id_a, kairos_id_b, trigger, reason, title_similarity, folder_a, folder_b)
         VALUES (?,?,?,?,?,?,?,?,?)
         ON CONFLICT(candidate_id) DO NOTHING
+    )");
+	// Multi-part movies (see GitHub #3): always delete-then-reinsert this
+	// movie's parts rather than diff them — the set is small (a handful of
+	// rows at most) and this stays correct with zero extra bookkeeping when
+	// a source stops/starts reporting a part or changes part order. Scoped
+	// to origin='auto' — an admin's manual link (ContentRepository::
+	// linkMovieParts) writes origin='manual' rows and locks the movie row,
+	// and s_check_locked below skips the whole block for a locked movie, so
+	// a manual link survives every future sync of the target's own source
+	// instead of being silently rederived back to single-file reality.
+	SQLite::Statement s_check_locked(sync_db_, "SELECT locked FROM movie WHERE movie_id = ?");
+	SQLite::Statement s_delete_parts(sync_db_, "DELETE FROM movie_part WHERE movie_id = ? AND origin = 'auto'");
+	SQLite::Statement s_insert_part(sync_db_, R"(
+        INSERT INTO movie_part (movie_id, part_num, file_path, duration_ms, origin)
+        VALUES (?,?,?,?,'auto')
     )");
 
 	// Watch-state seeding — only when this source is opted in (media_source.
@@ -1895,13 +1912,37 @@ void SyncManager::syncMovies(IMediaSource& src,
 					s_upsert_movie.bind(27, movie.audio_languages);
 					s_upsert_movie.bind(28, movie.embedded_subtitle_languages);
 					s_upsert_movie.bind(29, movie.nfo_confirmed);
+					s_upsert_movie.bind(30, movie.is_multi_part);
 					// 27 wins-flag placeholders (one per SET column above) at
-					// positions 30..56 (shifted by the nfo_confirmed VALUES
-					// slot added at 29, which has no wins-flag of its own —
-					// see its CASE above, which reads `excluded` unconditionally
-					// instead of gating on priority-wins like everything else).
-					for (int p = 30; p <= 56; ++p) s_upsert_movie.bind(p, wins);
+					// positions 31..57 (shifted by the nfo_confirmed/is_multi_part
+					// VALUES slots added at 29/30, neither of which has a wins-flag
+					// of its own — see their CASEs above, which read `excluded`
+					// unconditionally instead of gating on priority-wins like
+					// everything else).
+					for (int p = 31; p <= 57; ++p) s_upsert_movie.bind(p, wins);
 					s_upsert_movie.exec();
+
+					s_check_locked.reset();
+					s_check_locked.bind(1, movie.movie_id);
+					const bool row_locked = s_check_locked.executeStep() && s_check_locked.getColumn(0).getInt() != 0;
+					if (!row_locked)
+					{
+						s_delete_parts.reset();
+						s_delete_parts.bind(1, movie.movie_id);
+						s_delete_parts.exec();
+						if (movie.is_multi_part)
+						{
+							for (const auto& part : movie.parts)
+							{
+								s_insert_part.reset();
+								s_insert_part.bind(1, movie.movie_id);
+								s_insert_part.bind(2, part.part_num);
+								s_insert_part.bind(3, part.file_path);
+								s_insert_part.bind(4, part.duration_ms);
+								s_insert_part.exec();
+							}
+						}
+					}
 				}
 
 				s_movie_mapping.reset();
@@ -3219,6 +3260,97 @@ void SyncManager::syncMediaProbeFromFiles(const std::string& source_id)
 			}
 		}
 		probe_txn.commit();
+	}
+
+	// ── Multi-part movie duration sum (see GitHub #3) ───────────────────────
+	// movie.duration_ms for a multi-part movie must be the SUM of its parts,
+	// not any single file's duration — RuleEngine schedules off movie.
+	// duration_ms alone (see movieItem() in RuleEngine.cpp) and has no idea
+	// movie_part exists. Each part's own duration is probed here exactly like
+	// a single-file movie above; a part whose duration already looks valid
+	// (e.g. Plex/Jellyfin already reported it at sync time — see PlexSource
+	// ::fetchMovies / JellyfinBaseSource::fetchMovies) is left alone.
+	{
+		struct PartProbeItem
+		{
+			std::string movie_id;
+			int part_num;
+			std::string mapped_path;
+			int64_t duration_ms;
+		};
+		std::vector<PartProbeItem> part_items;
+		{
+			// origin='auto'/m.locked=0: a manually-linked movie (locked=1,
+			// origin='manual' parts — see ContentRepository::linkMovieParts)
+			// must never have its admin-set duration recomputed out from
+			// under it here.
+			SQLite::Statement q(sync_db_, R"(
+                SELECT mp.movie_id, mp.part_num, mp.file_path, mp.duration_ms
+                FROM movie_part mp
+                JOIN movie m ON m.movie_id = mp.movie_id
+                JOIN source_mapping sm ON sm.kairos_id = mp.movie_id AND sm.item_type='movie'
+                WHERE sm.source_id = ? AND mp.origin = 'auto' AND m.locked = 0
+            )");
+			q.bind(1, source_id);
+			while (q.executeStep())
+			{
+				const std::string file_path = q.getColumn(2).getString();
+				if (file_path.empty()) continue;
+				const std::string mapped = conf_.applyPathMap(file_path);
+				if (!std::filesystem::exists(mapped)) continue;
+				part_items.push_back({
+					q.getColumn(0).getString(), q.getColumn(1).getInt(),
+					mapped, q.getColumn(3).getInt64()
+				});
+			}
+		}
+
+		if (!part_items.empty())
+		{
+			std::mutex part_mu;
+			std::atomic<size_t> next{0};
+			const int worker_count = std::min<int>(getThreadCount(), static_cast<int>(part_items.size()));
+			std::vector<std::thread> workers;
+			workers.reserve(static_cast<size_t>(worker_count));
+			for (int w = 0; w < worker_count; ++w)
+			{
+				workers.emplace_back([&]()
+				{
+					for (size_t j = next.fetch_add(1); j < part_items.size(); j = next.fetch_add(1))
+					{
+						if (cancel_requested_.load(std::memory_order_relaxed)) return;
+						auto& p = part_items[j];
+						if (durationLooksValid(p.duration_ms)) continue;
+						FileProbeInfo probed = probeFileInfo(p.mapped_path);
+						p.duration_ms        = durationLooksValid(probed.duration_ms) ? probed.duration_ms : 0;
+					}
+				});
+			}
+			for (auto& t : workers) t.join();
+			yieldIfRequested();
+
+			SQLite::Transaction part_txn(sync_db_, SQLite::TransactionBehavior::IMMEDIATE);
+			SQLite::Statement upd_part(sync_db_, "UPDATE movie_part SET duration_ms = ? WHERE movie_id = ? AND part_num = ?");
+			std::unordered_map<std::string, int64_t> movie_totals;
+			for (const auto& p : part_items)
+			{
+				upd_part.bind(1, p.duration_ms);
+				upd_part.bind(2, p.movie_id);
+				upd_part.bind(3, p.part_num);
+				upd_part.exec();
+				upd_part.reset();
+				movie_totals[p.movie_id] += p.duration_ms;
+			}
+			SQLite::Statement upd_movie(sync_db_, "UPDATE movie SET duration_ms = ? WHERE movie_id = ? AND is_multi_part = 1");
+			for (const auto& [movie_id, total] : movie_totals)
+			{
+				upd_movie.bind(1, total);
+				upd_movie.bind(2, movie_id);
+				upd_movie.exec();
+				upd_movie.reset();
+			}
+			part_txn.commit();
+		}
 	}
 
 	std::cout << "[sync] media probe done: " << source_id

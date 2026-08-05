@@ -242,11 +242,36 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id)
 			result.reserve(result.size() + page_count);
 			for (const auto& item : items)
 			{
+				// Plex natively exposes a multi-part movie (CD1/CD2, multi-disc
+				// releases) as several entries in Media[0].Part[] -- walk all of
+				// them instead of only Part[0], each with its own file+duration,
+				// so Movie::parts round-trips into one logical movie row via
+				// SyncManager's fan-out rather than silently dropping every part
+				// but the first. See GitHub #3.
 				std::string file_path;
+				std::vector<MoviePart> parts;
 				if (item.contains("Media") && !item["Media"].empty())
 				{
 					const auto& media = item["Media"][0];
-					if (media.contains("Part") && !media["Part"].empty()) file_path = media["Part"][0].value("file", "");
+					if (media.contains("Part") && !media["Part"].empty())
+					{
+						file_path = media["Part"][0].value("file", "");
+						if (media["Part"].size() > 1)
+						{
+							int part_num = 0;
+							for (const auto& p : media["Part"])
+							{
+								++part_num;
+								std::string pf = p.value("file", "");
+								if (pf.empty()) continue;
+								MoviePart mp;
+								mp.part_num    = part_num;
+								mp.file_path   = std::move(pf);
+								mp.duration_ms = p.value("duration", int64_t{0});
+								parts.push_back(std::move(mp));
+							}
+						}
+					}
 				}
 				if (file_path.empty()) continue;
 
@@ -256,6 +281,15 @@ std::vector<Movie> PlexSource::fetchMovies(const std::string& external_lib_id)
 				movie.original_title = item.value("originalTitle", "");
 				movie.content_rating = item.value("contentRating", "");
 				movie.file_path      = std::move(file_path);
+				if (parts.size() > 1)
+				{
+					movie.is_multi_part = true;
+					movie.parts         = std::move(parts);
+					int64_t total       = 0;
+					for (const auto& p : movie.parts) total += p.duration_ms;
+					movie.duration_ms = total;
+				}
+				else
 				{
 					int64_t dur = item.value("duration", int64_t{0});
 					if (dur <= 0 && item.contains("Media") && !item["Media"].empty()) dur = item["Media"][0].value("duration", int64_t{0});

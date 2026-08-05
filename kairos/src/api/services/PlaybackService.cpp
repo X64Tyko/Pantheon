@@ -78,6 +78,109 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 
 		try
 		{
+			// Multi-part movies (GitHub #3): resolve to one part's file
+			// directly, via ?part=N — Hephaestus/Hades always pass an explicit
+			// part once GET /api/movies/:id/resolve-play-target has said which
+			// one to start in; this defaults to part 1 only as a safety
+			// fallback. Kept as an early, separate branch (with its own
+			// `return`) rather than folded into the COALESCE query below,
+			// since that query's column layout is shared with the episode
+			// path and movie_part has no equivalent there.
+			if (content_type == "movie")
+			{
+				SQLite::Statement mq(db_.get(), "SELECT is_multi_part, duration_ms FROM movie WHERE movie_id = ?");
+				mq.bind(1, id);
+				if (mq.executeStep() && mq.getColumn(0).getInt() != 0)
+				{
+					const int64_t movie_total_duration_ms = mq.getColumn(1).getInt64();
+					int part_num                          = 1;
+					if (req.has_param("part"))
+					{
+						try { part_num = std::max(1, std::stoi(req.get_param_value("part"))); }
+						catch (...)
+						{
+						}
+					}
+
+					struct PartRow
+					{
+						std::string file_path;
+						int64_t duration_ms;
+					};
+					std::vector<PartRow> all_parts;
+					SQLite::Statement pq(db_.get(), "SELECT file_path, duration_ms FROM movie_part WHERE movie_id = ? ORDER BY part_num");
+					pq.bind(1, id);
+					while (pq.executeStep()) all_parts.push_back({pq.getColumn(0).getString(), pq.getColumn(1).getInt64()});
+
+					if (part_num < 1 || part_num > static_cast<int>(all_parts.size()))
+					{
+						route::err(res, 404, "part not found");
+						return;
+					}
+					const auto& part   = all_parts[static_cast<size_t>(part_num - 1)];
+					std::string mapped = conf_.applyPathMap(part.file_path);
+					if (!std::filesystem::exists(mapped))
+					{
+						std::cerr << "[playback] file missing on disk for movie " << id
+							<< " part " << part_num << ": " << mapped << "\n";
+						route::err(res, 404, "media file not found on disk");
+						return;
+					}
+
+					std::string title;
+					{
+						SQLite::Statement tq(db_.get(), "SELECT title FROM movie WHERE movie_id = ?");
+						tq.bind(1, id);
+						if (tq.executeStep()) title = tq.getColumn(0).getString();
+					}
+
+					json external_subtitles = json::array();
+					for (const auto& t : SubtitleTrackRepository(db_).get("movie", id))
+					{
+						external_subtitles.push_back({
+							{"file_path", conf_.applyPathMap(t.file_path)},
+							{"language", t.language},
+							{"forced", t.forced},
+							{"sdh", t.sdh},
+							{"title", t.title},
+						});
+					}
+
+					std::string preferred_audio_lang, preferred_subtitle_lang;
+					if (auto user = currentUser())
+					{
+						if (auto pref = MovieTrackPreferenceRepository(db_).get(user->user_id, id))
+						{
+							preferred_audio_lang    = pref->audio_lang;
+							preferred_subtitle_lang = pref->subtitle_lang;
+						}
+						if (preferred_audio_lang.empty()) preferred_audio_lang = user->default_audio_lang;
+						if (preferred_subtitle_lang.empty()) preferred_subtitle_lang = user->default_subtitle_lang;
+					}
+
+					// No per-part keyframes_ms cache (schema only has it on movie,
+					// not movie_part) — Hephaestus falls back to its own ffprobe
+					// keyframe scan for each part. Only affects direct-stream
+					// segment-boundary selection, never correctness.
+					route::ok(res, json{
+								  {"file_path", mapped},
+								  {"duration_ms", part.duration_ms},
+								  {"title", title},
+								  {"external_subtitles", external_subtitles},
+								  {"preferred_audio_lang", preferred_audio_lang},
+								  {"preferred_subtitle_lang", preferred_subtitle_lang},
+								  {"keyframes_ms", json::array()},
+								  {"keyframes_size", 0},
+								  {"keyframes_mtime", 0},
+								  {"is_multi_part", true},
+								  {"part_num", part_num},
+								  {"total_parts", static_cast<int>(all_parts.size())},
+								  {"movie_duration_ms", movie_total_duration_ms},
+							  }.dump());
+					return;
+				}
+			}
+
 			// A linked special (episode.linked_movie_id set — see ScraperManager's
 			// specials linking) has no file of its own; its file_path/duration_ms
 			// must live-resolve through the movie it's linked to, never a stale
@@ -200,6 +303,7 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 						  {"keyframes_ms", keyframes_ms},
 						  {"keyframes_size", q.getColumn(6).getInt64()},
 						  {"keyframes_mtime", q.getColumn(7).getInt64()},
+						  {"is_multi_part", false},
 					  }.dump());
 		}
 		catch (const std::exception& e)
@@ -614,6 +718,39 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			int64_t duration_ms = b.value("duration_ms", int64_t{0});
 			if (position_ms < 0) position_ms = 0;
 
+			// Multi-part movies (GitHub #3): the client reports position/
+			// duration scoped to the CURRENT part it's playing (part_num
+			// present) — translate to the summed-across-parts position/
+			// duration watch_progress actually stores, so resume/resolve-
+			// play-target above can walk it back into a part+offset later.
+			// Looked up server-side rather than trusted from the client, to
+			// avoid desync if parts changed since the client last fetched them.
+			if (content_type == "movie" && b.contains("part_num"))
+			{
+				const int part_num = b.at("part_num").get<int>();
+				SQLite::Statement pq(db_.get(), "SELECT part_num, duration_ms FROM movie_part WHERE movie_id = ? ORDER BY part_num");
+				pq.bind(1, content_id);
+				int64_t summed_position = 0, summed_total = 0;
+				bool found              = false;
+				while (pq.executeStep())
+				{
+					const int this_part         = pq.getColumn(0).getInt();
+					const int64_t this_duration = pq.getColumn(1).getInt64();
+					if (this_part < part_num) summed_position += this_duration;
+					else if (this_part == part_num)
+					{
+						summed_position += position_ms;
+						found           = true;
+					}
+					summed_total += this_duration;
+				}
+				if (found)
+				{
+					position_ms = summed_position;
+					duration_ms = summed_total;
+				}
+			}
+
 			bool completed = b.value("completed", false) ||
 				(duration_ms > 0 && position_ms >= static_cast<int64_t>(duration_ms * 0.95));
 			if (completed && duration_ms > 0) position_ms = duration_ms;
@@ -700,6 +837,53 @@ void PlaybackService::registerRoutes(httplib::Server& svr)
 			auto states         = WatchProgressRepository(db_).getStates(user->user_id, {{"movie", movie_id}});
 			auto it             = states.find(watchStateKey("movie", movie_id));
 			int64_t position_ms = (it != states.end() && !it->second.completed) ? it->second.position_ms : int64_t{0};
+
+			// Multi-part movies (GitHub #3): watch_progress.position_ms is
+			// stored against the SUMMED duration across parts (see the PUT
+			// handler below) — translate it into which part to resume in plus
+			// the offset within that part.
+			SQLite::Statement mq(db_.get(), "SELECT is_multi_part FROM movie WHERE movie_id = ?");
+			mq.bind(1, movie_id);
+			if (mq.executeStep() && mq.getColumn(0).getInt() != 0)
+			{
+				SQLite::Statement pq(db_.get(), "SELECT part_num, duration_ms FROM movie_part WHERE movie_id = ? ORDER BY part_num");
+				pq.bind(1, movie_id);
+				int part_num      = 1;
+				int64_t offset_ms = 0;
+				int total_parts   = 0;
+				int64_t remaining = position_ms;
+				bool placed       = false;
+				while (pq.executeStep())
+				{
+					++total_parts;
+					const int this_part         = pq.getColumn(0).getInt();
+					const int64_t this_duration = pq.getColumn(1).getInt64();
+					if (!placed)
+					{
+						if (this_duration <= 0 || remaining < this_duration)
+						{
+							part_num  = this_part;
+							offset_ms = std::max<int64_t>(0, remaining);
+							placed    = true;
+						}
+						else
+						{
+							remaining -= this_duration;
+						}
+					}
+				}
+				if (!placed)
+				{
+					part_num  = total_parts > 0 ? total_parts : 1;
+					offset_ms = 0;
+				}
+
+				route::ok(res, json{
+							  {"kind", "movie"}, {"id", movie_id}, {"position_ms", offset_ms},
+							  {"part_num", part_num}, {"total_parts", total_parts},
+						  }.dump());
+				return;
+			}
 
 			route::ok(res, json{
 						  {"kind", "movie"}, {"id", movie_id}, {"position_ms", position_ms},

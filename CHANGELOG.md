@@ -8,6 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Multi-part movie detection and scheduling** (Kairos): a movie split across several video files (`CD1`/`CD2`,
+  `Part 1`/`Part 2`, `Disc 1`/`Disc 2`, `pt.1`/`pt.2` naming) is now grouped into one logical movie row instead of
+  syncing as separate/duplicate entries. New `movie_part` table + `movie.is_multi_part` flag; LocalSource groups
+  sibling files by filename marker, PlexSource walks Plex's own `Media.Part[]` array (previously discarded past
+  index 0), and JellyfinBaseSource (Emby too) clusters sibling library items the same way LocalSource does.
+  `movie.duration_ms` is kept as the sum of part durations — including a new local-file per-part ffprobe pass — so
+  channel scheduling (`RuleEngine`) treats a multi-part movie as one correctly-durationed block with no scheduler
+  changes needed.
+- **Multi-part movie playback continuity** (Kairos + Hephaestus + Hades): a multi-part movie now plays as one
+  continuous session instead of stopping after part 1. Each part still plays through the existing single-file
+  `VodSession`/HLS pipeline unchanged (no ffmpeg concat-demuxer); Kairos's `GET /api/playback/movie/:id` gained an
+  optional `?part=N`, and `GET /api/movies/:id/resolve-play-target`/`PUT /api/watch-progress/movie/:id` now translate
+  between a per-part position and the summed-across-parts position `watch_progress` stores, so resume always lands
+  in the right part at the right offset. The Hades player advances to the next part automatically on HLS
+  end-of-stream (no "Up Next" interstitial, no reload/back-navigation) and only marks the movie fully watched once
+  the *last* part finishes. Also fixes a pre-existing bug where Hades' movie playback never called the resume
+  endpoint at all (hardcoded `positionMs: 0` for every movie, single-file or not).
+- **Manual multi-part movie link/unlink** (Kairos + Hades): admin safety valve for multi-part movies the sync-time
+  heuristic missed (or got wrong) — `GET /api/movies/grouping-candidates` surfaces heuristic-scored candidates
+  among standalone movies, `POST /api/movies/:id/parts/link` groups them (reusing the existing movie-merge FK
+  cleanup), `POST /api/movies/:id/parts/unlink` splits a part back out into its own movie. A manually-linked movie
+  is locked (`movie.locked=1`) and its `movie_part` rows marked `origin='manual'`, so a later sync of the target's
+  own source can never silently undo the admin's grouping — sync only ever touches `origin='auto'` rows and skips
+  locked movies entirely. New "MOVIE PARTS" admin panel section (Hades library detail) and a "Link as multi-part"
+  action alongside the existing duplicate-merge flow in the Review queue.
 - **"About Pantheon" page** (Hades `/about`, `docs/About.html`): contribution model, financial support (placeholder
   for now), and credits. Both render the same `docs/About.md`, fetched live from GitHub and cached server-side
   (`GET /api/about`, public) so the two can never drift apart.

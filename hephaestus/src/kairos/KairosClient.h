@@ -36,9 +36,13 @@ public:
 	// contentType must be "movie" or "episode". bearerToken, when non-empty,
 	// is forwarded as Authorization so Kairos can resolve currentUser() and
 	// include this user's sticky per-show track preference in the response.
+	// partNum > 0 requests a specific part of a multi-part movie (GitHub #3)
+	// directly, forwarded as Kairos's ?part= query param; 0 lets Kairos pick
+	// (defaults to part 1). Ignored entirely for non-multi-part items.
 	std::optional<PlaybackInfo> getPlaybackInfo(const std::string& contentType,
 												const std::string& contentId,
-												const std::string& bearerToken = "");
+												const std::string& bearerToken = "",
+												int partNum                    = 0);
 
 	// Fire-and-forget (like markPlayed): persists a fresh keyframe probe back
 	// into Kairos so the next direct-stream session on this file skips its

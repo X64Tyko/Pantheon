@@ -166,6 +166,24 @@ protected:
 		s.bind(6, updated_at);
 		s.exec();
 	}
+
+	// Multi-part movies (GitHub #3) — marks movie_id multi-part and inserts
+	// one movie_part row. file_path defaults into media_dir so the route's
+	// exists-on-disk check passes, same convention as insertMovie/insertEpisode.
+	void insertMoviePart(const std::string& movie_id, int part_num, const std::string& file_name, int64_t duration_ms)
+	{
+		SQLite::Statement u(db.get(), "UPDATE movie SET is_multi_part = 1 WHERE movie_id = ?");
+		u.bind(1, movie_id);
+		u.exec();
+		std::ofstream(media_dir / file_name).put('x');
+		SQLite::Statement s(db.get(),
+							"INSERT INTO movie_part (movie_id, part_num, file_path, duration_ms) VALUES (?,?,?,?)");
+		s.bind(1, movie_id);
+		s.bind(2, part_num);
+		s.bind(3, "/media/" + file_name);
+		s.bind(4, duration_ms);
+		s.exec();
+	}
 };
 
 // ---------------------------------------------------------------------------
@@ -233,6 +251,62 @@ TEST_F(PlaybackKeyframesAndResolveRoutesTest, GetPlaybackLinkedSpecialResolvesKe
 	EXPECT_EQ(body["keyframes_ms"], (json{1, 2, 3}));
 	EXPECT_EQ(body["keyframes_size"], 55);
 	EXPECT_EQ(body["keyframes_mtime"], 66);
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/playback/movie/:id — multi-part movies (GitHub #3)
+// ---------------------------------------------------------------------------
+
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, GetPlaybackMultiPartDefaultsToPartOne)
+{
+	insertMovie("m1", "Multi Part Movie", "/media/x.mkv", 999); // pre-split file_path/duration, unused once multi-part
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+
+	auto r = cli->Get("/api/playback/movie/m1");
+	ASSERT_TRUE(r);
+	EXPECT_EQ(r->status, 200);
+	json body = json::parse(r->body);
+	EXPECT_EQ(body["is_multi_part"], true);
+	EXPECT_EQ(body["part_num"], 1);
+	EXPECT_EQ(body["total_parts"], 2);
+	EXPECT_EQ(body["duration_ms"], 3000);
+	EXPECT_TRUE(std::string(body["file_path"]).find("part1.mkv") != std::string::npos);
+}
+
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, GetPlaybackMultiPartHonorsPartQueryParam)
+{
+	insertMovie("m1", "Multi Part Movie");
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+
+	auto r = cli->Get("/api/playback/movie/m1?part=2");
+	ASSERT_TRUE(r);
+	EXPECT_EQ(r->status, 200);
+	json body = json::parse(r->body);
+	EXPECT_EQ(body["part_num"], 2);
+	EXPECT_EQ(body["duration_ms"], 3200);
+	EXPECT_TRUE(std::string(body["file_path"]).find("part2.mkv") != std::string::npos);
+}
+
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, GetPlaybackMultiPartOutOfRangePart404s)
+{
+	insertMovie("m1", "Multi Part Movie");
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+
+	auto r = cli->Get("/api/playback/movie/m1?part=99");
+	ASSERT_TRUE(r);
+	EXPECT_EQ(r->status, 404);
+}
+
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, GetPlaybackSingleFileMovieReportsNotMultiPart)
+{
+	insertMovie("m1", "Movie One");
+	auto r = cli->Get("/api/playback/movie/m1");
+	ASSERT_TRUE(r);
+	json body = json::parse(r->body);
+	EXPECT_EQ(body["is_multi_part"], false);
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +505,110 @@ TEST_F(PlaybackKeyframesAndResolveRoutesTest, MovieResolvePlayTargetOnUnknownIdS
 	json body = json::parse(r->body);
 	EXPECT_EQ(body["position_ms"], 0);
 	EXPECT_EQ(body["id"], "does-not-exist");
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/movies/:id/resolve-play-target — multi-part movies (GitHub #3)
+// ---------------------------------------------------------------------------
+
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, MovieResolvePlayTargetMultiPartNoProgressStartsAtPartOne)
+{
+	insertMovie("m1", "Multi Part Movie");
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+
+	auto r = cli->Get("/api/movies/m1/resolve-play-target", viewerHeaders());
+	ASSERT_TRUE(r);
+	json body = json::parse(r->body);
+	EXPECT_EQ(body["part_num"], 1);
+	EXPECT_EQ(body["total_parts"], 2);
+	EXPECT_EQ(body["position_ms"], 0);
+}
+
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, MovieResolvePlayTargetMultiPartResumesInSecondPart)
+{
+	insertMovie("m1", "Multi Part Movie");
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+	// Summed position 3500 = all of part 1 (3000) + 500 into part 2.
+	insertWatchProgress(viewer_id, "movie", "m1", 3500, 6200);
+
+	auto r = cli->Get("/api/movies/m1/resolve-play-target", viewerHeaders());
+	ASSERT_TRUE(r);
+	json body = json::parse(r->body);
+	EXPECT_EQ(body["part_num"], 2);
+	EXPECT_EQ(body["position_ms"], 500);
+}
+
+// A summed position far beyond the stored duration already reads as
+// "completed" by the existing (pre-multi-part) completed check above this
+// route's multi-part branch, which resets position_ms to 0 before the
+// part-walk ever runs -- same "finished movie restarts, doesn't resume at
+// the very end" precedent as MovieResolvePlayTargetCompletedResolvesToZero,
+// just landing on part 1 instead of a bare position.
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, MovieResolvePlayTargetMultiPartStalePastEndPositionRestartsAtPartOne)
+{
+	insertMovie("m1", "Multi Part Movie");
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+	insertWatchProgress(viewer_id, "movie", "m1", 999999, 6200);
+
+	auto r = cli->Get("/api/movies/m1/resolve-play-target", viewerHeaders());
+	ASSERT_TRUE(r);
+	json body = json::parse(r->body);
+	EXPECT_EQ(body["part_num"], 1);
+	EXPECT_EQ(body["position_ms"], 0);
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/watch-progress/movie/:id — multi-part movies (GitHub #3)
+// ---------------------------------------------------------------------------
+
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, PutWatchProgressMultiPartTranslatesToSummedPosition)
+{
+	insertMovie("m1", "Multi Part Movie");
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+
+	// 500ms into part 2 -> summed position 3000 (all of part 1) + 500 = 3500.
+	auto r = cli->Put("/api/watch-progress/movie/m1", viewerHeaders(),
+					  R"({"position_ms":500,"duration_ms":3200,"part_num":2})", "application/json");
+	ASSERT_TRUE(r);
+	EXPECT_EQ(r->status, 200);
+
+	SQLite::Statement q(db.get(), "SELECT position_ms, duration_ms FROM watch_progress WHERE user_id=? AND content_type='movie' AND content_id='m1'");
+	q.bind(1, viewer_id);
+	ASSERT_TRUE(q.executeStep());
+	EXPECT_EQ(q.getColumn(0).getInt64(), 3500);
+	EXPECT_EQ(q.getColumn(1).getInt64(), 6200);
+}
+
+// Finishing part 1 alone (95%+ of ITS duration) must not mark the whole
+// multi-part movie completed -- only reaching 95% of the summed total should.
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, PutWatchProgressMultiPartPartOneNearEndIsNotMovieCompleted)
+{
+	insertMovie("m1", "Multi Part Movie");
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+
+	auto r = cli->Put("/api/watch-progress/movie/m1", viewerHeaders(),
+					  R"({"position_ms":2999,"duration_ms":3000,"part_num":1})", "application/json");
+	ASSERT_TRUE(r);
+	json body = json::parse(r->body);
+	EXPECT_EQ(body["watched"], false);
+}
+
+TEST_F(PlaybackKeyframesAndResolveRoutesTest, PutWatchProgressMultiPartLastPartNearEndIsMovieCompleted)
+{
+	insertMovie("m1", "Multi Part Movie");
+	insertMoviePart("m1", 1, "part1.mkv", 3000);
+	insertMoviePart("m1", 2, "part2.mkv", 3200);
+
+	auto r = cli->Put("/api/watch-progress/movie/m1", viewerHeaders(),
+					  R"({"position_ms":3190,"duration_ms":3200,"part_num":2})", "application/json");
+	ASSERT_TRUE(r);
+	json body = json::parse(r->body);
+	EXPECT_EQ(body["watched"], true);
 }
 
 // ---------------------------------------------------------------------------

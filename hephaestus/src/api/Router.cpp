@@ -526,7 +526,11 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
         }
 
         auto token = extractBearerToken(req);
-        auto info = kairos.getPlaybackInfo(content_type, content_id, token);
+        // Multi-part movies (GitHub #3): Hades passes part_num once it's
+        // resolved which part to start in (GET /api/movies/:id/resolve-
+        // play-target) — forwarded straight through to Kairos's ?part=.
+        int part_num = body.value("part_num", 0);
+        auto info = kairos.getPlaybackInfo(content_type, content_id, token, part_num);
         if (!info || info->file_path.empty()) {
             res.status = 404; res.set_content(json{{"error","content not found"}}.dump(), "application/json"); return;
         }
@@ -613,7 +617,13 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
             // start their own selection state in sync with it.
             {"audio_track",     session->audioTrack()},
             {"subtitle_track",  session->subtitleTrack()},
+            {"is_multi_part",   info->is_multi_part},
         };
+        if (info->is_multi_part) {
+            out["part_num"]         = info->part_num;
+            out["total_parts"]      = info->total_parts;
+            out["movie_duration_ms"] = info->movie_duration_ms;
+        }
         if (session->hasSubtitleOutput())
             out["subtitle_url"] = "/stream/vod/" + session->sessionId() + "/subs.vtt";
         res.set_content(out.dump(), "application/json");

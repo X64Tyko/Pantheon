@@ -67,6 +67,19 @@ export interface PlaybackSession {
   // since the on-demand /subtitles/{n} pipe route landed. Text/extractable
   // tracks only — burn-in never reaches this (see reload's own comment).
   selectSubtitleTrack: (index: number) => void
+  // Multi-part movies (GitHub #3) — isMultiPart false/partNum 0 for the
+  // common single-file case. movieDurationMs is the summed total across all
+  // parts (durationMs above stays THIS part's own duration, same meaning it
+  // always had).
+  isMultiPart:     boolean
+  partNum:         number
+  totalParts:      number
+  movieDurationMs: number
+  // Starts a fresh session for partNum+1 of the same movie, at position 0 —
+  // the "no Up Next interstitial" continuation PlayerPage's handleVideoEnded
+  // calls on HLS end-of-stream for a non-final part. A no-op if already on
+  // the last part.
+  advanceToNextPart: () => void
 }
 
 // Position pings land on the *previous* session id, since stop() races with
@@ -81,6 +94,10 @@ export function usePlaybackSession(
   // convention.
   initialAudioTrack = -1,
   initialSubtitleTrack = -1,
+  // Multi-part movies (GitHub #3) — seeds the very first /stream/vod/start
+  // call's part_num, same "mount-time seed only" convention as
+  // initialPositionMs/initialAudioTrack/initialSubtitleTrack.
+  initialPartNum = 0,
 ): PlaybackSession {
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState<string | null>(null)
@@ -92,6 +109,10 @@ export function usePlaybackSession(
   const [audioTrack,    setAudioTrack]    = useState(-1)
   const [subtitleTrack, setSubtitleTrack] = useState(-1)
   const [startPositionMs, setStartPositionMs] = useState(initialPositionMs)
+  const [isMultiPart,     setIsMultiPart]     = useState(false)
+  const [partNum,         setPartNum]         = useState(initialPartNum)
+  const [totalParts,      setTotalParts]      = useState(0)
+  const [movieDurationMs, setMovieDurationMs] = useState(0)
 
   const sessionIdRef = useRef<string | null>(null)
     // Capability-bucketed channel viewer identity — separate from sessionIdRef
@@ -102,7 +123,7 @@ export function usePlaybackSession(
 
   const isLive = target.kind === 'channel'
 
-  const load = useCallback((positionMs: number, aTrack: number, sTrack: number) => {
+  const load = useCallback((positionMs: number, aTrack: number, sTrack: number, partNumArg = 0) => {
     const gen = ++genRef.current
     const prevSession = sessionIdRef.current
     sessionIdRef.current = null
@@ -169,6 +190,7 @@ export function usePlaybackSession(
       // would wrongly collapse a real external-track selection to none.
       subtitle_track:  sTrack !== -1 ? sTrack : undefined,
       position_ms:     positionMs,
+      part_num:        partNumArg > 0 ? partNumArg : undefined,
     }).then(res => {
       if (genRef.current !== gen) { stopVodPlayback(res.session_id); return } // superseded while in flight
       sessionIdRef.current = res.session_id
@@ -184,6 +206,10 @@ export function usePlaybackSession(
       // which rendition is already DEFAULT="YES" (see VideoPlayer.tsx).
       setAudioTrack(res.audio_track)
       setSubtitleTrack(res.subtitle_track)
+      setIsMultiPart(res.is_multi_part ?? false)
+      setPartNum(res.part_num ?? 0)
+      setTotalParts(res.total_parts ?? 0)
+      setMovieDurationMs(res.movie_duration_ms ?? 0)
       setLoading(false)
     }).catch(err => {
       if (genRef.current !== gen) return
@@ -194,7 +220,7 @@ export function usePlaybackSession(
   }, [target.kind, target.id, isLive])
 
   useEffect(() => {
-    load(initialPositionMs, initialAudioTrack, initialSubtitleTrack)
+    load(initialPositionMs, initialAudioTrack, initialSubtitleTrack, initialPartNum)
     return () => {
       genRef.current++
       if (sessionIdRef.current) stopVodPlayback(sessionIdRef.current)
@@ -210,9 +236,14 @@ export function usePlaybackSession(
     // audioTrack defaults to the current one as a request hint when the
     // caller doesn't pass it — so a burn-in-driven restart resolves the SAME
     // audio track rather than falling back to whatever the fresh session
-    // would auto-pick on its own.
-    load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, opts.subtitleTrack ?? subtitleTrack)
-  }, [load, audioTrack, subtitleTrack])
+    // would auto-pick on its own. Stays on the same part.
+    load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, opts.subtitleTrack ?? subtitleTrack, partNum)
+  }, [load, audioTrack, subtitleTrack, partNum])
+
+  const advanceToNextPart: PlaybackSession['advanceToNextPart'] = useCallback(() => {
+    if (!isMultiPart || partNum >= totalParts) return
+    load(0, audioTrack, subtitleTrack, partNum + 1)
+  }, [load, isMultiPart, partNum, totalParts, audioTrack, subtitleTrack])
 
   const selectAudioTrack: PlaybackSession['selectAudioTrack'] = useCallback(index => {
     console.log('[player] selectAudioTrack called with index=', index)
@@ -227,5 +258,6 @@ export function usePlaybackSession(
   return {
       loading, error, manifestUrl, isLive, directStream,
     title, durationMs, tracks, audioTrack, subtitleTrack, reload, selectAudioTrack, selectSubtitleTrack, startPositionMs,
+    isMultiPart, partNum, totalParts, movieDurationMs, advanceToNextPart,
   }
 }
