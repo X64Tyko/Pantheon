@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Multilingual alternate titles + display-language preference** (Kairos + Hades): searching now matches an item by
+  any known-language title, not just the one currently displayed — typing "El Perro y El Gato" finds "The Dog and
+  the Cat" if that Spanish title was ever scraped or manually entered. `item_alternate_title` gained `language`/
+  `overview` columns, and TMDB, TVDB, AniDB, Wikidata, Trakt, and AniList all now feed every localized title (and,
+  where the source has it, overview) they see into it, instead of discarding all but one pick (TVMaze skipped — its
+  `akas` endpoint is country-tagged regional aliases, not real language translations). Bare-word fuzzy search and
+  the `title:` filter field both now match against the canonical title, `original_title`, and every alternate title.
+  A per-library **and** per-item "Display Language" preference (new field on the item edit form, next to Original
+  Title) now determines which language's title/overview a scraper writes as canonical for that item, with a new
+  alternate-titles list editor (language/title/overview, add/remove) alongside the existing external-IDs editor.
+  Also fixes a pre-existing bug where `original_title` was silently dropped on every scraper refresh after the
+  initial library sync (only sync itself ever wrote it).
 - **"Normalize to H.264/AAC" library job** (Kairos + Hades): new manual-trigger job that re-encodes any episode/movie
   file that isn't H.264/AAC, or is flagged variable-frame-rate (same heuristic as Hephaestus's own `isLikelyVfr`), so
   more of the library qualifies for the cheap direct-stream channel bucket instead of a live software transcode.

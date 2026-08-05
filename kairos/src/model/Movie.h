@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "TitleTranslation.h"
 
 // One physical file belonging to a multi-part movie (see Movie::parts).
 struct MoviePart
@@ -73,4 +74,9 @@ struct Movie
 	// See Show.h's identical field — same <pantheon_confirmed> NFO round-trip,
 	// read from movie.nfo/"<video>.nfo" instead of tvshow.nfo.
 	bool nfo_confirmed = false;
+
+	// See Show.h's identical field — transient fetch output, never written to
+	// the `movie` table directly; ScraperManager upserts these into
+	// item_alternate_title.
+	std::vector<TitleTranslation> translations;
 };

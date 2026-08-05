@@ -2747,6 +2747,25 @@ namespace
 )SQL"
 		}
 
+		// ── v111: item_alternate_title gains language + overview — was a bare
+		//         title-only list used only to help scraper matching. Scrapers
+		//         now upsert every localized title/overview they see (TMDB,
+		//         TVDB, Trakt translations; Wikidata labels/descriptions; AniDB
+		//         xml:lang titles; AniList native/synonyms) so search can match
+		//         an item by any known language, and a display-language
+		//         preference can resolve which one to show. Existing
+		//         manually-entered rows keep language='' (untagged).
+		,
+		{
+			111, R"SQL(
+    ALTER TABLE item_alternate_title ADD COLUMN language TEXT NOT NULL DEFAULT '';
+    ALTER TABLE item_alternate_title ADD COLUMN overview TEXT NOT NULL DEFAULT '';
+
+    CREATE INDEX IF NOT EXISTS idx_item_alt_title_lang
+        ON item_alternate_title(item_type, kairos_id, language);
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

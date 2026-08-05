@@ -33,52 +33,61 @@
 //
 // No per-episode data: Wikidata doesn't reliably carry episode-level items
 // for most shows, so fetchEpisodes() always returns {}.
-class WikidataScraper final : public IMetadataScraper {
+class WikidataScraper final : public IMetadataScraper
+{
 public:
-    WikidataScraper();
+	WikidataScraper();
 
-    std::string sourceName() const override { return "wikidata"; }
+	std::string sourceName() const override { return "wikidata"; }
 
-    std::vector<Show>    searchShows  (const std::string& title, int year = 0)                        override;
-    std::optional<Show>  fetchShow    (const std::string& external_id, const std::string& lang = "") override;
-    std::vector<Episode> fetchEpisodes(const std::string& external_id, const std::string& lang = "") override;
+	std::vector<Show> searchShows(const std::string& title, int year = 0) override;
+	std::optional<Show> fetchShow(const std::string& external_id, const std::string& lang = "") override;
+	std::vector<Episode> fetchEpisodes(const std::string& external_id, const std::string& lang = "") override;
 
-    std::vector<Movie>   searchMovies (const std::string& title, int year = 0)                        override;
-    std::optional<Movie> fetchMovie   (const std::string& external_id, const std::string& lang = "") override;
+	std::vector<Movie> searchMovies(const std::string& title, int year = 0) override;
+	std::optional<Movie> fetchMovie(const std::string& external_id, const std::string& lang = "") override;
 
 private:
-    struct Candidate { std::string qid; nlohmann::json entity; };
+	struct Candidate
+	{
+		std::string qid;
+		nlohmann::json entity;
+	};
 
-    // Fuzzy-searches for `title`, then filters down to results whose P31
-    // ("instance of") claim matches one of `allowed_p31` — wbsearchentities
-    // has no type filter of its own; a plain "Alien" search also returns
-    // video games, a fictional species, and unrelated senses of the word,
-    // so this is what actually narrows it down to film/show entities.
-    std::vector<Candidate> searchAndFilter(const std::string& title, const std::set<std::string>& allowed_p31);
+	// Fuzzy-searches for `title`, then filters down to results whose P31
+	// ("instance of") claim matches one of `allowed_p31` — wbsearchentities
+	// has no type filter of its own; a plain "Alien" search also returns
+	// video games, a fictional species, and unrelated senses of the word,
+	// so this is what actually narrows it down to film/show entities.
+	std::vector<Candidate> searchAndFilter(const std::string& title, const std::set<std::string>& allowed_p31);
 
-    // Batch-resolves Q-IDs to English labels — genre/network/studio/
-    // country/rating claim *values* are themselves Q-ID references, not
-    // plain strings. Chunked at 50 ids/call (Wikidata's per-request max).
-    std::unordered_map<std::string, std::string> resolveLabels(const std::set<std::string>& qids);
+	// Batch-resolves Q-IDs to English labels — genre/network/studio/
+	// country/rating claim *values* are themselves Q-ID references, not
+	// plain strings. Chunked at 50 ids/call (Wikidata's per-request max).
+	std::unordered_map<std::string, std::string> resolveLabels(const std::set<std::string>& qids);
 
-    // Best-effort plain-text extract (+ thumbnail URL) from the English
-    // Wikipedia article named by the entity's enwiki sitelink. Empty
-    // extract/thumbnail on any failure or absent sitelink.
-    std::string wikipediaOverview(const std::string& enwiki_title, std::string* thumbnail_out);
+	// Best-effort plain-text extract (+ thumbnail URL) from the English
+	// Wikipedia article named by the entity's enwiki sitelink. Empty
+	// extract/thumbnail on any failure or absent sitelink.
+	std::string wikipediaOverview(const std::string& enwiki_title, std::string* thumbnail_out);
 
-    nlohmann::json fetchEntity(const std::string& qid);
+	nlohmann::json fetchEntity(const std::string& qid);
 
-    Show  buildShow (const nlohmann::json& entity, bool full_detail);
-    Movie buildMovie(const nlohmann::json& entity, bool full_detail);
+	// `lang` picks which label/description is applied as the canonical
+	// title/overview (falls back to "en" when absent/untranslated); every
+	// other language Wikidata has is still captured into
+	// Show::translations/Movie::translations when full_detail is set.
+	Show buildShow(const nlohmann::json& entity, bool full_detail, const std::string& lang = "en");
+	Movie buildMovie(const nlohmann::json& entity, bool full_detail, const std::string& lang = "en");
 
-    // Wikidata's action API applies a short-window burst rate limit that a
-    // normal library-matching pass trips easily (every title does 2+ calls
-    // here) — live-verified: the 3rd lookup in a row within a couple of
-    // seconds got a 429. Retries on 429 with a short backoff (honoring
-    // Retry-After if present) before giving up, same defensive posture
-    // AniDB's scraper already takes for its own documented rate limit.
-    httplib::Result getWithRetry(httplib::Client& client, const std::string& path);
+	// Wikidata's action API applies a short-window burst rate limit that a
+	// normal library-matching pass trips easily (every title does 2+ calls
+	// here) — live-verified: the 3rd lookup in a row within a couple of
+	// seconds got a 429. Retries on 429 with a short backoff (honoring
+	// Retry-After if present) before giving up, same defensive posture
+	// AniDB's scraper already takes for its own documented rate limit.
+	httplib::Result getWithRetry(httplib::Client& client, const std::string& path);
 
-    httplib::Client wikidata_client_;
-    httplib::Client wikipedia_client_;
+	httplib::Client wikidata_client_;
+	httplib::Client wikipedia_client_;
 };

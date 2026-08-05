@@ -562,7 +562,13 @@ void ScraperService::registerRoutes(httplib::Server& svr)
 			j_ids.push_back({{"source", id.source}, {"external_id", id.external_id}, {"priority", id.priority}});
 		}
 
-		ok(res, json{{"external_ids", j_ids}, {"alternate_titles", alts}});
+		json j_alts = json::array();
+		for (const auto& alt : alts)
+		{
+			j_alts.push_back({{"language", alt.language}, {"title", alt.title}, {"overview", alt.overview}});
+		}
+
+		ok(res, json{{"external_ids", j_ids}, {"alternate_titles", j_alts}});
 	});
 
 	// POST /api/scrapers/metadata/:item_type/:kairos_id/refresh
@@ -610,7 +616,12 @@ void ScraperService::registerRoutes(httplib::Server& svr)
 			}
 			if (body.contains("alternate_titles"))
 			{
-				scraper_.setAlternateTitles(kid, type, body["alternate_titles"].get<std::vector<std::string>>());
+				std::vector<ScraperManager::AlternateTitle> alts;
+				for (const auto& item : body["alternate_titles"])
+				{
+					alts.push_back({item.value("language", ""), item.value("title", ""), item.value("overview", "")});
+				}
+				scraper_.setAlternateTitles(kid, type, alts);
 			}
 			ok(res, json{{"ok", true}});
 		}

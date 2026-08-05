@@ -116,7 +116,8 @@
     <h2>Basics <a class="hash" href="#basics">#</a></h2>
     <p class="group-desc">A query is a sequence of space-separated terms. Each term is either a <code>field:value</code> clause or a bare word.</p>
     <div class="exwrap">
-      <div class="ex"><code>horror</code><span>Bare word — fuzzy free-text match against title, genre, actor, studio, network, and a few other searchable columns.</span></div>
+        <div class="ex"><code>horror</code><span>Bare word — fuzzy free-text match against title (including alternate/localized titles and the original-language title), genre, actor, studio, network, and a few other searchable columns.</span>
+        </div>
       <div class="ex"><code>genre:horror</code><span>A clause — <code>genre</code> exactly matches "Horror".</span></div>
       <div class="ex"><code>genre:horror 2020</code><span>Clauses and bare words freely mix in the same query — genre is Horror <i>and</i> the title/etc. fuzzy-matches "2020".</span></div>
     </div>
@@ -127,7 +128,13 @@
     <p class="group-desc">An unrecognized <code>something:value</code> prefix isn't an error — it just falls back to a plain fuzzy word (typing <code>foo:bar</code> searches for the literal text "foo:bar"). <code>rating</code> is an alias for <code>content_rating</code>.</p>
     <div class="tablewrap"><table>
       <tr><th>Field</th><th>Matches</th><th>Value</th></tr>
-      <tr><td class="field"><code>title</code></td><td>Title text</td><td>text</td></tr>
+        <tr>
+            <td class="field"><code>title</code></td>
+            <td>Title text — matches the displayed title, its original-language title, or any known alternate/localized
+                title (e.g. "El Perro y El Gato" finds "The Dog and the Cat")
+            </td>
+            <td>text</td>
+        </tr>
       <tr><td class="field"><code>genre</code></td><td>Genre tags</td><td>text</td></tr>
       <tr><td class="field"><code>tag</code></td><td>Scraper-derived keywords/themes (TMDB keywords, AniList tags, Wikidata main subject — e.g. "christmas", "time travel")</td><td>text</td></tr>
       <tr><td class="field"><code>year</code></td><td>Release year</td><td>number</td></tr>

@@ -101,6 +101,29 @@ namespace
 		return ts * 0.75 + yb * 0.25;
 	}
 
+	// Upserts one localized title/overview into item_alternate_title — shared by
+	// applyShowMetadata/applyMovieMetadata (translations gathered at fetch time,
+	// see Show::translations/Movie::translations) and the member
+	// ScraperManager::upsertAlternateTitle (external caller / manual-entry path).
+	// Title text is the de-dupe key: ON CONFLICT keeps language/overview fresh
+	// without needing a per-source tracked delete/replace.
+	void upsertTranslation(SQLite::Database& db, const std::string& item_type, const std::string& kairos_id,
+						   const std::string& title, const std::string& language, const std::string& overview)
+	{
+		if (title.empty()) return;
+		SQLite::Statement q(db,
+							"INSERT INTO item_alternate_title (item_type, kairos_id, title, language, overview) "
+							"VALUES (?, ?, ?, ?, ?) "
+							"ON CONFLICT(item_type, kairos_id, title) "
+							"DO UPDATE SET language = excluded.language, overview = excluded.overview");
+		q.bind(1, item_type);
+		q.bind(2, kairos_id);
+		q.bind(3, title);
+		q.bind(4, language);
+		q.bind(5, overview);
+		q.exec();
+	}
+
 	// ── Metadata writeback ───────────────────────────────────────────────────────
 	// Applies a freshly-fetched Show/Movie onto the matching row. Single source of
 	// truth for which columns a match/refresh actually writes — acceptCandidate()
@@ -118,6 +141,7 @@ namespace
 		SQLite::Statement app(db, R"(
         UPDATE show SET
             title                   = CASE WHEN locked THEN title                   ELSE COALESCE(NULLIF(?, ''), title)                   END,
+            original_title          = CASE WHEN locked THEN original_title          ELSE COALESCE(NULLIF(?, ''), original_title)          END,
             tmdb_id                 = CASE WHEN locked THEN tmdb_id                 ELSE COALESCE(NULLIF(?, ''), tmdb_id)                 END,
             tvdb_id                 = CASE WHEN locked THEN tvdb_id                 ELSE COALESCE(NULLIF(?, ''), tvdb_id)                 END,
             imdb_id                 = CASE WHEN locked THEN imdb_id                 ELSE COALESCE(NULLIF(?, ''), imdb_id)                 END,
@@ -137,6 +161,7 @@ namespace
     )");
 		int i = 1;
 		app.bind(i++, s.title);
+		app.bind(i++, s.original_title);
 		app.bind(i++, s.tmdb_id);
 		app.bind(i++, s.tvdb_id);
 		app.bind(i++, s.imdb_id);
@@ -156,6 +181,8 @@ namespace
 		app.bind(i++, s.art);
 		app.bind(i++, kairos_id);
 		app.exec();
+
+		for (const auto& t : s.translations) upsertTranslation(db, "show", kairos_id, t.title, t.language, t.overview);
 	}
 
 	void applyMovieMetadata(SQLite::Database& db, const std::string& kairos_id, const Movie& m)
@@ -163,6 +190,7 @@ namespace
 		SQLite::Statement app(db, R"(
         UPDATE movie SET
             title           = CASE WHEN locked THEN title           ELSE COALESCE(NULLIF(?, ''), title)           END,
+            original_title  = CASE WHEN locked THEN original_title  ELSE COALESCE(NULLIF(?, ''), original_title)  END,
             tmdb_id         = CASE WHEN locked THEN tmdb_id         ELSE COALESCE(NULLIF(?, ''), tmdb_id)         END,
             imdb_id         = CASE WHEN locked THEN imdb_id         ELSE COALESCE(NULLIF(?, ''), imdb_id)         END,
             overview        = CASE WHEN locked THEN overview        ELSE COALESCE(NULLIF(?, ''), overview)        END,
@@ -182,6 +210,7 @@ namespace
     )");
 		int i = 1;
 		app.bind(i++, m.title);
+		app.bind(i++, m.original_title);
 		app.bind(i++, m.tmdb_id);
 		app.bind(i++, m.imdb_id);
 		app.bind(i++, m.overview);
@@ -201,6 +230,8 @@ namespace
 		app.bind(i++, m.art);
 		app.bind(i++, kairos_id);
 		app.exec();
+
+		for (const auto& t : m.translations) upsertTranslation(db, "movie", kairos_id, t.title, t.language, t.overview);
 	}
 
 	std::string candidateKey(const std::string& item_type, const std::string& kairos_id,
@@ -494,21 +525,21 @@ void ScraperManager::setExternalIds(const std::string& kairos_id, const std::str
 	refreshMetadata(kairos_id, item_type);
 }
 
-std::vector<std::string> ScraperManager::getAlternateTitles(const std::string& kairos_id, const std::string& item_type) const
+std::vector<ScraperManager::AlternateTitle> ScraperManager::getAlternateTitles(const std::string& kairos_id, const std::string& item_type) const
 {
-	std::vector<std::string> out;
+	std::vector<AlternateTitle> out;
 	SQLite::Statement q(db_.get(),
-						"SELECT title FROM item_alternate_title WHERE kairos_id = ? AND item_type = ?");
+						"SELECT language, title, overview FROM item_alternate_title WHERE kairos_id = ? AND item_type = ?");
 	q.bind(1, kairos_id);
 	q.bind(2, item_type);
 	while (q.executeStep())
 	{
-		out.push_back(q.getColumn(0).getString());
+		out.push_back({q.getColumn(0).getString(), q.getColumn(1).getString(), q.getColumn(2).getString()});
 	}
 	return out;
 }
 
-void ScraperManager::setAlternateTitles(const std::string& kairos_id, const std::string& item_type, const std::vector<std::string>& titles)
+void ScraperManager::setAlternateTitles(const std::string& kairos_id, const std::string& item_type, const std::vector<AlternateTitle>& titles)
 {
 	SQLite::Transaction txn(db_.get());
 	{
@@ -518,13 +549,15 @@ void ScraperManager::setAlternateTitles(const std::string& kairos_id, const std:
 		d.exec();
 	}
 	SQLite::Statement ins(db_.get(),
-						  "INSERT INTO item_alternate_title (item_type, kairos_id, title) VALUES (?, ?, ?)");
-	for (const auto& title : titles)
+						  "INSERT INTO item_alternate_title (item_type, kairos_id, title, language, overview) VALUES (?, ?, ?, ?, ?)");
+	for (const auto& alt : titles)
 	{
-		if (title.empty()) continue;
+		if (alt.title.empty()) continue;
 		ins.bind(1, item_type);
 		ins.bind(2, kairos_id);
-		ins.bind(3, title);
+		ins.bind(3, alt.title);
+		ins.bind(4, alt.language);
+		ins.bind(5, alt.overview);
 		ins.exec();
 		ins.reset();
 	}
@@ -668,15 +701,10 @@ ScraperManager::DuplicateMergeResult ScraperManager::mergeIfDuplicateExternalId(
 }
 
 void ScraperManager::upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
-										  const std::string& title)
+										  const std::string& title, const std::string& language,
+										  const std::string& overview)
 {
-	if (title.empty()) return;
-	SQLite::Statement q(db_.get(),
-						"INSERT OR IGNORE INTO item_alternate_title (item_type, kairos_id, title) VALUES (?, ?, ?)");
-	q.bind(1, item_type);
-	q.bind(2, kairos_id);
-	q.bind(3, title);
-	q.exec();
+	upsertTranslation(db_.get(), item_type, kairos_id, title, language, overview);
 }
 
 void ScraperManager::buildScrapers()
@@ -1150,7 +1178,7 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
 	std::vector<std::string> query_titles = {search_title};
 	for (const auto& alt : getAlternateTitles(kairos_id, "show"))
 	{
-		if (!alt.empty() && std::find(query_titles.begin(), query_titles.end(), alt) == query_titles.end()) query_titles.push_back(alt);
+		if (!alt.title.empty() && std::find(query_titles.begin(), query_titles.end(), alt.title) == query_titles.end()) query_titles.push_back(alt.title);
 	}
 
 	struct Cand
@@ -1305,7 +1333,8 @@ void ScraperManager::matchShow(const MatchSettings& settings, const std::string&
 		// unlike AniDB there's no dedicated "include_anilist" checkbox, only
 		// this priority-list opt-in (add "anilist" to the library's scraper
 		// priority order in Sources to turn it on for that library).
-		if (anilist_&& std::find(priority.begin(), priority.end(), "anilist") 
+		if (anilist_&& std::find(priority.begin(), priority.end(), "anilist")
+		
 		!=
 		priority.end()
 		)
@@ -1458,7 +1487,7 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
 	std::vector<std::string> query_titles = {search_title};
 	for (const auto& alt : getAlternateTitles(kairos_id, "movie"))
 	{
-		if (!alt.empty() && std::find(query_titles.begin(), query_titles.end(), alt) == query_titles.end()) query_titles.push_back(alt);
+		if (!alt.title.empty() && std::find(query_titles.begin(), query_titles.end(), alt.title) == query_titles.end()) query_titles.push_back(alt.title);
 	}
 
 	struct Cand
@@ -1590,7 +1619,8 @@ void ScraperManager::matchMovie(const MatchSettings& settings, const std::string
 		}
 		// See matchShow() — same AniList priority-list-only opt-in, no
 		// separate checkbox.
-		if (anilist_&& std::find(priority.begin(), priority.end(), "anilist") 
+		if (anilist_&& std::find(priority.begin(), priority.end(), "anilist")
+		
 		!=
 		priority.end()
 		)
@@ -2706,7 +2736,8 @@ std::vector<ScraperManager::SearchResult> ScraperManager::search(const std::stri
 		// querying twice doubled its already rate-limited poster fetches and
 		// produced a duplicate tile for every match. Ambiguous matches
 		// default to "show".
-		if (anidb_&& content_type 
+		if (anidb_&& content_type
+		
 		!=
 		"movie"
 		)
@@ -2722,7 +2753,8 @@ std::vector<ScraperManager::SearchResult> ScraperManager::search(const std::stri
 		if (tmdb_) for (auto& m : capped(tmdb_->searchMovies(query))) addMovie("tmdb", m);
 		if (tvdb_) for (auto& m : capped(tvdb_->searchMovies(query))) addMovie("tvdb", m);
 		if (trakt_) for (auto& m : capped(trakt_->searchMovies(query))) addMovie("trakt", m);
-		if (anidb_&& content_type 
+		if (anidb_&& content_type
+		
 		==
 		"movie"
 		)
@@ -2754,8 +2786,7 @@ std::vector<std::pair<std::string, std::string>> ScraperManager::confirmedShowSo
 	std::set<std::string> seen;
 
 	// Richest source: populated once a human confirms via acceptCandidate().
-	for (const auto& eid : getExternalIds(show_id, "show"))
-		if (!eid.external_id.empty() && seen.insert(eid.source).second) out.push_back({eid.source, eid.external_id});
+	for (const auto& eid : getExternalIds(show_id, "show")) if (!eid.external_id.empty() && seen.insert(eid.source).second) out.push_back({eid.source, eid.external_id});
 
 	// Fallback: an auto-matched item that hasn't been human-confirmed yet
 	// never reaches acceptCandidate(), so item_external_id is empty — the

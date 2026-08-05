@@ -5,6 +5,7 @@ import type { ImportUserResult, Library, LibraryInfo, PathMap, SourceUser } from
 import { sourceStore, systemStore, userStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
+import {LANGUAGE_OPTIONS} from '../constants/languages'
 
 type TestState = 'idle' | 'testing' | 'ok' | 'failed'
 
@@ -1098,16 +1099,7 @@ export default observer(function SourcesPage() {
                     className="input w-full"
                   >
                     <option value="">Language — scraper default</option>
-                    <option value="en">English</option>
-                    <option value="ja">Japanese</option>
-                    <option value="ko">Korean</option>
-                    <option value="zh">Chinese</option>
-                    <option value="fr">French</option>
-                    <option value="de">German</option>
-                    <option value="es">Spanish</option>
-                    <option value="it">Italian</option>
-                    <option value="pt">Portuguese</option>
-                    <option value="ru">Russian</option>
+                      {LANGUAGE_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                   </select>
                   <div className="flex gap-2">
                     <button
@@ -1249,16 +1241,7 @@ export default observer(function SourcesPage() {
                         className="input w-full text-sm"
                       >
                         <option value="">Language — scraper default</option>
-                        <option value="en">English</option>
-                        <option value="ja">Japanese</option>
-                        <option value="ko">Korean</option>
-                        <option value="zh">Chinese</option>
-                        <option value="fr">French</option>
-                        <option value="de">German</option>
-                        <option value="es">Spanish</option>
-                        <option value="it">Italian</option>
-                        <option value="pt">Portuguese</option>
-                        <option value="ru">Russian</option>
+                          {LANGUAGE_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                       </select>
                       <div className="flex gap-2 pt-0.5">
                         <button

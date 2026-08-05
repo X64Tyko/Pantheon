@@ -1,6 +1,8 @@
 #pragma once
 #include <optional>
 #include <string>
+#include <vector>
+#include "TitleTranslation.h"
 
 struct Rating
 {
@@ -56,4 +58,9 @@ struct Show
 	// a later matching pass can restore match_confirmed itself after a DB
 	// wipe, not just the match. Always false for every other source.
 	bool nfo_confirmed = false;
+
+	// Other-language titles/overviews the scraper found alongside the ones
+	// applied above — transient fetch output, never written to the `show`
+	// table directly. ScraperManager upserts these into item_alternate_title.
+	std::vector<TitleTranslation> translations;
 };

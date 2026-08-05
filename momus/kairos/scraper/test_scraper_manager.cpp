@@ -142,13 +142,26 @@ TEST_F(ScraperManagerTest, AlternateTitles)
 {
 	insertShow("s1", "Show 1");
 
-	std::vector<std::string> titles = {"Title A", "Title B"};
+	std::vector<ScraperManager::AlternateTitle> titles = {
+		{"en", "Title A", "An overview"},
+		{"es", "Title B", ""},
+	};
 	manager.setAlternateTitles("s1", "show", titles);
 
 	auto loaded = manager.getAlternateTitles("s1", "show");
 	ASSERT_EQ(loaded.size(), 2u);
-	EXPECT_TRUE(std::find(loaded.begin(), loaded.end(), "Title A") != loaded.end());
-	EXPECT_TRUE(std::find(loaded.begin(), loaded.end(), "Title B") != loaded.end());
+	auto has = [&](const std::string& title)
+	{
+		return std::find_if(loaded.begin(), loaded.end(),
+							[&](const auto& t) { return t.title == title; }) != loaded.end();
+	};
+	EXPECT_TRUE(has("Title A"));
+	EXPECT_TRUE(has("Title B"));
+
+	auto titleB = std::find_if(loaded.begin(), loaded.end(),
+							   [](const auto& t) { return t.title == "Title B"; });
+	ASSERT_NE(titleB, loaded.end());
+	EXPECT_EQ(titleB->language, "es");
 }
 
 TEST_F(ScraperManagerTest, PriorityOrderingOnUpdate)

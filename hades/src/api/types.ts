@@ -436,6 +436,9 @@ export interface ShowDetail {
   show_id:                 string
   title:                   string
   original_title:          string
+    // Display-language override for this show — '' inherits the library's
+    // preferred_language (itself falling back to the scraper default).
+    preferred_language: string
   content_rating:          string
   overview:                string
   year?:                   number
@@ -471,6 +474,8 @@ export interface MovieDetail {
   movie_id:         string
   title:            string
   original_title:   string
+    // See ShowDetail's identical field.
+    preferred_language: string
   content_rating:   string
   duration_ms:      number
   year?:            number
@@ -550,9 +555,17 @@ export interface ExternalId {
   priority:    number
 }
 
+// language is an ISO 639-1 code when known, '' for untagged entries (e.g.
+// AniList synonyms, manually-entered titles).
+export interface AlternateTitle {
+    language: string
+    title: string
+    overview: string
+}
+
 export interface ItemMetadata {
   external_ids:     ExternalId[]
-  alternate_titles: string[]
+    alternate_titles: AlternateTitle[]
 }
 
 export interface WatchProgress {

@@ -236,8 +236,30 @@ TEST_F(MigrationTest, AllKeyIndicesExist)
 		"idx_sched_channel_time",
 		"idx_sched_channel_end",
 		"idx_chapter_media",
+		"idx_item_alt_title_lang",
 	};
 	for (const auto& idx : indices) EXPECT_TRUE(indexExists(db.get(), idx)) << "Missing index: " << idx;
+}
+
+TEST_F(MigrationTest, ItemAlternateTitleHasLanguageAndOverviewColumns)
+{
+	auto cols = columnNames(db.get(), "item_alternate_title");
+	EXPECT_GT(cols.count("item_type"), 0u);
+	EXPECT_GT(cols.count("kairos_id"), 0u);
+	EXPECT_GT(cols.count("title"), 0u);
+	EXPECT_GT(cols.count("language"), 0u) << "added v111";
+	EXPECT_GT(cols.count("overview"), 0u) << "added v111";
+}
+
+TEST_F(MigrationTest, ShowAndMovieHaveOriginalTitleAndPreferredLanguage)
+{
+	auto show_cols = columnNames(db.get(), "show");
+	EXPECT_GT(show_cols.count("original_title"), 0u);
+	EXPECT_GT(show_cols.count("preferred_language"), 0u);
+
+	auto movie_cols = columnNames(db.get(), "movie");
+	EXPECT_GT(movie_cols.count("original_title"), 0u);
+	EXPECT_GT(movie_cols.count("preferred_language"), 0u);
 }
 
 // ---------------------------------------------------------------------------

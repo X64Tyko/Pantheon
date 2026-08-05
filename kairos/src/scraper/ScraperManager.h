@@ -204,8 +204,17 @@ public:
 	std::vector<ExternalId> getExternalIds(const std::string& kairos_id, const std::string& item_type) const;
 	void setExternalIds(const std::string& kairos_id, const std::string& item_type, const std::vector<ExternalId>& ids);
 
-	std::vector<std::string> getAlternateTitles(const std::string& kairos_id, const std::string& item_type) const;
-	void setAlternateTitles(const std::string& kairos_id, const std::string& item_type, const std::vector<std::string>& titles);
+	// language is an ISO 639-1 code when known, '' for untagged/legacy entries
+	// (manually-entered titles, AniList synonyms) that carry no language info.
+	struct AlternateTitle
+	{
+		std::string language;
+		std::string title;
+		std::string overview;
+	};
+
+	std::vector<AlternateTitle> getAlternateTitles(const std::string& kairos_id, const std::string& item_type) const;
+	void setAlternateTitles(const std::string& kairos_id, const std::string& item_type, const std::vector<AlternateTitle>& titles);
 
 	// Review queue
 	std::vector<QueueItem> getQueue(const std::string& status_filter, // "uncertain"|"unmatched"|"all"
@@ -363,7 +372,8 @@ private:
 						const std::string& source, const std::string& external_id,
 						bool promote_to_primary);
 	void upsertAlternateTitle(const std::string& item_type, const std::string& kairos_id,
-							  const std::string& title);
+							  const std::string& title, const std::string& language = "",
+							  const std::string& overview                           = "");
 	double threshold() const;
 
 	// Returns the kairos_id of a DIFFERENT show/movie already linked to

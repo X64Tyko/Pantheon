@@ -572,9 +572,70 @@ namespace
 				if (entity == FilterEntity::Movie) return "1=0";
 			}
 
-			if (f == "content_rating" || f == "network" || f == "studio" || f == "title")
+			if (f == "title")
 			{
-				std::string c = f == "title" ? col("title") : col(f);
+				// Matches against the canonical title, original_title, AND every
+				// stored alternate/localized title (see searchableColsSql's
+				// identical item_alternate_title EXISTS clause) — so `title:` finds
+				// an item by any known-language title, not just the displayed one.
+				// is/contains/begins_with/ends_with OR across all three sources;
+				// is_not/does_not_contain require NONE of them to match.
+				std::string c             = col("title");
+				std::string oc            = col("original_title");
+				std::string kairos_id_col = entity == FilterEntity::Show ? col("show_id") : col("movie_id");
+				std::string item_type_lit = entity == FilterEntity::Show ? "'show'" : "'movie'";
+				auto altExists            = [&](const std::string& cmp)
+				{
+					return "EXISTS (SELECT 1 FROM item_alternate_title iat_title WHERE iat_title.item_type = " +
+						item_type_lit + " AND iat_title.kairos_id = " + kairos_id_col + " AND iat_title.title " + cmp + ")";
+				};
+				if (op == "is")
+				{
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					return "(" + c + " = ? OR " + oc + " = ? OR " + altExists("= ?") + ")";
+				}
+				if (op == "is_not")
+				{
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					return "((" + c + " IS NULL OR " + c + " != ?) AND (" + oc + " IS NULL OR " + oc + " != ?) AND NOT " + altExists("= ?") + ")";
+				}
+				if (op == "contains")
+				{
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					return "(" + c + " LIKE '%' || ? || '%' OR " + oc + " LIKE '%' || ? || '%' OR " + altExists("LIKE '%' || ? || '%'") + ")";
+				}
+				if (op == "does_not_contain")
+				{
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					return "((" + c + " IS NULL OR " + c + " NOT LIKE '%' || ? || '%') AND (" + oc + " IS NULL OR " + oc + " NOT LIKE '%' || ? || '%') AND NOT " + altExists("LIKE '%' || ? || '%'") + ")";
+				}
+				if (op == "begins_with")
+				{
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					return "(" + c + " LIKE ? || '%' OR " + oc + " LIKE ? || '%' OR " + altExists("LIKE ? || '%'") + ")";
+				}
+				if (op == "ends_with")
+				{
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					binds.push_back(n.value);
+					return "(" + c + " LIKE '%' || ? OR " + oc + " LIKE '%' || ? OR " + altExists("LIKE '%' || ?") + ")";
+				}
+			}
+
+			if (f == "content_rating" || f == "network" || f == "studio")
+			{
+				std::string c = col(f);
 				if (op == "is")
 				{
 					binds.push_back(n.value);
@@ -837,7 +898,21 @@ namespace
 		{
 			// OR-across-fields fragment for a single fuzzy word. Mirrors the
 			// field set already used by searchShows/searchMovies's free-text `q`.
-			std::vector<std::string> parts = {col("title") + " LIKE '%' || ? || '%'"};
+			std::vector<std::string> parts = {
+				col("title") + " LIKE '%' || ? || '%'",
+				col("original_title") + " LIKE '%' || ? || '%'",
+			};
+			// Alternate/localized titles — TMDB/TVDB/Trakt/Wikidata translations,
+			// AniDB xml:lang titles, AniList native/synonyms, manual admin
+			// entries — so a search word matches an item by any known-language
+			// title, not just whichever one is currently displayed.
+			{
+				std::string kairos_id_col = entity == FilterEntity::Show ? col("show_id") : col("movie_id");
+				std::string item_type_lit = entity == FilterEntity::Show ? "'show'" : "'movie'";
+				parts.push_back("EXISTS (SELECT 1 FROM item_alternate_title fw_alt_title WHERE fw_alt_title.item_type = " +
+					item_type_lit + " AND fw_alt_title.kairos_id = " + kairos_id_col +
+					" AND fw_alt_title.title LIKE '%' || ? || '%')");
+			}
 			if (entity == FilterEntity::Show) parts.push_back(col("network") + " LIKE '%' || ? || '%'");
 			parts.push_back(col("studio") + " LIKE '%' || ? || '%'");
 			if (entity == FilterEntity::Movie)

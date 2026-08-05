@@ -15,6 +15,7 @@ import type {
     LinkedSpecial
 } from '../../api/types'
 import styles from './LibraryAdminPanel.module.css'
+import {LANGUAGE_OPTIONS} from '../../constants/languages'
 
 type Detail = ShowDetail | MovieDetail
 type Section = 'details' | 'grouping' | 'movie-parts' | 'specials' | 'edit' | null
@@ -175,6 +176,21 @@ function DetailsSection({ detail, isShow, isAdmin, onDetailChanged }: { detail: 
           />
         )}
       </div>
+
+        <div>
+            <span className={styles.fieldLabel}>Alternate Titles</span>
+            {loading ? (
+                <div className={styles.metaText}>Loading…</div>
+            ) : (
+                <AlternateTitleEditor
+                    type={type}
+                    id={id}
+                    metadata={metadata}
+                    isAdmin={isAdmin}
+                    onChanged={setMetadata}
+                />
+            )}
+        </div>
 
       <div className={styles.stack4}>
         <IdRow label="Kairos ID" value={id} />
@@ -358,6 +374,132 @@ export function ExternalIdEditor({ type, id, metadata, isAdmin, onChanged }: {
       )}
     </div>
   )
+}
+
+// ── Alternate titles ─────────────────────────────────────────────────────────
+
+export function AlternateTitleEditor({type, id, metadata, isAdmin, onChanged}: {
+    type: 'show' | 'movie';
+    id: string;
+    metadata: ItemMetadata | null;
+    isAdmin: boolean;
+    onChanged: (m: ItemMetadata) => void;
+}) {
+    const [saving, setSaving] = useState(false)
+    const [lang, setLang] = useState('')
+    const [title, setTitle] = useState('')
+    const [overview, setOverview] = useState('')
+    const [addError, setAddError] = useState<string | null>(null)
+
+    if (!metadata) return null
+
+    const save = async (titles: typeof metadata.alternate_titles) => {
+        setSaving(true)
+        try {
+            await api.setItemMetadata(type, id, {alternate_titles: titles})
+            onChanged({...metadata, alternate_titles: titles})
+        } catch {
+            setAddError('Failed to save.')
+        }
+        setSaving(false)
+    }
+
+    const add = async () => {
+        const t = title.trim()
+        if (!t) {
+            setAddError('Title is required.')
+            return
+        }
+        setAddError(null)
+        const titles = [...metadata.alternate_titles, {
+            language: lang.trim().toLowerCase(),
+            title: t,
+            overview: overview.trim()
+        }]
+        await save(titles)
+        setLang('')
+        setTitle('')
+        setOverview('')
+    }
+
+    const remove = async (index: number) => {
+        if (!isAdmin) return
+        await save(metadata.alternate_titles.filter((_, i) => i !== index))
+    }
+
+    return (
+        <div className={`${styles.stack4} ${styles.actionBlock}`}>
+            {metadata.alternate_titles.length === 0 && (
+                <div className={styles.metaText}>
+                    No alternate titles stored.
+                </div>
+            )}
+            {metadata.alternate_titles.map((alt, i) => (
+                <div key={`${alt.language}:${alt.title}`} className={styles.eidRow}>
+                    <div className={styles.eidMeta}>
+                        <span className={styles.eidSource}>{alt.language || '—'}</span>
+                        <span className={styles.eidValue}>{alt.title}</span>
+                        {alt.overview && <span className={styles.metaTextXs}>{alt.overview}</span>}
+                    </div>
+
+                    {isAdmin && (
+                        <div className={styles.eidActions}>
+                            <button disabled={saving} onClick={() => remove(i)}
+                                    className={`${styles.iconButton} ${styles.iconButtonDanger}`}>×
+                            </button>
+                        </div>
+                    )}
+                </div>
+            ))}
+            {isAdmin && (
+                <>
+                    <div className={styles.addRow}>
+                        <input
+                            value={lang}
+                            onChange={e => {
+                                setLang(e.target.value);
+                                setAddError(null)
+                            }}
+                            placeholder="lang (e.g. es)"
+                            disabled={saving}
+                            className={styles.addInput}
+                            style={{flex: '0 0 5em'}}
+                        />
+                        <input
+                            value={title}
+                            onChange={e => {
+                                setTitle(e.target.value);
+                                setAddError(null)
+                            }}
+                            onKeyDown={e => e.key === 'Enter' && add()}
+                            placeholder="Alternate title — e.g. El Perro y El Gato"
+                            disabled={saving}
+                            className={styles.addInput}
+                        />
+                        <button disabled={saving || !title.trim()} onClick={add}
+                                className={`${styles.addButton} ${(saving || !title.trim()) ? styles.addButtonDisabled : ''}`}>Add
+                        </button>
+                    </div>
+                    <input
+                        value={overview}
+                        onChange={e => setOverview(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && add()}
+                        placeholder="Overview in this language (optional)"
+                        disabled={saving}
+                        className={styles.addInput}
+                        style={{width: '100%'}}
+                    />
+                    {addError && (
+                        <div className={styles.addError}>{addError}</div>
+                    )}
+                    <p className={styles.metaTextXs}>
+                        Searchable in any language regardless of the item's display language. Leave the language field
+                        blank for an untagged synonym.
+                    </p>
+                </>
+            )}
+        </div>
+    )
 }
 
 // ── Grouping ─────────────────────────────────────────────────────────────────
@@ -770,6 +912,16 @@ function EditSection({ detail, isShow, onSaved }: { detail: Detail; isShow: bool
         </Field>
         <Field label="Original Title" span={2}>
           <input style={inputStyle} value={draft.original_title ?? ''} onChange={e => patch('original_title', e.target.value)} />
+        </Field>
+          <Field label="Display Language" span={2}>
+              <select
+                  style={inputStyle}
+                  value={draft.preferred_language ?? ''}
+                  onChange={e => patch('preferred_language', e.target.value)}
+              >
+                  <option value="">Inherit library default</option>
+                  {LANGUAGE_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
         </Field>
         <Field label="Year">
           <input style={inputStyle} type="number" value={draft.year ?? ''} onChange={e => patch('year', Number(e.target.value))} />

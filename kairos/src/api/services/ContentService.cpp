@@ -1374,6 +1374,7 @@ void ContentService::registerRoutes(httplib::Server& svr)
 			std::vector<IntField> intf;
 			if (b.contains("title")) sf.push_back({"title", b["title"].get<std::string>()});
 			if (b.contains("original_title")) sf.push_back({"original_title", b["original_title"].get<std::string>()});
+			if (b.contains("preferred_language")) sf.push_back({"preferred_language", b["preferred_language"].get<std::string>()});
 			if (b.contains("overview")) sf.push_back({"overview", b["overview"].get<std::string>()});
 			if (b.contains("studio")) sf.push_back({"studio", b["studio"].get<std::string>()});
 			if (b.contains("status")) sf.push_back({"status", b["status"].get<std::string>()});
@@ -1589,6 +1590,7 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		show["show_id"]                 = d->show_id;
 		show["title"]                   = d->title;
 		show["original_title"]          = d->original_title;
+		show["preferred_language"]      = d->preferred_language;
 		show["content_rating"]          = d->content_rating;
 		show["overview"]                = d->overview;
 		show["studio"]                  = d->studio;
@@ -1698,6 +1700,7 @@ void ContentService::registerRoutes(httplib::Server& svr)
 			std::vector<IntField> intf;
 			if (b.contains("title")) sf.push_back({"title", b["title"].get<std::string>()});
 			if (b.contains("original_title")) sf.push_back({"original_title", b["original_title"].get<std::string>()});
+			if (b.contains("preferred_language")) sf.push_back({"preferred_language", b["preferred_language"].get<std::string>()});
 			if (b.contains("overview")) sf.push_back({"overview", b["overview"].get<std::string>()});
 			if (b.contains("tagline")) sf.push_back({"tagline", b["tagline"].get<std::string>()});
 			if (b.contains("studio")) sf.push_back({"studio", b["studio"].get<std::string>()});
@@ -2077,11 +2080,12 @@ void ContentService::registerRoutes(httplib::Server& svr)
 		};
 
 		json movie;
-		movie["movie_id"]       = d->movie_id;
-		movie["title"]          = d->title;
-		movie["original_title"] = d->original_title;
-		movie["content_rating"] = d->content_rating;
-		movie["duration_ms"]    = d->duration_ms;
+		movie["movie_id"]           = d->movie_id;
+		movie["title"]              = d->title;
+		movie["original_title"]     = d->original_title;
+		movie["preferred_language"] = d->preferred_language;
+		movie["content_rating"]     = d->content_rating;
+		movie["duration_ms"]        = d->duration_ms;
 		if (d->year) movie["year"] = *d->year;
 		if (!d->release_date.empty()) movie["release_date"] = d->release_date;
 		if (d->audience_rating) movie["audience_rating"] = *d->audience_rating;

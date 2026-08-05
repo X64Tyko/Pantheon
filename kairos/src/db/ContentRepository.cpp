@@ -1204,7 +1204,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
                s.labels, s.network, s.actors, s.countries, s.collections,
                s.match_status, s.match_score, s.match_confirmed, s.skip_scraping,
                s.find_specials, s.episode_display_order, s.folder_path, s.original_title,
-               s.tags
+               s.tags, s.preferred_language
         FROM show s
         LEFT JOIN episode e ON e.show_id = s.show_id
         WHERE s.show_id = ?
@@ -1245,6 +1245,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
 	const std::string stored_folder_path = q.getColumn(28).getString();
 	d.original_title                     = q.getColumn(29).getString();
 	d.tags                               = q.getColumn(30).getString();
+	d.preferred_language                 = q.getColumn(31).getString();
 
 	{
 		SQLite::Statement sm(db_.get(), R"(
@@ -1291,6 +1292,7 @@ std::optional<ShowDetail> ContentRepository::getShowDetail(const std::string& sh
 		auto ov = MetadataOverrideRepository(db_).getAll("show", show_id);
 		applyStr(ov, "title", d.title);
 		applyStr(ov, "original_title", d.original_title);
+		applyStr(ov, "preferred_language", d.preferred_language);
 		applyStr(ov, "overview", d.overview);
 		applyStr(ov, "studio", d.studio);
 		applyStr(ov, "status", d.status);
@@ -1352,7 +1354,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
                imdb_id, tmdb_id, audience_rating, locked,
                labels, actors, countries, collections, release_date,
                file_path, match_status, match_score, match_confirmed, skip_scraping, original_title, writer,
-               tags, is_multi_part
+               tags, is_multi_part, preferred_language
         FROM movie WHERE movie_id = ?
     )");
 	q.bind(1, movie_id);
@@ -1384,12 +1386,13 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
 	d.folder_path  = parentDir(d.file_path);
 	d.match_status = q.getColumn(22).getString();
 	if (!q.getColumn(23).isNull()) d.match_score = q.getColumn(23).getDouble();
-	d.match_confirmed = q.getColumn(24).getInt() != 0;
-	d.skip_scraping   = q.getColumn(25).getInt() != 0;
-	d.original_title  = q.getColumn(26).getString();
-	d.writer          = q.getColumn(27).getString();
-	d.tags            = q.getColumn(28).getString();
-	d.is_multi_part   = q.getColumn(29).getInt() != 0;
+	d.match_confirmed    = q.getColumn(24).getInt() != 0;
+	d.skip_scraping      = q.getColumn(25).getInt() != 0;
+	d.original_title     = q.getColumn(26).getString();
+	d.writer             = q.getColumn(27).getString();
+	d.tags               = q.getColumn(28).getString();
+	d.is_multi_part      = q.getColumn(29).getInt() != 0;
+	d.preferred_language = q.getColumn(30).getString();
 
 	if (d.is_multi_part)
 	{
@@ -1436,6 +1439,7 @@ std::optional<MovieDetail> ContentRepository::getMovieDetail(const std::string& 
 		auto ov = MetadataOverrideRepository(db_).getAll("movie", movie_id);
 		applyStr(ov, "title", d.title);
 		applyStr(ov, "original_title", d.original_title);
+		applyStr(ov, "preferred_language", d.preferred_language);
 		applyStr(ov, "overview", d.overview);
 		applyStr(ov, "tagline", d.tagline);
 		applyStr(ov, "studio", d.studio);
