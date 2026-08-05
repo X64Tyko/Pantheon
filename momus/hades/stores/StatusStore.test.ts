@@ -8,10 +8,11 @@ vi.mock('@/api/client', () => ({
     getMatchStatus:     vi.fn(),
     getWritebackStatus: vi.fn(),
     getSettings:        vi.fn(),
+      getChapterDetectStatus: vi.fn(),
   },
 }))
 
-const mockApi = api as Record<'getSyncStatus' | 'getMatchStatus' | 'getWritebackStatus' | 'getSettings', ReturnType<typeof vi.fn>>
+const mockApi = api as Record<'getSyncStatus' | 'getMatchStatus' | 'getWritebackStatus' | 'getSettings' | 'getChapterDetectStatus', ReturnType<typeof vi.fn>>
 
 const SETTINGS = {
   epg_debug: false, sync_debug: false, sync_threads: 6, stream_buffer_size: 65536,
@@ -35,6 +36,7 @@ describe('StatusStore', () => {
     mockApi.getMatchStatus.mockResolvedValue({ running: false })
     mockApi.getWritebackStatus.mockResolvedValue({ running: false })
     mockApi.getSettings.mockResolvedValue(SETTINGS)
+      mockApi.getChapterDetectStatus.mockResolvedValue({running: false})
     store = new StatusStore()
   })
 
@@ -49,6 +51,7 @@ describe('StatusStore', () => {
     expect(store.syncing).toBe(false)
     expect(store.matching).toBe(false)
     expect(store.anyRunning).toBe(false)
+      expect(store.detecting).toBe(false)
   })
 
   // ── startPolling ──────────────────────────────────────────────────────────
@@ -60,6 +63,7 @@ describe('StatusStore', () => {
       expect(mockApi.getMatchStatus).toHaveBeenCalledTimes(1)
       expect(mockApi.getWritebackStatus).toHaveBeenCalledTimes(1)
       expect(mockApi.getSettings).toHaveBeenCalledTimes(1)
+        expect(mockApi.getChapterDetectStatus).toHaveBeenCalledTimes(1)
     })
 
     it('sets syncing=true when the API reports running=true', async () => {

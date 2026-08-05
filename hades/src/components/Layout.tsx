@@ -246,6 +246,9 @@ export default observer(function Layout() {
               {statusStore.syncing && (
                 <ProcessRow color="var(--hds-violet)" label="Syncing" />
               )}
+                {statusStore.detecting && (
+                    <ProcessSpinner color="var(--hds-blue)" title="Detecting"/>
+                )}
               {statusStore.matching && (
                 <ProcessRow color="var(--hds-gold)" label="Matching" />
               )}
