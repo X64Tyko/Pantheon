@@ -1512,7 +1512,7 @@ const applyBuffer = () => {
                         <div className={styles.listMsg}>Loading…</div>
                     ) : (
                         <>
-                            {(['sync', 'metadata_refresh', 'chapter_detection', 'writeback_sweep'] as const).map(name => {
+                            {(['sync', 'metadata_refresh', 'chapter_detection', 'writeback_sweep', 'media_normalize'] as const).map(name => {
                                 const job = jobs.find(j => j.name === name)
                                 if (!job) return null
                                 const meta: Record<string, { label: string; hint: string }> = {
@@ -1531,6 +1531,10 @@ const applyBuffer = () => {
                                     writeback_sweep: {
                                         label: 'Writeback Sweep',
                                         hint: 'Pushes confirmed metadata to every source with auto-writeback enabled, catching anything a per-item save might have missed.',
+                                    },
+                                    media_normalize: {
+                                        label: 'Normalize to H.264/AAC',
+                                        hint: 'Re-encodes any library file that isn’t H.264/AAC (or has variable frame rate) in place, so more of the library can use cheap direct-stream playback instead of a live transcode. Slow, CPU-heavy — runs one file at a time.',
                                     },
                                 }
                                 return (

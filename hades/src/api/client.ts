@@ -424,7 +424,11 @@ export const api = {
         duration_ms: number;
         completed?: boolean;
         device_type?: string;
-        direct_stream?: boolean
+        direct_stream?: boolean;
+        // Multi-part movies (GitHub #3) — which part position_ms is scoped to,
+        // so the server can translate it into the summed-across-parts value
+        // watch_progress actually stores. Movie-only; meaningless for episodes.
+        part_num?: number
     }) =>
                         request<{ ok: boolean; watched: boolean }>('PUT', `/watch-progress/${contentType}/${id}`, b),
   clearWatchProgress: (contentType: 'movie' | 'episode', id: string)       => request<void>('DELETE', `/watch-progress/${contentType}/${id}`),
@@ -484,6 +488,8 @@ export const api = {
   // Server-side resolvePlayTarget.ts (see hades/src/player/resolvePlayTarget.ts) —
   // one call instead of watch-state + conditionally next-episode/full-episode-list.
   getResolvedPlayTarget: (showId: string)                                  => request<ResolvedPlayTarget | null>('GET', `/shows/${showId}/resolve-play-target`),
+    // Movie counterpart — same shape, plus part_num/total_parts when the movie is multi-part (GitHub #3).
+    getMovieResolvedPlayTarget: (movieId: string) => request<ResolvedPlayTarget | null>('GET', `/movies/${movieId}/resolve-play-target`),
 
   // Home row composition + Library/Detail/Guide zone layout — see hades/src/tv/useHomeManifest.ts.
   getTvManifest: ()                                                        => request<TvManifest>('GET', '/tv/manifest'),
@@ -819,10 +825,10 @@ export const api = {
   resetLibrary:   ()                                                     => request<{ ok: boolean }>('POST', '/config/library/reset'),
 
     // Scheduled jobs (sync/metadata_refresh/chapter_detection/writeback_sweep/
-    // backup) — GET/PATCH /api/jobs is a unified surface over all five even
-    // though "backup" is registered server-side by a separate service (see
-    // kairos/src/api/services/JobService.h); its manual trigger lives at
-    // POST /api/backup/run instead of .../jobs/backup/run-now.
+    // media_normalize/backup) — GET/PATCH /api/jobs is a unified surface over
+    // all six even though "backup" is registered server-side by a separate
+    // service (see kairos/src/api/services/JobService.h); its manual trigger
+    // lives at POST /api/backup/run instead of .../jobs/backup/run-now.
     getJobs: () => request<ScheduledJob[]>('GET', '/jobs'),
     updateJob: (name: string, patch: ScheduledJobPatch) => request<void>('PATCH', `/jobs/${name}`, patch),
     runJobNow: (name: string) => request<{ status: 'started' | 'already_running' }>('POST', `/jobs/${name}/run-now`),

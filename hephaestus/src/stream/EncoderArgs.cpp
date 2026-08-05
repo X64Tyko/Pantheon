@@ -359,9 +359,16 @@ void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double spe
 						  int audio_bitrate_kbps,
 						  const std::optional<ClientCapabilities>& client_caps,
 						  const AudioTrack* source_audio,
-						  bool debug_showinfo)
+						  bool debug_showinfo,
+						  bool resync_audio)
 {
 	std::vector<std::string> afParts;
+	// Placed first in the chain, before loudness/speed shaping — resync
+	// against the source's own timestamps, then apply everything else on top
+	// of an already-aligned stream. See this function's own header comment
+	// for why this only applies to the direct-stream/native bucket's
+	// stream-copied-video pairing.
+	if (resync_audio) afParts.push_back("aresample=async=1");
 	// dynaudnorm, not loudnorm: loudnorm's single-pass mode is a real-time
 	// estimate with no knowledge of the whole stream, and ffmpeg's own docs
 	// note it "shouldn't be used for VOD" for that reason (see VodSession's

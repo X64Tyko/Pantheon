@@ -160,11 +160,24 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
 // purpose). Off by default: at normal per-frame audio rates this is one line
 // per ~20-40ms of audio, far too chatty to leave on outside active
 // diagnosis.
+//
+// resync_audio: appends `aresample=async=1`, which continuously nudges this
+// (re-encoded) audio stream's timestamps back toward the container's own —
+// a no-op when already in sync, a gentle correction otherwise. Only
+// meaningful for a caller pairing this against a *stream-copied* video track
+// (ChannelSession's direct-stream/native bucket): that's the one pipeline
+// shape here where video timestamps ride through untouched from the source
+// while audio is decoded/filtered/re-encoded, an asymmetry with no other
+// resync mechanism anywhere in this codebase (confirmed: no existing
+// aresample/-async/itsoffset/copyts usage). A full transcode re-generates
+// both streams' timing together via the same -fflags +genpts/-fps_mode cfr
+// pass, so it was never exposed to this and doesn't need it.
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
 						  int audio_bitrate_kbps,
 						  const std::optional<ClientCapabilities>& client_caps = std::nullopt,
 						  const AudioTrack* source_audio                       = nullptr,
-						  bool debug_showinfo                                  = false);
+						  bool debug_showinfo                                  = false,
+						  bool resync_audio                                    = false);
 
 // Joins vfParts with commas and appends "-vf <joined>" to `a` if non-empty.
 void pushVideoFilterArgs(std::vector<std::string>& a, const std::vector<std::string>& vfParts);

@@ -18,6 +18,7 @@ class EmailService;
 class EPGMaterializer;
 class JobScheduler;
 class LogBuffer;
+class MediaNormalizeManager;
 class RuleEngine;
 class ScraperManager;
 class SyncManager;
@@ -55,6 +56,7 @@ private:
 	RateLimiter guest_mutation_limiter_;
 	std::unique_ptr<ScraperManager> scraper_mgr_;
 	std::unique_ptr<ChapterDetectionManager> chapter_detect_mgr_;
+	std::unique_ptr<MediaNormalizeManager> normalize_mgr_;
 	// Raw, non-owning — the owning unique_ptr moves into services_ once
 	// constructed (see registerRoutes()). Kept for JobService's
 	// writeback_sweep job, same reason ScraperManager's match-confirmed

@@ -1523,7 +1523,7 @@ export type OperationMetricsResponse = Record<string, OperationRun[]>
 // (whatever it was last set to) so switching modes in the UI doesn't lose
 // the previous value.
 export interface ScheduledJob {
-    name: 'sync' | 'metadata_refresh' | 'chapter_detection' | 'writeback_sweep' | 'backup'
+    name: 'sync' | 'metadata_refresh' | 'chapter_detection' | 'writeback_sweep' | 'media_normalize' | 'backup'
     enabled: boolean
     mode: 'interval' | 'daily'
     interval_hours: number

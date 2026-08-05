@@ -114,6 +114,22 @@ TEST(EncoderArgsTest, PushAudioEncoderArgs_DebugShowinfoAppendsAshowinfoFilter)
 	}
 }
 
+// resync_audio pairs a stream-copied video track against this re-encoded
+// audio (ChannelSession's direct-stream bucket) — aresample=async=1 must be
+// first in the chain so it corrects against the source, not against
+// loudnorm/speed's own output.
+TEST(EncoderArgsTest, PushAudioEncoderArgs_ResyncAudioAppendsAresampleFirst)
+{
+	std::vector<std::string> a;
+	pushAudioEncoderArgs(a, /*loudnorm=*/true, /*speed=*/1.0, 192,
+						 std::nullopt, nullptr, /*debug_showinfo=*/false, /*resync_audio=*/true);
+	auto it = std::find(a.begin(), a.end(), "-af");
+	ASSERT_NE(it, a.end());
+	ASSERT_NE(it + 1, a.end());
+	const std::string& af = *(it + 1);
+	EXPECT_EQ(af.substr(0, std::string("aresample=async=1").size()), "aresample=async=1");
+}
+
 TEST(EncoderArgsTest, PushVaapiDeviceArg)
 {
 	std::vector<std::string> a;

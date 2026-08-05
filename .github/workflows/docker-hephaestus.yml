@@ -33,8 +33,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Configure (below) runs the repo-root CMakeLists.txt, which unconditionally
+      # add_subdirectory(kairos) alongside hephaestus — kairos's own CMakeLists.txt
+      # pkg_check_modules for libavformat/libavcodec/libavutil (its native probe
+      # path, see kairos/src/source/MediaProbe.cpp), so this job needs those dev
+      # packages too even though it only builds/tests momus_hephaestus.
       - name: Install build deps
-        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ libssl-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ pkg-config libssl-dev libavformat-dev libavcodec-dev libavutil-dev
 
       - name: Cache FetchContent deps
         uses: actions/cache@v4

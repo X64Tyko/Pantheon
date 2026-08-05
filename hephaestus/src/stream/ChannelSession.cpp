@@ -58,8 +58,11 @@ static constexpr double kMaxSpeed = 1.02;
 // actual mechanism is still being investigated (see project memory for the
 // full history) — costs some cold-start/channel-switch latency (first
 // segment takes longer to produce), accepted as the tradeoff for now.
-// Revisit lowering this again once the real cause is found and fixed.
-static constexpr int kLiveHlsSegmentSecs = 2;
+//
+// Quietly reverted to 2 in a later commit to retest against an unrelated
+// bitrate-cap/NVENC fix — reproduced the same stalls on real (software-only,
+// no-hwaccel) hardware, so restored to 6.
+static constexpr int kLiveHlsSegmentSecs = 6;
 
 // Oversized vs. the 2s target so a direct-stream session's much-longer real
 // segments (see above) still get a safe rolling window instead of a client's
@@ -245,7 +248,12 @@ static std::vector<std::string> buildArgs(
 					 "-dn", "-map_chapters", "-1",
 					 "-c:v", "copy"
 				 });
-		pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps);
+		// resync_audio=true: this is exactly the copy-video/re-encode-audio
+		// pairing pushAudioEncoderArgs' own comment on that flag describes —
+		// see there for why only this bucket needs it.
+		pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps,
+							 /*client_caps=*/std::nullopt, /*source_audio=*/nullptr,
+							 /*debug_showinfo=*/verbose_transcode_logs, /*resync_audio=*/true);
 	}
 	else
 	{

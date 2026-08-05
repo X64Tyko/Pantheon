@@ -475,6 +475,22 @@ public:
 	std::vector<std::string> getWritebackEligibleMovieIds(const std::string& library_id,
 														  const std::string& source_id);
 
+	// Every episode/movie in the library (no match_confirmed gate, unlike
+	// the writeback-eligible lists above — codec normalization applies
+	// regardless of scrape-match state), for MediaNormalizeManager's sweep.
+	// library_id/source_id empty = unfiltered, same scoping semantics as
+	// getWritebackEligible*Ids.
+	struct NormalizeCandidateRow
+	{
+		std::string kairos_id;
+		int64_t duration_ms;
+	};
+
+	std::vector<NormalizeCandidateRow> getAllEpisodesForNormalize(const std::string& library_id,
+																  const std::string& source_id);
+	std::vector<NormalizeCandidateRow> getAllMoviesForNormalize(const std::string& library_id,
+																const std::string& source_id);
+
 	// Strips the last path segment (filename) off a file path, e.g.
 	// "/media/Movies/Foo (2020)/Foo.mkv" -> "/media/Movies/Foo (2020)".
 	// Empty in, or no '/' found, -> empty out.

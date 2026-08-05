@@ -5,6 +5,7 @@
 #include "../../db/ChapterRepository.h"
 #include "../../detect/ChapterDetectionManager.h"
 #include "../../jobs/JobScheduler.h"
+#include "../../normalize/MediaNormalizeManager.h"
 #include "../../scraper/ScraperManager.h"
 #include "../../source/SyncManager.h"
 #include "ContentService.h"
@@ -18,12 +19,12 @@ using Res  = httplib::Response;
 
 namespace
 {
-	// All five scheduled jobs, including "backup" (registered by
+	// All six scheduled jobs, including "backup" (registered by
 	// BackupService, not this class — see JobService.h) — GET/PATCH
 	// /api/jobs is a unified surface over whatever's actually registered in
 	// the shared JobScheduler.
-	constexpr std::array<const char*, 5> kKnownJobs = {
-		"sync", "metadata_refresh", "chapter_detection", "writeback_sweep", "backup"
+	constexpr std::array<const char*, 6> kKnownJobs = {
+		"sync", "metadata_refresh", "chapter_detection", "writeback_sweep", "media_normalize", "backup"
 	};
 
 	bool isKnownJob(const std::string& name)
@@ -35,21 +36,27 @@ namespace
 
 JobService::JobService(const ServiceContext& ctx, JobScheduler& jobs, SyncManager& sync,
 					   ScraperManager& scraper, ChapterDetectionManager& chapters,
-					   ContentService& content)
+					   ContentService& content, MediaNormalizeManager& normalize)
 	: db_(ctx.db)
 	, jobs_(jobs)
 	, sync_(sync)
 	, scraper_(scraper)
 	, chapters_(chapters)
 	, content_(content)
+	, normalize_(normalize)
 {
-	// All four default to disabled + a daily cadence except sync, which
-	// defaults to a tighter interval since it's the one job most operators
-	// will actually want running regularly once they opt in.
+	// All default to disabled + a daily cadence except sync, which defaults
+	// to a tighter interval since it's the one job most operators will
+	// actually want running regularly once they opt in. media_normalize is a
+	// full re-encode of every non-conforming file — manual-trigger only by
+	// design, never auto-scheduled (see MediaNormalizeManager's own comment),
+	// but still registered here so it gets the same enable/disable state
+	// tracking and "run now" surface as the others.
 	registerJob("sync", job_settings::JobConfig{false, "interval", 6, 3, 0});
 	registerJob("metadata_refresh", job_settings::JobConfig{false, "daily", 24, 3, 0});
 	registerJob("chapter_detection", job_settings::JobConfig{false, "daily", 24, 3, 0});
 	registerJob("writeback_sweep", job_settings::JobConfig{false, "daily", 24, 3, 0});
+	registerJob("media_normalize", job_settings::JobConfig{false, "daily", 24, 3, 0});
 }
 
 void JobService::registerJob(const std::string& name, const job_settings::JobConfig& fallback)
@@ -93,6 +100,7 @@ bool JobService::runNow(const std::string& name)
 		return chapters_.triggerShowDetect(ids.front());
 	}
 	if (name == "writeback_sweep") return content_.triggerWritebackAll();
+	if (name == "media_normalize") return normalize_.triggerNormalize();
 	return false;
 }
 

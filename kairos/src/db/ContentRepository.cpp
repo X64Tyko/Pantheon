@@ -1494,6 +1494,40 @@ std::vector<std::string> ContentRepository::getWritebackEligibleMovieIds(
 	return out;
 }
 
+std::vector<ContentRepository::NormalizeCandidateRow> ContentRepository::getAllEpisodesForNormalize(
+	const std::string& library_id, const std::string& source_id)
+{
+	SQLite::Statement q(db_.get(), R"(
+        SELECT e.episode_id, e.duration_ms FROM episode e
+          WHERE (? = '' OR EXISTS (SELECT 1 FROM source_mapping sm WHERE sm.item_type='episode' AND sm.kairos_id=e.episode_id AND sm.library_id=?))
+            AND (? = '' OR EXISTS (SELECT 1 FROM source_mapping sm WHERE sm.item_type='episode' AND sm.kairos_id=e.episode_id AND sm.source_id=?))
+    )");
+	q.bind(1, library_id);
+	q.bind(2, library_id);
+	q.bind(3, source_id);
+	q.bind(4, source_id);
+	std::vector<NormalizeCandidateRow> out;
+	while (q.executeStep()) out.push_back({q.getColumn(0).getString(), q.getColumn(1).getInt64()});
+	return out;
+}
+
+std::vector<ContentRepository::NormalizeCandidateRow> ContentRepository::getAllMoviesForNormalize(
+	const std::string& library_id, const std::string& source_id)
+{
+	SQLite::Statement q(db_.get(), R"(
+        SELECT m.movie_id, m.duration_ms FROM movie m
+          WHERE (? = '' OR EXISTS (SELECT 1 FROM source_mapping sm WHERE sm.item_type='movie' AND sm.kairos_id=m.movie_id AND sm.library_id=?))
+            AND (? = '' OR EXISTS (SELECT 1 FROM source_mapping sm WHERE sm.item_type='movie' AND sm.kairos_id=m.movie_id AND sm.source_id=?))
+    )");
+	q.bind(1, library_id);
+	q.bind(2, library_id);
+	q.bind(3, source_id);
+	q.bind(4, source_id);
+	std::vector<NormalizeCandidateRow> out;
+	while (q.executeStep()) out.push_back({q.getColumn(0).getString(), q.getColumn(1).getInt64()});
+	return out;
+}
+
 void ContentRepository::updateShow(const std::string& show_id,
 								   const std::vector<StrField>& str_fields,
 								   const std::vector<IntField>& int_fields)
@@ -1948,11 +1982,12 @@ std::vector<MovieGroupingCandidate> ContentRepository::getMovieGroupingCandidate
 		int confidence = 40;
 		if (part_nums[order.front()] == 1) confidence += 25;
 		bool consecutive = true;
-		for (size_t k = 1; k < order.size(); ++k) if (part_nums[order[k]] != part_nums[order[k - 1]] + 1)
-		{
-			consecutive = false;
-			break;
-		}
+		for (size_t k = 1; k < order.size(); ++k)
+			if (part_nums[order[k]] != part_nums[order[k - 1]] + 1)
+			{
+				consecutive = false;
+				break;
+			}
 		if (consecutive) confidence += 25;
 		if (idxs.size() >= 3) confidence += 10;
 

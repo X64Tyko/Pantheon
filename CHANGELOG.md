@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **"Normalize to H.264/AAC" library job** (Kairos + Hades): new manual-trigger job that re-encodes any episode/movie
+  file that isn't H.264/AAC, or is flagged variable-frame-rate (same heuristic as Hephaestus's own `isLikelyVfr`), so
+  more of the library qualifies for the cheap direct-stream channel bucket instead of a live software transcode.
+  Writes to a temp sibling, ffprobe-verifies the result before replacing the original (never touches a file it
+  can't confirm is good), and refreshes the cached duration/resolution/keyframe metadata afterward. Runs one file
+  at a time — a single libx264 encode already saturates every core. Disabled by default, no automatic schedule;
+  triggered from Settings > Jobs like the existing sync/writeback jobs.
 - **Multi-part movie detection and scheduling** (Kairos): a movie split across several video files (`CD1`/`CD2`,
   `Part 1`/`Part 2`, `Disc 1`/`Disc 2`, `pt.1`/`pt.2` naming) is now grouped into one logical movie row instead of
   syncing as separate/duplicate entries. New `movie_part` table + `movie.is_multi_part` flag; LocalSource groups
@@ -43,6 +50,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Sidebar profile controls looked like static text, not buttons (Hades)**: `usernameLinkBtn`/`sidebarExitBtn` had
   no resting border or hover background, unlike their already-correct mobile-drawer equivalents. Both now match the
   drawer's affordance; the new About link sits alongside them as a matching icon button.
+- **Live-channel transcode-bucket buffer stalls on low-power/no-hwaccel hosts** (Hephaestus): `kLiveHlsSegmentSecs`
+  had been quietly reverted from 6 back to 2 (a prior confirmed A/B fix for periodic stutter) while retesting an
+  unrelated bitrate-cap/NVENC change — reproduced the same stalls on a real, software-only demo VM. Restored to 6.
+- **Direct-stream (native bucket) audio/video desync** (Hephaestus): the direct-stream bucket copies video untouched
+  but always re-encodes audio (for loudness normalization), an asymmetric pipeline with no prior resync mechanism.
+  Added `aresample=async=1` to that bucket's audio filter chain to correct drift against the copied video track.
 
 ### Changed
 
