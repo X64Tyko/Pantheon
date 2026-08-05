@@ -5,6 +5,7 @@ dist/
 
 # ── CMake / C++ build ─────────────────────────────────────────────────────────
 build/
+build-asan/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt

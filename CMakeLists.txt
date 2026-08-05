@@ -12,6 +12,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 enable_testing()
 
+# Opt-in AddressSanitizer+LeakSanitizer instrumentation for the whole build —
+# off by default so normal dev/CI builds are unaffected. Enable with
+# -DPANTHEON_SANITIZE=ON (Debug build recommended) to make momus_kairos's
+# resource-release tests (momus/kairos/source/test_media_probe_resource_release.cpp)
+# actually catch leaked allocations via LSan's process-exit check, instead of
+# just exercising the code paths without verifying anything got freed.
+option(PANTHEON_SANITIZE "Build with AddressSanitizer + LeakSanitizer" OFF)
+if (PANTHEON_SANITIZE)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address)
+endif ()
+
 add_subdirectory(hades)
 add_subdirectory(kairos)
 add_subdirectory(hermes)

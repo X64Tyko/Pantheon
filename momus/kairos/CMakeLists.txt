@@ -56,6 +56,7 @@ add_executable(momus_kairos
     source/test_plex_source.cpp
     source/test_local_source.cpp
     source/test_sync_manager.cpp
+        source/test_media_probe_resource_release.cpp
 )
 
 # kairos_core brings in SQLiteCpp, nlohmann_json, httplib, and the src/ include
@@ -65,6 +66,11 @@ target_link_libraries(momus_kairos
     kairos_core
     GTest::gtest_main
 )
+
+# Absolute path to the committed media fixture used by
+# test_media_probe_resource_release.cpp — avoids depending on ctest's CWD.
+target_compile_definitions(momus_kairos PRIVATE
+        MOMUS_KAIROS_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 include(GoogleTest)
 gtest_discover_tests(momus_kairos)

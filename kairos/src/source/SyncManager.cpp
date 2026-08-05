@@ -28,6 +28,7 @@
 #include <ctime>
 #include <filesystem>
 #include <iostream>
+#include <malloc.h> // malloc_trim — glibc extension, not declared by <cstdlib>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -303,6 +304,15 @@ void SyncManager::syncAll()
 			if (src->isSupported()) syncChaptersFromFiles(src->sourceId());
 		}
 	}
+
+	// Every phase above spins up its own short-lived std::thread pool over a
+	// large batch of files (probe/chapter workers), each briefly allocating
+	// large scratch vectors (keyframe lists, scene cuts, fingerprints) that
+	// are freed as soon as each item finishes — but glibc's malloc doesn't
+	// hand freed heap back to the OS on its own, so RSS still reads as
+	// whatever the biggest concurrent burst needed, even once a sync is idle.
+	// This asks it to actually return the freed pages.
+	malloc_trim(0);
 
 	// Printed last, not after phase 4 — chapter sync (phase 5) is the
 	// longest-running phase by far (see this function's own comment above),

@@ -8,6 +8,7 @@
 #include "thread/TaskRegistry.h"
 #include <atomic>
 #include <iostream>
+#include <malloc.h> // malloc_trim — glibc extension, not declared by <cstdlib>
 #include <thread>
 #include <vector>
 
@@ -110,6 +111,12 @@ void ChapterDetectionManager::runShowDetect(const std::string& show_id) {
     }
     std::cout << "[detect] show " << show_id << ": detection wrote " << written
                << "/" << items.size() << " episode(s)\n";
+
+	// Same reasoning as SyncManager::syncAll's own malloc_trim(0) call: the
+	// worker pool above briefly allocates large per-episode scratch vectors
+	// (scene cuts, fingerprints) that glibc's malloc won't hand back to the
+	// OS on its own once freed.
+	malloc_trim(0);
 }
 
 void ChapterDetectionManager::runMovieDetect(const std::string& movie_id) {
