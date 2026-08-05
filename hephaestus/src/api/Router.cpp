@@ -25,12 +25,14 @@ using json = nlohmann::json;
 // burns its own retry budget, and surfaces a fatal "stream stopped
 // responding" with nothing useful in the server logs, since nothing here
 // actually errored.
-static bool waitForFile(const std::string& path, int maxWaitMs = 10000) {
-    for (int waited = 0; waited < maxWaitMs; waited += 100) {
-        if (std::filesystem::exists(path)) return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    return std::filesystem::exists(path);
+static bool waitForFile(const std::string& path, int maxWaitMs = 10000)
+{
+	for (int waited = 0; waited < maxWaitMs; waited += 100)
+	{
+		if (std::filesystem::exists(path)) return true;
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	return std::filesystem::exists(path);
 }
 
 // subs.vtt is written by its own small, independent, whole-file ffmpeg
@@ -60,154 +62,180 @@ static bool waitForFile(const std::string& path, int maxWaitMs = 10000) {
 // embedded extraction on a real file needs. Restored to the old budget —
 // blocking one shared worker thread for up to this long is the same
 // trade-off the old code already made.
-static bool waitForSubtitleExtraction(const VodSession& session, int maxWaitMs = 120000) {
-    for (int waited = 0; waited < maxWaitMs; waited += 200) {
-        if (session.hasSubtitleExtractionExited()) return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    }
-    return session.hasSubtitleExtractionExited();
+static bool waitForSubtitleExtraction(const VodSession& session, int maxWaitMs = 120000)
+{
+	for (int waited = 0; waited < maxWaitMs; waited += 200)
+	{
+		if (session.hasSubtitleExtractionExited()) return true;
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+	}
+	return session.hasSubtitleExtractionExited();
 }
 
 static void serveHlsFile(const std::string& path, const std::string& content_type,
-                          httplib::Response& res) {
-    if (!std::filesystem::exists(path)) {
-        res.status = 404;
-        res.set_content(json{{"error", "not found"}}.dump(), "application/json");
-        return;
-    }
-    res.set_file_content(path, content_type);
+						 httplib::Response& res)
+{
+	if (!std::filesystem::exists(path))
+	{
+		res.status = 404;
+		res.set_content(json{{"error", "not found"}}.dump(), "application/json");
+		return;
+	}
+	res.set_file_content(path, content_type);
 }
 
 // Video and audio are now independent streams (VodSession/VodEncodeStream —
 // see their class comments) with their own segment files and their own
 // static playlist, both living in the same session directory. isAudio picks
 // which one of the pair this request is actually asking for.
-static void serveVodPlaylist(const std::shared_ptr<VodSession>& session, bool isAudio, httplib::Response& res) {
-    session->touch();
-    auto path = session->dir() + (isAudio ? "/audio-playlist.m3u8" : "/playlist.m3u8");
-    if (!std::filesystem::exists(path)) { res.status = 404; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
-    serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+static void serveVodPlaylist(const std::shared_ptr<VodSession>& session, bool isAudio, httplib::Response& res)
+{
+	session->touch();
+	auto path = session->dir() + (isAudio ? "/audio-playlist.m3u8" : "/playlist.m3u8");
+	if (!std::filesystem::exists(path))
+	{
+		res.status = 404;
+		res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
+		return;
+	}
+	serveHlsFile(path, "application/vnd.apple.mpegurl", res);
 }
 
 // seg_suffix is the already zero-padded "NNNNN" component from the URL.
 static void serveVodSegment(const std::shared_ptr<VodSession>& session, bool isAudio, int index,
-                             const std::string& seg_suffix, httplib::Response& res) {
-    session->touch();
-    // Segments live under the (possibly shared) stream's own directory, not
-    // this session's — see VodSession::videoSegmentFilePath/
-    // audioSegmentFilePath's own comment. seg_suffix is unused for path
-    // purposes now (kept as a param since the URL still carries it and
-    // Router's logging/callers reference it), the numeric index is what
-    // actually resolves the real on-disk path.
-    (void)seg_suffix;
-    auto path = isAudio ? session->audioSegmentFilePath(index) : session->videoSegmentFilePath(index);
-    auto prep = isAudio ? session->prepareAudioSegment(index) : session->prepareSegment(index);
-    std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " stream=" << (isAudio ? "audio" : "video")
-               << " seg=" << index
-               << " prep=" << (prep == VodSession::SegmentPrep::Ready ? "Ready"
-                              : prep == VodSession::SegmentPrep::WaitShort ? "WaitShort"
-                              : prep == VodSession::SegmentPrep::WaitColdStart ? "WaitColdStart" : "Failed") << "\n";
-    switch (prep) {
-        case VodSession::SegmentPrep::Ready:
-            break; // already on disk — serve immediately, no wait
-        case VodSession::SegmentPrep::WaitShort:
-            // Resuming an already-warm, already-initialized head — should be fast.
-            if (!waitForFile(path, 10000)) {
-                std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
-                           << " WaitShort TIMED OUT after 10s (503)\n";
-                res.status = 503; return;
-            }
-            break;
-        case VodSession::SegmentPrep::WaitColdStart:
-            // A fresh head just spawned (seek beyond any live head's reach) —
-            // same NVENC/CUDA cold-start budget as before.
-            if (!waitForFile(path, 25000)) {
-                std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
-                           << " WaitColdStart TIMED OUT after 25s (503)\n";
-                res.status = 503; return;
-            }
-            break;
-        case VodSession::SegmentPrep::Failed:
-            std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index << " Failed (404)\n";
-            res.status = 404;
-            return;
-    }
-    serveHlsFile(path, "video/mp2t", res);
+							const std::string& seg_suffix, httplib::Response& res)
+{
+	session->touch();
+	// Segments live under the (possibly shared) stream's own directory, not
+	// this session's — see VodSession::videoSegmentFilePath/
+	// audioSegmentFilePath's own comment. seg_suffix is unused for path
+	// purposes now (kept as a param since the URL still carries it and
+	// Router's logging/callers reference it), the numeric index is what
+	// actually resolves the real on-disk path.
+	(void)seg_suffix;
+	auto path = isAudio ? session->audioSegmentFilePath(index) : session->videoSegmentFilePath(index);
+	auto prep = isAudio ? session->prepareAudioSegment(index) : session->prepareSegment(index);
+	std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " stream=" << (isAudio ? "audio" : "video")
+		<< " seg=" << index
+		<< " prep=" << (prep == VodSession::SegmentPrep::Ready
+							? "Ready"
+							: prep == VodSession::SegmentPrep::WaitShort
+							? "WaitShort"
+							: prep == VodSession::SegmentPrep::WaitColdStart
+							? "WaitColdStart"
+							: "Failed") << "\n";
+	switch (prep)
+	{
+		case VodSession::SegmentPrep::Ready: break; // already on disk — serve immediately, no wait
+		case VodSession::SegmentPrep::WaitShort:
+			// Resuming an already-warm, already-initialized head — should be fast.
+			if (!waitForFile(path, 10000))
+			{
+				std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
+					<< " WaitShort TIMED OUT after 10s (503)\n";
+				res.status = 503;
+				return;
+			}
+			break;
+		case VodSession::SegmentPrep::WaitColdStart:
+			// A fresh head just spawned (seek beyond any live head's reach) —
+			// same NVENC/CUDA cold-start budget as before.
+			if (!waitForFile(path, 25000))
+			{
+				std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index
+					<< " WaitColdStart TIMED OUT after 25s (503)\n";
+				res.status = 503;
+				return;
+			}
+			break;
+		case VodSession::SegmentPrep::Failed: std::cerr << "[router] serveVodSegment session=" << session->sessionId() << " seg=" << index << " Failed (404)\n";
+			res.status = 404;
+			return;
+	}
+	serveHlsFile(path, "video/mp2t", res);
 }
 
 // Extracts "http://host:port" from a request, falling back to the Host header.
-static std::string baseUrl(const httplib::Request& req) {
-    auto host = req.get_header_value("Host");
-    if (host.empty()) host = "localhost:8082";
-    return "http://" + host;
+static std::string baseUrl(const httplib::Request& req)
+{
+	auto host = req.get_header_value("Host");
+	if (host.empty()) host = "localhost:8082";
+	return "http://" + host;
 }
 
 // Shared stream handler: looks up / creates a session and fans the client in.
 static void handleStream(const std::string& channel_id,
-                          SessionManager& sessions,
-                          httplib::Response& res) {
-    auto session = sessions.getOrCreate(channel_id);
-    if (!session) {
-        res.status = 503;
-        res.set_content(
-            json{{"error", "channel unavailable"}, {"channel_id", channel_id}}.dump(),
-            "application/json");
-        return;
-    }
+						 SessionManager& sessions,
+						 httplib::Response& res)
+{
+	auto session = sessions.getOrCreate(channel_id);
+	if (!session)
+	{
+		res.status = 503;
+		res.set_content(
+			json{{"error", "channel unavailable"}, {"channel_id", channel_id}}.dump(),
+			"application/json");
+		return;
+	}
 
-    auto sink = std::make_shared<ClientSink>();
-    session->addClient(sink);
+	auto sink = std::make_shared<ClientSink>();
+	session->addClient(sink);
 
-    res.set_chunked_content_provider(
-        "video/mp2t",
-        [sink](size_t, httplib::DataSink& data_sink) -> bool {
-            std::unique_lock<std::mutex> lock(sink->mtx);
-            sink->cv.wait(lock, [&] {
-                return !sink->queue.empty() || sink->done.load();
-            });
+	res.set_chunked_content_provider(
+		"video/mp2t",
+		[sink](size_t, httplib::DataSink& data_sink) -> bool
+		{
+			std::unique_lock<std::mutex> lock(sink->mtx);
+			sink->cv.wait(lock, [&]
+			{
+				return !sink->queue.empty() || sink->done.load();
+			});
 
-            if (sink->queue.empty()) {
-                data_sink.done();
-                // true, not false — cpp-httplib's write_content_chunked loop
-                // treats a false return as Error::Canceled (a real failure),
-                // not "the provider finished." done() already wrote the
-                // terminating chunk; returning true here lets the loop exit
-                // through its own data_available check instead, which is what
-                // actually reports success. Getting this backwards doesn't
-                // corrupt what's sent to the client (done() writes the
-                // correct terminator either way) but it means every clean
-                // stream end gets misreported as canceled in httplib's own
-                // completion callback/error tracking.
-                return true;
-            }
+			if (sink->queue.empty())
+			{
+				data_sink.done();
+				// true, not false — cpp-httplib's write_content_chunked loop
+				// treats a false return as Error::Canceled (a real failure),
+				// not "the provider finished." done() already wrote the
+				// terminating chunk; returning true here lets the loop exit
+				// through its own data_available check instead, which is what
+				// actually reports success. Getting this backwards doesn't
+				// corrupt what's sent to the client (done() writes the
+				// correct terminator either way) but it means every clean
+				// stream end gets misreported as canceled in httplib's own
+				// completion callback/error tracking.
+				return true;
+			}
 
-            auto chunk = std::move(sink->queue.front());
-            sink->queue.pop_front();
-            lock.unlock();
+			auto chunk = std::move(sink->queue.front());
+			sink->queue.pop_front();
+			lock.unlock();
 
-            return data_sink.write(
-                reinterpret_cast<const char*>(chunk.data()),
-                chunk.size());
-        },
-        [sink, session](bool) {
-            session->removeClient(sink);
-        }
-    );
+			return data_sink.write(
+				reinterpret_cast<const char*>(chunk.data()),
+				chunk.size());
+		},
+		[sink, session](bool)
+		{
+			session->removeClient(sink);
+		}
+	);
 }
 
 void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionManager& vodSessions,
 					PreviewSessionManager& previewSessions, ChannelViewerRegistry& channelViewers,
 					KairosClient& kairos, LogBuffer& logs, const Config& cfg,
-                    ClientCapabilityCache& capabilityCache) {
+					ClientCapabilityCache& capabilityCache)
+{
+	// ── Health ────────────────────────────────────────────────────────────────
+	svr.Get("/health", [](const httplib::Request&, httplib::Response& res)
+	{
+		res.set_content(
+			json{{"status", "ok"}, {"service", "hephaestus"}}.dump(),
+			"application/json");
+	});
 
-    // ── Health ────────────────────────────────────────────────────────────────
-    svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(
-            json{{"status", "ok"}, {"service", "hephaestus"}}.dump(),
-            "application/json");
-    });
-
-    // ── Log stream (SSE — same contract as Kairos /api/logs/stream) ───────────
+	// ── Log stream (SSE — same contract as Kairos /api/logs/stream) ───────────
 	// Internal-only: the sole caller is Hermes's relayUpstreamLogs (see
 	// hermes/src/main.cpp), a server-to-server merge into its own unified
 	// /api/logs/stream — no browser client ever hits this directly. Same
@@ -223,187 +251,220 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 			res.set_content(json{{"error", "Unauthorized"}}.dump(), "application/json");
 			return;
 		}
-		res.set_header("Cache-Control",     "no-cache");
-        res.set_header("Connection",        "keep-alive");
-        res.set_header("X-Accel-Buffering", "no");
-        res.set_header("Access-Control-Allow-Origin", "*");
+		res.set_header("Cache-Control", "no-cache");
+		res.set_header("Connection", "keep-alive");
+		res.set_header("X-Accel-Buffering", "no");
+		res.set_header("Access-Control-Allow-Origin", "*");
 
-        res.set_chunked_content_provider("text/event-stream",
-            [&logs, cur_seq = uint64_t{0}, sent_init = false]
-            (size_t, httplib::DataSink& sink) mutable -> bool {
+		res.set_chunked_content_provider("text/event-stream",
+										 [&logs, cur_seq = uint64_t{0}, sent_init = false]
+									 (size_t, httplib::DataSink& sink) mutable -> bool
+										 {
+											 if (!sent_init)
+											 {
+												 sent_init         = true;
+												 auto [lines, seq] = logs.recent(200);
+												 cur_seq           = seq;
+												 for (const auto& line : lines)
+												 {
+													 std::string ev = "data:" + line + "\n\n";
+													 if (!sink.write(ev.data(), ev.size())) return false;
+												 }
+												 return true;
+											 }
 
-                if (!sent_init) {
-                    sent_init = true;
-                    auto [lines, seq] = logs.recent(200);
-                    cur_seq = seq;
-                    for (const auto& line : lines) {
-                        std::string ev = "data:" + line + "\n\n";
-                        if (!sink.write(ev.data(), ev.size())) return false;
-                    }
-                    return true;
-                }
+											 auto [new_lines, new_seq] =
+												 logs.waitAfter(cur_seq, std::chrono::milliseconds{25'000});
 
-                auto [new_lines, new_seq] =
-                    logs.waitAfter(cur_seq, std::chrono::milliseconds{25'000});
+											 if (!sink.is_writable()) return false;
 
-                if (!sink.is_writable()) return false;
+											 if (new_lines.empty())
+											 {
+												 static const std::string ping = ": ping\n\n";
+												 return sink.write(ping.data(), ping.size());
+											 }
 
-                if (new_lines.empty()) {
-                    static const std::string ping = ": ping\n\n";
-                    return sink.write(ping.data(), ping.size());
-                }
+											 cur_seq = new_seq;
+											 for (const auto& line : new_lines)
+											 {
+												 std::string ev = "data:" + line + "\n\n";
+												 if (!sink.write(ev.data(), ev.size())) return false;
+											 }
+											 return true;
+										 });
+	});
 
-                cur_seq = new_seq;
-                for (const auto& line : new_lines) {
-                    std::string ev = "data:" + line + "\n\n";
-                    if (!sink.write(ev.data(), ev.size())) return false;
-                }
-                return true;
-            });
-    });
+	// ── HDHomeRun device emulation ────────────────────────────────────────────
+	// Plex, Emby, and Jellyfin all speak the HDHomeRun HTTP API for live TV
+	// discovery. Add the device manually in the DVR settings by pointing at
+	// http://<hephaestus-host>:<port>. No SSDP required for manual entry.
 
-    // ── HDHomeRun device emulation ────────────────────────────────────────────
-    // Plex, Emby, and Jellyfin all speak the HDHomeRun HTTP API for live TV
-    // discovery. Add the device manually in the DVR settings by pointing at
-    // http://<hephaestus-host>:<port>. No SSDP required for manual entry.
+	svr.Get("/discover.json", [&cfg](const httplib::Request& req, httplib::Response& res)
+	{
+		auto base = baseUrl(req);
+		res.set_content(json{
+							{"FriendlyName", cfg.hdhr_friendly},
+							{"Manufacturer", "Silicondust"},
+							{"ManufacturerURL", "https://github.com/X64Tyko/Pantheon"},
+							{"ModelNumber", "HDTC-2US"},
+							{"FirmwareName", "hdhomeruntc_atsc"},
+							{"TunerCount", cfg.hdhr_tuner_count},
+							{"FirmwareVersion", "20170930"},
+							{"DeviceID", cfg.hdhr_device_id},
+							{"DeviceAuth", ""},
+							{"BaseURL", base},
+							{"LineupURL", base + "/lineup.json"},
+						}.dump(), "application/json");
+	});
 
-    svr.Get("/discover.json", [&cfg](const httplib::Request& req, httplib::Response& res) {
-        auto base = baseUrl(req);
-        res.set_content(json{
-            {"FriendlyName",   cfg.hdhr_friendly},
-            {"Manufacturer",   "Silicondust"},
-            {"ManufacturerURL","https://github.com/X64Tyko/Pantheon"},
-            {"ModelNumber",    "HDTC-2US"},
-            {"FirmwareName",   "hdhomeruntc_atsc"},
-            {"TunerCount",     cfg.hdhr_tuner_count},
-            {"FirmwareVersion","20170930"},
-            {"DeviceID",       cfg.hdhr_device_id},
-            {"DeviceAuth",     ""},
-            {"BaseURL",        base},
-            {"LineupURL",      base + "/lineup.json"},
-        }.dump(), "application/json");
-    });
+	svr.Get("/device.xml", [&cfg](const httplib::Request& req, httplib::Response& res)
+	{
+		auto base       = baseUrl(req);
+		std::string xml =
+			"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+			"<root xmlns=\"urn:schemas-upnp-org:device-1-0\">\n"
+			"  <URLBase>" + base + "</URLBase>\n"
+			"  <specVersion><major>1</major><minor>0</minor></specVersion>\n"
+			"  <device>\n"
+			"    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>\n"
+			"    <friendlyName>" + cfg.hdhr_friendly + "</friendlyName>\n"
+			"    <manufacturer>Silicondust</manufacturer>\n"
+			"    <modelName>HDTC-2US</modelName>\n"
+			"    <modelNumber>HDTC-2US</modelNumber>\n"
+			"    <serialNumber/>\n"
+			"    <UDN>uuid:" + cfg.hdhr_device_id + "</UDN>\n"
+			"  </device>\n"
+			"</root>\n";
+		res.set_content(xml, "application/xml");
+	});
 
-    svr.Get("/device.xml", [&cfg](const httplib::Request& req, httplib::Response& res) {
-        auto base = baseUrl(req);
-        std::string xml =
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            "<root xmlns=\"urn:schemas-upnp-org:device-1-0\">\n"
-            "  <URLBase>" + base + "</URLBase>\n"
-            "  <specVersion><major>1</major><minor>0</minor></specVersion>\n"
-            "  <device>\n"
-            "    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>\n"
-            "    <friendlyName>" + cfg.hdhr_friendly + "</friendlyName>\n"
-            "    <manufacturer>Silicondust</manufacturer>\n"
-            "    <modelName>HDTC-2US</modelName>\n"
-            "    <modelNumber>HDTC-2US</modelNumber>\n"
-            "    <serialNumber/>\n"
-            "    <UDN>uuid:" + cfg.hdhr_device_id + "</UDN>\n"
-            "  </device>\n"
-            "</root>\n";
-        res.set_content(xml, "application/xml");
-    });
+	svr.Get("/lineup_status.json", [](const httplib::Request&, httplib::Response& res)
+	{
+		res.set_content(json{
+							{"ScanInProgress", 0},
+							{"ScanPossible", 1},
+							{"Source", "Cable"},
+							{"SourceList", json::array({"Cable"})},
+						}.dump(), "application/json");
+	});
 
-    svr.Get("/lineup_status.json", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(json{
-            {"ScanInProgress", 0},
-            {"ScanPossible",   1},
-            {"Source",         "Cable"},
-            {"SourceList",     json::array({"Cable"})},
-        }.dump(), "application/json");
-    });
+	// lineup.json: one entry per Kairos channel, stream URL points back here.
+	// Uses the .ts suffix so Plex doesn't try to negotiate HLS.
+	svr.Get("/lineup.json", [&kairos, &sessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto base     = baseUrl(req);
+				auto channels = kairos.getChannels();
 
-    // lineup.json: one entry per Kairos channel, stream URL points back here.
-    // Uses the .ts suffix so Plex doesn't try to negotiate HLS.
-    svr.Get("/lineup.json", [&kairos, &sessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto base = baseUrl(req);
-        auto channels = kairos.getChannels();
+				json lineup = json::array();
+				for (auto& ch : channels)
+				{
+					lineup.push_back({
+						{"GuideNumber", std::to_string(ch.number)},
+						{"GuideName", ch.name},
+						{"URL", base + "/stream/channels/" + ch.channel_id + ".ts"},
+					});
+				}
 
-        json lineup = json::array();
-        for (auto& ch : channels) {
-            lineup.push_back({
-                {"GuideNumber", std::to_string(ch.number)},
-                {"GuideName",   ch.name},
-                {"URL",         base + "/stream/channels/" + ch.channel_id + ".ts"},
-            });
-        }
+				if (lineup.empty())
+				{
+					lineup.push_back({
+						{"GuideNumber", "1"},
+						{"GuideName", "No channels — check Kairos"},
+						{"URL", base + "/health"},
+					});
+				}
 
-        if (lineup.empty()) {
-            lineup.push_back({
-                {"GuideNumber", "1"},
-                {"GuideName",   "No channels — check Kairos"},
-                {"URL",         base + "/health"},
-            });
-        }
+				res.set_content(lineup.dump(), "application/json");
+			});
 
-        res.set_content(lineup.dump(), "application/json");
-    });
+	// ── MPEG-TS stream ────────────────────────────────────────────────────────
+	// Plain UUID form — used by M3U players and direct clients.
+	svr.Get(R"(/stream/channels/([^/.]+)$)", [&sessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				handleStream(req.matches[1], sessions, res);
+			});
 
-    // ── MPEG-TS stream ────────────────────────────────────────────────────────
-    // Plain UUID form — used by M3U players and direct clients.
-    svr.Get(R"(/stream/channels/([^/.]+)$)", [&sessions](
-            const httplib::Request& req, httplib::Response& res) {
-        handleStream(req.matches[1], sessions, res);
-    });
+	// .ts suffix form — used by HDHomeRun lineup.json and Plex.
+	svr.Get(R"(/stream/channels/([^/]+)\.ts$)", [&sessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				handleStream(req.matches[1], sessions, res);
+			});
 
-    // .ts suffix form — used by HDHomeRun lineup.json and Plex.
-    svr.Get(R"(/stream/channels/([^/]+)\.ts$)", [&sessions](
-            const httplib::Request& req, httplib::Response& res) {
-        handleStream(req.matches[1], sessions, res);
-    });
+	// ── M3U playlist ──────────────────────────────────────────────────────────
+	svr.Get("/playlist.m3u", [&kairos](const httplib::Request& req, httplib::Response& res)
+	{
+		auto base       = baseUrl(req);
+		auto channels   = kairos.getChannels();
+		std::string m3u = "#EXTM3U\n";
+		for (auto& ch : channels)
+		{
+			m3u += "#EXTINF:-1"
+				" tvg-id=\"" + ch.channel_id + "\""
+				" tvg-name=\"" + ch.name + "\""
+				" channel-number=\"" + std::to_string(ch.number) + "\""
+				"," + ch.name + "\n"
+				+ base + "/stream/channels/" + ch.channel_id + "\n";
+		}
+		res.set_content(m3u, "application/x-mpegurl");
+	});
 
-    // ── M3U playlist ──────────────────────────────────────────────────────────
-    svr.Get("/playlist.m3u", [&kairos](const httplib::Request& req, httplib::Response& res) {
-        auto base = baseUrl(req);
-        auto channels = kairos.getChannels();
-        std::string m3u = "#EXTM3U\n";
-        for (auto& ch : channels) {
-            m3u += "#EXTINF:-1"
-                   " tvg-id=\""      + ch.channel_id + "\""
-                   " tvg-name=\""    + ch.name       + "\""
-                   " channel-number=\"" + std::to_string(ch.number) + "\""
-                   "," + ch.name + "\n"
-                   + base + "/stream/channels/" + ch.channel_id + "\n";
-        }
-        res.set_content(m3u, "application/x-mpegurl");
-    });
+	// ── Internal channel list (proxied from Kairos) ───────────────────────────
+	svr.Get("/api/channels", [&kairos](const httplib::Request&, httplib::Response& res)
+	{
+		auto channels = kairos.getChannels();
+		json arr      = json::array();
+		for (auto& ch : channels)
+			arr.push_back({
+				{"channel_id", ch.channel_id},
+				{"name", ch.name},
+				{"number", ch.number}
+			});
+		res.set_content(arr.dump(), "application/json");
+	});
 
-    // ── Internal channel list (proxied from Kairos) ───────────────────────────
-    svr.Get("/api/channels", [&kairos](const httplib::Request&, httplib::Response& res) {
-        auto channels = kairos.getChannels();
-        json arr = json::array();
-        for (auto& ch : channels)
-            arr.push_back({{"channel_id", ch.channel_id},
-                           {"name",       ch.name},
-                           {"number",     ch.number}});
-        res.set_content(arr.dump(), "application/json");
-    });
+	// ── Live channel HLS (web player) ─────────────────────────────────────────
+	// Shares the channel's single running ffmpeg encode via the tee muxer
+	// (ChannelSession::hlsDir()) — same session as /stream/channels/:id, just
+	// a second output. Track selection is the channel's admin-configured
+	// audio_lang/subtitle_lang, not per-viewer (see plan: live is broadcast).
+	svr.Get(R"(/stream/hls/channels/([^/]+)/playlist\.m3u8$)", [&sessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = sessions.getOrCreate(req.matches[1]);
+				if (!session)
+				{
+					res.status = 503;
+					res.set_content(json{{"error", "channel unavailable"}}.dump(), "application/json");
+					return;
+				}
+				session->touchHls();
+				auto path = session->hlsDir() + "/playlist.m3u8";
+				if (!waitForFile(path))
+				{
+					res.status = 503;
+					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
+					return;
+				}
+				serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+			});
 
-    // ── Live channel HLS (web player) ─────────────────────────────────────────
-    // Shares the channel's single running ffmpeg encode via the tee muxer
-    // (ChannelSession::hlsDir()) — same session as /stream/channels/:id, just
-    // a second output. Track selection is the channel's admin-configured
-    // audio_lang/subtitle_lang, not per-viewer (see plan: live is broadcast).
-    svr.Get(R"(/stream/hls/channels/([^/]+)/playlist\.m3u8$)", [&sessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto session = sessions.getOrCreate(req.matches[1]);
-        if (!session) { res.status = 503; res.set_content(json{{"error","channel unavailable"}}.dump(), "application/json"); return; }
-        session->touchHls();
-        auto path = session->hlsDir() + "/playlist.m3u8";
-        if (!waitForFile(path)) { res.status = 503; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
-        serveHlsFile(path, "application/vnd.apple.mpegurl", res);
-    });
+	svr.Get(R"(/stream/hls/channels/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = sessions.getOrCreate(req.matches[1]);
+				if (!session)
+				{
+					res.status = 404;
+					return;
+				}
+				session->touchHls();
+				serveHlsFile(session->hlsDir() + "/" + req.matches[2].str(), "video/mp2t", res);
+			});
 
-    svr.Get(R"(/stream/hls/channels/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto session = sessions.getOrCreate(req.matches[1]);
-        if (!session) { res.status = 404; return; }
-        session->touchHls();
-        serveHlsFile(session->hlsDir() + "/" + req.matches[2].str(), "video/mp2t", res);
-    });
-
-    // ── Capability-bucketed live channel HLS (per-viewer, opt-in) ─────────────
+	// ── Capability-bucketed live channel HLS (per-viewer, opt-in) ─────────────
 	// Additive: the legacy /stream/hls/channels/:id/... routes above are
 	// completely unchanged and remain what MPEG-TS/HDHomeRun/any
 	// not-yet-updated client uses. This is the opt-in path a client calls to
@@ -506,439 +567,594 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				 res.set_content(json{{"ok", true}}.dump(), "application/json");
 			 });
 
+	// Polled by Hades (usePlaybackSession.ts) to decide whether to reconnect
+	// this viewer onto a different bucket — see ChannelViewerRegistry's own
+	// comment for why a live bucket flip must go through a real reconnect
+	// (fresh viewer_session_id + manifest_url) instead of silently swapping
+	// which session an existing manifest URL resolves to.
+	svr.Get(R"(/stream/channel/viewer/([^/]+)/status$)", [&channelViewers](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto st = channelViewers.status(req.matches[1]);
+				if (!st)
+				{
+					res.status = 404;
+					res.set_content(json{{"error", "viewer session not found"}}.dump(), "application/json");
+					return;
+				}
+				res.set_content(json{
+									{"bucket", st->bucket},
+									{"recommended_bucket", st->recommended_bucket},
+									{"reconnect_recommended", st->recommended_bucket != st->bucket},
+								}.dump(), "application/json");
+			});
+
 	// ── VOD (on-demand library playback) ──────────────────────────────────────
-    // One session per viewer, one session_id/manifest for its whole life. A
-    // TRACK SWITCH is still "stop this session, start a fresh one" (a
-    // different audio/subtitle selection needs genuinely different ffmpeg
-    // -map args). A plain SEEK is not — VodSession restarts its own internal
-    // encoder in place (see VodSession::restartAt/prepareSegment) and keeps
-    // serving the same manifest the whole time.
-    svr.Post("/stream/vod/start", [&kairos, &vodSessions, &capabilityCache](
-            const httplib::Request& req, httplib::Response& res) {
-        json body;
-        try { body = json::parse(req.body); } catch (...) {
-            res.status = 400; res.set_content(json{{"error","invalid JSON"}}.dump(), "application/json"); return;
-        }
-        auto content_type = body.value("content_type", "");
-        auto content_id   = body.value("content_id", "");
-        if (content_type != "movie" && content_type != "episode") {
-            res.status = 400; res.set_content(json{{"error","content_type must be movie or episode"}}.dump(), "application/json"); return;
-        }
+	// One session per viewer, one session_id/manifest for its whole life. A
+	// TRACK SWITCH is still "stop this session, start a fresh one" (a
+	// different audio/subtitle selection needs genuinely different ffmpeg
+	// -map args). A plain SEEK is not — VodSession restarts its own internal
+	// encoder in place (see VodSession::restartAt/prepareSegment) and keeps
+	// serving the same manifest the whole time.
+	svr.Post("/stream/vod/start", [&kairos, &vodSessions, &capabilityCache](
+			 const httplib::Request& req, httplib::Response& res)
+			 {
+				 json body;
+				 try { body = json::parse(req.body); }
+				 catch (...)
+				 {
+					 res.status = 400;
+					 res.set_content(json{{"error", "invalid JSON"}}.dump(), "application/json");
+					 return;
+				 }
+				 auto content_type = body.value("content_type", "");
+				 auto content_id   = body.value("content_id", "");
+				 if (content_type != "movie" && content_type != "episode")
+				 {
+					 res.status = 400;
+					 res.set_content(json{{"error", "content_type must be movie or episode"}}.dump(), "application/json");
+					 return;
+				 }
 
-        auto token = extractBearerToken(req);
-        // Multi-part movies (GitHub #3): Hades passes part_num once it's
-        // resolved which part to start in (GET /api/movies/:id/resolve-
-        // play-target) — forwarded straight through to Kairos's ?part=.
-        int part_num = body.value("part_num", 0);
-        auto info = kairos.getPlaybackInfo(content_type, content_id, token, part_num);
-        if (!info || info->file_path.empty()) {
-            res.status = 404; res.set_content(json{{"error","content not found"}}.dump(), "application/json"); return;
-        }
+				 auto token = extractBearerToken(req);
+				 // Multi-part movies (GitHub #3): Hades passes part_num once it's
+				 // resolved which part to start in (GET /api/movies/:id/resolve-
+				 // play-target) — forwarded straight through to Kairos's ?part=.
+				 int part_num = body.value("part_num", 0);
+				 auto info    = kairos.getPlaybackInfo(content_type, content_id, token, part_num);
+				 if (!info || info->file_path.empty())
+				 {
+					 res.status = 404;
+					 res.set_content(json{{"error", "content not found"}}.dump(), "application/json");
+					 return;
+				 }
 
-        int audio_track    = body.value("audio_track", -1);
-        int subtitle_track = body.value("subtitle_track", -1);
-        int64_t position_ms = body.value("position_ms", int64_t(0));
-        if (position_ms < 0) position_ms = 0;
-        bool hdr_capable = body.value("hdr_capable", false);
+				 int audio_track     = body.value("audio_track", -1);
+				 int subtitle_track  = body.value("subtitle_track", -1);
+				 int64_t position_ms = body.value("position_ms", int64_t(0));
+				 if (position_ms < 0) position_ms = 0;
+				 bool hdr_capable = body.value("hdr_capable", false);
 
-        std::optional<ClientCapabilities> client_caps;
-        if (!token.empty()) client_caps = capabilityCache.get(token);
+				 std::optional<ClientCapabilities> client_caps;
+				 if (!token.empty()) client_caps = capabilityCache.get(token);
 
-        auto session = vodSessions.create(content_type, content_id, info->file_path, position_ms, audio_track,
-                                           subtitle_track, hdr_capable, client_caps, info->external_subtitles,
-										   info->duration_ms, info->preferred_audio_lang, info->preferred_subtitle_lang,
-										   info->keyframes_ms, info->keyframes_size, info->keyframes_mtime);
-		if (!session) {
-            // Covers both a genuine probe/start failure and the concurrent-
-			// session cap (see VodSessionManager::create) — 503 either way
-			// since both are "try again," not a client-input error.
-			res.status = 503;
-			res.set_content(json{{"error", "failed to start playback (or server is at capacity — try again shortly)"}}.dump(), "application/json");
-			return;
-		}
+				 auto session = vodSessions.create(content_type, content_id, info->file_path, position_ms, audio_track,
+												   subtitle_track, hdr_capable, client_caps, info->external_subtitles,
+												   info->duration_ms, info->preferred_audio_lang, info->preferred_subtitle_lang,
+												   info->keyframes_ms, info->keyframes_size, info->keyframes_mtime);
+				 if (!session)
+				 {
+					 // Covers both a genuine probe/start failure and the concurrent-
+					 // session cap (see VodSessionManager::create) — 503 either way
+					 // since both are "try again," not a client-input error.
+					 res.status = 503;
+					 res.set_content(json{{"error", "failed to start playback (or server is at capacity — try again shortly)"}}.dump(), "application/json");
+					 return;
+				 }
 
-		json tracks;
-		tracks["video"] = json::array();
-		for (auto& t : session->tracks().video)
-            tracks["video"].push_back({{"codec", t.codec}, {"width", t.width}, {"height", t.height}});
-        tracks["audio"] = json::array();
-        for (auto& t : session->tracks().audio)
-            tracks["audio"].push_back({{"index", t.relative_index}, {"codec", t.codec}, {"language", t.language}, {"title", t.title}, {"channels", t.channels}});
-        tracks["subtitles"] = json::array();
-        for (auto& t : session->tracks().subtitles) {
-            bool extractable = t.codec == "subrip" || t.codec == "ass" || t.codec == "ssa" ||
-                                t.codec == "mov_text" || t.codec == "webvtt" || t.codec == "text";
-            // Bitmap formats (Blu-ray/DVD/DVB) aren't extractable as text,
-            // but can be burned directly into the video instead — see
-            // VodSession.cpp's isBitmapSubtitleCodec/subtitleBurnIn.
-            bool burnIn = t.codec == "hdmv_pgs_subtitle" || t.codec == "dvd_subtitle" || t.codec == "dvb_subtitle";
-            tracks["subtitles"].push_back({{"index", t.relative_index}, {"codec", t.codec}, {"language", t.language}, {"title", t.title},
-                                            {"extractable", extractable}, {"burn_in", burnIn}, {"source", "embedded"}});
-        }
-        // External sidecar files get negative indices starting at -2 (-1 is
-        // already "no subtitle" on the wire — see usePlaybackSession.ts/
-        // TrackMenu.tsx) — assigned here, once, in catalog order; VodSession::
-        // start()'s subtitle_track<=-2 branch reverses this exact formula to
-        // resolve a selection back to the right file. Nothing but this
-        // shared convention keeps the two in sync, so don't reorder either
-        // side independently.
-        int ext_index = -2;
-        for (auto& t : session->externalSubtitles()) {
-            tracks["subtitles"].push_back({{"index", ext_index--}, {"codec", ""}, {"language", t.language}, {"title", t.title},
-                                            {"extractable", true}, {"burn_in", false}, {"source", "external"},
-                                            {"forced", t.forced}, {"sdh", t.sdh}});
-        }
+				 json tracks;
+				 tracks["video"] = json::array();
+				 for (auto& t : session->tracks().video) tracks["video"].push_back({{"codec", t.codec}, {"width", t.width}, {"height", t.height}});
+				 tracks["audio"] = json::array();
+				 for (auto& t : session->tracks().audio) tracks["audio"].push_back({{"index", t.relative_index}, {"codec", t.codec}, {"language", t.language}, {"title", t.title}, {"channels", t.channels}});
+				 tracks["subtitles"] = json::array();
+				 for (auto& t : session->tracks().subtitles)
+				 {
+					 bool extractable = t.codec == "subrip" || t.codec == "ass" || t.codec == "ssa" ||
+						 t.codec == "mov_text" || t.codec == "webvtt" || t.codec == "text";
+					 // Bitmap formats (Blu-ray/DVD/DVB) aren't extractable as text,
+					 // but can be burned directly into the video instead — see
+					 // VodSession.cpp's isBitmapSubtitleCodec/subtitleBurnIn.
+					 bool burnIn = t.codec == "hdmv_pgs_subtitle" || t.codec == "dvd_subtitle" || t.codec == "dvb_subtitle";
+					 tracks["subtitles"].push_back({
+						 {"index", t.relative_index}, {"codec", t.codec}, {"language", t.language}, {"title", t.title},
+						 {"extractable", extractable}, {"burn_in", burnIn}, {"source", "embedded"}
+					 });
+				 }
+				 // External sidecar files get negative indices starting at -2 (-1 is
+				 // already "no subtitle" on the wire — see usePlaybackSession.ts/
+				 // TrackMenu.tsx) — assigned here, once, in catalog order; VodSession::
+				 // start()'s subtitle_track<=-2 branch reverses this exact formula to
+				 // resolve a selection back to the right file. Nothing but this
+				 // shared convention keeps the two in sync, so don't reorder either
+				 // side independently.
+				 int ext_index = -2;
+				 for (auto& t : session->externalSubtitles())
+				 {
+					 tracks["subtitles"].push_back({
+						 {"index", ext_index--}, {"codec", ""}, {"language", t.language}, {"title", t.title},
+						 {"extractable", true}, {"burn_in", false}, {"source", "external"},
+						 {"forced", t.forced}, {"sdh", t.sdh}
+					 });
+				 }
 
-        json out = {
-            {"session_id",   session->sessionId()},
-            // The multi-rendition master manifest (AUDIO/SUBTITLES groups —
-            // see VodSession::buildMasterPlaylist), not the flat variant
-            // playlist directly. hls.js's loadSource() already handles both
-            // single- and multi-variant playlists transparently. Native
-            // players (Android/TV) get the real groups to build their own
-            // language picker from; Hades drives its own TrackMenu against
-            // hls.js's subtitleTrack/audioTrack APIs instead (see
-            // VideoPlayer.tsx), matched against these renditions by URL.
-            {"manifest_url", "/stream/vod/" + session->sessionId() + "/master.m3u8"},
-            {"direct_stream",  session->directStream()},
-			// Prefer this session's own authoritative ffprobe duration —
-			// Kairos's info->duration_ms is only the fallback VodSession uses
-            // when its own probe comes back empty (see durationMs()'s comment).
-            {"duration_ms",  session->durationMs() > 0 ? session->durationMs() : info->duration_ms},
-            {"title",        info->title},
-            {"tracks",       tracks},
-            {"subtitle_burned_in", session->subtitleBurnedIn()},
-            // The actually-resolved selection (VodSession::audioTrack()/
-            // subtitleTrack()'s own comment) — may differ from what the
-            // request asked for (e.g. -1/"unset" resolved to a saved
-            // preference or the first track), and nothing else in this
-            // response says which master-manifest rendition is already
-            // active, so callers driving the manifest directly need this to
-            // start their own selection state in sync with it.
-            {"audio_track",     session->audioTrack()},
-            {"subtitle_track",  session->subtitleTrack()},
-            {"is_multi_part",   info->is_multi_part},
-        };
-        if (info->is_multi_part) {
-            out["part_num"]         = info->part_num;
-            out["total_parts"]      = info->total_parts;
-            out["movie_duration_ms"] = info->movie_duration_ms;
-        }
-        if (session->hasSubtitleOutput())
-            out["subtitle_url"] = "/stream/vod/" + session->sessionId() + "/subs.vtt";
-        res.set_content(out.dump(), "application/json");
-    });
+				 json out = {
+					 {"session_id", session->sessionId()},
+					 // The multi-rendition master manifest (AUDIO/SUBTITLES groups —
+					 // see VodSession::buildMasterPlaylist), not the flat variant
+					 // playlist directly. hls.js's loadSource() already handles both
+					 // single- and multi-variant playlists transparently. Native
+					 // players (Android/TV) get the real groups to build their own
+					 // language picker from; Hades drives its own TrackMenu against
+					 // hls.js's subtitleTrack/audioTrack APIs instead (see
+					 // VideoPlayer.tsx), matched against these renditions by URL.
+					 {"manifest_url", "/stream/vod/" + session->sessionId() + "/master.m3u8"},
+					 {"direct_stream", session->directStream()},
+					 // Prefer this session's own authoritative ffprobe duration —
+					 // Kairos's info->duration_ms is only the fallback VodSession uses
+					 // when its own probe comes back empty (see durationMs()'s comment).
+					 {"duration_ms", session->durationMs() > 0 ? session->durationMs() : info->duration_ms},
+					 {"title", info->title},
+					 {"tracks", tracks},
+					 {"subtitle_burned_in", session->subtitleBurnedIn()},
+					 // The actually-resolved selection (VodSession::audioTrack()/
+					 // subtitleTrack()'s own comment) — may differ from what the
+					 // request asked for (e.g. -1/"unset" resolved to a saved
+					 // preference or the first track), and nothing else in this
+					 // response says which master-manifest rendition is already
+					 // active, so callers driving the manifest directly need this to
+					 // start their own selection state in sync with it.
+					 {"audio_track", session->audioTrack()},
+					 {"subtitle_track", session->subtitleTrack()},
+					 {"is_multi_part", info->is_multi_part},
+				 };
+				 if (info->is_multi_part)
+				 {
+					 out["part_num"]          = info->part_num;
+					 out["total_parts"]       = info->total_parts;
+					 out["movie_duration_ms"] = info->movie_duration_ms;
+				 }
+				 if (session->hasSubtitleOutput()) out["subtitle_url"] = "/stream/vod/" + session->sessionId() + "/subs.vtt";
+				 res.set_content(out.dump(), "application/json");
+			 });
 
-    svr.Get(R"(/stream/vod/([^/]+)/master\.m3u8$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto session = vodSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
-        session->touch();
-        res.set_content(session->buildMasterPlaylist(), "application/vnd.apple.mpegurl");
-    });
+	svr.Get(R"(/stream/vod/([^/]+)/master\.m3u8$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = vodSessions.get(req.matches[1]);
+				if (!session)
+				{
+					res.status = 404;
+					res.set_content(json{{"error", "session not found"}}.dump(), "application/json");
+					return;
+				}
+				session->touch();
+				res.set_content(session->buildMasterPlaylist(), "application/vnd.apple.mpegurl");
+			});
 
-    svr.Get(R"(/stream/vod/([^/]+)/playlist\.m3u8$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto session = vodSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
-        // No wait needed anymore: VodSession writes the complete, static
-        // playlist.m3u8 synchronously inside start(), which itself runs
-        // synchronously inside POST /stream/vod/start — before that response
-        // (and so the manifest_url it contains) can possibly reach the
-        // client. The old 25s NVENC-cold-start-aware wait here is gone; only
-        // a defensive existence check remains for the (should-be-rare) case
-        // the session already vanished by the time this GET lands.
-        serveVodPlaylist(session, /*isAudio=*/false, res);
-    });
+	svr.Get(R"(/stream/vod/([^/]+)/playlist\.m3u8$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = vodSessions.get(req.matches[1]);
+				if (!session)
+				{
+					res.status = 404;
+					res.set_content(json{{"error", "session not found"}}.dump(), "application/json");
+					return;
+				}
+				// No wait needed anymore: VodSession writes the complete, static
+				// playlist.m3u8 synchronously inside start(), which itself runs
+				// synchronously inside POST /stream/vod/start — before that response
+				// (and so the manifest_url it contains) can possibly reach the
+				// client. The old 25s NVENC-cold-start-aware wait here is gone; only
+				// a defensive existence check remains for the (should-be-rare) case
+				// the session already vanished by the time this GET lands.
+				serveVodPlaylist(session, /*isAudio=*/false, res);
+			});
 
-    svr.Get(R"(/stream/vod/([^/]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto session = vodSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; return; }
-        int index = std::stoi(req.matches[2].str());
-        serveVodSegment(session, /*isAudio=*/false, index, req.matches[2].str(), res);
-    });
+	svr.Get(R"(/stream/vod/([^/]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = vodSessions.get(req.matches[1]);
+				if (!session)
+				{
+					res.status = 404;
+					return;
+				}
+				int index = std::stoi(req.matches[2].str());
+				serveVodSegment(session, /*isAudio=*/false, index, req.matches[2].str(), res);
+			});
 
-    // Per-audio-track alias for the master manifest's AUDIO group — see
-    // VodSession::ensureAudioTrack's comment. A native player picking a
-    // non-active language hits this before its own segments, which is what
-    // actually triggers the encoder restart onto the new -map; the segment
-    // route below is a defensive fallback for a cached URL fetched without
-    // re-fetching the playlist first.
-    svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/playlist\.m3u8$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
-        int track = std::stoi(req.matches[2].str());
-        std::cerr << "[router] GET audio playlist.m3u8 session=" << sid << " track=" << track
-                   << " UA=\"" << req.get_header_value("User-Agent") << "\"\n";
-        auto session = vodSessions.get(sid);
-        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
-        if (!session->ensureAudioTrack(track)) {
-            std::cerr << "[router] audio playlist.m3u8 session=" << sid << " track=" << track << " ensureAudioTrack FAILED\n";
-            res.status = 500; res.set_content(json{{"error","failed to switch audio track"}}.dump(), "application/json"); return;
-        }
-        serveVodPlaylist(session, /*isAudio=*/true, res);
-    });
+	// Per-audio-track alias for the master manifest's AUDIO group — see
+	// VodSession::ensureAudioTrack's comment. A native player picking a
+	// non-active language hits this before its own segments, which is what
+	// actually triggers the encoder restart onto the new -map; the segment
+	// route below is a defensive fallback for a cached URL fetched without
+	// re-fetching the playlist first.
+	svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/playlist\.m3u8$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				std::string sid = req.matches[1];
+				int track       = std::stoi(req.matches[2].str());
+				std::cerr << "[router] GET audio playlist.m3u8 session=" << sid << " track=" << track
+					<< " UA=\"" << req.get_header_value("User-Agent") << "\"\n";
+				auto session = vodSessions.get(sid);
+				if (!session)
+				{
+					res.status = 404;
+					res.set_content(json{{"error", "session not found"}}.dump(), "application/json");
+					return;
+				}
+				if (!session->ensureAudioTrack(track))
+				{
+					std::cerr << "[router] audio playlist.m3u8 session=" << sid << " track=" << track << " ensureAudioTrack FAILED\n";
+					res.status = 500;
+					res.set_content(json{{"error", "failed to switch audio track"}}.dump(), "application/json");
+					return;
+				}
+				serveVodPlaylist(session, /*isAudio=*/true, res);
+			});
 
-    svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/aseg-([0-9]+)\.ts$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
-        int track = std::stoi(req.matches[2].str());
-        std::cerr << "[router] GET audio seg session=" << sid << " track=" << track
-                   << " seg=" << req.matches[3].str() << " UA=\"" << req.get_header_value("User-Agent") << "\"\n";
-        auto session = vodSessions.get(sid);
-        if (!session) { res.status = 404; return; }
-        if (!session->ensureAudioTrack(track)) {
-            std::cerr << "[router] audio seg session=" << sid << " track=" << track << " ensureAudioTrack FAILED\n";
-            res.status = 500; return;
-        }
-        int index = std::stoi(req.matches[3].str());
-        serveVodSegment(session, /*isAudio=*/true, index, req.matches[3].str(), res);
-    });
+	svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/aseg-([0-9]+)\.ts$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				std::string sid = req.matches[1];
+				int track       = std::stoi(req.matches[2].str());
+				std::cerr << "[router] GET audio seg session=" << sid << " track=" << track
+					<< " seg=" << req.matches[3].str() << " UA=\"" << req.get_header_value("User-Agent") << "\"\n";
+				auto session = vodSessions.get(sid);
+				if (!session)
+				{
+					res.status = 404;
+					return;
+				}
+				if (!session->ensureAudioTrack(track))
+				{
+					std::cerr << "[router] audio seg session=" << sid << " track=" << track << " ensureAudioTrack FAILED\n";
+					res.status = 500;
+					return;
+				}
+				int index = std::stoi(req.matches[3].str());
+				serveVodSegment(session, /*isAudio=*/true, index, req.matches[3].str(), res);
+			});
 
-    // Wraps the on-demand pipe below in a minimal single-segment VOD media
-    // playlist — an #EXT-X-MEDIA URI must reference a Media Playlist per the
-    // HLS spec, not a raw resource. Pointing the master manifest's
-    // SUBTITLES group straight at the pipe route made hls.js fail to parse
-    // it as a playlist and retry in a tight, un-backed-off loop (observed
-    // spawning the same extraction repeatedly within a fraction of a
-    // second). This route is fetched once; the one #EXTINF segment it
-    // declares is fetched once by the route below — same "fetched exactly
-    // once" shape /subs.vtt always had.
-    svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)/playlist\.m3u8$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
-        int track = std::stoi(req.matches[2].str());
-        std::cerr << "[router] GET subtitles playlist.m3u8 session=" << sid << " track=" << track << "\n";
-        auto session = vodSessions.get(sid);
-        if (!session) {
-            std::cerr << "[router] subtitles playlist.m3u8 session=" << sid << " not found\n";
-            res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return;
-        }
-        session->touch();
-        auto playlist = session->buildSubtitlePlaylist(track);
-        if (!playlist) {
-            std::cerr << "[router] subtitles playlist.m3u8 session=" << sid << " track=" << track << " unavailable (404)\n";
-            res.status = 404; res.set_content(json{{"error","subtitle track not available"}}.dump(), "application/json"); return;
-        }
-        res.set_content(*playlist, "application/vnd.apple.mpegurl");
-    });
+	// Wraps the on-demand pipe below in a minimal single-segment VOD media
+	// playlist — an #EXT-X-MEDIA URI must reference a Media Playlist per the
+	// HLS spec, not a raw resource. Pointing the master manifest's
+	// SUBTITLES group straight at the pipe route made hls.js fail to parse
+	// it as a playlist and retry in a tight, un-backed-off loop (observed
+	// spawning the same extraction repeatedly within a fraction of a
+	// second). This route is fetched once; the one #EXTINF segment it
+	// declares is fetched once by the route below — same "fetched exactly
+	// once" shape /subs.vtt always had.
+	svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)/playlist\.m3u8$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				std::string sid = req.matches[1];
+				int track       = std::stoi(req.matches[2].str());
+				std::cerr << "[router] GET subtitles playlist.m3u8 session=" << sid << " track=" << track << "\n";
+				auto session = vodSessions.get(sid);
+				if (!session)
+				{
+					std::cerr << "[router] subtitles playlist.m3u8 session=" << sid << " not found\n";
+					res.status = 404;
+					res.set_content(json{{"error", "session not found"}}.dump(), "application/json");
+					return;
+				}
+				session->touch();
+				auto playlist = session->buildSubtitlePlaylist(track);
+				if (!playlist)
+				{
+					std::cerr << "[router] subtitles playlist.m3u8 session=" << sid << " track=" << track << " unavailable (404)\n";
+					res.status = 404;
+					res.set_content(json{{"error", "subtitle track not available"}}.dump(), "application/json");
+					return;
+				}
+				res.set_content(*playlist, "application/vnd.apple.mpegurl");
+			});
 
-    // On-demand WebVTT pipe for any subtitle track (embedded relative_index
-    // >= 0, external sidecar -2/-3/... — same convention as the `tracks`
-    // JSON below), referenced as the one segment in the playlist route
-    // above. Streams ffmpeg's stdout straight to the client instead of
-    // extracting to disk first (buildVodSubtitleArgs' on_fly path) — no
-    // up-front wait for the whole extraction to finish the way /subs.vtt
-    // needs. Fully independent of audio track switching: never touches the
-    // main encoder.
-    svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        std::string sid = req.matches[1];
-        int track = std::stoi(req.matches[2].str());
-        std::cerr << "[router] GET subtitles pipe session=" << sid << " track=" << track << "\n";
-        auto session = vodSessions.get(sid);
-        if (!session) {
-            std::cerr << "[router] subtitles pipe session=" << sid << " not found\n";
-            res.status = 404; return;
-        }
-        session->touch();
+	// On-demand WebVTT pipe for any subtitle track (embedded relative_index
+	// >= 0, external sidecar -2/-3/... — same convention as the `tracks`
+	// JSON below), referenced as the one segment in the playlist route
+	// above. Streams ffmpeg's stdout straight to the client instead of
+	// extracting to disk first (buildVodSubtitleArgs' on_fly path) — no
+	// up-front wait for the whole extraction to finish the way /subs.vtt
+	// needs. Fully independent of audio track switching: never touches the
+	// main encoder.
+	svr.Get(R"(/stream/vod/([^/]+)/subtitles/(-?[0-9]+)$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				std::string sid = req.matches[1];
+				int track       = std::stoi(req.matches[2].str());
+				std::cerr << "[router] GET subtitles pipe session=" << sid << " track=" << track << "\n";
+				auto session = vodSessions.get(sid);
+				if (!session)
+				{
+					std::cerr << "[router] subtitles pipe session=" << sid << " not found\n";
+					res.status = 404;
+					return;
+				}
+				session->touch();
 
-        auto sink = std::make_shared<ClientSink>();
+				auto sink = std::make_shared<ClientSink>();
 
-        // HLS players anchor a WebVTT segment's cue clock onto the shared
-        // presentation timeline via X-TIMESTAMP-MAP — without it, a player
-        // can fall back to treating cue time 0 as "whenever this segment
-        // started loading" instead of the file's real absolute time, which
-        // is the domain buildVodSubtitleArgs' cues actually use (no -ss —
-        // always the whole file). Observed in practice as subtitles running
-        // from the episode's start regardless of where the video itself
-        // resumed. ffmpeg's webvtt muxer doesn't emit this header, so it's
-        // spliced in here: push our own as this response's first chunk, then
-        // strip ffmpeg's own literal "WEBVTT\n\n" signature (libavformat's
-        // webvttenc.c writes exactly that, unconditionally) off the front of
-        // its real output below so the result is one valid WEBVTT file, not
-        // two concatenated ones.
-        static const std::string kWebvttSignature = "WEBVTT\n\n";
-        static const std::string kWebvttHeader =
-            "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n";
-        {
-            std::lock_guard<std::mutex> lock(sink->mtx);
-            sink->queue.emplace_back(kWebvttHeader.begin(), kWebvttHeader.end());
-        }
-        auto skip_remaining = std::make_shared<size_t>(kWebvttSignature.size());
-        // Byte-count diagnostic — an ffmpeg run that exits 0 but produced
-        // near-zero actual cue bytes (e.g. its srt demuxer silently parsing
-        // zero blocks out of a mis-detected charenc, rather than erroring)
-        // would otherwise look identical in the logs to a real successful
-        // extraction; this makes that distinction visible.
-        auto bytes_out = std::make_shared<std::atomic<size_t>>(0);
+				// HLS players anchor a WebVTT segment's cue clock onto the shared
+				// presentation timeline via X-TIMESTAMP-MAP — without it, a player
+				// can fall back to treating cue time 0 as "whenever this segment
+				// started loading" instead of the file's real absolute time, which
+				// is the domain buildVodSubtitleArgs' cues actually use (no -ss —
+				// always the whole file). Observed in practice as subtitles running
+				// from the episode's start regardless of where the video itself
+				// resumed. ffmpeg's webvtt muxer doesn't emit this header, so it's
+				// spliced in here: push our own as this response's first chunk, then
+				// strip ffmpeg's own literal "WEBVTT\n\n" signature (libavformat's
+				// webvttenc.c writes exactly that, unconditionally) off the front of
+				// its real output below so the result is one valid WEBVTT file, not
+				// two concatenated ones.
+				static const std::string kWebvttSignature = "WEBVTT\n\n";
+				static const std::string kWebvttHeader    =
+					"WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n\n";
+				{
+					std::lock_guard<std::mutex> lock(sink->mtx);
+					sink->queue.emplace_back(kWebvttHeader.begin(), kWebvttHeader.end());
+				}
+				auto skip_remaining = std::make_shared<size_t>(kWebvttSignature.size());
+				// Byte-count diagnostic — an ffmpeg run that exits 0 but produced
+				// near-zero actual cue bytes (e.g. its srt demuxer silently parsing
+				// zero blocks out of a mis-detected charenc, rather than erroring)
+				// would otherwise look identical in the logs to a real successful
+				// extraction; this makes that distinction visible.
+				auto bytes_out = std::make_shared<std::atomic<size_t>>(0);
 
-        std::shared_ptr<FfmpegProcess> proc;
-        try {
-            // spawnSubtitlePipe forks + starts two reader threads — under
-            // resource pressure (e.g. a client hammering this route) thread
-            // creation can throw std::system_error; letting that escape an
-            // httplib handler is fatal to the whole process, not just this
-            // request.
-            proc = session->spawnSubtitlePipe(track,
-                [sink, skip_remaining, bytes_out](const uint8_t* data, size_t len) {
-                    if (*skip_remaining > 0) {
-                        size_t skip = std::min(*skip_remaining, len);
-                        data += skip; len -= skip; *skip_remaining -= skip;
-                    }
-                    if (len == 0) return;
-                    bytes_out->fetch_add(len);
-                    std::lock_guard<std::mutex> lock(sink->mtx);
-                    if (sink->queue.size() < ClientSink::MAX_QUEUE)
-                        sink->queue.emplace_back(data, data + len);
-                    sink->cv.notify_one();
-                },
-                [sink, bytes_out, sid, track](int code) {
-                    std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
-                               << " ffmpeg exited code=" << code << " total cue bytes=" << bytes_out->load() << "\n";
-                    std::lock_guard<std::mutex> lock(sink->mtx);
-                    sink->done.store(true);
-                    sink->cv.notify_one();
-                });
-        } catch (const std::exception& e) {
-            std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
-                       << " spawn threw: " << e.what() << "\n";
-            res.status = 503; res.set_content(json{{"error","subtitle track temporarily unavailable"}}.dump(), "application/json"); return;
-        }
-        if (!proc) {
-            std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track << " spawn returned null (404)\n";
-            res.status = 404; res.set_content(json{{"error","subtitle track not available"}}.dump(), "application/json"); return;
-        }
-        std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
-                   << " streaming response (chunked, text/vtt)\n";
+				std::shared_ptr<FfmpegProcess> proc;
+				try
+				{
+					// spawnSubtitlePipe forks + starts two reader threads — under
+					// resource pressure (e.g. a client hammering this route) thread
+					// creation can throw std::system_error; letting that escape an
+					// httplib handler is fatal to the whole process, not just this
+					// request.
+					proc = session->spawnSubtitlePipe(track,
+													  [sink, skip_remaining, bytes_out](const uint8_t* data, size_t len)
+													  {
+														  if (*skip_remaining > 0)
+														  {
+															  size_t skip     = std::min(*skip_remaining, len);
+															  data            += skip;
+															  len             -= skip;
+															  *skip_remaining -= skip;
+														  }
+														  if (len == 0) return;
+														  bytes_out->fetch_add(len);
+														  std::lock_guard<std::mutex> lock(sink->mtx);
+														  if (sink->queue.size() < ClientSink::MAX_QUEUE) sink->queue.emplace_back(data, data + len);
+														  sink->cv.notify_one();
+													  },
+													  [sink, bytes_out, sid, track](int code)
+													  {
+														  std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
+															  << " ffmpeg exited code=" << code << " total cue bytes=" << bytes_out->load() << "\n";
+														  std::lock_guard<std::mutex> lock(sink->mtx);
+														  sink->done.store(true);
+														  sink->cv.notify_one();
+													  });
+				}
+				catch (const std::exception& e)
+				{
+					std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
+						<< " spawn threw: " << e.what() << "\n";
+					res.status = 503;
+					res.set_content(json{{"error", "subtitle track temporarily unavailable"}}.dump(), "application/json");
+					return;
+				}
+				if (!proc)
+				{
+					std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track << " spawn returned null (404)\n";
+					res.status = 404;
+					res.set_content(json{{"error", "subtitle track not available"}}.dump(), "application/json");
+					return;
+				}
+				std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
+					<< " streaming response (chunked, text/vtt)\n";
 
-        res.set_chunked_content_provider(
-            "text/vtt",
-            [sink](size_t, httplib::DataSink& data_sink) -> bool {
-                std::unique_lock<std::mutex> lock(sink->mtx);
-                sink->cv.wait(lock, [&] { return !sink->queue.empty() || sink->done.load(); });
-                // true, not false — see the /stream/channels/:id route's
-                // identical done()/return pair for why: httplib's
-                // write_content_chunked treats a false return as
-                // Error::Canceled regardless of done() having already
-                // written the real terminator, so this was misreporting
-                // every clean finish as a cancellation in the on-complete
-                // callback below.
-                if (sink->queue.empty()) { data_sink.done(); return true; }
-                auto chunk = std::move(sink->queue.front());
-                sink->queue.pop_front();
-                lock.unlock();
-                return data_sink.write(reinterpret_cast<const char*>(chunk.data()), chunk.size());
-            },
-            [proc, sid, track](bool success) {
-                // proc (the last reference) is destroyed here, killing the
-                // ffmpeg process if the client disconnected before it
-                // finished on its own — see FfmpegProcess's destructor.
-                std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
-                           << " response finished success=" << (success ? "yes" : "no") << "\n";
-            }
-        );
-    });
+				res.set_chunked_content_provider(
+					"text/vtt",
+					[sink](size_t, httplib::DataSink& data_sink) -> bool
+					{
+						std::unique_lock<std::mutex> lock(sink->mtx);
+						sink->cv.wait(lock, [&] { return !sink->queue.empty() || sink->done.load(); });
+						// true, not false — see the /stream/channels/:id route's
+						// identical done()/return pair for why: httplib's
+						// write_content_chunked treats a false return as
+						// Error::Canceled regardless of done() having already
+						// written the real terminator, so this was misreporting
+						// every clean finish as a cancellation in the on-complete
+						// callback below.
+						if (sink->queue.empty())
+						{
+							data_sink.done();
+							return true;
+						}
+						auto chunk = std::move(sink->queue.front());
+						sink->queue.pop_front();
+						lock.unlock();
+						return data_sink.write(reinterpret_cast<const char*>(chunk.data()), chunk.size());
+					},
+					[proc, sid, track](bool success)
+					{
+						// proc (the last reference) is destroyed here, killing the
+						// ffmpeg process if the client disconnected before it
+						// finished on its own — see FfmpegProcess's destructor.
+						std::cerr << "[router] subtitles pipe session=" << sid << " track=" << track
+							<< " response finished success=" << (success ? "yes" : "no") << "\n";
+					}
+				);
+			});
 
-    svr.Get(R"(/stream/vod/([^/]+)/subs\.vtt$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto session = vodSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; return; }
-        session->touch();
-        // Lazy — see VodSession::spawnSubtitleProcess()'s own comment. No
-        // longer spawned unconditionally at session start, since nothing
-        // built against this codebase still uses this route (both Hades and
-        // Android moved to the per-track on-demand /subtitles/{n} pipe) —
-        // idempotent, so harmless if something else already triggered it.
-        session->spawnSubtitleProcess();
-        auto path = session->dir() + "/subs.vtt";
-        if (!waitForFile(path, 3000)) { res.status = 503; return; } // existence check, now that a first request just triggered the spawn above
-        // Completeness — see waitForSubtitleExtraction's own comment. Must
-        // actually check the result: a <track>/ExoPlayer sideloaded fetch
-        // happens exactly once and never re-fetches, so serving whatever
-        // partial bytes ffmpeg has flushed so far (rather than 503ing and
-        // letting the client's own request logic decide whether to retry)
-        // means permanently truncated/no cues for the rest of the file, not
-        // a merely-late-but-eventually-correct one.
-        if (!waitForSubtitleExtraction(*session)) { res.status = 503; return; }
-        // Exited doesn't mean succeeded — ffmpeg can leave a syntactically
-        // valid but empty/truncated WebVTT file behind on failure (e.g. its
-        // srt demuxer rejecting non-UTF-8 input despite sniffSubCharenc's
-        // mitigation). Serving that as 200 reads to the client as "this
-        // title just has no subtitles," silently, instead of a real error.
-        if (session->hasSubtitleExtractionFailed()) { res.status = 500; res.set_content(json{{"error","subtitle extraction failed"}}.dump(), "application/json"); return; }
-        serveHlsFile(path, "text/vtt", res);
-    });
+	svr.Get(R"(/stream/vod/([^/]+)/subs\.vtt$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = vodSessions.get(req.matches[1]);
+				if (!session)
+				{
+					res.status = 404;
+					return;
+				}
+				session->touch();
+				// Lazy — see VodSession::spawnSubtitleProcess()'s own comment. No
+				// longer spawned unconditionally at session start, since nothing
+				// built against this codebase still uses this route (both Hades and
+				// Android moved to the per-track on-demand /subtitles/{n} pipe) —
+				// idempotent, so harmless if something else already triggered it.
+				session->spawnSubtitleProcess();
+				auto path = session->dir() + "/subs.vtt";
+				if (!waitForFile(path, 3000))
+				{
+					res.status = 503;
+					return;
+				} // existence check, now that a first request just triggered the spawn above
+				// Completeness — see waitForSubtitleExtraction's own comment. Must
+				// actually check the result: a <track>/ExoPlayer sideloaded fetch
+				// happens exactly once and never re-fetches, so serving whatever
+				// partial bytes ffmpeg has flushed so far (rather than 503ing and
+				// letting the client's own request logic decide whether to retry)
+				// means permanently truncated/no cues for the rest of the file, not
+				// a merely-late-but-eventually-correct one.
+				if (!waitForSubtitleExtraction(*session))
+				{
+					res.status = 503;
+					return;
+				}
+				// Exited doesn't mean succeeded — ffmpeg can leave a syntactically
+				// valid but empty/truncated WebVTT file behind on failure (e.g. its
+				// srt demuxer rejecting non-UTF-8 input despite sniffSubCharenc's
+				// mitigation). Serving that as 200 reads to the client as "this
+				// title just has no subtitles," silently, instead of a real error.
+				if (session->hasSubtitleExtractionFailed())
+				{
+					res.status = 500;
+					res.set_content(json{{"error", "subtitle extraction failed"}}.dump(), "application/json");
+					return;
+				}
+				serveHlsFile(path, "text/vtt", res);
+			});
 
-    svr.Post(R"(/stream/vod/([^/]+)/stop$)", [&vodSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        vodSessions.stop(req.matches[1]);
-        res.set_content(json{{"ok", true}}.dump(), "application/json");
-    });
+	svr.Post(R"(/stream/vod/([^/]+)/stop$)", [&vodSessions](
+			 const httplib::Request& req, httplib::Response& res)
+			 {
+				 vodSessions.stop(req.matches[1]);
+				 res.set_content(json{{"ok", true}}.dump(), "application/json");
+			 });
 
-    // ── Preview (Guide hover previews) ────────────────────────────────────────
-    svr.Post("/stream/preview/start", [&previewSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        json body;
-        try { body = json::parse(req.body); } catch (...) {
-            res.status = 400; res.set_content(json{{"error","invalid JSON"}}.dump(), "application/json"); return;
-        }
-        auto channel_id = body.value("channel_id", "");
-        if (channel_id.empty()) {
-            res.status = 400; res.set_content(json{{"error","channel_id required"}}.dump(), "application/json"); return;
-        }
-        bool hdr_capable = body.value("hdr_capable", false);
-        auto session = previewSessions.create(channel_id, hdr_capable);
-        if (!session) {
-            // See /stream/vod/start's own comment — same cap-or-failure ambiguity.
-            res.status = 503;
-			res.set_content(json{{"error", "failed to start preview (or server is at capacity — try again shortly)"}}.dump(), "application/json");
-			return;
-		}
-		res.set_content(json{
-							{"session_id", session->sessionId()},
-							{"manifest_url", "/stream/preview/" + session->sessionId() + "/playlist.m3u8"},
-						}.dump(), "application/json");
-    });
+	// ── Preview (Guide hover previews) ────────────────────────────────────────
+	svr.Post("/stream/preview/start", [&previewSessions](
+			 const httplib::Request& req, httplib::Response& res)
+			 {
+				 json body;
+				 try { body = json::parse(req.body); }
+				 catch (...)
+				 {
+					 res.status = 400;
+					 res.set_content(json{{"error", "invalid JSON"}}.dump(), "application/json");
+					 return;
+				 }
+				 auto channel_id = body.value("channel_id", "");
+				 if (channel_id.empty())
+				 {
+					 res.status = 400;
+					 res.set_content(json{{"error", "channel_id required"}}.dump(), "application/json");
+					 return;
+				 }
+				 bool hdr_capable = body.value("hdr_capable", false);
+				 auto session     = previewSessions.create(channel_id, hdr_capable);
+				 if (!session)
+				 {
+					 // See /stream/vod/start's own comment — same cap-or-failure ambiguity.
+					 res.status = 503;
+					 res.set_content(json{{"error", "failed to start preview (or server is at capacity — try again shortly)"}}.dump(), "application/json");
+					 return;
+				 }
+				 res.set_content(json{
+									 {"session_id", session->sessionId()},
+									 {"manifest_url", "/stream/preview/" + session->sessionId() + "/playlist.m3u8"},
+								 }.dump(), "application/json");
+			 });
 
-    svr.Post(R"(/stream/preview/([^/]+)/switch$)", [&previewSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        json body;
-        try { body = json::parse(req.body); } catch (...) {
-            res.status = 400; res.set_content(json{{"error","invalid JSON"}}.dump(), "application/json"); return;
-        }
-        auto channel_id = body.value("channel_id", "");
-        if (channel_id.empty()) {
-            res.status = 400; res.set_content(json{{"error","channel_id required"}}.dump(), "application/json"); return;
-        }
-        if (!previewSessions.switchChannel(req.matches[1], channel_id)) {
-            res.status = 404; res.set_content(json{{"error","session not found or switch failed"}}.dump(), "application/json"); return;
-        }
-        res.set_content(json{{"ok", true}}.dump(), "application/json");
-    });
+	svr.Post(R"(/stream/preview/([^/]+)/switch$)", [&previewSessions](
+			 const httplib::Request& req, httplib::Response& res)
+			 {
+				 json body;
+				 try { body = json::parse(req.body); }
+				 catch (...)
+				 {
+					 res.status = 400;
+					 res.set_content(json{{"error", "invalid JSON"}}.dump(), "application/json");
+					 return;
+				 }
+				 auto channel_id = body.value("channel_id", "");
+				 if (channel_id.empty())
+				 {
+					 res.status = 400;
+					 res.set_content(json{{"error", "channel_id required"}}.dump(), "application/json");
+					 return;
+				 }
+				 if (!previewSessions.switchChannel(req.matches[1], channel_id))
+				 {
+					 res.status = 404;
+					 res.set_content(json{{"error", "session not found or switch failed"}}.dump(), "application/json");
+					 return;
+				 }
+				 res.set_content(json{{"ok", true}}.dump(), "application/json");
+			 });
 
-    svr.Get(R"(/stream/preview/([^/]+)/playlist\.m3u8$)", [&previewSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto session = previewSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; res.set_content(json{{"error","session not found"}}.dump(), "application/json"); return; }
-        session->touch();
-        auto path = session->dir() + "/playlist.m3u8";
-        if (!waitForFile(path)) { res.status = 503; res.set_content(json{{"error","not ready"}}.dump(), "application/json"); return; }
-        serveHlsFile(path, "application/vnd.apple.mpegurl", res);
-    });
+	svr.Get(R"(/stream/preview/([^/]+)/playlist\.m3u8$)", [&previewSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = previewSessions.get(req.matches[1]);
+				if (!session)
+				{
+					res.status = 404;
+					res.set_content(json{{"error", "session not found"}}.dump(), "application/json");
+					return;
+				}
+				session->touch();
+				auto path = session->dir() + "/playlist.m3u8";
+				if (!waitForFile(path))
+				{
+					res.status = 503;
+					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
+					return;
+				}
+				serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+			});
 
-    svr.Get(R"(/stream/preview/([^/]+)/(seg-[0-9]+\.ts)$)", [&previewSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        auto session = previewSessions.get(req.matches[1]);
-        if (!session) { res.status = 404; return; }
-        session->touch();
-        serveHlsFile(session->dir() + "/" + req.matches[2].str(), "video/mp2t", res);
-    });
+	svr.Get(R"(/stream/preview/([^/]+)/(seg-[0-9]+\.ts)$)", [&previewSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = previewSessions.get(req.matches[1]);
+				if (!session)
+				{
+					res.status = 404;
+					return;
+				}
+				session->touch();
+				serveHlsFile(session->dir() + "/" + req.matches[2].str(), "video/mp2t", res);
+			});
 
-    svr.Post(R"(/stream/preview/([^/]+)/stop$)", [&previewSessions](
-            const httplib::Request& req, httplib::Response& res) {
-        previewSessions.stop(req.matches[1]);
-        res.set_content(json{{"ok", true}}.dump(), "application/json");
-    });
+	svr.Post(R"(/stream/preview/([^/]+)/stop$)", [&previewSessions](
+			 const httplib::Request& req, httplib::Response& res)
+			 {
+				 previewSessions.stop(req.matches[1]);
+				 res.set_content(json{{"ok", true}}.dump(), "application/json");
+			 });
 }

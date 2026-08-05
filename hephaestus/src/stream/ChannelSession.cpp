@@ -1107,11 +1107,11 @@ void ChannelSession::spawnFfmpeg(const KairosNowResponse& item, int64_t startOff
 		current_audio_track = audioTrack;
 	}
 	// Notify a wired-up ChannelViewerRegistry (see onItemPlaying's own
-	// comment) what's now playing, so it can (re)assign capability-bucketed
-	// viewers of this channel. Harmless if more than one bucket instance
+	// comment) what's now playing, so it can refresh capability-bucketed
+	// viewers' recommended bucket. Harmless if more than one bucket instance
 	// calls this for the same item — idempotent recomputation against the
 	// same deterministic Kairos schedule.
-	if (onItemPlaying) onItemPlaying(channel_id, info, audioTrack);
+	if (onItemPlaying) onItemPlaying(channel_id, info, audioTrack, item.duration_ms, item.is_filler);
 
 	auto args = buildArgs(ffmpeg_path, item, startOffsetMs, audioTrack, subtitleTrack,
 						  opts.loudnorm, opts.hw_accel, opts.vaapi_device,

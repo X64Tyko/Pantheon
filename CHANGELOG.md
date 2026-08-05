@@ -56,6 +56,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Direct-stream (native bucket) audio/video desync** (Hephaestus): the direct-stream bucket copies video untouched
   but always re-encodes audio (for loudness normalization), an asymmetric pipeline with no prior resync mechanism.
   Added `aresample=async=1` to that bucket's audio filter chain to correct drift against the copied video track.
+- **Live-channel bucket switch corrupted playback (audio/video from one item bleeding into the next, plus stalls)**
+  (Hephaestus + Hades): `ChannelViewerRegistry` used to silently migrate an already-connected viewer's serving bucket
+  (default transcode vs. native direct-stream) whenever the schedule moved onto/off of a directly-streamable item —
+  the two buckets are fully independent ffmpeg encodes/HLS playlists with unrelated segment numbering, so an already-
+  polling hls.js session had no way to know its manifest URL just started resolving to an unrelated stream. A
+  viewer's serving bucket is now pinned at connect time and never mutated after; `reassignForChannel` only updates
+  an advisory `recommended_bucket`, exposed via a new `GET /stream/channel/viewer/:id/status`, and Hades polls it and
+  does a real reconnect (fresh viewer session + manifest) when a switch is actually recommended. Recommendations are
+  also gated on the item being at least 45s and not a filler, so a channel interleaving many short bumpers (the
+  schedule that originally exposed this bug) doesn't reconnect on almost every item boundary. That gate only applies
+  to the opportunistic default-to-native upgrade — a native-to-default fallback (a viewer already pinned to native
+  who is no longer eligible for what's now airing) is never gated, since the native bucket copies video verbatim
+  regardless of viewer capability and leaving an ineligible viewer on it risks genuinely undecodable playback, not
+  just a missed efficiency win.
 
 ### Changed
 

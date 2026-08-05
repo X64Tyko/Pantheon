@@ -128,9 +128,10 @@ std::shared_ptr<ChannelSession> SessionManager::getOrCreate(const std::string& c
 	if (viewer_registry_)
 	{
 		ChannelViewerRegistry* registry = viewer_registry_;
-		session->onItemPlaying          = [registry](const std::string& cid, const std::optional<MediaInfo>& info, int audioTrack)
+		session->onItemPlaying          = [registry](const std::string& cid, const std::optional<MediaInfo>& info, int audioTrack,
+											int64_t itemDurationMs, bool isFiller)
 		{
-			registry->reassignForChannel(cid, info, audioTrack);
+			registry->reassignForChannel(cid, info, audioTrack, itemDurationMs, isFiller);
 		};
 	}
 	if (!session->start())

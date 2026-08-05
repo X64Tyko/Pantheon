@@ -124,6 +124,27 @@ export function stopChannelViewer(viewerSessionId: string) {
     })
 }
 
+// Polled by usePlaybackSession while watching a live channel. Hephaestus's
+// ChannelViewerRegistry recommends a bucket switch (e.g. the schedule moved
+// onto/off of a directly-streamable item) but never silently migrates an
+// already-connected viewer's serving bucket — that was the root cause of a
+// real bug where two independent ffmpeg encodes (default/native) got spliced
+// together under one manifest URL, showing up as one item's audio/video
+// bleeding into the next at every switch. reconnect_recommended==true means
+// the caller should tear down and restart the viewer session (see
+// usePlaybackSession's reload()) to actually move onto the recommended bucket.
+export interface ChannelViewerStatus {
+    bucket: string
+    recommended_bucket: string
+    reconnect_recommended: boolean
+}
+
+export async function getChannelViewerStatus(viewerSessionId: string): Promise<ChannelViewerStatus> {
+    const res = await fetch(`/stream/channel/viewer/${viewerSessionId}/status`, {headers: authHeaders()})
+    if (!res.ok) throw new Error(`channel viewer status: ${res.statusText}`)
+    return res.json()
+}
+
 export interface DeclaredClientCapabilities {
     video_codecs: string[]
     audio_codecs: string[]

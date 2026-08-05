@@ -90,7 +90,7 @@ ChannelViewerRegistry::StartResult ChannelViewerRegistry::start(
 	std::string id = generateViewerId();
 	{
 		std::lock_guard<std::mutex> lock(mtx_);
-		viewers_[id] = ViewerEntry{channel_id, caps, bucket, nowMs()};
+		viewers_[id] = ViewerEntry{channel_id, caps, bucket, bucket, nowMs()};
 	}
 
 	if (bucket == ChannelSession::kNativeBucket) sessions_.getOrCreate(channel_id, bucket); // spins up if this is the first native viewer
@@ -122,25 +122,78 @@ std::map<std::string, std::map<std::string, int>> ChannelViewerRegistry::viewerC
 	return out;
 }
 
+std::optional<ChannelViewerRegistry::ViewerStatus> ChannelViewerRegistry::status(const std::string& viewer_session_id) const
+{
+	std::lock_guard<std::mutex> lock(mtx_);
+	auto it = viewers_.find(viewer_session_id);
+	if (it == viewers_.end()) return std::nullopt;
+	return ViewerStatus{it->second.bucket, it->second.recommended_bucket};
+}
+
+// Bumpers/fillers are short enough that a reconnect-driven bucket switch
+// (a real HLS teardown/reload on Hades' side, same visible cost as a channel
+// change) would cost more in rebuffering than it would ever save in transcode
+// CPU — and a channel that interleaves many short bumpers between real
+// programming (exactly the schedule that exposed the original silent-swap
+// corruption bug) would otherwise recommend a reconnect on almost every
+// single item boundary. Only recommend switching for items substantial
+// enough that the tradeoff is worth it.
+//
+// This debounce ONLY applies to the opportunistic default->native upgrade,
+// never to a native->default fallback — see reassignForChannel's own
+// comment on why those two directions aren't symmetric.
+static constexpr int64_t kMinReassignDurationMs = 45'000;
+
 void ChannelViewerRegistry::reassignForChannel(const std::string& channel_id,
-											   const std::optional<MediaInfo>& info, int audio_track)
+											   const std::optional<MediaInfo>& info, int audio_track,
+											   int64_t item_duration_ms, bool is_filler)
 {
 	bool force_transcode = sessions_.channelForcesTranscode(channel_id);
-	bool need_native     = false;
+	bool item_too_short  = is_filler || item_duration_ms < kMinReassignDurationMs;
+
+	bool need_native  = false;
+	bool need_default = false;
 	{
 		std::lock_guard<std::mutex> lock(mtx_);
 		for (auto& [id, entry] : viewers_)
 		{
 			if (entry.channel_id != channel_id) continue;
+
 			std::string ideal = (!force_transcode && info && isChannelDirectStreamable(*info, audio_track, entry.caps))
 									? ChannelSession::kNativeBucket
 									: ChannelSession::kDefaultBucket;
-			entry.bucket = ideal;
+
+			// A native ChannelSession always does a raw `-c:v copy` of
+			// whatever's airing (see ChannelSession::spawnFfmpeg's
+			// direct_stream branch) — it has no idea whether that's actually
+			// decodable by any given viewer; that check is entirely this
+			// registry's job, via isChannelDirectStreamable above. So a
+			// viewer already pinned to native who is no longer eligible for
+			// the newly-playing item (wrong codec, too tall, missing audio
+			// track, VFR) is at real risk of outright broken/undecodable
+			// playback for that item's whole duration, not just a missed
+			// efficiency win — unlike the reverse case (a default-pinned
+			// viewer who *could* move to native), where staying put is
+			// always safe, just not maximally efficient. Only the latter is
+			// worth debouncing against short items/fillers; a native->default
+			// safety fallback must go through regardless of how short the
+			// item is.
+			bool downgrade_for_safety = entry.bucket == ChannelSession::kNativeBucket &&
+				ideal == ChannelSession::kDefaultBucket;
+			if (item_too_short && !downgrade_for_safety) continue;
+
+			entry.recommended_bucket = ideal;
 			if (ideal == ChannelSession::kNativeBucket) need_native = true;
+			else need_default                                       = true;
 		}
 	}
-	// Ensure the native bucket session exists if anyone now needs it — a
-	// no-op (existing active session returned) if it's already running.
+
+	// Pre-warm whichever bucket(s) a viewer might reconnect into, so acting
+	// on the recommendation above finds it already running instead of a cold
+	// spin-up — a no-op (existing active session returned) if already
+	// running. Never touches any already-connected viewer's pinned serving
+	// bucket (see this class's own comment on ViewerEntry::bucket) — only a
+	// real reconnect (a fresh start()) ever changes that.
 	//
 	// Dispatched asynchronously, NOT called inline: this function can itself
 	// run synchronously inside SessionManager::getOrCreate()'s own call to
@@ -155,10 +208,14 @@ void ChannelViewerRegistry::reassignForChannel(const std::string& channel_id,
 	// this has already returned and inserted its session, so this just
 	// finds it already active — the ordinary case — instead of racing its
 	// own caller.
-	if (need_native)
+	if (need_native || need_default)
 	{
 		SessionManager* sessions = &sessions_;
 		std::string cid          = channel_id;
-		TaskRegistry::global().spawn([sessions, cid] { sessions->getOrCreate(cid, ChannelSession::kNativeBucket); });
+		TaskRegistry::global().spawn([sessions, cid, need_native, need_default]
+		{
+			if (need_native) sessions->getOrCreate(cid, ChannelSession::kNativeBucket);
+			if (need_default) sessions->getOrCreate(cid, ChannelSession::kDefaultBucket);
+		});
 	}
 }

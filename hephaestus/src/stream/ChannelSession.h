@@ -256,11 +256,18 @@ public:
 
 	// Notified from spawnFfmpeg() whenever a new (non-offline) item starts
 	// playing, so a ChannelViewerRegistry can keep capability-bucketed
-	// viewers assigned correctly as the schedule advances. Public field, not
-	// a setter — set once by SessionManager right after construction.
-	// Unset (nullptr) is harmless: live-channel bucketing simply never
-	// engages, everything behaves exactly as it did before this feature.
-	std::function<void(const std::string & channel_id, const std::optional<MediaInfo> & info, int audio_track)> onItemPlaying;
+	// viewers' *recommended* bucket current as the schedule advances (see
+	// ChannelViewerRegistry::reassignForChannel — it no longer silently
+	// migrates an already-connected viewer's serving bucket; a real bucket
+	// change only ever happens via a fresh reconnect). item_duration_ms/
+	// is_filler let that recommendation ignore short bumpers/fillers, where a
+	// reconnect's own rebuffer would cost more than the transcode CPU it
+	// would save. Public field, not a setter — set once by SessionManager
+	// right after construction. Unset (nullptr) is harmless: live-channel
+	// bucketing simply never engages, everything behaves exactly as it did
+	// before this feature.
+	std::function<void(const std::string & channel_id, const std::optional<MediaInfo> & info, int audio_track,
+					   int64_t item_duration_ms, bool is_filler)> onItemPlaying;
 
 	// Fetches current item from Kairos and starts ffmpeg. Returns false on failure.
 	bool start();

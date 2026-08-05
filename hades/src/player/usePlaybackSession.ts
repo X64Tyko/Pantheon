@@ -4,7 +4,8 @@ import {
     stopVodPlayback,
     liveChannelManifestUrl,
     startChannelViewer,
-    stopChannelViewer
+    stopChannelViewer,
+    getChannelViewerStatus
 } from './playbackApi'
 import type { VodTracks } from './playbackApi'
 import { api } from '../api/client'
@@ -239,6 +240,26 @@ export function usePlaybackSession(
     // would auto-pick on its own. Stays on the same part.
     load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, opts.subtitleTrack ?? subtitleTrack, partNum)
   }, [load, audioTrack, subtitleTrack, partNum])
+
+    // Polls Hephaestus for a recommended bucket switch (see
+    // playbackApi.ts's getChannelViewerStatus doc comment) and reconnects
+    // (a real fresh viewer session, not a silent in-place swap) when one's
+    // recommended. viewerSessionIdRef is read fresh on every tick rather than
+    // captured, so a reconnect this same poll triggered doesn't get raced by
+    // the next tick still holding the old (now-stopped) id.
+    useEffect(() => {
+        if (!isLive) return
+        const interval = setInterval(() => {
+            const vid = viewerSessionIdRef.current
+            if (!vid) return // no viewer session yet, or mid-reconnect
+            getChannelViewerStatus(vid).then(st => {
+                if (viewerSessionIdRef.current !== vid) return // superseded while in flight
+                if (st.reconnect_recommended) reload({})
+            }).catch(() => {
+            }) // best-effort — just tries again next tick
+        }, 5000)
+        return () => clearInterval(interval)
+    }, [isLive, reload])
 
   const advanceToNextPart: PlaybackSession['advanceToNextPart'] = useCallback(() => {
     if (!isMultiPart || partNum >= totalParts) return
