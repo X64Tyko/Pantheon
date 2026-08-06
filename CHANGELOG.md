@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **`.ogv` file support** (Kairos): the local library scanner now recognizes `.ogv` (Ogg Theora/Vorbis) files as
+  video and ingests them like any other container. They aren't eligible for the direct-stream channel bucket
+  (Theora/Vorbis aren't in the direct-streamable codec set) but play normally through the existing software
+  transcode path.
 - **Multilingual alternate titles + display-language preference** (Kairos + Hades): searching now matches an item by
   any known-language title, not just the one currently displayed — typing "El Perro y El Gato" finds "The Dog and
   the Cat" if that Spanish title was ever scraped or manually entered. `item_alternate_title` gained `language`/

@@ -26,7 +26,7 @@ namespace
 {
 	const std::unordered_set<std::string> kVideoExts = {
 		".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv",
-		".flv", ".ts", ".mpg", ".mpeg", ".m2ts", ".webm",
+		".flv", ".ts", ".mpg", ".mpeg", ".m2ts", ".webm", ".ogv",
 	};
 
 	// Last-resort "date added" signal for local files — there's no real "added
