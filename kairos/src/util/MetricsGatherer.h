@@ -24,20 +24,9 @@ public:
 	{
 		ProcessMetrics m;
 
-		// RAM: raw cgroup usage minus reclaimable page-cache.
-		//
-		// Originally subtracted only inactive_file to match what docker stats
-		// itself reports — but that undercounts right after (or during) any
-		// heavy sequential read, like the scene-detection/fingerprint scans
-		// in detect/ChapterDetector.cpp: pages the kernel only just cached
-		// are classified active_file until it gets around to aging them,
-		// which can be many minutes on a mostly-idle host. Subtracting the
-		// full file figure (all reclaimable page cache, active or not)
-		// instead means a one-off library scan no longer makes this figure —
-		// the one Kairos's own /api/activity endpoint hands to the Hades
-		// Activity page — look like sustained app memory it isn't. This can
-		// now read a bit lower than `docker stats`' own figure in that same
-		// window; that's the more honest number, not a bug.
+		// RAM: raw cgroup usage minus all reclaimable page-cache (not just
+		// inactive_file — that undercounts right after a heavy scan, since
+		// freshly-cached pages stay "active" until the kernel ages them out).
 		{
 			// Try cgroup v2
 			std::ifstream f2("/sys/fs/cgroup/memory.current");

@@ -135,18 +135,19 @@ private:
 	// earlier one rolls off the sliding window — an HLS-spec requirement
 	// (RFC 8216 §4.3.3) Roku's player enforces strictly and stops playback
 	// over. No ffmpeg hls_flags option controls this (checked against
-	// ffmpeg n8.1.1's own muxer help), so a small background loop patches
-	// the on-disk playlist.m3u8 directly. One count per spawnFfmpeg() after
-	// the very first (transition() increments it); the first spawn isn't a
-	// discontinuity.
+	// ffmpeg n8.1.1's own muxer help).
+	//
+	// Patched in memory at serve time (playlistForClient()) rather than
+	// rewritten on disk — a second on-disk writer raced ffmpeg's own muxer
+	// and could clobber it; ffmpeg is now the only writer of this file.
 	std::atomic<int> discontinuity_count_{0};
+	// Pure, unit-testable — no file I/O.
+	static std::string patchDiscontinuitySequence(const std::string& raw, int discontinuity_count);
+
 	std::thread hls_patch_thread;
 	std::atomic<bool> hls_patch_stop{false};
 	void hlsPatchLoop();
-	void patchDiscontinuitySequence();
-	// Last segment URI whose EXTINF duration was already checked/logged by
-	// patchDiscontinuitySequence's verbose_transcode_logs diagnostic — not
-	// synchronized, only ever touched from the single hlsPatchLoop thread.
+	void checkSegmentDurationDrift(); // diagnostic only, no writes
 	std::string last_extinf_uri_;
 
 	// Warms Hephaestus's own file probe cache (MediaProbe.cpp's process-
@@ -226,8 +227,10 @@ public:
 		return computeSpeed(rawDriftMs, durationMs);
 	}
 
-	void setDiscontinuityCountForTest(int n) { discontinuity_count_.store(n); }
-	void patchDiscontinuitySequenceForTest() { patchDiscontinuitySequence(); }
+	static std::string patchDiscontinuitySequenceForTest(const std::string& raw, int discontinuity_count)
+	{
+		return patchDiscontinuitySequence(raw, discontinuity_count);
+	}
 
 	// Exposed for testing the start()/applyResolvedItem() retry-on-
 	// unreachable-Kairos fix: whether the session is still showing the
@@ -297,6 +300,9 @@ public:
 	// Called by the HTTP handler on every HLS playlist/segment GET — keeps
 	// the session alive the same way an MPEG-TS client connection does.
 	void touchHls();
+	// Live playlist.m3u8 with the discontinuity-sequence tag patched in
+	// memory — serve this instead of the raw file. nullopt if not readable.
+	std::optional<std::string> playlistForClient() const;
 
 	bool isActive() const { return active.load(); }
 	const std::string& channelId() const { return channel_id; }
