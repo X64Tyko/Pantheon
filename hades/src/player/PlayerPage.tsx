@@ -234,6 +234,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     setCurrentMs(initialPositionMs)
     currentMsRef.current = initialPositionMs
     setUpNextDismissed(false)
+      setPlayerError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetId])
 
@@ -699,7 +700,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
         </div>
       )}
 
-      {!session.loading && !session.error && session.manifestUrl && (
+        {!session.loading && !session.error && !playerError && session.manifestUrl && (
         <>
           {isRemoteActive ? (
             // The local hls.js instance only exists inside VideoPlayer — not

@@ -24,26 +24,37 @@ public:
 	{
 		ProcessMetrics m;
 
-		// RAM: match Docker's "working set" calculation:
-		//   displayed = memory.current − inactive_file  (from memory.stat)
-		// The raw cgroup value includes the reclaimable page-cache; subtracting
-		// inactive_file gives the same figure docker stats reports.
+		// RAM: raw cgroup usage minus reclaimable page-cache.
+		//
+		// Originally subtracted only inactive_file to match what docker stats
+		// itself reports — but that undercounts right after (or during) any
+		// heavy sequential read, like the scene-detection/fingerprint scans
+		// in detect/ChapterDetector.cpp: pages the kernel only just cached
+		// are classified active_file until it gets around to aging them,
+		// which can be many minutes on a mostly-idle host. Subtracting the
+		// full file figure (all reclaimable page cache, active or not)
+		// instead means a one-off library scan no longer makes this figure —
+		// the one Kairos's own /api/activity endpoint hands to the Hades
+		// Activity page — look like sustained app memory it isn't. This can
+		// now read a bit lower than `docker stats`' own figure in that same
+		// window; that's the more honest number, not a bug.
 		{
 			// Try cgroup v2
 			std::ifstream f2("/sys/fs/cgroup/memory.current");
 			long raw = 0;
 			if (f2 >> raw)
 			{
-				long inactive_file = 0;
+				long file_cache = 0;
 				std::ifstream stat2("/sys/fs/cgroup/memory.stat");
 				std::string key;
 				long val;
-				while (stat2 >> key >> val) if (key == "inactive_file")
-				{
-					inactive_file = val;
-					break;
-				}
-				m.ram_bytes = raw > inactive_file ? raw - inactive_file : 0;
+				while (stat2 >> key >> val)
+					if (key == "file")
+					{
+						file_cache = val;
+						break;
+					}
+				m.ram_bytes = raw > file_cache ? raw - file_cache : 0;
 			}
 			else
 			{
@@ -51,16 +62,17 @@ public:
 				std::ifstream f1("/sys/fs/cgroup/memory/memory.usage_in_bytes");
 				if (f1 >> raw)
 				{
-					long inactive_file = 0;
+					long file_cache = 0;
 					std::ifstream stat1("/sys/fs/cgroup/memory/memory.stat");
 					std::string key;
 					long val;
-					while (stat1 >> key >> val) if (key == "total_inactive_file")
-					{
-						inactive_file = val;
-						break;
-					}
-					m.ram_bytes = raw > inactive_file ? raw - inactive_file : 0;
+					while (stat1 >> key >> val)
+						if (key == "total_cache")
+						{
+							file_cache = val;
+							break;
+						}
+					m.ram_bytes = raw > file_cache ? raw - file_cache : 0;
 				}
 				else
 				{

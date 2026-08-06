@@ -47,22 +47,28 @@ static constexpr double kMaxSpeed = 1.02;
 // below are sized generously to absorb that case rather than just the
 // intended segment length.
 //
-// SHIPPED MITIGATION, NOT THE ROOT-CAUSE FIX — bumped 2->6. A live A/B/A
-// test (2s glitches, 6s doesn't, 2s glitches again) confirmed the transcode
-// bucket's periodic stutter is tied to this interval. The leading theory —
-// missing `-g` letting the encoder replan its internal GOP structure every
-// forced keyframe — was implemented (EncoderArgs.cpp now sizes `-g` off the
-// source's real frame rate) but confirmed NOT sufficient on its own: the
-// glitch still reproduces at 2s with that fix in place. Bumping the segment
-// interval itself is the blunt, confirmed-effective mitigation while the
-// actual mechanism is still being investigated (see project memory for the
-// full history) — costs some cold-start/channel-switch latency (first
-// segment takes longer to produce), accepted as the tradeoff for now.
-//
-// Quietly reverted to 2 in a later commit to retest against an unrelated
-// bitrate-cap/NVENC fix — reproduced the same stalls on real (software-only,
-// no-hwaccel) hardware, so restored to 6.
-static constexpr int kLiveHlsSegmentSecs = 6;
+// KNOWN TRADEOFF, ROOT CAUSE STILL UNRESOLVED — this value has flip-flopped
+// between 2 and 6 as the two symptoms it affects took turns being the
+// priority:
+//   - At 2: a live A/B/A test confirmed a periodic transcode-bucket stutter
+//     during playback is tied to this interval (2s glitches, 6s doesn't, 2s
+//     glitches again). The leading theory — missing `-g` letting the encoder
+//     replan its internal GOP structure every forced keyframe — was
+//     implemented (EncoderArgs.cpp sizes `-g` off the source's real frame
+//     rate) but confirmed NOT sufficient on its own: the glitch still
+//     reproduces at 2s with that fix in place. Reproduced on real
+//     (software-only, no-hwaccel) hardware, ruling out a GPU-specific cause.
+//   - At 6: cold-start/channel-switch latency gets worse — ffmpeg (paced by
+//     -re) only closes/flushes the first segment once hls_time seconds of
+//     real wall-clock content has played, so a slow tune-in more easily loses
+//     the race against the client's manifest-load patience (Router.cpp's
+//     waitForFile) — a plausible contributor to slow/failed channel
+//     transitions.
+// Set back to 2 (2026-08-05) to prioritize transition/tune-in latency; if the
+// periodic in-stream stutter reappears, that's the expected tradeoff, not a
+// new regression — see project memory for the full investigation history
+// before re-flipping this again.
+static constexpr int kLiveHlsSegmentSecs = 2;
 
 // Oversized vs. the 2s target so a direct-stream session's much-longer real
 // segments (see above) still get a safe rolling window instead of a client's

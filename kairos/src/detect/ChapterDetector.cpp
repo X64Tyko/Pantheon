@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace {
 
@@ -17,6 +19,27 @@ std::string shellQuote(const std::string& s) {
         else           r += c;
     }
     return r + "'";
+}
+
+// sceneChangeTimeline/computeAudioFingerprint each decode a whole media file
+// (ffmpeg's full-frame scene-cut scan, fpcalc's full-length audio read) via a
+// popen'd child process that inherits this container's cgroup — so every
+// page read gets cached and billed against Kairos's own memory usage, not
+// whichever short-lived subprocess actually touched it. A one-off library
+// scan over many large files can hold several GB of otherwise-idle page
+// cache this way, which docker stats (and Kairos's own /api/activity RAM
+// figure) then reports as if it were real, sustained app memory. This has no
+// fd of its own on the file (the child process did the reading), so it opens
+// the file fresh purely to advise the kernel to drop whatever of it is
+// cached — no re-read, just an eviction hint — immediately after each scan
+// instead of leaving that cache to linger until the kernel gets around to
+// aging it out under pressure.
+void dropPageCache(const std::string& file_path)
+{
+	int fd = open(file_path.c_str(), O_RDONLY);
+	if (fd < 0) return;
+	posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+	close(fd);
 }
 
 constexpr int kSceneDetectTimeoutSecs = 900; // full-file video decode, no audio — generous ceiling
@@ -117,8 +140,9 @@ std::vector<int64_t> sceneChangeTimeline(const std::string& file_path) {
         } catch (...) {}
     }
     pclose(pipe);
+    dropPageCache(file_path);
 
-    std::sort(cuts.begin(), cuts.end());
+	std::sort(cuts.begin(), cuts.end());
     DLOG << "[detect] scene timeline done in " << elapsedMs(t0, std::chrono::steady_clock::now())
          << "ms → " << cuts.size() << " cut(s): " << file_path << '\n';
     return cuts;
@@ -207,8 +231,9 @@ std::vector<uint32_t> computeAudioFingerprint(const std::string& file_path) {
         }
     }
     pclose(pipe);
+    dropPageCache(file_path);
 
-    DLOG << "[detect] fingerprint done in " << elapsedMs(t0, std::chrono::steady_clock::now())
+	DLOG << "[detect] fingerprint done in " << elapsedMs(t0, std::chrono::steady_clock::now())
          << "ms → " << fp.size() << " item(s): " << file_path << '\n';
     return fp;
 }
