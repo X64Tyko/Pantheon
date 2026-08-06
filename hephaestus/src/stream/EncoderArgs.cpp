@@ -130,7 +130,8 @@ const std::vector<VideoCodecOption>& videoCodecPriority()
 													   "-c:v", "hevc_nvenc", "-preset", "p4",
 													   "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "yuv420p",
 													   "-forced-idr", "1",
-													   "-no-scenecut", "1" // see the h264 entry below for why
+													   "-no-scenecut", "1", // see the h264 entry below for why
+													   "-strict_gop", "1"   // see the h264 entry below for why
 												   });
 						break;
 					case HwAccel::amd: vfParts.push_back("format=nv12,hwupload");
@@ -176,7 +177,19 @@ const std::vector<VideoCodecOption>& videoCodecPriority()
 													   // t/ffmpeg-encoder-h264-nvenc-ignores-sc-threshold-
 													   // value/212726) — -no-scenecut is the flag that
 													   // actually works for this encoder family.
-													   "-no-scenecut", "1"
+													   "-no-scenecut", "1",
+													   // -g alone is only a hint to NVENC's rate-control
+													   // planner, not a commitment — left at its 0 default,
+													   // -strict_gop lets rate control still adaptively vary
+													   // actual GOP structure/bit allocation around that
+													   // hint for smoother bitrate, which reintroduces the
+													   // same "replan when the forced keyframe actually
+													   // fires" cost pushVideoEncoderArgs' own -g comment
+													   // describes -g as fixing. "Set 1 to minimize
+													   // GOP-to-GOP rate fluctuations" per `ffmpeg -h
+													   // encoder=h264_nvenc` — makes the encoder actually
+													   // hold to the cadence instead of just aiming for it.
+													   "-strict_gop", "1"
 												   });
 						break;
 					case HwAccel::amd: vfParts.push_back("format=nv12,hwupload");
@@ -293,7 +306,8 @@ void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>&
 											   "-c:v", "hevc_nvenc", "-preset", "p4", "-profile:v", "main10",
 											   "-rc:v", "vbr", "-cq", "23", "-pix_fmt", "p010le",
 											   "-forced-idr", "1",
-											   "-no-scenecut", "1" // see the 8-bit nvenc branch below for why
+											   "-no-scenecut", "1", // see the 8-bit nvenc branch below for why
+											   "-strict_gop", "1"   // see the 8-bit nvenc branch below for why
 										   });
 				break;
 			case HwAccel::amd: vfParts.push_back("format=p010le,hwupload");
