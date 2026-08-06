@@ -1,9 +1,7 @@
 import {useCallback, useEffect, useRef, useState, type RefObject} from 'react'
 import Hls from 'hls.js'
 import { registerReceiverVideoElement } from '../cast/CastReceiverProvider'
-import {api} from '../api/client'
-import {statusStore} from '../stores'
-import {currentUserRef} from '../auth/AuthContext'
+import {playbackDebugLog} from './playbackDebugLog'
 import styles from './VideoPlayer.module.css'
 
 interface VideoPlayerProps {
@@ -174,20 +172,26 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       // always re-applies whatever's currently selected, not a stale
       // mount-time snapshot (see applySubtitleTrackRef's own comment).
       hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_evt, data) => {
+          const summary = data.subtitleTracks.map(t => `${t.id}:${t.name}(panIdx=${t.attrs['X-PANTHEON-INDEX']})`).join(', ')
         console.log('[player] hls SUBTITLE_TRACKS_UPDATED', data.subtitleTracks.map(t => ({ id: t.id, name: t.name, panIdx: t.attrs['X-PANTHEON-INDEX'], url: t.url })))
+          if (isLive) playbackDebugLog('track', `SUBTITLE_TRACKS_UPDATED [${summary}]`)
         applySubtitleTrackRef.current()
       })
       // Same reasoning as SUBTITLE_TRACKS_UPDATED above — always re-applies
       // whatever's currently selected via the ref, not a stale closure.
       hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_evt, data) => {
+          const summary = data.audioTracks.map(t => `${t.id}:${t.name}(panIdx=${t.attrs['X-PANTHEON-INDEX']})`).join(', ')
         console.log('[player] hls AUDIO_TRACKS_UPDATED', data.audioTracks.map(t => ({ id: t.id, name: t.name, panIdx: t.attrs['X-PANTHEON-INDEX'], url: t.url })))
+          if (isLive) playbackDebugLog('track', `AUDIO_TRACKS_UPDATED [${summary}]`)
         applyAudioTrackRef.current()
       })
       hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_evt, data) => {
         console.log('[player] hls AUDIO_TRACK_SWITCHED -> id', data.id)
+          if (isLive) playbackDebugLog('track', `AUDIO_TRACK_SWITCHED -> id=${data.id} currentTime=${video.currentTime.toFixed(2)}`)
       })
       hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (_evt, data) => {
         console.log('[player] hls SUBTITLE_TRACK_SWITCH -> id', data.id)
+          if (isLive) playbackDebugLog('track', `SUBTITLE_TRACK_SWITCH -> id=${data.id}`)
       })
       hls.on(Hls.Events.SUBTITLE_TRACK_LOADED, (_evt, data) => {
         console.log('[player] hls SUBTITLE_TRACK_LOADED', { id: data.id, url: data.details?.url, fragCount: data.details?.fragments?.length })
@@ -264,13 +268,9 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
                   // (not just the 3-in-12s escalation below) is the point while
                   // hunting the segment-boundary-correlated live-channel stutter —
                   // frequency-over-time is exactly the signal that's missing
-                  // server-side. Gated on hades_debug like other opt-in diagnostics.
-                  if (isLive && statusStore.hadesDebug) {
-                      api.sendClientLog('warn',
-                          `hls ${data.details} at t=${video.currentTime.toFixed(2)}s frag=${data.frag?.url ?? 'n/a'}`,
-                          currentUserRef.id).catch(() => {
-                      })
-                  }
+                  // server-side. Gated on hades_debug like other opt-in diagnostics
+                  // (see playbackDebugLog).
+                  if (isLive) playbackDebugLog('stall', `${data.details} at t=${video.currentTime.toFixed(2)}s frag=${data.frag?.url ?? 'n/a'}`)
                   if (recentStalls.length === 0) positionAtFirstStall = video.currentTime
                   recentStalls.push(now)
                   while (recentStalls.length && now - recentStalls[0] > STALL_WINDOW_MS) recentStalls.shift()
@@ -282,13 +282,20 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
                       positionAtFirstStall = null
                       if (!progressed) {
                           console.warn('[player] repeated non-fatal buffer stalls with no real progress — forcing full player reload')
+                          if (isLive) playbackDebugLog('stall', `forcing full reload — repeated stalls with no progress, t=${video.currentTime.toFixed(2)}s`)
                           setReloadKey(k => k + 1)
                       } else {
                           console.warn('[player] repeated non-fatal buffer stalls but currentTime is still advancing — treating as ordinary transition jitter, not reloading')
+                          if (isLive) playbackDebugLog('stall', `not reloading — currentTime still advancing (stale-buffer-fed progress would also look like this), t=${video.currentTime.toFixed(2)}s`)
                       }
                   }
               }
               return
+          }
+          if (isLive) {
+              playbackDebugLog('error',
+                  `fatal type=${data.type} details=${data.details} frag=${data.frag?.url ?? 'n/a'} ` +
+                  `response=${JSON.stringify(data.response ?? null)} t=${video.currentTime.toFixed(2)}s`)
           }
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
@@ -312,7 +319,10 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       // hung backend response (network log will show a long-pending seg-*
       // request) versus something purely client-side (hls.js never even
       // issuing the request, or stuck buffering after receiving it).
-      video.addEventListener('seeking', () => console.log('[player] video seeking -> target', video.currentTime))
+        video.addEventListener('seeking', () => {
+            console.log('[player] video seeking -> target', video.currentTime)
+            if (isLive) playbackDebugLog('seek', `seeking -> target=${video.currentTime.toFixed(2)}`)
+        })
       // Re-assert the subtitle track once the video has actually landed at
       // its real position — including the implicit "seek" hls.js performs
       // internally to reach startPositionSec on a continue-watching resume.
@@ -326,13 +336,80 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       // stale) sync state they picked up before the seek completed.
       video.addEventListener('seeked', () => {
         console.log('[player] video seeked, now at', video.currentTime)
+          if (isLive) playbackDebugLog('seek', `seeked -> now=${video.currentTime.toFixed(2)}`)
         applySubtitleTrackRef.current()
       })
-      video.addEventListener('waiting', () => console.log('[player] video waiting (buffering) at', video.currentTime))
-      video.addEventListener('stalled', () => console.warn('[player] video stalled at', video.currentTime))
-      video.addEventListener('canplay', () => console.log('[player] video canplay at', video.currentTime))
-      hls.on(Hls.Events.FRAG_LOADING, (_evt, data) => console.log('[player] hls FRAG_LOADING', data.frag.type, data.frag.url))
-      hls.on(Hls.Events.FRAG_LOADED,  (_evt, data) => console.log('[player] hls FRAG_LOADED', data.frag.type, data.frag.url))
+        video.addEventListener('waiting', () => {
+            console.log('[player] video waiting (buffering) at', video.currentTime)
+            if (isLive) playbackDebugLog('stall', `native 'waiting' at t=${video.currentTime.toFixed(2)}s`)
+        })
+        video.addEventListener('stalled', () => {
+            console.warn('[player] video stalled at', video.currentTime)
+            if (isLive) playbackDebugLog('stall', `native 'stalled' at t=${video.currentTime.toFixed(2)}s`)
+        })
+        video.addEventListener('canplay', () => {
+            console.log('[player] video canplay at', video.currentTime)
+            if (isLive) playbackDebugLog('stall', `native 'canplay' (recovered) at t=${video.currentTime.toFixed(2)}s`)
+        })
+        // pause/play — the reported incident this whole file's buffer/stall
+        // logging chases was described as "video paused"; the native element
+        // pausing on its own (not a user action) is itself a signal worth
+        // capturing, distinct from a stall/wait (currentTime stops advancing
+        // but playbackState may still say "playing").
+        video.addEventListener('pause', () => {
+            if (isLive) playbackDebugLog('stall', `native 'pause' at t=${video.currentTime.toFixed(2)}s ended=${video.ended}`)
+        })
+        video.addEventListener('play', () => {
+            if (isLive) playbackDebugLog('stall', `native 'play' (resumed) at t=${video.currentTime.toFixed(2)}s`)
+        })
+        hls.on(Hls.Events.FRAG_LOADING, (_evt, data) => {
+            console.log('[player] hls FRAG_LOADING', data.frag.type, data.frag.url)
+            if (isLive) playbackDebugLog('frag', `LOADING type=${data.frag.type} sn=${data.frag.sn} cc=${data.frag.cc} url=${data.frag.url}`)
+        })
+        hls.on(Hls.Events.FRAG_LOADED, (_evt, data) => {
+            console.log('[player] hls FRAG_LOADED', data.frag.type, data.frag.url)
+            if (isLive) playbackDebugLog('frag', `LOADED type=${data.frag.type} sn=${data.frag.sn} cc=${data.frag.cc} start=${data.frag.start.toFixed(2)} duration=${data.frag.duration.toFixed(2)}`)
+        })
+        // Diagnostic-only (hades_debug-gated, same as the stall/nudge forwarding
+        // above): chasing a live-channel report of frozen video with stale
+        // audio (from an item that had already aired) continuing to play until
+        // it ran out, at which point playback resumed in sync — a shape that
+        // points at hls.js's audio and video SourceBuffers drifting apart
+        // rather than anything server-side (Hephaestus's canonical segment
+        // naming is a strictly monotonic, never-reused sequence per channel
+        // session — see ChannelPlaylistSplicer::next_seq_ — so a stale
+        // canonical segment being re-served under a recycled name isn't
+        // possible; if this reproduces, the divergence has to be visible here,
+        // client-side). BUFFER_APPENDED's timeRanges gives each track's own
+        // buffered() *separately* — normal HTMLMediaElement.buffered only
+        // reports the intersection, which would hide exactly this kind of
+        // divergence. frag.cc (continuity counter) pinpoints which
+        // discontinuity a given append belongs to, so the log can show whether
+        // an audio append ever lands from an older cc than the video append
+        // alongside it.
+        const fmtRanges = (tr?: TimeRanges) => {
+            if (!tr) return 'none'
+            const parts: string[] = []
+            for (let i = 0; i < tr.length; i++) parts.push(`${tr.start(i).toFixed(2)}-${tr.end(i).toFixed(2)}`)
+            return parts.length ? parts.join(',') : 'empty'
+        }
+        hls.on(Hls.Events.BUFFER_APPENDED, (_evt, data) => {
+            if (!isLive) return
+            playbackDebugLog('buffer',
+                `APPENDED type=${data.type} frag.type=${data.frag.type} sn=${data.frag.sn} cc=${data.frag.cc} ` +
+                `frag.start=${data.frag.start.toFixed(2)} video=[${fmtRanges(data.timeRanges.video)}] audio=[${fmtRanges(data.timeRanges.audio)}] ` +
+                `currentTime=${video.currentTime.toFixed(2)}`)
+        })
+        hls.on(Hls.Events.BUFFER_FLUSHING, (_evt, data) => {
+            if (!isLive) return
+            playbackDebugLog('buffer',
+                `FLUSHING type=${data.type ?? 'both'} start=${data.startOffset.toFixed(2)} end=${data.endOffset.toFixed(2)} ` +
+                `currentTime=${video.currentTime.toFixed(2)}`)
+        })
+        hls.on(Hls.Events.BUFFER_FLUSHED, (_evt, data) => {
+            if (!isLive) return
+            playbackDebugLog('buffer', `FLUSHED type=${data.type} currentTime=${video.currentTime.toFixed(2)}`)
+        })
       if (autoPlay) video.play().catch(() => {})
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari: native HLS, no hls.js needed. Unlike hls.js there's no

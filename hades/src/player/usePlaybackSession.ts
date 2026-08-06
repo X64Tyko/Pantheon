@@ -9,6 +9,7 @@ import {
 } from './playbackApi'
 import type { VodTracks } from './playbackApi'
 import { api } from '../api/client'
+import {playbackDebugLog} from './playbackDebugLog'
 
 export type PlaybackTarget =
   | { kind: 'movie';   id: string }
@@ -131,6 +132,12 @@ export function usePlaybackSession(
       const prevViewerSession = viewerSessionIdRef.current
       viewerSessionIdRef.current = null
 
+      if (isLive) {
+          playbackDebugLog('session',
+              `load() gen=${gen} target=${target.kind}:${target.id} positionMs=${positionMs} ` +
+              `prevViewerSession=${prevViewerSession ?? 'none'}`)
+      }
+
     if (prevSession) stopVodPlayback(prevSession)
       if (prevViewerSession) stopChannelViewer(prevViewerSession)
 
@@ -157,16 +164,27 @@ export function usePlaybackSession(
           // an error, since the fallback below is exactly today's behavior.
           startChannelViewer(target.id).then(viewerRes => {
               if (genRef.current !== gen) {
+                  playbackDebugLog('session', `startChannelViewer gen=${gen} superseded (current gen=${genRef.current}) — stopping viewer=${viewerRes.viewer_session_id}`)
                   stopChannelViewer(viewerRes.viewer_session_id);
                   return
               }
+              playbackDebugLog('session',
+                  `startChannelViewer gen=${gen} ok viewer=${viewerRes.viewer_session_id} directStream=${viewerRes.direct_stream}`)
               viewerSessionIdRef.current = viewerRes.viewer_session_id
               setManifestUrl(viewerRes.manifest_url)
               setDirectStream(viewerRes.direct_stream)
               setTracks(null)
               setLoading(false)
-          }).catch(() => {
+          }).catch(err => {
               if (genRef.current !== gen) return
+              // Capability-bucketed viewer setup failed — falls back to the
+              // legacy anonymous manifest URL silently (see the comment above
+              // startChannelViewer's call). That fallback is otherwise
+              // invisible; worth knowing about since it means this viewer
+              // isn't on the pinned-bucket path the reconnect logic below
+              // manages.
+              playbackDebugLog('session',
+                  `startChannelViewer gen=${gen} FAILED, falling back to legacy manifest: ${err instanceof Error ? err.message : String(err)}`)
               setManifestUrl(liveChannelManifestUrl(target.id))
           setDirectStream(null)
               setTracks(null)
@@ -174,6 +192,7 @@ export function usePlaybackSession(
           })
       }).catch(err => {
         if (genRef.current !== gen) return
+          playbackDebugLog('session', `checkChannelAccess gen=${gen} FAILED: ${err instanceof Error ? err.message : String(err)}`)
         setError(err instanceof Error ? err.message : 'Failed to load channel')
         setLoading(false)
       })
@@ -254,7 +273,10 @@ export function usePlaybackSession(
             if (!vid) return // no viewer session yet, or mid-reconnect
             getChannelViewerStatus(vid).then(st => {
                 if (viewerSessionIdRef.current !== vid) return // superseded while in flight
-                if (st.reconnect_recommended) reload({})
+                if (st.reconnect_recommended) {
+                    playbackDebugLog('session', `getChannelViewerStatus viewer=${vid} reconnect_recommended — reloading`)
+                    reload({})
+                }
             }).catch(() => {
             }) // best-effort — just tries again next tick
         }, 5000)
@@ -268,13 +290,15 @@ export function usePlaybackSession(
 
   const selectAudioTrack: PlaybackSession['selectAudioTrack'] = useCallback(index => {
     console.log('[player] selectAudioTrack called with index=', index)
+      if (isLive) playbackDebugLog('track', `selectAudioTrack -> index=${index}`)
     setAudioTrack(index)
-  }, [])
+  }, [isLive])
 
   const selectSubtitleTrack: PlaybackSession['selectSubtitleTrack'] = useCallback(index => {
     console.log('[player] selectSubtitleTrack called with index=', index)
+      if (isLive) playbackDebugLog('track', `selectSubtitleTrack -> index=${index}`)
     setSubtitleTrack(index)
-  }, [])
+  }, [isLive])
 
   return {
       loading, error, manifestUrl, isLive, directStream,

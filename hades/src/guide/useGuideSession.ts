@@ -4,6 +4,7 @@ import type { Channel, EpgProgram } from '../api/types'
 import { startPreview, switchPreview, stopPreview } from './previewApi'
 import {PreviewSessionController} from './previewSessionController'
 import { WINDOW_LOOKBACK_MIN, WINDOW_FORWARD_HOURS } from './constants'
+import {playbackDebugLog} from '../player/playbackDebugLog'
 
 const FOCUS_DEBOUNCE_MS  = 300
 const HIDDEN_STOP_MS     = 20_000 // grace period before a backgrounded tab's preview is actually torn down
@@ -73,9 +74,18 @@ export function useGuideSession() {
 
     // Thin wrappers so the rest of this hook doesn't need to know the
     // controller exists as a ref — see PreviewSessionController's own comment
-    // for the actual start/switch/queue/self-stop state machine.
-    const beginPreview = (channelId: string) => controllerRef.current!.begin(channelId)
-    const stopCurrentPreview = () => controllerRef.current!.stop()
+    // for the actual start/switch/queue/self-stop state machine. Logged here
+    // rather than inside the controller itself, which is deliberately
+    // framework-free/side-effect-free beyond the injected api (see its own
+    // class comment) for unit-testability.
+    const beginPreview = (channelId: string) => {
+        playbackDebugLog('session', `guide preview begin(${channelId}) hasSession=${controllerRef.current!.hasSession()} starting=${controllerRef.current!.isStarting()}`)
+        controllerRef.current!.begin(channelId)
+    }
+    const stopCurrentPreview = () => {
+        if (controllerRef.current!.hasSession()) playbackDebugLog('session', 'guide preview stop')
+        controllerRef.current!.stop()
+    }
 
   useEffect(() => {
     if (!focusedId) return

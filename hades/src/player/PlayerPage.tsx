@@ -4,6 +4,7 @@ import { api, mediaUrl, channelLogoUrl } from '../api/client'
 import type { Channel, ChannelNow, Chapter, NextEpisode, WatchTogetherSession } from '../api/types'
 import { nextInQueue, type QueueItem } from './playQueue'
 import { usePlaybackSession, type PlaybackTarget } from './usePlaybackSession'
+import {playbackDebugLog} from './playbackDebugLog'
 import { VideoPlayer } from './VideoPlayer'
 import { PlayerControls } from './PlayerControls'
 import { TrackMenu } from './TrackMenu'
@@ -193,6 +194,14 @@ export function PlayerPage({ kind }: PlayerPageProps) {
         if (cancelled) return
         setChannelNow(now)
         if (now.item_id === lastItemId) return
+          // Client-side view of the channel's own EPG — an independent signal
+          // from the server-side "hls producer:" spawn logs (Hephaestus), worth
+          // correlating: if this transition doesn't line up with what the
+          // player actually shows a moment later, the mismatch is diagnostic in
+          // itself.
+          playbackDebugLog('session',
+              `channel now-playing changed: ${lastItemId || '(none)'} -> ${now.item_id} ` +
+              `type=${now.item_type} wall_clock_start_ms=${now.wall_clock_start_ms}`)
         lastItemId = now.item_id
         const fetchChapters = now.item_type === 'episode' ? api.getEpisodeChapters(now.item_id)
                              : now.item_type === 'movie'   ? api.getMovieChapters(now.item_id)
@@ -369,6 +378,9 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     const video = videoRef.current
     if (!video) return
       const effect = computeWtEventEffect(event, video.currentTime * 1000, video.paused)
+      playbackDebugLog('session',
+          `watchTogether event type=${event.type} position_ms=${event.position_ms ?? 'n/a'} paused=${event.paused ?? 'n/a'} ` +
+          `-> seekToMs=${effect.seekToMs ?? 'n/a'} pause=${effect.pause} play=${effect.play}`)
       if (typeof effect.seekToMs === 'number') {
           video.currentTime = effect.seekToMs / 1000
           setCurrentMs(effect.seekToMs)
@@ -661,6 +673,7 @@ export function PlayerPage({ kind }: PlayerPageProps) {
     )
     if (!nearRealEnd) {
       console.warn('[player] native ended fired away from real end (at', currentMsRef.current, 'of', session.durationMs, 'ms) — treating as spurious, resuming playback')
+        playbackDebugLog('session', `spurious native 'ended' at ${currentMsRef.current}ms of ${session.durationMs}ms — resuming, not advancing`)
       videoRef.current?.play().catch(() => {})
       return
     }
