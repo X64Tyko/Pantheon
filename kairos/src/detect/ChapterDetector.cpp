@@ -21,19 +21,9 @@ std::string shellQuote(const std::string& s) {
     return r + "'";
 }
 
-// sceneChangeTimeline/computeAudioFingerprint each decode a whole media file
-// (ffmpeg's full-frame scene-cut scan, fpcalc's full-length audio read) via a
-// popen'd child process that inherits this container's cgroup — so every
-// page read gets cached and billed against Kairos's own memory usage, not
-// whichever short-lived subprocess actually touched it. A one-off library
-// scan over many large files can hold several GB of otherwise-idle page
-// cache this way, which docker stats (and Kairos's own /api/activity RAM
-// figure) then reports as if it were real, sustained app memory. This has no
-// fd of its own on the file (the child process did the reading), so it opens
-// the file fresh purely to advise the kernel to drop whatever of it is
-// cached — no re-read, just an eviction hint — immediately after each scan
-// instead of leaving that cache to linger until the kernel gets around to
-// aging it out under pressure.
+// The popen'd ffmpeg/fpcalc scan caches whatever it reads against this
+// container's cgroup; proactively evict it so a library scan doesn't look
+// like a growing app memory leak.
 void dropPageCache(const std::string& file_path)
 {
 	int fd = open(file_path.c_str(), O_RDONLY);

@@ -448,7 +448,14 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 					return;
 				}
-				serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+				auto content = session->playlistForClient();
+				if (!content)
+				{
+					res.status = 503;
+					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
+					return;
+				}
+				res.set_content(*content, "application/vnd.apple.mpegurl");
 			});
 
 	svr.Get(R"(/stream/hls/channels/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions](
@@ -537,7 +544,14 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 					return;
 				}
-				serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+				auto content = session->playlistForClient();
+				if (!content)
+				{
+					res.status = 503;
+					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
+					return;
+				}
+				res.set_content(*content, "application/vnd.apple.mpegurl");
 			});
 
 	svr.Get(R"(/stream/hls/channel-viewer/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &channelViewers](

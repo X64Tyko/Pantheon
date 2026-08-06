@@ -47,27 +47,8 @@ static constexpr double kMaxSpeed = 1.02;
 // below are sized generously to absorb that case rather than just the
 // intended segment length.
 //
-// KNOWN TRADEOFF, ROOT CAUSE STILL UNRESOLVED — this value has flip-flopped
-// between 2 and 6 as the two symptoms it affects took turns being the
-// priority:
-//   - At 2: a live A/B/A test confirmed a periodic transcode-bucket stutter
-//     during playback is tied to this interval (2s glitches, 6s doesn't, 2s
-//     glitches again). The leading theory — missing `-g` letting the encoder
-//     replan its internal GOP structure every forced keyframe — was
-//     implemented (EncoderArgs.cpp sizes `-g` off the source's real frame
-//     rate) but confirmed NOT sufficient on its own: the glitch still
-//     reproduces at 2s with that fix in place. Reproduced on real
-//     (software-only, no-hwaccel) hardware, ruling out a GPU-specific cause.
-//   - At 6: cold-start/channel-switch latency gets worse — ffmpeg (paced by
-//     -re) only closes/flushes the first segment once hls_time seconds of
-//     real wall-clock content has played, so a slow tune-in more easily loses
-//     the race against the client's manifest-load patience (Router.cpp's
-//     waitForFile) — a plausible contributor to slow/failed channel
-//     transitions.
-// Set back to 2 (2026-08-05) to prioritize transition/tune-in latency; if the
-// periodic in-stream stutter reappears, that's the expected tradeoff, not a
-// new regression — see project memory for the full investigation history
-// before re-flipping this again.
+// 2 vs 6 is a known tradeoff (periodic stutter vs. tune-in latency), not a
+// settled value — see project memory before changing it again.
 static constexpr int kLiveHlsSegmentSecs = 2;
 
 // Oversized vs. the 2s target so a direct-stream session's much-longer real
@@ -476,80 +457,68 @@ void ChannelSession::hlsWatchLoop()
 }
 
 // Ticks faster than hlsWatchLoop (segments are only kLiveHlsSegmentSecs
-// long, so a stale discontinuity-sequence needs correcting well within one
-// segment interval, not one linger-check interval) — kept as its own
-// thread/loop rather than folded into hlsWatchLoop so shortening this one's
-// cadence doesn't also change the idle/linger check's timing.
+// long) — own thread so its cadence stays decoupled from hlsWatchLoop's
+// idle/linger check. Read-only now; see discontinuity_count_'s comment.
 void ChannelSession::hlsPatchLoop()
 {
 	while (!hls_patch_stop.load() && active.load())
 	{
 		std::this_thread::sleep_for(std::chrono::milliseconds(kLiveHlsSegmentSecs * 500));
 		if (!active.load()) return;
-		patchDiscontinuitySequence();
+		checkSegmentDurationDrift();
 	}
 }
 
-void ChannelSession::patchDiscontinuitySequence()
+// Diagnostic only (verbose_transcode_logs-gated): logs when a newly-cut
+// segment's real EXTINF duration deviates from the requested hls_time.
+void ChannelSession::checkSegmentDurationDrift()
 {
-	std::string path = hlsDir() + "/playlist.m3u8";
+	if (!opts.verbose_transcode_logs) return;
 
-	std::ifstream in(path);
+	std::ifstream in(hlsDir() + "/playlist.m3u8");
 	if (!in) return;
 	std::vector<std::string> lines;
 	std::string line;
-	int visible = 0;
-	while (std::getline(in, line))
-	{
-		if (line == "#EXT-X-DISCONTINUITY") ++visible;
-		lines.push_back(line);
-	}
+	while (std::getline(in, line)) lines.push_back(line);
 	in.close();
 
-	// Segment-duration sanity check, piggybacked on the read above (no extra
-	// I/O): flags a newly-appeared segment whose actual muxed EXTINF duration
-	// deviates meaningfully from the requested hls_time (kLiveHlsSegmentSecs)
-	// — evidence the HLS muxer itself, not per-frame encode timing (already
-	// ruled clean by the showinfo/ashowinfo filters), is cutting segments
-	// irregularly, e.g. off-GOP-boundary at short segment durations. Only
-	// checks the newest segment each tick (cheap, and sufficient to catch a
-	// pattern over time); diagnostic only, gated on verbose_transcode_logs
-	// like showinfo/ashowinfo.
-	if (opts.verbose_transcode_logs)
+	int lastExtinfIdx = -1;
+	for (size_t i = 0; i < lines.size(); ++i) if (lines[i].rfind("#EXTINF:", 0) == 0) lastExtinfIdx = static_cast<int>(i);
+	if (lastExtinfIdx < 0 || static_cast<size_t>(lastExtinfIdx) + 1 >= lines.size()) return;
+
+	const std::string& uri = lines[static_cast<size_t>(lastExtinfIdx) + 1];
+	if (uri == last_extinf_uri_) return;
+	last_extinf_uri_ = uri;
+
+	double dur = 0.0;
+	try { dur = std::stod(lines[static_cast<size_t>(lastExtinfIdx)].substr(8)); }
+	catch (...)
 	{
-		int lastExtinfIdx = -1;
-		for (size_t i = 0; i < lines.size(); ++i) if (lines[i].rfind("#EXTINF:", 0) == 0) lastExtinfIdx = static_cast<int>(i);
-		if (lastExtinfIdx >= 0 && static_cast<size_t>(lastExtinfIdx) + 1 < lines.size())
-		{
-			const std::string& uri = lines[static_cast<size_t>(lastExtinfIdx) + 1];
-			if (uri != last_extinf_uri_)
-			{
-				last_extinf_uri_ = uri;
-				double dur       = 0.0;
-				try { dur = std::stod(lines[static_cast<size_t>(lastExtinfIdx)].substr(8)); }
-				catch (...)
-				{
-				}
-				double expected = static_cast<double>(kLiveHlsSegmentSecs);
-				if (dur > 0.0 && std::fabs(dur - expected) > expected * 0.2)
-				{
-					std::cerr << "[session:" << channel_id << "] segment " << uri
-						<< " duration=" << dur << "s deviates from hls_time=" << expected << "s\n";
-				}
-			}
-		}
+	}
+	double expected = static_cast<double>(kLiveHlsSegmentSecs);
+	if (dur > 0.0 && std::fabs(dur - expected) > expected * 0.2)
+	{
+		std::cerr << "[session:" << channel_id << "] segment " << uri
+			<< " duration=" << dur << "s deviates from hls_time=" << expected << "s\n";
+	}
+}
+
+std::string ChannelSession::patchDiscontinuitySequence(const std::string& raw, int discontinuity_count)
+{
+	std::vector<std::string> lines;
+	{
+		std::istringstream in(raw);
+		std::string line;
+		while (std::getline(in, line)) lines.push_back(line);
 	}
 
-	// ffmpeg's own writes to this file are rename-based now (hls_flags
-	// +temp_file, see appendOutputArgs), so a torn read here would only ever
-	// come from this loop racing itself across ticks — shouldn't happen
-	// given the single-threaded poll below, but a missing/garbled header is
-	// still the unambiguous sign something upstream (e.g. mid-restart with
-	// the dir freshly created) isn't settled yet; skip and let the next
-	// tick (half a segment interval away) retry.
-	if (lines.empty() || lines[0] != "#EXTM3U") return;
+	// Not a real playlist (e.g. empty/partial read) — leave it untouched.
+	if (lines.empty() || lines[0] != "#EXTM3U") return raw;
 
-	int wanted = discontinuity_count_.load() - visible;
+	int visible = 0;
+	for (auto& l : lines) if (l == "#EXT-X-DISCONTINUITY") ++visible;
+
+	int wanted = discontinuity_count - visible;
 	if (wanted < 0) wanted = 0; // defensive only — should never actually go negative
 
 	std::string wantedLine = "#EXT-X-DISCONTINUITY-SEQUENCE:" + std::to_string(wanted);
@@ -563,11 +532,10 @@ void ChannelSession::patchDiscontinuitySequence()
 			break;
 		}
 	}
-	if (existingIdx >= 0 && lines[static_cast<size_t>(existingIdx)] == wantedLine) return; // already correct
 
 	if (existingIdx >= 0)
 	{
-		lines[static_cast<size_t>(existingIdx)] = wantedLine;
+		if (lines[static_cast<size_t>(existingIdx)] != wantedLine) lines[static_cast<size_t>(existingIdx)] = wantedLine;
 	}
 	else
 	{
@@ -586,18 +554,22 @@ void ChannelSession::patchDiscontinuitySequence()
 		lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insertAt), wantedLine);
 	}
 
-	// Rename-based write, same reasoning as ffmpeg's own +temp_file above:
-	// this file is read by Router.cpp's serveHlsFile and re-parsed at
-	// startup by every transition's new ffmpeg process (hls_flags=
-	// append_list), both of which must never observe a half-written file.
-	std::string tmpPath = path + ".tmp";
+	std::string out;
+	for (auto& l : lines)
 	{
-		std::ofstream out(tmpPath, std::ios::trunc);
-		if (!out) return;
-		for (auto& l : lines) out << l << "\n";
+		out += l;
+		out += "\n";
 	}
-	std::error_code ec;
-	std::filesystem::rename(tmpPath, path, ec);
+	return out;
+}
+
+std::optional<std::string> ChannelSession::playlistForClient() const
+{
+	std::ifstream in(hlsDir() + "/playlist.m3u8");
+	if (!in) return std::nullopt;
+	std::ostringstream ss;
+	ss << in.rdbuf();
+	return patchDiscontinuitySequence(ss.str(), discontinuity_count_.load());
 }
 
 // Looks ahead to whatever Kairos has scheduled after the current item and
