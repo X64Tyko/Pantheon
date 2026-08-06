@@ -267,15 +267,12 @@ export interface Library {
   skip_scraping:       boolean
 }
 
-export type AdvanceMode = 'scheduled' | 'on_play'
-
 export interface Channel {
   channel_id:               string
   name:                     string
   number:                   number
   timezone:                 string
   seed?:                    number
-  advance_mode?:            AdvanceMode     // default: 'scheduled'
   default_filler_entries:   FillerEntry[]
   default_filler_selection: FillerSelectionMode
   offline_video_path?:      string
@@ -761,7 +758,6 @@ export interface ChannelExport {
     name:                     string
     number:                   number
     timezone:                 string
-    advance_mode?:            AdvanceMode
     default_filler_selection: FillerSelectionMode
     seed?:                    number
     default_filler_entries:   ChannelExportFillerEntry[]

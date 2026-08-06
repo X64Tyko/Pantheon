@@ -1,7 +1,6 @@
 #include "EPGMaterializer.h"
 #include "CursorState.h"
 #include "Rng.h"
-#include "../db/ChannelRepository.h"
 #include "../db/CursorRepository.h"
 #include "../db/Database.h"
 #include "../db/ScheduleRepository.h"
@@ -398,13 +397,17 @@ void EPGMaterializer::preSeed(const std::string& channel_id, int weeks)
 			if (qa.executeStep() && !qa.getColumn(0).isNull())
 			{
 				try { existing = json::parse(qa.getColumn(0).getString()); }
-				catch (...) {}
+				catch (...)
+				{
+				}
 			}
 		}
 		for (auto& [ts, snap_str] : result.anchors)
 		{
 			try { existing[std::to_string(ts)] = json::parse(snap_str); }
-			catch (...) {}
+			catch (...)
+			{
+			}
 		}
 		SQLite::Statement upd(db_.get(),
 							  "UPDATE channel SET anchor_hashes=? WHERE channel_id=?");
@@ -432,60 +435,10 @@ void EPGMaterializer::ensureScheduled(const std::string& channel_id,
 {
 	// Serializes concurrent callers for this one channel — see
 	// channelLock()'s own comment. A caller that loses the race just finds
-	// the horizon already covered (scheduled mode) or re-does a now-cheap
-	// regenerate against the cursor state the winner just committed
-	// (on_play mode) once it gets the lock, instead of duplicating the work
-	// in parallel.
+	// the horizon already covered, instead of duplicating the work in
+	// parallel.
 	std::lock_guard<std::mutex> channel_guard(channelLock(channel_id));
 
-	// ── on_play mode: regenerate from current cursor position on every call. ──
-	{
-		bool on_play = ChannelRepository(db_).getAdvanceMode(channel_id) == "on_play";
-		if (on_play)
-		{
-			auto now_ts = static_cast<int64_t>(std::time(nullptr));
-			{
-				SQLite::Statement d1(db_.get(),
-									 "DELETE FROM scheduled_program WHERE channel_id=?");
-				d1.bind(1, channel_id);
-				d1.exec();
-			}
-			CursorState cs = CursorRepository(db_).load(channel_id);
-			Xoshiro256 onplay_rng(seed >= 0 ? static_cast<uint64_t>(seed) : 0);
-			auto items = engine_.project(channel_id, from, horizon_hours, cs, onplay_rng);
-
-			db_.get().exec("SAVEPOINT sp_ens");
-			SQLite::Statement ins(db_.get(), R"(
-                INSERT OR IGNORE INTO scheduled_program
-                    (channel_id, block_id, item_type, item_id,
-                     wall_clock_start, wall_clock_end, cursor_json, created_at, is_filler)
-                VALUES (?,?,?,?,?,?,?,?,?)
-            )");
-			for (const auto& item : items)
-			{
-				ins.bind(1, channel_id);
-				if (item.block_id.empty()) ins.bind(2);
-				else ins.bind(2, item.block_id);
-				ins.bind(3, item.item_type);
-				ins.bind(4, item.item_id);
-				ins.bind(5, item.wall_clock_start_ms / 1000);
-				ins.bind(6, item.wall_clock_end_ms / 1000);
-				ins.bind(7, item.cursor_json);
-				ins.bind(8, now_ts);
-				ins.bind(9, item.is_filler ? 1 : 0);
-				ins.exec();
-				ins.reset();
-			}
-			db_.get().exec("RELEASE SAVEPOINT sp_ens");
-
-			if (epgDebug())
-				std::cout << "[epg] ensureScheduled on_play channel=" << channel_id
-					<< " => " << items.size() << " items\n";
-			return;
-		}
-	}
-
-	// ── scheduled mode ───────────────────────────────────────────────────────
 	const std::time_t horizon = from + static_cast<std::time_t>(horizon_hours) * 3600;
 
 	// generate() always re-projects the whole week from Monday through

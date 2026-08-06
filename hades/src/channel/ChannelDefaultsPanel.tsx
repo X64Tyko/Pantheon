@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
-import type { AdvanceMode, Channel, EpisodeSearchResult } from '../api/types'
+import type {Channel, EpisodeSearchResult} from '../api/types'
 import { CardSection, LauncherRow } from './sections'
 import {TIMEZONE_SUGGESTIONS} from './constants'
 import type { ChannelDetailStore } from './store'

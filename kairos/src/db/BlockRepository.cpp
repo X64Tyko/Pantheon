@@ -285,16 +285,6 @@ std::string BlockRepository::channelTimezone(const std::string& channel_id) {
     return "UTC";
 }
 
-std::string BlockRepository::channelAdvanceMode(const std::string& channel_id) {
-    SQLite::Statement q(db_.get(), "SELECT advance_mode FROM channel WHERE channel_id=?");
-    q.bind(1, channel_id);
-    if (q.executeStep()) {
-        auto m = q.getColumn(0).getString();
-        if (!m.empty()) return m;
-    }
-    return "scheduled";
-}
-
 int BlockRepository::readCursorPos(const std::string& content_type,
                                    const std::string& content_id,
                                    const std::string& scope,

@@ -25,7 +25,7 @@ public:
 	std::optional<Channel> findById(const std::string& channel_id);
 
 	std::string create(const std::string& name, int number,
-					   const std::string& timezone, const std::string& advance_mode,
+					   const std::string& timezone,
 					   const std::optional<std::string>& owner_user_id = std::nullopt,
 					   bool is_demo                                    = false);
 
@@ -61,7 +61,6 @@ public:
 	void updateFillerEntryField(int id, const std::string& col, int val);
 	void removeFillerEntry(int id);
 
-	std::string getAdvanceMode(const std::string& channel_id);
 	std::optional<std::string> getAnchorHashes(const std::string& channel_id);
 
 private:

@@ -31,31 +31,30 @@ Channel ChannelRepository::rowToChannel(SQLite::Statement& q)
 	c.default_filler_selection = q.getColumn(4).getString();
 	c.rerun_min_time_mins      = q.getColumn(5).getInt();
 	c.seed                     = q.getColumn(6).getInt();
-	c.advance_mode             = q.getColumn(7).getString();
-	c.offline_video_path       = q.getColumn(8).getString();
-	c.offline_image_path       = q.getColumn(9).getString();
-	c.offline_audio_id         = q.getColumn(10).getString();
-	c.offline_audio_type       = q.getColumn(11).getString();
-	c.offline_audio_title      = q.getColumn(12).getString();
-	c.logo_path                = q.getColumn(13).getString();
-	if (!q.getColumn(14).isNull()) c.anchor_hashes = q.getColumn(14).getString();
-	c.audio_lang           = q.getColumn(15).getString();
-	c.subtitle_lang        = q.getColumn(16).getString();
-	c.stream_resolution    = q.getColumn(17).getString();
-	c.stream_video_bitrate = q.getColumn(18).getInt();
-	c.stream_audio_bitrate = q.getColumn(19).getInt();
-	c.content_tag          = q.getColumn(20).getString();
-	if (!q.getColumn(21).isNull()) c.owner_user_id = q.getColumn(21).getString();
-	c.is_demo         = q.getColumn(22).getInt() != 0;
-	c.force_transcode = q.getColumn(23).getInt() != 0;
-	c.pre_seed_weeks  = q.getColumn(24).getInt();
+	c.offline_video_path       = q.getColumn(7).getString();
+	c.offline_image_path       = q.getColumn(8).getString();
+	c.offline_audio_id         = q.getColumn(9).getString();
+	c.offline_audio_type       = q.getColumn(10).getString();
+	c.offline_audio_title      = q.getColumn(11).getString();
+	c.logo_path                = q.getColumn(12).getString();
+	if (!q.getColumn(13).isNull()) c.anchor_hashes = q.getColumn(13).getString();
+	c.audio_lang           = q.getColumn(14).getString();
+	c.subtitle_lang        = q.getColumn(15).getString();
+	c.stream_resolution    = q.getColumn(16).getString();
+	c.stream_video_bitrate = q.getColumn(17).getInt();
+	c.stream_audio_bitrate = q.getColumn(18).getInt();
+	c.content_tag          = q.getColumn(19).getString();
+	if (!q.getColumn(20).isNull()) c.owner_user_id = q.getColumn(20).getString();
+	c.is_demo         = q.getColumn(21).getInt() != 0;
+	c.force_transcode = q.getColumn(22).getInt() != 0;
+	c.pre_seed_weeks  = q.getColumn(23).getInt();
 	return c;
 }
 
 namespace
 {
 	constexpr const char* kChannelColumns =
-		"channel_id, name, number, timezone, default_filler_selection, rerun_min_time_mins, seed, advance_mode, "
+		"channel_id, name, number, timezone, default_filler_selection, rerun_min_time_mins, seed, "
 		"offline_video_path, offline_image_path, offline_audio_id, offline_audio_type, "
 		"offline_audio_title, logo_path, anchor_hashes, audio_lang, subtitle_lang, "
 		"stream_resolution, stream_video_bitrate, stream_audio_bitrate, content_tag, "
@@ -91,22 +90,20 @@ std::optional<Channel> ChannelRepository::findById(const std::string& channel_id
 
 std::string ChannelRepository::create(const std::string& name, int number,
 									  const std::string& timezone,
-									  const std::string& advance_mode,
 									  const std::optional<std::string>& owner_user_id,
 									  bool is_demo)
 {
 	std::string channel_id = generateId();
 	SQLite::Statement s(db_.get(),
-						"INSERT INTO channel (channel_id, name, number, timezone, advance_mode, owner_user_id, is_demo) "
-						"VALUES (?,?,?,?,?,?,?)");
+						"INSERT INTO channel (channel_id, name, number, timezone, owner_user_id, is_demo) "
+						"VALUES (?,?,?,?,?,?)");
 	s.bind(1, channel_id);
 	s.bind(2, name);
 	s.bind(3, number);
 	s.bind(4, timezone);
-	s.bind(5, advance_mode);
-	if (owner_user_id.has_value()) s.bind(6, *owner_user_id);
-	else s.bind(6);
-	s.bind(7, is_demo ? 1 : 0);
+	if (owner_user_id.has_value()) s.bind(5, *owner_user_id);
+	else s.bind(5);
+	s.bind(6, is_demo ? 1 : 0);
 	s.exec();
 	return channel_id;
 }
@@ -249,13 +246,6 @@ void ChannelRepository::removeFillerEntry(int id)
 	SQLite::Statement s(db_.get(), "DELETE FROM channel_filler_entry WHERE id = ?");
 	s.bind(1, id);
 	s.exec();
-}
-
-std::string ChannelRepository::getAdvanceMode(const std::string& channel_id)
-{
-	SQLite::Statement q(db_.get(), "SELECT advance_mode FROM channel WHERE channel_id=?");
-	q.bind(1, channel_id);
-	return q.executeStep() ? q.getColumn(0).getString() : "";
 }
 
 std::optional<std::string> ChannelRepository::getAnchorHashes(const std::string& channel_id)

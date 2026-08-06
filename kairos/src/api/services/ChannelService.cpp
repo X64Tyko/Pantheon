@@ -77,7 +77,6 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 					{"timezone", c.timezone},
 					{"default_filler_selection", c.default_filler_selection},
 					{"seed", c.seed},
-					{"advance_mode", c.advance_mode},
 					{"offline_video_path", c.offline_video_path},
 					{"offline_image_path", c.offline_image_path},
 					{"offline_audio_id", c.offline_audio_id},
@@ -186,12 +185,11 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 
 		try
 		{
-			auto b                   = json::parse(req.body);
-			std::string name         = b.value("name", "");
-			int number               = b.value("number", 0);
-			std::string timezone     = b.value("timezone", "UTC");
-			std::string advance_mode = b.value("advance_mode", "scheduled");
-			int pre_seed_weeks       = std::max(0, b.value("pre_seed_weeks", 0));
+			auto b               = json::parse(req.body);
+			std::string name     = b.value("name", "");
+			int number           = b.value("number", 0);
+			std::string timezone = b.value("timezone", "UTC");
+			int pre_seed_weeks   = std::max(0, b.value("pre_seed_weeks", 0));
 			if (name.empty() || number == 0)
 			{
 				route::err(res, 400, "name and number required");
@@ -203,7 +201,7 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 				return;
 			}
 			std::string channel_id = ChannelRepository(db_).create(
-				name, number, timezone, advance_mode, owner_user_id, is_demo);
+				name, number, timezone, owner_user_id, is_demo);
 			if (pre_seed_weeks > 0)
 			{
 				ChannelRepository(db_).updateField(channel_id, "pre_seed_weeks", pre_seed_weeks);
@@ -255,7 +253,6 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 			}
 			if (b.contains("number")) updI("number", b["number"].get<int>());
 			if (b.contains("default_filler_selection")) upd("default_filler_selection", b["default_filler_selection"]);
-			if (b.contains("advance_mode")) upd("advance_mode", b["advance_mode"]);
 			if (b.contains("offline_video_path")) upd("offline_video_path", b["offline_video_path"]);
 			if (b.contains("offline_image_path")) upd("offline_image_path", b["offline_image_path"]);
 			if (b.contains("offline_audio_id")) upd("offline_audio_id", b["offline_audio_id"]);
@@ -291,8 +288,8 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 			// day_mask/start_time resolves against, and seed changes the RNG
 			// determinism the whole projection is built on — old anchor/cursor
 			// state doesn't just look different afterward, it's for a different
-			// channel in all but name. default_filler_selection/advance_mode only
-			// shape future picks, so a soft clear is enough for those.
+			// channel in all but name. default_filler_selection only shapes
+			// future picks, so a soft clear is enough for that.
 			//
 			// ?preserve_cursor=true downgrades the hard reset to a soft clear —
 			// an explicit, user-confirmed "keep everyone's place in this channel"
@@ -305,7 +302,7 @@ void ChannelService::registerRoutes(httplib::Server& svr)
 				if (route::wantsPreserveCursor(req)) schedule_cache_.clear(id);
 				else schedule_cache_.hardReset(id);
 			}
-			else if (b.contains("default_filler_selection") || b.contains("advance_mode")) schedule_cache_.clear(id);
+			else if (b.contains("default_filler_selection")) schedule_cache_.clear(id);
 			// trigger_pre_seed: hard-reset cursor/anchors then run a virtual
 			// projection over pre_seed_weeks of past airtime. Only honoured when
 			// pre_seed_weeks > 0 (either just set above or already stored).

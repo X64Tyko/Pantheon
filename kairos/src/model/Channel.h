@@ -15,7 +15,6 @@ struct Channel
 	// real viewer's persistent one (a full lineup citizen).
 	bool is_demo                         = false;
 	std::string timezone                 = "UTC";
-	std::string advance_mode             = "scheduled";
 	std::string default_filler_selection = "round_robin";
 	int rerun_min_time_mins              = 0;
 	int seed                             = 12345;

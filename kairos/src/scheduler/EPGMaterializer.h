@@ -75,8 +75,8 @@ public:
 	void preSeed(const std::string& channel_id, int weeks);
 
 	// Ensure the schedule for `channel_id` is populated from `from` through
-	// `from + horizon_hours`. Calls generate() + commit() for scheduled mode;
-	// handles on_play mode separately.
+	// `from + horizon_hours`. Calls generate() + commit(), skipping the
+	// re-projection if the horizon is already covered.
 	void ensureScheduled(const std::string& channel_id,
 						 std::time_t from, int horizon_hours,
 						 int seed = -1);

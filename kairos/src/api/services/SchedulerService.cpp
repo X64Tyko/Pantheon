@@ -398,7 +398,6 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 			}
 			engine_.markPlayed(channel_id, block_id, item_type, item_id, duration_ms);
 			materializer_.notifyPlayed(channel_id, item_id);
-			if (ChannelRepository(db_).getAdvanceMode(channel_id) == "on_play") schedule_cache_.clear(channel_id);
 			route::ok(res, json{{"ok", true}}.dump());
 		}
 		catch (const std::exception& e)

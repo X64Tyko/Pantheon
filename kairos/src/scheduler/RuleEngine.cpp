@@ -481,11 +481,6 @@ std::string RuleEngine::channelTimezone(const std::string& channel_id)
 	return blocks_.channelTimezone(channel_id);
 }
 
-std::string RuleEngine::channelAdvanceMode(const std::string& channel_id)
-{
-	return blocks_.channelAdvanceMode(channel_id);
-}
-
 std::optional<Block> RuleEngine::resolveBlock(const std::string& channel_id, std::time_t t)
 {
 	auto blocks = loadBlocks(channel_id);
@@ -2291,23 +2286,7 @@ void RuleEngine::markPlayed(const std::string& channel_id, const std::string& bl
 
 	ScheduleRepository(db_).recordPlayHistory(item_type, item_id, channel_id, block_id);
 
-	// In 'scheduled' mode project() already advanced cursors during EPG generation,
-	// so advancing again here would double-advance and skip episodes on the next
-	// ensureScheduled() pass. Only advance on confirmed play for 'on_play' channels.
-	if (!block_id.empty() && channelAdvanceMode(channel_id) == "on_play")
-	{
-		auto b = blocks_.loadBlock(block_id);
-		if (b)
-		{
-			CursorState cs = CursorRepository(db_).load(channel_id);
-			Xoshiro256 rng(std::hash<std::string>{}(channel_id + block_id)
-				^ static_cast<uint64_t>(std::time(nullptr)));
-			ContentCache cache;
-			int sel = pickNextContent(channel_id, *b, cs, rng);
-			if (sel >= 0) advanceAndGet(channel_id, *b, sel, cs, rng, cache);
-			CursorRepository(db_).apply(channel_id, cs);
-		}
-	}
-
+	// Cursors already advanced during EPG generation (project()), so there's
+	// nothing left to advance here — this just records history.
 	txn.commit();
 }

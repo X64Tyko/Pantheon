@@ -2766,6 +2766,24 @@ namespace
 )SQL"
 		}
 
+		// ── v112: drop 'on_play' advance mode. It predates block scheduling and
+		//         never got a real UI toggle — cursors advancing only on confirmed
+		//         playback made sense before blocks existed, but ensureScheduled()
+		//         had to fully delete-and-reproject an on_play channel's schedule
+		//         from a rolling now-1h window on every single /now poll to honor
+		//         it (no persisted wall-clock anchor for the in-progress item),
+		//         which could reconstruct the currently-airing item as starting
+		//         near "now" instead of its true start under any regenerate/
+		//         markPlayed timing wobble — a live channel appearing to restart
+		//         mid-episode. 'scheduled' mode's cursors already advance during
+		//         normal EPG projection, so nothing else relied on this.
+		,
+		{
+			112, R"SQL(
+    ALTER TABLE channel DROP COLUMN advance_mode;
+)SQL"
+		}
+
 	}; // kMigrations
 }      // namespace
 

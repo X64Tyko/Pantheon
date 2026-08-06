@@ -338,10 +338,8 @@ TEST_F(RuleEngineTest, NextItem_SeasonFilterLimitsEpisodes)
 }
 
 // ---------------------------------------------------------------------------
-// markPlayed — cursor advancement depends on advance_mode
+// markPlayed — records history only; project() owns cursor advancement
 // ---------------------------------------------------------------------------
-// In 'scheduled' mode (default), project() owns cursor advancement; markPlayed()
-// records history only. In 'on_play' mode, markPlayed() is the sole cursor advance.
 
 TEST_F(RuleEngineTest, MarkPlayed_InsertsPlayHistoryEntry)
 {
@@ -371,38 +369,6 @@ TEST_F(RuleEngineTest, MarkPlayed_Scheduled_DoesNotAdvanceCursor)
 	EXPECT_EQ(still_first->item_id, "e1") << "scheduled mode: cursor must not advance on markPlayed";
 }
 
-TEST_F(RuleEngineTest, MarkPlayed_OnPlay_AdvancesShowCursorToNextEpisode)
-{
-	db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='c1'");
-	insertBlock("b1", "episode", "08:00");
-	addContent("b1", "show", "s1");
-
-	auto first = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
-	ASSERT_TRUE(first.has_value());
-	EXPECT_EQ(first->item_id, "e1");
-
-	engine.markPlayed("c1", "b1", "episode", "e1", 3600000);
-
-	auto second = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
-	ASSERT_TRUE(second.has_value());
-	EXPECT_EQ(second->item_id, "e2") << "on_play mode: cursor should have advanced to e2";
-}
-
-TEST_F(RuleEngineTest, MarkPlayed_OnPlay_WrapsAroundToFirstEpisodeAfterLast)
-{
-	db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='c1'");
-	insertBlock("b1", "episode", "08:00");
-	addContent("b1", "show", "s1");
-
-	engine.markPlayed("c1", "b1", "episode", "e1", 3600000);
-	engine.markPlayed("c1", "b1", "episode", "e2", 3600000);
-	engine.markPlayed("c1", "b1", "episode", "e3", 3600000);
-
-	auto item = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
-	ASSERT_TRUE(item.has_value());
-	EXPECT_EQ(item->item_id, "e1") << "should wrap back to first episode";
-}
-
 TEST_F(RuleEngineTest, MarkPlayed_MultipleHistoryEntriesAccumulate)
 {
 	insertBlock("b1", "episode", "08:00");
@@ -413,31 +379,6 @@ TEST_F(RuleEngineTest, MarkPlayed_MultipleHistoryEntriesAccumulate)
 						"SELECT COUNT(*) FROM play_history WHERE channel_id='c1'");
 	q.executeStep();
 	EXPECT_EQ(q.getColumn(0).getInt(), 2);
-}
-
-TEST_F(RuleEngineTest, MarkPlayed_OnPlay_RoundRobinAdvancesThroughContentItems)
-{
-	db.get().exec("UPDATE channel SET advance_mode='on_play' WHERE channel_id='c1'");
-	insertBlock("b1", "episode", "08:00");
-	addContent("b1", "show", "s1");
-	addContent("b1", "movie", "m1");
-
-	// block_rr=0 → show → nextItem returns episode
-	auto item1 = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
-	ASSERT_TRUE(item1.has_value());
-	EXPECT_EQ(item1->item_type, "episode");
-
-	engine.markPlayed("c1", "b1", "episode", "e1", 3600000);
-	// block_rr=1 → movie
-	auto item2 = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
-	ASSERT_TRUE(item2.has_value());
-	EXPECT_EQ(item2->item_type, "movie");
-
-	engine.markPlayed("c1", "b1", "movie", "m1", 7200000);
-	// block_rr wraps to 0 → show again
-	auto item3 = engine.nextItem("c1", engine.loadBlocks("c1")[0], kMonNoon);
-	ASSERT_TRUE(item3.has_value());
-	EXPECT_EQ(item3->item_type, "episode");
 }
 
 // ---------------------------------------------------------------------------

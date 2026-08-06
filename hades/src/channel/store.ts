@@ -7,7 +7,7 @@ import { FilterTreeStore } from '../components/media/filterTree'
 import { toFilterString } from '../components/media/filterQuery'
 import type { BlockDraft, LimitMode, PickerTab } from './types'
 import type {
-  AdvanceMode, Advancement, AnchorSnapshot, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
+    Advancement, AnchorSnapshot, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
   EpisodeOrder, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, FillerEntry, FillerEntryAdvancement,
   FillerSelectionMode, LibraryWithSource, Movie, NoHistoryBehavior, Playlist,
   PlaylistMode, PlayStyle, Show, StartScope, TimeslotSlot, TimeslotQueueEntry,
@@ -127,7 +127,6 @@ export class ChannelDetailStore {
     number:              number
     timezone:            string
     seed:                number
-    advance_mode:        AdvanceMode
     offline_video_path:  string
     offline_image_path:  string
     offline_audio_id:    string
@@ -143,7 +142,7 @@ export class ChannelDetailStore {
     content_tag:         string
     pre_seed_weeks:      number
   } = {
-    name: '', number: 1, timezone: 'UTC', seed: 12345, advance_mode: 'scheduled',
+      name: '', number: 1, timezone: 'UTC', seed: 12345,
     offline_video_path: '', offline_image_path: '',
     offline_audio_id: '', offline_audio_type: '', offline_audio_title: '',
     logo_path: '', audio_lang: '', subtitle_lang: '',
@@ -211,7 +210,6 @@ export class ChannelDetailStore {
       number:              channel.number,
       timezone:            channel.timezone,
       seed:                channel.seed ?? 12345,
-      advance_mode:        channel.advance_mode ?? 'scheduled',
       offline_video_path:  channel.offline_video_path  ?? '',
       offline_image_path:  channel.offline_image_path  ?? '',
       offline_audio_id:    channel.offline_audio_id    ?? '',
