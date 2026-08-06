@@ -14,13 +14,6 @@ namespace
 			std::chrono::system_clock::now().time_since_epoch()).count();
 	}
 
-	// How many segments one head is responsible for before it self-terminates —
-	// same order of magnitude as Kyoo's own ~100-segment window. Large enough
-	// that a normal viewing session rarely crosses a boundary at all; small
-	// enough to bound worst-case wasted encode work from a head nobody ever
-	// finishes watching.
-	constexpr int kVodHeadWindowSegments = 100;
-
 	// A segment just short of a head's own generated frontier is still worth
 	// waiting on rather than spawning a redundant head for — same tolerance
 	// prepareSegment() always had for the single-process model.
@@ -36,7 +29,8 @@ namespace
 
 VodEncodeStream::VodEncodeStream(std::string label, std::string segment_dir, std::string segment_prefix,
 								 ArgsBuilder argsBuilder, int buffer_size, bool ffmpeg_debug_logs,
-								 bool verbose_transcode_logs, int lookahead_secs, int hls_time_secs)
+								 bool verbose_transcode_logs, int lookahead_secs, int hls_time_secs,
+								 int head_window_segments)
 	: label_(std::move(label))
 	, segment_dir_(std::move(segment_dir))
 	, segment_prefix_(std::move(segment_prefix))
@@ -46,6 +40,7 @@ VodEncodeStream::VodEncodeStream(std::string label, std::string segment_dir, std
 	, verbose_transcode_logs_(verbose_transcode_logs)
 	, lookahead_secs_(lookahead_secs)
 	, hls_time_secs_(hls_time_secs)
+	, head_window_segments_(head_window_segments)
 {
 }
 
@@ -90,7 +85,7 @@ VodEncodeStream::Head* VodEncodeStream::spawnHead(int segment_index, int64_t pos
 												  const std::vector<int64_t>& segment_start_ms, int total_segments,
 												  std::vector<std::unique_ptr<Head>>& graveyard)
 {
-	int window_end = std::min(segment_index + kVodHeadWindowSegments, total_segments);
+	int window_end = std::min(segment_index + head_window_segments_, total_segments);
 	// Clamp against any other still-live head's own start — two live heads
 	// must never claim overlapping segment ranges: segmentPath() is one flat
 	// filename numbering shared by every head on this stream, so overlap

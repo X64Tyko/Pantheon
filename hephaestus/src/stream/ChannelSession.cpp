@@ -10,7 +10,6 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
-#include <fstream>
 #include <cmath>
 
 using clock_t_ = std::chrono::system_clock;
@@ -58,6 +57,26 @@ static constexpr int kLiveHlsSegmentSecs = 2;
 // spacing, already cached in keyframes_ms) — good follow-up, not done here.
 static constexpr int kLiveHlsListSize        = 12;
 static constexpr int kLiveHlsDeleteThreshold = 8;
+
+// How far ahead of true wall-clock "now" the splicer is allowed to reveal a
+// due segment — ordinary broadcast delay, giving a real-time-synced client
+// margin to fetch/buffer instead of a segment appearing in the manifest at
+// the exact instant it's needed. In the same range as Hades' own
+// TARGET_BUFFER_SECS (PlayerPage.tsx).
+static constexpr int64_t kHlsRevealLeadMs = 6'000;
+
+// How many segments one VodEncodeStream head covers for a channel spawn —
+// much smaller than normal VOD's ~100-segment default so heads succeed each
+// other often; not used for anything today, but keeps the door open for a
+// later per-head speed-nudge drift-correction pass without needing to touch
+// this again. See project memory.
+static constexpr int kHlsHeadWindowSegments = 10;
+
+// How far ahead of "due now" the producer should try to stay buffered before
+// VodEncodeStream pauses a head — must comfortably clear kHlsRevealLeadMs
+// (no point encoding less far ahead than what the splicer is already allowed
+// to reveal) with real margin for jitter in this loop's own tick cadence.
+static constexpr int kHlsProducerLookaheadSecs = 20;
 
 // How long transition()'s own default-slate fallback runs before rechecking
 // Kairos, when /now returns nothing at all (no scheduled item, no filler,
@@ -317,6 +336,109 @@ static std::vector<std::string> buildArgs(
 	return a;
 }
 
+// Combined-A/V args for the new HLS-only pipeline's VodEncodeStream heads
+// (see hlsSpawnProducer()) — deliberately its own function rather than a
+// variant of buildArgs() above: no -re (this pipeline's producer is allowed
+// to race ahead of real time; the splicer paces what actually gets
+// revealed — see project memory), no MPEG-TS tee branch (that's the legacy
+// pipeline's job alone now), and it needs pushHeadBoundArgs()'s
+// -output_ts_offset/-t window bound plus -start_number the way VOD's own
+// per-head args do (VodSession.cpp's buildVodVideoArgs/buildVodAudioArgs),
+// for the same reason: so consecutive heads covering one long item
+// concatenate seamlessly, and each head only encodes its own window.
+// hls_dir here is always a pendingDir(spawn_id), never canonical.
+static std::vector<std::string> buildHlsProducerArgs(
+	const std::string& ffmpeg_path,
+	const KairosNowResponse& item,
+	int audioTrackIndex,
+	int subtitleTrackIndex,
+	bool loudnorm,
+	HwAccel hw_accel,
+	const std::string& vaapi_device,
+	HwAccel decode_hw_accel,
+	const std::set<std::string>& decodable_codecs,
+	const std::string& source_codec,
+	const VideoTrack* source_video,
+	bool direct_stream,
+	bool verbose_transcode_logs,
+	const std::string& max_resolution,
+	int video_bitrate_kbps,
+	int audio_bitrate_kbps,
+	const std::string& hls_dir,
+	int segment_index,
+	int64_t position_ms,
+	std::optional<double> window_duration_secs)
+{
+	std::vector<std::string> a;
+	a.push_back(ffmpeg_path);
+	pushLogLevelArgs(a, verbose_transcode_logs);
+
+	a.insert(a.end(), {"-fflags", "+genpts"});
+	pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
+
+	if (position_ms > 0)
+	{
+		std::ostringstream ss;
+		ss << std::fixed << std::setprecision(3) << (position_ms / 1000.0);
+		a.push_back("-ss");
+		a.push_back(ss.str());
+	}
+
+	if (!direct_stream) pushHwAccelDecodeArgs(a, decode_hw_accel, decodable_codecs, source_codec);
+
+	a.push_back("-i");
+	a.push_back(item.file_path);
+
+	if (direct_stream)
+	{
+		a.insert(a.end(), {
+					 "-map", "0:v:0?",
+					 "-map", "0:a:" + std::to_string(audioTrackIndex) + "?",
+					 "-dn", "-map_chapters", "-1",
+					 "-c:v", "copy"
+				 });
+		pushAudioEncoderArgs(a, loudnorm, /*speed=*/1.0, audio_bitrate_kbps,
+							 /*client_caps=*/std::nullopt, /*source_audio=*/nullptr,
+							 /*debug_showinfo=*/verbose_transcode_logs, /*resync_audio=*/true);
+	}
+	else
+	{
+		a.insert(a.end(), {"-map", "0:v:0?", "-map", "0:a:" + std::to_string(audioTrackIndex) + "?"});
+		if (subtitleTrackIndex >= 0) a.insert(a.end(), {"-map", "0:s:" + std::to_string(subtitleTrackIndex) + "?"});
+		a.insert(a.end(), {"-dn", "-map_chapters", "-1", "-fps_mode", "cfr"});
+		if (source_video && !source_video->r_frame_rate.empty()) a.insert(a.end(), {"-r", source_video->r_frame_rate});
+
+		std::vector<std::string> vfParts;
+		pushScaleFilter(vfParts, resolveMaxHeight(max_resolution));
+		pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs, source_video);
+		if (verbose_transcode_logs) vfParts.push_back("showinfo");
+		pushVideoFilterArgs(a, vfParts);
+
+		int effective_bitrate_kbps = video_bitrate_kbps > 0
+										 ? video_bitrate_kbps
+										 : defaultBitrateCapKbps(effectiveOutputHeight(resolveMaxHeight(max_resolution), source_video));
+		pushBitrateCapArgs(a, effective_bitrate_kbps);
+
+		pushAudioEncoderArgs(a, loudnorm, /*speed=*/1.0, audio_bitrate_kbps,
+							 /*client_caps=*/std::nullopt, /*source_audio=*/nullptr,
+							 /*debug_showinfo=*/verbose_transcode_logs);
+	}
+
+	pushHeadBoundArgs(a, position_ms, window_duration_secs);
+
+	a.insert(a.end(), {
+				 "-f", "hls",
+				 "-hls_time", std::to_string(kLiveHlsSegmentSecs),
+				 "-hls_playlist_type", "vod",
+				 "-hls_list_size", "0",
+				 "-start_number", std::to_string(segment_index),
+				 "-hls_segment_filename", hls_dir + "/seg-%05d.ts",
+				 hls_dir + "/producer.m3u8" // never read — the splicer scans segment files directly
+			 });
+
+	return a;
+}
+
 // Loops a still image into an MPEG-TS stream, with either a looped audio
 // track or generated silence. Used for the offline slate and the connect-time
 // splash — neither has a real media file to seek/map into like buildArgs().
@@ -411,10 +533,11 @@ ChannelSession::~ChannelSession()
 	stop();
 	hls_watcher_stop.store(true);
 	if (hls_watcher.joinable()) hls_watcher.join();
-	hls_patch_stop.store(true);
-	if (hls_patch_thread.joinable()) hls_patch_thread.join();
+	hls_producer_stop_.store(true);
+	if (hls_producer_thread_.joinable()) hls_producer_thread_.join();
 	prefetch_stop.store(true);
 	if (prefetch_thread.joinable()) prefetch_thread.join();
+	if (splicer_) splicer_->stop();
 }
 
 std::string ChannelSession::hlsDir() const
@@ -456,120 +579,13 @@ void ChannelSession::hlsWatchLoop()
 	}
 }
 
-// Ticks faster than hlsWatchLoop (segments are only kLiveHlsSegmentSecs
-// long) — own thread so its cadence stays decoupled from hlsWatchLoop's
-// idle/linger check. Read-only now; see discontinuity_count_'s comment.
-void ChannelSession::hlsPatchLoop()
+// pendingDir() below is where every ffmpeg spawn writes now — see
+// hlsProducerLoop()'s own comment. Canonical hlsDir() is written solely by
+// splicer_.
+std::string ChannelSession::pendingDir(int spawn_id) const
 {
-	while (!hls_patch_stop.load() && active.load())
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(kLiveHlsSegmentSecs * 500));
-		if (!active.load()) return;
-		checkSegmentDurationDrift();
-	}
-}
-
-// Diagnostic only (verbose_transcode_logs-gated): logs when a newly-cut
-// segment's real EXTINF duration deviates from the requested hls_time.
-void ChannelSession::checkSegmentDurationDrift()
-{
-	if (!opts.verbose_transcode_logs) return;
-
-	std::ifstream in(hlsDir() + "/playlist.m3u8");
-	if (!in) return;
-	std::vector<std::string> lines;
-	std::string line;
-	while (std::getline(in, line)) lines.push_back(line);
-	in.close();
-
-	int lastExtinfIdx = -1;
-	for (size_t i = 0; i < lines.size(); ++i) if (lines[i].rfind("#EXTINF:", 0) == 0) lastExtinfIdx = static_cast<int>(i);
-	if (lastExtinfIdx < 0 || static_cast<size_t>(lastExtinfIdx) + 1 >= lines.size()) return;
-
-	const std::string& uri = lines[static_cast<size_t>(lastExtinfIdx) + 1];
-	if (uri == last_extinf_uri_) return;
-	last_extinf_uri_ = uri;
-
-	double dur = 0.0;
-	try { dur = std::stod(lines[static_cast<size_t>(lastExtinfIdx)].substr(8)); }
-	catch (...)
-	{
-	}
-	double expected = static_cast<double>(kLiveHlsSegmentSecs);
-	if (dur > 0.0 && std::fabs(dur - expected) > expected * 0.2)
-	{
-		std::cerr << "[session:" << channel_id << "] segment " << uri
-			<< " duration=" << dur << "s deviates from hls_time=" << expected << "s\n";
-	}
-}
-
-std::string ChannelSession::patchDiscontinuitySequence(const std::string& raw, int discontinuity_count)
-{
-	std::vector<std::string> lines;
-	{
-		std::istringstream in(raw);
-		std::string line;
-		while (std::getline(in, line)) lines.push_back(line);
-	}
-
-	// Not a real playlist (e.g. empty/partial read) — leave it untouched.
-	if (lines.empty() || lines[0] != "#EXTM3U") return raw;
-
-	int visible = 0;
-	for (auto& l : lines) if (l == "#EXT-X-DISCONTINUITY") ++visible;
-
-	int wanted = discontinuity_count - visible;
-	if (wanted < 0) wanted = 0; // defensive only — should never actually go negative
-
-	std::string wantedLine = "#EXT-X-DISCONTINUITY-SEQUENCE:" + std::to_string(wanted);
-
-	int existingIdx = -1;
-	for (size_t i = 0; i < lines.size(); ++i)
-	{
-		if (lines[i].rfind("#EXT-X-DISCONTINUITY-SEQUENCE:", 0) == 0)
-		{
-			existingIdx = static_cast<int>(i);
-			break;
-		}
-	}
-
-	if (existingIdx >= 0)
-	{
-		if (lines[static_cast<size_t>(existingIdx)] != wantedLine) lines[static_cast<size_t>(existingIdx)] = wantedLine;
-	}
-	else
-	{
-		// Standard placement: right after #EXT-X-VERSION (falls back to
-		// right after #EXTM3U if that's somehow absent), before any Media
-		// Segment — same neighborhood ffmpeg already puts #EXT-X-TARGETDURATION.
-		size_t insertAt = 1;
-		for (size_t i = 0; i < lines.size(); ++i)
-		{
-			if (lines[i].rfind("#EXT-X-VERSION", 0) == 0)
-			{
-				insertAt = i + 1;
-				break;
-			}
-		}
-		lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insertAt), wantedLine);
-	}
-
-	std::string out;
-	for (auto& l : lines)
-	{
-		out += l;
-		out += "\n";
-	}
-	return out;
-}
-
-std::optional<std::string> ChannelSession::playlistForClient() const
-{
-	std::ifstream in(hlsDir() + "/playlist.m3u8");
-	if (!in) return std::nullopt;
-	std::ostringstream ss;
-	ss << in.rdbuf();
-	return patchDiscontinuitySequence(ss.str(), discontinuity_count_.load());
+	if (opts.hls_root.empty()) return "";
+	return hlsDir() + "/pending/" + std::to_string(spawn_id);
 }
 
 // Looks ahead to whatever Kairos has scheduled after the current item and
@@ -682,14 +698,29 @@ bool ChannelSession::start()
 		}
 		else
 		{
-			hls_watcher      = std::thread([this] { hlsWatchLoop(); });
-			hls_patch_thread = std::thread([this] { hlsPatchLoop(); });
+			hls_watcher = std::thread([this] { hlsWatchLoop(); });
+			splicer_    = std::make_unique<ChannelPlaylistSplicer>(
+				dir, kLiveHlsListSize, kLiveHlsDeleteThreshold,
+				kHlsRevealLeadMs, std::chrono::milliseconds(kLiveHlsSegmentSecs * 500));
+			splicer_->start();
+			hls_producer_thread_ = std::thread([this] { hlsProducerLoop(); });
 		}
 	}
 
-	// Unlike hls_watcher/hls_patch_thread above, this isn't HLS-specific —
+	// Unlike hls_watcher/hls_producer_thread_ above, this isn't HLS-specific —
 	// MPEG-TS-only sessions get transitions too — so it always starts.
 	prefetch_thread = std::thread([this] { prefetchLoop(); });
+
+	// Legacy MPEG-TS pipeline: eagerly started only when HLS is disabled for
+	// this session (opts.hls_root empty at this point, either never set or
+	// just cleared above on a create_directories failure) — today's exact
+	// behavior, unchanged. When HLS is active, this pipeline is fully lazy
+	// (see addClient()/removeClient()/spawnLegacyForCurrentItem()): it
+	// doesn't need to run at all until an actual MPEG-TS client connects,
+	// and hlsProducerLoop() above is what resolves current_item instead —
+	// running both unconditionally would mean two concurrent transcodes of
+	// the same content for the common case of HLS-only viewers.
+	if (!opts.hls_root.empty()) return active.load();
 
 	// Kick off the /now lookup on its own thread and give it a short budget
 	// to answer before deciding whether to show the splash at all.
@@ -821,6 +852,22 @@ void ChannelSession::stop()
 			ffmpeg.reset();
 		}
 	}
+	// Must fully stop the HLS producer/splicer (not just flip active, which
+	// they'd only notice on their own next tick) before the remove_all()
+	// below — otherwise either could still be mid-write into a directory
+	// that's about to disappear out from under it.
+	{
+		std::lock_guard<std::mutex> lock(hls_mtx_);
+		if (hls_producer_)
+		{
+			hls_producer_->stop();
+			hls_producer_.reset();
+		}
+	}
+	hls_producer_stop_.store(true);
+	if (hls_producer_thread_.joinable()) hls_producer_thread_.join();
+	if (splicer_) splicer_->stop();
+
 	broadcastDone();
 	auto dir = hlsDir();
 	if (!dir.empty())
@@ -832,9 +879,27 @@ void ChannelSession::stop()
 
 void ChannelSession::addClient(std::shared_ptr<ClientSink> sink)
 {
-	std::lock_guard<std::mutex> lock(clients_mtx);
-	clients.push_back(sink);
-	++client_count;
+	{
+		std::lock_guard<std::mutex> lock(clients_mtx);
+		clients.push_back(sink);
+		++client_count;
+	}
+	// Legacy pipeline is fully lazy when HLS is active (see plan doc / class
+	// comment near hlsProducerTick()) — the demo server can't afford running
+	// it unconditionally alongside the new HLS pipeline for every channel.
+	// When HLS is disabled, it's already running from start(), nothing to do.
+	// Lock only for the check — spawnLegacyForCurrentItem() ends up calling
+	// launchFfmpeg(), which takes ffmpeg_mtx itself; holding it across that
+	// call would self-deadlock (not a recursive mutex).
+	if (!opts.hls_root.empty())
+	{
+		bool needsSpawn;
+		{
+			std::lock_guard<std::mutex> lock(ffmpeg_mtx);
+			needsSpawn = !ffmpeg;
+		}
+		if (needsSpawn) spawnLegacyForCurrentItem();
+	}
 }
 
 void ChannelSession::removeClient(std::shared_ptr<ClientSink> sink)
@@ -844,7 +909,22 @@ void ChannelSession::removeClient(std::shared_ptr<ClientSink> sink)
 		clients.erase(std::remove(clients.begin(), clients.end(), sink), clients.end());
 		--client_count;
 	}
-	if (client_count.load() == 0) scheduleStop();
+	if (client_count.load() != 0) return;
+
+	if (!opts.hls_root.empty())
+	{
+		// Stop just the legacy pipeline, not the whole session — HLS viewers
+		// may still be active. Session teardown when *everything* is idle is
+		// still hlsWatchLoop/scheduleStop()'s job.
+		std::lock_guard<std::mutex> lock(ffmpeg_mtx);
+		if (ffmpeg)
+		{
+			ffmpeg->kill();
+			ffmpeg.reset();
+		}
+		return;
+	}
+	scheduleStop();
 }
 
 void ChannelSession::onData(const uint8_t* data, size_t len)
@@ -870,6 +950,24 @@ void ChannelSession::onExit(int code)
 
 	std::cerr << "[session:" << channel_id << "] ffmpeg exited (code=" << code << ")\n";
 
+	// When HLS is active this pipeline is fully lazy/reactive (see
+	// addClient()) — it never owns scheduling (hlsProducerTick() does that,
+	// and already updated current_item/markPlayed/onItemPlaying for this
+	// boundary independently), so it must not call transition() itself, and
+	// there's no splash concept of its own either (spawnLegacyForCurrentItem
+	// only ever runs after a client has connected, by which point
+	// current_item is already resolved). Just respawn for whatever
+	// current_item now says, or stay idle if the last client already left.
+	if (!opts.hls_root.empty())
+	{
+		TaskRegistry::global().spawn([self = shared_from_this()]
+		{
+			if (self->client_count.load() == 0) return;
+			self->spawnLegacyForCurrentItem();
+		});
+		return;
+	}
+
 	if (in_splash.load())
 	{
 		// The splash loops forever and should never exit on its own; if it
@@ -882,6 +980,49 @@ void ChannelSession::onExit(int code)
 	// Natural exit (code 0): item finished cleanly → transition.
 	// Unexpected exit (code != 0): also transition to avoid black-screen.
 	TaskRegistry::global().spawn([self = shared_from_this()] { self->transition(); });
+}
+
+// Only ever called after a client has connected (addClient()'s 0->1
+// transition, or onExit() respawning across a boundary while clients remain)
+// — by which point hlsProducerTick() has already resolved current_item at
+// least once, so wall_clock_end_ms==0 unambiguously means "not resolved
+// yet" (a genuine offline item always carries a real bounded end) rather
+// than a real item. Skips spawning in that narrow startup race rather than
+// treating an empty item as real content with no file_path — the next
+// addClient/onExit retry picks it up once resolved.
+void ChannelSession::spawnLegacyForCurrentItem()
+{
+	KairosNowResponse cur;
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		cur = current_item;
+	}
+	if (cur.item_type.empty() && cur.wall_clock_end_ms == 0) return;
+
+	int64_t offset = computeOffset(cur, nowMs());
+	if (!cur.is_filler && cur.duration_ms > 0 && offset >= cur.duration_ms)
+	{
+		// Drift/late-connect landed us past this item's own end, right as
+		// hlsProducerTick() is about to move current_item on — nothing
+		// legitimate to seek into yet. Retry shortly instead of resolving a
+		// *different* item here too (that's hlsProducerTick's job alone —
+		// see this function's own comment); unlike onExit()'s own retry
+		// path, nothing else will call this again on its own since no
+		// ffmpeg ever spawned here to exit.
+		TaskRegistry::global().spawn([self = shared_from_this()]
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(kLiveHlsSegmentSecs * 500));
+			if (self->client_count.load() == 0) return;
+			bool needsSpawn;
+			{
+				std::lock_guard<std::mutex> lock(self->ffmpeg_mtx);
+				needsSpawn = !self->ffmpeg;
+			}
+			if (needsSpawn) self->spawnLegacyForCurrentItem();
+		});
+		return;
+	}
+	spawnFfmpeg(cur, offset);
 }
 
 void ChannelSession::transition()
@@ -1017,11 +1158,6 @@ void ChannelSession::transition()
 		return;
 	}
 
-	// Every transition spawns a brand new ffmpeg process into the same
-	// output file (see launchFfmpeg's swap-under-mutex tail) — ffmpeg's own
-	// HLS muxer marks that restart with #EXT-X-DISCONTINUITY, so this needs
-	// to count in step with it for patchDiscontinuitySequence() below.
-	discontinuity_count_.fetch_add(1);
 	spawnFfmpeg(*next, startOffset, speed);
 }
 
@@ -1171,6 +1307,338 @@ void ChannelSession::spawnOffline(const KairosNowResponse& item)
 							   opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
 							   opts.verbose_transcode_logs, hlsDir(), boundMs);
 	launchFfmpeg(std::move(args), "ffmpeg (offline slate)");
+}
+
+namespace
+{
+	std::vector<int64_t> uniformSegmentBoundaries(int64_t spanMs, int segmentSecs)
+	{
+		std::vector<int64_t> b;
+		int64_t segMs = int64_t(segmentSecs) * 1000;
+		int n         = static_cast<int>(std::ceil(double(spanMs) / segMs));
+		if (n < 1) n = 1;
+		for (int i = 0; i < n; ++i) b.push_back(int64_t(i) * segMs);
+		return b;
+	}
+} // namespace
+
+void ChannelSession::hlsProducerLoop()
+{
+	while (!hls_producer_stop_.load() && active.load())
+	{
+		hlsProducerTick();
+		if (!active.load() || hls_producer_stop_.load()) return;
+		std::this_thread::sleep_for(std::chrono::milliseconds(kLiveHlsSegmentSecs * 500));
+	}
+}
+
+void ChannelSession::hlsProducerTick()
+{
+	int64_t now = nowMs();
+
+	KairosNowResponse cur;
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		cur = current_item;
+	}
+	bool haveItem = !cur.item_type.empty() || cur.wall_clock_end_ms > 0;
+
+	if (haveItem && now < cur.wall_clock_end_ms)
+	{
+		if (cur.item_type != "offline") hlsMaybePreroll(cur, now);
+
+		// Mid-item: just keep the producer ahead of what the splicer needs.
+		std::lock_guard<std::mutex> lock(hls_mtx_);
+		if (!hls_producer_) return; // offline producer, or not spawned yet
+		int total = static_cast<int>(hls_segment_boundaries_ms_.size());
+		if (total == 0) return;
+		int64_t dueOffsetMs = now - hls_wall_clock_start_ms_;
+		int dueIndex        = 0;
+		while (dueIndex + 1 < total && hls_segment_boundaries_ms_[static_cast<size_t>(dueIndex + 1)] <= dueOffsetMs) ++dueIndex;
+		hls_producer_->prepareSegment(dueIndex, hls_segment_boundaries_ms_, total);
+		hls_producer_->tick(total);
+		return;
+	}
+
+	// Need the next item. This pipeline is the authoritative scheduler
+	// whenever it's running (see class comment near hlsProducerTick's
+	// declaration) — unlike the legacy pipeline's onExit(), it owns
+	// markPlayed/onItemPlaying/current_item itself.
+	if (haveItem && cur.item_type != "offline") kairos.markPlayed(channel_id, cur.item_type, cur.item_id, cur.block_id, now - cur.wall_clock_start_ms);
+
+	auto next = haveItem ? kairos.getNow(channel_id, cur.wall_clock_end_ms) : kairos.getNow(channel_id, now);
+	if (!next) next = kairos.getNow(channel_id, now);
+	if (!next)
+	{
+		hls_preroll_item_.reset();
+		hls_preroll_handle_ = HlsProducerHandle{};
+
+		// Same "Kairos has nothing at all" fallback shape as transition().
+		KairosNowResponse fallback;
+		fallback.item_type           = "offline";
+		fallback.wall_clock_start_ms = now;
+		fallback.wall_clock_end_ms   = now + kNoContentRetryMs;
+		{
+			std::lock_guard<std::mutex> l(current_item_mtx);
+			current_item = fallback;
+		}
+		hlsSpawnOfflineProducer(fallback);
+		return;
+	}
+
+	// Same filler-skip-if-already-blown-past logic as transition() — see its
+	// own comment.
+	int guard = 0;
+	while (next->is_filler && next->duration_ms > 0 && now >= next->wall_clock_end_ms && ++guard < 64)
+	{
+		auto after = kairos.getNow(channel_id, next->wall_clock_end_ms);
+		if (!after) break;
+		next = after;
+	}
+
+	int64_t startOffset = computeOffset(*next, now);
+	{
+		std::lock_guard<std::mutex> l(current_item_mtx);
+		current_item = *next;
+	}
+	item_start             = steady_::now();
+	current_item_offset_ms = startOffset;
+
+	if (!next->is_filler && next->duration_ms > 0 && startOffset >= next->duration_ms)
+	{
+		// Drift pushed us past this item's own end too — retry next tick
+		// (kLiveHlsSegmentSecs*500ms away) rather than recursing through
+		// possibly many blown-past items in one call. Leave any preroll
+		// alone — it may still be exactly right for whatever the next tick
+		// resolves.
+		return;
+	}
+
+	if (next->item_type == "offline")
+	{
+		hls_preroll_item_.reset();
+		hls_preroll_handle_ = HlsProducerHandle{};
+		hlsSpawnOfflineProducer(*next);
+		return;
+	}
+
+	if (hls_preroll_item_&& hlsSameItem(*hls_preroll_item_, *next))
+	{
+		// Preroll'd exactly what we need — near-instant splice; its backlog
+		// (built during the lead window) is what makes this gapless.
+		hlsPromoteProducer(*next, std::move(hls_preroll_handle_), hls_preroll_wall_clock_start_ms_);
+		hls_preroll_item_.reset();
+		hls_preroll_handle_ = HlsProducerHandle{};
+		return;
+	}
+
+	// No preroll, or it turned out to be for something else (the schedule
+	// changed underneath it — an admin edit, a re-sync) — discard any stale
+	// one and fall back to a cold spawn, same as before preroll existed.
+	hls_preroll_item_.reset();
+	hls_preroll_handle_ = HlsProducerHandle{};
+	hlsSpawnProducer(*next, startOffset, now);
+}
+
+void ChannelSession::hlsMaybePreroll(const KairosNowResponse& cur, int64_t now)
+{
+	if (hls_preroll_item_) return;
+	if (cur.wall_clock_end_ms <= 0) return;
+	if (now < cur.wall_clock_end_ms - kPrefetchLeadMs) return;
+
+	auto next = kairos.getNow(channel_id, cur.wall_clock_end_ms);
+	if (!next) return; // nothing to preroll — the real transition retries/falls back to offline itself
+
+	// Same filler-skip guard the real transition applies, anchored on cur's
+	// own end as an approximation of what "now" will be once that real
+	// transition actually runs — if this ends up wrong (drift), the
+	// identity check at promotion time simply misses and falls back to a
+	// cold spawn, same as any other stale-preroll case.
+	int guard = 0;
+	while (next->is_filler && next->duration_ms > 0 && cur.wall_clock_end_ms >= next->wall_clock_end_ms && ++guard < 64)
+	{
+		auto after = kairos.getNow(channel_id, next->wall_clock_end_ms);
+		if (!after) return;
+		next = after;
+	}
+	if (next->item_type == "offline" || next->file_path.empty()) return; // never preroll offline — see header comment
+
+	auto handle = hlsCreateProducer(*next, /*startOffsetMs=*/0);
+	if (!handle.producer) return; // create failed — real transition falls back to a cold spawn
+
+	hls_preroll_wall_clock_start_ms_ = next->wall_clock_start_ms;
+	hls_preroll_handle_              = std::move(handle);
+	hls_preroll_item_                = std::move(next);
+}
+
+bool ChannelSession::hlsSameItem(const KairosNowResponse& a, const KairosNowResponse& b)
+{
+	if (a.item_type != b.item_type) return false;
+	if (!a.item_id.empty() || !b.item_id.empty()) return a.item_id == b.item_id;
+	return a.file_path == b.file_path;
+}
+
+ChannelSession::HlsProducerHandle ChannelSession::hlsCreateProducer(const KairosNowResponse& item, int64_t startOffsetMs)
+{
+	HlsProducerHandle handle;
+	if (item.file_path.empty())
+	{
+		std::cerr << "[session:" << channel_id << ":" << bucket << "] hls item has no file_path, skipping\n";
+		return handle;
+	}
+
+	bool direct_stream = (bucket == kNativeBucket);
+	if (direct_stream) startOffsetMs = snapToKeyframe(item, startOffsetMs);
+
+	int audioTrack    = 0;
+	int subtitleTrack = -1;
+	std::string source_codec;
+	auto info = probeMediaCached(opts.ffprobe_path, item.file_path);
+	if (info)
+	{
+		if (!opts.audio_lang.empty()) audioTrack = pickAudioTrack(*info, opts.audio_lang);
+		if (!opts.subtitle_lang.empty()) subtitleTrack = pickSubtitleTrack(*info, opts.subtitle_lang);
+		if (!info->video.empty()) source_codec = decodeCodecKey(info->video[0].codec, info->video[0].bit_depth);
+	}
+
+	int64_t spanMs = item.duration_ms > startOffsetMs ? item.duration_ms - startOffsetMs : 0;
+	std::vector<int64_t> boundaries;
+	if (direct_stream && !item.keyframes_ms.empty())
+	{
+		std::vector<int64_t> sliced;
+		for (int64_t kf : item.keyframes_ms) if (kf >= startOffsetMs) sliced.push_back(kf - startOffsetMs);
+		if (sliced.empty() || sliced.front() != 0) sliced.insert(sliced.begin(), 0);
+		boundaries = simulateDirectStreamSegmentBoundaries(sliced, kLiveHlsSegmentSecs);
+	}
+	if (boundaries.empty()) boundaries = uniformSegmentBoundaries(spanMs, kLiveHlsSegmentSecs);
+
+	int spawn_id    = next_spawn_id_.fetch_add(1);
+	std::string dir = pendingDir(spawn_id);
+	std::error_code ec;
+	std::filesystem::create_directories(dir, ec);
+	if (ec)
+	{
+		std::cerr << "[session:" << channel_id << "] failed to create pending dir \"" << dir << "\": " << ec.message() << "\n";
+		return handle;
+	}
+
+	std::cout << "[session:" << channel_id << ":" << bucket << "] hls producer: \""
+		<< item.file_path << "\" offset=" << startOffsetMs << "ms\n";
+
+	VodEncodeStream::ArgsBuilder argsBuilder =
+		[this, item, audioTrack, subtitleTrack, direct_stream, source_codec, info, dir]
+	(int segment_index, int64_t position_ms, std::optional<double> window_duration_secs)
+	{
+		const VideoTrack* sv = (info && !info->video.empty()) ? &info->video[0] : nullptr;
+		return buildHlsProducerArgs(ffmpeg_path, item, audioTrack, subtitleTrack,
+									opts.loudnorm, opts.hw_accel, opts.vaapi_device, opts.decode_hw_accel, opts.decodable_codecs,
+									source_codec, sv, direct_stream, opts.verbose_transcode_logs,
+									opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
+									dir, segment_index, position_ms, window_duration_secs);
+	};
+
+	auto producer = std::make_unique<VodEncodeStream>(
+		"hls", dir, "seg-", std::move(argsBuilder),
+		opts.buffer_size, opts.ffmpeg_debug_logs, opts.verbose_transcode_logs,
+		kHlsProducerLookaheadSecs, kLiveHlsSegmentSecs, kHlsHeadWindowSegments);
+
+	int total = static_cast<int>(boundaries.size());
+	producer->prepareSegment(0, boundaries, total); // kick off production immediately
+
+	handle.producer    = std::move(producer);
+	handle.boundaries  = std::move(boundaries);
+	handle.dir         = std::move(dir);
+	handle.info        = std::move(info);
+	handle.audio_track = audioTrack;
+	handle.span_ms     = spanMs;
+	return handle;
+}
+
+void ChannelSession::hlsPromoteProducer(const KairosNowResponse& item, HlsProducerHandle handle, int64_t wallClockStartMs)
+{
+	if (!handle.producer) return; // hlsCreateProducer failed — caller's transition retries next tick
+
+	{
+		std::lock_guard<std::mutex> lock(info_mtx);
+		current_info        = handle.info;
+		current_audio_track = handle.audio_track;
+	}
+	if (onItemPlaying) onItemPlaying(channel_id, handle.info, handle.audio_track, item.duration_ms, item.is_filler);
+
+	std::string dir                 = handle.dir;
+	std::vector<int64_t> boundaries = handle.boundaries;
+	int64_t spanMs                  = handle.span_ms;
+
+	{
+		std::lock_guard<std::mutex> lock(hls_mtx_);
+		if (hls_offline_ffmpeg_) hls_offline_ffmpeg_.reset();
+		hls_producer_              = std::move(handle.producer);
+		hls_segment_boundaries_ms_ = boundaries;
+		hls_wall_clock_start_ms_   = wallClockStartMs;
+	}
+
+	if (splicer_) splicer_->spliceTo(ChannelPlaylistSplicer::SpawnInfo{dir, "seg-", boundaries, spanMs, wallClockStartMs});
+}
+
+void ChannelSession::hlsSpawnProducer(const KairosNowResponse& item, int64_t startOffsetMs, int64_t wallClockStartMs)
+{
+	hlsPromoteProducer(item, hlsCreateProducer(item, startOffsetMs), wallClockStartMs);
+}
+
+void ChannelSession::hlsSpawnOfflineProducer(const KairosNowResponse& item)
+{
+	std::string image = item.offline_image_path.value_or("");
+	if (image.empty()) image = opts.logo_path;
+	if (image.empty()) image = opts.default_logo_path;
+	if (image.empty())
+	{
+		std::cerr << "[session:" << channel_id << "] no offline image available for hls producer, skipping\n";
+		return;
+	}
+
+	static constexpr int64_t kMinRecheckMs = 3000;
+	int64_t boundMs                        = item.wall_clock_end_ms > 0
+												 ? std::max(kMinRecheckMs, item.wall_clock_end_ms - nowMs())
+												 : kNoContentRetryMs; // shouldn't happen (hlsProducerTick always bounds its fallback), defensive only
+
+	int spawn_id    = next_spawn_id_.fetch_add(1);
+	std::string dir = pendingDir(spawn_id);
+	std::error_code ec;
+	std::filesystem::create_directories(dir, ec);
+	if (ec)
+	{
+		std::cerr << "[session:" << channel_id << "] failed to create pending dir \"" << dir << "\": " << ec.message() << "\n";
+		return;
+	}
+
+	auto args = buildImageArgs(ffmpeg_path, image, item.offline_audio_path.value_or(""),
+							   opts.hw_accel, opts.vaapi_device, opts.max_resolution,
+							   opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
+							   opts.verbose_transcode_logs, dir, boundMs);
+
+	auto proc = std::make_unique<FfmpegProcess>(
+		std::move(args), /*on_data=*/nullptr, /*on_exit=*/[](int)
+		{
+		},
+		opts.buffer_size, opts.ffmpeg_debug_logs, opts.verbose_transcode_logs);
+	if (!proc->start())
+	{
+		std::cerr << "[session:" << channel_id << "] failed to spawn hls offline producer\n";
+		return;
+	}
+
+	auto boundaries          = uniformSegmentBoundaries(boundMs, kLiveHlsSegmentSecs);
+	int64_t wallClockStartMs = nowMs();
+
+	{
+		std::lock_guard<std::mutex> lock(hls_mtx_);
+		if (hls_producer_) hls_producer_.reset();
+		hls_offline_ffmpeg_        = std::move(proc);
+		hls_segment_boundaries_ms_ = boundaries;
+		hls_wall_clock_start_ms_   = wallClockStartMs;
+	}
+
+	if (splicer_) splicer_->spliceTo(ChannelPlaylistSplicer::SpawnInfo{dir, "seg-", boundaries, boundMs, wallClockStartMs});
 }
 
 // Shared tail of spawnFfmpeg()/spawnOffline(): installs `args` as the

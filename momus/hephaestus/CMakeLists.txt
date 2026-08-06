@@ -5,7 +5,7 @@ add_executable(momus_hephaestus
     test_channel_session.cpp
         test_channel_viewer_registry.cpp
     test_hw_probe.cpp
-    test_discontinuity_sequence.cpp
+        test_channel_playlist_splicer.cpp
         test_preview_session.cpp
         test_preview_session_manager.cpp
         test_vod_encode_stream.cpp

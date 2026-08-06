@@ -11,6 +11,41 @@ std::string fmtSpeed(double speed)
 	return ss.str();
 }
 
+void pushHeadBoundArgs(std::vector<std::string>& a, int64_t positionMs, std::optional<double> windowDurationSecs)
+{
+	std::ostringstream offset;
+	offset << std::fixed << std::setprecision(3) << (positionMs / 1000.0);
+	a.insert(a.end(), {"-output_ts_offset", offset.str()});
+	if (windowDurationSecs)
+	{
+		std::ostringstream dur;
+		dur << std::fixed << std::setprecision(3) << *windowDurationSecs;
+		a.insert(a.end(), {"-t", dur.str()});
+	}
+}
+
+std::vector<int64_t> simulateDirectStreamSegmentBoundaries(
+	const std::vector<int64_t>& keyframes_ms, int hls_time_secs)
+{
+	std::vector<int64_t> bounds;
+	if (keyframes_ms.empty()) return bounds;
+	const int64_t hls_time_ms = int64_t(hls_time_secs) * 1000;
+	int64_t current_start     = keyframes_ms.front(); // should be ~0
+	bounds.push_back(current_start);
+	int64_t target = current_start + hls_time_ms;
+	for (int64_t kf : keyframes_ms)
+	{
+		if (kf <= current_start) continue;
+		if (kf >= target)
+		{
+			bounds.push_back(kf);
+			current_start = kf;
+			target        = current_start + hls_time_ms;
+		}
+	}
+	return bounds;
+}
+
 const char* hwAccelName(HwAccel hw_accel)
 {
 	switch (hw_accel)

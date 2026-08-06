@@ -63,6 +63,56 @@ TEST(ChannelSessionTest, ComputeSpeed)
 	EXPECT_FALSE(s4.has_value());
 }
 
+// ── hlsSameItem: the preroll mismatch-fallback safety property ─────────────
+//
+// hlsMaybePreroll() builds a producer for whatever Kairos resolves as next
+// during the lead window, ahead of the real transition. If the schedule
+// changes underneath it (admin edit, re-sync) before the real transition
+// runs its own independent resolution, hlsSameItem() is what decides whether
+// the preroll'd producer is still safe to promote — a false positive here
+// would serve the wrong content; overly strict is merely a wasted preroll
+// (falls back to a cold spawn, same as no preroll at all), so correctness
+// only needs to worry about the false-positive direction.
+TEST(ChannelSessionTest, HlsSameItemMatchesOnIdenticalItemId)
+{
+	KairosNowResponse a, b;
+	a.item_type = b.item_type = "episode";
+	a.item_id   = b.item_id   = "ep-123";
+	a.file_path = "/media/shows/a.mkv";
+	b.file_path = "/media/shows/a.mkv";
+	EXPECT_TRUE(ChannelSession::hlsSameItemForTest(a, b));
+}
+
+TEST(ChannelSessionTest, HlsSameItemDiffersOnDifferentItemId)
+{
+	KairosNowResponse a, b;
+	a.item_type = b.item_type = "episode";
+	a.item_id   = "ep-123";
+	b.item_id   = "ep-456";                           // schedule changed to a different episode
+	a.file_path = b.file_path = "/media/shows/a.mkv"; // even if the file happens to match
+	EXPECT_FALSE(ChannelSession::hlsSameItemForTest(a, b));
+}
+
+TEST(ChannelSessionTest, HlsSameItemDiffersOnDifferentItemType)
+{
+	KairosNowResponse a, b;
+	a.item_type = "movie";
+	b.item_type = "offline"; // schedule changed to a gap
+	EXPECT_FALSE(ChannelSession::hlsSameItemForTest(a, b));
+}
+
+TEST(ChannelSessionTest, HlsSameItemFallsBackToFilePathWhenNeitherHasAnId)
+{
+	KairosNowResponse a, b;
+	a.item_type = b.item_type = "filler";
+	a.file_path = "/media/bumpers/one.mkv";
+	b.file_path = "/media/bumpers/two.mkv";
+	EXPECT_FALSE(ChannelSession::hlsSameItemForTest(a, b));
+
+	b.file_path = a.file_path;
+	EXPECT_TRUE(ChannelSession::hlsSameItemForTest(a, b));
+}
+
 // ── start()'s retry-on-unreachable-Kairos fix ───────────────────────────────
 //
 // Before this session's fix, a session whose very first /now lookup failed

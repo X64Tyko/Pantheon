@@ -64,9 +64,15 @@ public:
 	// hls_time_secs mirror VodStreamOptions' own fields — passed in rather
 	// than read from a shared opts struct so this class stays independent of
 	// VodSession's own config plumbing.
+	// head_window_segments: how many segments one head is responsible for
+	// before it self-terminates — default matches normal VOD's existing
+	// ~100-segment window (large enough that a normal viewing session rarely
+	// crosses a boundary). A caller with more frequent natural respawn points
+	// to offer (e.g. a live channel wanting room to eventually nudge speed
+	// per-head) can pass something much smaller.
 	VodEncodeStream(std::string label, std::string segment_dir, std::string segment_prefix,
 					ArgsBuilder argsBuilder, int buffer_size, bool ffmpeg_debug_logs, bool verbose_transcode_logs,
-					int lookahead_secs, int hls_time_secs);
+					int lookahead_secs, int hls_time_secs, int head_window_segments = 100);
 	~VodEncodeStream();
 
 	VodEncodeStream(const VodEncodeStream&)            = delete;
@@ -163,6 +169,7 @@ private:
 	bool verbose_transcode_logs_;
 	int lookahead_secs_;
 	int hls_time_secs_;
+	int head_window_segments_;
 
 	mutable std::mutex mtx_;
 	std::vector<std::unique_ptr<Head>> heads_; // guarded by mtx_; dead heads erased, not just marked

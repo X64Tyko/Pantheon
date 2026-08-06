@@ -3,6 +3,8 @@
 #include "../kairos/KairosTypes.h"
 #include "FfmpegProcess.h"
 #include "MediaProbe.h"
+#include "VodEncodeStream.h"
+#include "ChannelPlaylistSplicer.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -129,26 +131,118 @@ private:
 	void hlsWatchLoop();
 	bool hlsIdle() const;
 
-	// ffmpeg's HLS muxer (append_list+delete_segments) inserts
-	// #EXT-X-DISCONTINUITY at each new spawnFfmpeg() (a new process
-	// restart), but never maintains #EXT-X-DISCONTINUITY-SEQUENCE once an
-	// earlier one rolls off the sliding window — an HLS-spec requirement
-	// (RFC 8216 §4.3.3) Roku's player enforces strictly and stops playback
-	// over. No ffmpeg hls_flags option controls this (checked against
-	// ffmpeg n8.1.1's own muxer help).
-	//
-	// Patched in memory at serve time (playlistForClient()) rather than
-	// rewritten on disk — a second on-disk writer raced ffmpeg's own muxer
-	// and could clobber it; ffmpeg is now the only writer of this file.
-	std::atomic<int> discontinuity_count_{0};
-	// Pure, unit-testable — no file I/O.
-	static std::string patchDiscontinuitySequence(const std::string& raw, int discontinuity_count);
+	// ── New HLS-only pipeline: VOD-backed producer + ChannelPlaylistSplicer ──
+	// Additive to the legacy MPEG-TS pipeline above (ffmpeg/onData/clients),
+	// not a replacement — MPEG-TS/HDHomeRun clients already buffer/smooth
+	// client-side and don't have the small-rolling-window content-skip
+	// problem HLS has, so they stay on the untouched real-time -re-paced
+	// path (including computeSpeed() below). This pipeline exists purely to
+	// give Pantheon's own HLS clients (Hades web/mobile, Android, Roku,
+	// Cast) gapless transitions — see project memory for the full design
+	// history (a prior on-disk discontinuity-sequence patch this replaces
+	// entirely, now that the splicer is canonical's sole, correct-by-
+	// construction author).
+	std::atomic<int> next_spawn_id_{0};
+	std::string pendingDir(int spawn_id) const;
 
-	std::thread hls_patch_thread;
-	std::atomic<bool> hls_patch_stop{false};
-	void hlsPatchLoop();
-	void checkSegmentDurationDrift(); // diagnostic only, no writes
-	std::string last_extinf_uri_;
+	std::unique_ptr<ChannelPlaylistSplicer> splicer_;
+
+	// Deliberately reuses current_item/current_item_mtx/item_start/
+	// current_item_offset_ms above as the one shared "what's on now" state
+	// rather than tracking its own separate item — hlsProducerTick() writes
+	// them the same way transition() does, so currentTitle()/
+	// currentFilePath()/onItemPlaying need no changes regardless of which
+	// pipeline is actually driving them (see plan doc: when opts.hls_root is
+	// set, this pipeline is authoritative and the legacy one becomes purely
+	// reactive — see addClient()/removeClient()/onExit()).
+	std::mutex hls_mtx_; // guards every hls_* member below
+	std::unique_ptr<VodEncodeStream> hls_producer_;
+	std::unique_ptr<FfmpegProcess> hls_offline_ffmpeg_; // offline/splash producer — see hlsSpawnOfflineProducer()
+	std::vector<int64_t> hls_segment_boundaries_ms_;    // 0-based, for whichever producer above is active
+	int64_t hls_wall_clock_start_ms_ = 0;               // real time corresponding to offset 0 of the active spawn
+
+	std::thread hls_producer_thread_;
+	std::atomic<bool> hls_producer_stop_{false};
+	void hlsProducerLoop();
+	// Starts (or, mid-item, keeps producing ahead of) whatever HLS should be
+	// airing right now. Resolves a fresh item via Kairos once current_item's
+	// wall_clock_end_ms has passed (or none is set yet — same fallback
+	// shape as transition()'s own "Kairos has nothing" branch), spawns a new
+	// VodEncodeStream into its own pendingDir() and hands it to the
+	// splicer; otherwise just drives the existing producer forward
+	// (VodEncodeStream::prepareSegment()/tick(), mirroring VodSession's own
+	// lookaheadLoop) so it stays ahead of what the splicer needs to reveal.
+	// Note: unlike the legacy pipeline's start(), there's no fast-path/splash
+	// distinction here for a slow initial Kairos response — the first tick
+	// just blocks briefly; Router.cpp's existing waitForFile()+503 already
+	// covers a client asking before that first tick lands.
+	void hlsProducerTick();
+	// item.keyframes_ms-based (native bucket) or uniform-cadence (default
+	// bucket) segment boundaries, probes audio/subtitle tracks, spawns a
+	// VodEncodeStream into a fresh pendingDir(), and hands it to the
+	// splicer — the real-content path.
+	void hlsSpawnProducer(const KairosNowResponse& item, int64_t startOffsetMs, int64_t wallClockStartMs);
+	// Offline slate/no-schedule fallback — a single indefinitely-bounded
+	// looped-image encode has no real segment-index/seek concept for
+	// VodEncodeStream's head model to apply to, so this uses a plain
+	// FfmpegProcess (mirroring spawnOffline()'s own buildImageArgs), just
+	// writing into a pendingDir() like every other producer instead of
+	// hlsDir() directly, with uniform boundaries the splicer can still page
+	// through the same way. Never preroll'd — see hlsMaybePreroll()'s own
+	// comment on why.
+	void hlsSpawnOfflineProducer(const KairosNowResponse& item);
+
+	// ── Preroll: eliminates hlsSpawnProducer()'s cold-start gap ────────────
+	// A VodEncodeStream built ahead of time, kept aside rather than made
+	// active — the actual fix this whole pipeline exists for. See project
+	// memory / plan doc for the full design.
+	struct HlsProducerHandle
+	{
+		std::unique_ptr<VodEncodeStream> producer;
+		std::vector<int64_t> boundaries;
+		std::string dir;
+		std::optional<MediaInfo> info;
+		int audio_track = 0;
+		int64_t span_ms = 0;
+	};
+
+	// Builds (doesn't activate) a producer for `item` starting at
+	// startOffsetMs within it — the part of hlsSpawnProducer() that doesn't
+	// depend on *when* it runs, shared by the reactive path (promotes
+	// immediately) and hlsMaybePreroll() below (stashes the result until the
+	// real transition moment, promoting it only if the item Kairos resolves
+	// then still matches).
+	HlsProducerHandle hlsCreateProducer(const KairosNowResponse& item, int64_t startOffsetMs);
+	// Makes `handle` the active producer for `item`: current_info/
+	// onItemPlaying (must only fire once an item is actually on air, not at
+	// preroll time), swaps it into hls_producer_, hands it to the splicer.
+	void hlsPromoteProducer(const KairosNowResponse& item, HlsProducerHandle handle, int64_t wallClockStartMs);
+
+	// True once inside kPrefetchLeadMs of cur's own end and nothing's
+	// already preroll'd — resolves what's next the same way hlsProducerTick()
+	// itself does at the real transition, and builds (but doesn't activate)
+	// its producer. Offline items are never preroll'd: a looped-image slate
+	// has no real content worth pre-warming, and there's no equivalent
+	// build-ahead path for hlsSpawnOfflineProducer()'s plain FfmpegProcess —
+	// hlsProducerTick() falls back to spawning one reactively same as today
+	// whenever what's actually next turns out to be offline.
+	void hlsMaybePreroll(const KairosNowResponse& cur, int64_t now);
+	// item_id (when either side has one) or file_path otherwise — same
+	// identity Kairos's own deterministic schedule would resolve twice in a
+	// row unless something actually changed (an admin edit, a re-sync)
+	// between the preroll check and the real transition.
+	static bool hlsSameItem(const KairosNowResponse& a, const KairosNowResponse& b);
+
+	std::optional<KairosNowResponse> hls_preroll_item_;
+	HlsProducerHandle hls_preroll_handle_;
+	int64_t hls_preroll_wall_clock_start_ms_ = 0;
+
+	// Spawns the legacy MPEG-TS pipeline for whatever current_item currently
+	// says, at however far into it "now" actually is — used by addClient()'s
+	// 0->1 transition (lazy start, see plan doc) and by onExit() to respawn
+	// across an item boundary while clients are still connected, instead of
+	// each doing its own independent Kairos resolution.
+	void spawnLegacyForCurrentItem();
 
 	// Warms Hephaestus's own file probe cache (MediaProbe.cpp's process-
 	// lifetime probeMediaCached cache) for the *next* scheduled item a few
@@ -227,9 +321,11 @@ public:
 		return computeSpeed(rawDriftMs, durationMs);
 	}
 
-	static std::string patchDiscontinuitySequenceForTest(const std::string& raw, int discontinuity_count)
+	// The preroll mismatch-fallback safety property (hlsMaybePreroll()'s own
+	// comment) rests entirely on this — worth testing in isolation.
+	static bool hlsSameItemForTest(const KairosNowResponse& a, const KairosNowResponse& b)
 	{
-		return patchDiscontinuitySequence(raw, discontinuity_count);
+		return hlsSameItem(a, b);
 	}
 
 	// Exposed for testing the start()/applyResolvedItem() retry-on-

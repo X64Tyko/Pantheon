@@ -2,12 +2,41 @@
 #include "ChannelSession.h"     // HwAccel
 #include "ClientCapabilities.h" // ClientCapabilities
 #include "MediaProbe.h"         // VideoTrack
+#include <cstdint>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 std::string fmtSpeed(double speed);
+
+// Replicates ffmpeg's own -hls_time cutting rule for a direct-stream (stream
+// copy) session: cut at the first keyframe at or after hls_time_secs seconds
+// have elapsed since the last cut. Given the file's real keyframe timestamps
+// (MediaProbe::probeKeyframeTimestampsMs), this predicts EXACTLY where a
+// -c:v copy invocation will actually cut segments, since stream copy can't
+// force keyframes onto any other cadence — the assumed-uniform-cadence
+// approach only holds for transcode/burn-in, where -force_key_frames
+// controls placement directly. Returns an empty vector if keyframes_ms is
+// empty (probe failed) — callers fall back to the uniform assumption.
+// Shared by VodSession and ChannelSession's spawn path — both need to predict
+// segment boundaries upfront rather than discover them from ffmpeg's output.
+std::vector<int64_t> simulateDirectStreamSegmentBoundaries(
+	const std::vector<int64_t>& keyframes_ms, int hls_time_secs);
+
+// Output-side duration bound (bounds a head to its own window) plus the
+// absolute-timeline timestamp rebasing that lets segments from *different*
+// ffmpeg processes covering the same logical item concatenate seamlessly:
+// without -output_ts_offset, each process resets its own PTS clock near zero
+// on restart, so segment N from one head and segment N+1 from a different
+// one covering the same item would carry genuinely discontinuous timestamps
+// even though they're meant to play as one continuous stream.
+// -output_ts_offset rebases this run's output onto the real absolute
+// position instead, so every head's segments land in the same timestamp
+// domain regardless of which one produced them. Shared by VOD (multiple
+// heads within one file) and the channel spawn path (multiple heads within
+// one scheduled item) — both need the same rebasing for the same reason.
+void pushHeadBoundArgs(std::vector<std::string>& a, int64_t positionMs, std::optional<double> windowDurationSecs);
 
 // Single shared HwAccel-to-string mapping, used by startup log lines
 // (HwProbe.cpp, main.cpp) so there's exactly one of these in the codebase.
