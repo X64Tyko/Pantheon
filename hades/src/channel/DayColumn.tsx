@@ -21,6 +21,30 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
   const bit       = DAY_BITS[dayIdx]
   const colBlocks = blocks.filter(b => (b.day_mask & bit) !== 0)
   const colMax    = Math.max(0, ...colBlocks.map(b => b.priority))
+
+    // Same-priority overlap has no defined resolution (priority is what
+    // decides which of two overlapping blocks wins — see the depth/filter
+    // stacking below); two same-priority blocks covering the same moment on
+    // the same day is always a config mistake, not something the scheduler can
+    // meaningfully arbitrate. Different-priority overlap is the normal/
+    // supported preemption case and is deliberately left alone here.
+    const conflictIds = (() => {
+        const ids = new Set<string>()
+        for (let i = 0; i < colBlocks.length; i++) {
+            const a = colBlocks[i]
+            const aStart = t2m(a.start_time), aEnd = endOf(a)
+            for (let j = i + 1; j < colBlocks.length; j++) {
+                const b = colBlocks[j]
+                if (a.priority !== b.priority) continue
+                const bStart = t2m(b.start_time), bEnd = endOf(b)
+                if (aStart < bEnd && bStart < aEnd) {
+                    ids.add(a.block_id);
+                    ids.add(b.block_id)
+                }
+            }
+        }
+        return ids
+    })()
   const gridH     = 24 * pph
   const lineBg    = `repeating-linear-gradient(to bottom, transparent 0px, transparent ${pph - 1}px, var(--hds-line-s) ${pph - 1}px, var(--hds-line-s) ${pph}px)`
 
@@ -97,7 +121,13 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
         const height  = Math.max(Math.round(((end - start) / 60) * pph), 30)
         const left    = Math.min((block.priority - 1) * 11, 33)
         const depth   = colMax > 1 ? colMax - block.priority : 0
-        const isTop        = block.priority === colMax
+          const conflict = conflictIds.has(block.block_id)
+          // A same-priority conflict needs to actually be seen to get fixed —
+          // the normal priority stacking (dimmed/buried behind whichever block
+          // in this column has the highest priority) would otherwise hide
+          // exactly the blocks this warning exists for, including from each
+          // other when they tie for colMax themselves.
+          const isTop = block.priority === colMax || conflict
         const sel          = selectedId === block.block_id
         const bulkSelected = store.bulkMode && store.bulkSelectedIds.includes(block.block_id)
         const filter  = isTop ? 'none' : `brightness(${(0.82 - depth * 0.1).toFixed(2)}) saturate(0.85)`
@@ -114,13 +144,17 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
         const boxStyle: CSSProperties = {
           position: 'absolute', left, right: 5,
           top, height,
-          zIndex: block.priority * 2 + (sel ? 40 : 0),
+            // Conflict wins over the normal priority-based stacking (see isTop
+            // above) — a fixed value well above any realistic priority*2+40
+            // ceiling, so a conflicting block always sits above every other
+            // block in the column, not just the ones it directly overlaps.
+            zIndex: (conflict ? 1000 : block.priority * 2) + (sel ? 40 : 0),
           background: m.bg,
           borderRadius: limitM === 'programs' ? '7px 7px 0 0' : 7,
-          border: `1px solid ${m.border}`,
-          borderLeft: `3px solid ${m.edge}`,
-          borderBottom: limitM === 'programs' ? `2px dashed ${m.edge}` : `1px solid ${m.border}`,
-          boxShadow: shadow,
+            border: conflict ? '1px solid var(--hds-danger-border)' : `1px solid ${m.border}`,
+            borderLeft: `3px solid ${conflict ? 'var(--hds-danger-text)' : m.edge}`,
+            borderBottom: limitM === 'programs' ? `2px dashed ${m.edge}` : conflict ? '1px solid var(--hds-danger-border)' : `1px solid ${m.border}`,
+            boxShadow: conflict ? '0 0 0 1px var(--hds-danger-text)' : shadow,
           padding: '7px 9px',
           overflow: 'hidden',
           cursor: 'pointer',
@@ -138,6 +172,7 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
             // positioning context hds-shimmer-ring's ::after needs (any
             // non-static position works, not just relative).
             className={shimmerGold ? 'hds-shimmer-ring hds-shimmer-ring--gold' : undefined}
+            title={conflict ? `Overlaps another priority ${block.priority} block on this day — same-priority overlap has no defined winner. Change one block's priority or time.` : undefined}
             onClick={() => store.bulkMode ? store.toggleBulkBlock(block.block_id) : store.select(block.block_id)}
             onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.filter = 'brightness(1.15) saturate(1)'}
             onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.filter = filter}
@@ -150,6 +185,12 @@ const DayColumn = observer(function DayColumn({ dayIdx, blocks, pph, selectedId,
                 {block.late_start_mins > 0 && (
                   <span className={styles.lateStartBadge}>
                     ↧{block.late_start_mins}m
+                  </span>
+                )}
+                  {conflict && (
+                      <span className={styles.lateStartBadge}
+                            style={{color: 'var(--hds-danger-text)', background: 'var(--hds-danger-border)'}}>
+                    ⚠ overlap
                   </span>
                 )}
               </span>

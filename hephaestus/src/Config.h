@@ -50,6 +50,17 @@ struct Config
 	// especially a public-facing one, should leave the default in place.
 	int max_vod_sessions     = 8;
 	int max_preview_sessions = 8;
+
+	// Host-wide cap on concurrent hardware-encode (NVENC/VAAPI) sessions,
+	// shared across channels/VOD/preview — see EncoderAdmission's own class
+	// comment for why max_vod_sessions/max_preview_sessions above don't
+	// already cover this (they cap concurrent *viewer* sessions per type,
+	// with no cross-type coordination, and channels have no cap of their
+	// own at all). 0 disables the cap (today's behavior, still the default —
+	// this needs the deployment's real GPU's concurrent-session ceiling to
+	// set correctly, which varies by card/driver, so it isn't safe to
+	// default to a nonzero guess).
+	int max_gpu_encode_sessions = 0;
 };
 
 inline HwAccel parseHwAccel(const std::string& s)
@@ -182,5 +193,6 @@ inline Config parseConfig(int argc, char* argv[])
 	if (auto* p = getenv("HEPH_HW_PROBE_ASSETS")) cfg.hw_probe_assets_dir = p;
 	if (auto* p = getenv("HEPH_MAX_VOD_SESSIONS")) cfg.max_vod_sessions = std::stoi(p);
 	if (auto* p = getenv("HEPH_MAX_PREVIEW_SESSIONS")) cfg.max_preview_sessions = std::stoi(p);
+	if (auto* p = getenv("HEPH_MAX_GPU_ENCODE_SESSIONS")) cfg.max_gpu_encode_sessions = std::stoi(p);
 	return cfg;
 }

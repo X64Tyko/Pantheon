@@ -16,28 +16,33 @@
 
 class VodSessionManager; // VodSessionManager.h includes this header — forward-declared to avoid the cycle
 
-struct VodStreamOptions {
+struct VodStreamOptions
+{
 	std::string ffprobe_path = "ffprobe";
 	// VOD sessions live at "<hls_root>/vod/<session_id>/". Never empty in
 	// practice — VOD has no non-HLS fallback the way live channels do.
 	std::string hls_root;
-	int         linger_secs       = 60;
-	int         buffer_size       = 1048576;
-	HwAccel     hw_accel          = HwAccel::none; // resolved encode backend (HwProbe)
+	int linger_secs  = 60;
+	int buffer_size  = 1048576;
+	HwAccel hw_accel = HwAccel::none; // resolved encode backend (HwProbe)
 	// Resolved decode backend + which source video codecs it can hwaccel-
 	// decode, from HwProbe::probeHwCapabilities() at startup. Independent of
 	// hw_accel above -- see EncoderArgs.h's pushHwAccelDecodeArgs.
-	HwAccel     decode_hw_accel   = HwAccel::none;
+	HwAccel decode_hw_accel = HwAccel::none;
 	std::set<std::string> decodable_codecs;
-	std::string vaapi_device      = "/dev/dri/renderD128";
-	bool        ffmpeg_debug_logs = false;
-	bool        verbose_transcode_logs = false; // -v verbose + full command line on every spawn
+	std::string vaapi_device    = "/dev/dri/renderD128";
+	bool ffmpeg_debug_logs      = false;
+	bool verbose_transcode_logs = false; // -v verbose + full command line on every spawn
+	// Host-wide hardware-encode-session cap shared with channels/preview —
+	// see EncoderAdmission's own class comment. nullptr (default) disables
+	// gating entirely, same as every other caller of it.
+	EncoderAdmission* encoder_admission = nullptr;
 	// How far ahead of the viewer's last-requested segment the main encoder
 	// is allowed to run before being paused (SIGSTOP) — see the lookahead
 	// monitor (lookaheadLoop()). A few minutes, mirroring how
 	// linger_secs/kVodHlsSegmentSecs are already simple, operator-tunable
 	// scalars rather than hardcoded deep in the implementation.
-	int         lookahead_secs    = 180;
+	int lookahead_secs = 180;
 };
 
 // One viewer's own handle onto playback — but no longer "one file, one
@@ -68,7 +73,8 @@ struct VodStreamOptions {
 // Subtitle extraction is a second, fully independent FfmpegProcess covering
 // the whole file in one small, fast pass, spawned once at start() and never
 // shared across sessions (cheap enough not to bother) — see subs_ffmpeg.
-class VodSession {
+class VodSession
+{
 public:
 	VodSession(std::string session_id, std::string content_type, std::string content_id,
 			   std::string ffmpeg_path, VodStreamOptions opts, VodSessionManager& manager);
@@ -134,6 +140,7 @@ public:
 	// longer active. Delegates to video_stream_'s own VodEncodeStream::
 	// prepareSegment() — see prepareAudioSegment() for the audio-route twin.
 	enum class SegmentPrep { Ready, WaitShort, WaitColdStart, Failed };
+
 	SegmentPrep prepareSegment(int segment_index);
 	// Same contract as prepareSegment(), against audio_stream_ — see
 	// Router.cpp's /audio/{n}/seg-{n}.ts route. Failed if this file has no
@@ -240,11 +247,13 @@ public:
 	// what buildVodSubtitleArgs needs. Shared by start() (for the initially
 	// selected track) and the /subtitles/{n} route (for any track a native
 	// player asks for via the master manifest).
-	struct SubtitleResolution {
-		bool        output   = false; // extractable as a text sidecar
-		bool        burn_in  = false; // bitmap track — no sidecar, baked into video instead
-		std::string external_path;    // empty if embedded
+	struct SubtitleResolution
+	{
+		bool output  = false;      // extractable as a text sidecar
+		bool burn_in = false;      // bitmap track — no sidecar, baked into video instead
+		std::string external_path; // empty if embedded
 	};
+
 	SubtitleResolution resolveSubtitleTrack(int track) const;
 
 	// Spawns a one-shot, on-demand WebVTT extraction for an arbitrary
@@ -272,15 +281,15 @@ public:
 
 	// For the activity/debugging view (ActivityRouter).
 	const std::string& filePath() const { return file_path; }
-	HwAccel hwAccel() const       { return opts.hw_accel; }
+	HwAccel hwAccel() const { return opts.hw_accel; }
 	HwAccel decodeHwAccel() const { return opts.decode_hw_accel; }
-	int64_t startedAtMs() const   { return started_at_ms; }
+	int64_t startedAtMs() const { return started_at_ms; }
 
 private:
-	std::string   session_id;
-	std::string   content_type_;
-	std::string   content_id_;
-	std::string   ffmpeg_path;
+	std::string session_id;
+	std::string content_type_;
+	std::string content_id_;
+	std::string ffmpeg_path;
 	VodStreamOptions opts;
 	// The registry this session's shared video_stream_/audio_stream_ come
 	// from — a plain reference, not owned; VodSessionManager outlives every
@@ -294,7 +303,7 @@ private:
 	// audio_stream_ out for a different track. video_stream_/audio_stream_
 	// each own their own internal locking for their own head bookkeeping —
 	// this mutex is about VodSession's own state, not theirs.
-	std::mutex    session_mtx;
+	std::mutex session_mtx;
 
 	// One shared VodEncodeStream per elementary stream — see
 	// VodEncodeStream.h's class comment for why video and audio are no
@@ -316,7 +325,7 @@ private:
 	std::atomic<int> last_requested_segment{-1};
 
 	int64_t effective_duration_ms = 0;
-	int     total_segments        = 0;
+	int total_segments            = 0;
 	// Segment i spans [segment_start_ms[i], segment_start_ms[i+1] or
 	// effective_duration_ms for the last one). Computed in start() and, on a
 	// track switch that flips VIDEO direct-stream eligibility (burn-in can
@@ -330,14 +339,14 @@ private:
 	void computeSegmentBoundaries();
 
 	// Independent subtitle extraction — see class comment.
-	std::mutex    subs_mtx;
+	std::mutex subs_mtx;
 	std::unique_ptr<FfmpegProcess> subs_ffmpeg;
 	std::atomic<bool> subs_exited{false};
 	std::atomic<bool> subs_failed{false};
 
 	// Lookahead monitor — see lookaheadLoop(). Now just ticks both streams;
 	// all the actual scan/pause/reap logic lives in VodEncodeStream::tick().
-	std::thread       lookahead_thread;
+	std::thread lookahead_thread;
 	std::atomic<bool> lookahead_stop{false};
 	void lookaheadLoop();
 
@@ -346,32 +355,32 @@ private:
 	void writeVideoPlaylist() const;
 	void writeAudioPlaylist() const;
 
-	std::atomic<bool>    active{false};
+	std::atomic<bool> active{false};
 	std::atomic<int64_t> last_touch_ms{0};
 	// Video-only now — see isVideoDirectStreamable(). Audio's own direct-stream
 	// decision is made fresh per track inside buildVodAudioArgs(), not
 	// stored here, since it no longer has any bearing on the video stream.
-	bool          direct_stream     = false;
-	bool          subtitle_output = false;
-	bool          subtitle_burn_in = false;
-	MediaInfo     media_info;
+	bool direct_stream    = false;
+	bool subtitle_output  = false;
+	bool subtitle_burn_in = false;
+	MediaInfo media_info;
 	std::string file_path;
 	int64_t started_at_ms = 0;
 	// Kairos's cached direct-stream keyframe probe, and the file stat() it
 	// was computed from — see start()'s own comment and
 	// computeSegmentBoundaries(), the only reader.
 	std::vector<int64_t> kairos_keyframes_ms_;
-	int64_t kairos_keyframes_size_               = 0;
-	int64_t              kairos_keyframes_mtime_ = 0;
+	int64_t kairos_keyframes_size_  = 0;
+	int64_t kairos_keyframes_mtime_ = 0;
 	std::vector<ExternalSubtitle> external_subtitles_;
 
 	// Resolved once in start(), reused by every subsequent head spawn — a
 	// seek keeps the same track/HDR selection, only the position changes.
 	// audio_track_ is the one exception: ensureAudioTrack() (a track switch
 	// via the master manifest's /audio/{n}/... routes) reassigns it.
-	int         audio_track_ = 0;
-	int         subtitle_track_ = -1;
-	bool        hdr_capable_ = false;
+	int audio_track_    = 0;
+	int subtitle_track_ = -1;
+	bool hdr_capable_   = false;
 	std::string source_codec_;
 	std::string external_subtitle_path_;
 	// The requesting client's declared decode capability from start() —

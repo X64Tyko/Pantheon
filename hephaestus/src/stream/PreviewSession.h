@@ -24,6 +24,10 @@ struct PreviewStreamOptions
 	std::string vaapi_device    = "/dev/dri/renderD128";
 	bool ffmpeg_debug_logs      = false;
 	bool verbose_transcode_logs = false; // -v verbose + full command line on every spawn
+	// Host-wide hardware-encode-session cap shared with channels/VOD — see
+	// EncoderAdmission's own class comment. nullptr (default) disables
+	// gating entirely, same as every other caller of it.
+	EncoderAdmission* encoder_admission = nullptr;
 };
 
 // Manifest URL is stable for the session's whole life — switchChannel()

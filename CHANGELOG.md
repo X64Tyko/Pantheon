@@ -60,6 +60,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   for now), and credits. Both render the same `docs/About.md`, fetched live from GitHub and cached server-side
   (`GET /api/about`, public) so the two can never drift apart.
 - **SECURITY.md**: vulnerability disclosure policy, `security@pantheonmedia.app`.
+- **Same-priority block conflict warning** (Hades channel builder): two blocks covering the same time on the same
+  day at equal priority have no defined winner. The day grid now flags them with a red border/badge and a tooltip
+  explaining why, and brings them to the front of the day's stack so the warning isn't hidden behind a
+  higher-priority block.
+- **Categorized live-playback diagnostics** (Hades): hls.js buffer append/flush events (per-track buffered ranges,
+  not just the intersection `HTMLMediaElement.buffered` reports), fatal errors, track switches, seeks, fragment
+  loads, and session/viewer lifecycle (reconnects, capability-bucket fallback, channel item transitions) are now
+  forwarded to the server log under a `[category]` prefix for live channels, gated on the existing "Hades Console
+  Error Logging" (`hades_debug`) toggle.
 
 ### Fixed
 
@@ -86,6 +95,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   who is no longer eligible for what's now airing) is never gated, since the native bucket copies video verbatim
   regardless of viewer capability and leaving an ineligible viewer on it risks genuinely undecodable playback, not
   just a missed efficiency win.
+- **Live channel repeatedly restarting a different, unscheduled episode from the beginning** (Kairos): `GET
+  /api/channels/:id/now`'s fallback for a gap in the committed schedule called a non-persisted "peek" block
+  resolution and always reported the picked item as starting at the query's own timestamp, so every re-poll during
+  the same gap (a session restart, a reconnect) independently re-resolved and reported a fresh episode starting at
+  offset 0. Gaps now fall straight to the channel's configured filler instead.
+- **Live channel producer thrashing under transient GPU/CPU contention** (Hephaestus): `VodEncodeStream` used to
+  kill and cold-restart a segment-producing head as soon as it fell a few segments behind schedule, even if it was
+  still actively producing — the replacement pays the same reopen/reprobe/reseek/NVENC-init cost while wall-clock
+  keeps moving, which could turn a transient slowdown into a self-sustaining restart loop (confirmed live: the same
+  source file reopened repeatedly within seconds, never catching up). A head is now only replaced once it's
+  genuinely stalled (no forward progress for 15s) or exhausted; a merely-lagging head gets a much wider catch-up
+  margin. Channel head windows also widened 10→25 segments to reduce how often a handoff happens at all.
+
+### Removed
+
+- **`on_play` channel advance mode** (Kairos + Hades): predated block scheduling and never got a UI toggle to
+  select it. Advancing cursors only on confirmed playback made sense before blocks existed, but required
+  `ensureScheduled` to fully delete-and-reproject an `on_play` channel's schedule from a rolling window on every
+  single `/now` poll (no persisted wall-clock anchor for the in-progress item) — any regenerate/timing wobble could
+  report the currently-airing item as having just started. `scheduled` mode's cursors already advance during normal
+  EPG projection, so nothing else relied on this.
 
 ### Changed
 

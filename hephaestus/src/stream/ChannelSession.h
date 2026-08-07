@@ -1,6 +1,7 @@
 #pragma once
 #include "../kairos/KairosClient.h"
 #include "../kairos/KairosTypes.h"
+#include "EncoderAdmission.h"
 #include "FfmpegProcess.h"
 #include "MediaProbe.h"
 #include "VodEncodeStream.h"
@@ -45,9 +46,13 @@ struct StreamOptions
 	// hw_accel above -- see EncoderArgs.h's pushHwAccelDecodeArgs.
 	HwAccel decode_hw_accel = HwAccel::none;
 	std::set<std::string> decodable_codecs;
-	std::string vaapi_device    = "/dev/dri/renderD128";
-	bool ffmpeg_debug_logs      = false; // pipe ffmpeg stderr into the log stream
-	bool verbose_transcode_logs = false; // -v verbose + full command line on every spawn
+	// Host-wide hardware-encode-session cap shared with VOD/preview — see
+	// EncoderAdmission's own class comment. nullptr (default) disables
+	// gating entirely, same as every other caller of it.
+	EncoderAdmission* encoder_admission = nullptr;
+	std::string vaapi_device            = "/dev/dri/renderD128";
+	bool ffmpeg_debug_logs              = false; // pipe ffmpeg stderr into the log stream
+	bool verbose_transcode_logs         = false; // -v verbose + full command line on every spawn
 	// Per-channel transcode quality
 	std::string max_resolution = "source"; // "source"|"1080p"|"720p"|"480p"
 	int video_bitrate_kbps     = 0;        // 0 = CRF/CQ auto; >0 adds -maxrate cap

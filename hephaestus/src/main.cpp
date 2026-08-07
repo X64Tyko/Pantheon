@@ -10,6 +10,7 @@
 #include "stream/ClientCapabilities.h"
 #include "stream/EncoderArgs.h" // hwAccelName
 #include "stream/HwProbe.h"
+#include "stream/EncoderAdmission.h"
 #include "stream/SessionManager.h"
 #include "stream/VodSessionManager.h"
 #include "stream/PreviewSessionManager.h"
@@ -41,6 +42,11 @@ int main(int argc, char* argv[])
 		<< " decodable_codecs=" << hw_caps.decodable_codecs.size() << "\n";
 
 	KairosClient kairos(cfg.kairos_url, cfg.kairos_conf_path);
+
+	// One instance shared by every session type below — see its own class
+	// comment for why the per-type max_vod_sessions/max_preview_sessions
+	// caps (and channels' complete lack of one) don't already cover this.
+	EncoderAdmission encoder_admission(cfg.max_gpu_encode_sessions);
 
 	StreamOptions stream_opts;
 	stream_opts.ffprobe_path           = cfg.ffprobe_path;

@@ -201,51 +201,28 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 				}
 				std::cerr << "[now] scheduled file missing on disk for channel " << channel_id
 					<< " (" << row->item_type << " " << row->item_id << "): " << mapped
-					<< " — falling through to the next tier\n";
+					<< " — falling through to filler\n";
 			}
 
-			auto block_opt = engine_.resolveBlock(channel_id, t);
-			std::optional<ScheduledItem> item_opt;
-			if (block_opt) item_opt = engine_.nextItem(channel_id, *block_opt, std::time(nullptr));
-
-			if (block_opt && item_opt)
-			{
-				const auto& item   = *item_opt;
-				std::string mapped = conf_.applyPathMap(item.file_path);
-				if (fileReachable(mapped))
-				{
-					json j = {
-						{"item_type", item.item_type},
-						{"item_id", item.item_id},
-						{"file_path", mapped},
-						{"duration_ms", item.duration_ms},
-						{"title", item.title},
-						{"block_id", item.block_id},
-						{"wall_clock_start_ms", static_cast<int64_t>(t) * 1000},
-						{"wall_clock_end_ms", static_cast<int64_t>(t) * 1000 + item.duration_ms},
-						{"is_filler", item.is_filler},
-					};
-					if (!item.show_title.empty())
-					{
-						j["show_title"]  = item.show_title;
-						j["show_id"]     = item.show_id;
-						j["season"]      = item.season;
-						j["episode_num"] = item.episode_num;
-					}
-					if (auto sm = SourceRepository(db_).getSourceMapping(item.item_id))
-					{
-						j["source_id"]   = sm->source_id;
-						j["external_id"] = sm->external_id;
-					}
-					attachKeyframes(db_, j, item.item_type, item.item_id);
-					route::ok(res, j.dump());
-					return;
-				}
-				std::cerr << "[now] scheduled file missing on disk for channel " << channel_id
-					<< " (" << item.item_type << " " << item.item_id << "): " << mapped
-					<< " — falling through to the next tier\n";
-			}
-
+			// No committed row (a genuine gap in the materialized schedule) or
+			// its file is unreachable — go straight to the channel's own
+			// configured filler fallback rather than a live, uncommitted
+			// engine_.resolveBlock()/nextItem() re-resolution. That used to
+			// live here, but it's fundamentally unfit for this: nextItem()
+			// itself documents "peek-only: advance happens in a copy that is
+			// never persisted," and this call site had no wall-clock anchor
+			// of its own to give the result either, so it always reported
+			// {"wall_clock_start_ms": t*1000} — the exact moment of *this*
+			// query, not any real scheduled position. Since nothing was ever
+			// committed, the next query during the same gap (a session
+			// restart, a reconnect, another poller entirely) re-resolves from
+			// scratch and reports a *different* "started right now" — a full,
+			// non-filler episode from the block's content pool, repeatedly
+			// restarting at offset 0 for as long as the gap lasts. Filler
+			// below has the same non-persisted/always-now timing shape, but
+			// that's the right fit for it — short, interchangeable, already
+			// excluded from the EPG grid and everywhere else that cares about
+			// a stable schedule position, unlike a full episode.
 			if (auto filler = sched.getChannelFillerFallback(channel_id))
 			{
 				std::string mapped = conf_.applyPathMap(filler->file_path);
