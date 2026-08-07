@@ -143,6 +143,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   walks the schedule forward and builds a producer for every item starting within that same window, so a filler
   behind a short bumper starts prerolling at the same moment as the bumper, not after. Bounded to 6 queued items at
   once as a safety rail against a pathological run of near-zero-duration schedule entries.
+- **Preroll'd producers could get discarded and cold-restarted right at promotion, despite a good backlog**
+  (Hephaestus): a preroll's own progress bookkeeping only ever advances via an explicit `tick()` call, which was
+  only ever made on the currently-live producer — a producer still sitting in the preroll queue kept writing
+  segments in the background the whole time, but its bookkeeping stayed frozen at "nothing generated yet"
+  regardless. The first real segment request right after promotion could then misjudge a perfectly good backlog as
+  behind schedule and trigger an unwanted respawn, discarding it. Every queued preroll is now ticked on the same
+  cadence as the live producer, plus a final catch-up tick right at the promotion handoff itself.
+- **"Verbose transcode logs" flooded the log file down to well under a minute of real coverage** (Hephaestus): its
+  per-frame `showinfo`/`ashowinfo` debug filters logged a line per video/audio frame each — tens of lines a second
+  per active ffmpeg process, easily enough to rotate a 10MB log file out within a minute under normal multi-producer
+  load. Both are now sampled to roughly once per second per stream instead of logged in full — still enough to spot
+  A/V drift trending over time (the reason to turn this on in the first place), without burying everything else.
+  Also fixed a separate, unrelated bug surfaced by the same log: output from concurrent ffmpeg processes could get
+  interleaved mid-line into unreadable jammed-together text, since each forwarded line was written as several
+  separate (each individually flushed) stream insertions instead of one.
 
 ### Removed
 

@@ -6,22 +6,23 @@
 #include <atomic>
 #include <mutex>
 
-using DataCallback = std::function<void(const uint8_t*, size_t)>;
+using DataCallback = std::function<void(const uint8_t *, size_t)>;
 using ExitCallback = std::function<void(int)>; // exit code; -1 = signalled
 
-class FfmpegProcess {
+class FfmpegProcess
+{
 	std::vector<std::string> args;
 	DataCallback on_data;
 	ExitCallback on_exit;
-	bool         log_stderr;
-	bool         verbose;
+	bool log_stderr;
+	bool verbose;
 
-	pid_t pid        = -1;
-	int   stdout_fd  = -1;
-	int   stderr_fd  = -1;
+	pid_t pid       = -1;
+	int stdout_fd   = -1;
+	int stderr_fd   = -1;
 	int buffer_size = 1048576; // 1024 KB
-	std::thread      reader_thread;
-	std::thread      stderr_thread;
+	std::thread reader_thread;
+	std::thread stderr_thread;
 	std::atomic<bool> killed{false};
 	std::atomic<bool> paused{false};
 
@@ -30,11 +31,20 @@ class FfmpegProcess {
 	// Grown when verbose is on (see constructor) — the extra "-v verbose"
 	// ffmpeg detail callers add in that mode is much chattier, and without a
 	// bigger tail the actual failure reason gets pushed out by it.
-	std::mutex  stderr_mtx;
+	std::mutex stderr_mtx;
 	std::string stderr_tail;
-	size_t      stderr_tail_max;
+	size_t stderr_tail_max;
 	static constexpr size_t kStderrTailMaxDefault = 4000;
 	static constexpr size_t kStderrTailMaxVerbose = 32000;
+
+	// showinfo/ashowinfo (verbose_transcode_logs' per-frame debug filters,
+	// see EncoderArgs.cpp) fire once per frame each — tens of lines/sec
+	// combined, easily enough to rotate a 10MB log file down to well under
+	// a minute of real coverage. Only stderr_thread ever touches these, so
+	// plain ints are fine. See shouldEmitLine()'s own comment.
+	int video_showinfo_count_ = 0;
+	int audio_showinfo_count_ = 0;
+	bool shouldEmitLine(const std::string& line);
 
 public:
 	// verbose: prints the full joined command line to std::cerr right before

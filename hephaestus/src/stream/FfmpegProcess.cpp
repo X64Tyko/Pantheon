@@ -18,6 +18,26 @@
 // pts_time X" against "audio frame at pts_time Y" to see which one is
 // actually arriving late in real time, which is the whole point of turning
 // this logging on to diagnose A/V drift.
+// Sampled roughly once per second per stream (matched against each
+// filter's own typical frame rate — ~24-30fps video, ~50 audio frames/sec
+// at the 960-sample/48kHz cadence this codebase always encodes to) rather
+// than logged in full: still enough to see A/V drift trending over time
+// (the whole reason to turn this on — see EncoderArgs.h's own comment),
+// without the per-frame flood that otherwise buries everything else in the
+// log and rotates it out within well under a minute of real time. Two
+// independent counters (checked in this order, since "ashowinfo" contains
+// "showinfo" as a substring) so audio's higher native rate doesn't starve
+// video's own sampling or vice versa.
+static constexpr int kVideoShowinfoSampleEvery = 30;
+static constexpr int kAudioShowinfoSampleEvery = 50;
+
+bool FfmpegProcess::shouldEmitLine(const std::string& line)
+{
+	if (line.find("ashowinfo") != std::string::npos) return (++audio_showinfo_count_ % kAudioShowinfoSampleEvery) == 0;
+	if (line.find("showinfo") != std::string::npos) return (++video_showinfo_count_ % kVideoShowinfoSampleEvery) == 0;
+	return true;
+}
+
 static std::string timestampNow()
 {
 	using namespace std::chrono;
@@ -136,7 +156,13 @@ bool FfmpegProcess::start()
 			{
 				if (buf[i] == '\n')
 				{
-					if (!partial.empty()) std::cerr << "[ffmpeg] " << timestampNow() << " " << partial << "\n";
+					// One single-argument << (not "a" << b << c << d, four
+					// separate insertions each individually flushed since
+					// cerr is unbuffered) — with several ffmpeg processes'
+					// stderr_thread all writing concurrently, that let one
+					// line's write interleave mid-line with another's,
+					// producing genuinely unreadable jammed-together output.
+					if (!partial.empty() && shouldEmitLine(partial)) std::cerr << ("[ffmpeg] " + timestampNow() + " " + partial + "\n");
 					partial.clear();
 				}
 				else
@@ -145,7 +171,7 @@ bool FfmpegProcess::start()
 				}
 			}
 		}
-		if (log_stderr && !partial.empty()) std::cerr << "[ffmpeg] " << timestampNow() << " " << partial << "\n";
+		if (log_stderr && !partial.empty() && shouldEmitLine(partial)) std::cerr << ("[ffmpeg] " + timestampNow() + " " + partial + "\n");
 		// stderr_fd closed by kill()
 	});
 

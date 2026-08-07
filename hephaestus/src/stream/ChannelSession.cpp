@@ -1387,6 +1387,23 @@ void ChannelSession::hlsProducerTick()
 	{
 		if (cur.item_type != "offline") hlsMaintainPrerollQueue(cur, now);
 
+		// Keep every queued preroll's own bookkeeping current too, not just
+		// the live producer's. A preroll sits built well ahead of its own
+		// promotion, its ffmpeg producing in the background the whole time,
+		// but tick() (the only thing that ever advances highest_generated,
+		// applies pause/resume throttling, or detects an overrun) is
+		// otherwise never called on it before promotion — highest_generated
+		// stays stuck at its just-spawned -1 regardless of how much has
+		// actually been written, so the first real prepareSegment() calls
+		// right after promotion misjudge a perfectly good backlog as behind
+		// and can trigger an unwanted respawn, discarding it and cold-
+		// starting instead. Confirmed live as head-eviction churn within
+		// seconds of a short item's own promotion.
+		for (auto& entry : hls_preroll_queue_)
+		{
+			if (entry.handle.producer) entry.handle.producer->tick(static_cast<int>(entry.handle.boundaries.size()));
+		}
+
 		// Mid-item: just keep the producer ahead of what the splicer needs.
 		std::lock_guard<std::mutex> lock(hls_mtx_);
 		if (!hls_producer_) return; // offline producer, or not spawned yet
@@ -1649,6 +1666,14 @@ ChannelSession::HlsProducerHandle ChannelSession::hlsCreateProducer(const Kairos
 void ChannelSession::hlsPromoteProducer(const KairosNowResponse& item, HlsProducerHandle handle, int64_t wallClockStartMs)
 {
 	if (!handle.producer) return; // hlsCreateProducer failed — caller's transition retries next tick
+
+	// Final catch-up right at handoff — see hlsProducerTick()'s periodic
+	// preroll-queue ticking above for why this matters (highest_generated
+	// only ever advances via tick(), never on its own). Bounds the
+	// staleness window to whatever's changed since the last producer tick
+	// instead of leaving it to the first post-promotion prepareSegment()
+	// call to discover.
+	handle.producer->tick(static_cast<int>(handle.boundaries.size()));
 
 	{
 		std::lock_guard<std::mutex> lock(info_mtx);
