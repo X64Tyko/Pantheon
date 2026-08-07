@@ -193,7 +193,7 @@ private:
 	// FfmpegProcess (mirroring spawnOffline()'s own buildImageArgs), just
 	// writing into a pendingDir() like every other producer instead of
 	// hlsDir() directly, with uniform boundaries the splicer can still page
-	// through the same way. Never preroll'd — see hlsMaybePreroll()'s own
+	// through the same way. Never preroll'd — see hlsMaintainPrerollQueue()'s own
 	// comment on why.
 	void hlsSpawnOfflineProducer(const KairosNowResponse& item);
 
@@ -214,7 +214,7 @@ private:
 	// Builds (doesn't activate) a producer for `item` starting at
 	// startOffsetMs within it — the part of hlsSpawnProducer() that doesn't
 	// depend on *when* it runs, shared by the reactive path (promotes
-	// immediately) and hlsMaybePreroll() below (stashes the result until the
+	// immediately) and hlsMaintainPrerollQueue() below (stashes the result until the
 	// real transition moment, promoting it only if the item Kairos resolves
 	// then still matches).
 	HlsProducerHandle hlsCreateProducer(const KairosNowResponse& item, int64_t startOffsetMs);
@@ -223,24 +223,43 @@ private:
 	// preroll time), swaps it into hls_producer_, hands it to the splicer.
 	void hlsPromoteProducer(const KairosNowResponse& item, HlsProducerHandle handle, int64_t wallClockStartMs);
 
-	// True once inside kPrefetchLeadMs of cur's own end and nothing's
-	// already preroll'd — resolves what's next the same way hlsProducerTick()
-	// itself does at the real transition, and builds (but doesn't activate)
-	// its producer. Offline items are never preroll'd: a looped-image slate
-	// has no real content worth pre-warming, and there's no equivalent
-	// build-ahead path for hlsSpawnOfflineProducer()'s plain FfmpegProcess —
-	// hlsProducerTick() falls back to spawning one reactively same as today
-	// whenever what's actually next turns out to be offline.
-	void hlsMaybePreroll(const KairosNowResponse& cur, int64_t now);
+	// Once inside kPrefetchLeadMs of cur's own end, walks the schedule
+	// forward from wherever the queue currently leaves off and builds (but
+	// doesn't activate) a producer for every item whose own start falls
+	// within that same lead window from cur's end — not just the single
+	// next item. A run of short filler/bumpers packed inside the window
+	// (e.g. a 5s bumper then a 30s filler, both starting well inside an 8s
+	// lookahead from the outgoing episode's end) all get their producers
+	// building in parallel from the same moment, rather than the filler
+	// only starting to build once the bumper it follows actually becomes
+	// current — that reactive, one-at-a-time chaining is what left barely
+	// any lead time for whichever item followed a very short one. Offline
+	// items are never preroll'd (see hlsSpawnOfflineProducer()) and stop
+	// the walk — hlsProducerTick() falls back to spawning one reactively
+	// same as today whenever what's actually next turns out to be offline.
+	// Bounded by kMaxHlsPrerollQueueDepth regardless of how much of the
+	// window that leaves uncovered.
+	void hlsMaintainPrerollQueue(const KairosNowResponse& cur, int64_t now);
 	// item_id (when either side has one) or file_path otherwise — same
 	// identity Kairos's own deterministic schedule would resolve twice in a
 	// row unless something actually changed (an admin edit, a re-sync)
 	// between the preroll check and the real transition.
 	static bool hlsSameItem(const KairosNowResponse& a, const KairosNowResponse& b);
 
-	std::optional<KairosNowResponse> hls_preroll_item_;
-	HlsProducerHandle hls_preroll_handle_;
-	int64_t hls_preroll_wall_clock_start_ms_ = 0;
+	// One queued-ahead producer plus enough of its own KairosNowResponse to
+	// promote or stale-check it later without re-resolving from Kairos.
+	struct PrerollEntry
+	{
+		KairosNowResponse item;
+		HlsProducerHandle handle;
+		int64_t wall_clock_start_ms = 0;
+	};
+
+	// Always in schedule order (oldest/soonest-airing first) — the walk in
+	// hlsMaintainPrerollQueue() only ever appends, and promotion/staleness
+	// only ever removes from the front, so nothing later in the deque can
+	// be stale (or due for promotion) before something earlier in it is.
+	std::deque<PrerollEntry> hls_preroll_queue_;
 
 	// Spawns the legacy MPEG-TS pipeline for whatever current_item currently
 	// says, at however far into it "now" actually is — used by addClient()'s
@@ -326,7 +345,7 @@ public:
 		return computeSpeed(rawDriftMs, durationMs);
 	}
 
-	// The preroll mismatch-fallback safety property (hlsMaybePreroll()'s own
+	// The preroll mismatch-fallback safety property (hlsMaintainPrerollQueue()'s own
 	// comment) rests entirely on this — worth testing in isolation.
 	static bool hlsSameItemForTest(const KairosNowResponse& a, const KairosNowResponse& b)
 	{

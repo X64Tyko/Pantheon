@@ -126,6 +126,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `max-age`. Hermes's generic proxy also silently dropped every response header except `Location`/`Content-Type`
   from the upstream it was forwarding — now forwards `Cache-Control`/`Pragma` too, or the origin's fix above would
   never have reached a real client anyway.
+- **Cold starts and segment stutter on short live-channel filler/bumpers** (Hephaestus): the producer's own poll
+  loop only checked whether the next item needed prerolling every `segment_length*500ms` (3s at the current 6s
+  segment length) — a filler shorter than that gap could start and fully end between two polls, so nothing was
+  ever prerolled for whatever came after it, and the real transition (whenever the next poll finally landed) had
+  already fallen behind and cold-spawned instead. The poll loop now runs on a fixed 1s interval, independent of
+  segment length, so even a several-seconds-long filler gets multiple chances to be caught mid-item. Separately, a
+  preroll built for one item can still go stale (its own target window fully elapses) before ever being promoted,
+  if a chain of short items keeps the schedule running behind real time — previously undetected until the real
+  transition found the mismatch and discarded it; now caught as soon as it's determinable, freeing that hardware
+  encoder slot for a fresh, still-useful preroll instead of sitting on an already-doomed one.
+- **Short filler/bumpers still got too little preroll lead time** (Hephaestus): even with the above fix, preroll was
+  still reactive one item at a time — a filler right behind a 5s bumper only started building once the bumper
+  itself became the current item, leaving it barely any lead time of its own. The producer now maintains a small
+  queue of preroll'd items instead of a single slot: once inside the lead window of the *current* item's own end, it
+  walks the schedule forward and builds a producer for every item starting within that same window, so a filler
+  behind a short bumper starts prerolling at the same moment as the bumper, not after. Bounded to 6 queued items at
+  once as a safety rail against a pathological run of near-zero-duration schedule entries.
 
 ### Removed
 

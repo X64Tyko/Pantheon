@@ -65,7 +65,7 @@ TEST(ChannelSessionTest, ComputeSpeed)
 
 // ── hlsSameItem: the preroll mismatch-fallback safety property ─────────────
 //
-// hlsMaybePreroll() builds a producer for whatever Kairos resolves as next
+// hlsMaintainPrerollQueue() builds a producer for whatever Kairos resolves as next
 // during the lead window, ahead of the real transition. If the schedule
 // changes underneath it (admin edit, re-sync) before the real transition
 // runs its own independent resolution, hlsSameItem() is what decides whether

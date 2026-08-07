@@ -101,10 +101,31 @@ static constexpr int64_t kNoContentRetryMs = 20'000;
 // already over before this even fires.
 static constexpr int64_t kPrefetchLeadMs = 8'000;
 
+// Hard cap on how many items hlsMaintainPrerollQueue() will build producers
+// for in one lookahead window. A pathological schedule (a run of
+// sub-second/zero-duration filler slots) could otherwise walk dozens of
+// items into the window and hold that many encoder sessions at once for a
+// single channel; this bounds worst case regardless of window size. Chosen
+// generously above what any real filler chain should need — this is a
+// safety rail, not a tuning knob.
+static constexpr size_t kMaxHlsPrerollQueueDepth = 6;
+
 // How often prefetchLoop() checks whether it's inside the lead window —
 // coarser than hlsPatchLoop's cadence since this is a lookahead, not a
 // per-segment correction, and cheap headroom against a 20s+ lead is fine.
 static constexpr int kPrefetchTickSecs = 2;
+
+// hlsProducerTick()'s own poll interval — deliberately independent of
+// kLiveHlsSegmentSecs (used to be segSecs*500ms, tying scheduling
+// responsiveness to segment length). A schedule with short filler/bumpers
+// (well under the 6s segment length) could have an item start and fully end
+// between two ticks at the old cadence — hlsMaintainPrerollQueue() (called from
+// this tick's mid-item branch) never got a single chance to run *during*
+// that item's own airtime, so nothing was ever prerolled for whatever came
+// after it; the real transition, whenever the next tick finally landed,
+// found itself already behind and cold-spawned. 1s gives even a several-
+// seconds-long filler multiple chances to be caught mid-item.
+static constexpr int kHlsProducerTickMs = 1'000;
 
 // ── ffmpeg arg construction ───────────────────────────────────────────────────
 // pushVideoEncoderArgs()/pushAudioEncoderArgs()/fmtSpeed() live in
@@ -1347,7 +1368,7 @@ void ChannelSession::hlsProducerLoop()
 	{
 		hlsProducerTick();
 		if (!active.load() || hls_producer_stop_.load()) return;
-		std::this_thread::sleep_for(std::chrono::milliseconds(kLiveHlsSegmentSecs * 500));
+		std::this_thread::sleep_for(std::chrono::milliseconds(kHlsProducerTickMs));
 	}
 }
 
@@ -1364,7 +1385,7 @@ void ChannelSession::hlsProducerTick()
 
 	if (haveItem && now < cur.wall_clock_end_ms)
 	{
-		if (cur.item_type != "offline") hlsMaybePreroll(cur, now);
+		if (cur.item_type != "offline") hlsMaintainPrerollQueue(cur, now);
 
 		// Mid-item: just keep the producer ahead of what the splicer needs.
 		std::lock_guard<std::mutex> lock(hls_mtx_);
@@ -1389,8 +1410,7 @@ void ChannelSession::hlsProducerTick()
 	if (!next) next = kairos.getNow(channel_id, now);
 	if (!next)
 	{
-		hls_preroll_item_.reset();
-		hls_preroll_handle_ = HlsProducerHandle{};
+		hls_preroll_queue_.clear();
 
 		// Same "Kairos has nothing at all" fallback shape as transition().
 		KairosNowResponse fallback;
@@ -1435,59 +1455,112 @@ void ChannelSession::hlsProducerTick()
 
 	if (next->item_type == "offline")
 	{
-		hls_preroll_item_.reset();
-		hls_preroll_handle_ = HlsProducerHandle{};
+		hls_preroll_queue_.clear();
 		hlsSpawnOfflineProducer(*next);
 		return;
 	}
 
-	if (hls_preroll_item_&& hlsSameItem(*hls_preroll_item_, *next))
+	auto match = std::find_if(hls_preroll_queue_.begin(), hls_preroll_queue_.end(),
+							  [&](const PrerollEntry& e) { return hlsSameItem(e.item, *next); });
+	if (match != hls_preroll_queue_.end())
 	{
 		// Preroll'd exactly what we need — near-instant splice; its backlog
-		// (built during the lead window) is what makes this gapless.
-		hlsPromoteProducer(*next, std::move(hls_preroll_handle_), hls_preroll_wall_clock_start_ms_);
-		hls_preroll_item_.reset();
-		hls_preroll_handle_ = HlsProducerHandle{};
+		// (built during the lead window) is what makes this gapless. Drop
+		// everything up to and including it: anything still ahead of it in
+		// the deque keeps building toward its own turn, but anything
+		// *before* it (there shouldn't normally be any — promotion always
+		// targets the frontmost entry — but a schedule change could leave
+		// stale ones ahead of the real match) is now moot.
+		HlsProducerHandle handle = std::move(match->handle);
+		int64_t wall_start_ms    = match->wall_clock_start_ms;
+		hls_preroll_queue_.erase(hls_preroll_queue_.begin(), std::next(match));
+		hlsPromoteProducer(*next, std::move(handle), wall_start_ms);
 		return;
 	}
 
-	// No preroll, or it turned out to be for something else (the schedule
-	// changed underneath it — an admin edit, a re-sync) — discard any stale
-	// one and fall back to a cold spawn, same as before preroll existed.
-	hls_preroll_item_.reset();
-	hls_preroll_handle_ = HlsProducerHandle{};
+	// No match anywhere in the queue (the schedule changed underneath it —
+	// an admin edit, a re-sync) — nothing else in it can be trusted either,
+	// since it was all built relative to the same now-wrong assumption.
+	// Discard it and fall back to a cold spawn, same as before preroll
+	// existed.
+	hls_preroll_queue_.clear();
 	hlsSpawnProducer(*next, startOffset, now);
 }
 
-void ChannelSession::hlsMaybePreroll(const KairosNowResponse& cur, int64_t now)
+void ChannelSession::hlsMaintainPrerollQueue(const KairosNowResponse& cur, int64_t now)
 {
-	if (hls_preroll_item_) return;
+	// A queued entry's own target window can fully elapse in real time
+	// before the real transition ever gets around to promoting it — a
+	// chain of short filler/bumpers is the common case: each one can be
+	// done before hlsProducerTick's own poll cadence lands another check
+	// (see kHlsProducerTickMs's own comment), so the schedule falls behind
+	// and the real transition, whenever it does land, resolves to
+	// something *later* than whatever this entry was built for — a
+	// guaranteed mismatch at promotion time (hlsProducerTick's hlsSameItem
+	// search), discarded there with nothing to show for the time spent
+	// building it. Catching that here instead, as soon as it's
+	// determinable, frees the hardware encoder slot it holds rather than
+	// sitting on an already-doomed producer until the real transition
+	// discovers the mismatch. Front-to-back order means the first
+	// non-stale entry proves nothing after it is stale either.
+	while (!hls_preroll_queue_.empty())
+	{
+		auto& front = hls_preroll_queue_.front();
+		if (front.item.duration_ms <= 0) break;
+		if (now < front.wall_clock_start_ms + front.item.duration_ms) break;
+		hls_preroll_queue_.pop_front();
+	}
+
 	if (cur.wall_clock_end_ms <= 0) return;
 	if (now < cur.wall_clock_end_ms - kPrefetchLeadMs) return;
 
-	auto next = kairos.getNow(channel_id, cur.wall_clock_end_ms);
-	if (!next) return; // nothing to preroll — the real transition retries/falls back to offline itself
+	// Walk the schedule forward from wherever the queue currently leaves
+	// off (cur's own end if it's empty), building a producer for every item
+	// that starts within kPrefetchLeadMs of cur's end — not just the
+	// single next one. This is what lets a short bumper's own successor
+	// (a filler right behind it) start building from the same moment as
+	// the bumper itself, instead of only once the bumper becomes current.
+	int64_t window_end_ms = cur.wall_clock_end_ms + kPrefetchLeadMs;
+	int64_t t             = hls_preroll_queue_.empty()
+								? cur.wall_clock_end_ms
+								: hls_preroll_queue_.back().item.wall_clock_end_ms;
 
-	// Same filler-skip guard the real transition applies, anchored on cur's
-	// own end as an approximation of what "now" will be once that real
-	// transition actually runs — if this ends up wrong (drift), the
-	// identity check at promotion time simply misses and falls back to a
-	// cold spawn, same as any other stale-preroll case.
 	int guard = 0;
-	while (next->is_filler && next->duration_ms > 0 && cur.wall_clock_end_ms >= next->wall_clock_end_ms && ++guard < 64)
+	while (t < window_end_ms && hls_preroll_queue_.size() < kMaxHlsPrerollQueueDepth && ++guard < 64)
 	{
-		auto after = kairos.getNow(channel_id, next->wall_clock_end_ms);
-		if (!after) return;
-		next = after;
+		auto next = kairos.getNow(channel_id, t);
+		if (!next) break; // nothing more to preroll — the real transition retries/falls back to offline itself
+
+		// Same filler-skip guard the real transition applies, anchored on
+		// `t` as an approximation of what "now" will actually be once the
+		// real transition reaches this point in the schedule — if this ends
+		// up wrong (drift), the identity check at promotion time simply
+		// misses and falls back to a cold spawn, same as any other
+		// stale-preroll case.
+		int skipGuard = 0;
+		while (next->is_filler && next->duration_ms > 0 && t >= next->wall_clock_end_ms && ++skipGuard < 64)
+		{
+			auto after = kairos.getNow(channel_id, next->wall_clock_end_ms);
+			if (!after)
+			{
+				next.reset();
+				break;
+			}
+			next = after;
+		}
+		if (!next) break;
+		if (next->item_type == "offline" || next->file_path.empty()) break; // never preroll offline — see header comment
+
+		auto handle = hlsCreateProducer(*next, /*startOffsetMs=*/0);
+		if (!handle.producer) break; // create failed — real transition falls back to a cold spawn
+
+		int64_t start_ms = next->wall_clock_start_ms;
+		int64_t end_ms   = next->wall_clock_end_ms;
+		hls_preroll_queue_.push_back({std::move(*next), std::move(handle), start_ms});
+
+		if (end_ms <= t) break; // zero/negative-duration item — avoid spinning in place
+		t = end_ms;
 	}
-	if (next->item_type == "offline" || next->file_path.empty()) return; // never preroll offline — see header comment
-
-	auto handle = hlsCreateProducer(*next, /*startOffsetMs=*/0);
-	if (!handle.producer) return; // create failed — real transition falls back to a cold spawn
-
-	hls_preroll_wall_clock_start_ms_ = next->wall_clock_start_ms;
-	hls_preroll_handle_              = std::move(handle);
-	hls_preroll_item_                = std::move(next);
 }
 
 bool ChannelSession::hlsSameItem(const KairosNowResponse& a, const KairosNowResponse& b)
