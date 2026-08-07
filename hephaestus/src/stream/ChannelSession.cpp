@@ -69,8 +69,16 @@ static constexpr int64_t kHlsRevealLeadMs = 6'000;
 // much smaller than normal VOD's ~100-segment default so heads succeed each
 // other often; not used for anything today, but keeps the door open for a
 // later per-head speed-nudge drift-correction pass without needing to touch
-// this again. See project memory.
-static constexpr int kHlsHeadWindowSegments = 10;
+// this again. See project memory. 10 (60s at kLiveHlsSegmentSecs=6) measured
+// too tight in practice — real head-to-head handoffs were frequent enough
+// that a transient lag (GPU contention, a heavy transition) had a real
+// chance of landing right at a boundary, forcing a full cold-start handoff
+// (reopen/reprobe/reseek/NVENC init) at the worst possible moment. 25 (150s)
+// gives a lot more slack before a head's own window boundary forces a
+// handoff at all; the "is this head merely behind or actually stuck"
+// judgment itself now lives in VodEncodeStream::prepareSegment()'s own
+// stall-timeout check (kHeadStallTimeoutMs), not window size.
+static constexpr int kHlsHeadWindowSegments = 25;
 
 // How far ahead of "due now" the producer should try to stay buffered before
 // VodEncodeStream pauses a head — must comfortably clear kHlsRevealLeadMs

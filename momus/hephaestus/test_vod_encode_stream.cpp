@@ -134,9 +134,9 @@ TEST_F(VodEncodeStreamTest, RepeatedRequestWithinCatchUpMarginDoesNotRespawn)
 	ASSERT_EQ(stream->liveHeadCount(), 1);
 
 	// Nothing has actually been produced (fake process never writes files),
-	// so highest_generated is still -1 — segment 2 is within the
-	// kVodCatchUpMarginSegments(4) tolerance and should just wait on the
-	// existing head rather than spawning a second one.
+	// so highest_generated is still -1 — segment 2 is within the head's
+	// (not-stalled — it was just spawned) catch-up margin and should just
+	// wait on the existing head rather than spawning a second one.
 	auto result = stream->prepareSegment(2, segment_ms, 250);
 
 	EXPECT_EQ(result, VodEncodeStream::SegmentPrep::WaitShort);

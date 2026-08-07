@@ -16,8 +16,34 @@ namespace
 
 	// A segment just short of a head's own generated frontier is still worth
 	// waiting on rather than spawning a redundant head for — same tolerance
-	// prepareSegment() always had for the single-process model.
+	// prepareSegment() always had for the single-process model. Applied
+	// as-is once a head is judged stalled (see kHeadStallTimeoutMs) — at that
+	// point it's not going to produce anything further regardless of gap
+	// size, so there's no reason to wait past this tight a margin.
 	constexpr int kVodCatchUpMarginSegments = 4;
+
+	// A merely-lagging head (see kHeadStallTimeoutMs) gets much more distance
+	// than a stalled one before prepareSegment() gives up on it — it's
+	// actively closing the gap, just slower than "due now" implies right
+	// now, and a respawn wouldn't actually be faster (see that constant's own
+	// comment). Still bounded, not infinite: a genuine seek/jump far beyond
+	// what this head could reach by continuing sequentially (VOD scrubbing,
+	// or a request landing well outside what a live head's short window was
+	// ever sized for) should still get its own head immediately rather than
+	// wait out a large gap one segment at a time.
+	constexpr int kVodLaggingCatchUpMarginSegments = 20;
+
+	// Genuinely stuck (no forward progress at all for this long) vs. merely
+	// behind schedule right now (still producing, just slower than "due now"
+	// implies — transient GPU/CPU contention, a heavy transition, etc.) — see
+	// prepareSegment()'s own comment for why this, not just how numerically
+	// far behind a head is, is what decides whether to kill and respawn it.
+	// A respawn pays its own reopen/reprobe/reseek/NVENC-init cost while
+	// wall-clock keeps moving, so respawning a head that's still actively
+	// working just trades one kind of behind for another, with real overhead
+	// on every cycle — confirmed live as the same source file getting
+	// reopened by a fresh head every few seconds, never catching up.
+	constexpr int64_t kHeadStallTimeoutMs = 15'000;
 
 	// Live heads (spawned, not yet fully torn down) this stream will hold onto
 	// at once — a live head keeps its hardware encoder slot (NVENC/VAAPI) even
@@ -118,6 +144,7 @@ VodEncodeStream::Head* VodEncodeStream::spawnHead(int segment_index, int64_t pos
 	head->window_end_segment = window_end;
 	head->last_requested.store(segment_index);
 	head->last_requested_at_ms.store(nowMs());
+	head->last_progress_at_ms.store(nowMs());
 
 	// Spawn before evicting anyone — same overlap reasoning as VodSession's
 	// own restartAt(): a doomed-to-be-evicted head's output is already
@@ -205,21 +232,32 @@ VodEncodeStream::SegmentPrep VodEncodeStream::prepareSegment(int segment_index, 
 			// (A segment that exists on disk but hasn't been picked up by
 			// tick()'s ~2s scan yet is already handled by the exists() check
 			// above, before this head was even looked up.)
-			if (!head->exited_naturally->load() && segment_index <= generated + kVodCatchUpMarginSegments)
+			//
+			// Stalled gets the tight margin (it's not going to produce
+			// anything further regardless of gap size); still-progressing
+			// gets a much more generous one (see kVodLaggingCatchUpMarginSegments's
+			// own comment for why respawning it wouldn't actually be faster).
+			// Either way, a big enough gap still falls through — a genuine
+			// seek/jump this head could never reach by continuing
+			// sequentially needs its own head starting at the right place,
+			// not an ever-more-generous wait.
+			bool stalled = head->exited_naturally->load() ||
+				(nowMs() - head->last_progress_at_ms.load()) >= kHeadStallTimeoutMs;
+			int margin = stalled ? kVodCatchUpMarginSegments : kVodLaggingCatchUpMarginSegments;
+			if (segment_index <= generated + margin)
 			{
 				if (head->ffmpeg && head->ffmpeg->isPaused()) head->ffmpeg->resume();
 				return SegmentPrep::WaitShort;
 			}
-			// This head's own run can't produce it soon (exhausted, or too
-			// far behind within its own declared window) — fall through and
+			// This head's own run can't produce it soon (exhausted, too far
+			// ahead to be a lag, or genuinely stalled) — fall through and
 			// spawn a fresh head starting here. Whatever this head already
 			// produced stays servable from disk regardless of what happens
-			// to it next; it's evicted below (after the new head is
-			// confirmed alive) rather than left running, since it would
-			// otherwise go on writing into the same absolute segment-index
-			// range — one flat filename numbering shared by every head on
-			// this stream (segmentPath()) — that the fresh head is about to
-			// claim.
+			// to it next; it's evicted below (after the new head is confirmed alive)
+			// rather than left running, since it would otherwise go on
+			// writing into the same absolute segment-index range — one flat
+			// filename numbering shared by every head on this stream
+			// (segmentPath()) — that the fresh head is about to claim.
 		}
 
 		Head* new_head = spawnHead(segment_index, segment_start_ms[static_cast<size_t>(segment_index)],
@@ -263,12 +301,15 @@ void VodEncodeStream::tick(int total_segments)
 
 		for (auto& h : heads_)
 		{
-			int idx = h->highest_generated.load() + 1;
+			int idx         = h->highest_generated.load() + 1;
+			bool progressed = false;
 			while (idx < h->window_end_segment && idx < total_segments && std::filesystem::exists(segmentPath(idx)))
 			{
 				h->highest_generated.store(idx);
+				progressed = true;
 				++idx;
 			}
+			if (progressed) h->last_progress_at_ms.store(nowMs());
 		}
 
 		// Direct-stream's real keyframe cadence doesn't always match the

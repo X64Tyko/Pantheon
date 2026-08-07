@@ -134,6 +134,13 @@ private:
 		std::atomic<int> highest_generated{-1};
 		std::atomic<int> last_requested{-1};
 		std::atomic<int64_t> last_requested_at_ms{0};
+		// Wall-clock time highest_generated last actually advanced — set at
+		// spawn and bumped every tick() it produces at least one new segment.
+		// prepareSegment()'s fallback uses this (not just how numerically far
+		// behind the head is) to tell "slow but still working" apart from
+		// "genuinely stuck" — see that function's own comment for why the
+		// distinction matters.
+		std::atomic<int64_t> last_progress_at_ms{0};
 		// shared_ptr, not a plain atomic<bool>: FfmpegProcess's on_exit fires
 		// asynchronously on a TaskRegistry thread (FfmpegProcess.cpp), which
 		// can run after this Head has already been erased from heads_ (e.g.
