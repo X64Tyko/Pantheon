@@ -375,7 +375,17 @@ static std::vector<std::string> buildHlsProducerArgs(
 	const std::string& hls_dir,
 	int segment_index,
 	int64_t position_ms,
-	std::optional<double> window_duration_secs)
+	std::optional<double> window_duration_secs,
+	// This spawn's own wall-clock resume offset into item.file_path (0 for a
+	// fresh item start; nonzero for a cold/reconnect landing mid-item — see
+	// hlsCreateProducer's own computeOffset() call) — NOT the same thing as
+	// position_ms just above, which is relative to *this spawn's own*
+	// segment_boundaries_ms (always 0 for its first head) and exists purely
+	// to keep consecutive heads' internal PTS numbering contiguous via
+	// pushHeadBoundArgs' -output_ts_offset below. Only the real file seek
+	// needs the absolute position; -output_ts_offset intentionally still
+	// uses the local, spawn-relative one.
+	int64_t seek_base_ms)
 {
 	std::vector<std::string> a;
 	a.push_back(ffmpeg_path);
@@ -384,10 +394,11 @@ static std::vector<std::string> buildHlsProducerArgs(
 	a.insert(a.end(), {"-fflags", "+genpts"});
 	pushVaapiDeviceArg(a, hw_accel, decode_hw_accel, vaapi_device);
 
-	if (position_ms > 0)
+	int64_t seek_ms = seek_base_ms + position_ms;
+	if (seek_ms > 0)
 	{
 		std::ostringstream ss;
-		ss << std::fixed << std::setprecision(3) << (position_ms / 1000.0);
+		ss << std::fixed << std::setprecision(3) << (seek_ms / 1000.0);
 		a.push_back("-ss");
 		a.push_back(ss.str());
 	}
@@ -1534,7 +1545,7 @@ ChannelSession::HlsProducerHandle ChannelSession::hlsCreateProducer(const Kairos
 		<< item.file_path << "\" offset=" << startOffsetMs << "ms\n";
 
 	VodEncodeStream::ArgsBuilder argsBuilder =
-		[this, item, audioTrack, subtitleTrack, direct_stream, source_codec, info, dir]
+		[this, item, audioTrack, subtitleTrack, direct_stream, source_codec, info, dir, startOffsetMs]
 	(int segment_index, int64_t position_ms, std::optional<double> window_duration_secs)
 	{
 		const VideoTrack* sv = (info && !info->video.empty()) ? &info->video[0] : nullptr;
@@ -1542,7 +1553,7 @@ ChannelSession::HlsProducerHandle ChannelSession::hlsCreateProducer(const Kairos
 									opts.loudnorm, opts.hw_accel, opts.vaapi_device, opts.decode_hw_accel, opts.decodable_codecs,
 									source_codec, sv, direct_stream, opts.verbose_transcode_logs,
 									opts.max_resolution, opts.video_bitrate_kbps, opts.audio_bitrate_kbps,
-									dir, segment_index, position_ms, window_duration_secs);
+									dir, segment_index, position_ms, window_duration_secs, startOffsetMs);
 	};
 
 	auto producer = std::make_unique<VodEncodeStream>(

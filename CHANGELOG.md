@@ -107,6 +107,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   source file reopened repeatedly within seconds, never catching up). A head is now only replaced once it's
   genuinely stalled (no forward progress for 15s) or exhausted; a merely-lagging head gets a much wider catch-up
   margin. Channel head windows also widened 10→25 segments to reduce how often a handoff happens at all.
+- **Live channel HLS producer always started an item from position 0, ignoring the correct wall-clock resume
+  offset** (Hephaestus): `hlsCreateProducer`'s `-ss` seek used `VodEncodeStream`'s own segment-relative
+  `position_ms` (always 0 for a spawn's first head) instead of the real, separately-computed resume offset — the
+  correct offset was used to size the segment count but silently never reached the actual ffmpeg seek argument.
+  Every cold start, reconnect, or bucket switch landing partway into an item played from its beginning instead of
+  the right position.
 
 ### Removed
 
