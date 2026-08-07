@@ -212,6 +212,35 @@ static void serveRewrittenChannelViewerPlaylist(const std::string& path, const s
 		res.set_content(json{{"error", "not found"}}.dump(), "application/json");
 		return;
 	}
+	// Guard against ever handing hls.js something it can't parse as a 200 —
+	// readFileBytes() succeeding only means the file existed and was
+	// readable, not that it's a complete, well-formed playlist (e.g. a
+	// caught-mid-write empty/partial read, or any other case that isn't
+	// literal "file missing"). A malformed 200 here is what actually
+	// produces hls.js's fatal levelParsingError → retry storm → stall,
+	// versus this: a client that just retries its next scheduled poll.
+	if (content.compare(0, 7, "#EXTM3U") != 0)
+	{
+		// Dump whatever we actually read — this guard exists specifically
+		// because we don't yet know what a bad read looks like (empty?
+		// truncated mid-line? something else?). Saved to a file (not just
+		// logged) since hephaestus.log rotates/gets noisy fast and this is
+		// an intermittent, hard-to-catch-live event — a dedicated file
+		// under ./data survives that and is easy to grab after the fact.
+		auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::system_clock::now().time_since_epoch()).count();
+		std::error_code dir_ec;
+		std::filesystem::create_directories("./data", dir_ec);
+		std::string dump_path =
+			"./data/bad_playlist_" + std::to_string(ms) + "_" + channel_id + "_" + bucket + ".m3u8";
+		std::ofstream dump(dump_path, std::ios::binary);
+		if (dump) dump << content;
+		std::cerr << "[router] serveRewrittenChannelViewerPlaylist: " << path
+			<< " (" << content.size() << " bytes) failed #EXTM3U check, saved to " << dump_path << "\n";
+		res.status = 503;
+		res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
+		return;
+	}
 	// Same no-cache contract as serveHlsFile's manifest branch — this
 	// playlist is rewritten every tick for the life of the session.
 	res.set_header("Cache-Control", "no-store, no-cache, must-revalidate");
