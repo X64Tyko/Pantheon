@@ -14,6 +14,8 @@
 #include "stream/SessionManager.h"
 #include "stream/VodSessionManager.h"
 #include "stream/PreviewSessionManager.h"
+#include "stream/CacheSizing.h"
+#include "cache/SegmentCache.h"
 #include <httplib.h>
 #include <iostream>
 
@@ -43,6 +45,23 @@ int main(int argc, char* argv[])
 
 	KairosClient kairos(cfg.kairos_url, cfg.kairos_conf_path);
 
+	// In-memory segment cache — one process-wide instance, budget from
+	// cfg.segment_cache_mb (0 = disabled, the default). See
+	// shared/cache/SegmentCache.h for the disabled fast-path.
+	SegmentCache segment_cache(cfg.segment_cache_mb * 1024 * 1024);
+	{
+		auto channels       = kairos.getChannels();
+		size_t suggested_mb = CacheSizing::suggestSegmentCacheMb(channels);
+		std::cout << "[cache] " << channels.size() << " channels configured; suggested "
+			<< "HEPH_SEGMENT_CACHE_MB >= " << suggested_mb
+			<< " (segment_cache_mb=" << cfg.segment_cache_mb << "). This floor is shared across "
+			<< "all viewers of each channel (one ffmpeg process per channel+bucket) — it scales "
+			<< "with distinct channels actively watched, not with total viewer count. Direct-play "
+			<< "(\"native\" bucket) and VOD scrubbing draw on the same budget opportunistically "
+			<< "above this floor and are self-limiting (LRU eviction, no hard failure) if it's not "
+			<< "raised further.\n";
+	}
+
 	// One instance shared by every session type below — see its own class
 	// comment for why the per-type max_vod_sessions/max_preview_sessions
 	// caps (and channels' complete lack of one) don't already cover this.
@@ -62,6 +81,7 @@ int main(int argc, char* argv[])
 	stream_opts.vaapi_device           = cfg.vaapi_device;
 	stream_opts.default_logo_path      = cfg.default_logo_path;
 	stream_opts.hls_root               = cfg.hls_root;
+	stream_opts.segment_cache          = &segment_cache;
 
 	// stream_opts.buffer_size (from --buffer-size/BUF_SIZE above) is the fallback
 	// if Kairos is unreachable — SessionManager fetches the persisted Kairos
@@ -87,6 +107,7 @@ int main(int argc, char* argv[])
 	vod_opts.ffmpeg_debug_logs      = cfg.ffmpeg_debug_logs;
 	vod_opts.verbose_transcode_logs = cfg.verbose_transcode_logs;
 	vod_opts.lookahead_secs         = cfg.vod_lookahead_secs;
+	vod_opts.segment_cache          = &segment_cache;
 	VodSessionManager vodSessions(cfg.ffmpeg_path, vod_opts, kairos, cfg.max_vod_sessions);
 
 	PreviewStreamOptions preview_opts;
@@ -101,6 +122,7 @@ int main(int argc, char* argv[])
 	preview_opts.vaapi_device           = cfg.vaapi_device;
 	preview_opts.ffmpeg_debug_logs      = cfg.ffmpeg_debug_logs;
 	preview_opts.verbose_transcode_logs = cfg.verbose_transcode_logs;
+	preview_opts.segment_cache          = &segment_cache;
 	PreviewSessionManager previewSessions(cfg.ffmpeg_path, preview_opts, kairos, cfg.max_preview_sessions);
 
 	httplib::Server svr;
@@ -124,7 +146,7 @@ int main(int argc, char* argv[])
 	// process's lifetime, same as every *SessionManager above.
 	ClientCapabilityCache capability_cache;
 
-	registerRoutes(svr, sessions, vodSessions, previewSessions, channelViewers, kairos, log_buffer, cfg, capability_cache);
+	registerRoutes(svr, sessions, vodSessions, previewSessions, channelViewers, kairos, log_buffer, cfg, capability_cache, segment_cache);
 	registerClientCapabilitiesRoutes(svr, capability_cache);
 	// Prefer encode if resolved, else decode -- either way the physical GPU
 	// in question is the one whose live utilization/memory/temp the

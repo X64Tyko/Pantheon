@@ -284,11 +284,65 @@ static void proxyStream(const std::string& upstream_base,
 									 });
 }
 
+// Relays a CoalescedResult (either this call's own fetch, for the leader, or
+// the leader's shared result, for a follower) onto a real httplib::Response
+// — kept in sync with proxyRequest's own success-path header handling below
+// so a follower's response is indistinguishable from a leader's.
+static void applyCoalescedResult(const CoalescedResult& r, httplib::Response& res)
+{
+	res.status = r.status;
+	if (!r.cache_control.empty()) res.set_header("Cache-Control", r.cache_control);
+	res.set_header("Access-Control-Allow-Origin", "*");
+	if (!r.body.empty()) res.set_content(r.body, r.content_type.empty() ? "application/octet-stream" : r.content_type);
+}
+
 // Forward any HTTP request to an upstream service verbatim.
+//
+// cache/coalescer: only passed (non-null) by the 4 GET stream-proxy route
+// registrations below — every other proxyRequest call site (Kairos/Hades
+// proxies, the authed VOD/preview/channel POST routes) leaves them null and
+// gets exactly the old uncached/uncoalesced behavior. Even when non-null,
+// only GET requests for a `.ts` segment actually engage this path — playlist
+// polls and every other request type fall straight through to the plain
+// fetch below, same as before this existed. See SegmentCache (shared/cache/)
+// and RequestCoalescer (cache/) for why: N simultaneous viewers requesting
+// the same live-channel segment used to trigger N independent upstream
+// fetches to Hephaestus; this collapses concurrent duplicates into one fetch
+// (coalescer) and skips the fetch entirely on a repeat request once cached.
 static void proxyRequest(const std::string& upstream_base,
 						 const httplib::Request& req,
-						 httplib::Response& res)
+						 httplib::Response& res,
+						 SegmentCache* cache         = nullptr,
+						 RequestCoalescer* coalescer = nullptr)
 {
+	bool segment_cacheable = cache && coalescer && req.method == "GET" &&
+		req.path.size() > 3 && req.path.compare(req.path.size() - 3, 3, ".ts") == 0;
+
+	if (segment_cacheable)
+	{
+		if (auto cached = cache->get(req.path))
+		{
+			res.status = 200;
+			res.set_header("Cache-Control", "public, max-age=31536000, immutable");
+			res.set_header("Access-Control-Allow-Origin", "*");
+			res.set_content(*cached, "video/mp2t");
+			return;
+		}
+
+		auto ticket = coalescer->joinOrLead(req.path);
+		if (!ticket.is_leader)
+		{
+			// Another request for this exact segment is already in flight —
+			// block on its result instead of firing a redundant fetch of our
+			// own. Bounded by however long the leader's own fetch takes
+			// (cli.set_read_timeout below), not indefinite.
+			applyCoalescedResult(ticket.future.get(), res);
+			return;
+		}
+		// Leader: fetch as normal below, then cache + complete() before
+		// returning on every exit path so followers can't block forever.
+	}
+
 	httplib::Client cli(upstream_base);
 	cli.set_connection_timeout(5);
 	cli.set_read_timeout(30);
@@ -324,6 +378,7 @@ static void proxyRequest(const std::string& upstream_base,
 	{
 		res.status = 502;
 		res.set_content(json{{"error", "upstream unavailable"}}.dump(), "application/json");
+		if (segment_cacheable) coalescer->complete(req.path, CoalescedResult{502, "", "application/json", ""});
 		return;
 	}
 	res.status = r->status;
@@ -339,10 +394,15 @@ static void proxyRequest(const std::string& upstream_base,
 	// between whatever snapshot a given request happened to get. Forwarded
 	// generically (not just for the HLS routes) since any upstream response
 	// that bothers to set this is expressing an intent worth preserving.
+	std::string cache_control_hdr;
 	for (const char* h : {"Cache-Control", "Pragma"})
 	{
 		auto v = r->get_header_value(h);
-		if (!v.empty()) res.set_header(h, v);
+		if (!v.empty())
+		{
+			res.set_header(h, v);
+			if (std::string(h) == "Cache-Control") cache_control_hdr = v;
+		}
 	}
 	// Needed for a Chromecast custom receiver's player pipeline (a JS-level
 	// fetch from whatever origin the receiver is hosted at — github.io or a
@@ -351,7 +411,17 @@ static void proxyRequest(const std::string& upstream_base,
 	// and the SSE log route already use elsewhere in this file.
 	res.set_header("Access-Control-Allow-Origin", "*");
 	auto resp_ct = r->get_header_value("Content-Type");
-	if (!r->body.empty()) res.set_content(r->body, resp_ct.empty() ? "application/octet-stream" : resp_ct);
+	if (resp_ct.empty()) resp_ct = "application/octet-stream";
+	if (!r->body.empty()) res.set_content(r->body, resp_ct);
+
+	if (segment_cacheable)
+	{
+		// Only a genuinely-ready segment is worth caching — Hephaestus
+		// answers 404/503 while a segment isn't written yet, and those are
+		// transient, not content to hold onto.
+		if (r->status == 200 && !r->body.empty()) cache->put(req.path, r->body);
+		coalescer->complete(req.path, CoalescedResult{r->status, r->body, resp_ct, cache_control_hdr});
+	}
 }
 
 // Hermes has no session/user concept of its own, so admin-only routes here
@@ -383,7 +453,8 @@ static bool checkAdminToken(const httplib::Request& req, const Config& cfg)
 
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 					KairosClient& kairos, LogBuffer& logs, LogBuffer& local_log, const Config& cfg,
-					DeviceSessionManager& devices, WatchTogetherManager& watch_together)
+					DeviceSessionManager& devices, WatchTogetherManager& watch_together,
+					SegmentCache& segmentCache, RequestCoalescer& coalescer)
 {
 	// ── Health ────────────────────────────────────────────────────────────────
 	svr.Get("/health", [](const httplib::Request&, httplib::Response& res)
@@ -781,14 +852,21 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 	{
 		proxyRequest(cfg.hephaestus_url, req, res);
 	};
-	svr.Get(R"(/stream/hls/channels/.*)", hephaestusProxy);
+	// Cache/coalesce-aware variant, only for the 4 GET routes below — see
+	// proxyRequest's own comment. The client-capabilities POST/DELETE routes
+	// further down deliberately keep using the plain hephaestusProxy above.
+	auto hephaestusSegmentProxy = [&cfg, &segmentCache, &coalescer](const httplib::Request& req, httplib::Response& res)
+	{
+		proxyRequest(cfg.hephaestus_url, req, res, &segmentCache, &coalescer);
+	};
+	svr.Get(R"(/stream/hls/channels/.*)", hephaestusSegmentProxy);
 	// Capability-bucketed per-viewer channel HLS (see Hephaestus's
 	// ChannelViewerRegistry) — plain pass-through same as the legacy channel
 	// HLS route above; all viewer-identity/bucket-resolution logic lives on
 	// the Hephaestus side, nothing here needs to be session-aware.
-	svr.Get(R"(/stream/hls/channel-viewer/.*)", hephaestusProxy);
-	svr.Get(R"(/stream/vod/.*)", hephaestusProxy);
-	svr.Get(R"(/stream/preview/.*)", hephaestusProxy);
+	svr.Get(R"(/stream/hls/channel-viewer/.*)", hephaestusSegmentProxy);
+	svr.Get(R"(/stream/vod/.*)", hephaestusSegmentProxy);
+	svr.Get(R"(/stream/preview/.*)", hephaestusSegmentProxy);
 
 	// POST /stream/vod|preview/... (start/switch/stop) is the one place on
 	// this router that would otherwise let anyone on the network stream the

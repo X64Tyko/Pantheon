@@ -1,4 +1,5 @@
 #pragma once
+#include "cache/SegmentCache.h"
 #include <string>
 #include <vector>
 #include <deque>
@@ -42,9 +43,14 @@ public:
 	// manifest at the same instant a real-time-synced client needs to start
 	// playing it, leaving no margin to fetch/buffer (this is ordinary
 	// broadcast delay, not a hack). tick_interval is the background relay
-	// loop's cadence.
+	// loop's cadence. segment_cache may be null (segment caching disabled) —
+	// when non-null, every segment this class prunes from canonical also
+	// gets invalidated out of the cache so a viewer request occurring right
+	// after eviction can't get memory-pinned indefinitely on content the
+	// splicer itself already considers gone.
 	ChannelPlaylistSplicer(std::string canonical_dir, int list_size, int delete_threshold,
-						   int64_t reveal_lead_ms, std::chrono::milliseconds tick_interval);
+						   int64_t reveal_lead_ms, std::chrono::milliseconds tick_interval,
+						   SegmentCache* segment_cache = nullptr);
 	~ChannelPlaylistSplicer();
 
 	void start();
@@ -93,6 +99,7 @@ private:
 	int delete_threshold_;
 	int64_t reveal_lead_ms_;
 	std::chrono::milliseconds tick_interval_;
+	SegmentCache* segment_cache_;
 
 	mutable std::mutex mtx_;
 	SpawnInfo active_;

@@ -37,6 +37,9 @@ struct VodStreamOptions
 	// see EncoderAdmission's own class comment. nullptr (default) disables
 	// gating entirely, same as every other caller of it.
 	EncoderAdmission* encoder_admission = nullptr;
+	// In-memory segment cache shared with channels/preview — nullptr
+	// (default) disables caching entirely.
+	SegmentCache* segment_cache = nullptr;
 	// How far ahead of the viewer's last-requested segment the main encoder
 	// is allowed to run before being paused (SIGSTOP) — see the lookahead
 	// monitor (lookaheadLoop()). A few minutes, mirroring how

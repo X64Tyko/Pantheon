@@ -24,12 +24,14 @@ namespace
 } // namespace
 
 ChannelPlaylistSplicer::ChannelPlaylistSplicer(std::string canonical_dir, int list_size, int delete_threshold,
-											   int64_t reveal_lead_ms, std::chrono::milliseconds tick_interval)
+											   int64_t reveal_lead_ms, std::chrono::milliseconds tick_interval,
+											   SegmentCache* segment_cache)
 	: canonical_dir_(std::move(canonical_dir))
 	, list_size_(list_size)
 	, delete_threshold_(delete_threshold)
 	, reveal_lead_ms_(reveal_lead_ms)
 	, tick_interval_(tick_interval)
+	, segment_cache_(segment_cache)
 {
 }
 
@@ -64,6 +66,7 @@ void ChannelPlaylistSplicer::spliceTo(SpawnInfo info)
 {
 	std::lock_guard<std::mutex> lock(mtx_);
 	if (have_active_&& info
+	
 	.
 	pending_dir == active_.pending_dir
 	)
@@ -132,7 +135,9 @@ void ChannelPlaylistSplicer::relayTickLocked()
 		auto& oldest = segments_.front();
 		if (oldest.discontinuity_before) ++discontinuities_rolled_off_;
 		std::error_code ec;
-		std::filesystem::remove(canonical_dir_ + "/" + oldest.filename, ec);
+		std::string oldest_path = canonical_dir_ + "/" + oldest.filename;
+		std::filesystem::remove(oldest_path, ec);
+		if (segment_cache_) segment_cache_->invalidate(oldest_path);
 		segments_.pop_front();
 	}
 

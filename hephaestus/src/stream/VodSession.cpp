@@ -1234,6 +1234,7 @@ void VodSession::stop()
 
 	std::error_code ec;
 	std::filesystem::remove_all(dir(), ec);
+	if (opts.segment_cache) opts.segment_cache->invalidatePrefix(dir());
 }
 
 void VodSession::touch() { last_touch_ms.store(nowMs()); }

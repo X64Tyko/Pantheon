@@ -143,6 +143,7 @@ bool PreviewSession::switchChannel(const std::string& channel_id)
 	// Clear stale segments from whatever was previously playing so the
 	// client never picks up a mix of old and new channel content.
 	for (auto& entry : std::filesystem::directory_iterator(d)) std::filesystem::remove(entry.path(), ec);
+	if (opts.segment_cache) opts.segment_cache->invalidatePrefix(d);
 
 	auto item = kairos.getNow(channel_id);
 
@@ -226,6 +227,7 @@ void PreviewSession::stop()
 	}
 	std::error_code ec;
 	std::filesystem::remove_all(dir(), ec);
+	if (opts.segment_cache) opts.segment_cache->invalidatePrefix(dir());
 }
 
 void PreviewSession::touch() { last_touch_ms.store(nowMs()); }

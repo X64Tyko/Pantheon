@@ -74,15 +74,29 @@ static bool waitForSubtitleExtraction(const VodSession& session, int maxWaitMs =
 	return session.hasSubtitleExtractionExited();
 }
 
-static void serveHlsFile(const std::string& path, const std::string& content_type,
-						 httplib::Response& res)
+// Reads a whole file into memory. Only called on a segment-cache miss when
+// caching is enabled — the common (disabled) case never pays this cost, it
+// stays on set_file_content's own streamed disk read below.
+static bool readFileBytes(const std::string& path, std::string& out)
 {
-	if (!std::filesystem::exists(path))
-	{
-		res.status = 404;
-		res.set_content(json{{"error", "not found"}}.dump(), "application/json");
-		return;
-	}
+	std::ifstream f(path, std::ios::binary | std::ios::ate);
+	if (!f) return false;
+	std::streamsize size = f.tellg();
+	if (size < 0) return false;
+	f.seekg(0, std::ios::beg);
+	out.resize(static_cast<size_t>(size));
+	if (size > 0 && !f.read(out.data(), size)) return false;
+	return true;
+}
+
+// group_key/group_cap: only meaningful for segments (ignored for manifests)
+// — see SegmentCache::put's own comment. Passing group_cap=0 (the default)
+// just means "no per-group ceiling, rely on the global byte budget alone",
+// which is what every non-live-channel call site below wants.
+static void serveHlsFile(const std::string& path, const std::string& content_type,
+						 httplib::Response& res, SegmentCache& cache,
+						 const std::string& group_key = "", size_t group_cap = 0)
+{
 	// The manifest is rewritten every few seconds for the life of the session
 	// (a live channel's canonical playlist.m3u8 via ChannelPlaylistSplicer, or
 	// a VOD/audio playlist while its VodEncodeStream is still generating) —
@@ -96,20 +110,109 @@ static void serveHlsFile(const std::string& path, const std::string& content_typ
 	// exactly once under a filename that's never reused (splicer's own
 	// monotonic next_seq_, or a VOD/live producer's own never-reused segment
 	// index) and never modified afterward, so they're safe — actively good,
-	// even — to let any intermediary cache aggressively and indefinitely.
+	// even — to let any intermediary (or our own in-memory cache below) cache
+	// aggressively and indefinitely.
 	bool is_manifest = content_type == "application/vnd.apple.mpegurl";
+
+	if (!is_manifest)
+	{
+		if (auto cached = cache.get(path))
+		{
+			res.set_header("Cache-Control", "public, max-age=31536000, immutable");
+			res.set_content(*cached, content_type);
+			return;
+		}
+	}
+
+	if (!std::filesystem::exists(path))
+	{
+		res.status = 404;
+		res.set_content(json{{"error", "not found"}}.dump(), "application/json");
+		return;
+	}
+
 	res.set_header("Cache-Control", is_manifest
 										? "no-store, no-cache, must-revalidate"
 										: "public, max-age=31536000, immutable");
 	if (is_manifest) res.set_header("Pragma", "no-cache");
-	res.set_file_content(path, content_type);
+
+	if (is_manifest || !cache.enabled())
+	{
+		res.set_file_content(path, content_type);
+		return;
+	}
+
+	std::string bytes;
+	if (!readFileBytes(path, bytes))
+	{
+		// Existed a moment ago (checked above) but failed to read fully —
+		// rare (e.g. deleted mid-read); fall back to the normal path instead
+		// of caching/serving a partial body.
+		res.set_file_content(path, content_type);
+		return;
+	}
+	cache.put(path, bytes, group_key, group_cap);
+	res.set_content(bytes, content_type);
+}
+
+// The channel-viewer playlist route hands out a fresh viewer_session_id-
+// scoped manifest URL per viewer, but the segment lines inside it are bare
+// relative filenames (straight from ffmpeg's hls muxer) — hls.js resolves
+// those relative to whatever URL it fetched the manifest from, so two
+// viewers pinned to the identical (channel_id, bucket) end up requesting
+// their *own*, distinct segment URLs for the exact same bytes. Hermes can
+// only cache/coalesce across viewers if it sees the same request path for
+// the same content, so this rewrites each bare "seg-NNNNN.ts" line into the
+// absolute, content-addressed form the bucket-explicit legacy-style route
+// below serves — same bytes, but now one URL shared by every viewer of this
+// channel+bucket regardless of which viewer_session_id fetched the
+// manifest. Plain text substitution, not a full M3U8 parser: every non-'#'
+// line ffmpeg's hls muxer ever writes is a segment filename. Absolute-path
+// URIs are valid HLS (RFC 8216) and standard practice for CDN manifest
+// rewriting.
+static std::string rewriteChannelViewerPlaylist(const std::string& content, const std::string& channel_id,
+												const std::string& bucket)
+{
+	std::string prefix = "/stream/hls/channels/" + channel_id + "/" + bucket + "/";
+	std::string out;
+	out.reserve(content.size() + 32);
+	size_t pos = 0;
+	while (pos <= content.size())
+	{
+		size_t nl        = content.find('\n', pos);
+		std::string line = (nl == std::string::npos) ? content.substr(pos) : content.substr(pos, nl - pos);
+		if (!line.empty() && line[0] != '#') out += prefix;
+		out += line;
+		if (nl == std::string::npos) break;
+		out += '\n';
+		pos = nl + 1;
+	}
+	return out;
+}
+
+static void serveRewrittenChannelViewerPlaylist(const std::string& path, const std::string& channel_id,
+												const std::string& bucket, httplib::Response& res)
+{
+	std::string content;
+	if (!readFileBytes(path, content))
+	{
+		res.status = 404;
+		res.set_content(json{{"error", "not found"}}.dump(), "application/json");
+		return;
+	}
+	// Same no-cache contract as serveHlsFile's manifest branch — this
+	// playlist is rewritten every tick for the life of the session.
+	res.set_header("Cache-Control", "no-store, no-cache, must-revalidate");
+	res.set_header("Pragma", "no-cache");
+	res.set_content(rewriteChannelViewerPlaylist(content, channel_id, bucket), "application/vnd.apple.mpegurl");
 }
 
 // Video and audio are now independent streams (VodSession/VodEncodeStream —
 // see their class comments) with their own segment files and their own
 // static playlist, both living in the same session directory. isAudio picks
 // which one of the pair this request is actually asking for.
-static void serveVodPlaylist(const std::shared_ptr<VodSession>& session, bool isAudio, httplib::Response& res)
+static void serveVodPlaylist(const std::shared_ptr<VodSession>& session, bool isAudio, httplib::Response& res,
+							 SegmentCache& cache)
 {
 	session->touch();
 	auto path = session->dir() + (isAudio ? "/audio-playlist.m3u8" : "/playlist.m3u8");
@@ -119,12 +222,12 @@ static void serveVodPlaylist(const std::shared_ptr<VodSession>& session, bool is
 		res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 		return;
 	}
-	serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+	serveHlsFile(path, "application/vnd.apple.mpegurl", res, cache);
 }
 
 // seg_suffix is the already zero-padded "NNNNN" component from the URL.
 static void serveVodSegment(const std::shared_ptr<VodSession>& session, bool isAudio, int index,
-							const std::string& seg_suffix, httplib::Response& res)
+							const std::string& seg_suffix, httplib::Response& res, SegmentCache& cache)
 {
 	session->touch();
 	// Segments live under the (possibly shared) stream's own directory, not
@@ -173,7 +276,7 @@ static void serveVodSegment(const std::shared_ptr<VodSession>& session, bool isA
 			res.status = 404;
 			return;
 	}
-	serveHlsFile(path, "video/mp2t", res);
+	serveHlsFile(path, "video/mp2t", res, cache);
 }
 
 // Extracts "http://host:port" from a request, falling back to the Host header.
@@ -246,7 +349,7 @@ static void handleStream(const std::string& channel_id,
 void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionManager& vodSessions,
 					PreviewSessionManager& previewSessions, ChannelViewerRegistry& channelViewers,
 					KairosClient& kairos, LogBuffer& logs, const Config& cfg,
-					ClientCapabilityCache& capabilityCache)
+					ClientCapabilityCache& capabilityCache, SegmentCache& segmentCache)
 {
 	// ── Health ────────────────────────────────────────────────────────────────
 	svr.Get("/health", [](const httplib::Request&, httplib::Response& res)
@@ -478,7 +581,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 	// (ChannelSession::hlsDir()) — same session as /stream/channels/:id, just
 	// a second output. Track selection is the channel's admin-configured
 	// audio_lang/subtitle_lang, not per-viewer (see plan: live is broadcast).
-	svr.Get(R"(/stream/hls/channels/([^/]+)/playlist\.m3u8$)", [&sessions](
+	svr.Get(R"(/stream/hls/channels/([^/]+)/playlist\.m3u8$)", [&sessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				auto session = sessions.getOrCreate(req.matches[1]);
@@ -496,10 +599,10 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 					return;
 				}
-				serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+				serveHlsFile(path, "application/vnd.apple.mpegurl", res, segmentCache);
 			});
 
-	svr.Get(R"(/stream/hls/channels/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions](
+	svr.Get(R"(/stream/hls/channels/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				auto session = sessions.getOrCreate(req.matches[1]);
@@ -509,7 +612,37 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					return;
 				}
 				session->touchHls();
-				serveHlsFile(session->hlsDir() + "/" + req.matches[2].str(), "video/mp2t", res);
+				std::string channel_id = req.matches[1];
+				serveHlsFile(session->hlsDir() + "/" + req.matches[2].str(), "video/mp2t", res, segmentCache,
+							 channel_id + "|" + ChannelSession::kDefaultBucket, kLiveCacheMaxSegmentsDefault);
+			});
+
+	// Content-addressed segment route: same shape as the legacy route above,
+	// just with an explicit bucket instead of always resolving to the
+	// default one. Exists so the channel-viewer playlist rewrite
+	// (serveRewrittenChannelViewerPlaylist) can hand every viewer of a given
+	// channel+bucket the *same* segment URL regardless of their own
+	// viewer_session_id — see that function's comment for why this is what
+	// actually makes Hermes-side cross-viewer caching/coalescing possible.
+	// Unauthenticated like every other segment route: this is broadcast
+	// schedule content, not per-viewer private data.
+	svr.Get(R"(/stream/hls/channels/([^/]+)/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &segmentCache](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				std::string channel_id = req.matches[1];
+				std::string bucket     = req.matches[2];
+				auto session           = sessions.getOrCreate(channel_id, bucket);
+				if (!session)
+				{
+					res.status = 404;
+					return;
+				}
+				session->touchHls();
+				size_t group_cap = bucket == ChannelSession::kNativeBucket
+									   ? kLiveCacheMaxSegmentsNative
+									   : kLiveCacheMaxSegmentsDefault;
+				serveHlsFile(session->hlsDir() + "/" + req.matches[3].str(), "video/mp2t", res, segmentCache,
+							 channel_id + "|" + bucket, group_cap);
 			});
 
 	// ── Capability-bucketed live channel HLS (per-viewer, opt-in) ─────────────
@@ -585,10 +718,10 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 					return;
 				}
-				serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+				serveRewrittenChannelViewerPlaylist(path, channel_id, bucket, res);
 			});
 
-	svr.Get(R"(/stream/hls/channel-viewer/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &channelViewers](
+	svr.Get(R"(/stream/hls/channel-viewer/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &channelViewers, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				std::string channel_id;
@@ -605,7 +738,11 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					return;
 				}
 				session->touchHls();
-				serveHlsFile(session->hlsDir() + "/" + req.matches[2].str(), "video/mp2t", res);
+				size_t group_cap = bucket == ChannelSession::kNativeBucket
+									   ? kLiveCacheMaxSegmentsNative
+									   : kLiveCacheMaxSegmentsDefault;
+				serveHlsFile(session->hlsDir() + "/" + req.matches[2].str(), "video/mp2t", res, segmentCache,
+							 channel_id + "|" + bucket, group_cap);
 			});
 
 	svr.Post(R"(/stream/channel/viewer/([^/]+)/stop$)", [&channelViewers](
@@ -790,7 +927,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				res.set_content(session->buildMasterPlaylist(), "application/vnd.apple.mpegurl");
 			});
 
-	svr.Get(R"(/stream/vod/([^/]+)/playlist\.m3u8$)", [&vodSessions](
+	svr.Get(R"(/stream/vod/([^/]+)/playlist\.m3u8$)", [&vodSessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				auto session = vodSessions.get(req.matches[1]);
@@ -807,10 +944,10 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				// client. The old 25s NVENC-cold-start-aware wait here is gone; only
 				// a defensive existence check remains for the (should-be-rare) case
 				// the session already vanished by the time this GET lands.
-				serveVodPlaylist(session, /*isAudio=*/false, res);
+				serveVodPlaylist(session, /*isAudio=*/false, res, segmentCache);
 			});
 
-	svr.Get(R"(/stream/vod/([^/]+)/seg-([0-9]+)\.ts$)", [&vodSessions](
+	svr.Get(R"(/stream/vod/([^/]+)/seg-([0-9]+)\.ts$)", [&vodSessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				auto session = vodSessions.get(req.matches[1]);
@@ -820,7 +957,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					return;
 				}
 				int index = std::stoi(req.matches[2].str());
-				serveVodSegment(session, /*isAudio=*/false, index, req.matches[2].str(), res);
+				serveVodSegment(session, /*isAudio=*/false, index, req.matches[2].str(), res, segmentCache);
 			});
 
 	// Per-audio-track alias for the master manifest's AUDIO group — see
@@ -829,7 +966,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 	// actually triggers the encoder restart onto the new -map; the segment
 	// route below is a defensive fallback for a cached URL fetched without
 	// re-fetching the playlist first.
-	svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/playlist\.m3u8$)", [&vodSessions](
+	svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/playlist\.m3u8$)", [&vodSessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				std::string sid = req.matches[1];
@@ -850,10 +987,10 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "failed to switch audio track"}}.dump(), "application/json");
 					return;
 				}
-				serveVodPlaylist(session, /*isAudio=*/true, res);
+				serveVodPlaylist(session, /*isAudio=*/true, res, segmentCache);
 			});
 
-	svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/aseg-([0-9]+)\.ts$)", [&vodSessions](
+	svr.Get(R"(/stream/vod/([^/]+)/audio/([0-9]+)/aseg-([0-9]+)\.ts$)", [&vodSessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				std::string sid = req.matches[1];
@@ -873,7 +1010,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					return;
 				}
 				int index = std::stoi(req.matches[3].str());
-				serveVodSegment(session, /*isAudio=*/true, index, req.matches[3].str(), res);
+				serveVodSegment(session, /*isAudio=*/true, index, req.matches[3].str(), res, segmentCache);
 			});
 
 	// Wraps the on-demand pipe below in a minimal single-segment VOD media
@@ -1049,7 +1186,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				);
 			});
 
-	svr.Get(R"(/stream/vod/([^/]+)/subs\.vtt$)", [&vodSessions](
+	svr.Get(R"(/stream/vod/([^/]+)/subs\.vtt$)", [&vodSessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				auto session = vodSessions.get(req.matches[1]);
@@ -1094,7 +1231,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "subtitle extraction failed"}}.dump(), "application/json");
 					return;
 				}
-				serveHlsFile(path, "text/vtt", res);
+				serveHlsFile(path, "text/vtt", res, segmentCache);
 			});
 
 	svr.Post(R"(/stream/vod/([^/]+)/stop$)", [&vodSessions](
@@ -1165,7 +1302,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				 res.set_content(json{{"ok", true}}.dump(), "application/json");
 			 });
 
-	svr.Get(R"(/stream/preview/([^/]+)/playlist\.m3u8$)", [&previewSessions](
+	svr.Get(R"(/stream/preview/([^/]+)/playlist\.m3u8$)", [&previewSessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				auto session = previewSessions.get(req.matches[1]);
@@ -1183,10 +1320,10 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 					return;
 				}
-				serveHlsFile(path, "application/vnd.apple.mpegurl", res);
+				serveHlsFile(path, "application/vnd.apple.mpegurl", res, segmentCache);
 			});
 
-	svr.Get(R"(/stream/preview/([^/]+)/(seg-[0-9]+\.ts)$)", [&previewSessions](
+	svr.Get(R"(/stream/preview/([^/]+)/(seg-[0-9]+\.ts)$)", [&previewSessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				auto session = previewSessions.get(req.matches[1]);
@@ -1196,7 +1333,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					return;
 				}
 				session->touch();
-				serveHlsFile(session->dir() + "/" + req.matches[2].str(), "video/mp2t", res);
+				serveHlsFile(session->dir() + "/" + req.matches[2].str(), "video/mp2t", res, segmentCache);
 			});
 
 	svr.Post(R"(/stream/preview/([^/]+)/stop$)", [&previewSessions](

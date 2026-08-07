@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <cstdlib>
+#include <algorithm>
 
 struct Config
 {
@@ -9,6 +10,14 @@ struct Config
 	std::string hades_url      = "http://localhost:3000";
 	int port                   = 8000;
 	int linger_secs            = 30;
+
+	// In-memory HLS segment cache budget, in MB. 0 (default) disables it
+	// entirely — see shared/cache/SegmentCache.h. Independent of
+	// Hephaestus's own HEPH_SEGMENT_CACHE_MB — they're separate processes
+	// with separate budgets, each caching the same bytes for a different
+	// reason (Hephaestus: skip its own disk read; Hermes: skip its own
+	// upstream HTTP fetch to Hephaestus).
+	size_t segment_cache_mb = 0;
 
 	// HDHomeRun identity — Hermes owns this, Hephaestus should be internal-only
 	std::string hdhr_device_id = "50414e54"; // "PANT" in ASCII hex
@@ -55,6 +64,11 @@ inline Config parseConfig(int argc, char* argv[])
 			cfg.linger_secs = std::stoi(v);
 			++i;
 		}
+		else if (k == "--segment-cache-mb")
+		{
+			cfg.segment_cache_mb = static_cast<size_t>(std::max(0, std::stoi(v)));
+			++i;
+		}
 		else if (k == "--device-id")
 		{
 			cfg.hdhr_device_id = v;
@@ -75,5 +89,6 @@ inline Config parseConfig(int argc, char* argv[])
 	if (auto* p = getenv("KAIROS_URL")) cfg.kairos_url = p;
 	if (auto* p = getenv("HADES_URL")) cfg.hades_url = p;
 	if (auto* p = getenv("HERMES_KAIROS_CONF_PATH")) cfg.kairos_conf_path = p;
+	if (auto* p = getenv("HERMES_SEGMENT_CACHE_MB")) cfg.segment_cache_mb = static_cast<size_t>(std::max(0, std::stoi(p)));
 	return cfg;
 }

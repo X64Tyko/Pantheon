@@ -6,6 +6,7 @@
 #include "MediaProbe.h"
 #include "VodEncodeStream.h"
 #include "ChannelPlaylistSplicer.h"
+#include "cache/SegmentCache.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -18,6 +19,24 @@
 #include <optional>
 #include <set>
 #include <thread>
+
+// Live-channel HLS segment length. Header-scope (not file-local in
+// ChannelSession.cpp, where this used to live) because CacheSizing.cpp and
+// Router.cpp's segment-cache wiring both need it too and must never drift
+// from the value ffmpeg's own -hls_time/-force_key_frames actually use —
+// see appendOutputArgs' own comment in ChannelSession.cpp for why 2 vs. 6 is
+// a real, previously-revisited tradeoff, not a settled value.
+inline constexpr int kLiveHlsSegmentSecs = 2;
+
+// How many of a live-channel bucket's segments the in-memory SegmentCache
+// keeps resident, independent of the on-disk retention window
+// (kLiveHlsListSize+kLiveHlsDeleteThreshold in ChannelSession.cpp, ~20
+// segments/~40s) — live playback never seeks backward, so caching the full
+// disk window would just waste RAM. Native (direct-stream) segments carry
+// whatever the source's own bitrate is (uncapped, unlike the transcode
+// bucket's -maxrate ceiling), so its cap is tighter.
+inline constexpr size_t kLiveCacheMaxSegmentsDefault = 4;
+inline constexpr size_t kLiveCacheMaxSegmentsNative  = 2;
 
 // One ClientSink per connected HTTP client. Thread-safe queue the HTTP handler
 // thread reads from while the session's reader thread writes to it.
@@ -50,9 +69,14 @@ struct StreamOptions
 	// EncoderAdmission's own class comment. nullptr (default) disables
 	// gating entirely, same as every other caller of it.
 	EncoderAdmission* encoder_admission = nullptr;
-	std::string vaapi_device            = "/dev/dri/renderD128";
-	bool ffmpeg_debug_logs              = false; // pipe ffmpeg stderr into the log stream
-	bool verbose_transcode_logs         = false; // -v verbose + full command line on every spawn
+	// In-memory segment cache shared with VOD/preview — nullptr (default)
+	// disables caching entirely (matches SegmentCache's own budget=0
+	// disabled state; this codebase always constructs one at process start,
+	// see main.cpp, so nullptr in practice only happens in tests).
+	SegmentCache* segment_cache = nullptr;
+	std::string vaapi_device    = "/dev/dri/renderD128";
+	bool ffmpeg_debug_logs      = false; // pipe ffmpeg stderr into the log stream
+	bool verbose_transcode_logs = false; // -v verbose + full command line on every spawn
 	// Per-channel transcode quality
 	std::string max_resolution = "source"; // "source"|"1080p"|"720p"|"480p"
 	int video_bitrate_kbps     = 0;        // 0 = CRF/CQ auto; >0 adds -maxrate cap

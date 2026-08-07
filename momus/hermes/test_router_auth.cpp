@@ -26,7 +26,9 @@
 #include "../../hermes/src/devices/DeviceSessionManager.h"
 #include "../../hermes/src/kairos/KairosClient.h"
 #include "../../hermes/src/watchtogether/WatchTogetherManager.h"
+#include "../../hermes/src/cache/RequestCoalescer.h"
 #include "log/LogBuffer.h"
+#include "cache/SegmentCache.h"
 
 using json = nlohmann::json;
 
@@ -105,6 +107,8 @@ namespace
 		LogBuffer local_log;
 		DeviceSessionManager devices;
 		WatchTogetherManager watch_together;
+		SegmentCache segment_cache{0}; // disabled — not under test here
+		RequestCoalescer coalescer;
 
 		httplib::Server svr;
 		std::unique_ptr<httplib::Client> cli;
@@ -116,7 +120,8 @@ namespace
 			cfg.kairos_url     = upstream.url;
 			cfg.hephaestus_url = upstream.url;
 
-			registerRoutes(svr, broadcasters, kairos, logs, local_log, cfg, devices, watch_together);
+			registerRoutes(svr, broadcasters, kairos, logs, local_log, cfg, devices, watch_together,
+						   segment_cache, coalescer);
 
 			int port      = svr.bind_to_any_port("127.0.0.1");
 			server_thread = std::thread([this] { svr.listen_after_bind(); });

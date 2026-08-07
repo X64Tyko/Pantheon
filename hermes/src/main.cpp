@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "api/Router.h"
 #include "broadcast/BroadcasterManager.h"
+#include "cache/RequestCoalescer.h"
 #include "crash/CrashHandler.h"
 #include "devices/DeviceSessionManager.h"
 #include "kairos/InternalToken.h"
@@ -9,6 +10,7 @@
 #include "log/RuntimeFlags.h"
 #include "thread/TaskRegistry.h"
 #include "watchtogether/WatchTogetherManager.h"
+#include "cache/SegmentCache.h"
 #include <httplib.h>
 #include <iostream>
 #include <stop_token>
@@ -94,6 +96,14 @@ int main(int argc, char* argv[])
 	DeviceSessionManager devices;
 	WatchTogetherManager watch_together;
 
+	// In-memory segment cache + request coalescer for the GET stream-proxy
+	// routes — see shared/cache/SegmentCache.h and cache/RequestCoalescer.h.
+	// Independent instance/budget from Hephaestus's own segment cache (they
+	// solve different problems: Hephaestus skips its own disk read, Hermes
+	// skips its own upstream HTTP fetch).
+	SegmentCache segment_cache(cfg.segment_cache_mb * 1024 * 1024);
+	RequestCoalescer coalescer;
+
 	httplib::Server svr;
 	svr.new_task_queue = [] { return new httplib::ThreadPool(32); };
 	// See Kairos's main.cpp for why — same reasoning, Hermes has no upload
@@ -134,7 +144,8 @@ int main(int argc, char* argv[])
 		}
 	});
 
-	registerRoutes(svr, broadcasters, kairos, combined_log, local_log, cfg, devices, watch_together);
+	registerRoutes(svr, broadcasters, kairos, combined_log, local_log, cfg, devices, watch_together,
+				   segment_cache, coalescer);
 
 	// Relay upstream log streams so the Hades UI sees all service logs via
 	// a single /api/logs/stream endpoint on Hermes. Read once at startup —

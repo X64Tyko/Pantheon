@@ -2,6 +2,7 @@
 #include "stream/ChannelSession.h"
 #include <string>
 #include <cstdlib>
+#include <algorithm>
 
 struct Config
 {
@@ -36,6 +37,13 @@ struct Config
 	// Root directory for HLS output (live channel tee output + VOD sessions).
 	// Empty disables HLS entirely (legacy MPEG-TS-only behavior).
 	std::string hls_root = "/tmp/hephaestus/hls";
+
+	// In-memory segment cache byte budget, in MB. 0 (default) disables it
+	// entirely — every low-power deployment that doesn't opt in pays zero
+	// cost beyond a branch, see shared/cache/SegmentCache.h. See
+	// CacheSizing.h for a startup-time suggestion computed from the
+	// deployment's actual configured channels.
+	size_t segment_cache_mb = 0;
 
 	// HDHomeRun device identity presented to Plex / Emby / Jellyfin
 	std::string hdhr_device_id = "48455048"; // "HEPH" in ASCII hex
@@ -157,6 +165,11 @@ inline Config parseConfig(int argc, char* argv[])
 			cfg.hls_root = v;
 			++i;
 		}
+		else if (k == "--segment-cache-mb")
+		{
+			cfg.segment_cache_mb = static_cast<size_t>(std::max(0, std::stoi(v)));
+			++i;
+		}
 		else if (k == "--device-id")
 		{
 			cfg.hdhr_device_id = v;
@@ -189,6 +202,7 @@ inline Config parseConfig(int argc, char* argv[])
 	if (auto* p = getenv("HEPH_VAAPI_DEV")) cfg.vaapi_device = p;
 	if (auto* p = getenv("HEPH_DEFAULT_LOGO")) cfg.default_logo_path = p;
 	if (auto* p = getenv("HEPH_HLS_ROOT")) cfg.hls_root = p;
+	if (auto* p = getenv("HEPH_SEGMENT_CACHE_MB")) cfg.segment_cache_mb = static_cast<size_t>(std::max(0, std::stoi(p)));
 	if (auto* p = getenv("HEPH_VOD_LOOKAHEAD_SECS")) cfg.vod_lookahead_secs = std::stoi(p);
 	if (auto* p = getenv("HEPH_HW_PROBE_ASSETS")) cfg.hw_probe_assets_dir = p;
 	if (auto* p = getenv("HEPH_MAX_VOD_SESSIONS")) cfg.max_vod_sessions = std::stoi(p);

@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **In-memory HLS segment cache + cross-viewer deduplication** (Hephaestus + Hermes): opt-in RAM cache for HLS
+  segments, off by default (`HEPH_SEGMENT_CACHE_MB`/`HERMES_SEGMENT_CACHE_MB`, both 0) so low-power deployments see
+  no change unless explicitly enabled. Hephaestus caches segment bytes to skip repeat disk reads, with live-channel
+  buckets capped to a handful of resident segments (no benefit to holding more — a channel never seeks backward) and
+  a startup log suggesting a real budget computed from each configured channel's actual quality settings. Hermes gets
+  its own independent cache plus request coalescing ("singleflight"): concurrent requests for the same not-yet-cached
+  segment now collapse into one upstream fetch to Hephaestus instead of one per viewer. Making cross-viewer
+  deduplication actually work required fixing a real gap: the capability-bucketed channel-viewer playlist handed
+  every viewer their own `viewer_session_id`-scoped segment URLs for identical bytes, so Hermes had no way to
+  recognize two viewers were requesting the same content — that playlist's segment URIs are now rewritten to the
+  same content-addressed, channel+bucket-scoped URL for every viewer (new bucket-explicit segment route on
+  Hephaestus), which is what actually lets the cache/coalescer hit across viewers on a shared live channel.
 - **`.ogv` file support** (Kairos): the local library scanner now recognizes `.ogv` (Ogg Theora/Vorbis) files as
   video and ingests them like any other container. They aren't eligible for the direct-stream channel bucket
   (Theora/Vorbis aren't in the direct-streamable codec set) but play normally through the existing software

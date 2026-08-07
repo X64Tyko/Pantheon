@@ -3,7 +3,9 @@
 #include "../devices/DeviceSessionManager.h"
 #include "../kairos/KairosClient.h"
 #include "../watchtogether/WatchTogetherManager.h"
+#include "../cache/RequestCoalescer.h"
 #include "log/LogBuffer.h"
+#include "cache/SegmentCache.h"
 #include "../Config.h"
 #include <httplib.h>
 
@@ -11,7 +13,11 @@
 // its own — see main.cpp's own comment on why). local_log: the file-backed
 // buffer holding Hermes's *own* lines only (hermes.log) — used solely to back
 // /api/logs/file's own-log export and /api/logs/export's zip, both of which
-// need a real on-disk path, unlike everything else here.
+// need a real on-disk path, unlike everything else here. segmentCache/
+// coalescer: shared across the 4 GET stream-proxy routes only — see
+// proxyRequest's own comment for why every other proxyRequest call site
+// passes neither.
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 					KairosClient& kairos, LogBuffer& logs, LogBuffer& local_log, const Config& cfg,
-					DeviceSessionManager& devices, WatchTogetherManager& watch_together);
+					DeviceSessionManager& devices, WatchTogetherManager& watch_together,
+					SegmentCache& segmentCache, RequestCoalescer& coalescer);

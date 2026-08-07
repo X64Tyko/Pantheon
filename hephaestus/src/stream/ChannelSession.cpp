@@ -48,7 +48,8 @@ static constexpr double kMaxSpeed = 1.02;
 //
 // 2 vs 6 is a known tradeoff (periodic stutter vs. tune-in latency), not a
 // settled value — see project memory before changing it again.
-static constexpr int kLiveHlsSegmentSecs = 2;
+// (kLiveHlsSegmentSecs itself now lives in ChannelSession.h — CacheSizing.cpp
+// and Router.cpp's segment-cache wiring need it too.)
 
 // Oversized vs. the 2s target so a direct-stream session's much-longer real
 // segments (see above) still get a safe rolling window instead of a client's
@@ -741,7 +742,8 @@ bool ChannelSession::start()
 			hls_watcher = std::thread([this] { hlsWatchLoop(); });
 			splicer_    = std::make_unique<ChannelPlaylistSplicer>(
 				dir, kLiveHlsListSize, kLiveHlsDeleteThreshold,
-				kHlsRevealLeadMs, std::chrono::milliseconds(kLiveHlsSegmentSecs * 500));
+				kHlsRevealLeadMs, std::chrono::milliseconds(kLiveHlsSegmentSecs * 500),
+				opts.segment_cache);
 			splicer_->start();
 			hls_producer_thread_ = std::thread([this] { hlsProducerLoop(); });
 		}
@@ -914,6 +916,7 @@ void ChannelSession::stop()
 	{
 		std::error_code ec;
 		std::filesystem::remove_all(dir, ec);
+		if (opts.segment_cache) opts.segment_cache->invalidatePrefix(dir);
 	}
 }
 

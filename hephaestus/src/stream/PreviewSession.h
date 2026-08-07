@@ -28,6 +28,9 @@ struct PreviewStreamOptions
 	// EncoderAdmission's own class comment. nullptr (default) disables
 	// gating entirely, same as every other caller of it.
 	EncoderAdmission* encoder_admission = nullptr;
+	// In-memory segment cache shared with channels/VOD — nullptr (default)
+	// disables caching entirely.
+	SegmentCache* segment_cache = nullptr;
 };
 
 // Manifest URL is stable for the session's whole life — switchChannel()
