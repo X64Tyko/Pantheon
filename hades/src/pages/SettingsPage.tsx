@@ -854,7 +854,7 @@ const applyBuffer = () => {
           <Section title="Stream Settings">
             <SettingRow
               label="Stream Buffer Size (KB)"
-              hint="Size of the stream buffer while watching streaming channels. (Requires Restart)"
+              hint="Per-stream chunk size used when reading transcoded output on the server (default 1024 KB) — a memory/overhead tradeoff, not a playback buffer. Higher uses more RAM per active stream but reduces read overhead; lower saves memory. Applies automatically to new stream sessions within about 15 seconds — no restart needed, and streams already playing keep their current value until they reconnect."
             >
               <div className={styles.inlineRow}>
                 <input

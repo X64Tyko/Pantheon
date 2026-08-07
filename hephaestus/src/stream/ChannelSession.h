@@ -125,6 +125,22 @@ private:
 	StreamOptions opts;
 	std::string bucket = kDefaultBucket; // see kDefaultBucket/kNativeBucket above
 
+	// Distinguishes this ChannelSession instance from any previous or future
+	// one for the same (channel_id, bucket) key — set once at construction,
+	// never changes afterward. SessionManager::getOrCreate() silently
+	// replaces an inactive session with a brand-new instance, which resets
+	// segment numbering back to seg-00000.ts (ChannelPlaylistSplicer's own
+	// next_seq_) while reusing the exact same on-disk hlsDir(). Hephaestus's
+	// own SegmentCache is fine with that (stop() invalidates its cache
+	// entries for hlsDir() on teardown) but Hermes's independent cache has
+	// no visibility into a Hephaestus-side restart at all — instanceId()
+	// lets the content-addressed segment URL (Router.cpp's bucket-explicit
+	// route + the channel-viewer playlist rewrite) change across a restart,
+	// so Hermes's cache naturally keys a fresh incarnation's segments
+	// separately instead of risking a stale-content collision under a
+	// reused seg-NNNNN.ts filename.
+	int64_t instance_id;
+
 	std::mutex clients_mtx;
 	std::vector<std::shared_ptr<ClientSink>> clients;
 	std::atomic<int> client_count{0};
@@ -451,6 +467,9 @@ public:
 	bool isActive() const { return active.load(); }
 	const std::string& channelId() const { return channel_id; }
 	const std::string& bucketName() const { return bucket; }
+	// See instance_id's own comment (below, private section) for why this
+	// exists and what it's for.
+	int64_t instanceId() const { return instance_id; }
 
 	// Best-effort snapshot for the activity/debugging view (ActivityRouter) —
 	// by value under current_item_mtx (see its own comment): the value can

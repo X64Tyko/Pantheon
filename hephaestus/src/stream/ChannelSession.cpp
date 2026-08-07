@@ -66,20 +66,36 @@ static constexpr int kLiveHlsDeleteThreshold = 8;
 // TARGET_BUFFER_SECS (PlayerPage.tsx).
 static constexpr int64_t kHlsRevealLeadMs = 6'000;
 
+// Target head-window slack, in seconds, before a head's own window boundary
+// forces a handoff. Named/derived (see kHlsHeadWindowSegments below)
+// instead of baking a flat segment count directly, after that flat-count
+// approach silently drifted out of sync with kLiveHlsSegmentSecs once
+// already — see that constant's own history for why it isn't safe to treat
+// as fixed.
+static constexpr int kHlsHeadWindowTargetSecs = 150;
+
 // How many segments one VodEncodeStream head covers for a channel spawn —
 // much smaller than normal VOD's ~100-segment default so heads succeed each
 // other often; not used for anything today, but keeps the door open for a
 // later per-head speed-nudge drift-correction pass without needing to touch
-// this again. See project memory. 10 (60s at kLiveHlsSegmentSecs=6) measured
-// too tight in practice — real head-to-head handoffs were frequent enough
-// that a transient lag (GPU contention, a heavy transition) had a real
-// chance of landing right at a boundary, forcing a full cold-start handoff
-// (reopen/reprobe/reseek/NVENC init) at the worst possible moment. 25 (150s)
-// gives a lot more slack before a head's own window boundary forces a
-// handoff at all; the "is this head merely behind or actually stuck"
-// judgment itself now lives in VodEncodeStream::prepareSegment()'s own
-// stall-timeout check (kHeadStallTimeoutMs), not window size.
-static constexpr int kHlsHeadWindowSegments = 25;
+// this again. See project memory. 10 segments (60s, back when
+// kLiveHlsSegmentSecs was 6) measured too tight in practice — real
+// head-to-head handoffs were frequent enough that a transient lag (GPU
+// contention, a heavy transition) had a real chance of landing right at a
+// boundary, forcing a full cold-start handoff (reopen/reprobe/reseek/NVENC
+// init) at the worst possible moment. Raised to a flat 25, reasoned as
+// "150s" of slack — but kLiveHlsSegmentSecs was later changed back to 2
+// (see its own comment) without this constant being revisited, silently
+// shrinking the real slack to 25*2=50s per head (100s total across
+// VodEncodeStream's kVodMaxLiveHeads=2 live heads) — a 3x regression from
+// the intended value that went unnoticed until it surfaced as head-rotation
+// churn on any item watched past ~100s in. Derived from
+// kHlsHeadWindowTargetSecs now instead of a flat number so it can't
+// silently drift out of sync with kLiveHlsSegmentSecs again. The "is this
+// head merely behind or actually stuck" judgment itself still lives in
+// VodEncodeStream::prepareSegment()'s own stall-timeout check
+// (kHeadStallTimeoutMs), not window size.
+static constexpr int kHlsHeadWindowSegments = kHlsHeadWindowTargetSecs / kLiveHlsSegmentSecs;
 
 // How far ahead of "due now" the producer should try to stay buffered before
 // VodEncodeStream pauses a head — must comfortably clear kHlsRevealLeadMs
@@ -566,6 +582,7 @@ ChannelSession::ChannelSession(std::string channel_id, KairosClient& kairos,
 	, ffmpeg_path(std::move(ffmpeg_path))
 	, opts(std::move(opts))
 	, bucket(std::move(bucket))
+	, instance_id(nowMs())
 {
 }
 

@@ -88,6 +88,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Hermes could serve stale/wrong segment bytes after a live-channel session restarted** (Hephaestus + Hermes): a
+  channel's segment numbering (`seg-00000.ts`, ...) always restarts at zero when its underlying `ChannelSession` gets
+  torn down and recreated (idle reap, then a fresh request) — Hephaestus's own cache already handled this (invalidated
+  on teardown), but Hermes's independent cache had no way to know a session had restarted, so it could keep serving
+  old cached bytes under a since-reused segment filename: playback jumping back to content from a previous session
+  with nothing in the current schedule explaining it, sometimes cascading into a dead stream. `ChannelSession` now
+  carries a per-incarnation `instance_id`, embedded (opaque, unvalidated) in the content-addressed segment URL the
+  channel-viewer playlist rewrite emits — a restart naturally changes the URL, so Hermes's cache can't collide across
+  incarnations.
+- **`kHlsHeadWindowSegments` (Hephaestus) was tuned for a since-changed segment length**: the "150s of slack" the
+  constant's own comment claimed assumed `kLiveHlsSegmentSecs=6`; the value was never revisited when that was set
+  back to 2, silently leaving only ~50s of real slack (3x less than intended) before a live-channel producer's
+  encoder head had to rotate — recurring roughly every 50s for any item watched that long. Now derived from a named
+  target-seconds constant divided by `kLiveHlsSegmentSecs` so it can't silently drift out of sync again.
 - **Sidebar profile controls looked like static text, not buttons (Hades)**: `usernameLinkBtn`/`sidebarExitBtn` had
   no resting border or hover background, unlike their already-correct mobile-drawer equivalents. Both now match the
   drawer's affordance; the new About link sits alongside them as a matching icon button.

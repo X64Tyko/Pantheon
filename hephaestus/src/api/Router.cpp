@@ -170,10 +170,21 @@ static void serveHlsFile(const std::string& path, const std::string& content_typ
 // line ffmpeg's hls muxer ever writes is a segment filename. Absolute-path
 // URIs are valid HLS (RFC 8216) and standard practice for CDN manifest
 // rewriting.
+//
+// instance_id (ChannelSession::instanceId()) is embedded as an opaque path
+// component purely so the URL itself changes if this (channel_id, bucket)
+// session ever gets torn down and replaced (SessionManager::getOrCreate()
+// does this silently, resetting segment numbering back to seg-00000.ts on
+// the same hlsDir()) — Hermes's cache keys on request path, has no other
+// way to know a "new" seg-00003.ts isn't the same content as the old
+// seg-00003.ts it already cached under the same URL. The route below never
+// inspects this value, only consumes it — the current live session is
+// always what actually gets served either way.
 static std::string rewriteChannelViewerPlaylist(const std::string& content, const std::string& channel_id,
-												const std::string& bucket)
+												const std::string& bucket, int64_t instance_id)
 {
-	std::string prefix = "/stream/hls/channels/" + channel_id + "/" + bucket + "/";
+	std::string prefix =
+		"/stream/hls/channels/" + channel_id + "/" + bucket + "/" + std::to_string(instance_id) + "/";
 	std::string out;
 	out.reserve(content.size() + 32);
 	size_t pos = 0;
@@ -191,7 +202,8 @@ static std::string rewriteChannelViewerPlaylist(const std::string& content, cons
 }
 
 static void serveRewrittenChannelViewerPlaylist(const std::string& path, const std::string& channel_id,
-												const std::string& bucket, httplib::Response& res)
+												const std::string& bucket, int64_t instance_id,
+												httplib::Response& res)
 {
 	std::string content;
 	if (!readFileBytes(path, content))
@@ -204,7 +216,8 @@ static void serveRewrittenChannelViewerPlaylist(const std::string& path, const s
 	// playlist is rewritten every tick for the life of the session.
 	res.set_header("Cache-Control", "no-store, no-cache, must-revalidate");
 	res.set_header("Pragma", "no-cache");
-	res.set_content(rewriteChannelViewerPlaylist(content, channel_id, bucket), "application/vnd.apple.mpegurl");
+	res.set_content(rewriteChannelViewerPlaylist(content, channel_id, bucket, instance_id),
+					"application/vnd.apple.mpegurl");
 }
 
 // Video and audio are now independent streams (VodSession/VodEncodeStream —
@@ -626,7 +639,12 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 	// actually makes Hermes-side cross-viewer caching/coalescing possible.
 	// Unauthenticated like every other segment route: this is broadcast
 	// schedule content, not per-viewer private data.
-	svr.Get(R"(/stream/hls/channels/([^/]+)/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &segmentCache](
+	// Trailing [0-9]+/ is the session's instanceId() — consumed, never
+	// inspected (see rewriteChannelViewerPlaylist's comment for why it's
+	// there at all). Always serves whatever session is currently live for
+	// this (channel_id, bucket), regardless of which instance_id the
+	// requesting URL happens to carry.
+	svr.Get(R"(/stream/hls/channels/([^/]+)/([^/]+)/[0-9]+/(seg-[0-9]+\.ts)$)", [&sessions, &segmentCache](
 			const httplib::Request& req, httplib::Response& res)
 			{
 				std::string channel_id = req.matches[1];
@@ -718,7 +736,7 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 					return;
 				}
-				serveRewrittenChannelViewerPlaylist(path, channel_id, bucket, res);
+				serveRewrittenChannelViewerPlaylist(path, channel_id, bucket, session->instanceId(), res);
 			});
 
 	svr.Get(R"(/stream/hls/channel-viewer/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &channelViewers, &segmentCache](
