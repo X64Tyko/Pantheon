@@ -69,6 +69,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   loads, and session/viewer lifecycle (reconnects, capability-bucket fallback, channel item transitions) are now
   forwarded to the server log under a `[category]` prefix for live channels, gated on the existing "Hades Console
   Error Logging" (`hades_debug`) toggle.
+- **"Download all logs" diagnostics export** (Hades, Hermes, Kairos, Hephaestus): the Activity page's Engine Logs
+  panel can now download a zip with all three services' complete on-disk log files, not just the ~2000-line combined
+  in-memory view the live viewer shows. Each service exposes its own log file via a new `GET /api/logs/file`; Hermes
+  aggregates all three into `GET /api/logs/export`, admin-authenticated the same way as the existing log stream.
 
 ### Fixed
 
@@ -113,6 +117,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   correct offset was used to size the segment count but silently never reached the actual ffmpeg seek argument.
   Every cold start, reconnect, or bucket switch landing partway into an item played from its beginning instead of
   the right position.
+- **Live channel playback randomly rewinding then snapping back to the correct position** (Hephaestus, Hermes):
+  HLS playlist/segment responses set no `Cache-Control` at all, so an intermediary in the real deployment path
+  (Cloudflare Tunnel, a browser's own HTTP cache) was free to cache a snapshot of the live, constantly-rewritten
+  `playlist.m3u8` and keep serving it — read by hls.js as the available segment list randomly jumping backward and
+  forward between whatever snapshot a given request happened to get. Manifests now set `no-store, no-cache,
+  must-revalidate`; segments (immutable once written, never reused under the same name) now set a long, cacheable
+  `max-age`. Hermes's generic proxy also silently dropped every response header except `Location`/`Content-Type`
+  from the upstream it was forwarding — now forwards `Cache-Control`/`Pragma` too, or the origin's fix above would
+  never have reached a real client anyway.
 
 ### Removed
 

@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api/client'
+import {api, downloadAllLogs} from '../api/client'
 import { sourceStore, systemStore, statusStore, metricsStore } from '../stores'
 import type { LogEntry } from '../stores'
 import type { LibraryWithSource } from '../api/types'
@@ -113,6 +113,24 @@ export default observer(function ActivityPage() {
   const [confirmWritebackAll, setConfirmWritebackAll] = useState(false)
   const [writebackError,      setWritebackError]      = useState<string | null>(null)
   useEffect(() => { api.getAllLibraries().then(setAllLibraries).catch(() => {}) }, [])
+
+    // "Download all logs" — a real zip of all three services' complete
+    // on-disk log files (see downloadAllLogs's own comment for why this
+    // exists: hand-copying a clean capture out of the live viewer below gets
+    // genuinely difficult once verbose_transcode_logs/hades_debug are on).
+    const [logsExportBusy, setLogsExportBusy] = useState(false)
+    const [logsExportError, setLogsExportError] = useState<string | null>(null)
+    const exportAllLogs = async () => {
+        setLogsExportBusy(true)
+        setLogsExportError(null)
+        try {
+            await downloadAllLogs()
+        } catch (e: any) {
+            setLogsExportError(e.message ?? 'Unknown error')
+        } finally {
+            setLogsExportBusy(false)
+        }
+    }
   const writebackAll = async () => {
     setConfirmWritebackAll(false)
     setWritebackError(null)
@@ -470,6 +488,14 @@ export default observer(function ActivityPage() {
                : liveStatus === 'live'    ? 'Live'
                :                           'Disconnected'}
             </span>
+              <button
+                  onClick={exportAllLogs}
+                  disabled={logsExportBusy}
+                  title="Download a zip with all three services' complete on-disk log files"
+                  className={`text-xs transition-colors ${logsExportBusy ? 'text-zinc-700 cursor-not-allowed' : 'text-zinc-600 hover:text-zinc-400'}`}
+              >
+                  {logsExportBusy ? 'Preparing…' : '⭳ Download all logs'}
+              </button>
             <button
               onClick={jumpToBottom}
               className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
@@ -478,6 +504,11 @@ export default observer(function ActivityPage() {
             </button>
           </div>
         </div>
+          {logsExportError && (
+              <div className="px-4 py-1.5 text-xs text-red-400 border-b border-zinc-800/80 shrink-0">
+                  Error: {logsExportError}
+              </div>
+          )}
 
         <div
           ref={logRef}

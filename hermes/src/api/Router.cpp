@@ -1,12 +1,16 @@
 #include "Router.h"
 #include "../devices/DeviceRouter.h"
+#include "../kairos/InternalToken.h"
 #include "../watchtogether/WatchTogetherRouter.h"
 #include "crash/CrashHandler.h"
+#include "log/ZipWriter.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <string>
 #include <future>
+#include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <unistd.h>
 
 // MetricsGatherer inline for shared logic across components without complex relative headers in Docker
@@ -43,11 +47,12 @@ public:
 				std::ifstream stat2("/sys/fs/cgroup/memory.stat");
 				std::string key;
 				long val;
-				while (stat2 >> key >> val) if (key == "inactive_file")
-				{
-					inactive_file = val;
-					break;
-				}
+				while (stat2 >> key >> val)
+					if (key == "inactive_file")
+					{
+						inactive_file = val;
+						break;
+					}
 				m.ram_bytes = raw > inactive_file ? raw - inactive_file : 0;
 			}
 			else
@@ -59,11 +64,12 @@ public:
 					std::ifstream stat1("/sys/fs/cgroup/memory/memory.stat");
 					std::string key;
 					long val;
-					while (stat1 >> key >> val) if (key == "total_inactive_file")
-					{
-						inactive_file = val;
-						break;
-					}
+					while (stat1 >> key >> val)
+						if (key == "total_inactive_file")
+						{
+							inactive_file = val;
+							break;
+						}
 					m.ram_bytes = raw > inactive_file ? raw - inactive_file : 0;
 				}
 				else
@@ -323,6 +329,21 @@ static void proxyRequest(const std::string& upstream_base,
 	res.status = r->status;
 	auto loc   = r->get_header_value("Location");
 	if (!loc.empty()) res.set_header("Location", loc);
+	// A transparent proxy shouldn't silently drop caching directives the
+	// origin explicitly set — Hephaestus's own HLS manifest/segment routes
+	// (Router.cpp's serveHlsFile) rely on this reaching real clients: a
+	// no-store/no-cache manifest response is what stops an intermediary
+	// (Cloudflare Tunnel in the real deployment path, a browser's own HTTP
+	// cache) from caching a live playlist snapshot and serving it back stale
+	// — which reads to hls.js as playback randomly jumping backward/forward
+	// between whatever snapshot a given request happened to get. Forwarded
+	// generically (not just for the HLS routes) since any upstream response
+	// that bothers to set this is expressing an intent worth preserving.
+	for (const char* h : {"Cache-Control", "Pragma"})
+	{
+		auto v = r->get_header_value(h);
+		if (!v.empty()) res.set_header(h, v);
+	}
 	// Needed for a Chromecast custom receiver's player pipeline (a JS-level
 	// fetch from whatever origin the receiver is hosted at — github.io or a
 	// self-hosted domain) to read manifests/segments cross-origin if it ever
@@ -333,8 +354,35 @@ static void proxyRequest(const std::string& upstream_base,
 	if (!r->body.empty()) res.set_content(r->body, resp_ct.empty() ? "application/octet-stream" : resp_ct);
 }
 
+// Hermes has no session/user concept of its own, so admin-only routes here
+// (the log stream/file/export trio) validate the caller's token against
+// Kairos's /api/auth/me instead — same pattern DELETE /api/activity/crash
+// already used inline before this was pulled out for the new file/export
+// routes to share. EventSource can't set an Authorization header, so a
+// caller may send ?token= instead; checked here too for that reason (a plain
+// fetch/download, unlike EventSource, could use either).
+static bool checkAdminToken(const httplib::Request& req, const Config& cfg)
+{
+	std::string token = req.get_header_value("Authorization");
+	if (token.starts_with("Bearer ")) token = token.substr(7);
+	else
+	{
+		token.clear();
+		auto it = req.params.find("token");
+		if (it != req.params.end()) token = it->second;
+	}
+	if (token.empty()) return false;
+	httplib::Client cli(cfg.kairos_url);
+	cli.set_connection_timeout(5);
+	cli.set_read_timeout(5);
+	auto who = cli.Get("/api/auth/me?token=" + urlEncodeValue(token));
+	if (!who || who->status != 200) return false;
+	try { return json::parse(who->body).value("role", "") == "admin"; }
+	catch (...) { return false; }
+}
+
 void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
-					KairosClient& kairos, LogBuffer& logs, const Config& cfg,
+					KairosClient& kairos, LogBuffer& logs, LogBuffer& local_log, const Config& cfg,
 					DeviceSessionManager& devices, WatchTogetherManager& watch_together)
 {
 	// ── Health ────────────────────────────────────────────────────────────────
@@ -352,40 +400,13 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 		// Activity page's own adminOnly nav gate — this was previously wide
 		// open to anyone, letting an anonymous caller hold an SSE connection
 		// open indefinitely (enough concurrent ones exhaust Hermes's thread
-		// pool). Hermes has no session/user concept of its own, so it
-		// validates the caller against Kairos's /api/auth/me, same pattern as
-		// DELETE /api/activity/crash below. EventSource can't set an
-		// Authorization header, so the token may arrive as ?token= instead —
-		// check both, same as Kairos's own auth middleware does.
-		std::string token = req.get_header_value("Authorization");
-		if (token.starts_with("Bearer ")) token = token.substr(7);
-		else
+		// pool). See checkAdminToken's own comment for why this validates
+		// against Kairos rather than a session Hermes doesn't have.
+		if (!checkAdminToken(req, cfg))
 		{
-			token.clear();
-			auto it = req.params.find("token");
-			if (it != req.params.end()) token = it->second;
-		}
-		bool is_admin = false;
-		if (!token.empty())
-		{
-			httplib::Client cli(cfg.kairos_url);
-			cli.set_connection_timeout(5);
-			cli.set_read_timeout(5);
-			if (auto who = cli.Get("/api/auth/me?token=" + urlEncodeValue(token)))
-			{
-				if (who->status == 200)
-				{
-					try { is_admin = json::parse(who->body).value("role", "") == "admin"; }
-					catch (...)
-					{
-					}
-				}
-			}
-		}
-		if (!is_admin)
-		{
-			res.status = token.empty() ? 401 : 403;
-			res.set_content(json{{"error", token.empty() ? "Unauthorized" : "Forbidden"}}.dump(), "application/json");
+			bool has_token = req.has_header("Authorization") || req.has_param("token");
+			res.status     = has_token ? 403 : 401;
+			res.set_content(json{{"error", has_token ? "Forbidden" : "Unauthorized"}}.dump(), "application/json");
 			return;
 		}
 
@@ -430,6 +451,80 @@ void registerRoutes(httplib::Server& svr, BroadcasterManager& broadcasters,
 											 }
 											 return true;
 										 });
+	});
+
+	// Raw on-disk log file — every line since the last rotation (LogBuffer's
+	// kMaxFileSize, 10MB), unlike /api/logs/stream's in-memory kMax=2000-line
+	// ring buffer. local_log specifically (not the combined/no-file buffer
+	// the stream above serves) — see this function's own header comment for
+	// why. Backs /api/logs/export's zip, and independently useful on its own.
+	svr.Get("/api/logs/file", [&local_log, cfg](const httplib::Request& req, httplib::Response& res)
+	{
+		if (!checkAdminToken(req, cfg))
+		{
+			bool has_token = req.has_header("Authorization") || req.has_param("token");
+			res.status     = has_token ? 403 : 401;
+			res.set_content(json{{"error", has_token ? "Forbidden" : "Unauthorized"}}.dump(), "application/json");
+			return;
+		}
+		std::string path = local_log.path();
+		if (path.empty() || !std::filesystem::exists(path))
+		{
+			res.status = 404;
+			res.set_content(json{{"error", "no log file"}}.dump(), "application/json");
+			return;
+		}
+		std::ifstream f(path, std::ios::binary);
+		std::ostringstream ss;
+		ss << f.rdbuf();
+		res.set_content(ss.str(), "text/plain");
+	});
+
+	// "Download all logs" diagnostics export — one zip with all three
+	// services' complete on-disk log files (not just what each one's
+	// /api/logs/stream ring buffer happens to still hold), sourced from each
+	// service's own /api/logs/file. Hermes is the natural place for this:
+	// it's the one service that already talks to both others as a matter of
+	// course (this same file's proxying/relaying). Best-effort per service —
+	// one being unreachable shouldn't block getting the other two.
+	svr.Get("/api/logs/export", [&local_log, cfg](const httplib::Request& req, httplib::Response& res)
+	{
+		if (!checkAdminToken(req, cfg))
+		{
+			bool has_token = req.has_header("Authorization") || req.has_param("token");
+			res.status     = has_token ? 403 : 401;
+			res.set_content(json{{"error", has_token ? "Forbidden" : "Unauthorized"}}.dump(), "application/json");
+			return;
+		}
+
+		ZipWriter zip;
+
+		std::string own_path = local_log.path();
+		if (!own_path.empty() && std::filesystem::exists(own_path))
+		{
+			std::ifstream f(own_path, std::ios::binary);
+			std::ostringstream ss;
+			ss << f.rdbuf();
+			zip.addFile("hermes.log", ss.str());
+		}
+
+		std::string internal_token = readKairosInternalToken(cfg.kairos_conf_path);
+		auto fetchInto             = [&](const std::string& base_url, const char* entry_name)
+		{
+			httplib::Client cli(base_url);
+			cli.set_connection_timeout(5);
+			cli.set_read_timeout(15);
+			httplib::Headers h;
+			if (!internal_token.empty()) h.emplace("X-Internal-Token", internal_token);
+			if (auto r = cli.Get("/api/logs/file", h); r && r->status == 200) zip.addFile(entry_name, r->body);
+		};
+		fetchInto(cfg.kairos_url, "kairos.log");
+		fetchInto(cfg.hephaestus_url, "hephaestus.log");
+
+		std::ostringstream out;
+		zip.write(out);
+		res.set_header("Content-Disposition", "attachment; filename=\"pantheon-logs.zip\"");
+		res.set_content(out.str(), "application/zip");
 	});
 
 	// ── Aggregated Metrics ────────────────────────────────────────────────────

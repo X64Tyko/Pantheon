@@ -11,6 +11,9 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
@@ -165,6 +168,33 @@ void ActivityService::registerRoutes(httplib::Server& svr)
 											 }
 											 return true;
 										 });
+	});
+
+	// Raw on-disk log file — every line since the last rotation (LogBuffer's
+	// kMaxFileSize, 10MB), unlike /api/logs/stream's in-memory kMax=2000-line
+	// ring buffer. Backs the "download all logs" diagnostics export (Hermes's
+	// /api/logs/export aggregates this same route from all three services);
+	// same admin-or-internal-token auth as /api/logs/stream just above, for
+	// the same reason (Hermes calls this server-to-server, no user session).
+	svr.Get("/api/logs/file", [this](const Req& req, Res& res)
+	{
+		const std::string expected = conf_.getInternalToken();
+		bool is_internal           = !expected.empty() && req.get_header_value("X-Internal-Token") == expected;
+		if (!is_internal && (!currentUser() || currentUser()->role != "admin"))
+		{
+			route::err(res, 403, "Forbidden");
+			return;
+		}
+		std::string path = logs_.path();
+		if (path.empty() || !std::filesystem::exists(path))
+		{
+			route::err(res, 404, "no log file");
+			return;
+		}
+		std::ifstream f(path, std::ios::binary);
+		std::ostringstream ss;
+		ss << f.rdbuf();
+		res.set_content(ss.str(), "text/plain");
 	});
 
 	svr.Get("/api/system/metrics", [](const Req&, Res& res)

@@ -107,6 +107,33 @@ export async function downloadDebugDump(): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
+// Fetches a zip of all three services' complete on-disk log files (Hermes's
+// GET /api/logs/export — see its own comment for why Hermes, not Kairos,
+// hosts this) and saves it the same way downloadDebugDump does just above.
+// Getting a clean, complete log capture by hand (scrolling/copying out of
+// the live Engine Logs viewer, which only ever shows the last ~2000 lines
+// across all three services combined) is genuinely difficult once anything
+// verbose (verbose_transcode_logs, hades_debug) is on — this is the direct
+// fix for that.
+export async function downloadAllLogs(): Promise<void> {
+    const res = await fetch('/api/logs/export', {headers: authHeaders()})
+    if (!res.ok) {
+        const payload = await res.json().catch(() => ({error: res.statusText}))
+        throw new ApiError((payload as any).error ?? res.statusText, res.status, payload)
+    }
+    const disposition = res.headers.get('Content-Disposition') ?? ''
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1]
+        ?? `pantheon-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`
+
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url;
+    a.download = filename;
+    a.click()
+    URL.revokeObjectURL(url)
+}
+
 // Carries status/body for callers that need more than the message (e.g. merge's folder-mismatch confirm).
 export class ApiError extends Error {
   status: number

@@ -102,6 +102,7 @@ namespace
 		BroadcasterManager broadcasters{"http://unused.invalid", 30};
 		KairosClient kairos{"http://unused.invalid"}; // unused by authedHephaestusProxy itself (it builds its own httplib::Client from cfg)
 		LogBuffer logs;
+		LogBuffer local_log;
 		DeviceSessionManager devices;
 		WatchTogetherManager watch_together;
 
@@ -115,7 +116,7 @@ namespace
 			cfg.kairos_url     = upstream.url;
 			cfg.hephaestus_url = upstream.url;
 
-			registerRoutes(svr, broadcasters, kairos, logs, cfg, devices, watch_together);
+			registerRoutes(svr, broadcasters, kairos, logs, local_log, cfg, devices, watch_together);
 
 			int port      = svr.bind_to_any_port("127.0.0.1");
 			server_thread = std::thread([this] { svr.listen_after_bind(); });

@@ -6,6 +6,8 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -81,6 +83,25 @@ static void serveHlsFile(const std::string& path, const std::string& content_typ
 		res.set_content(json{{"error", "not found"}}.dump(), "application/json");
 		return;
 	}
+	// The manifest is rewritten every few seconds for the life of the session
+	// (a live channel's canonical playlist.m3u8 via ChannelPlaylistSplicer, or
+	// a VOD/audio playlist while its VodEncodeStream is still generating) —
+	// with no explicit Cache-Control at all, an intermediary in the real
+	// deployment path (Cloudflare Tunnel, a browser's own HTTP cache) is free
+	// to cache a snapshot and keep serving it, which reads to hls.js as the
+	// segment list randomly jumping backward/forward between whatever
+	// snapshot each individual request happened to get — a plausible
+	// explanation for reports of playback "rewinding, then snapping back and
+	// forth." Segment (.ts) files are the opposite: each one is written
+	// exactly once under a filename that's never reused (splicer's own
+	// monotonic next_seq_, or a VOD/live producer's own never-reused segment
+	// index) and never modified afterward, so they're safe — actively good,
+	// even — to let any intermediary cache aggressively and indefinitely.
+	bool is_manifest = content_type == "application/vnd.apple.mpegurl";
+	res.set_header("Cache-Control", is_manifest
+										? "no-store, no-cache, must-revalidate"
+										: "public, max-age=31536000, immutable");
+	if (is_manifest) res.set_header("Pragma", "no-cache");
 	res.set_file_content(path, content_type);
 }
 
@@ -292,6 +313,33 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 											 }
 											 return true;
 										 });
+	});
+
+	// Raw on-disk log file — every line since the last rotation (LogBuffer's
+	// kMaxFileSize, 10MB), unlike /api/logs/stream's in-memory kMax=2000-line
+	// ring buffer. Backs Hermes's /api/logs/export "download all logs"
+	// diagnostics zip, which aggregates this same route from all three
+	// services — same internal-only auth as /api/logs/stream just above.
+	svr.Get("/api/logs/file", [&logs, &cfg](const httplib::Request& req, httplib::Response& res)
+	{
+		const std::string expected = readKairosInternalToken(cfg.kairos_conf_path);
+		if (expected.empty() || req.get_header_value("X-Internal-Token") != expected)
+		{
+			res.status = 401;
+			res.set_content(json{{"error", "Unauthorized"}}.dump(), "application/json");
+			return;
+		}
+		std::string path = logs.path();
+		if (path.empty() || !std::filesystem::exists(path))
+		{
+			res.status = 404;
+			res.set_content(json{{"error", "no log file"}}.dump(), "application/json");
+			return;
+		}
+		std::ifstream f(path, std::ios::binary);
+		std::ostringstream ss;
+		ss << f.rdbuf();
+		res.set_content(ss.str(), "text/plain");
 	});
 
 	// ── HDHomeRun device emulation ────────────────────────────────────────────
