@@ -24,6 +24,18 @@ namespace
 		while (std::getline(f, line)) out.push_back(line);
 		return out;
 	}
+
+	// LogBuffer::push() now prepends a wall-clock timestamp (see its own
+	// comment) to every stored/written line, so exact-match assertions
+	// against pushed content need to check the suffix rather than the whole
+	// line.
+	::testing::AssertionResult EndsWithLine(const std::string& actual, const std::string& expectedSuffix)
+	{
+		if (actual.size() >= expectedSuffix.size() &&
+			actual.compare(actual.size() - expectedSuffix.size(), expectedSuffix.size(), expectedSuffix) == 0)
+			return ::testing::AssertionSuccess();
+		return ::testing::AssertionFailure() << "\"" << actual << "\" does not end with \"" << expectedSuffix << "\"";
+	}
 }
 
 // PushAndRecent/WaitAfter/WaitAfterTimeout/Overflow (plain LogBuffer
@@ -55,9 +67,9 @@ TEST(LogBufferTest, SetFileWritesEveryLineRegardlessOfCategoryFilter)
 
 	auto lines = readLines(path);
 	ASSERT_EQ(lines.size(), 3u);
-	EXPECT_EQ(lines[0], "[hermes] listening on :8000");
-	EXPECT_EQ(lines[1], "[hermes] GET /foo -> 404");
-	EXPECT_EQ(lines[2], "[roku-ecp] launch 10.0.0.5 unreachable");
+	EXPECT_TRUE(EndsWithLine(lines[0], "[hermes] listening on :8000"));
+	EXPECT_TRUE(EndsWithLine(lines[1], "[hermes] GET /foo -> 404"));
+	EXPECT_TRUE(EndsWithLine(lines[2], "[roku-ecp] launch 10.0.0.5 unreachable"));
 }
 
 TEST(LogBufferTest, GatewayCategoriesHiddenFromRecentWhenFlagOff)
@@ -99,7 +111,7 @@ TEST(LogBufferTest, NonGatewayCategoryAlwaysVisibleRegardlessOfFlag)
 
 	auto [lines, seq] = buf.recent(10);
 	ASSERT_EQ(lines.size(), 1u);
-	EXPECT_EQ(lines[0], "[kairos] GET /api/channels -> 200");
+	EXPECT_TRUE(EndsWithLine(lines[0], "[kairos] GET /api/channels -> 200"));
 }
 
 // setForward: local (file-backed) lines that pass the filter should reach
@@ -127,14 +139,14 @@ TEST(LogBufferTest, ForwardedLinesReachCombinedBufferButNotItsOwnFile)
 
 	auto [combinedLines, seq] = combined.recent(10);
 	ASSERT_EQ(combinedLines.size(), 2u);
-	EXPECT_EQ(combinedLines[0], "[hermes] listening on :8000");
-	EXPECT_EQ(combinedLines[1], "[sync] pass complete");
+	EXPECT_TRUE(EndsWithLine(combinedLines[0], "[hermes] listening on :8000"));
+	EXPECT_TRUE(EndsWithLine(combinedLines[1], "[sync] pass complete"));
 
 	// Only the line pushed directly to `local` should be in hermes.log —
 	// the relayed [sync] line was never local's, and never should reach it.
 	auto fileLines = readLines(local_path);
 	ASSERT_EQ(fileLines.size(), 1u);
-	EXPECT_EQ(fileLines[0], "[hermes] listening on :8000");
+	EXPECT_TRUE(EndsWithLine(fileLines[0], "[hermes] listening on :8000"));
 }
 
 TEST(LogBufferTest, ForwardRespectsLocalFilterBeforeReachingCombined)

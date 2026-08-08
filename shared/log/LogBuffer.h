@@ -1,13 +1,16 @@
 #pragma once
 #include <chrono>
 #include <condition_variable>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -16,6 +19,27 @@
 // category-prefix filtering policy over its own runtime flags is supplied
 // via setFilter() rather than baked in, since that policy differs per
 // service and depends on globals this header has no business knowing about.
+
+// Wall-clock timestamp prefixed onto every line pushed through this buffer
+// (see push() below) — without it, only ffmpeg's own relayed stderr lines
+// (FfmpegProcess stamps those itself) carried any time info at all, so a
+// downloaded log had no way to tell whether a "[session:...]"/"[splicer]"/
+// etc. line happened before, during, or after a given ffmpeg event, which
+// matters for diagnosing races between session lifecycle and still-running
+// ffmpeg processes. Local time, millisecond precision, date included since
+// downloaded logs can span midnight or multiple days.
+inline std::string logTimestampNow()
+{
+	using namespace std::chrono;
+	auto now      = system_clock::now();
+	auto ms       = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+	std::time_t t = system_clock::to_time_t(now);
+	std::tm tm{};
+	localtime_r(&t, &tm);
+	std::ostringstream ss;
+	ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << ms.count();
+	return ss.str();
+}
 
 // ─── Ring buffer ──────────────────────────────────────────────────────────────
 
@@ -66,24 +90,28 @@ public:
 
 	void push(std::string line)
 	{
+		// Filtering/forwarding operate on the original, category-tagged line
+		// (setFilter() callbacks match on a leading "[category]" — see e.g.
+		// hephaestusLogFilter — which a leading timestamp would break) — only
+		// the file/ring-buffer copy actually stored gets stamped.
+		bool should_push    = !filter_ || filter_(line);
+		std::string stamped = logTimestampNow() + " " + line;
 		{
 			std::lock_guard lock(mu_);
 			if (file_)
 			{
-				file_ << line << std::endl;
-				bytes_written_ += line.size() + 1;
+				file_ << stamped << std::endl;
+				bytes_written_ += stamped.size() + 1;
 				if (bytes_written_ > kMaxFileSize)
 				{
 					rotateFile();
 				}
 			}
 
-			bool should_push = !filter_ || filter_(line);
-
 			if (should_push)
 			{
-				if (fwd_) fwd_->push(line); // copy — line is moved-from just below
-				entries_.push_back({seq_++, std::move(line)});
+				if (fwd_) fwd_->push(line); // copy of the original — fwd_ stamps it independently on its own push()
+				entries_.push_back({seq_++, std::move(stamped)});
 				if (entries_.size() > kMax) entries_.pop_front();
 			}
 		}

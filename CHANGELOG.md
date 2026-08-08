@@ -86,6 +86,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   in-memory view the live viewer shows. Each service exposes its own log file via a new `GET /api/logs/file`; Hermes
   aggregates all three into `GET /api/logs/export`, admin-authenticated the same way as the existing log stream.
 
+### Added
+
+- **Wall-clock timestamps on every log line** (Kairos + Hermes + Hephaestus): `LogBuffer::push()` (the single choke
+  point every service's `std::cout`/`std::cerr` output passes through) now prefixes every line with a
+  `YYYY-MM-DD HH:MM:SS.mmm` timestamp before it reaches the log file or the in-memory ring buffer. Previously only
+  Hephaestus's relayed ffmpeg stderr lines carried any time info (a per-line stamp added at the point of capture) —
+  every other line (`[session:...]`, `[splicer]`, `[sessions]`, `[router]`, etc., across all three services) had
+  none, making it impossible to tell whether a session-lifecycle event happened before, during, or after a given
+  ffmpeg event in a downloaded log. The old per-line ffmpeg stamp was removed to avoid double-stamping.
+
 ### Fixed
 
 - **Queued live-channel preroll producer could crash mid-encode with "No such file or directory"** (Hephaestus):
