@@ -70,9 +70,13 @@ public:
 	// crosses a boundary). A caller with more frequent natural respawn points
 	// to offer (e.g. a live channel wanting room to eventually nudge speed
 	// per-head) can pass something much smaller.
+	// stall_timeout_ms: exposed purely so tests can shrink it (the default
+	// mirrors kHeadStallTimeoutMs in the .cpp) — no production caller needs
+	// anything but the default real-world budget.
 	VodEncodeStream(std::string label, std::string segment_dir, std::string segment_prefix,
 					ArgsBuilder argsBuilder, int buffer_size, bool ffmpeg_debug_logs, bool verbose_transcode_logs,
-					int lookahead_secs, int hls_time_secs, int head_window_segments = 100);
+					int lookahead_secs, int hls_time_secs, int head_window_segments = 100,
+					int64_t stall_timeout_ms                                        = 15'000);
 	~VodEncodeStream();
 
 	VodEncodeStream(const VodEncodeStream&)            = delete;
@@ -177,6 +181,7 @@ private:
 	int lookahead_secs_;
 	int hls_time_secs_;
 	int head_window_segments_;
+	int64_t stall_timeout_ms_;
 
 	mutable std::mutex mtx_;
 	std::vector<std::unique_ptr<Head>> heads_; // guarded by mtx_; dead heads erased, not just marked

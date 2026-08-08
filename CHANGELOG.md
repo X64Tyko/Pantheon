@@ -109,6 +109,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **VOD playback could freeze shortly after starting** (Hephaestus): `VodEncodeStream::prepareSegment()` only ever
+  refreshed a head's "last requested" bookkeeping on a cache *miss* — a segment already sitting on disk (the normal
+  case once a head has raced ahead and built up a backlog) returned straight from the fast path without touching it.
+  That bookkeeping is what `tick()`'s pause/resume hysteresis and `evictOneIfAtCap()`'s LRU choice both key off, so a
+  head serving its entire backlog from disk looked frozen at its spawn-time timestamp — indistinguishable from one
+  nobody wants anymore. Worse, once such a head paused (its own deliberate throttle after building a healthy lead —
+  expected, not a problem), `prepareSegment()`'s stalled-vs-lagging check had no way to tell "paused on purpose" apart
+  from "genuinely stuck": any head idle past the stall timeout got only the tight catch-up margin regardless of why,
+  and normal playback routinely takes far longer than that timeout to work through a pre-buffered backlog. The
+  combination meant a perfectly healthy, cheaply-resumable paused head got killed and cold-respawned (full
+  reopen/reprobe/reseek/NVENC-init) the moment a viewer caught up to it — read as playback starting fine, then
+  freezing. Both bookkeeping paths are now touched unconditionally, and a currently-paused head is never classified
+  as stalled.
 - **Channel-viewer playlist route's four non-200 branches were completely silent server-side** (Hephaestus): "viewer
   session not found," "channel unavailable," the `playlist.m3u8` file never appearing, and a failed read of an
   already-confirmed-existing file all returned a small JSON error body with no log line anywhere — indistinguishable

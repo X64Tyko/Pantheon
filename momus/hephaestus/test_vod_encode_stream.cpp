@@ -222,3 +222,101 @@ TEST_F(VodEncodeStreamTest, TickDoesNotStopAHeadThatHasNotReachedItsWindowEnd)
 
 	EXPECT_EQ(stream->liveHeadCount(), 1);
 }
+
+TEST_F(VodEncodeStreamTest, FastPathDiskHitRefreshesLastRequestedForLruEviction)
+{
+	// Regression test: a head whose segments are all being served straight
+	// from the already-on-disk fast path (the common, intended case — it
+	// raced ahead of the viewer) must still count as "recently requested"
+	// for evictOneIfAtCap()'s LRU choice. Before the fix, last_requested/
+	// last_requested_at_ms were only ever touched on the cache-*miss* path
+	// below, so a head serving its entire backlog straight from disk looked
+	// frozen at its spawn-time timestamp — indistinguishable from one nobody
+	// wants anymore — the moment a third, unrelated request forced an
+	// eviction at the live-head cap.
+	VodEncodeStream::ArgsBuilder args = [](int, int64_t, std::optional<double>)
+	{
+		return std::vector<std::string>{"sleep", "30"};
+	};
+	VodEncodeStream stream("video", dir.string(), "seg-", args,
+						   /*buffer_size=*/65536, /*ffmpeg_debug_logs=*/false,
+						   /*verbose_transcode_logs=*/false,
+						   /*lookahead_secs=*/1200, /*hls_time_secs=*/6); // huge window — never pauses in this test
+	auto segment_ms = segmentStartMs(500);
+
+	ASSERT_EQ(stream.prepareSegment(0, segment_ms, 500), VodEncodeStream::SegmentPrep::WaitColdStart);
+	ASSERT_EQ(stream.liveHeadCount(), 1); // head A, [0,100)
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+	ASSERT_EQ(stream.prepareSegment(150, segment_ms, 500), VodEncodeStream::SegmentPrep::WaitColdStart);
+	ASSERT_EQ(stream.liveHeadCount(), 2); // head B, [150,250)
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+	// Head A has been producing (and a viewer consuming) segment 0 the whole
+	// time in between — simulate that purely through the fast, already-on-
+	// disk path, exactly as normal playback would.
+	touchSegment(0);
+	ASSERT_EQ(stream.prepareSegment(0, segment_ms, 500), VodEncodeStream::SegmentPrep::Ready);
+
+	// A third, unrelated request now forces an eviction at the live-head cap
+	// (2). Head A was just used a moment ago via the fast path; head B has
+	// not been touched since its own spawn — B must be the one evicted.
+	ASSERT_EQ(stream.prepareSegment(300, segment_ms, 500), VodEncodeStream::SegmentPrep::WaitColdStart);
+	ASSERT_EQ(stream.liveHeadCount(), 2);
+
+	auto windows = stream.headWindowsForTest();
+	std::sort(windows.begin(), windows.end());
+	ASSERT_EQ(windows.size(), 2u);
+	EXPECT_EQ(windows[0].first, 0) << "head A (recently used via the disk fast-path) must survive";
+	EXPECT_EQ(windows[1].first, 300) << "the newly spawned head covering the actual request";
+}
+
+TEST_F(VodEncodeStreamTest, PausedHeadIsNotTreatedAsStalledEvenAfterALongIdlePeriod)
+{
+	// Regression test: pausing is this class's OWN deliberate throttle
+	// (tick()'s pause/resume hysteresis, once a head built up a healthy
+	// lead) — it is not the head being stuck. Before the fix, prepareSegment()'s
+	// "stalled" heuristic couldn't tell the difference: any head idle past
+	// stall_timeout_ms (for *any* reason) got only the tight catch-up margin,
+	// so a normal viewer catching up to a paused head's backlog — which
+	// routinely takes far longer than the stall timeout, since that's the
+	// whole point of pre-buffering — got the head evicted and cold-respawned
+	// instead of cheaply resumed.
+	VodEncodeStream::ArgsBuilder args = [](int, int64_t, std::optional<double>)
+	{
+		return std::vector<std::string>{"sleep", "30"};
+	};
+	// lookahead_secs/hls_time_secs -> window_segments = 2/1 = 2, so the head
+	// pauses quickly once it's got a small lead. stall_timeout_ms is tiny so
+	// the test can wait past it without a real multi-second sleep.
+	VodEncodeStream stream("video", dir.string(), "seg-", args,
+						   /*buffer_size=*/65536, /*ffmpeg_debug_logs=*/false,
+						   /*verbose_transcode_logs=*/false,
+						   /*lookahead_secs=*/2, /*hls_time_secs=*/1,
+						   /*head_window_segments=*/100, /*stall_timeout_ms=*/20);
+	auto segment_ms = segmentStartMs(250);
+
+	ASSERT_EQ(stream.prepareSegment(0, segment_ms, 250), VodEncodeStream::SegmentPrep::WaitColdStart);
+	ASSERT_EQ(stream.liveHeadCount(), 1);
+
+	// Simulate the head racing ahead and building up a healthy backlog.
+	for (int i = 0; i <= 5; ++i) touchSegment(i);
+	stream.tick(250);
+	ASSERT_TRUE(stream.anyHeadPaused()) << "sanity check: the head should have paused once it built up a lead";
+
+	// Wait past stall_timeout_ms with the head legitimately idle (paused) —
+	// same as a viewer taking a while to watch through the backlog.
+	std::this_thread::sleep_for(std::chrono::milliseconds(40));
+
+	// The viewer catches up just past the paused frontier (generated=5):
+	// within the generous "still working" margin (20) this should get, but
+	// beyond the tight "genuinely stalled" one (4) the old, pause-blind
+	// check would have wrongly applied here.
+	auto result = stream.prepareSegment(12, segment_ms, 250);
+
+	EXPECT_EQ(result, VodEncodeStream::SegmentPrep::WaitShort)
+		<< "a paused-but-healthy head should be resumed and waited on, not evicted for a cold respawn";
+	ASSERT_EQ(stream.liveHeadCount(), 1);
+	EXPECT_EQ(stream.headWindowsForTest()[0].first, 0) << "must still be the original head, not a fresh one";
+	EXPECT_FALSE(stream.anyHeadPaused()) << "prepareSegment() should have resumed it";
+}

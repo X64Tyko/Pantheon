@@ -42,8 +42,9 @@ namespace
 	// wall-clock keeps moving, so respawning a head that's still actively
 	// working just trades one kind of behind for another, with real overhead
 	// on every cycle — confirmed live as the same source file getting
-	// reopened by a fresh head every few seconds, never catching up.
-	constexpr int64_t kHeadStallTimeoutMs = 15'000;
+	// reopened by a fresh head every few seconds, never catching up. (The
+	// actual timeout is VodEncodeStream::stall_timeout_ms_, injected via the
+	// constructor for testability — this is just its real-world default.)
 
 	// Live heads (spawned, not yet fully torn down) this stream will hold onto
 	// at once — a live head keeps its hardware encoder slot (NVENC/VAAPI) even
@@ -56,7 +57,7 @@ namespace
 VodEncodeStream::VodEncodeStream(std::string label, std::string segment_dir, std::string segment_prefix,
 								 ArgsBuilder argsBuilder, int buffer_size, bool ffmpeg_debug_logs,
 								 bool verbose_transcode_logs, int lookahead_secs, int hls_time_secs,
-								 int head_window_segments)
+								 int head_window_segments, int64_t stall_timeout_ms)
 	: label_(std::move(label))
 	, segment_dir_(std::move(segment_dir))
 	, segment_prefix_(std::move(segment_prefix))
@@ -67,6 +68,7 @@ VodEncodeStream::VodEncodeStream(std::string label, std::string segment_dir, std
 	, lookahead_secs_(lookahead_secs)
 	, hls_time_secs_(hls_time_secs)
 	, head_window_segments_(head_window_segments)
+	, stall_timeout_ms_(stall_timeout_ms)
 {
 }
 
@@ -207,6 +209,23 @@ VodEncodeStream::SegmentPrep VodEncodeStream::prepareSegment(int segment_index, 
 	{
 		std::lock_guard<std::mutex> lock(mtx_);
 
+		// Looked up and touched unconditionally, before the disk-exists fast
+		// path below — a head whose segments are all being served straight
+		// from disk (the common case: it raced ahead of the viewer, exactly
+		// what it's supposed to do) is still very much "in use" and must
+		// count as recently requested, both for evictOneIfAtCap()'s LRU
+		// choice and for tick()'s own pause/resume floor (see its comment).
+		// Previously this lookup/touch only happened on the miss path below,
+		// so a head serving entirely from its own pre-generated backlog
+		// looked frozen at its spawn-time timestamp — indistinguishable from
+		// one nobody wants anymore — to both of those.
+		Head* head = findCoveringHead(segment_index);
+		if (head)
+		{
+			head->last_requested.store(segment_index);
+			head->last_requested_at_ms.store(nowMs());
+		}
+
 		// A file already on disk is always safe to serve regardless of
 		// whether any live head currently "declares" it — reaped heads leave
 		// their segments servable (see tick()'s own comment), and direct-
@@ -215,14 +234,14 @@ VodEncodeStream::SegmentPrep VodEncodeStream::prepareSegment(int segment_index, 
 		// Checking this first avoids spawning a redundant second writer for
 		// an index another (possibly already-gone, possibly still-
 		// overrunning) process already produced.
-		if (std::filesystem::exists(segmentPath(segment_index))) return SegmentPrep::Ready;
+		if (std::filesystem::exists(segmentPath(segment_index)))
+		{
+			if (head && head->ffmpeg && head->ffmpeg->isPaused()) head->ffmpeg->resume();
+			return SegmentPrep::Ready;
+		}
 
-		Head* head = findCoveringHead(segment_index);
 		if (head)
 		{
-			head->last_requested.store(segment_index);
-			head->last_requested_at_ms.store(nowMs());
-
 			int generated = head->highest_generated.load();
 			if (segment_index <= generated)
 			{
@@ -241,8 +260,22 @@ VodEncodeStream::SegmentPrep VodEncodeStream::prepareSegment(int segment_index, 
 			// seek/jump this head could never reach by continuing
 			// sequentially needs its own head starting at the right place,
 			// not an ever-more-generous wait.
-			bool stalled = head->exited_naturally->load() ||
-				(nowMs() - head->last_progress_at_ms.load()) >= kHeadStallTimeoutMs;
+			//
+			// A currently-paused head is never "stalled", regardless of how
+			// long it's been since last_progress_at_ms moved: pausing is
+			// this same class's own deliberate throttle (tick()'s hysteresis
+			// once a head built up a healthy lead), not the head being
+			// stuck, and normal playback will routinely leave one paused far
+			// longer than stall_timeout_ms_ just by watching through its
+			// existing backlog. Resuming it is a SIGCONT away — cheap and
+			// fast, unlike a respawn's full reopen/reprobe/reseek/NVENC-init
+			// — so it deserves the same generous margin as a merely-lagging
+			// head, not the tight one that used to send a perfectly healthy,
+			// still-resumable head to spawnHead()'s eviction below the
+			// moment a viewer's request outran its paused backlog.
+			bool head_paused = head->ffmpeg && head->ffmpeg->isPaused();
+			bool stalled     = head->exited_naturally->load() ||
+				(!head_paused && (nowMs() - head->last_progress_at_ms.load()) >= stall_timeout_ms_);
 			int margin = stalled ? kVodCatchUpMarginSegments : kVodLaggingCatchUpMarginSegments;
 			if (segment_index <= generated + margin)
 			{
