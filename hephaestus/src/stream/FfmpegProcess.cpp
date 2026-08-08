@@ -21,10 +21,29 @@
 static constexpr int kVideoShowinfoSampleEvery = 30;
 static constexpr int kAudioShowinfoSampleEvery = 50;
 
+// The `segment` muxer (VodSession's own buildVodAudioArgs — see its comment
+// on why direct-stream audio needs this instead of `hls`) logs two lines
+// per segment the `hls` muxer never did: a "starts with packet ..." line
+// and a "'<file>' count:N ended" line, both at the same info level as the
+// "Opening '<file>' for writing" line both muxers share. At a real (several
+// seconds per segment) cadence that's negligible, but a head racing far
+// ahead of a stalled/idle viewer (VodEncodeStream's own pause/resume is
+// throttling exactly this — see its own comment) can produce hundreds of
+// segments a second, and this alone was enough to rotate a whole capture's
+// worth of ring-buffer log down to pure per-segment noise with zero
+// [vod:.../router] context left to diagnose anything from. Sampled the same
+// way showinfo/ashowinfo already are, keyed off the `segment` muxer's own
+// distinctive "count:" field (not present in the shared "Opening ..." line,
+// which stays unsampled/one-per-segment on both muxers).
+static constexpr int kSegmentMuxerSampleEvery = 10;
+
 bool FfmpegProcess::shouldEmitLine(const std::string& line)
 {
 	if (line.find("ashowinfo") != std::string::npos) return (++audio_showinfo_count_ % kAudioShowinfoSampleEvery) == 0;
 	if (line.find("showinfo") != std::string::npos) return (++video_showinfo_count_ % kVideoShowinfoSampleEvery) == 0;
+	if (line.find("[segment @") != std::string::npos &&
+		(line.find("starts with packet") != std::string::npos || line.find("count:") != std::string::npos))
+		return (++segment_muxer_count_ % kSegmentMuxerSampleEvery) == 0;
 	return true;
 }
 

@@ -44,6 +44,9 @@ class FfmpegProcess
 	// plain ints are fine. See shouldEmitLine()'s own comment.
 	int video_showinfo_count_ = 0;
 	int audio_showinfo_count_ = 0;
+	// The `segment` muxer's own per-segment "starts with packet"/"count:N
+	// ended" lines — see shouldEmitLine()'s own comment.
+	int segment_muxer_count_ = 0;
 	bool shouldEmitLine(const std::string& line);
 
 public:
