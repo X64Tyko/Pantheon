@@ -66,6 +66,7 @@ void ChannelPlaylistSplicer::spliceTo(SpawnInfo info)
 {
 	std::lock_guard<std::mutex> lock(mtx_);
 	if (have_active_&& info
+
 	
 	.
 	pending_dir == active_.pending_dir
@@ -140,6 +141,19 @@ void ChannelPlaylistSplicer::relayTickLocked()
 		if (segment_cache_) segment_cache_->invalidate(oldest_path);
 		segments_.pop_front();
 	}
+
+	// Never publish before the first segment exists: the retention-eviction
+	// loop above never evicts below list_size_+delete_threshold_ items, so
+	// segments_ being empty here can only mean this splicer hasn't relayed
+	// anything since construction yet, not "everything rolled off". Publishing
+	// in that state would write a syntactically-valid-but-empty live playlist
+	// (TARGETDURATION:0, zero segments) that a client polling in this exact
+	// window can read via a bare filesystem::exists() check (waitForFile()) —
+	// hls.js correctly treats that as a fatal parse error. Leaving the file
+	// absent instead makes waitForFile() keep polling, which is the correct
+	// "not ready yet" signal and resolves within its existing timeout once the
+	// first real segment lands.
+	if (segments_.empty()) return;
 
 	// ── Write canonical playlist.m3u8 (temp_file+rename — sole writer now) ──
 	size_t visibleCount = std::min(segments_.size(), static_cast<size_t>(list_size_));

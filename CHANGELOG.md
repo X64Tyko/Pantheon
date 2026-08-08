@@ -116,6 +116,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   all of them identically as a fatal `levelParsingError`, since it tries to parse any non-M3U8 response body as one).
   Reproduced live: repeated `levelParsingError`s with no ffmpeg crash, no cache-invalidation activity, and no trace in
   any of the existing diagnostic dumps. All four branches now log which one fired and why.
+- **Live-channel `playlist.m3u8` could be served as an empty, spec-invalid skeleton right after a session
+  (re)starts** (Hephaestus): `ChannelPlaylistSplicer::relayTickLocked()` published `playlist.m3u8` (via its usual
+  atomic temp-file+rename) on its very first tick even when it hadn't relayed a single segment yet — producing a
+  syntactically well-formed but empty live playlist (`#EXTM3U`, `TARGETDURATION:0`, zero `#EXTINF` lines). The route
+  handler's readiness check (`waitForFile()`) only polls `std::filesystem::exists()`, and the channel-viewer route's
+  only content guard checks for a leading `#EXTM3U` tag — both pass this skeleton straight through as a normal 200.
+  hls.js correctly treats a segment-less live playlist as a fatal `levelParsingError`, then retries into a full
+  player reconnect; reproduced live as a backward seek + fatal parse error + re-fetch of an already-played segment,
+  every time around a session restart (bucket switch, cold start, or `SessionManager::getOrCreate()` silently
+  replacing a torn-down session). The splicer now simply doesn't publish until it has relayed at least one real
+  segment, so a request in that window sees "file doesn't exist yet" and `waitForFile()`'s existing poll-and-wait
+  correctly resolves once the first segment lands, instead of a client-visible parse error and reconnect.
 - **Queued live-channel preroll producer could crash mid-encode with "No such file or directory"** (Hephaestus):
   `ChannelSession::stop()` removed the whole session's HLS directory (`remove_all(hlsDir())`) without first stopping
   any producers still sitting in the preroll queue (built ahead of their actual air time, per-item, each a live ffmpeg
