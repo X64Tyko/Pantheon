@@ -88,6 +88,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Queued live-channel preroll producer could crash mid-encode with "No such file or directory"** (Hephaestus):
+  `ChannelSession::stop()` removed the whole session's HLS directory (`remove_all(hlsDir())`) without first stopping
+  any producers still sitting in the preroll queue (built ahead of their actual air time, per-item, each a live ffmpeg
+  process writing into its own `pending/<id>` subdirectory) — only the single currently-active producer was stopped.
+  A still-running queued producer's ffmpeg process would keep writing after its directory was deleted out from under
+  it, crashing with a real "Failed to open file ... No such file or directory" mid-item and leaving the live playlist
+  frozen on stale content until the next item's own (unaffected) producer got spliced in. `stop()` now stops and
+  clears the preroll queue in the same critical section, before the directory removal.
 - **Hermes could serve stale/wrong segment bytes after a live-channel session restarted** (Hephaestus + Hermes): a
   channel's segment numbering (`seg-00000.ts`, ...) always restarts at zero when its underlying `ChannelSession` gets
   torn down and recreated (idle reap, then a fresh request) — Hephaestus's own cache already handled this (invalidated

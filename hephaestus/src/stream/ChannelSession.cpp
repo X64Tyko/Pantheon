@@ -922,6 +922,18 @@ void ChannelSession::stop()
 			hls_producer_->stop();
 			hls_producer_.reset();
 		}
+		// Queued (not-yet-promoted) preroll producers each own a live ffmpeg
+		// process still writing into their own pending/<spawn_id> directory —
+		// without this, remove_all(dir) below deletes those directories out
+		// from under a still-running process. Confirmed live: a queued
+		// item's ffmpeg crashed mid-encode with "Failed to open file ...
+		// No such file or directory" on its pending dir. stop() blocks until
+		// each process is confirmed dead, same as hls_producer_->stop() above.
+		for (auto& entry : hls_preroll_queue_)
+		{
+			if (entry.handle.producer) entry.handle.producer->stop();
+		}
+		hls_preroll_queue_.clear();
 	}
 	hls_producer_stop_.store(true);
 	if (hls_producer_thread_.joinable()) hls_producer_thread_.join();

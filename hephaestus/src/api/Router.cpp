@@ -201,9 +201,30 @@ static std::string rewriteChannelViewerPlaylist(const std::string& content, cons
 	return out;
 }
 
-static void serveRewrittenChannelViewerPlaylist(const std::string& path, const std::string& channel_id,
-												const std::string& bucket, int64_t instance_id,
-												httplib::Response& res)
+// Unconditionally overwrites a per-viewer "last served" snapshot (raw disk
+// content + what actually got sent to the client after rewriting) every
+// call — cheap (one small file, always overwritten, never accumulates) and
+// means whatever hls.js actually choked on for a given viewer_session_id is
+// sitting on disk the moment its next levelParsingError gets reported,
+// regardless of whether the content passed any particular sanity check.
+// Added after the #EXTM3U-prefix guard below failed to catch a real
+// levelParsingError — the corruption (if any) is evidently not "file is
+// empty/garbage from the first byte," so this doesn't try to guess what
+// "bad" looks like at all, it just always keeps the evidence.
+static void dumpLastServedPlaylist(const std::string& viewer_session_id, const std::string& raw_content,
+								   const std::string& rewritten_content)
+{
+	std::error_code dir_ec;
+	std::filesystem::create_directories("./data", dir_ec);
+	std::ofstream raw_dump("./data/last_playlist_" + viewer_session_id + ".raw.m3u8", std::ios::binary);
+	if (raw_dump) raw_dump << raw_content;
+	std::ofstream rewritten_dump("./data/last_playlist_" + viewer_session_id + ".rewritten.m3u8", std::ios::binary);
+	if (rewritten_dump) rewritten_dump << rewritten_content;
+}
+
+static void serveRewrittenChannelViewerPlaylist(const std::string& viewer_session_id, const std::string& path,
+												const std::string& channel_id, const std::string& bucket,
+												int64_t instance_id, httplib::Response& res)
 {
 	std::string content;
 	if (!readFileBytes(path, content))
@@ -245,8 +266,9 @@ static void serveRewrittenChannelViewerPlaylist(const std::string& path, const s
 	// playlist is rewritten every tick for the life of the session.
 	res.set_header("Cache-Control", "no-store, no-cache, must-revalidate");
 	res.set_header("Pragma", "no-cache");
-	res.set_content(rewriteChannelViewerPlaylist(content, channel_id, bucket, instance_id),
-					"application/vnd.apple.mpegurl");
+	std::string rewritten = rewriteChannelViewerPlaylist(content, channel_id, bucket, instance_id);
+	dumpLastServedPlaylist(viewer_session_id, content, rewritten);
+	res.set_content(rewritten, "application/vnd.apple.mpegurl");
 }
 
 // Video and audio are now independent streams (VodSession/VodEncodeStream —
@@ -765,7 +787,8 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 					return;
 				}
-				serveRewrittenChannelViewerPlaylist(path, channel_id, bucket, session->instanceId(), res);
+				std::string viewer_session_id = req.matches[1];
+				serveRewrittenChannelViewerPlaylist(viewer_session_id, path, channel_id, bucket, session->instanceId(), res);
 			});
 
 	svr.Get(R"(/stream/hls/channel-viewer/([^/]+)/(seg-[0-9]+\.ts)$)", [&sessions, &channelViewers, &segmentCache](
