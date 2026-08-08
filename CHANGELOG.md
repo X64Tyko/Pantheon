@@ -96,6 +96,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   none, making it impossible to tell whether a session-lifecycle event happened before, during, or after a given
   ffmpeg event in a downloaded log. The old per-line ffmpeg stamp was removed to avoid double-stamping.
 
+### Added
+
+- **Stale-manifest detector for the live-channel playlist route** (Hephaestus): each viewer's `#EXT-X-MEDIA-SEQUENCE`
+  can now only move forward — a decrease for the same `viewer_session_id` gets permanently dumped to
+  `./data/stale_playlist_<viewer>_<ms>.m3u8` and logged, instead of silently overwriting the existing (and
+  overwrite-on-every-request) `last_playlist_*` snapshot. Added after reproducing a client-visible symptom this
+  can't otherwise catch: hls.js briefly playing old content on a live channel then snapping back to current, with no
+  crash, no non-200 response, and no trace anywhere — consistent with something between the client and Hephaestus
+  (a CDN edge, a tunnel, a buffering quirk) replaying a stale-but-valid response rather than any bug in what
+  Hephaestus itself served.
+
 ### Fixed
 
 - **Channel-viewer playlist route's four non-200 branches were completely silent server-side** (Hephaestus): "viewer

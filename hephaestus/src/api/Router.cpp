@@ -7,9 +7,11 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 using json = nlohmann::json;
 
@@ -222,6 +224,53 @@ static void dumpLastServedPlaylist(const std::string& viewer_session_id, const s
 	if (rewritten_dump) rewritten_dump << rewritten_content;
 }
 
+// A live channel's #EXT-X-MEDIA-SEQUENCE only ever increases for a given
+// session (relayTickLocked only ever appends new segments before its own
+// pruning) — a decrease for the same viewer_session_id means this viewer was
+// just served a snapshot older than one it already received, e.g. an
+// intermediary between the client and Hephaestus (a CDN edge, Cloudflare
+// Tunnel, a browser/hls.js buffering quirk) replaying a stale response.
+// dumpLastServedPlaylist() above can't catch this on its own: it overwrites
+// every call, so by the time anyone looks, the very next (correct, newer)
+// poll has already erased the evidence — this keeps a permanent, timestamped
+// copy, but only on the anomaly itself, so it doesn't accumulate on every
+// normal request.
+static std::mutex g_last_seq_mtx;
+static std::unordered_map<std::string, int64_t> g_last_seq_by_viewer;
+
+static void checkForStaleMediaSequence(const std::string& viewer_session_id, const std::string& raw_content)
+{
+	static const std::string kTag = "#EXT-X-MEDIA-SEQUENCE:";
+	auto pos                      = raw_content.find(kTag);
+	if (pos == std::string::npos) return;
+	int64_t seq;
+	try
+	{
+		seq = std::stoll(raw_content.substr(pos + kTag.size()));
+	}
+	catch (...)
+	{
+		return;
+	}
+
+	std::lock_guard<std::mutex> lock(g_last_seq_mtx);
+	auto it = g_last_seq_by_viewer.find(viewer_session_id);
+	if (it != g_last_seq_by_viewer.end() && seq < it->second)
+	{
+		auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::system_clock::now().time_since_epoch()).count();
+		std::error_code dir_ec;
+		std::filesystem::create_directories("./data", dir_ec);
+		std::string path = "./data/stale_playlist_" + viewer_session_id + "_" + std::to_string(ms) + ".m3u8";
+		std::ofstream dump(path, std::ios::binary);
+		if (dump) dump << raw_content;
+		std::cerr << "[router] STALE MEDIA-SEQUENCE for viewer_session_id=" << viewer_session_id
+			<< ": served seq=" << seq << " after previously serving seq=" << it->second
+			<< " -- saved to " << path << "\n";
+	}
+	if (it == g_last_seq_by_viewer.end() || seq > it->second) g_last_seq_by_viewer[viewer_session_id] = seq;
+}
+
 static void serveRewrittenChannelViewerPlaylist(const std::string& viewer_session_id, const std::string& path,
 												const std::string& channel_id, const std::string& bucket,
 												int64_t instance_id, httplib::Response& res)
@@ -271,6 +320,7 @@ static void serveRewrittenChannelViewerPlaylist(const std::string& viewer_sessio
 		res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 		return;
 	}
+	checkForStaleMediaSequence(viewer_session_id, content);
 	// Same no-cache contract as serveHlsFile's manifest branch — this
 	// playlist is rewritten every tick for the life of the session.
 	res.set_header("Cache-Control", "no-store, no-cache, must-revalidate");
