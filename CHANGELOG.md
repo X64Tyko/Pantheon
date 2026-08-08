@@ -98,6 +98,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Channel-viewer playlist route's four non-200 branches were completely silent server-side** (Hephaestus): "viewer
+  session not found," "channel unavailable," the `playlist.m3u8` file never appearing, and a failed read of an
+  already-confirmed-existing file all returned a small JSON error body with no log line anywhere — indistinguishable
+  from each other, and indistinguishable from a genuinely malformed 200, from the client's perspective (hls.js reports
+  all of them identically as a fatal `levelParsingError`, since it tries to parse any non-M3U8 response body as one).
+  Reproduced live: repeated `levelParsingError`s with no ffmpeg crash, no cache-invalidation activity, and no trace in
+  any of the existing diagnostic dumps. All four branches now log which one fired and why.
 - **Queued live-channel preroll producer could crash mid-encode with "No such file or directory"** (Hephaestus):
   `ChannelSession::stop()` removed the whole session's HLS directory (`remove_all(hlsDir())`) without first stopping
   any producers still sitting in the preroll queue (built ahead of their actual air time, per-item, each a live ffmpeg

@@ -229,6 +229,15 @@ static void serveRewrittenChannelViewerPlaylist(const std::string& viewer_sessio
 	std::string content;
 	if (!readFileBytes(path, content))
 	{
+		// This 404 lands in hls.js as a response body it tries to parse as
+		// M3U8 — i.e. a fatal levelParsingError, indistinguishable client-side
+		// from a genuinely malformed 200. Logged (not just returned) since
+		// this path previously left zero trace anywhere, including the
+		// ./data dumps below, making a real occurrence unfalsifiable from the
+		// client-side error alone.
+		std::cerr << "[router] serveRewrittenChannelViewerPlaylist: " << path
+			<< " missing/unreadable for viewer_session_id=" << viewer_session_id
+			<< " channel=" << channel_id << " bucket=" << bucket << "\n";
 		res.status = 404;
 		res.set_content(json{{"error", "not found"}}.dump(), "application/json");
 		return;
@@ -768,6 +777,13 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				auto bucket = channelViewers.touch(req.matches[1], channel_id);
 				if (bucket.empty())
 				{
+					// hls.js treats any non-M3U8 response body (including this
+					// JSON error) as a fatal levelParsingError — logged so a
+					// live occurrence is distinguishable from the other
+					// non-200 branches below instead of leaving the client
+					// error as the only evidence.
+					std::cerr << "[router] channel-viewer playlist: viewer session not found for "
+						<< req.matches[1].str() << "\n";
 					res.status = 404;
 					res.set_content(json{{"error", "viewer session not found"}}.dump(), "application/json");
 					return;
@@ -775,6 +791,8 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				auto session = sessions.getOrCreate(channel_id, bucket);
 				if (!session)
 				{
+					std::cerr << "[router] channel-viewer playlist: channel unavailable for viewer_session_id="
+						<< req.matches[1].str() << " channel=" << channel_id << " bucket=" << bucket << "\n";
 					res.status = 503;
 					res.set_content(json{{"error", "channel unavailable"}}.dump(), "application/json");
 					return;
@@ -783,6 +801,9 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				auto path = session->hlsDir() + "/playlist.m3u8";
 				if (!waitForFile(path))
 				{
+					std::cerr << "[router] channel-viewer playlist: " << path
+						<< " never appeared for viewer_session_id=" << req.matches[1].str()
+						<< " channel=" << channel_id << " bucket=" << bucket << "\n";
 					res.status = 503;
 					res.set_content(json{{"error", "not ready"}}.dump(), "application/json");
 					return;
