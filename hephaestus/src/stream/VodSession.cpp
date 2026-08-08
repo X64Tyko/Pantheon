@@ -281,6 +281,28 @@ static std::vector<std::string> buildVodVideoArgs(
 // all. directStream here is this ONE track's own eligibility (isAudioDirectStreamable),
 // entirely independent of whatever the video stream decided for itself —
 // see isVideoDirectStreamable/isAudioDirectStreamable's shared comment.
+//
+// segment_start_ms/total_segments: buildStaticPlaylist() serves ONE shared
+// #EXTINF list (see its own comment) against BOTH streams' segment files —
+// this stream's real on-disk cuts MUST therefore land at those exact
+// boundaries, not wherever ffmpeg's own `-hls_time`-driven auto-segmenter
+// happens to land. For a transcoded (non-direct) audio track that's true by
+// construction (accumulated -hls_time drift is sub-frame-sized). For a
+// direct-stream (copy) VIDEO track paired with this audio track, though,
+// video's own real cuts are keyframe-bound (see simulateDirectStreamSegmentBoundaries)
+// and can legitimately fall well past the nominal kVodHlsSegmentSecs
+// interval when real keyframes are sparse — video's `-hls_time` cut and
+// this audio stream's independent `-hls_time` cut then land at genuinely
+// different real times, even though both are told the same nominal target.
+// The playlist's declared #EXTINF for a given index (taken from video's
+// real cuts) then no longer matches this audio segment's actual content
+// duration — confirmed live as playback freezing a few seconds in, the
+// point where the two grids first diverge enough for a player's demuxer to
+// choke on a segment whose real duration doesn't match what the manifest
+// promised. Explicit -segment_times (segment muxer, not the hls one) pins
+// this stream's real cuts to the identical boundaries video's were
+// predicted to land on, so both streams' segments always agree with the
+// one shared playlist regardless of how sparse real video keyframes are.
 static std::vector<std::string> buildVodAudioArgs(
 	const std::string& ffmpeg_path,
 	const std::string& file_path,
@@ -292,7 +314,9 @@ static std::vector<std::string> buildVodAudioArgs(
 	const std::string& dir,
 	int hlsStartNumber,
 	const std::optional<ClientCapabilities>& client_caps,
-	const AudioTrack* source_audio)
+	const AudioTrack* source_audio,
+	const std::vector<int64_t>& segment_start_ms,
+	int total_segments)
 {
 	std::vector<std::string> a;
 	a.push_back(ffmpeg_path);
@@ -327,15 +351,34 @@ static std::vector<std::string> buildVodAudioArgs(
 
 	pushHeadBoundArgs(a, positionMs, windowDurationSecs);
 
+	// Every real boundary strictly inside this head's own window, expressed
+	// as an offset from positionMs (the segment muxer's -segment_times is
+	// relative to this run's own output timeline, which starts at 0 here —
+	// same "-ss before -i, output starts fresh" reasoning as everywhere else
+	// in this file). windowDurationSecs is nullopt exactly when this head
+	// runs to the real end of the file (see ArgsBuilder's own comment), so
+	// there's no further boundary to stop at — every remaining segment,
+	// through total_segments-1, belongs to this head.
+	std::optional<int64_t> window_end_ms;
+	if (windowDurationSecs) window_end_ms = positionMs + static_cast<int64_t>(std::llround(*windowDurationSecs * 1000.0));
+	std::string segment_times;
+	for (int i = hlsStartNumber + 1; i < total_segments; ++i)
+	{
+		int64_t boundary_ms = segment_start_ms[static_cast<size_t>(i)];
+		if (window_end_ms && boundary_ms >= *window_end_ms) break;
+		if (!segment_times.empty()) segment_times += ",";
+		std::ostringstream ss;
+		ss << std::fixed << std::setprecision(3) << ((boundary_ms - positionMs) / 1000.0);
+		segment_times += ss.str();
+	}
+
 	a.insert(a.end(), {
-				 "-f", "hls",
-				 "-hls_time", std::to_string(kVodHlsSegmentSecs),
-				 "-hls_playlist_type", "vod",
-				 "-hls_list_size", "0",
-				 "-start_number", std::to_string(hlsStartNumber),
-				 "-hls_segment_filename", dir + "/aseg-%05d.ts",
-				 dir + "/audio-encoder.m3u8"
+				 "-f", "segment",
+				 "-reset_timestamps", "0", // keep -output_ts_offset's absolute timestamps, not per-segment-relative ones
+				 "-segment_start_number", std::to_string(hlsStartNumber),
 			 });
+	if (!segment_times.empty()) a.insert(a.end(), {"-segment_times", segment_times});
+	a.push_back(dir + "/aseg-%05d.ts");
 
 	return a;
 }
@@ -672,26 +715,33 @@ void VodSession::rebuildAudioStream(int target_segment)
 
 	// Same by-value-capture reasoning as the video stream above — this
 	// closure lives inside the shared VodEncodeStream, not this session.
+	// segment_start_ms/total_segments are copied in too now — see
+	// buildVodAudioArgs' own comment on why this stream's real cuts must be
+	// pinned to those exact boundaries, not left to its own -hls_time guess.
 	std::string ffmpeg_path_copy                       = ffmpeg_path;
 	std::string file_path_copy                         = this->file_path;
 	VodStreamOptions opts_copy                         = opts;
 	std::optional<ClientCapabilities> client_caps_copy = client_caps_;
+	std::vector<int64_t> segment_start_ms_copy         = segment_start_ms;
+	int total_segments_copy                            = total_segments;
 
 	audio_stream_ = manager_.getOrCreateAudioStream(akey,
 													[adir, ffmpeg_path_copy, file_path_copy, opts_copy, client_caps_copy, captured_track, audio_direct,
-														source_audio_copy]()
+														source_audio_copy, segment_start_ms_copy, total_segments_copy]()
 													{
 														std::error_code ec;
 														std::filesystem::create_directories(adir, ec);
 														return std::make_shared<VodEncodeStream>(
 															"audio", adir, "aseg-",
 															[ffmpeg_path_copy, file_path_copy, opts_copy, client_caps_copy, captured_track, audio_direct,
-																source_audio_copy, adir](int segment_index, int64_t posMs, std::optional<double> windowSecs)
+																source_audio_copy, adir, segment_start_ms_copy, total_segments_copy]
+														(int segment_index, int64_t posMs, std::optional<double> windowSecs)
 															{
 																const AudioTrack* source_audio = source_audio_copy ? &*source_audio_copy : nullptr;
 																return buildVodAudioArgs(ffmpeg_path_copy, file_path_copy, posMs, windowSecs, captured_track,
 																						 audio_direct, opts_copy.verbose_transcode_logs, adir, segment_index,
-																						 client_caps_copy, source_audio);
+																						 client_caps_copy, source_audio, segment_start_ms_copy,
+																						 total_segments_copy);
 															},
 															opts_copy.buffer_size, opts_copy.ffmpeg_debug_logs, opts_copy.verbose_transcode_logs,
 															opts_copy.lookahead_secs, kVodHlsSegmentSecs);

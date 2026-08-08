@@ -109,6 +109,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Direct-stream VOD playback could freeze a few seconds in, every time** (Hephaestus): video and audio are encoded
+  as two independent ffmpeg processes, but only ONE shared `#EXTINF` list (built from video's own real segment
+  boundaries) gets served for both playlists. For a direct-stream (copy) video, real cuts land on the nearest
+  keyframe at/after each target interval, and can legitimately run longer than the nominal segment length whenever
+  real keyframes are sparse; direct-stream audio has no such constraint and was still letting ffmpeg's own
+  `-hls_time`-driven auto-segmenter cut it at the plain uniform interval instead. The two independent processes then
+  disagreed on where segment boundaries actually fall — reproduced live as an audio segment's real content running
+  out ~4 seconds short of what the shared playlist promised for it, worse the longer real video keyframes stayed
+  sparse. A player has no way to reconcile a segment whose actual media duration doesn't match its manifest-declared
+  one, and stalls once it hits the mismatch — exactly the "plays fine for a few seconds, then freezes" reports. Audio
+  now cuts (via the `segment` muxer's explicit `-segment_times`, not `-hls_time`) at the identical boundaries video's
+  were predicted to land on, so both streams' real segments always agree with the one shared playlist regardless of
+  how sparse real keyframes are.
 - **VOD playback could freeze shortly after starting** (Hephaestus): `VodEncodeStream::prepareSegment()` only ever
   refreshed a head's "last requested" bookkeeping on a cache *miss* — a segment already sitting on disk (the normal
   case once a head has raced ahead and built up a backlog) returned straight from the fast path without touching it.
