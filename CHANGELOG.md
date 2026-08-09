@@ -109,6 +109,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **A large/slow direct-stream file could collapse into a single unbounded HLS "segment," breaking playback and
+  leaving the encoder running unthrottled for the whole file** (Hephaestus): `probeKeyframeTimestampsMs()`'s
+  packet-level ffprobe scan is wrapped in its own timeout (a large 2160p/HEVC file on slow storage can genuinely take
+  longer than a fixed budget to demux every packet header); when that timeout fired, the scan's real-but-incomplete
+  partial output was trusted as if it were the complete keyframe list. Reproduced live as a ~2-hour movie whose scan
+  died after its very first keyframe: `total_segments` came out as 1, meaning the entire file was published as one
+  HLS segment that stays open/growing for the whole runtime — breaking the basic HLS assumption that a published
+  segment's bytes never change once served (a player that fetched it early treated whatever partial bytes it got as
+  the complete, short segment, then found no next one to move to and stopped) — and leaving nothing to ever pause the
+  encoder, since the pause/window-cap logic only ever acts once a segment boundary actually closes, so it ran
+  flat-out for the entire movie. The scan's own timeout is bumped up (30s → 120s) as headroom, but more importantly
+  the result is now cross-checked against the file's own separately-probed overall duration — a live probe's last
+  *packet* (not just keyframe) timestamp should always land within a couple seconds of the real end; a cache hit
+  (no fresh reading this session) falls back to comparing against the file's own established keyframe rhythm.
+  Either way, a probe that looks truncated is discarded in favor of the uniform-cadence fallback instead of being
+  trusted, and a truncated result is no longer written back to Kairos's keyframe cache (which would otherwise wedge
+  every future session on that file into repeating the same collapse regardless of how generous the timeout is).
+- **A file with unreadable container-level duration metadata (common on a re-muxed/edited source) could make VOD
+  playback stall right where the file actually ends** (Hephaestus): the real per-segment boundaries for a
+  direct-stream video come from an actual keyframe probe, but the *last* segment's declared end always fell back to
+  `effective_duration_ms` — which, when the container's own duration field is unreadable, is Kairos's stored
+  duration for that item instead, a value that has nothing to do with what the file's bytes actually contain (a
+  badly-scraped/mismatched library item, for instance). The manifest ended up with several correctly-durationed real
+  segments followed by one final segment claiming hours of content it didn't have; a player trusting that manifest
+  stalls waiting for data that will never arrive, right at the real end of the file — reported as playback starting
+  fine and then freezing, at a different point for every affected file since it's wherever that file's real content
+  happens to end. The last segment's boundary (and the session's overall reported duration) is now grounded in the
+  keyframe probe's own last-packet reading whenever the container's duration was unreadable, instead of trusting the
+  untrusted fallback.
 - **Direct-stream VOD playback could freeze a few seconds in, every time** (Hephaestus): video and audio are encoded
   as two independent ffmpeg processes, but only ONE shared `#EXTINF` list (built from video's own real segment
   boundaries) gets served for both playlists. For a direct-stream (copy) video, real cuts land on the nearest

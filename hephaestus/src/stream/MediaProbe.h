@@ -108,8 +108,19 @@ std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
 // that only actually holds for the transcode paths (where -force_key_frames
 // controls keyframe placement directly). Returns an empty vector on probe
 // failure or a file with no video stream.
+//
+// last_packet_ms (optional): the highest pts_time seen across EVERY packet
+// scanned (not just keyframes) — a free byproduct of the same single pass,
+// since every packet's pts_time is already read to test its keyframe flag.
+// probeMedia()'s own format-level duration can come back 0/missing on a
+// file whose container metadata is stale or malformed (common on a
+// re-muxed/edited source — the moov atom's duration field just wasn't
+// updated) even though the packets themselves demux fine; this is a real,
+// packet-grounded alternative for exactly that case, filled in whenever the
+// pointer is non-null and at least one packet was seen.
 std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
-											   const std::string& file_path);
+											   const std::string& file_path,
+											   int64_t* last_packet_ms = nullptr);
 
 // Last-write-time of file_path, as epoch seconds — matches Kairos's own
 // SyncManager.cpp::statFingerprint so a cached probe's stashed mtime (e.g.

@@ -765,6 +765,7 @@ void VodSession::computeSegmentBoundaries()
 		// otherwise, same as always, and pushes the fresh result back to
 		// Kairos so the next session on this file doesn't pay for it again.
 		std::vector<int64_t> keyframes;
+		int64_t last_packet_ms = -1; // filled only on a live probe — see below
 		std::error_code ec;
 		const auto file_size = std::filesystem::file_size(file_path, ec);
 		const auto cache_hit = !ec && !kairos_keyframes_ms_.empty()
@@ -776,24 +777,121 @@ void VodSession::computeSegmentBoundaries()
 		}
 		else
 		{
-			keyframes = probeKeyframeTimestampsMs(opts.ffprobe_path, file_path);
-			if (!keyframes.empty() && !ec)
-			{
-				const int64_t mtime  = statMtimeEpochSecs(file_path);
-				const std::string ct = content_type_, cid = content_id_;
-				const int64_t sz     = static_cast<int64_t>(file_size);
-				// Captures the manager, not `this` — manager_ outlives every
-				// VodSession it hands out (see its own header comment), but
-				// this session could be stopped/destroyed before a detached
-				// background task gets to run.
-				VodSessionManager* mgr = &manager_;
-				TaskRegistry::global().spawn([mgr, ct, cid, keyframes, sz, mtime]
-				{
-					mgr->pushKeyframeCache(ct, cid, keyframes, sz, mtime);
-				});
-			}
+			keyframes = probeKeyframeTimestampsMs(opts.ffprobe_path, file_path, &last_packet_ms);
 		}
 		segment_start_ms = simulateDirectStreamSegmentBoundaries(keyframes, kVodHlsSegmentSecs);
+
+		// effective_duration_ms only reaches here still wrong when the
+		// container's own duration field was unreadable (media_info.duration_ms
+		// <= 0 in start()) AND fallback_duration_ms (Kairos's own stored value —
+		// itself derived from a scrape/match that has nothing to do with this
+		// file's real bytes) was substituted for it. That fallback is exactly
+		// what buildStaticPlaylist() uses as the LAST segment's declared end —
+		// confirmed live as a file (broken/stale container duration metadata,
+		// common on a re-muxed/edited source) whose real keyframe-derived
+		// segments were all correct except the final one, which claimed hours
+		// of remaining content it didn't have. A player that trusts the
+		// manifest stalls waiting for data that will never arrive, right where
+		// the real file actually ends — reproduced live as "plays fine, then
+		// freezes" at whatever point that real end happened to fall for a
+		// given file. Once real (non-empty) boundaries exist, this last
+		// packet's own timestamp — a free byproduct of the same probe pass
+		// that produced them — is grounded in what the file actually contains,
+		// unlike the untrusted fallback; a cache hit has no fresh last-packet
+		// reading this session, so the last real keyframe plus a couple of
+		// segments' worth of margin is the best available substitute.
+		//
+		// Deliberately done BEFORE the truncated-probe check below, which
+		// needs a trustworthy effective_duration_ms to compare against —
+		// otherwise an ALSO-wrong fallback here reads as "the probe must be
+		// truncated" and the two corrections fight each other.
+		if (!segment_start_ms.empty() && media_info.duration_ms <= 0)
+		{
+			int64_t grounded_end_ms = last_packet_ms >= 0
+										  ? last_packet_ms + kVodHlsSegmentSecs * 1000
+										  : segment_start_ms.back() + 2 * kVodHlsSegmentSecs * 1000;
+			if (grounded_end_ms != effective_duration_ms)
+			{
+				std::cerr << "[vod:" << session_id << "] effective_duration_ms (" << effective_duration_ms
+					<< "ms, from Kairos' fallback — this file's own container duration was unreadable) "
+					"disagrees with the real keyframe probe — correcting to " << grounded_end_ms
+					<< "ms so the final segment doesn't claim content that isn't there\n";
+				effective_duration_ms = grounded_end_ms;
+			}
+		}
+
+		// probeKeyframeTimestampsMs()'s own scan can get cut short by its
+		// timeout on a large/slow file (see its own comment) — runCommand()
+		// then hands back a real but INCOMPLETE prefix of the file's actual
+		// keyframes, with no way for that function to tell "genuinely done"
+		// apart from "ran out of time" on its own. Trusting a truncated list
+		// here collapses however much of the file went unscanned into a
+		// single unbounded final "segment" that never actually closes (its
+		// -t bound only ever gets set when this head's window falls short of
+		// total_segments — see spawnHead()) — confirmed live as a two-hour
+		// movie whose scan died after its first keyframe, total_segments=1,
+		// the encoder racing flat-out for the whole runtime with nothing to
+		// ever pause it (tick()'s pause logic only ever acts once a segment
+		// boundary closes), and playback stopping the moment a player
+		// exhausted whatever partial bytes it happened to fetch from that
+		// one still-growing file before treating the (nonexistent) next
+		// segment as "video's just over."
+		//
+		// A flat "is the last keyframe near the file's end" check isn't
+		// enough on its own: sparse keyframes (a long GOP) legitimately put
+		// the real last keyframe well before the true end — that's normal,
+		// not truncation, and flagging it would wrongly discard a perfectly
+		// good probe. On a live probe, last_packet_ms (every packet, not
+		// just keyframes) is the precise signal instead — a complete scan's
+		// last packet is always within a frame or two of the file's real
+		// end regardless of keyframe spacing. A cache hit has no fresh
+		// last-packet reading this session, so the fallback there compares
+		// against this file's own established keyframe rhythm: a genuinely
+		// complete scan never trails off past its own last real keyframe by
+		// more than a few times its typical interval.
+		bool truncated = false;
+		if (!segment_start_ms.empty() && effective_duration_ms > 0)
+		{
+			if (last_packet_ms >= 0)
+			{
+				truncated = last_packet_ms < effective_duration_ms - 2000;
+			}
+			else
+			{
+				int64_t avg_gap_ms = keyframes.size() >= 2
+										 ? (keyframes.back() - keyframes.front()) / static_cast<int64_t>(keyframes.size() - 1)
+										 : int64_t(kVodHlsSegmentSecs) * 1000;
+				truncated = (effective_duration_ms - keyframes.back()) > 3 * avg_gap_ms;
+			}
+		}
+		if (truncated)
+		{
+			std::cerr << "[vod:" << session_id << "] direct-stream keyframe probe looks truncated (last keyframe "
+				"at " << keyframes.back() << "ms, file is " << effective_duration_ms << "ms) — probably hit its "
+				"own timeout on a large/slow file; falling back to assumed uniform segment cadence instead of "
+				"trusting a partial scan\n";
+			segment_start_ms.clear();
+		}
+		else if (!cache_hit && !keyframes.empty() && !ec)
+		{
+			// Only ever cache a probe this same check just accepted as
+			// complete — caching a truncated one would otherwise wedge
+			// every future session on this file (same size/mtime) into
+			// the cache-hit branch above, repeating the same collapse
+			// forever regardless of how generous the live timeout is.
+			const int64_t mtime  = statMtimeEpochSecs(file_path);
+			const std::string ct = content_type_, cid = content_id_;
+			const int64_t sz     = static_cast<int64_t>(file_size);
+			// Captures the manager, not `this` — manager_ outlives every
+			// VodSession it hands out (see its own header comment), but
+			// this session could be stopped/destroyed before a detached
+			// background task gets to run.
+			VodSessionManager* mgr = &manager_;
+			TaskRegistry::global().spawn([mgr, ct, cid, keyframes, sz, mtime]
+			{
+				mgr->pushKeyframeCache(ct, cid, keyframes, sz, mtime);
+			});
+		}
 		if (segment_start_ms.empty())
 			std::cerr << "[vod:" << session_id << "] keyframe probe failed/empty for direct-stream — "
 				"falling back to assumed uniform segment cadence (segment boundaries may drift from actual cut points)\n";

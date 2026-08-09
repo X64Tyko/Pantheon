@@ -29,6 +29,7 @@
 
 #include <gtest/gtest.h>
 #include "stream/VodSessionManager.h"
+#include "stream/MediaProbe.h"
 #include "kairos/KairosClient.h"
 
 #include <chrono>
@@ -240,4 +241,98 @@ TEST_F(VodSessionPlaybackTest, EpisodeAdvancementStartsACleanSessionAfterThePrio
 	ASSERT_NE(sessionB->prepareSegment(0), VodSession::SegmentPrep::Failed);
 	ASSERT_TRUE(waitForFile(sessionB->videoSegmentFilePath(0)));
 	EXPECT_GT(ffprobeDurationSecs(sessionB->videoSegmentFilePath(0)), 0);
+}
+
+TEST_F(VodSessionPlaybackTest, BrokenContainerDurationDoesNotPoisonTheFinalSegmentBoundary)
+{
+	// Regression test: vod_broken_duration_sample.mp4 has its moov/mvhd and
+	// mdhd duration fields zeroed out (real ~24s of h264/aac content,
+	// 2s-interval keyframes, all otherwise intact) — reproducing a real,
+	// live-observed class of file (a re-muxed/edited source, YouTube-rip
+	// naming being the common real-world case) whose container-level
+	// duration is unreadable even though its packets demux perfectly fine.
+	// probeMedia() reports duration_ms=0 for exactly this shape of file,
+	// which used to fall through to Kairos' own stored duration_ms — itself
+	// only as trustworthy as whatever scrape/match produced it, and
+	// completely unrelated to what this file's bytes actually contain.
+	// computeSegmentBoundaries() must ground the last segment's declared end
+	// in the real keyframe/packet probe instead, regardless of how wrong
+	// that fallback is.
+	std::string brokenDurationFixture = std::string(MOMUS_HEPHAESTUS_FIXTURES_DIR) + "/vod_broken_duration_sample.mp4";
+
+	// Standing in for Kairos' own (wrong) stored duration — wildly more than
+	// this ~24s real clip, the same shape of mismatch as a badly-scraped
+	// library item matched to the wrong metadata.
+	constexpr int64_t kWrongFallbackDurationMs = 8'000'000;
+
+	auto session = manager->create("movie", "content-broken-duration", brokenDurationFixture, /*position_ms=*/0,
+								   /*audio_track=*/-1, /*subtitle_track=*/-1, /*hdr_capable=*/false,
+								   /*client_caps=*/std::nullopt, /*external_subtitles=*/{},
+								   kWrongFallbackDurationMs);
+	ASSERT_NE(session, nullptr);
+
+	// The real file is ~24s of content — total_segments must reflect that,
+	// not the ~1300+ segments the wrong 8000s fallback implies.
+	EXPECT_LT(session->totalSegments(), 20)
+		<< "total_segments must be grounded in the real file, not the wrong fallback duration";
+
+	// durationMs() is what the /stream/vod/start response's own duration_ms
+	// falls back to (Router.cpp) — it has to be corrected too, not just the
+	// playlist, so any client-visible duration/seekbar is right as well.
+	EXPECT_LT(session->durationMs(), 60'000);
+
+	ASSERT_TRUE(waitForFile(session->dir() + "/playlist.m3u8"));
+	auto videoEntries = parsePlaylist(session->dir() + "/playlist.m3u8");
+	ASSERT_FALSE(videoEntries.empty());
+	double totalDeclaredSecs = 0;
+	for (auto& e : videoEntries) totalDeclaredSecs += e.duration;
+	EXPECT_LT(totalDeclaredSecs, 60.0)
+		<< "the manifest's total declared duration must be grounded in the real file, not the wrong fallback — "
+		"a player trusting an inflated final segment stalls waiting for content that will never arrive";
+}
+
+TEST_F(VodSessionPlaybackTest, TruncatedKeyframeProbeFallsBackInsteadOfCollapsingToOneSegment)
+{
+	// Regression test for the mechanism behind a real, live-observed
+	// incident: a ~2-hour direct-stream movie's keyframe probe (packet-level
+	// ffprobe scan, see probeKeyframeTimestampsMs()'s own comment) got cut
+	// off by its own timeout partway through a large/slow file, returning a
+	// real but incomplete keyframe list — just the first keyframe, in that
+	// case. Trusting it collapsed the whole movie into total_segments=1: a
+	// single HLS "segment" that stays open/growing for the entire runtime
+	// (its own -t bound only gets set when a head's window falls short of
+	// total_segments — see spawnHead()), which breaks the basic HLS
+	// assumption that a published segment's bytes never change once served,
+	// and left nothing to ever pause the encoder (tick()'s pause logic only
+	// acts once a segment boundary actually closes) — it ran flat-out for
+	// the whole movie. Simulated here via the same Kairos keyframe-cache
+	// plumbing a real stale/truncated scan would arrive through (VodSession::
+	// start()'s kairos_keyframes_ms/_size/_mtime params — see
+	// computeSegmentBoundaries()'s cache_hit branch), rather than actually
+	// waiting out a real probe timeout: file size/mtime matched so it reads
+	// as a cache hit, but the "cached" keyframe list only covers a sliver of
+	// this ~30s fixture's real duration.
+	std::string fixture = std::string(MOMUS_HEPHAESTUS_FIXTURES_DIR) + "/vod_playback_sample.mp4";
+	std::error_code ec;
+	int64_t fileSize  = static_cast<int64_t>(std::filesystem::file_size(fixture, ec));
+	int64_t fileMtime = statMtimeEpochSecs(fixture);
+	ASSERT_FALSE(ec);
+
+	// Stands in for a scan that only reached the file's very first keyframe
+	// before its own timeout killed it.
+	std::vector<int64_t> truncatedKeyframesMs = {0};
+
+	auto session = manager->create("movie", "content-truncated-probe", fixture, /*position_ms=*/0,
+								   /*audio_track=*/-1, /*subtitle_track=*/-1, /*hdr_capable=*/false,
+								   /*client_caps=*/std::nullopt, /*external_subtitles=*/{},
+								   /*fallback_duration_ms=*/0, /*preferred_audio_lang=*/"",
+								   /*preferred_subtitle_lang=*/"", truncatedKeyframesMs, fileSize, fileMtime);
+	ASSERT_NE(session, nullptr);
+
+	// This fixture is really ~30s (see FastPathDiskHit... and the other
+	// tests above using it) — a truncated single-keyframe probe must not be
+	// allowed to collapse that into one giant segment.
+	EXPECT_GT(session->totalSegments(), 1)
+		<< "a probe that plainly didn't reach anywhere near the file's real duration must fall back to the "
+		"uniform-cadence assumption, not be trusted as if it were complete";
 }

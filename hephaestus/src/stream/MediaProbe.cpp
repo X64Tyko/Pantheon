@@ -248,7 +248,8 @@ int pickSubtitleTrack(const MediaInfo& info, const std::string& preferred_lang)
 }
 
 std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
-											   const std::string& file_path)
+											   const std::string& file_path,
+											   int64_t* last_packet_ms)
 {
 	std::string safe_path = shellEscapeSingleQuoted(file_path);
 	// Packet-level probing (no decode): -show_entries packet=pts_time,flags
@@ -256,29 +257,42 @@ std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
 	// column's leading 'K' marks a keyframe packet (ffmpeg's own convention,
 	// e.g. "K__" vs "__"). csv=p=0 drops the leading stream-index column
 	// ffprobe would otherwise prefix each line with.
-	// Same timeout guard as probeMedia() above, longer (30s) since this scans
-	// every packet in the whole file, not just the header.
-	std::string cmd = "timeout -k 2 30 " + ffprobe_path
+	// 120s, not probeMedia()'s much shorter header-only timeout — this scans
+	// every packet in the whole file, and a large (multi-hour 4K/2160p) file
+	// on a slow disk or network share can genuinely take minutes even
+	// without decoding. Whatever the budget, `timeout` still just kills
+	// ffprobe outright once it's spent — runCommand() then returns
+	// whatever partial CSV output had already been flushed, a real but
+	// INCOMPLETE prefix of the file's actual keyframes, not a failure this
+	// function can see and report on its own. Confirmed live as a two-hour
+	// movie's keyframe scan getting cut off after only its first keyframe —
+	// computeSegmentBoundaries() cross-checks the result against the file's
+	// own separately-probed duration specifically because no timeout value
+	// here can be trusted to always be long enough.
+	std::string cmd = "timeout -k 2 120 " + ffprobe_path
 		+ " -v quiet -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 '"
 		+ safe_path + "' 2>/dev/null";
 
 	std::string output = runCommand(cmd);
 	std::vector<int64_t> keyframes;
+	int64_t last_ms = -1;
 	std::istringstream iss(output);
 	std::string line;
 	while (std::getline(iss, line))
 	{
 		auto comma = line.find(',');
 		if (comma == std::string::npos || comma + 1 >= line.size()) continue;
-		if (line[comma + 1] != 'K') continue;
 		try
 		{
 			double secs = std::stod(line.substr(0, comma));
-			keyframes.push_back(static_cast<int64_t>(secs * 1000.0 + 0.5));
+			int64_t ms  = static_cast<int64_t>(secs * 1000.0 + 0.5);
+			if (ms > last_ms) last_ms = ms;
+			if (line[comma + 1] == 'K') keyframes.push_back(ms);
 		}
 		catch (...)
 		{
 		}
 	}
+	if (last_packet_ms && last_ms >= 0) *last_packet_ms = last_ms;
 	return keyframes;
 }
