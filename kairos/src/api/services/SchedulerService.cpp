@@ -203,6 +203,20 @@ void SchedulerService::registerRoutes(httplib::Server& svr)
 					<< " (" << row->item_type << " " << row->item_id << "): " << mapped
 					<< " — falling through to filler\n";
 			}
+			else
+			{
+				// No committed scheduled_program row covers `t` at all — the
+				// "genuine gap in the materialized schedule" case the big
+				// comment below describes, previously silent. ensureScheduled
+				// just ran immediately above with a fixed 4-hour horizon from
+				// t-3600 — worth knowing t itself (often a preroll/lookahead
+				// call's *future* `at`, not real wall-clock now — see
+				// ChannelSession::hlsMaintainPrerollQueue) whenever this fires,
+				// to tell a genuine content-pool/block gap apart from simply
+				// asking further ahead than any horizon has ever covered.
+				std::cerr << "[now] no scheduled row for channel " << channel_id
+					<< " at t=" << t << " — falling through to filler\n";
+			}
 
 			// No committed row (a genuine gap in the materialized schedule) or
 			// its file is unreachable — go straight to the channel's own

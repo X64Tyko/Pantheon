@@ -1459,6 +1459,17 @@ void ChannelSession::hlsProducerTick()
 	if (!next) next = kairos.getNow(channel_id, now);
 	if (!next)
 	{
+		// Genuinely nothing scheduled/fillable/offline-configured for this
+		// channel at this instant — Kairos's own /now route falls through
+		// filler and offline configs before ever 404ing (see
+		// SchedulerService.cpp), so reaching this means all three came up
+		// empty. Silent until now: this is the one path in this function
+		// with no log line at all, which made a real "schedule ran dry"
+		// case (e.g. a materialization horizon gap) indistinguishable from
+		// ordinary silence in the log.
+		std::cerr << "[session:" << channel_id << "] kairos returned nothing for cur.end="
+			<< (haveItem ? cur.wall_clock_end_ms : 0) << " now=" << now
+			<< " — falling back to offline slate\n";
 		hls_preroll_queue_.clear();
 
 		// Same "Kairos has nothing at all" fallback shape as transition().
@@ -1531,7 +1542,13 @@ void ChannelSession::hlsProducerTick()
 	// an admin edit, a re-sync) — nothing else in it can be trusted either,
 	// since it was all built relative to the same now-wrong assumption.
 	// Discard it and fall back to a cold spawn, same as before preroll
-	// existed.
+	// existed. Previously silent — this is meant to be rare (this comment
+	// predates any log line proving that), so a live occurrence is worth
+	// surfacing rather than reading as an ordinary gapless transition when
+	// it's actually a cold (non-gapless, visibly stall-prone) one.
+	std::cerr << "[session:" << channel_id << "] preroll queue miss for item_id=" << next->item_id
+		<< " type=" << next->item_type << " (queue had " << hls_preroll_queue_.size()
+		<< " entries) — falling back to cold spawn\n";
 	hls_preroll_queue_.clear();
 	hlsSpawnProducer(*next, startOffset, now);
 }
