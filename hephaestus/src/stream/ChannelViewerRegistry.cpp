@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
+#include <iostream>
 #include <random>
 #include <sstream>
 
@@ -72,9 +73,29 @@ void ChannelViewerRegistry::reapLoop()
 		for (int i = 0; i < 5 && !stop_reaper_.load(); ++i) std::this_thread::sleep_for(std::chrono::seconds(1));
 		if (stop_reaper_.load()) break;
 
-		int64_t cutoff = nowMs() - kMaxIdleMs;
+		int64_t now    = nowMs();
+		int64_t cutoff = now - kMaxIdleMs;
 		std::lock_guard<std::mutex> lock(mtx_);
-		for (auto it = viewers_.begin(); it != viewers_.end();) it = (it->second.last_seen_ms < cutoff) ? viewers_.erase(it) : std::next(it);
+		for (auto it = viewers_.begin(); it != viewers_.end();)
+		{
+			if (it->second.last_seen_ms < cutoff)
+			{
+				// Idle-reap is the only non-explicit way a viewer_session_id
+				// stops resolving — surfaced here (not just silently erased)
+				// since the client-visible symptom (hls.js fatal
+				// levelParsingError on the next playlist poll, see Router.cpp's
+				// channel-viewer playlist route) gives no indication of *why*
+				// the registry lost track of it. A viewer idle by exactly
+				// ~kMaxIdleMs under otherwise-continuous playback points at a
+				// gap in the client's own playlist-poll cadence (e.g. a
+				// backgrounded/throttled tab) rather than anything wrong here.
+				std::cerr << "[channel-viewer] reaping idle viewer_session_id=" << it->first
+					<< " channel=" << it->second.channel_id << " bucket=" << it->second.bucket
+					<< " idle_ms=" << (now - it->second.last_seen_ms) << "\n";
+				it = viewers_.erase(it);
+			}
+			else it = std::next(it);
+		}
 	}
 }
 
@@ -111,7 +132,15 @@ std::string ChannelViewerRegistry::touch(const std::string& viewer_session_id, s
 void ChannelViewerRegistry::stop(const std::string& viewer_session_id)
 {
 	std::lock_guard<std::mutex> lock(mtx_);
-	viewers_.erase(viewer_session_id);
+	auto it = viewers_.find(viewer_session_id);
+	if (it == viewers_.end()) return;
+	// Same reasoning as reapLoop's own log line — an explicit stop() racing a
+	// still-in-flight playlist/segment poll from the same (soon to be stale)
+	// hls.js instance is otherwise indistinguishable, from the server log
+	// alone, from an idle-reap or a viewer_session_id that never existed.
+	std::cerr << "[channel-viewer] stopping viewer_session_id=" << viewer_session_id
+		<< " channel=" << it->second.channel_id << " bucket=" << it->second.bucket << "\n";
+	viewers_.erase(it);
 }
 
 std::map<std::string, std::map<std::string, int>> ChannelViewerRegistry::viewerCounts() const
