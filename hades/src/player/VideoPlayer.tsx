@@ -162,10 +162,27 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
       // declared upfront — see VodSession.cpp's sliding-window engine), so
       // hls.js correctly treats it as on-demand rather than live from the
       // very first fetch. startPosition seeds where in that (now-absolute,
-      // whole-file) timeline THIS load should begin — true live channels
-      // keep hls.js's own default live-edge sync instead (that playlist is a
-      // genuinely rolling/deleting window, not an append-only one).
-      hls = new Hls(isLive ? {} : { startPosition: startPositionSec ?? 0 })
+        // whole-file) timeline THIS load should begin.
+        //
+        // Live is different but not exempt: on a genuinely fresh mount there's
+        // nowhere sensible to resume, so hls.js's own default live-edge sync
+        // is correct. But this effect also re-runs on a forced reload
+        // (reloadKey bump below, or a channel-viewer reconnect swapping
+        // manifestUrl) — and the <video> element itself persists across that,
+        // only the Hls.js instance attached to it gets destroyed and rebuilt.
+        // video.currentTime at that point still reflects wherever the
+        // previous instance had gotten to. Without pinning it, a fresh Hls.js
+        // instance picks its own live-position default with no idea this is a
+        // resume — and since the splicer's sliding window deliberately keeps
+        // an outgoing item's tail segments alongside the incoming one's (what
+        // makes a gapless transition possible), that default can land inside
+        // segments from an item that already aired. Confirmed live: a
+        // stall-triggered reload rewound and replayed an already-shown
+        // commercial this way.
+        const resumeAt = isLive && video.currentTime > 0 ? video.currentTime : undefined
+        hls = new Hls(isLive
+            ? (resumeAt !== undefined ? {startPosition: resumeAt} : {})
+            : {startPosition: startPositionSec ?? 0})
       hlsRef.current = hls
       // Fires once hls.js has parsed the manifest's SUBTITLES groups (and
       // possibly again later) — applySubtitleTrackRef.current() so this
