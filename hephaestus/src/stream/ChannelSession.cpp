@@ -1756,6 +1756,34 @@ void ChannelSession::hlsPromoteProducer(const KairosNowResponse& item, HlsProduc
 		hls_producer_              = std::move(handle.producer);
 		hls_segment_boundaries_ms_ = boundaries;
 		hls_wall_clock_start_ms_   = wallClockStartMs;
+
+		// Force an immediate resume-if-paused right here, not just the bare
+		// tick() above. A preroll producer is routinely still paused at
+		// this exact moment: hlsMaintainPrerollQueue()'s periodic tick()
+		// calls (see the loop above hlsProducerTick()'s steady-state branch)
+		// keep highest_generated current while queued, but nothing calls
+		// prepareSegment() on a *queued* preroll to advance its own
+		// last_requested floor — so once VodEncodeStream::tick()'s own
+		// pause/resume hysteresis pauses it (having built its
+		// kHlsProducerLookaheadSecs-ahead backlog, same target the active
+		// producer paces itself to), it stays paused for the rest of its
+		// time in the queue, since tick()'s resume condition can never see
+		// that floor catch up on its own. resume() only ever happens inside
+		// prepareSegment() itself (its own isPaused() check) — tick() alone
+		// can't do it. Without this, the just-promoted producer would sit
+		// paused until whatever's left of the current kHlsProducerTickMs
+		// interval elapses and the steady-state prepareSegment() call below
+		// finally reaches it — up to 1s where a resume-worthy backlog
+		// shortfall (a late promotion, real drift past the ~20s pre-built
+		// margin) would read as a stall with no active producer catching it.
+		int total = static_cast<int>(boundaries.size());
+		if (total > 0)
+		{
+			int64_t dueOffsetMs = nowMs() - wallClockStartMs;
+			int dueIndex        = 0;
+			while (dueIndex + 1 < total && boundaries[static_cast<size_t>(dueIndex + 1)] <= dueOffsetMs) ++dueIndex;
+			hls_producer_->prepareSegment(dueIndex, boundaries, total);
+		}
 	}
 
 	if (splicer_) splicer_->spliceTo(ChannelPlaylistSplicer::SpawnInfo{dir, "seg-", boundaries, spanMs, wallClockStartMs});

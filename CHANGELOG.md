@@ -109,6 +109,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **A just-promoted live-channel producer could sit paused for up to a second after handoff instead of resuming immediately** (Hephaestus): a preroll producer built ahead of its own item's airtime gets paced by the same pause/resume window as the live producer (~20s built ahead of "due"), but nothing calls `prepareSegment()` on a *queued* preroll to keep its own "due" floor advancing — so once `VodEncodeStream::tick()`'s pause/resume hysteresis paused it (having built its lead-window backlog), it stayed paused for the rest of its time in the queue, since `tick()` alone can never resume a head (only `prepareSegment()`'s own explicit check does that). `hlsPromoteProducer()`'s existing "final catch-up" call at handoff was a bare `tick()`, which refreshes bookkeeping but doesn't resume — so a just-promoted producer could remain paused until whatever's left of the current 1s tick interval elapsed and the steady-state `prepareSegment()` call finally reached it. Fixed by having `hlsPromoteProducer()` call `prepareSegment()` (at the item's actual due offset) immediately at handoff instead of leaving resume to the next scheduled tick — closes a real, if usually backlog-masked, gap for the specific case of a late promotion or drift eating into the pre-built margin. `momus_hephaestus` 89/89 pass. **Not yet confirmed as the cause of any specific observed stall** — found via code-reading in response to a user hypothesis, not a captured incident.
+- **Android let the device sleep mid-playback** (Android): no touch input during a movie/channel meant the device's
+  normal screen-timeout fired regardless of active playback, dimming and (on phones) locking the screen. `PlayerView`
+  now sets `keepScreenOn` tied to `playWhenReady` (not raw `isPlaying`, matching the existing Watch Together
+  play/pause-intent signal already used in the same listener) — an explicit pause still lets the screen sleep
+  normally.
 - **A client stall on a live channel could rewind playback into already-aired content** (Hades + Hephaestus): three
   distinct causes were found and fixed. In the web player, `startLoad()` on hls.js's own `NETWORK_ERROR` retry path
   was called with no explicit position, so it recomputed a fresh live sync point on every recovery instead of
