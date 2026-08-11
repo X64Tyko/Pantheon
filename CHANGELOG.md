@@ -109,6 +109,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **A client stall on a live channel could rewind playback into already-aired content** (Hades + Hephaestus): three
+  distinct causes were found and fixed. In the web player, `startLoad()` on hls.js's own `NETWORK_ERROR` retry path
+  was called with no explicit position, so it recomputed a fresh live sync point on every recovery instead of
+  resuming where playback actually was — confirmed as the dominant recovery path via new "retry recovered" logging
+  added to distinguish a genuinely-stuck retry from a silent one; fixed by pinning `video.currentTime` as the retry's
+  start position (`VideoPlayer.tsx`), alongside the same fix already in place for a full instance rebuild. The
+  Android player had the equivalent gap: its stall-watchdog-triggered source rebuild (`PlayerScreen.kt`'s
+  `reloadTick`) never passed a resume position to `setMediaItem()` at all, so media3 also defaulted to a fresh live
+  edge on every forced reload; fixed by pinning `exoPlayer.currentPosition` there too. A third, separate mechanism
+  survived both client fixes: a client stall long enough to fall behind the server's listed segment window forces
+  hls.js's own internal stall recovery (not a fatal-error retry) to recompute position from whatever's newly listed —
+  confirmed live via a genuine client-side fragment-sequence gap (two segments relayed and later evicted from the
+  list before the stalled client could fetch them) immediately preceding a ~22s rewind. Since the channel splicer
+  deliberately keeps an outgoing item's tail segments in the same window as the incoming item's (for gapless
+  transitions), any fresh default position — from any of these three paths — risks landing in already-aired content.
+  Closed at the source instead of chasing further hls.js internals: the live-channel retention window
+  (`kLiveHlsListSize`/`kLiveHlsDeleteThreshold`) is doubled (12/8 → 24/16 segments) so an ordinary stall can no
+  longer outrun it. The retention-window change is not yet retested live.
 - **A large/slow direct-stream file could collapse into a single unbounded HLS "segment," breaking playback and
   leaving the encoder running unthrottled for the whole file** (Hephaestus): `probeKeyframeTimestampsMs()`'s
   packet-level ffprobe scan is wrapped in its own timeout (a large 2160p/HEVC file on slow storage can genuinely take

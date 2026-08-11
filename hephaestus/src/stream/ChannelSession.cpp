@@ -56,8 +56,23 @@ static constexpr double kMaxSpeed = 1.02;
 // slightly-stale manifest racing a too-eager delete. Blunt fix, not the
 // precise one (which would size -hls_time per item off its real keyframe
 // spacing, already cached in keyframes_ms) — good follow-up, not done here.
-static constexpr int kLiveHlsListSize        = 12;
-static constexpr int kLiveHlsDeleteThreshold = 8;
+//
+// Raised from 12/8 after a confirmed live rewind: a client stall long enough
+// to fall behind the listed window (client-side logs showed a genuine
+// seg-00264 -> seg-00267 fragment gap — 265/266 were relayed and later
+// scrolled off list_size before the client, coming out of the stall, tried
+// to fetch them) forces hls.js to recompute a fresh live position from
+// whatever's newly listed, and since the splicer deliberately keeps an
+// outgoing item's tail segments in the same window as the incoming item's
+// (gapless transitions — see spliceTo()'s own comment), that fresh position
+// can land back in already-aired content. None of the client-side
+// startPosition pins (VideoPlayer.tsx) touch this path — it's hls.js's own
+// internal stall recovery, not a fatal-error retry or a reloadKey rebuild.
+// Widening the window so an ordinary stall can't outrun it closes the actual
+// trigger condition instead of chasing hls.js's internal recovery paths
+// further. Not yet retested live.
+static constexpr int kLiveHlsListSize        = 24;
+static constexpr int kLiveHlsDeleteThreshold = 16;
 
 // How far ahead of true wall-clock "now" the splicer is allowed to reveal a
 // due segment — ordinary broadcast delay, giving a real-time-synced client
