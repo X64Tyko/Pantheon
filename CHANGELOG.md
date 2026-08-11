@@ -107,6 +107,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (a CDN edge, a tunnel, a buffering quirk) replaying a stale-but-valid response rather than any bug in what
   Hephaestus itself served.
 
+### Changed
+
+- **Live-channel HLS segment length bumped 2s → 4s** (Hephaestus, `kLiveHlsSegmentSecs`): a live experiment for the
+  occasional-hiccup investigation, not yet confirmed as a fix — a midpoint between 2s's tune-in-latency-optimized
+  default and the earlier-confirmed 6s stutter fix. `momus_hephaestus` 89/89 pass (segment count in a couple of
+  fixture-derived assertions shifts with segment length; no test needed updating since none hardcode the exact
+  duration). Revert to 2 if this doesn't help — see project memory before changing this value again either way.
+
 ### Fixed
 
 - **A just-promoted live-channel producer could sit paused for up to a second after handoff instead of resuming immediately** (Hephaestus): a preroll producer built ahead of its own item's airtime gets paced by the same pause/resume window as the live producer (~20s built ahead of "due"), but nothing calls `prepareSegment()` on a *queued* preroll to keep its own "due" floor advancing — so once `VodEncodeStream::tick()`'s pause/resume hysteresis paused it (having built its lead-window backlog), it stayed paused for the rest of its time in the queue, since `tick()` alone can never resume a head (only `prepareSegment()`'s own explicit check does that). `hlsPromoteProducer()`'s existing "final catch-up" call at handoff was a bare `tick()`, which refreshes bookkeeping but doesn't resume — so a just-promoted producer could remain paused until whatever's left of the current 1s tick interval elapsed and the steady-state `prepareSegment()` call finally reached it. Fixed by having `hlsPromoteProducer()` call `prepareSegment()` (at the item's actual due offset) immediately at handoff instead of leaving resume to the next scheduled tick — closes a real, if usually backlog-masked, gap for the specific case of a late promotion or drift eating into the pre-built margin. `momus_hephaestus` 89/89 pass. **Not yet confirmed as the cause of any specific observed stall** — found via code-reading in response to a user hypothesis, not a captured incident.

@@ -26,7 +26,14 @@
 // from the value ffmpeg's own -hls_time/-force_key_frames actually use —
 // see appendOutputArgs' own comment in ChannelSession.cpp for why 2 vs. 6 is
 // a real, previously-revisited tradeoff, not a settled value.
-inline constexpr int kLiveHlsSegmentSecs = 2;
+//
+// Bumped to 4 (2026-08-11, user-directed) as a live experiment for the
+// occasional-hiccup investigation — a midpoint between 2's tune-in latency
+// and 6's earlier-confirmed stutter fix, not yet itself confirmed as a fix.
+// kLiveHlsListSize/kLiveHlsDeleteThreshold (ChannelSession.cpp) are sized in
+// segment *count*, so this alone roughly doubles their real listed/retained
+// duration — no changes needed there for this test.
+inline constexpr int kLiveHlsSegmentSecs = 4;
 
 // How many of a live-channel bucket's segments the in-memory SegmentCache
 // keeps resident, independent of the on-disk retention window
