@@ -271,7 +271,29 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
         const STALL_THRESHOLD = 3
         const STALL_MIN_PROGRESS_S = 2
         let positionAtFirstStall: number | null = null
-      hls.on(Hls.Events.FRAG_LOADED, () => { networkRetries = 0; mediaRetries = 0 })
+        // "retry N of MAX_RETRIES" only tells us the retry was *attempted* —
+        // startLoad()/recoverMediaError() are fire-and-forget, so without this
+        // we have no way to tell a retry that actually landed a good
+        // manifest/fragment apart from one that's silently still stuck (no new
+        // fatal event just means hls.js hasn't given up yet, not that it
+        // recovered). LEVEL_LOADED is the tightest counterpart to a
+        // NETWORK_ERROR/levelParsingError specifically, since that error is a
+        // level (playlist) load/parse failure — logging it only when a retry
+        // was actually outstanding avoids spamming every ordinary poll.
+        hls.on(Hls.Events.LEVEL_LOADED, () => {
+            if (networkRetries > 0) {
+                console.warn('[player] hls LEVEL_LOADED after fatal NETWORK_ERROR retry — manifest recovered')
+                if (isLive) playbackDebugLog('error', `retry recovered — LEVEL_LOADED after NETWORK_ERROR retry, t=${video.currentTime.toFixed(2)}s`)
+            }
+        })
+        hls.on(Hls.Events.FRAG_LOADED, () => {
+            if (networkRetries > 0 || mediaRetries > 0) {
+                console.warn('[player] hls FRAG_LOADED after fatal error retry — playback recovered, networkRetries=', networkRetries, 'mediaRetries=', mediaRetries)
+                if (isLive) playbackDebugLog('error', `retry recovered — FRAG_LOADED after retry, networkRetries=${networkRetries} mediaRetries=${mediaRetries} t=${video.currentTime.toFixed(2)}s`)
+            }
+            networkRetries = 0;
+            mediaRetries = 0
+        })
       hls.on(Hls.Events.ERROR, (_evt, data) => {
         console.warn('[player] hls ERROR fatal=', data.fatal, 'type=', data.type, 'details=', data.details,
           'url=', (data as { url?: string }).url, 'response=', data.response, 'frag=', data.frag?.url)
