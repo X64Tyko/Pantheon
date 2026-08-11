@@ -339,7 +339,16 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
             console.warn('[player] fatal NETWORK_ERROR, retry', networkRetries + 1, 'of', MAX_RETRIES)
-            if (networkRetries++ < MAX_RETRIES) hls!.startLoad()
+              // startLoad() with no argument defaults to startPosition=-1, which
+              // tells hls.js to recompute its own live sync point from the
+              // freshly-reloaded level — on the SAME still-alive instance, not
+              // just on a reloadKey rebuild (see the `new Hls()` call above for
+              // that case). Confirmed live: this is what was still causing the
+              // old-content rewind even after pinning startPosition on rebuild,
+              // since most recoveries never rebuild the instance at all — they
+              // just call this. Passing currentTime pins the resume point the
+              // same way.
+              if (networkRetries++ < MAX_RETRIES) hls!.startLoad(video.currentTime)
             else onError('Network error — the stream stopped responding.')
             break
           case Hls.ErrorTypes.MEDIA_ERROR:
