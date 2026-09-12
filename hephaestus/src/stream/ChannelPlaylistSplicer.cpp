@@ -65,13 +65,7 @@ void ChannelPlaylistSplicer::relayLoop()
 void ChannelPlaylistSplicer::spliceTo(SpawnInfo info)
 {
 	std::lock_guard<std::mutex> lock(mtx_);
-	if (have_active_&& info
-
-	
-	.
-	pending_dir == active_.pending_dir
-	)
-	return;
+	if (have_active_ && info.pending_dir == active_.pending_dir) return;
 
 	// Drain whatever's due from the outgoing source first — its ffmpeg has
 	// already exited by the time a caller reaches this (see class comment),
@@ -123,7 +117,6 @@ void ChannelPlaylistSplicer::relayTickLocked()
 
 		segments_.push_back({next_seq_, duration, canonicalName, pending_discontinuity_marker_});
 		pending_discontinuity_marker_ = false;
-		max_duration_ever_            = std::max(max_duration_ever_, duration);
 		++next_seq_;
 		++relayed_count_;
 	}
@@ -159,11 +152,31 @@ void ChannelPlaylistSplicer::relayTickLocked()
 	size_t visibleCount = std::min(segments_.size(), static_cast<size_t>(list_size_));
 	size_t firstVisible = segments_.size() - visibleCount;
 
+	// DISCONTINUITY-SEQUENCE must describe the first LISTED segment (RFC 8216
+	// §4.3.3.3), like MEDIA-SEQUENCE below. discontinuities_rolled_off_ only
+	// counts fully-evicted ones, missing any still in the retained-but-hidden
+	// [0, firstVisible) region — dropping a #EXT-X-DISCONTINUITY tag from the
+	// text without bumping the sequence shifts every later fragment's cc by one,
+	// which desyncs hls.js's audio/video buffers. Count the hidden ones too.
+	int64_t disc_seq = discontinuities_rolled_off_;
+	for (size_t i = 0; i < firstVisible; ++i)
+		if (segments_[i].discontinuity_before) ++disc_seq;
+
+	// TARGETDURATION is an upper bound on the durations of the segments
+	// actually listed — computed per-write over exactly those, not carried as
+	// an all-time high-water mark. A single long segment (a direct-stream
+	// long-GOP cut, an offline slate) otherwise inflated it permanently, and
+	// hls.js paces its playlist reloads / live-edge target off TARGETDURATION,
+	// so a stale-large value makes it sit further back and poll less often —
+	// enough to fall behind the rolling window and rewind into aired content.
+	double target_dur = 0.0;
+	for (size_t i = firstVisible; i < segments_.size(); ++i) target_dur = std::max(target_dur, segments_[i].duration);
+
 	std::ostringstream out;
 	out << "#EXTM3U\n#EXT-X-VERSION:3\n";
-	out << "#EXT-X-TARGETDURATION:" << static_cast<int64_t>(std::ceil(max_duration_ever_)) << "\n";
+	out << "#EXT-X-TARGETDURATION:" << std::max<int64_t>(1, static_cast<int64_t>(std::ceil(target_dur))) << "\n";
 	out << "#EXT-X-MEDIA-SEQUENCE:" << (visibleCount ? segments_[firstVisible].seq : next_seq_) << "\n";
-	out << "#EXT-X-DISCONTINUITY-SEQUENCE:" << discontinuities_rolled_off_ << "\n";
+	out << "#EXT-X-DISCONTINUITY-SEQUENCE:" << disc_seq << "\n";
 	for (size_t i = firstVisible; i < segments_.size(); ++i)
 	{
 		if (segments_[i].discontinuity_before) out << "#EXT-X-DISCONTINUITY\n";

@@ -19,11 +19,13 @@
 
 #include <gtest/gtest.h>
 #include "stream/VodEncodeStream.h"
+#include "stream/EncoderAdmission.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 #include <utility>
 
 namespace
@@ -319,4 +321,122 @@ TEST_F(VodEncodeStreamTest, PausedHeadIsNotTreatedAsStalledEvenAfterALongIdlePer
 	ASSERT_EQ(stream.liveHeadCount(), 1);
 	EXPECT_EQ(stream.headWindowsForTest()[0].first, 0) << "must still be the original head, not a fresh one";
 	EXPECT_FALSE(stream.anyHeadPaused()) << "prepareSegment() should have resumed it";
+}
+
+// ── setPrewarmNextHead(): spawn the next window's head before the consumed ──
+// frontier reaches the boundary, so a live channel's head handoff isn't a cold
+// start right when the first segment past the boundary is already due.
+
+TEST_F(VodEncodeStreamTest, PrewarmSpawnsNextBoundaryHeadBeforeFrontierReachesIt)
+{
+	VodEncodeStream::ArgsBuilder args = [](int, int64_t, std::optional<double>)
+	{
+		return std::vector<std::string>{"sleep", "30"};
+	};
+	VodEncodeStream stream("video", dir.string(), "seg-", args,
+						   /*buffer_size=*/65536, /*ffmpeg_debug_logs=*/false, /*verbose_transcode_logs=*/false,
+						   /*lookahead_secs=*/12, /*hls_time_secs=*/6, /*head_window_segments=*/4);
+	stream.setPrewarmNextHead(true);
+	auto seg = segmentStartMs(20);
+
+	ASSERT_EQ(stream.prepareSegment(0, seg, 20), VodEncodeStream::SegmentPrep::WaitColdStart);
+	ASSERT_EQ(stream.liveHeadCount(), 1);
+
+	// Frontier requested within kHeadPrewarmLeadSegments of the [0,4) boundary.
+	stream.prepareSegment(1, seg, 20);
+	stream.tick(20);
+
+	auto windows = stream.headWindowsForTest();
+	std::sort(windows.begin(), windows.end());
+	ASSERT_EQ(windows.size(), 2u) << "successor head should be prewarmed before the boundary";
+	EXPECT_EQ(windows[0], std::make_pair(0, 4));
+	EXPECT_EQ(windows[1].first, 4) << "prewarmed head starts exactly at the window boundary — no overlap, no gap";
+
+	// Idempotent: nothing new to prewarm until the frontier actually moves into
+	// the successor's own window.
+	stream.tick(20);
+	EXPECT_EQ(stream.liveHeadCount(), 2);
+}
+
+TEST_F(VodEncodeStreamTest, WithoutPrewarmNoSuccessorHeadIsSpawnedAhead)
+{
+	// Negative case: default (VOD) behaviour must not build encoder slots ahead.
+	VodEncodeStream::ArgsBuilder args = [](int, int64_t, std::optional<double>)
+	{
+		return std::vector<std::string>{"sleep", "30"};
+	};
+	VodEncodeStream stream("video", dir.string(), "seg-", args,
+						   /*buffer_size=*/65536, /*ffmpeg_debug_logs=*/false, /*verbose_transcode_logs=*/false,
+						   /*lookahead_secs=*/12, /*hls_time_secs=*/6, /*head_window_segments=*/4);
+	auto seg = segmentStartMs(20);
+
+	ASSERT_EQ(stream.prepareSegment(0, seg, 20), VodEncodeStream::SegmentPrep::WaitColdStart);
+	stream.prepareSegment(1, seg, 20);
+	stream.tick(20);
+
+	EXPECT_EQ(stream.liveHeadCount(), 1) << "no prewarm requested — successor stays a cold spawn at the boundary";
+}
+
+// ── EncoderAdmission: heads gate on the host-wide hardware-encode-session cap ──
+
+TEST_F(VodEncodeStreamTest, GatedHeadAcquiresAndReleasesEncoderSlot)
+{
+	EncoderAdmission admission(1);
+	VodEncodeStream::ArgsBuilder args = [](int, int64_t, std::optional<double>)
+	{
+		return std::vector<std::string>{"sleep", "30"};
+	};
+	{
+		VodEncodeStream stream("video", dir.string(), "seg-", args,
+							   /*buffer_size=*/65536, /*ffmpeg_debug_logs=*/false, /*verbose_transcode_logs=*/false,
+							   /*lookahead_secs=*/12, /*hls_time_secs=*/6, /*head_window_segments=*/100,
+							   VodEncodeStream::kDefaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
+		ASSERT_EQ(stream.prepareSegment(0, segmentStartMs(50), 50), VodEncodeStream::SegmentPrep::WaitColdStart);
+		EXPECT_EQ(admission.activeCount(), 1) << "a gated head must hold a host encoder slot while live";
+	}
+	EXPECT_EQ(admission.activeCount(), 0) << "the slot must be released when the head (stream) tears down";
+}
+
+TEST_F(VodEncodeStreamTest, GatedSpawnRefusedWhenHostAtEncoderCap)
+{
+	EncoderAdmission admission(1);
+	VodEncodeStream::ArgsBuilder args = [](int, int64_t, std::optional<double>)
+	{
+		return std::vector<std::string>{"sleep", "30"};
+	};
+	// Separate segment dirs so the two streams' flat seg-NNNNN.ts namespaces
+	// don't collide — this test is about slot accounting, not file overlap.
+	std::filesystem::create_directories(dir / "a");
+	std::filesystem::create_directories(dir / "b");
+	VodEncodeStream s1("video", (dir / "a").string(), "seg-", args,
+					   65536, false, false, 12, 6, 100,
+					   VodEncodeStream::kDefaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
+	VodEncodeStream s2("video", (dir / "b").string(), "seg-", args,
+					   65536, false, false, 12, 6, 100,
+					   VodEncodeStream::kDefaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
+
+	ASSERT_EQ(s1.prepareSegment(0, segmentStartMs(50), 50), VodEncodeStream::SegmentPrep::WaitColdStart);
+	EXPECT_EQ(admission.activeCount(), 1);
+
+	// Host is at its cap of 1 — s2's spawn is refused, same terminal shape as a
+	// genuine hardware-exhaustion failure, and must not leak a slot.
+	EXPECT_EQ(s2.prepareSegment(0, segmentStartMs(50), 50), VodEncodeStream::SegmentPrep::Failed);
+	EXPECT_EQ(s2.liveHeadCount(), 0);
+	EXPECT_EQ(admission.activeCount(), 1) << "a refused spawn must not have consumed a slot";
+}
+
+TEST_F(VodEncodeStreamTest, UngatedStreamNeverTouchesEncoderAdmission)
+{
+	EncoderAdmission admission(1);
+	VodEncodeStream::ArgsBuilder args = [](int, int64_t, std::optional<double>)
+	{
+		return std::vector<std::string>{"sleep", "30"};
+	};
+	// gate_encoder_slot=false (e.g. an audio-only or software encode) — must
+	// spawn freely and never acquire, even sharing the same admission object.
+	VodEncodeStream stream("audio", dir.string(), "aseg-", args,
+						   65536, false, false, 12, 6, 100,
+						   VodEncodeStream::kDefaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/false);
+	ASSERT_EQ(stream.prepareSegment(0, segmentStartMs(50), 50), VodEncodeStream::SegmentPrep::WaitColdStart);
+	EXPECT_EQ(admission.activeCount(), 0) << "an ungated stream must not consume host encoder slots";
 }

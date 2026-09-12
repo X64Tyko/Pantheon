@@ -1713,7 +1713,12 @@ ChannelSession::HlsProducerHandle ChannelSession::hlsCreateProducer(const Kairos
 	auto producer = std::make_unique<VodEncodeStream>(
 		"hls", dir, "seg-", std::move(argsBuilder),
 		opts.buffer_size, opts.ffmpeg_debug_logs, opts.verbose_transcode_logs,
-		kHlsProducerLookaheadSecs, kLiveHlsSegmentSecs, kHlsHeadWindowSegments);
+		kHlsProducerLookaheadSecs, kLiveHlsSegmentSecs, kHlsHeadWindowSegments,
+		VodEncodeStream::kDefaultStallTimeoutMs, opts.encoder_admission,
+		/*gate_encoder_slot=*/opts.hw_accel != HwAccel::none);
+	// A live channel is consumed strictly forward, so its head handoffs can be
+	// prewarmed instead of cold-started right at the boundary.
+	producer->setPrewarmNextHead(true);
 
 	int total = static_cast<int>(boundaries.size());
 	producer->prepareSegment(0, boundaries, total); // kick off production immediately

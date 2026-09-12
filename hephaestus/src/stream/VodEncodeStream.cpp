@@ -1,4 +1,5 @@
 #include "VodEncodeStream.h"
+#include "EncoderAdmission.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -52,12 +53,28 @@ namespace
 	// just a process-count nicety, it's what keeps a pathological scrub pattern
 	// from starving every other session's transcode of slots.
 	constexpr int kVodMaxLiveHeads = 2;
+
+	// How close (in segments) the consumed frontier must get to a head's window
+	// boundary before setPrewarmNextHead()'d streams spawn the successor head.
+	// Enough lead to absorb the successor's own cold-start (reopen/reprobe/
+	// reseek/NVENC-init) before its first segment is due — ~3 segments of
+	// runway at the live channel's segment length.
+	constexpr int kHeadPrewarmLeadSegments = 3;
+}
+
+VodEncodeStream::Head::~Head()
+{
+	// Kill (blocking) before releasing the slot, so the host-wide count never
+	// briefly claims a slot is free while its process is still tearing down.
+	ffmpeg.reset();
+	if (holds_slot && admission) admission->release();
 }
 
 VodEncodeStream::VodEncodeStream(std::string label, std::string segment_dir, std::string segment_prefix,
 								 ArgsBuilder argsBuilder, int buffer_size, bool ffmpeg_debug_logs,
 								 bool verbose_transcode_logs, int lookahead_secs, int hls_time_secs,
-								 int head_window_segments, int64_t stall_timeout_ms)
+								 int head_window_segments, int64_t stall_timeout_ms,
+								 EncoderAdmission* admission, bool gate_encoder_slot)
 	: label_(std::move(label))
 	, segment_dir_(std::move(segment_dir))
 	, segment_prefix_(std::move(segment_prefix))
@@ -69,6 +86,8 @@ VodEncodeStream::VodEncodeStream(std::string label, std::string segment_dir, std
 	, hls_time_secs_(hls_time_secs)
 	, head_window_segments_(head_window_segments)
 	, stall_timeout_ms_(stall_timeout_ms)
+	, admission_(admission)
+	, gate_encoder_slot_(gate_encoder_slot)
 {
 }
 
@@ -148,6 +167,24 @@ VodEncodeStream::Head* VodEncodeStream::spawnHead(int segment_index, int64_t pos
 	head->last_requested_at_ms.store(nowMs());
 	head->last_progress_at_ms.store(nowMs());
 
+	// Reserve a host-wide encoder slot before spawning (only when this stream
+	// actually runs a hardware encode). Held for the head's whole life and
+	// released in ~Head. Recording admission/holds_slot on the head now means
+	// every early-return path below frees it automatically when `head`
+	// destructs. Refused when the host is already at its concurrent-session
+	// cap — same terminal shape as a genuine hardware-exhaustion spawn failure.
+	if (gate_encoder_slot_ && admission_)
+	{
+		if (!admission_->tryAcquire())
+		{
+			std::cerr << "[vod-" << label_ << "] host encoder-session cap reached — cannot spawn head at segment "
+				<< segment_index << "\n";
+			return nullptr;
+		}
+		head->admission   = admission_;
+		head->holds_slot  = true;
+	}
+
 	// Spawn before evicting anyone — same overlap reasoning as VodSession's
 	// own restartAt(): a doomed-to-be-evicted head's output is already
 	// superseded, so there's no reason to eat its kill() teardown wait
@@ -208,6 +245,11 @@ VodEncodeStream::SegmentPrep VodEncodeStream::prepareSegment(int segment_index, 
 	std::vector<std::unique_ptr<Head>> graveyard;
 	{
 		std::lock_guard<std::mutex> lock(mtx_);
+
+		// Cache boundaries so tick()'s prewarm pass can spawn the next-window
+		// head without the caller threading this array through tick() too. Same
+		// for every call within one item (its boundaries don't change).
+		segment_start_ms_ = segment_start_ms;
 
 		// Looked up and touched unconditionally, before the disk-exists fast
 		// path below — a head whose segments are all being served straight
@@ -399,6 +441,37 @@ void VodEncodeStream::tick(int total_segments)
 			graveyard.push_back(std::move(h));
 			return true;
 		}), heads_.end());
+
+		// Prewarm the next window's head before the consumed frontier actually
+		// reaches the boundary, so a forward-only stream (a live channel — see
+		// setPrewarmNextHead()) never pays a cold head handoff exactly when the
+		// first segment past the boundary is already due. Decided against a
+		// snapshot of heads_ and spawned once, after the loop, since spawnHead()
+		// mutates heads_. Exactly one boundary ahead: once the successor exists
+		// its start_segment covers the boundary, so the guard below won't fire
+		// again for it until the frontier moves into it too.
+		if (prewarm_next_head_.load() && !segment_start_ms_.empty())
+		{
+			int prewarm_start = -1;
+			for (auto& h : heads_)
+			{
+				if (!h->ffmpeg) continue;
+				if (h->window_end_segment >= total_segments) continue; // last head — nothing follows it
+				if (h->window_end_segment - h->last_requested.load() > kHeadPrewarmLeadSegments) continue;
+				int we      = h->window_end_segment;
+				bool covered = std::any_of(heads_.begin(), heads_.end(),
+										   [&](const std::unique_ptr<Head>& o) { return o->start_segment == we; });
+				if (covered) continue;
+				if (we < static_cast<int>(segment_start_ms_.size()) && std::filesystem::exists(segmentPath(we))) continue;
+				prewarm_start = we;
+				break;
+			}
+			if (prewarm_start >= 0 && prewarm_start < static_cast<int>(segment_start_ms_.size()))
+			{
+				spawnHead(prewarm_start, segment_start_ms_[static_cast<size_t>(prewarm_start)],
+						  segment_start_ms_, total_segments, graveyard);
+			}
+		}
 	}
 }
 

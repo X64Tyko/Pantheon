@@ -666,7 +666,10 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 																						 client_caps_copy);
 															},
 															opts_copy.buffer_size, opts_copy.ffmpeg_debug_logs, opts_copy.verbose_transcode_logs,
-															opts_copy.lookahead_secs, kVodHlsSegmentSecs);
+															opts_copy.lookahead_secs, kVodHlsSegmentSecs,
+															/*head_window_segments=*/100, VodEncodeStream::kDefaultStallTimeoutMs, opts_copy.encoder_admission,
+															// direct-stream (copy) video runs no encoder, so gate only a real hw encode
+															/*gate_encoder_slot=*/!video_direct && opts_copy.hw_accel != HwAccel::none);
 													});
 	if (!video_stream_ ||
 		video_stream_->prepareSegment(start_segment, segment_start_ms, total_segments) == VodEncodeStream::SegmentPrep::Failed)

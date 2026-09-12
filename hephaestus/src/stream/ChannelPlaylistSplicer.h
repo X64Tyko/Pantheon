@@ -118,7 +118,6 @@ private:
 	std::deque<CanonicalSegment> segments_;
 	int64_t next_seq_                   = 0;
 	int64_t discontinuities_rolled_off_ = 0;
-	double max_duration_ever_           = 0;
 
 	std::thread thread_;
 	std::atomic<bool> stop_flag_{false};

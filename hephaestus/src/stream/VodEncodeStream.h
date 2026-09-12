@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+class EncoderAdmission;
+
 // One elementary HLS stream (video-only or audio-only) within a VOD
 // session's directory, covered by a small set of bounded-window "heads" —
 // each a real ffmpeg process responsible for a fixed span of segments
@@ -70,13 +72,21 @@ public:
 	// crosses a boundary). A caller with more frequent natural respawn points
 	// to offer (e.g. a live channel wanting room to eventually nudge speed
 	// per-head) can pass something much smaller.
-	// stall_timeout_ms: exposed purely so tests can shrink it (the default
-	// mirrors kHeadStallTimeoutMs in the .cpp) — no production caller needs
-	// anything but the default real-world budget.
+	// stall_timeout_ms: exposed purely so tests can shrink it (the default is
+	// kDefaultStallTimeoutMs) — no production caller needs anything but the
+	// default real-world budget.
+	// admission/gate_encoder_slot: host-wide hardware-encode-session cap (see
+	// EncoderAdmission). gate_encoder_slot must be true only when this stream's
+	// heads actually run a hardware encode (a software/AAC-only encode doesn't
+	// consume a GPU session) — when true and admission is non-null, each head
+	// acquires a slot before spawning and releases it on teardown (RAII, see
+	// Head). nullptr/false leaves behaviour exactly as before (opt-in).
+	static constexpr int64_t kDefaultStallTimeoutMs = 15'000;
 	VodEncodeStream(std::string label, std::string segment_dir, std::string segment_prefix,
 					ArgsBuilder argsBuilder, int buffer_size, bool ffmpeg_debug_logs, bool verbose_transcode_logs,
 					int lookahead_secs, int hls_time_secs, int head_window_segments = 100,
-					int64_t stall_timeout_ms                                        = 15'000);
+					int64_t stall_timeout_ms                                        = kDefaultStallTimeoutMs,
+					EncoderAdmission* admission = nullptr, bool gate_encoder_slot = false);
 	~VodEncodeStream();
 
 	VodEncodeStream(const VodEncodeStream&)            = delete;
@@ -103,6 +113,14 @@ public:
 
 	void setVerboseTranscodeLogs(bool v) { verbose_transcode_logs_ = v; }
 	void setBufferSize(int v) { buffer_size_ = v; }
+
+	// When true, tick() spawns the head covering the next window boundary a few
+	// segments before playback actually reaches it, so a head-to-head handoff
+	// is never a cold start (reopen/reprobe/reseek/NVENC-init) right at the
+	// moment its first segment is already due. Only sound for a strictly
+	// forward-consumed stream (a live channel); off by default so VOD, whose
+	// viewers seek/pause, doesn't build encoder slots ahead speculatively.
+	void setPrewarmNextHead(bool v) { prewarm_next_head_.store(v); }
 
 	// Public so Router.cpp can resolve the on-disk path for a segment
 	// directly off a shared VodEncodeStream (via VodSession's own
@@ -153,6 +171,14 @@ private:
 		// Head*, so it always has something live to write to regardless of
 		// whether the Head itself still exists by the time it runs.
 		std::shared_ptr<std::atomic<bool>> exited_naturally = std::make_shared<std::atomic<bool>>(false);
+
+		// Host-wide encoder slot this head holds, if any (see EncoderAdmission).
+		// Released in the destructor — after the process is confirmed dead — so
+		// every teardown path (natural exit reap, LRU/overlap eviction, stop())
+		// frees the slot exactly once without each having to remember to.
+		EncoderAdmission* admission = nullptr;
+		bool holds_slot             = false;
+		~Head();
 	};
 
 	// All require mtx_ already held by the caller. graveyard collects heads
@@ -182,7 +208,14 @@ private:
 	int hls_time_secs_;
 	int head_window_segments_;
 	int64_t stall_timeout_ms_;
+	EncoderAdmission* admission_;
+	bool gate_encoder_slot_;
+	std::atomic<bool> prewarm_next_head_{false};
 
 	mutable std::mutex mtx_;
 	std::vector<std::unique_ptr<Head>> heads_; // guarded by mtx_; dead heads erased, not just marked
+	// Last boundaries prepareSegment() was called with — cached so tick()'s
+	// prewarm pass can spawn the next boundary head without the caller having
+	// to thread the array through tick() too. Guarded by mtx_.
+	std::vector<int64_t> segment_start_ms_;
 };

@@ -178,6 +178,80 @@ TEST_F(ChannelPlaylistSplicerTest, SpliceToInsertsDiscontinuityAndCatchesUpNewSo
 	EXPECT_NE(playlist.find("seg-00002.ts"), std::string::npos);
 }
 
+TEST_F(ChannelPlaylistSplicerTest, DiscontinuitySequenceCountsRetainedButHiddenDiscontinuities)
+{
+	// list_size(2) + delete_threshold(2) = 4 retained, 2 listed — so 2 retained
+	// segments sit in the hidden [0, firstVisible) region. A discontinuity that
+	// scrolls into that region but hasn't been fully evicted must still be
+	// reflected in EXT-X-DISCONTINUITY-SEQUENCE (RFC 8216 §4.3.3.3), or every
+	// later fragment's continuity counter shifts across the reload that drops
+	// the tag from the listed window. Regression for the "buffering/desync a
+	// couple programs in" bug.
+	auto splicer = std::make_unique<ChannelPlaylistSplicer>(
+		canonical.string(), /*list_size=*/2, /*delete_threshold=*/2,
+		/*reveal_lead_ms=*/6'000, std::chrono::milliseconds(500));
+
+	// Item A: one segment, no discontinuity (first splice ever) — canonical seq 0.
+	writeSegment(pendingA, 0);
+	ChannelPlaylistSplicer::SpawnInfo a;
+	a.pending_dir           = pendingA.string();
+	a.segment_prefix        = "seg-";
+	a.segment_boundaries_ms = {0};
+	a.item_duration_ms      = 1000;
+	a.wall_clock_start_ms   = nowMs() - 60'000; // everything already due
+	splicer->spliceTo(a);
+
+	// Item B: four segments — canonical seq 1..4, with a discontinuity before
+	// seq 1 (B's first). Relaying all of them evicts seq 0 and leaves the deque
+	// holding [1,2,3,4]: seq 1 (the discontinuity) is now at deque index 0, in
+	// the hidden region, but not evicted.
+	for (int i = 0; i < 4; ++i) writeSegment(pendingB, i);
+	ChannelPlaylistSplicer::SpawnInfo b;
+	b.pending_dir           = pendingB.string();
+	b.segment_prefix        = "seg-";
+	b.segment_boundaries_ms = {0, 1000, 2000, 3000};
+	b.item_duration_ms      = 4000;
+	b.wall_clock_start_ms   = nowMs() - 60'000;
+	splicer->spliceTo(b);
+
+	std::string playlist = splicer->canonicalPlaylistForTest();
+	// The discontinuity tag itself is no longer in the listed window...
+	EXPECT_EQ(playlist.find("#EXT-X-DISCONTINUITY\n"), std::string::npos);
+	// ...so the sequence number must carry it instead.
+	EXPECT_NE(playlist.find("#EXT-X-DISCONTINUITY-SEQUENCE:1\n"), std::string::npos);
+	// Sanity: seq 1 really is retained-but-hidden (on disk, not in the listing).
+	EXPECT_TRUE(std::filesystem::exists(canonical / "seg-00001.ts"));
+	EXPECT_EQ(playlist.find("seg-00001.ts"), std::string::npos);
+}
+
+TEST_F(ChannelPlaylistSplicerTest, TargetDurationTracksListedSegmentsNotAllTimeMax)
+{
+	// One early long segment (10s) followed by short ones — once the long
+	// segment scrolls out of the listed window, TARGETDURATION must drop back
+	// to bound only what's actually listed, not stay pinned at the all-time
+	// high. A stale-large TARGETDURATION makes hls.js sit further from the live
+	// edge and poll less often. Regression for the monotonic-max bug.
+	auto splicer = std::make_unique<ChannelPlaylistSplicer>(
+		canonical.string(), /*list_size=*/2, /*delete_threshold=*/0,
+		/*reveal_lead_ms=*/6'000, std::chrono::milliseconds(500));
+
+	for (int i = 0; i < 5; ++i) writeSegment(pendingA, i);
+	ChannelPlaylistSplicer::SpawnInfo info;
+	info.pending_dir           = pendingA.string();
+	info.segment_prefix        = "seg-";
+	// seg0 spans 10s; seg1..3 span 2s each; seg4 is the 2s tail to item end.
+	info.segment_boundaries_ms = {0, 10'000, 12'000, 14'000, 16'000};
+	info.item_duration_ms      = 18'000;
+	info.wall_clock_start_ms   = nowMs() - 60'000; // everything already due
+	splicer->spliceTo(info);
+
+	// Only seg-00003 (2s) and seg-00004 (2s) remain listed; the 10s seg-00000
+	// rolled off entirely.
+	std::string playlist = splicer->canonicalPlaylistForTest();
+	EXPECT_NE(playlist.find("#EXT-X-TARGETDURATION:2\n"), std::string::npos);
+	EXPECT_EQ(playlist.find("#EXT-X-TARGETDURATION:10\n"), std::string::npos);
+}
+
 TEST_F(ChannelPlaylistSplicerTest, PrunesOldSegmentsBeyondListSizePlusDeleteThreshold)
 {
 	auto splicer = std::make_unique<ChannelPlaylistSplicer>(
