@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import {
     startVodPlayback,
     stopVodPlayback,
+    pingVodSession,
     liveChannelManifestUrl,
     startChannelViewer,
     stopChannelViewer,
@@ -252,19 +253,14 @@ export function usePlaybackSession(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.kind, target.id])
 
-  // After the full transcode finishes, hls.js downloads all remaining
-  // segments in a burst then stops making HTTP requests. Without a
-  // keepalive the server's 120 s idle reaper deletes the HLS directory —
-  // Android Chrome's smaller MSE buffer evicts buffered video and hls.js
-  // tries to re-fetch segments that are now gone (404 → freeze). Re-
-  // fetching the manifest every 30 s is enough to prevent the reap.
   useEffect(() => {
-    if (isLive || !manifestUrl) return
-    const keepalive = setInterval(() => {
-      fetch(manifestUrl, { cache: 'no-store' }).catch(() => {})
-    }, 30_000)
-    return () => clearInterval(keepalive)
-  }, [isLive, manifestUrl])
+    if (isLive) return
+    const heartbeat = setInterval(() => {
+      const sid = sessionIdRef.current
+      if (sid) pingVodSession(sid)
+    }, 60_000)
+    return () => clearInterval(heartbeat)
+  }, [isLive])
 
   const reload: PlaybackSession['reload'] = useCallback(opts => {
     // audioTrack defaults to the current one as a request hint when the

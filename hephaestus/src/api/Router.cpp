@@ -1382,6 +1382,15 @@ void registerRoutes(httplib::Server& svr, SessionManager& sessions, VodSessionMa
 				 res.set_content(json{{"ok", true}}.dump(), "application/json");
 			 });
 
+	svr.Get(R"(/stream/vod/([^/]+)/ping$)", [&vodSessions](
+			const httplib::Request& req, httplib::Response& res)
+			{
+				auto session = vodSessions.get(req.matches[1]);
+				if (!session) { res.status = 404; return; }
+				session->touch();
+				res.status = 204;
+			});
+
 	// ── Preview (Guide hover previews) ────────────────────────────────────────
 	svr.Post("/stream/preview/start", [&previewSessions](
 			 const httplib::Request& req, httplib::Response& res)

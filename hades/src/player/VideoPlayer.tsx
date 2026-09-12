@@ -182,7 +182,7 @@ export function VideoPlayer({ videoRef, manifestUrl, isLive, subtitleTrack = -1,
         const resumeAt = isLive && video.currentTime > 0 ? video.currentTime : undefined
         hls = new Hls(isLive
             ? (resumeAt !== undefined ? {startPosition: resumeAt} : {})
-            : {startPosition: startPositionSec ?? 0})
+            : {startPosition: startPositionSec ?? 0, maxMaxBufferLength: 90})
       hlsRef.current = hls
       // Fires once hls.js has parsed the manifest's SUBTITLES groups (and
       // possibly again later) — applySubtitleTrackRef.current() so this

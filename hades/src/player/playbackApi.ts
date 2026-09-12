@@ -81,6 +81,13 @@ export function stopVodPlayback(sessionId: string) {
   fetch(`/stream/vod/${sessionId}/stop`, { method: 'POST', headers: authHeaders() }).catch(() => {})
 }
 
+// Heartbeat — touches the session to prevent idle reaping while the player
+// is paused or the tab is backgrounded. Fire-and-forget; a 404 (session
+// already gone) is silently swallowed.
+export function pingVodSession(sessionId: string) {
+  fetch(`/stream/vod/${sessionId}/ping`, { headers: authHeaders() }).catch(() => {})
+}
+
 export function liveChannelManifestUrl(channelId: string): string {
   const url = `/stream/hls/channels/${channelId}/playlist.m3u8`
   if (typeof window !== 'undefined' && (window.location.protocol === 'https:' || window.location.hostname !== 'localhost')) {
