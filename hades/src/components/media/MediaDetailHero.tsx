@@ -2,10 +2,40 @@ import { type ReactNode } from 'react'
 import type { ScraperSearchResult, VideoInfo } from '../../api/types'
 import { EpisodeShelf } from './EpisodeShelf'
 import { LanguageChips } from './LanguageChips'
+import { PlaybackPreferenceSelector } from './PlaybackPreferenceSelector'
 import { useFocusable } from '../../nav/useFocusable'
 import { useNavBack } from '../../nav/back'
 import { folderBaseName, useMediaDetail, type MediaDetailResult } from './useMediaDetail'
-import { heroTextShadow } from '../../channel/styles'
+import { useScrollCollapse } from './useScrollCollapse'
+import { useElementHeight } from './useElementHeight'
+import styles from './MediaDetailHero.module.css'
+
+// The backdrop is a genuinely fixed layer — never scrolls. It's
+// HERO_HEIGHT_CSS tall (matches HomePage's hero, see HomePage.tsx's height:
+// '62vh', minHeight: 360, so both read as the same scale — and so it's
+// shown in full on first paint, per design) until the header below has
+// actually locked at the top (`collapsed`, from useScrollCollapse's
+// sentinel — geometry-accurate, not a guessed scroll distance), at which
+// point it shrinks to match the header's own *measured* rendered height
+// (`useElementHeight` — varies per item, e.g. a long overview needs more
+// room than a short one) and grows back once scrolled back up.
+//
+// The poster/title/overview block itself never shrinks or changes style on
+// web — it's a `position: sticky` element *inside* the scroll container,
+// starting at its normal document position (overlapping the backdrop's
+// lower edge by HERO_OVERLAP) and translating up with the scroll like
+// anything else until it locks at the top, still overlaid on the backdrop
+// throughout (its zIndex is higher). `secondaryInfo` (languages, studio,
+// folder, sources) and `playButton` live in that same sticky block, since
+// they're part of the detail header, not "the rest of the page" — they
+// lock and stay visible alongside poster/title instead of continuing to
+// scroll underneath once locked. `actions` (match status, Fix Match, Push
+// to Sources, Refresh Metadata, etc. — the heavier admin tooling) and the
+// season shelves are plain, non-positioned flow *after* the sticky block,
+// so they naturally paint *below* the fixed backdrop wherever they scroll
+// into that region — visually passing behind it.
+const HERO_HEIGHT_CSS = 'max(62vh, 360px)'
+const HERO_OVERLAP    = 40
 
 function formatVideoInfo(v: VideoInfo): string | null {
   if (!v.codec && !v.height) return null
@@ -21,39 +51,36 @@ interface MediaDetailHeroProps {
   content_type?:   'show' | 'movie'
   discoverResult?: ScraperSearchResult
   onBack:          () => void
-  /** Extra library-management controls, rendered between the overview and the season shelves. Render-prop so it shares this component's own useMediaDetail() result. */
+    /** Rendered inside the sticky header, right after secondaryInfo (studio/folder/sources) — stays locked alongside poster/title rather than scrolling with the admin tooling in `actions`. Render-prop (like `actions`) so Play-from-Beginning can read `media.seasonsWithEpisodes` without a second fetch. */
+    playButton?: (media: MediaDetailResult) => ReactNode
+  /** Heavier admin/library-management controls (match status, Fix Match, Push to Sources, etc.), rendered between the sticky header and the season shelves as plain scrolling content. Render-prop so it shares this component's own useMediaDetail() result. */
   actions?:        (media: MediaDetailResult) => ReactNode
   /** Admin/details tooling, rendered at the very bottom, after the season shelves. */
   afterShelves?:   ReactNode
 }
 
-const metaChip: React.CSSProperties = {
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-  padding: '3px 9px', borderRadius: 10,
-  border: '1px solid var(--hds-line-s)', color: 'var(--hds-txt-3)',
-}
-
-export function MediaDetailHero({ id, content_type, discoverResult, onBack, actions, afterShelves }: MediaDetailHeroProps) {
+export function MediaDetailHero({ id, content_type, discoverResult, onBack, playButton, actions, afterShelves }: MediaDetailHeroProps) {
   useNavBack(onBack) // Escape/Backspace closes the detail view, same contract as PlayerPage
   const media = useMediaDetail({ id, content_type, discoverResult })
   const {
-    show, movie, loading, detail, contentType,
-    posterUrl, backdropUrl, title, year, overview, genres, rating,
+      show, movie, loading, error, detail, contentType,
+    posterUrl, backdropUrl, title, year, overview, genres, tags, rating,
     seasonsWithEpisodes, languages, videoInfo, folderName, fileName,
     setFocusedEpisode,
   } = media
 
-  const srcColor = discoverResult?.source === 'tmdb' ? 'oklch(0.65 0.18 220)' : 'oklch(0.65 0.12 280)'
+  const { scrollRef, sentinelRef, collapsed } = useScrollCollapse()
+  const { ref: headerRef, height: headerHeight } = useElementHeight<HTMLDivElement>()
+
+  const sourceChipClass = discoverResult?.source === 'tmdb' ? styles.metaChipTmdb : styles.metaChipOther
+  const requestApproved = discoverResult?.request_status === 'approved'
 
   const posterBox = (
-    <div style={{
-      width: 170, height: 255, borderRadius: 10, overflow: 'hidden', flexShrink: 0,
-      background: 'var(--hds-bg-3)', boxShadow: '0 8px 32px oklch(0 0 0 / 0.5)',
-    }}>
+    <div className={`hds-media-detail-poster ${styles.posterBox}`}>
       {posterUrl && (
         <img
           src={posterUrl} alt={title}
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          className={styles.posterImg}
           onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
       )}
@@ -61,61 +88,55 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
   )
 
   const primaryInfo = (
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
-        <h2 style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 27, fontWeight: 700,
-          color: 'var(--hds-txt)', margin: 0, flex: 1, lineHeight: 1.15,
-          textShadow: heroTextShadow,
-        }}>{title}</h2>
+    <div className={styles.primaryInfo}>
+      <div className={styles.titleRow}>
+        <h2 className={styles.title}>{title}</h2>
         {detail?.locked && (
-          <span style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, padding: '2px 8px',
-            borderRadius: 8, background: 'oklch(0.55 0.14 292 / 0.2)',
-            border: '1px solid oklch(0.7 0.13 287 / 0.4)', color: 'var(--hds-violet)',
-            flexShrink: 0, marginTop: 5,
-          }}>LOCKED</span>
+          <span className={`${styles.statusBadge} ${styles.statusBadgeLocked}`}>LOCKED</span>
         )}
         {detail?.skip_scraping && (
-          <span style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 9, padding: '2px 8px',
-            borderRadius: 8, background: 'oklch(0.3 0.01 286 / 0.5)',
-            border: '1px solid oklch(0.4 0.01 286 / 0.6)', color: 'var(--hds-txt-3)',
-            flexShrink: 0, marginTop: 5,
-          }}>SCRAPING OFF</span>
+          <span className={`${styles.statusBadge} ${styles.statusBadgeScrapingOff}`}>SCRAPING OFF</span>
         )}
       </div>
 
       {/* Meta chips */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-        {year && <span style={metaChip}>{year}</span>}
-        {detail?.content_rating && <span style={metaChip}>{detail.content_rating}</span>}
+      <div className={styles.metaChipRow}>
+        {year && <span className={styles.metaChip}>{year}</span>}
+        {detail?.content_rating && <span className={styles.metaChip}>{detail.content_rating}</span>}
         {rating != null && (
-          <span style={{ ...metaChip, color: 'var(--hds-gold)', borderColor: 'oklch(0.83 0.13 84 / 0.4)' }}>
+          <span className={`${styles.metaChip} ${styles.metaChipGold}`}>
             ★ {rating.toFixed(1)}
           </span>
         )}
-        <span style={metaChip}>{contentType === 'show' ? 'series' : 'film'}</span>
+        <span className={styles.metaChip}>{contentType === 'show' ? 'series' : 'film'}</span>
         {videoInfo && formatVideoInfo(videoInfo) && (
-          <span style={metaChip}>{formatVideoInfo(videoInfo)}</span>
+          <span className={styles.metaChip}>{formatVideoInfo(videoInfo)}</span>
+        )}
+        {/* Watched status — general viewer-facing info, not admin/match
+            tooling, so it lives here in the sticky header rather than down
+            in LibraryDetailActions' match-status row next to Fix Match. */}
+        {movie?.watched && (
+          <span className={`${styles.metaChip} ${styles.metaChipGreen}`}>
+            ✓ {movie.view_count && movie.view_count > 1 ? `Watched · ${movie.view_count}×` : 'Watched'}
+          </span>
+        )}
+        {show && show.watched_episode_count > 0 && (
+          <span className={`${styles.metaChip} ${styles.metaChipGreen}`}>
+            ✓ {show.watched_episode_count < show.episode_count
+              ? `${show.watched_episode_count}/${show.episode_count} watched`
+              : 'Watched'}
+          </span>
         )}
         {discoverResult && (
-          <span style={{
-            ...metaChip, color: srcColor,
-            borderColor: discoverResult.source === 'tmdb' ? 'oklch(0.65 0.18 220 / 0.4)' : 'oklch(0.65 0.12 280 / 0.4)',
-          }}>{discoverResult.source.toUpperCase()}</span>
+          <span className={`${styles.metaChip} ${sourceChipClass}`}>{discoverResult.source.toUpperCase()}</span>
         )}
         {discoverResult?.in_library && (
-          <span style={{ ...metaChip, color: 'oklch(0.7 0.16 150)', borderColor: 'oklch(0.7 0.16 150 / 0.4)' }}>
+          <span className={`${styles.metaChip} ${styles.metaChipGreen}`}>
             IN LIBRARY
           </span>
         )}
         {!discoverResult?.in_library && discoverResult?.request_status && (
-          <span style={{
-            ...metaChip,
-            color:       discoverResult.request_status === 'approved' ? 'oklch(0.7 0.16 150)' : 'oklch(0.78 0.15 84)',
-            borderColor: discoverResult.request_status === 'approved' ? 'oklch(0.7 0.16 150 / 0.4)' : 'oklch(0.78 0.15 84 / 0.4)',
-          }}>
+          <span className={`${styles.metaChip} ${requestApproved ? styles.metaChipGreen : styles.metaChipAmber}`}>
             {discoverResult.request_status === 'approved' ? 'APPROVED' : discoverResult.request_status === 'rejected' ? 'REJECTED' : 'REQUESTED'}
           </span>
         )}
@@ -123,25 +144,28 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
 
       {/* Genres */}
       {genres.length > 0 && (
-        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div className={styles.genreRow}>
           {genres.map(g => (
-            <span key={g} style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-              padding: '3px 10px', borderRadius: 12,
-              background: 'var(--hds-glass)', border: '1px solid var(--hds-glass-border)',
-              color: 'var(--hds-txt-2)', letterSpacing: '0.05em',
-            }}>{g}</span>
+            <span key={g} className={styles.genreChip}>{g}</span>
+          ))}
+        </div>
+      )}
+
+      {/* Tags — scraper-derived keywords/themes (TMDB keywords, AniList tags,
+          Wikidata main subject), distinct from genres: more numerous and more
+          specific (e.g. "Christmas", "time travel"), so a lighter/smaller
+          chip style keeps them from competing visually with genres. */}
+      {tags.length > 0 && (
+        <div className={styles.tagRow}>
+          {tags.map(t => (
+            <span key={t} className={styles.tagChip}>{t}</span>
           ))}
         </div>
       )}
 
       {/* Overview — swaps to the focused episode's when one is hovered/focused */}
       {overview && (
-        <p style={{
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, lineHeight: 1.75,
-          color: 'var(--hds-txt-2)', margin: '0 0 16px', maxWidth: 760,
-          textShadow: heroTextShadow,
-        }}>{overview}</p>
+        <p className={styles.overview}>{overview}</p>
       )}
     </div>
   )
@@ -151,9 +175,19 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
       {/* Languages */}
       <LanguageChips languages={languages} />
 
+      {/* Playback preference — settable before ever pressing play, unlike
+          the sticky per-show/movie preference that used to only ever get
+          set as a side effect of switching tracks mid-playback. Only for a
+          real library item (id + detail both present) — a bare
+          discoverResult (not yet in the library) has no show_id/movie_id
+          for this to key off. */}
+      {id && detail && (
+        <PlaybackPreferenceSelector contentType={contentType} id={id} languages={languages} />
+      )}
+
       {/* Movie: credits */}
       {movie && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 6 }}>
+        <div className={styles.movieCreditsCol}>
           {movie.director && <MetaRow label="Director">{movie.director}</MetaRow>}
           {movie.studio   && <MetaRow label="Studio">{movie.studio}</MetaRow>}
           {movie.duration_ms > 0 && (
@@ -164,7 +198,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
               path), only movies have one file to point at. */}
           {fileName && (
             <MetaRow label="File">
-              <span style={{ wordBreak: 'break-all' }}>
+              <span className={styles.breakAll}>
                 {folderName && <>{folderName}/</>}{fileName}
               </span>
             </MetaRow>
@@ -178,7 +212,7 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
           of the movie "File" row above. */}
       {show?.folder_path && (
         <MetaRow label="Folder">
-          <span style={{ wordBreak: 'break-all' }} title={show.folder_path}>
+          <span className={styles.breakAll} title={show.folder_path}>
             {folderBaseName(show.folder_path)}
           </span>
         </MetaRow>
@@ -188,14 +222,11 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
           {detail.sources.map(s => s.display_name || s.source_type).join(', ')}
         </MetaRow>
       )}
-
-      {/* Extra library actions */}
-      {actions?.(media)}
     </>
   )
 
   const seasonShelves = seasonsWithEpisodes.length > 0 && (
-    <div style={{ marginTop: 32 }}>
+    <div className={styles.seasonShelvesWrap}>
       {seasonsWithEpisodes.map(s => (
         <EpisodeShelf
           key={`${s.number}-${s.episodes[0]?.episode_id ?? ''}`}
@@ -206,56 +237,87 @@ export function MediaDetailHero({ id, content_type, discoverResult, onBack, acti
     </div>
   )
 
-  // One implementation for every caller (LibraryPage, Home's detail view,
-  // TvLibraryDetail has its own TV-shaped layout but the same idea) — own
-  // pinned hero: backdrop + poster + title/chips/genres/overview stay fixed
-  // (and, critically, visible regardless of how far down the season shelves
-  // are scrolled, so the episode-hover retarget above is actually
-  // perceptible) while secondary metadata/actions and the season shelves
-  // scroll beneath it.
+  // One implementation for every caller (LibraryPage, Home's detail view;
+  // TvLibraryDetail has its own TV-shaped layout but the same idea, sized
+  // for 10-foot viewing). See the HERO_HEIGHT_CSS comment above for the
+  // full mechanism.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ flexShrink: 0 }}>
-        {/* Sticky + height:0 so Back stays pinned to the viewport instead of scrolling away with the banner. */}
-        <div style={{ position: 'sticky', top: 18, zIndex: 20, height: 0 }}>
-          <BackButton onClick={onBack} overlay />
-        </div>
-        <div style={{
-          position: 'relative', height: '42vh', minHeight: 300, flexShrink: 0,
+    <div className={styles.root}>
+      {/* Fixed backdrop — never scrolls; shrinks to the locked header's
+          measured height once collapsed, back to full size once not.
+          Height and the backdrop image itself are both genuinely dynamic
+          per-render values (a live DOM measurement, and an arbitrary image
+          URL) so they stay targeted inline styles rather than static classes. */}
+      <div
+        className={`${styles.backdrop} ${loading && !discoverResult ? styles.backdropLoading : ''}`}
+        style={{
+          height: collapsed && headerHeight > 0 ? headerHeight : HERO_HEIGHT_CSS,
           background: backdropUrl
             ? `url(${backdropUrl}) center/cover no-repeat`
-            : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)',
-          marginBottom: -60, paddingBottom: 60,
-          opacity: loading && !discoverResult ? 0.6 : 1, transition: 'opacity .3s ease',
-        }}>
-          <div style={{
-            position: 'absolute', inset: 0,
-            background: 'linear-gradient(to right, oklch(0 0 0 / 0.75) 0%, oklch(0 0 0 / 0.3) 55%, transparent 100%)',
-          }} />
-          <div style={{
-            position: 'absolute', inset: 0,
-            background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 46%)',
-            paddingBottom: 60, marginBottom: -60,
-          }} />
-        </div>
-
-        <div className="hds-media-detail-hero-container" style={{ position: 'relative', zIndex: 2, padding: '0 48px 24px' }}>
-          {loading && !discoverResult ? (
-            <DetailSkeleton />
-          ) : (
-            <div className="hds-media-detail-hero-row" style={{ display: 'flex', gap: 36, alignItems: 'flex-start', maxWidth: 1200, paddingTop: 20 }}>
-              {posterBox}
-              {primaryInfo}
-            </div>
-          )}
-        </div>
+            : 'linear-gradient(135deg, var(--hds-backdrop-fallback-1) 0%, var(--hds-backdrop-fallback-2) 50%, var(--hds-backdrop-fallback-3) 100%)',
+        }}
+      >
+        <div className={styles.backdropScrimH} />
+        <div className={styles.backdropScrimV} />
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', maxHeight: '100%' }} className="scrollbar-dark">
-        <div style={{ padding: '0 48px 48px' }}>
-          {!loading && (
-            <div style={{ maxWidth: 1200, paddingLeft: 206 /* align under the info column above, not the poster */ }}>
-              <div style={{ maxWidth: 760 }}>{secondaryInfo}</div>
+      {/* Pinned above everything, independent of scroll or collapse state. */}
+      <div className={styles.pinnedBack}>
+        <BackButton onClick={onBack} overlay />
+      </div>
+
+      <div ref={scrollRef} className={`${styles.scrollArea} scrollbar-dark`}>
+        {/* Spacer — the sticky header's natural (unstuck) starting position,
+            overlapping the fixed backdrop's lower edge by HERO_OVERLAP. */}
+        <div style={{ height: `calc(${HERO_HEIGHT_CSS} - ${HERO_OVERLAP}px)` }} />
+
+        {/* Sentinel — same document position as the header's natural top
+            edge, right before it. Once this scrolls out of view the header
+            has nowhere left to go but stick (see useScrollCollapse). */}
+        <div ref={sentinelRef} />
+
+        {/* Sticky header — scrolls up with the page like normal content
+            until it reaches the top, then locks there. Never changes size —
+            just overlaid on the still-visible backdrop behind it throughout
+            (zIndex 2 > backdrop's zIndex 1), never on the page background.
+            secondaryInfo (Studio, Folder, Sources, etc.) and playButton live
+            *inside* this sticky block, not in the plain-flow content below —
+            they're part of the detail header, not "the rest of the page,"
+            so they lock and stay visible alongside poster/title instead of
+            continuing to scroll underneath them once locked. */}
+        <div
+          ref={headerRef}
+          className={`hds-media-detail-hero-container${collapsed ? ' hds-media-detail-hero-collapsed' : ''} ${styles.stickyHeader}`}
+        >
+          {loading && !discoverResult ? (
+            <DetailSkeleton />
+          ) : error && !detail ? (
+              <div className={styles.errorState}>{error}</div>
+          ) : (
+            <>
+              <div className={`hds-media-detail-hero-row ${styles.heroRow}`}>
+                {posterBox}
+                {primaryInfo}
+              </div>
+              <div className={styles.alignUnderInfo}>
+                <div className={styles.secondaryInfoCol}>
+                  {secondaryInfo}
+                    {playButton?.(media)}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Plain flow — no position/z-index, so it naturally paints *below*
+            the fixed backdrop (a positioned element) wherever it scrolls
+            into that region, i.e. behind it. Match status/Fix Match/Push to
+            Sources/etc, season shelves, fix-match panel — genuinely "the
+            rest of the page." */}
+        <div className={styles.belowFold}>
+          {!loading && actions && (
+            <div className={styles.alignUnderInfo}>
+              <div className={styles.actionsCol}>{actions(media)}</div>
             </div>
           )}
           {seasonShelves}
@@ -272,23 +334,7 @@ function BackButton({ onClick, overlay }: { onClick: () => void; overlay?: boole
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 11, letterSpacing: '0.06em',
-        transition: 'color .12s, background .12s',
-        ...(overlay
-          ? {
-              marginLeft: 24, // positioning handled by the sticky wrapper in MediaDetailHero
-              padding: '7px 14px 7px 10px', borderRadius: 20,
-              border: '1px solid var(--hds-glass-border)', background: 'var(--hds-glass)',
-              backdropFilter: 'blur(8px)', color: 'oklch(0.92 0.01 285)',
-            }
-          : {
-              background: 'none', border: 'none', padding: '18px 0 20px', color: 'var(--hds-txt-3)',
-            }),
-      }}
-      onMouseEnter={e => (e.currentTarget.style.color = overlay ? '#fff' : 'var(--hds-txt)')}
-      onMouseLeave={e => (e.currentTarget.style.color = overlay ? 'oklch(0.92 0.01 285)' : 'var(--hds-txt-3)')}
+      className={`${styles.backButton} ${overlay ? styles.backButtonOverlay : ''}`}
     >
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 2L4 7l5 5" />
@@ -300,8 +346,8 @@ function BackButton({ onClick, overlay }: { onClick: () => void; overlay?: boole
 
 function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)' }}>
-      <span style={{ color: 'var(--hds-txt-2)' }}>{label}</span>
+    <div className={styles.metaRow}>
+      <span className={styles.metaRowLabel}>{label}</span>
       {' · '}{children}
     </div>
   )
@@ -309,11 +355,11 @@ function MetaRow({ label, children }: { label: string; children: ReactNode }) {
 
 function DetailSkeleton() {
   return (
-    <div style={{ display: 'flex', gap: 32, paddingTop: 20 }}>
-      <div className="hds-skeleton" style={{ width: 170, height: 255, borderRadius: 10, flexShrink: 0 }} />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 600 }}>
+    <div className={styles.skeletonRow}>
+      <div className={`hds-skeleton ${styles.skeletonPoster}`} />
+      <div className={styles.skeletonLines}>
         {[240, 120, 90, 320, 280, 300, 220].map((w, i) => (
-          <div key={i} className="hds-skeleton" style={{ height: 14, borderRadius: 4, width: w }} />
+          <div key={i} className={`hds-skeleton ${styles.skeletonLine}`} style={{ width: w }} />
         ))}
       </div>
     </div>

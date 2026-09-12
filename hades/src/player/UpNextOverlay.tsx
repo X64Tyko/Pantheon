@@ -3,6 +3,7 @@ import { setFocus } from '@noriginmedia/norigin-spatial-navigation'
 import { useFocusable } from '../nav/useFocusable'
 import { mediaUrl } from '../api/client'
 import type { NextEpisode } from '../api/types'
+import styles from './UpNextOverlay.module.css'
 
 const COUNTDOWN_SECS = 10
 const CANCEL_FOCUS_KEY = 'player-upnext-cancel'
@@ -45,93 +46,43 @@ export function UpNextOverlay({ nextEpisode, onPlayNow, onDismiss }: UpNextOverl
 
   return (
     <div
-      style={cardStyle}
+      className={styles.card}
       onClick={passive ? undefined : onPlayNow}
       role={passive ? undefined : 'button'}
       tabIndex={passive ? undefined : 0}
     >
-      <div style={rowStyle}>
+      <div className={styles.row}>
         {nextEpisode.thumb && (
           <img
             src={mediaUrl(`/api/episodes/${nextEpisode.episode_id}/thumb`)}
             alt=""
-            style={thumbStyle}
+            className={styles.thumb}
           />
         )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <div style={labelStyle}>{passive ? 'Coming Up' : 'Up Next'}</div>
-          <div style={epNumStyle}>S{nextEpisode.season} · E{nextEpisode.episode}</div>
-          <div style={titleStyle}>{nextEpisode.title}</div>
+        <div className={styles.textCol}>
+          <div className={styles.label}>{passive ? 'Coming Up' : 'Up Next'}</div>
+          <div className={styles.epNum}>S{nextEpisode.season} · E{nextEpisode.episode}</div>
+          <div className={styles.epTitle}>{nextEpisode.title}</div>
         </div>
       </div>
       {!passive && (
         <>
-          <div style={countdownTextStyle}>Playing Next In: {secsLeft}s</div>
+          <div className={styles.countdownText}>Playing Next In: {secsLeft}s</div>
           <button
             ref={cancel.ref} data-tv-focused={cancel.focused}
             onClick={e => { e.stopPropagation(); onDismiss!() }}
-            style={cancelBtnStyle}
+            className={styles.cancelBtn}
           >
             Cancel
           </button>
-          <div style={progressTrackStyle}>
+          <div className={styles.progressTrack}>
             <div
-              className="hds-upnext-fill"
-              style={{ ...progressFillStyle, animationDuration: `${COUNTDOWN_SECS}s` }}
+              className={`hds-upnext-fill ${styles.progressFill}`}
+              style={{ animationDuration: `${COUNTDOWN_SECS}s` }}
             />
           </div>
         </>
       )}
     </div>
   )
-}
-
-const cardStyle: React.CSSProperties = {
-  position: 'absolute', right: 28, bottom: 110, zIndex: 60,
-  width: 340, padding: 16, borderRadius: 10,
-  background: 'var(--hds-bg-2, rgba(20,20,24,0.92))',
-  border: '1px solid var(--hds-line, rgba(255,255,255,0.12))',
-  boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
-  fontFamily: "'JetBrains Mono', monospace", color: 'var(--hds-txt, #eee)',
-}
-
-const rowStyle: React.CSSProperties = { display: 'flex', gap: 12, alignItems: 'center' }
-
-const thumbStyle: React.CSSProperties = {
-  width: 100, height: 56, objectFit: 'cover', borderRadius: 6, flexShrink: 0,
-  background: 'var(--hds-bg-3, #222)',
-}
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
-  color: 'var(--hds-gold, #cba135)',
-}
-
-const epNumStyle: React.CSSProperties = { fontSize: 11, color: 'var(--hds-txt-2, #999)' }
-
-const titleStyle: React.CSSProperties = {
-  fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-}
-
-const countdownTextStyle: React.CSSProperties = {
-  marginTop: 14, fontSize: 11, color: 'var(--hds-txt-2, #999)',
-}
-
-const cancelBtnStyle: React.CSSProperties = {
-  marginTop: 8, width: '100%', padding: '8px 0', borderRadius: 6, cursor: 'pointer',
-  border: '1px solid var(--hds-line, rgba(255,255,255,0.12))',
-  background: 'transparent', color: 'var(--hds-txt, #eee)', fontWeight: 600,
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
-}
-
-// The bar drains over the same countdown that drives auto-play — visually,
-// "how much time is left to hit Cancel" (see hds-upnext-drain in index.css).
-const progressTrackStyle: React.CSSProperties = {
-  marginTop: 10, height: 3, borderRadius: 2, overflow: 'hidden',
-  background: 'var(--hds-bg-3, rgba(255,255,255,0.1))',
-}
-
-const progressFillStyle: React.CSSProperties = {
-  height: '100%', width: '100%', background: 'var(--hds-gold, #cba135)',
-  animationName: 'hds-upnext-drain', animationTimingFunction: 'linear', animationFillMode: 'forwards',
 }

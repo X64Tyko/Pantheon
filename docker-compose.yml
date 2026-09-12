@@ -3,10 +3,26 @@
 # Unraid Compose Manager URL:
 #   https://raw.githubusercontent.com/X64Tyko/Pantheon/master/docker-compose.yml
 #
+# This is the plain variant: CPU-only transcoding, no Cloudflare Tunnel.
+# Five other ready-to-use variants (NVENC, VAAPI, and a +cloudflared version
+# of each) are attached to every GitHub Release — see
+# https://github.com/X64Tyko/Pantheon/releases/latest. All six are generated
+# from this same file (scripts/generate-compose-variants.py) and differ only
+# in which lines below are commented out, so switching later is just copying
+# the toggled block into your own already-customized file — no need to
+# re-point at a different file and lose your volume paths.
+#
 # Before first run, edit the volume paths below to match your setup:
 #   MEDIA_PATH  — your media library root (e.g. /mnt/user/Media on Unraid)
 #   FILLER_PATH — where yt-dlp downloads land; set this same path as the
 #                 Default Download Path in the Hades Downloads page.
+#
+# YouTube downloads failing with "Sign in to confirm you're not a bot"?
+# That's YouTube flagging this host's IP (common on cloud/datacenter hosts,
+# not just LAN ones) — pacing doesn't fix it. Export cookies.txt from a real
+# logged-in browser session (see the yt-dlp wiki: "exporting YouTube
+# cookies"), place it on the host, and point KAIROS_YTDLP_COOKIES at the
+# in-container path below. Leave unset for the old unauthenticated behavior.
 #
 # Kairos stores its database and config at whatever host path you mount to
 # /data below (default: /mnt/user/appdata/kairos). The paths in this file are
@@ -15,15 +31,32 @@
 # On first start, open the Hades UI at http://<host>:8000 and configure
 # your settings through it.
 #
+# Admin account: if KAIROS_ADMIN_USERNAME / KAIROS_ADMIN_PASSWORD are set
+# (put them in a `.env` file next to this compose file, same pattern as
+# CLOUDFLARE_TUNNEL_TOKEN below), Kairos creates that admin account itself on
+# first boot, before it ever starts accepting connections. Strongly
+# recommended for any server reachable from outside your LAN — without it,
+# the in-app "Continue setup" screen has no way to tell your first real
+# visitor apart from the operator, and whoever gets there first becomes
+# admin. Leave both unset for the old behavior (configure the admin account
+# through the Hades UI on first visit) if this is staying LAN-only.
+#
 # Port map:
 #   8000 — Hermes (single public endpoint: UI, API, live TV, HDHomeRun)
-#   8081 — Kairos direct access (optional; useful for debugging)
+#   8081 — Kairos direct access, commented out below by default. Handy for
+#          local debugging, but it's a second, unnecessary way into the same
+#          admin-capable API and doesn't need to be reachable from wherever
+#          your public/demo traffic comes from — uncomment the port mapping
+#          in the kairos service below only if you specifically need it, and
+#          don't publish it on an internet-facing host.
 #
 # Optional: remote/HTTPS access via Cloudflare Tunnel — chromecast sender
 # support (and anything else requiring a secure context) needs Hades served
 # over HTTPS, which a LAN-only http://<host>:8000 address never satisfies.
-# Off by default, no compose flags needed to keep it that way (see the
-# cloudflared service below for why) — enable per-install with:
+# This variant doesn't define the cloudflared service at all (it's commented
+# out near the bottom of this file), so nothing extra gets pulled or started
+# if you don't need it. To enable it, either uncomment that block or grab the
+# docker-compose.cloudflared.yml variant instead — then:
 #   1. Cloudflare Zero Trust dashboard → Networks → Tunnels → Create a tunnel
 #      → connector type "Docker" → copy the token it gives you.
 #   2. In that same wizard, add a Public Hostname: whatever hostname you want
@@ -47,16 +80,20 @@ services:
     image: ghcr.io/x64tyko/kairos:latest
     labels:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Kairos_Beta_Icon.png"
-    ports:
-      - "8081:8080"
+    # ports:
+    #   - "8081:8080"   # direct Kairos access — see the Port map note above
     environment:
       - KAIROS_SYNC_THREADS=4
+      - KAIROS_ADMIN_USERNAME=${KAIROS_ADMIN_USERNAME:-}
+      - KAIROS_ADMIN_PASSWORD=${KAIROS_ADMIN_PASSWORD:-}
       # - KAIROS_DEBUG=1
       # - KAIROS_DEBUG_EPG=1
+      # - KAIROS_YTDLP_COOKIES=/data/ytdlp-cookies.txt   # see note above
     volumes:
       - /mnt/user/appdata/kairos:/data
-      - /mnt/user/Media:/media:ro
+      - /mnt/user/Media:/media   # writable: Kairos writes NFO/poster/fanart sidecars back to local libraries
       - /mnt/user/Media/Filler:/downloads
+      # - /mnt/user/appdata/kairos/ytdlp-cookies.txt:/data/ytdlp-cookies.txt:ro
     restart: unless-stopped
 
   hephaestus:
@@ -65,6 +102,12 @@ services:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/X64Tyko/Pantheon/master/icons/Hephaestus_Beta_Icon.png"
     environment:
       - KAIROS_URL=http://kairos:8080
+      # Caps concurrent transcode/preview sessions (each is a spawned ffmpeg
+      # process) so no single account — including a guest — can exhaust this
+      # host's CPU/GPU by opening unlimited sessions. Defaults to 8 each if
+      # unset; raise/lower to match this host's real transcode capacity.
+      # - HEPH_MAX_VOD_SESSIONS=8
+      # - HEPH_MAX_PREVIEW_SESSIONS=8
       # ── NVIDIA: uncomment these three lines and add `runtime: nvidia` below ──
       # - HEPH_HW_ACCEL=nvidia
       # - NVIDIA_VISIBLE_DEVICES=all
@@ -74,6 +117,7 @@ services:
       # - HEPH_VAAPI_DEV=/dev/dri/renderD128   # override if your render node differs
     # runtime: nvidia   # NVIDIA — requires NVIDIA Container Toolkit on the host
     volumes:
+      - /mnt/user/appdata/kairos:/data
       - /mnt/user/Media:/media:ro
     # devices:          # AMD — expose the GPU render node
     #   - /dev/dri/renderD128:/dev/dri/renderD128
@@ -97,39 +141,44 @@ services:
       - KAIROS_URL=http://kairos:8080
       - HEPHAESTUS_URL=http://hephaestus:8082
       - HADES_URL=http://hades:3000
+    volumes:
+      - /mnt/user/appdata/kairos:/data
     depends_on:
       - kairos
       - hephaestus
       - hades
     restart: unless-stopped
 
-  # Optional — see the "Cloudflare Tunnel" note near the top of this file.
+  # Cloudflare Tunnel — see the note near the top of this file. This whole
+  # block toggles on/off together; enabling it needs a `.env` file next to
+  # this compose file with CLOUDFLARE_TUNNEL_TOKEN=... set.
+  #
   # Outbound-only, no inbound port mapping needed; the public hostname and
   # its target (hermes:8000) are configured in the Cloudflare dashboard when
   # the tunnel token is created, not here — this file is the same for every
   # install, only the token differs.
   #
-  # Always defined and started by a plain `docker compose up` — no
-  # --profile flag, since some management UIs (Unraid's Compose Manager
-  # included) just run compose directly with no way to pass one. Opting out
-  # is purely env-var-driven instead: the entrypoint below checks for
+  # Deliberately not gated behind a compose `--profile` flag, since some
+  # management UIs (Unraid's Compose Manager included) just run compose
+  # directly with no way to pass one — instead, once uncommented, it's safe
+  # to leave defined even without a token: the entrypoint below checks for
   # CLOUDFLARE_TUNNEL_TOKEN itself and exits cleanly (0) rather than trying
   # to authenticate with nothing if it's unset, and `restart: on-failure`
   # (not unless-stopped) means that clean exit leaves the container quietly
-  # sitting at "Exited (0)" instead of crash-looping forever for anyone who
-  # doesn't set a token at all.
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    environment:
-      - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        if [ -z "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
-          echo "cloudflared: CLOUDFLARE_TUNNEL_TOKEN not set in .env — skipping (see the note near the top of docker-compose.yml)"
-          exit 0
-        fi
-        exec cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
-    depends_on:
-      - hermes
-    restart: on-failure
+  # sitting at "Exited (0)" instead of crash-looping forever if you uncomment
+  # this without setting a token.
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   environment:
+  #     - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+  #   entrypoint: ["/bin/sh", "-c"]
+  #   command:
+  #     - |
+  #       if [ -z "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+  #         echo "cloudflared: CLOUDFLARE_TUNNEL_TOKEN not set in .env — skipping (see the note near the top of docker-compose.yml)"
+  #         exit 0
+  #       fi
+  #       exec cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
+  #   depends_on:
+  #     - hermes
+  #   restart: on-failure

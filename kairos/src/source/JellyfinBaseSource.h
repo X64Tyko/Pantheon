@@ -31,6 +31,14 @@ public:
                        const std::string& item_type,
                        const WritebackFields& fields)                                override;
 
+    std::optional<std::string> createRemoteList(const std::string& title, const std::string& kind,
+                                                 const std::vector<IMediaSource::PushListItem>& items,
+                                                 const std::string& external_lib_id)              override;
+    bool addRemoteListItems(const std::string& list_external_id, const std::string& kind,
+                             const std::vector<IMediaSource::PushListItem>& items)                override;
+    bool removeRemoteListItems(const std::string& list_external_id, const std::string& kind,
+                                const std::vector<IMediaSource::PushListItem>& items)             override;
+
 protected:
     JellyfinBaseSource(const std::string& source_id,
                        const std::string& base_url,

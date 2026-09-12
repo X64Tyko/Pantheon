@@ -1,0 +1,174 @@
+.sectionWrap { margin-bottom: var(--hds-space-6); }
+
+.sectionHeading {
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  padding-bottom: var(--hds-space-2);
+  margin-bottom: var(--hds-space-3);
+  border-bottom: 1px solid var(--hds-line-s);
+}
+
+.gifWrap { margin-top: var(--hds-space-4); }
+
+.gifImg {
+  width: 100%;
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-line-s);
+  display: block;
+}
+
+.gifLabel {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  margin-top: 5px;
+  font-style: italic;
+}
+
+.gifPlaceholder {
+  margin-top: var(--hds-space-4);
+  border: 1px dashed oklch(0.38 0.05 286);
+  border-radius: var(--hds-radius-tile);
+  padding: var(--hds-space-4) 14px;
+  background: oklch(0.15 0.012 286);
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+}
+
+.gifPlaceholderIcon {
+  font-size: var(--hds-font-size-tv-body);
+  color: var(--hds-txt-3);
+  flex-shrink: 0;
+}
+
+.gifPlaceholderLabel {
+  font-size: 10.5px;
+  color: var(--hds-txt-3);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.triggerWrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.triggerWrapLabeled { margin-left: 0; }
+.triggerWrapUnlabeled { margin-left: 5px; }
+
+.labelBtn {
+  padding: 5px 12px;
+  border-radius: var(--hds-radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-3);
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+}
+
+.questionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--hds-line);
+  background-color: var(--hds-bg-3);
+  color: var(--hds-txt-3);
+  font-size: var(--hds-font-size-tv-badge);
+  font-family: sans-serif;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+  padding: 0;
+  transition: 0.1s;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 9999;
+  background: oklch(0.2 0.018 286);
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-sm);
+  padding: 5px var(--hds-space-3);
+  font-size: 10.5px;
+  color: var(--hds-txt-2);
+  box-shadow: 0 6px 16px -4px oklch(0 0 0 / 0.5);
+  pointer-events: none;
+  white-space: nowrap;
+  font-family: var(--hds-font-mono-brand);
+  /* top/left/transform: dynamic (positioned against the trigger's own rect), set inline */
+}
+
+.tooltipHint {
+  color: var(--hds-txt-3);
+  font-size: 9.5px;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: oklch(0.08 0.015 286 / 0.85);
+  backdrop-filter: blur(2px);
+}
+
+.modalBox {
+  width: min(96vw, 540px);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--hds-bg-2);
+  border-radius: var(--hds-radius-lg);
+  border: 1px solid var(--hds-line);
+  box-shadow: 0 32px 80px -16px oklch(0 0 0 / 0.7);
+  overflow: hidden;
+  font-family: var(--hds-font-mono-brand);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--hds-space-5) 20px 13px;
+  border-bottom: 1px solid var(--hds-line-s);
+  flex-shrink: 0;
+}
+
+.modalTitle {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
+
+.modalCloseBtn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--hds-radius-tile);
+  background: transparent;
+  color: var(--hds-txt-2);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-input);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modalBody {
+  flex: 1;
+  overflow: auto;
+  padding: 18px 20px var(--hds-space-6);
+  font-size: var(--hds-font-size-tv-label);
+  color: var(--hds-txt-2);
+  line-height: 1.75;
+}

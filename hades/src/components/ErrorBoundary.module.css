@@ -1,0 +1,8 @@
+.fallback {
+  padding: var(--hds-space-7);
+  color: oklch(0.72 0.16 22);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+}
+.title { margin-bottom: var(--hds-space-3); font-size: 14px; }
+.message { color: var(--hds-txt-3); }

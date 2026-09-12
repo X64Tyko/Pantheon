@@ -13,8 +13,18 @@ foreach ($svc in @('kairos', 'hephaestus', 'hermes')) {
     }
 }
 
+# ── Design tokens ─────────────────────────────────────────────────────────────
+# Regenerated here (not just via Hades' own predev hook) so Kairos serves
+# fresh theme data from its very first request — Hades' dev server starts
+# last, below, and its predev hook wouldn't otherwise run until then. Zero
+# npm dependencies (node:fs/url/path only), so this works even before
+# `pnpm install` has run.
+Write-Host '[dev] generating design tokens ...'
+node (Join-Path $root 'hades\scripts\generate-tv-tokens.mjs')
+
 # ── Kairos    :8080 ───────────────────────────────────────────────────────────
 Write-Host '[dev] starting Kairos on :8080 ...'
+$env:KAIROS_TV_TOKENS_PATH = Join-Path $root 'kairos\assets\tv-tokens.json'
 $kairosProc = Start-Process -FilePath (Join-Path $build 'kairos\kairos.exe') `
     -WorkingDirectory (Join-Path $build 'kairos') -PassThru
 

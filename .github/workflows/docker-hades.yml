@@ -3,17 +3,58 @@ name: Build & publish Hades image
 on:
   push:
     branches: [master]
+    # GitHub ignores `paths` entirely for tag pushes (it only applies to
+    # branch pushes), so a `vX.Y.Z` release tag always builds+publishes a
+    # versioned image regardless of what changed — this is what lets a
+    # user's compose.yml pin to a stable release instead of just `:latest`.
+    tags: ["v*.*.*"]
     paths:
       - "hades/**"
+      - "momus/hades/**"
+      - "VERSION"
       - ".github/workflows/docker-hades.yml"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional version tag to also publish (e.g. v0.2.0) — for backfilling a release whose tag push predates a CI fix"
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: x64tyko/hades
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: hades/package.json
+
+      - name: Install deps
+        working-directory: hades
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: hades
+        run: pnpm exec tsc -b
+
+      - name: Run tests
+        working-directory: hades
+        run: pnpm test:run
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -45,7 +86,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./hades
+          context: .
+          file: hades/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
@@ -99,6 +141,8 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
+            type=ref,event=tag
+            type=raw,value=${{ inputs.release_tag }},enable=${{ inputs.release_tag != '' }}
 
       - name: Create and push manifest
         working-directory: /tmp/digests

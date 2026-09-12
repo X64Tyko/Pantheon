@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
+import { useSearchParams } from 'react-router-dom'
 import { api, downloadDebugDump } from '../api/client'
 import { statusStore, helpTipsStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
-import type { ArrConfig, CastSessionInfo, RokuDevice, ScraperSettings, ScraperStats } from '../api/types'
+import type {
+    ArrConfig,
+    BackupInfo,
+    CastSessionInfo,
+    RokuDevice,
+    ScheduledJob,
+    ScheduledJobPatch,
+    ScraperSettings,
+    ScraperStats
+} from '../api/types'
 
 interface SmtpForm {
   host:            string
@@ -16,6 +26,7 @@ interface SmtpForm {
 }
 import { useFocusable } from '../nav/useFocusable'
 import { HelpTip, HelpSection } from '../channel/HelpTip'
+import styles from './SettingsPage.module.css'
 
 interface Settings {
   epg_debug:              boolean
@@ -24,7 +35,39 @@ interface Settings {
   stream_buffer_size:     number
   image_cache_ttl_hours:  number
   verbose_transcode_logs: boolean
+    ffmpeg_debug_logs: boolean
+  verbose_gateway_logs:   boolean
+  hades_debug:            boolean
   cast_app_id:            string
+    default_landing_page: string
+    internal_token: string
+    guest_profiles_enabled: boolean
+    guest_idle_timeout_days: number
+    guest_max_concurrent: number
+    guest_channel_builder_enabled: boolean
+    guest_max_demo_channels: number
+    viewer_max_channels: number
+    require_admin_password_switch: boolean
+}
+
+type Tab = 'general' | 'scrapers' | 'integrations' | 'devices' | 'jobs' | 'diagnostics'
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'general',      label: 'General' },
+  { key: 'scrapers',     label: 'Scrapers' },
+  { key: 'integrations', label: 'Integrations' },
+  { key: 'devices',      label: 'Devices' },
+    {key: 'jobs', label: 'Jobs'},
+  { key: 'diagnostics',  label: 'Diagnostics' },
+]
+
+function relativeTime(ms: number): string {
+    const secs = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+    if (secs < 60) return `${secs}s ago`
+    const mins = Math.floor(secs / 60)
+    if (mins < 60) return `${mins}m ago`
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return `${hours}h ago`
+    return `${Math.floor(hours / 24)}d ago`
 }
 
 function Toggle({ id, checked, onChange, disabled }: { id: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -40,18 +83,9 @@ function Toggle({ id, checked, onChange, disabled }: { id: string; checked: bool
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      style={{
-        position: 'relative', display: 'inline-flex', alignItems: 'center',
-        width: 40, height: 22, borderRadius: 11, border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
-        background: checked ? 'oklch(0.72 0.18 140)' : 'oklch(0.28 0.01 286)',
-        transition: 'background 0.15s', flexShrink: 0, outline: 'none',
-        opacity: disabled ? 0.5 : 1,
-      }}
+      className={`${styles.toggle} ${checked ? styles.toggleOn : styles.toggleOff} ${disabled ? styles.toggleDisabled : ''}`}
     >
-      <span style={{
-        position: 'absolute', left: checked ? 20 : 2, width: 18, height: 18,
-        borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
-      }} />
+      <span className={`${styles.toggleKnob} ${checked ? styles.toggleKnobOn : styles.toggleKnobOff}`} />
     </button>
   )
 }
@@ -62,12 +96,12 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
     // instead of both fighting for horizontal space — several controls here
     // have hardcoded widths (e.g. 260px API key inputs) that would otherwise
     // crush the label into a sliver, or overflow outright, on a phone.
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px 24px', padding: '14px 0', borderBottom: '1px solid oklch(0.22 0.01 286)' }}>
+    <div className={styles.settingRow}>
       <div>
-        <div style={{ fontSize: 13, color: 'var(--hds-txt)', fontWeight: 500 }}>{label}</div>
-        {hint && <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginTop: 3 }}>{hint}</div>}
+        <div className={styles.settingRowLabel}>{label}</div>
+        {hint && <div className={styles.settingRowHint}>{hint}</div>}
       </div>
-      <div style={{ flexShrink: 0 }}>{children}</div>
+      <div className={styles.settingRowControl}>{children}</div>
     </div>
   )
 }
@@ -75,13 +109,13 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
 // Local helper — this page has several one-off action buttons (Clear All,
 // Save x2, Run Match, Reset/Yes/Cancel) all needing the same D-pad wiring;
 // factored out rather than repeating the useFocusable boilerplate 7 times.
-function NavButton({ id, onClick, disabled, style, children }: {
-  id: string; onClick: () => void; disabled?: boolean
-  style: React.CSSProperties; children: React.ReactNode
+function NavButton({ id, onClick, disabled, className, title, children }: {
+  id: string; onClick: () => void; disabled?: boolean; title?: string
+  className: string; children: React.ReactNode
 }) {
   const { ref, focused } = useFocusable<object, HTMLButtonElement>({ focusKey: `settings-btn-${id}`, onEnterPress: onClick, focusable: !disabled })
   return (
-    <button ref={ref} data-tv-focused={focused} onClick={onClick} disabled={disabled} style={style}>
+    <button ref={ref} data-tv-focused={focused} onClick={onClick} disabled={disabled} title={title} className={className}>
       {children}
     </button>
   )
@@ -89,23 +123,20 @@ function NavButton({ id, onClick, disabled, style, children }: {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: 'var(--hds-bg-2)', border: '1px solid oklch(0.22 0.01 286 / 0.6)', borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ padding: '10px 18px', borderBottom: '1px solid oklch(0.22 0.01 286)', background: 'oklch(0.14 0.012 286 / 0.6)' }}>
-        <span style={{ fontSize: 10, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>{title.toUpperCase()}</span>
+    <div className={styles.section}>
+      <div className={styles.sectionHeader}>
+        <span className={styles.sectionHeaderText}>{title.toUpperCase()}</span>
       </div>
-      <div style={{ padding: '0 18px' }}>{children}</div>
+      <div className={styles.sectionBody}>{children}</div>
     </div>
   )
 }
 
-const inputStyle: React.CSSProperties = {
-  padding: '4px 8px', borderRadius: 6,
-  border: '1px solid oklch(0.3 0.01 286)',
-  background: 'oklch(0.13 0.01 286)', color: 'var(--hds-txt)',
-  fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
-}
-
 export default observer(function SettingsPage() {
+  const [searchParams] = useSearchParams()
+  const initialTab = TABS.find(t => t.key === searchParams.get('tab'))?.key ?? 'general'
+  const [tab, setTab] = useState<Tab>(initialTab)
+
   const [settings, setSettings]   = useState<Settings | null>(null)
   const [saving,   setSaving]     = useState(false)
   const [clearing, setClearing]   = useState(false)
@@ -114,6 +145,12 @@ export default observer(function SettingsPage() {
   const [threads,  setThreads]    = useState('')
   const [bufferSize, setBufferSize] = useState('')
   const [castAppId, setCastAppId] = useState('')
+    const [internalToken, setInternalToken] = useState('')
+    const [guestIdleTimeoutDays, setGuestIdleTimeoutDays] = useState('')
+    const [guestMaxConcurrent, setGuestMaxConcurrent] = useState('')
+    const [guestMaxDemoChannels, setGuestMaxDemoChannels] = useState('')
+    const [viewerMaxChannels, setViewerMaxChannels] = useState('')
+    const [regeneratingToken, setRegeneratingToken] = useState(false)
   const [castSessions, setCastSessions] = useState<CastSessionInfo[] | null>(null)
   const [revokingCast, setRevokingCast] = useState<string | null>(null)
 
@@ -125,6 +162,16 @@ export default observer(function SettingsPage() {
   const [removingRoku, setRemovingRoku] = useState<string | null>(null)
   const rokuPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+    const [jobs, setJobs] = useState<ScheduledJob[] | null>(null)
+    const [jobBusy, setJobBusy] = useState<string | null>(null) // job name currently being patched/run
+    const [jobMsg, setJobMsg] = useState<string | null>(null)
+
+    const [backups, setBackups] = useState<BackupInfo[] | null>(null)
+    const [backupMaxCount, setBackupMaxCount] = useState('')
+    const [backupMaxCountServer, setBackupMaxCountServer] = useState(14) // last-known-good, for reverting an invalid edit
+    const [backupBusy, setBackupBusy] = useState<string | null>(null) // 'run' | 'config' | a backup id
+    const [restoreConfirmId, setRestoreConfirmId] = useState<string | null>(null)
+    const [backupMsg, setBackupMsg] = useState<string | null>(null)
 
   const [resetConfirm,  setResetConfirm]  = useState(false)
   const [resetting,     setResetting]     = useState(false)
@@ -155,6 +202,18 @@ export default observer(function SettingsPage() {
   const [matchRunning,    setMatchRunning]    = useState(false)
   const matchPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const [refreshingAll, setRefreshingAll] = useState(false)
+  const [refreshAllProgress, setRefreshAllProgress] = useState<{ total: number; processed: number; refreshed: number; failed: number } | null>(null)
+  const refreshAllPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const [confirmAllPending, setConfirmAllPending] = useState(false)
+  const [confirmingAll,     setConfirmingAll]     = useState(false)
+  const [confirmAllMsg,     setConfirmAllMsg]     = useState<string | null>(null)
+
+    const [unconfirmAllPending, setUnconfirmAllPending] = useState(false)
+    const [unconfirmingAll, setUnconfirmingAll] = useState(false)
+    const [unconfirmAllMsg, setUnconfirmAllMsg] = useState<string | null>(null)
+
   const loadCastSessions = () => api.getCastSessions().then(setCastSessions).catch(() => setCastSessions([]))
 
   // Self-terminating poll chain, not a standing interval — only ever ticks
@@ -173,6 +232,67 @@ export default observer(function SettingsPage() {
       wasMatchRunningRef.current = s.running
     }).catch(() => {})
   }
+
+  // Same self-terminating pattern as pollMatchStatus, tracking the separate
+  // "refresh all metadata" background job instead of the matcher.
+  const wasRefreshingAllRef = useRef(false)
+  const pollRefreshAllStatus = () => {
+    api.getRefreshAllStatus().then(s => {
+      setRefreshingAll(s.running)
+      setRefreshAllProgress({ total: s.total, processed: s.processed, refreshed: s.refreshed, failed: s.failed })
+      if (s.running) {
+        refreshAllPollRef.current = setTimeout(pollRefreshAllStatus, 3000)
+      } else if (wasRefreshingAllRef.current) {
+        api.getScraperStats().then(setScraperStats).catch(() => {})
+      }
+      wasRefreshingAllRef.current = s.running
+    }).catch(() => {})
+  }
+
+  const refreshAll = async () => {
+    setRefreshingAll(true)
+    setRefreshAllProgress(null)
+    wasRefreshingAllRef.current = true
+    await api.triggerRefreshAll()
+    if (refreshAllPollRef.current) clearTimeout(refreshAllPollRef.current)
+    pollRefreshAllStatus()
+  }
+
+  // Synchronous (a plain DB flip, no network fetch per item — see
+  // ScraperManager::confirmAllMatches()), so unlike refreshAll/runMatch this
+  // needs no background-job polling: the await just resolves once it's done.
+  const confirmAllMatches = async () => {
+    setConfirmingAll(true)
+    setConfirmAllMsg(null)
+    try {
+      const { confirmed } = await api.confirmAllMatches()
+      setConfirmAllMsg(`Confirmed ${confirmed} match${confirmed !== 1 ? 'es' : ''}.`)
+      setConfirmAllPending(false)
+      api.getScraperStats().then(setScraperStats).catch(() => {})
+    } catch (e: any) {
+      setConfirmAllMsg(`Error: ${e.message ?? 'Unknown error'}`)
+    } finally {
+      setConfirmingAll(false)
+    }
+  }
+
+    // Undo button for an accidental Confirm All Matches — same synchronous
+    // plain-DB-flip shape as confirmAllMatches() above.
+    const unconfirmAllMatches = async () => {
+        setUnconfirmingAll(true)
+        setUnconfirmAllMsg(null)
+        try {
+            const {unconfirmed} = await api.unconfirmAllMatches()
+            setUnconfirmAllMsg(`Un-confirmed ${unconfirmed} match${unconfirmed !== 1 ? 'es' : ''}.`)
+            setUnconfirmAllPending(false)
+            api.getScraperStats().then(setScraperStats).catch(() => {
+            })
+        } catch (e: any) {
+            setUnconfirmAllMsg(`Error: ${e.message ?? 'Unknown error'}`)
+        } finally {
+            setUnconfirmingAll(false)
+        }
+    }
 
   const revokeCastSession = async (sessionId: string) => {
     setRevokingCast(sessionId)
@@ -219,6 +339,11 @@ export default observer(function SettingsPage() {
       setThreads(String(s.sync_threads))
       setBufferSize(String(s.stream_buffer_size))
       setCastAppId(s.cast_app_id)
+        setInternalToken(s.internal_token)
+        setGuestIdleTimeoutDays(String(s.guest_idle_timeout_days))
+        setGuestMaxConcurrent(String(s.guest_max_concurrent))
+        setGuestMaxDemoChannels(String(s.guest_max_demo_channels))
+        setViewerMaxChannels(String(s.viewer_max_channels))
     }).catch(() => setError('Failed to load settings'))
     loadCastSessions()
     pollRokuDevices()
@@ -229,15 +354,31 @@ export default observer(function SettingsPage() {
     }).catch(() => {})
     api.getScraperSettings().then(setScraperSettings).catch(() => {})
     api.getScraperStats().then(setScraperStats).catch(() => {})
-    // One-time check in case a match kicked off elsewhere (or before this
-    // mount) is still running — pollMatchStatus takes over from here on its
-    // own if so, and stays quiet otherwise.
+      api.getJobs().then(setJobs).catch(() => setJobs([]))
+      api.getBackups().then(r => {
+          setBackups(r.backups)
+          setBackupMaxCount(String(r.max_count))
+          setBackupMaxCountServer(r.max_count)
+      }).catch(() => setBackups([]))
+    // One-time check in case a match/refresh-all kicked off elsewhere (or
+    // before this mount) is still running — the poll chains take over from
+    // here on their own if so, and stay quiet otherwise.
     pollMatchStatus()
+    pollRefreshAllStatus()
     return () => {
-      if (matchPollRef.current) clearTimeout(matchPollRef.current)
-      if (rokuPollRef.current)  clearTimeout(rokuPollRef.current)
+      if (matchPollRef.current)      clearTimeout(matchPollRef.current)
+      if (rokuPollRef.current)       clearTimeout(rokuPollRef.current)
+      if (refreshAllPollRef.current) clearTimeout(refreshAllPollRef.current)
     }
   }, [])
+
+  // The guided setup tour's scraper step targets an input that now lives
+  // behind the Scrapers tab — force that tab open while the step is active
+  // so TourSpotlight's data-tour querySelector can actually find it.
+  const tourRoute = tourStore.currentStep?.route
+  useEffect(() => {
+    if (tourRoute === '/settings') setTab('scrapers')
+  }, [tourRoute])
 
   const patch = async (update: Partial<Settings>) => {
     setSaving(true)
@@ -248,9 +389,18 @@ export default observer(function SettingsPage() {
       setThreads(String(next.sync_threads))
       setBufferSize(String(next.stream_buffer_size))
       setCastAppId(next.cast_app_id)
+        setInternalToken(next.internal_token)
+        setGuestIdleTimeoutDays(String(next.guest_idle_timeout_days))
+        setGuestMaxConcurrent(String(next.guest_max_concurrent))
+        setGuestMaxDemoChannels(String(next.guest_max_demo_channels))
+        setViewerMaxChannels(String(next.viewer_max_channels))
       // Keep statusStore in sync immediately so the debug banner reflects the change.
-      if ('sync_debug' in update) statusStore.syncDebug = next.sync_debug
-      if ('epg_debug'  in update) statusStore.epgDebug  = next.epg_debug
+      if ('sync_debug'  in update) statusStore.syncDebug  = next.sync_debug
+      if ('epg_debug'   in update) statusStore.epgDebug   = next.epg_debug
+      // remoteLog.ts reads this directly to decide whether to forward
+      // console.error calls — update it now rather than waiting for the
+      // next statusStore poll.
+      if ('hades_debug' in update) statusStore.hadesDebug = next.hades_debug
     } catch (e: any) {
       setError(e.message ?? 'Save failed')
     } finally {
@@ -274,6 +424,48 @@ const applyBuffer = () => {
     if (castAppId !== (settings?.cast_app_id ?? '')) patch({ cast_app_id: castAppId.trim() })
   }
 
+    const applyGuestIdleTimeoutDays = () => {
+        const n = parseInt(guestIdleTimeoutDays, 10)
+        if (!isNaN(n) && n >= 1 && n <= 365) patch({guest_idle_timeout_days: n})
+        else setGuestIdleTimeoutDays(settings ? String(settings.guest_idle_timeout_days) : '7')
+    }
+
+    const applyGuestMaxConcurrent = () => {
+        const n = parseInt(guestMaxConcurrent, 10)
+        if (!isNaN(n) && n >= 1 && n <= 1000) patch({guest_max_concurrent: n})
+        else setGuestMaxConcurrent(settings ? String(settings.guest_max_concurrent) : '20')
+    }
+
+    const applyGuestMaxDemoChannels = () => {
+        const n = parseInt(guestMaxDemoChannels, 10)
+        if (!isNaN(n) && n >= 1 && n <= 10) patch({guest_max_demo_channels: n})
+        else setGuestMaxDemoChannels(settings ? String(settings.guest_max_demo_channels) : '1')
+    }
+
+    const applyViewerMaxChannels = () => {
+        const n = parseInt(viewerMaxChannels, 10)
+        if (!isNaN(n) && n >= 1 && n <= 50) patch({viewer_max_channels: n})
+        else setViewerMaxChannels(settings ? String(settings.viewer_max_channels) : '3')
+    }
+
+    const applyInternalToken = () => {
+        const v = internalToken.trim()
+        if (v && v !== (settings?.internal_token ?? '')) patch({internal_token: v})
+        else if (!v) setInternalToken(settings?.internal_token ?? '')
+    }
+
+    const regenerateInternalToken = async () => {
+        setRegeneratingToken(true)
+        try {
+            const bytes = new Uint8Array(32)
+            crypto.getRandomValues(bytes)
+            const v = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+            await patch({internal_token: v})
+        } finally {
+            setRegeneratingToken(false)
+        }
+    }
+
   const resetLibrary = async () => {
     setResetting(true)
     setResetMsg(null)
@@ -287,6 +479,94 @@ const applyBuffer = () => {
       setResetting(false)
     }
   }
+
+    const patchJob = async (name: string, jobPatch: ScheduledJobPatch) => {
+        setJobBusy(name)
+        setJobMsg(null)
+        try {
+            await api.updateJob(name, jobPatch)
+            setJobs(await api.getJobs())
+        } catch (e: any) {
+            setJobMsg(`Error: ${e.message ?? 'Unknown error'}`)
+        } finally {
+            setJobBusy(null)
+        }
+    }
+
+    const runJobNow = async (name: string) => {
+        setJobBusy(name)
+        setJobMsg(null)
+        try {
+            const {status} = await api.runJobNow(name)
+            setJobMsg(status === 'started' ? null : `${name} is already running.`)
+            setJobs(await api.getJobs())
+        } catch (e: any) {
+            setJobMsg(`Error: ${e.message ?? 'Unknown error'}`)
+        } finally {
+            setJobBusy(null)
+        }
+    }
+
+    const applyBackupMaxCount = async () => {
+        const n = parseInt(backupMaxCount, 10)
+        if (!Number.isFinite(n) || n < 1) {
+            setBackupMaxCount(String(backupMaxCountServer));
+            return
+        }
+        setBackupBusy('config')
+        try {
+            await api.updateBackupConfig(n)
+            setBackupMaxCountServer(n)
+        } finally {
+            setBackupBusy(null)
+        }
+    }
+
+    const runBackupNow = async () => {
+        setBackupBusy('run')
+        setBackupMsg(null)
+        try {
+            await api.runBackupNow()
+            setBackupMsg('Backup started.')
+        } catch (e: any) {
+            setBackupMsg(`Error: ${e.message ?? 'Unknown error'}`)
+        } finally {
+            setBackupBusy(null)
+            api.getBackups().then(r => {
+                setBackups(r.backups)
+                setBackupMaxCount(String(r.max_count))
+                setBackupMaxCountServer(r.max_count)
+            }).catch(() => {
+            })
+        }
+    }
+
+    const deleteBackup = async (id: string) => {
+        setBackupBusy(id)
+        try {
+            await api.deleteBackup(id)
+            setBackups(await api.getBackups().then(r => r.backups))
+        } finally {
+            setBackupBusy(null)
+        }
+    }
+
+    const restoreBackup = async (id: string) => {
+        setBackupBusy(id)
+        setBackupMsg(null)
+        try {
+            await api.restoreBackup(id)
+            setBackupMsg('Restoring — Kairos is restarting. This page will stop responding for a few seconds.')
+            setRestoreConfirmId(null)
+        } catch (e: any) {
+            setBackupMsg(`Error: ${e.message ?? 'Unknown error'}`)
+            setBackupBusy(null)
+        }
+        // Deliberately no `finally` clearing busy on success — the process is
+        // about to exit, so there's no server left to answer a follow-up
+        // getBackups() call, and leaving the button disabled is the correct
+        // state to be in until the page is reloaded anyway.
+    }
 
   const dumpDebugDb = async () => {
     setDumping(true)
@@ -313,7 +593,14 @@ const applyBuffer = () => {
     }
   }
 
-  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb', field: string, value: string | boolean | number) => {
+    // The server never sends the real key/pin back (see ScraperService.cpp's
+    // GET handler) — api_key/pin are write-only now, so an untouched field
+    // shows this instead of the actual value, and stays blank (meaning "leave
+    // unchanged") unless the admin types a new one.
+    const secretPlaceholder = (hasValue: boolean | undefined, fallback: string) =>
+        hasValue ? 'configured — leave blank to keep' : fallback
+
+  const updateScraperConfig = (source: 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist' | 'wikidata', field: string, value: string | boolean | number) => {
     if (!scraperSettings) return
     setScraperSettings(prev => prev ? {
       ...prev,
@@ -325,6 +612,12 @@ const applyBuffer = () => {
   const updateThreshold = (v: number) => {
     if (!scraperSettings) return
     setScraperSettings(prev => prev ? { ...prev, match_threshold: v } : prev)
+    setScraperDirty(true)
+  }
+
+  const updateAnidbDownloadPosters = (v: boolean) => {
+    if (!scraperSettings) return
+    setScraperSettings(prev => prev ? { ...prev, anidb_download_posters: v } : prev)
     setScraperDirty(true)
   }
 
@@ -350,703 +643,1295 @@ const applyBuffer = () => {
     pollMatchStatus()
   }
 
-  const tmdb  = scraperSettings?.configs.find(c => c.source === 'tmdb')
-  const tvdb  = scraperSettings?.configs.find(c => c.source === 'tvdb')
-  const anidb = scraperSettings?.configs.find(c => c.source === 'anidb')
+  const tmdb   = scraperSettings?.configs.find(c => c.source === 'tmdb')
+  const tvdb   = scraperSettings?.configs.find(c => c.source === 'tvdb')
+  const anidb  = scraperSettings?.configs.find(c => c.source === 'anidb')
+  const tvmaze = scraperSettings?.configs.find(c => c.source === 'tvmaze')
+  const trakt   = scraperSettings?.configs.find(c => c.source === 'trakt')
+  const anilist  = scraperSettings?.configs.find(c => c.source === 'anilist')
+  const wikidata = scraperSettings?.configs.find(c => c.source === 'wikidata')
 
   return (
-    <div style={{ maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div className={styles.page}>
       {tourStore.currentStep?.route === '/settings' && <TourSpotlight step={tourStore.currentStep} />}
-      <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--hds-txt)', margin: 0 }}>Settings</h1>
+
+      <div className={styles.titleRow}>
+        <h1 className={styles.title}>Settings</h1>
+        {saving && <span className={styles.savingText}>Saving…</span>}
+      </div>
 
       {error && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'oklch(0.18 0.06 22 / 0.5)', border: '1px solid oklch(0.4 0.1 22 / 0.4)', fontSize: 12, color: 'oklch(0.75 0.15 22)' }}>
+        <div className={styles.errorBanner}>
           {error}
         </div>
       )}
 
-      <Section title="Interface">
-        <SettingRow
-          label="Help & Tips"
-          hint={'The small "?" help buttons throughout the app (channel builder, etc.) and their explanation popups. Off removes them entirely, everywhere.'}
-        >
-          <Toggle
-            id="help_tips_enabled"
-            checked={helpTipsStore.enabled}
-            onChange={v => helpTipsStore.setEnabled(v)}
-          />
-        </SettingRow>
-      </Section>
-
-      <Section title="Diagnostics">
-        <SettingRow
-          label="Sync Debug Logging"
-          hint="Verbose output for every sync, ffprobe call, and scraper query — phase timings, per-episode path mapping, and chapter probe results. Disable when not actively diagnosing."
-        >
-          <Toggle
-            id="sync_debug"
-            checked={settings?.sync_debug ?? false}
-            disabled={!settings || saving}
-            onChange={v => patch({ sync_debug: v })}
-          />
-        </SettingRow>
-        <SettingRow
-          label="EPG Debug Logging"
-          hint="Emits verbose [epg] lines to stdout during schedule projection. Visible in engine logs and docker logs."
-        >
-          <Toggle
-            id="epg_debug"
-            checked={settings?.epg_debug ?? false}
-            disabled={!settings || saving}
-            onChange={v => patch({ epg_debug: v })}
-          />
-        </SettingRow>
-        <SettingRow
-          label="Verbose Transcode Logging"
-          hint="Logs full ffmpeg command lines and -v verbose output for every spawned transcode (live channels, VOD, previews) — noisy, enable only when debugging hardware acceleration issues. Applies to new streams within ~15s, no restart needed."
-        >
-          <Toggle
-            id="verbose_transcode_logs"
-            checked={settings?.verbose_transcode_logs ?? false}
-            disabled={!settings || saving}
-            onChange={v => patch({ verbose_transcode_logs: v })}
-          />
-        </SettingRow>
-        <SettingRow
-          label="Download DB Snapshot"
-          hint="Downloads a sqlite file with just the library/matching tables (shows, movies, episodes, source mappings, scraper/review-queue data) — no login or session data. For sharing with support or digging into library-count/matching discrepancies offline."
-        >
-          <NavButton
-            id="debug-dump"
-            onClick={dumpDebugDb}
-            disabled={dumping}
-            style={{
-              padding: '5px 14px', borderRadius: 6, border: '1px solid oklch(0.3 0.01 286)',
-              background: 'oklch(0.18 0.01 286)', color: 'var(--hds-txt)',
-              fontSize: 12, cursor: dumping ? 'not-allowed' : 'pointer',
-              fontFamily: "'JetBrains Mono', monospace", opacity: dumping ? 0.6 : 1,
-            }}
+      {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
+      <div className={styles.tabBar}>
+        {TABS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`${styles.tabBtn} ${tab === key ? styles.tabBtnActive : ''}`}
           >
-            {dumping ? 'Preparing…' : 'Download'}
-          </NavButton>
-        </SettingRow>
-        {dumpMsg && (
-          <div style={{ padding: '10px 0 14px', fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{dumpMsg}</div>
-        )}
-      </Section>
+            {label.toUpperCase()}
+          </button>
+        ))}
+      </div>
 
-      <Section title="Performance">
-        <SettingRow
-          label="Sync Worker Threads"
-          hint="Parallel connections used when fetching episode metadata from media servers. Range: 1–32."
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              type="number" min={1} max={32}
-              value={threads}
-              onChange={e => setThreads(e.target.value)}
-              onBlur={applyThreads}
-              onKeyDown={e => e.key === 'Enter' && applyThreads()}
-              disabled={!settings || saving}
-              style={{
-                ...inputStyle, width: 60, textAlign: 'center',
-              }}
-            />
-          </div>
-        </SettingRow>
-        <SettingRow
-          label="Image Cache TTL"
-          hint="How long poster and backdrop images are cached on disk before re-fetching from the source."
-        >
-          <select
-            value={settings?.image_cache_ttl_hours ?? 2}
-            disabled={!settings || saving}
-            onChange={e => patch({ image_cache_ttl_hours: parseInt(e.target.value, 10) })}
-            style={{ ...inputStyle, width: 120, cursor: 'pointer' }}
-          >
-            {([
-              [1,   '1 hour'],
-              [2,   '2 hours'],
-              [6,   '6 hours'],
-              [12,  '12 hours'],
-              [24,  '1 day'],
-              [48,  '2 days'],
-              [168, '7 days'],
-            ] as [number, string][]).map(([v, label]) => (
-              <option key={v} value={v}>{label}</option>
-            ))}
-          </select>
-        </SettingRow>
-      </Section>
-
-      <Section title="EPG Cache">
-        <SettingRow
-          label="Clear All EPG Caches"
-          hint="Deletes all scheduled program rows across every channel. The guide will regenerate on next request."
-        >
-          <NavButton
-            id="clear-epg"
-            onClick={clearAllEpg}
-            disabled={clearing}
-            style={{
-              padding: '5px 14px', borderRadius: 6, border: '1px solid oklch(0.4 0.1 22 / 0.6)',
-              background: 'oklch(0.18 0.06 22 / 0.4)', color: 'oklch(0.75 0.15 22)',
-              fontSize: 12, cursor: clearing ? 'not-allowed' : 'pointer',
-              fontFamily: "'JetBrains Mono', monospace", opacity: clearing ? 0.6 : 1,
-            }}
-          >
-            {clearing ? 'Clearing…' : 'Clear All'}
-          </NavButton>
-        </SettingRow>
-        {clearMsg && (
-          <div style={{ padding: '10px 0 14px', fontSize: 11, color: 'var(--hds-txt-3)' }}>{clearMsg}</div>
-        )}
-      </Section>
-
-        <Section title="Stream Settings">
+      {/* ── General ─────────────────────────────────────────────────────────── */}
+      {tab === 'general' && (
+        <>
+          <Section title="Interface">
             <SettingRow
-                label="Stream Buffer Size (KB)"
-                hint="Size of the stream buffer while watching streaming channels. (Requires Restart)"
+              label="Help & Tips"
+              hint={'The small "?" help buttons throughout the app (channel builder, etc.) and their explanation popups. Off removes them entirely, everywhere.'}
             >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                        type="number" min={1024}
-                        value={bufferSize}
-                        onChange={e => setBufferSize(e.target.value)}
-                        onBlur={applyBuffer}
-                        onKeyDown={e => e.key === 'Enter' && applyBuffer()}
+              <Toggle
+                id="help_tips_enabled"
+                checked={helpTipsStore.enabled}
+                onChange={v => helpTipsStore.setEnabled(v)}
+              />
+            </SettingRow>
+              <SettingRow
+                  label="Default Landing Page"
+                  hint="Which page the app opens to after logging in or switching profiles. Any user can override this for their own account on their Account page."
+              >
+                  <select
+                      value={settings?.default_landing_page ?? 'home'}
+                      disabled={!settings || saving}
+                      onChange={e => patch({default_landing_page: e.target.value})}
+                      className={`${styles.input} ${styles.w120} ${styles.inputCursorPointer}`}
+                  >
+                      <option value="home">Home</option>
+                      <option value="guide">Guide</option>
+                  </select>
+            </SettingRow>
+          </Section>
+
+            <Section title="Guest Access">
+                <SettingRow
+                    label="Allow Guest Profiles"
+                    hint={'Lets anyone who reaches the login page create their own passwordless, viewer-only account ("Continue as Guest") — meant for running a public demo server. Off by default. A guest picks their own display name and can configure their own PIN and parental-control restrictions during first-run setup; they never get admin access.'}
+                >
+                    <Toggle
+                        id="guest_profiles_enabled"
+                        checked={settings?.guest_profiles_enabled ?? false}
                         disabled={!settings || saving}
-                        style={{
-                            ...inputStyle, width: 120, textAlign: 'right',
-                        }}
+                        onChange={v => patch({guest_profiles_enabled: v})}
                     />
-                    <span style={{ fontSize: 12, color: 'var(--hds-txt-3)' }}>KB</span>
-                </div>
-            </SettingRow>
-        </Section>
+                </SettingRow>
+                <SettingRow
+                    label="Guest Idle Timeout (days)"
+                    hint="A guest account is automatically deleted once it's gone this many days without any activity (not from when it was created — an actively-used guest account never expires on its own). Checked hourly."
+                >
+                    <input
+                        type="number" min={1} max={365}
+                        value={guestIdleTimeoutDays}
+                        onChange={e => setGuestIdleTimeoutDays(e.target.value)}
+                        onBlur={applyGuestIdleTimeoutDays}
+                        onKeyDown={e => e.key === 'Enter' && applyGuestIdleTimeoutDays()}
+                        disabled={!settings || saving}
+                        className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                    />
+                </SettingRow>
+                <SettingRow
+                    label="Max Concurrent Guests"
+                    hint="Caps how many guest accounts can exist at once, so a public demo server can't be spammed into an unbounded number of accounts — creating a new guest fails with a clear message once this many already exist."
+                >
+                    <input
+                        type="number" min={1} max={1000}
+                        value={guestMaxConcurrent}
+                        onChange={e => setGuestMaxConcurrent(e.target.value)}
+                        onBlur={applyGuestMaxConcurrent}
+                        onKeyDown={e => e.key === 'Enter' && applyGuestMaxConcurrent()}
+                        disabled={!settings || saving}
+                        className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                    />
+                </SettingRow>
+                <SettingRow
+                    label="Allow Guest Channel Builder"
+                    hint="Lets a guest build one throwaway demo channel against the real library, and watch it play. Off by default, and only takes effect while Guest Profiles (above) is also on. Intended for a separate, already-curated public demo deployment — not a server that also holds your real personal library. The demo channel never appears in the real channel lineup or M3U/XMLTV output, and is deleted automatically along with the guest account (idle timeout or self-delete)."
+                >
+                    <Toggle
+                        id="guest_channel_builder_enabled"
+                        checked={settings?.guest_channel_builder_enabled ?? false}
+                        disabled={!settings || saving || !(settings?.guest_profiles_enabled ?? false)}
+                        onChange={v => patch({guest_channel_builder_enabled: v})}
+                    />
+                </SettingRow>
+                <SettingRow
+                    label="Max Demo Channels per Guest"
+                    hint="How many channels one guest account can build at once."
+                >
+                    <input
+                        type="number" min={1} max={10}
+                        value={guestMaxDemoChannels}
+                        onChange={e => setGuestMaxDemoChannels(e.target.value)}
+                        onBlur={applyGuestMaxDemoChannels}
+                        onKeyDown={e => e.key === 'Enter' && applyGuestMaxDemoChannels()}
+                        disabled={!settings || saving}
+                        className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                    />
+                </SettingRow>
+            </Section>
 
-      <Section title="Chromecast">
-        <SettingRow
-          label="Receiver Application ID"
-          hint="From the Google Cast SDK Developer Console, registered against the Pantheon custom receiver's hosted URL. Leave blank to disable the Cast button."
-        >
-          <input
-            style={{ ...inputStyle, width: 200 }}
-            placeholder="XXXXXXXX"
-            value={castAppId}
-            onChange={e => setCastAppId(e.target.value)}
-            onBlur={applyCastAppId}
-            onKeyDown={e => e.key === 'Enter' && applyCastAppId()}
-            disabled={!settings || saving}
-          />
-        </SettingRow>
-        <SettingRow
-          label="Remote / HTTPS Access"
-          hint="Chrome only enables the Cast button on a secure origin (HTTPS, or localhost) — a plain http://<lan-ip> address never satisfies this. Cloudflare Tunnel is one free way to get a real HTTPS URL for Pantheon without port-forwarding."
-        >
-          <HelpTip title="Cloudflare Tunnel Setup" label="Setup Guide">
-            <HelpSection title="Why">
-              Google Chrome disables the Chromecast Sender API entirely on insecure origins — casting only works from an <code>https://</code> URL, or from <code>http://localhost</code> on the machine Pantheon itself runs on. A LAN address like <code>http://192.168.1.20:8000</code> will never show a Cast button, no matter what's configured elsewhere in this app.
-            </HelpSection>
-            <HelpSection title="What Cloudflare Tunnel does">
-              Gives Pantheon a real <code>https://</code> hostname (e.g. <code>pantheon.yourdomain.com</code>) that reaches your server without opening any inbound ports on your router — the tunnel is outbound-only from your network to Cloudflare's edge.
-            </HelpSection>
-            <HelpSection title="Setup">
-              <ol style={{ margin: 0, paddingLeft: 18 }}>
-                <li style={{ marginBottom: 8 }}>You need a domain added to Cloudflare (DNS managed by Cloudflare — free tier is fine).</li>
-                <li style={{ marginBottom: 8 }}>Cloudflare Zero Trust dashboard → <b style={{ color: 'var(--hds-txt)' }}>Networks → Tunnels → Create a tunnel</b> → connector type <b style={{ color: 'var(--hds-txt)' }}>Docker</b> → copy the token it gives you.</li>
-                <li style={{ marginBottom: 8 }}>In the same wizard, add a <b style={{ color: 'var(--hds-txt)' }}>Public Hostname</b>: the hostname you want (e.g. <code>pantheon.yourdomain.com</code>) → service type <b style={{ color: 'var(--hds-txt)' }}>HTTP</b> → URL <code>hermes:8000</code>. This is also where the hostname itself is configured — nothing in Pantheon's own files needs your hostname hardcoded.</li>
-                <li style={{ marginBottom: 8 }}>Put that token in a <code>.env</code> file next to Pantheon's <code>docker-compose.yml</code>:<br /><code>CLOUDFLARE_TUNNEL_TOKEN=eyJ...</code></li>
-                <li>Start/restart the stack however you normally do (plain <code>docker compose up -d</code>, or the Unraid Compose Manager UI) — no extra flags needed. Leaving the token blank keeps the container quietly stopped and doesn't affect anything else.</li>
-              </ol>
-            </HelpSection>
-            <HelpSection title="Important">
-              <p style={{ margin: 0 }}>
-                The <code>cloudflared</code> container has to actually be running — the tunnel
-                only exists while it's up. Registering a tunnel and hostname in the Cloudflare
-                dashboard doesn't do anything on its own if <code>CLOUDFLARE_TUNNEL_TOKEN</code>{' '}
-                isn't set, or the container ever gets stopped — the hostname will simply fail to
-                connect until it's running again. Check it with{' '}
-                <code>docker compose ps cloudflared</code>.
-              </p>
-            </HelpSection>
-            <HelpSection title="Security note">
-              This makes Pantheon reachable from the public internet at whatever hostname you choose, not just your LAN. Kairos's own login screen still gates access — if you want an extra layer, Cloudflare Zero Trust Access can require an email/SSO check before a request ever reaches Pantheon, configured separately in the same dashboard.
-            </HelpSection>
-          </HelpTip>
-        </SettingRow>
-      </Section>
+            <Section title="Viewer Channel Builder">
+                <SettingRow
+                    label="Max Channels per Viewer"
+                    hint="How many channels a real (named) account can build at once, once an admin has granted them channel-builder access on the Users page. Unlike Guest Access above, that access is granted per-account, not server-wide — this only caps the quota for whoever's been granted it."
+                >
+                    <input
+                        type="number" min={1} max={50}
+                        value={viewerMaxChannels}
+                        onChange={e => setViewerMaxChannels(e.target.value)}
+                        onBlur={applyViewerMaxChannels}
+                        onKeyDown={e => e.key === 'Enter' && applyViewerMaxChannels()}
+                        disabled={!settings || saving}
+                        className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                    />
+                </SettingRow>
+            </Section>
 
-      <Section title="Cast Devices">
-        {castSessions === null ? (
-          <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>Loading…</div>
-        ) : castSessions.length === 0 ? (
-          <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>
-            No devices paired yet — casting to a Chromecast or Google TV for the first time will add one here.
-          </div>
-        ) : (
-          castSessions.map(s => (
+            <Section title="Security">
+                <SettingRow
+                    label="Require Password for Admin Profile Switch"
+                    hint={settings?.guest_profiles_enabled
+                        ? 'Automatically on while Guest Access is enabled — a 4-6 digit PIN is a meaningfully weaker credential than the real password, and the "Who\'s watching?" picker showing an admin tile is reachable by any guest once guest profiles exist. Turn off Guest Access to make this optional again.'
+                        : 'When on, switching into an admin profile from the "Who\'s watching?" picker always requires the real password, even if a PIN is set for convenience — closes the gap where a weaker PIN alone could grant admin access. Independent of Guest Access, which turns this on automatically as a safe default the moment it\'s enabled.'}
+                >
+                    <Toggle
+                        id="require_admin_password_switch"
+                        checked={(settings?.require_admin_password_switch || settings?.guest_profiles_enabled) ?? false}
+                        disabled={!settings || saving || (settings?.guest_profiles_enabled ?? false)}
+                        onChange={v => patch({require_admin_password_switch: v})}
+                    />
+                </SettingRow>
+            </Section>
+
+          <Section title="Performance">
             <SettingRow
-              key={s.session_id}
-              label={`Paired ${new Date(s.created_at * 1000).toLocaleDateString()}`}
-              hint={`Last used ${new Date(s.last_seen * 1000).toLocaleString()}`}
+              label="Sync Worker Threads"
+              hint="Parallel connections used when fetching episode metadata from media servers. Range: 1–32."
             >
-              <NavButton
-                id={`cast-revoke-${s.session_id}`}
-                onClick={() => revokeCastSession(s.session_id)}
-                disabled={revokingCast === s.session_id}
-                style={{
-                  padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
-                  border: '1px solid oklch(0.4 0.15 25)', background: 'transparent',
-                  color: 'oklch(0.65 0.2 25)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
-                  opacity: revokingCast === s.session_id ? 0.5 : 1,
-                }}
-              >
-                {revokingCast === s.session_id ? 'Revoking…' : 'Revoke'}
-              </NavButton>
-            </SettingRow>
-          ))
-        )}
-      </Section>
-
-      <Section title="Roku Devices">
-        <SettingRow
-          label="Add a Roku device"
-          hint="Enter the IP address shown on the Roku itself (Settings → Network → About) — the Pantheon channel must already be open and signed in on it once before pairing can complete."
-        >
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              type="text" placeholder="Living Room TV" value={rokuName}
-              onChange={e => setRokuName(e.target.value)}
-              style={{ width: 140, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)', color: 'var(--hds-txt)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}
-            />
-            <input
-              type="text" placeholder="192.168.1.50" value={rokuIp}
-              onChange={e => setRokuIp(e.target.value)}
-              style={{ width: 120, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--hds-line)', background: 'var(--hds-bg-3)', color: 'var(--hds-txt)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}
-            />
-            <NavButton
-              id="roku-add" onClick={addRokuDevice} disabled={addingRoku || !rokuName.trim() || !rokuIp.trim()}
-              style={{
-                padding: '6px 14px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--hds-violet)',
-                background: 'transparent', color: 'var(--hds-violet)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
-                opacity: addingRoku ? 0.5 : 1,
-              }}
-            >
-              {addingRoku ? 'Adding…' : 'Add'}
-            </NavButton>
-          </div>
-        </SettingRow>
-        {rokuError && <div style={{ padding: '6px 0', fontSize: 12, color: 'oklch(0.65 0.2 25)' }}>{rokuError}</div>}
-
-        {rokuDevices === null ? (
-          <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>Loading…</div>
-        ) : rokuDevices.length === 0 ? (
-          <div style={{ padding: '14px 0', fontSize: 12, color: 'var(--hds-txt-3)' }}>No Roku devices added yet.</div>
-        ) : (
-          rokuDevices.map(d => (
-            <SettingRow
-              key={d.id}
-              label={d.name}
-              hint={d.paired ? d.ip_address : `${d.ip_address} — waiting for the channel to confirm pairing…`}
-            >
-              <NavButton
-                id={`roku-remove-${d.id}`}
-                onClick={() => removeRokuDevice(d.id)}
-                disabled={removingRoku === d.id}
-                style={{
-                  padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
-                  border: '1px solid oklch(0.4 0.15 25)', background: 'transparent',
-                  color: 'oklch(0.65 0.2 25)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
-                  opacity: removingRoku === d.id ? 0.5 : 1,
-                }}
-              >
-                {removingRoku === d.id ? 'Removing…' : 'Remove'}
-              </NavButton>
-            </SettingRow>
-          ))
-        )}
-      </Section>
-
-      <Section title="Sonarr">
-        <ArrField label="URL" hint="e.g. http://sonarr:8989" value={arr.sonarr_url}
-          onChange={v => setArr(a => ({ ...a, sonarr_url: v }))} />
-        <ArrField label="API Key" value={arr.sonarr_api_key} password
-          onChange={v => setArr(a => ({ ...a, sonarr_api_key: v }))} />
-      </Section>
-
-      <Section title="Radarr">
-        <ArrField label="URL" hint="e.g. http://radarr:7878" value={arr.radarr_url}
-          onChange={v => setArr(a => ({ ...a, radarr_url: v }))} />
-        <ArrField label="API Key" value={arr.radarr_api_key} password
-          onChange={v => setArr(a => ({ ...a, radarr_api_key: v }))} />
-      </Section>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <NavButton
-          id="save-arr"
-          onClick={async () => {
-            setArrSave('saving')
-            try { await api.patchArrConfig(arr); setArrSave('ok') }
-            catch { setArrSave('err') }
-            setTimeout(() => setArrSave('idle'), 2000)
-          }}
-          disabled={arrSave === 'saving'}
-          style={{
-            padding: '6px 18px', borderRadius: 6,
-            border: '1px solid oklch(0.72 0.18 84 / 0.6)',
-            background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
-            fontSize: 12, cursor: arrSave === 'saving' ? 'not-allowed' : 'pointer',
-            fontFamily: "'JetBrains Mono', monospace", opacity: arrSave === 'saving' ? 0.6 : 1,
-          }}
-        >
-          {arrSave === 'saving' ? 'Saving…' : arrSave === 'ok' ? 'Saved' : arrSave === 'err' ? 'Error' : 'Save Settings'}
-        </NavButton>
-        <span style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>
-          Used when adding missing media from the import preview.
-        </span>
-      </div>
-
-      <Section title="Email / SMTP">
-        <ArrField label="Host" hint="e.g. smtp.gmail.com" value={smtp.host}
-          onChange={v => setSmtp(s => ({ ...s, host: v }))} />
-        <ArrField label="Port" hint="STARTTLS only — 587 is the common case" value={smtp.port}
-          onChange={v => setSmtp(s => ({ ...s, port: v }))} />
-        <ArrField label="Username" value={smtp.username}
-          onChange={v => setSmtp(s => ({ ...s, username: v }))} />
-        <SettingRow label="Password" hint={smtpHasPassword ? 'Leave blank to keep the current one' : undefined}>
-          <input
-            type="password"
-            placeholder={smtpHasPassword ? '••••••••  (unchanged)' : ''}
-            value={smtp.password}
-            onChange={e => setSmtp(s => ({ ...s, password: e.target.value }))}
-            style={{ ...inputStyle, width: 240 }}
-          />
-        </SettingRow>
-        <ArrField label="From address" hint="What recipients see as the sender" value={smtp.from_address}
-          onChange={v => setSmtp(s => ({ ...s, from_address: v }))} />
-        <ArrField label="Public base URL" hint="e.g. https://pantheon.example.com — used to build invite links" value={smtp.public_base_url}
-          onChange={v => setSmtp(s => ({ ...s, public_base_url: v }))} />
-      </Section>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <NavButton
-          id="save-smtp"
-          onClick={async () => {
-            setSmtpSave('saving')
-            try {
-              const body: Partial<Record<keyof SmtpForm, string>> = {
-                host: smtp.host, port: smtp.port, username: smtp.username,
-                from_address: smtp.from_address, public_base_url: smtp.public_base_url,
-              }
-              if (smtp.password) body.password = smtp.password
-              await api.setSmtpConfig(body)
-              setSmtpSave('ok')
-              if (smtp.password) { setSmtpHasPassword(true); setSmtp(s => ({ ...s, password: '' })) }
-            } catch { setSmtpSave('err') }
-            setTimeout(() => setSmtpSave('idle'), 2000)
-          }}
-          disabled={smtpSave === 'saving'}
-          style={{
-            padding: '6px 18px', borderRadius: 6,
-            border: '1px solid oklch(0.72 0.18 84 / 0.6)',
-            background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
-            fontSize: 12, cursor: smtpSave === 'saving' ? 'not-allowed' : 'pointer',
-            fontFamily: "'JetBrains Mono', monospace", opacity: smtpSave === 'saving' ? 0.6 : 1,
-          }}
-        >
-          {smtpSave === 'saving' ? 'Saving…' : smtpSave === 'ok' ? 'Saved' : smtpSave === 'err' ? 'Error' : 'Save Settings'}
-        </NavButton>
-
-        <input
-          placeholder="you@example.com"
-          value={testEmailTo}
-          onChange={e => setTestEmailTo(e.target.value)}
-          style={{ ...inputStyle, width: 200 }}
-        />
-        <NavButton
-          id="test-smtp"
-          onClick={async () => {
-            if (!testEmailTo) return
-            setTestSend('sending'); setTestError('')
-            try { await api.testSmtp(testEmailTo); setTestSend('ok') }
-            catch (e: any) { setTestSend('err'); setTestError(e.message ?? 'Send failed') }
-            setTimeout(() => setTestSend('idle'), 4000)
-          }}
-          disabled={testSend === 'sending' || !testEmailTo}
-          style={{
-            padding: '6px 18px', borderRadius: 6,
-            border: '1px solid var(--hds-line)',
-            background: 'transparent', color: 'var(--hds-txt-2)',
-            fontSize: 12, cursor: testSend === 'sending' || !testEmailTo ? 'not-allowed' : 'pointer',
-            fontFamily: "'JetBrains Mono', monospace", opacity: testSend === 'sending' || !testEmailTo ? 0.5 : 1,
-          }}
-        >
-          {testSend === 'sending' ? 'Sending…' : testSend === 'ok' ? 'Sent ✓' : testSend === 'err' ? 'Failed' : 'Send Test Email'}
-        </NavButton>
-        {testSend === 'err' && testError && (
-          <span style={{ fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{testError}</span>
-        )}
-      </div>
-
-      {/* ── Metadata scrapers ───────────────────────────────────────────────── */}
-
-      <Section title="TMDB — The Movie Database">
-        <SettingRow label="Enabled" hint="Primary metadata source for movies and shows.">
-          <Toggle
-            id="tmdb_enabled"
-            checked={tmdb?.enabled ?? false}
-            disabled={!scraperSettings}
-            onChange={v => updateScraperConfig('tmdb', 'enabled', v)}
-          />
-        </SettingRow>
-        <SettingRow label="API Key (v3)">
-          <input
-            data-tour="tmdb-api-key-input"
-            style={{ ...inputStyle, width: 260 }}
-            type="password"
-            placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            value={tmdb?.api_key ?? ''}
-            onChange={e => updateScraperConfig('tmdb', 'api_key', e.target.value)}
-          />
-        </SettingRow>
-        <SettingRow label="Language" hint="e.g. en-US">
-          <input
-            style={{ ...inputStyle, width: 80 }}
-            placeholder="en-US"
-            value={tmdb?.language ?? 'en-US'}
-            onChange={e => updateScraperConfig('tmdb', 'language', e.target.value)}
-          />
-        </SettingRow>
-        <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
-          <input
-            type="number" step={0.05} min={0} max={1}
-            style={{ ...inputStyle, width: 80 }}
-            value={tmdb?.language_weight ?? 0.1}
-            onChange={e => updateScraperConfig('tmdb', 'language_weight', parseFloat(e.target.value))}
-          />
-        </SettingRow>
-      </Section>
-
-      <Section title="TVDB — TheTVDB">
-        <SettingRow label="Enabled" hint="Secondary source; provides TVDB IDs and series data.">
-          <Toggle
-            id="tvdb_enabled"
-            checked={tvdb?.enabled ?? false}
-            disabled={!scraperSettings}
-            onChange={v => updateScraperConfig('tvdb', 'enabled', v)}
-          />
-        </SettingRow>
-        <SettingRow label="API Key (v4 project key)">
-          <input
-            style={{ ...inputStyle, width: 260 }}
-            type="password"
-            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-            value={tvdb?.api_key ?? ''}
-            onChange={e => updateScraperConfig('tvdb', 'api_key', e.target.value)}
-          />
-        </SettingRow>
-        <SettingRow label="Subscriber PIN" hint="Optional; required for some TVDB accounts.">
-          <input
-            style={{ ...inputStyle, width: 140 }}
-            type="password"
-            placeholder="optional"
-            value={tvdb?.pin ?? ''}
-            onChange={e => updateScraperConfig('tvdb', 'pin', e.target.value)}
-          />
-        </SettingRow>
-        <SettingRow label="Language" hint="e.g. eng">
-          <input
-            style={{ ...inputStyle, width: 80 }}
-            placeholder="eng"
-            value={tvdb?.language ?? 'eng'}
-            onChange={e => updateScraperConfig('tvdb', 'language', e.target.value)}
-          />
-        </SettingRow>
-        <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
-          <input
-            type="number" step={0.05} min={0} max={1}
-            style={{ ...inputStyle, width: 80 }}
-            value={tvdb?.language_weight ?? 0.1}
-            onChange={e => updateScraperConfig('tvdb', 'language_weight', parseFloat(e.target.value))}
-          />
-        </SettingRow>
-      </Section>
-
-      <Section title="AniDB">
-        <SettingRow label="Enabled" hint="Anime metadata source for shows and movies via the AniDB HTTP API.">
-          <Toggle
-            id="anidb_enabled"
-            checked={anidb?.enabled ?? false}
-            disabled={!scraperSettings}
-            onChange={v => updateScraperConfig('anidb', 'enabled', v)}
-          />
-        </SettingRow>
-        <SettingRow label="Client Name" hint="Your registered AniDB HTTP API client name. Register at anidb.net/software/add.">
-          <input
-            style={{ ...inputStyle, width: 200 }}
-            placeholder="myclientname"
-            value={anidb?.api_key ?? ''}
-            onChange={e => updateScraperConfig('anidb', 'api_key', e.target.value)}
-          />
-        </SettingRow>
-        <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
-          <input
-            type="number" step={0.05} min={0} max={1}
-            style={{ ...inputStyle, width: 80 }}
-            value={anidb?.language_weight ?? 0.1}
-            onChange={e => updateScraperConfig('anidb', 'language_weight', parseFloat(e.target.value))}
-          />
-        </SettingRow>
-      </Section>
-
-      <Section title="Matching">
-        <SettingRow
-          label="Confidence Threshold"
-          hint="Items below this score go to the Review Queue. 100% = only exact matches are auto-accepted."
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <input
-              type="range" min={0} max={1} step={0.05}
-              value={scraperSettings?.match_threshold ?? 0.8}
-              onChange={e => updateThreshold(parseFloat(e.target.value))}
-              disabled={!scraperSettings}
-              style={{ width: 110, accentColor: 'var(--hds-violet)' }}
-            />
-            <span style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700,
-              color: 'var(--hds-violet)', minWidth: 38, textAlign: 'right',
-            }}>
-              {Math.round((scraperSettings?.match_threshold ?? 0.8) * 100)}%
-            </span>
-          </div>
-        </SettingRow>
-
-        {scraperStats && (
-          <div style={{ padding: '14px 0', borderBottom: '1px solid oklch(0.22 0.01 286)', display: 'flex', gap: 10 }}>
-            {([
-              { label: 'Total',     value: scraperStats.total,     color: 'var(--hds-txt-2)' },
-              { label: 'Matched',   value: scraperStats.matched,   color: 'var(--hds-match-green)' },
-              { label: 'Uncertain', value: scraperStats.uncertain, color: 'var(--hds-match-amber)' },
-              { label: 'Unmatched', value: scraperStats.unmatched, color: 'var(--hds-match-red)' },
-              { label: 'Unscraped', value: scraperStats.unscraped, color: 'var(--hds-txt-3)' },
-              { label: 'Skipped',   value: scraperStats.skipped,   color: 'var(--hds-txt-3)' },
-            ] as const).map(({ label, value, color }) => (
-              <div key={label} style={{
-                flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid oklch(0.22 0.01 286)',
-                background: 'oklch(0.13 0.01 286)',
-              }}>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, fontWeight: 700, color }}>{value}</div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--hds-txt-3)', letterSpacing: '0.1em', marginTop: 3 }}>{label.toUpperCase()}</div>
+              <div className={styles.inlineRow}>
+                <input
+                  type="number" min={1} max={32}
+                  value={threads}
+                  onChange={e => setThreads(e.target.value)}
+                  onBlur={applyThreads}
+                  onKeyDown={e => e.key === 'Enter' && applyThreads()}
+                  disabled={!settings || saving}
+                  className={`${styles.input} ${styles.w60} ${styles.inputCenter}`}
+                />
               </div>
-            ))}
-          </div>
-        )}
+            </SettingRow>
+            <SettingRow
+              label="Image Cache TTL"
+              hint="How long poster and backdrop images are cached on disk before re-fetching from the source."
+            >
+              <select
+                value={settings?.image_cache_ttl_hours ?? 2}
+                disabled={!settings || saving}
+                onChange={e => patch({ image_cache_ttl_hours: parseInt(e.target.value, 10) })}
+                className={`${styles.input} ${styles.w120} ${styles.inputCursorPointer}`}
+              >
+                {([
+                  [1,   '1 hour'],
+                  [2,   '2 hours'],
+                  [6,   '6 hours'],
+                  [12,  '12 hours'],
+                  [24,  '1 day'],
+                  [48,  '2 days'],
+                  [168, '7 days'],
+                ] as [number, string][]).map(([v, label]) => (
+                  <option key={v} value={v}>{label}</option>
+                ))}
+              </select>
+            </SettingRow>
+          </Section>
 
-        <div style={{ padding: '14px 0', display: 'flex', gap: 10, alignItems: 'center' }}>
-          <NavButton
-            id="run-match"
-            onClick={runMatch}
-            disabled={matchRunning}
-            style={{
-              padding: '6px 16px', borderRadius: 6, cursor: matchRunning ? 'not-allowed' : 'pointer',
-              border: '1px solid oklch(0.3 0.01 286)',
-              background: 'transparent',
-              color: matchRunning ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)',
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-              opacity: matchRunning ? 0.6 : 1,
-            }}
-          >
-            {matchRunning ? '● Running…' : 'Run Match Pass'}
-          </NavButton>
-        </div>
-      </Section>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <NavButton
-          id="save-scraper"
-          onClick={saveScraperSettings}
-          disabled={!scraperDirty || scraperSaving}
-          style={{
-            padding: '6px 18px', borderRadius: 6,
-            border: '1px solid oklch(0.72 0.18 84 / 0.6)',
-            background: 'oklch(0.18 0.06 84 / 0.3)', color: 'oklch(0.88 0.14 84)',
-            fontSize: 12,
-            cursor: (!scraperDirty || scraperSaving) ? 'not-allowed' : 'pointer',
-            fontFamily: "'JetBrains Mono', monospace",
-            opacity: (!scraperDirty || scraperSaving) ? 0.45 : 1,
-          }}
-        >
-          {scraperSaving ? 'Saving…' : scraperSaved ? '✓ Saved' : 'Save Scraper Settings'}
-        </NavButton>
-      </div>
-
-      {saving && (
-        <div style={{ fontSize: 11, color: 'var(--hds-txt-3)' }}>Saving…</div>
+          <Section title="Stream Settings">
+            <SettingRow
+              label="Stream Buffer Size (KB)"
+              hint="Per-stream chunk size used when reading transcoded output on the server (default 1024 KB) — a memory/overhead tradeoff, not a playback buffer. Higher uses more RAM per active stream but reduces read overhead; lower saves memory. Applies automatically to new stream sessions within about 15 seconds — no restart needed, and streams already playing keep their current value until they reconnect."
+            >
+              <div className={styles.inlineRow}>
+                <input
+                  type="number" min={1024}
+                  value={bufferSize}
+                  onChange={e => setBufferSize(e.target.value)}
+                  onBlur={applyBuffer}
+                  onKeyDown={e => e.key === 'Enter' && applyBuffer()}
+                  disabled={!settings || saving}
+                  className={`${styles.input} ${styles.w120} ${styles.inputRight}`}
+                />
+                <span className={styles.unitLabel}>KB</span>
+              </div>
+            </SettingRow>
+          </Section>
+        </>
       )}
 
-      <Section title="Danger Zone">
-        <SettingRow
-          label="Reset Library Index"
-          hint="Wipes all shows, episodes, movies, and source mappings. Source/library config, channels, and users are kept. The next sync rebuilds everything from scratch."
-        >
-          {!resetConfirm ? (
-            <NavButton
-              id="reset-library"
-              onClick={() => { setResetConfirm(true); setResetMsg(null) }}
-              style={{
-                padding: '5px 14px', borderRadius: 6,
-                border: '1px solid oklch(0.4 0.1 22 / 0.6)',
-                background: 'oklch(0.18 0.06 22 / 0.4)', color: 'oklch(0.75 0.15 22)',
-                fontSize: 12, cursor: 'pointer',
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
+      {/* ── Scrapers ────────────────────────────────────────────────────────── */}
+      {tab === 'scrapers' && (
+        <>
+          <Section title="TMDB — The Movie Database">
+            <SettingRow label="Enabled" hint="Primary metadata source for movies and shows.">
+              <Toggle
+                id="tmdb_enabled"
+                checked={tmdb?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('tmdb', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="API Key (v3)">
+              <input
+                data-tour="tmdb-api-key-input"
+                className={`${styles.input} ${styles.w260}`}
+                type="password"
+                placeholder={secretPlaceholder(tmdb?.has_api_key, 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')}
+                value={tmdb?.api_key ?? ''}
+                onChange={e => updateScraperConfig('tmdb', 'api_key', e.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Language" hint="e.g. en-US">
+              <input
+                className={`${styles.input} ${styles.w80}`}
+                placeholder="en-US"
+                value={tmdb?.language ?? 'en-US'}
+                onChange={e => updateScraperConfig('tmdb', 'language', e.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                className={`${styles.input} ${styles.w80}`}
+                value={tmdb?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('tmdb', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="TVDB — TheTVDB">
+            <SettingRow label="Enabled" hint="Secondary source; provides TVDB IDs and series data.">
+              <Toggle
+                id="tvdb_enabled"
+                checked={tvdb?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('tvdb', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="API Key (v4 project key)">
+              <input
+                className={`${styles.input} ${styles.w260}`}
+                type="password"
+                placeholder={secretPlaceholder(tvdb?.has_api_key, 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
+                value={tvdb?.api_key ?? ''}
+                onChange={e => updateScraperConfig('tvdb', 'api_key', e.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Subscriber PIN" hint="Optional; required for some TVDB accounts.">
+              <input
+                className={`${styles.input} ${styles.w140}`}
+                type="password"
+                placeholder={secretPlaceholder(tvdb?.has_pin, 'optional')}
+                value={tvdb?.pin ?? ''}
+                onChange={e => updateScraperConfig('tvdb', 'pin', e.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Language" hint="e.g. eng">
+              <input
+                className={`${styles.input} ${styles.w80}`}
+                placeholder="eng"
+                value={tvdb?.language ?? 'eng'}
+                onChange={e => updateScraperConfig('tvdb', 'language', e.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                className={`${styles.input} ${styles.w80}`}
+                value={tvdb?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('tvdb', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="TVMaze">
+            <SettingRow label="Enabled" hint="Free, unauthenticated TV show database — no API key required. Shows only; TVMaze doesn't catalogue movies.">
+              <Toggle
+                id="tvmaze_enabled"
+                checked={tvmaze?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('tvmaze', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference. TVMaze's data is predominantly English.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                className={`${styles.input} ${styles.w80}`}
+                value={tvmaze?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('tvmaze', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="Trakt">
+            <SettingRow label="Enabled" hint="Metadata source for both movies and shows, keyed by Trakt's own IDs plus cross-references to TMDB/IMDB.">
+              <Toggle
+                id="trakt_enabled"
+                checked={trakt?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('trakt', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Client ID" hint="Your registered Trakt app's Client ID. Register at trakt.tv/oauth/applications.">
+              <input
+                className={`${styles.input} ${styles.w280}`}
+                type="password"
+                placeholder={secretPlaceholder(trakt?.has_api_key, 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')}
+                value={trakt?.api_key ?? ''}
+                onChange={e => updateScraperConfig('trakt', 'api_key', e.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                className={`${styles.input} ${styles.w80}`}
+                value={trakt?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('trakt', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="AniDB">
+            <SettingRow label="Enabled" hint="Anime metadata source for shows and movies via the AniDB HTTP API.">
+              <Toggle
+                id="anidb_enabled"
+                checked={anidb?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('anidb', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Client Name" hint="Your registered AniDB HTTP API client name. Register at anidb.net/software/add.">
+              <input
+                className={`${styles.input} ${styles.w200}`}
+                placeholder={secretPlaceholder(anidb?.has_api_key, 'myclientname')}
+                value={anidb?.api_key ?? ''}
+                onChange={e => updateScraperConfig('anidb', 'api_key', e.target.value)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                className={`${styles.input} ${styles.w80}`}
+                value={anidb?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('anidb', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Download & Cache Posters Locally"
+              hint="Saves a confirmed match's poster to disk (next to the media, as aniThumb.jpg) the first time it's matched, so it loads instantly afterward with no AniDB CDN dependency. Tradeoff: AniDB rate-limits image fetches to ~1 every 2.1s, so turning this on adds a one-time ~2s delay per newly-matched or refreshed item, and matching/refreshing many anime at once will serialize slowly. Off by default — posters still work without this, just fetched live (and cached briefly) on each request instead of saved permanently."
             >
-              Reset
-            </NavButton>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: 'oklch(0.75 0.15 22)' }}>Sure?</span>
+              <Toggle
+                id="anidb_download_posters"
+                checked={scraperSettings?.anidb_download_posters ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateAnidbDownloadPosters(v)}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="AniList">
+            <SettingRow label="Enabled" hint="Anime/manga metadata source via AniList's free public GraphQL API — no API key required. Unlike AniDB, there's no separate 'include' checkbox: once enabled here, add &quot;anilist&quot; to a library's scraper priority order (Sources page) to actually query it for that library.">
+              <Toggle
+                id="anilist_enabled"
+                checked={anilist?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('anilist', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                className={`${styles.input} ${styles.w80}`}
+                value={anilist?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('anilist', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="Wikidata">
+            <SettingRow label="Enabled" hint="Broadest coverage of any source here (Wikidata's structured data + a Wikipedia summary for overview text) — no API key required. No per-episode data and thinner fields than dedicated media databases, so it's best kept as a low-priority fallback for obscure, regional, or web-only titles the other sources don't have.">
+              <Toggle
+                id="wikidata_enabled"
+                checked={wikidata?.enabled ?? false}
+                disabled={!scraperSettings}
+                onChange={v => updateScraperConfig('wikidata', 'enabled', v)}
+              />
+            </SettingRow>
+            <SettingRow label="Language Weight" hint="Bonus added to score (0.0 to 1.0) if scraper language matches library preference.">
+              <input
+                type="number" step={0.05} min={0} max={1}
+                className={`${styles.input} ${styles.w80}`}
+                value={wikidata?.language_weight ?? 0.1}
+                onChange={e => updateScraperConfig('wikidata', 'language_weight', parseFloat(e.target.value))}
+              />
+            </SettingRow>
+          </Section>
+
+          <Section title="Matching">
+            <SettingRow
+              label="Confidence Threshold"
+              hint="Items below this score go to the Review Queue. 100% = only exact matches are auto-accepted."
+            >
+              <div className={styles.inlineRowSm}>
+                <input
+                  type="range" min={0} max={1} step={0.05}
+                  value={scraperSettings?.match_threshold ?? 0.8}
+                  onChange={e => updateThreshold(parseFloat(e.target.value))}
+                  disabled={!scraperSettings}
+                  className={styles.thresholdSlider}
+                />
+                <span className={styles.thresholdValue}>
+                  {Math.round((scraperSettings?.match_threshold ?? 0.8) * 100)}%
+                </span>
+              </div>
+            </SettingRow>
+
+            {scraperStats && (
+              <div className={styles.statsRow}>
+                {([
+                  { label: 'Total',     value: scraperStats.total,     color: 'var(--hds-txt-2)' },
+                  { label: 'Matched',   value: scraperStats.matched,   color: 'var(--hds-match-green)' },
+                  { label: 'Uncertain', value: scraperStats.uncertain, color: 'var(--hds-match-amber)' },
+                  { label: 'Unmatched', value: scraperStats.unmatched, color: 'var(--hds-match-red)' },
+                  { label: 'Unscraped', value: scraperStats.unscraped, color: 'var(--hds-txt-3)' },
+                  { label: 'Skipped',   value: scraperStats.skipped,   color: 'var(--hds-txt-3)' },
+                ] as const).map(({ label, value, color }) => (
+                  <div key={label} className={styles.statCard}>
+                    <div className={styles.statValue} style={{ color }}>{value}</div>
+                    <div className={styles.statLabel}>{label.toUpperCase()}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className={styles.actionsRow}>
               <NavButton
-                id="reset-library-confirm"
-                onClick={resetLibrary}
-                disabled={resetting}
-                style={{
-                  padding: '5px 14px', borderRadius: 6,
-                  border: '1px solid oklch(0.55 0.2 22 / 0.8)',
-                  background: 'oklch(0.35 0.12 22 / 0.6)', color: 'oklch(0.88 0.12 22)',
-                  fontSize: 12, cursor: resetting ? 'not-allowed' : 'pointer',
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontWeight: 600, opacity: resetting ? 0.6 : 1,
-                }}
+                id="run-match"
+                onClick={runMatch}
+                disabled={matchRunning}
+                className={`${styles.navBtn} ${styles.navBtnNeutral16} ${matchRunning ? styles.navBtnNeutral16TxtB : styles.navBtnNeutral16TxtA} ${matchRunning ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${matchRunning ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
               >
-                {resetting ? 'Resetting…' : 'Yes, wipe it'}
+                {matchRunning ? '● Running…' : 'Run Match Pass'}
               </NavButton>
               <NavButton
-                id="reset-library-cancel"
-                onClick={() => setResetConfirm(false)}
-                style={{
-                  padding: '5px 10px', borderRadius: 6,
-                  border: '1px solid oklch(0.3 0.01 286)',
-                  background: 'transparent', color: 'var(--hds-txt-3)',
-                  fontSize: 12, cursor: 'pointer',
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
+                id="refresh-all"
+                onClick={refreshAll}
+                disabled={refreshingAll}
+                title="Re-pulls title, overview, posters, ratings, etc. from each already-linked source for every matched show/movie"
+                className={`${styles.navBtn} ${styles.navBtnNeutral16} ${refreshingAll ? styles.navBtnNeutral16TxtB : styles.navBtnNeutral16TxtA} ${refreshingAll ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${refreshingAll ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
               >
-                Cancel
+                {refreshingAll ? '● Refreshing metadata…' : 'Refresh All Metadata'}
               </NavButton>
             </div>
-          )}
-        </SettingRow>
-        {resetMsg && (
-          <div style={{ padding: '10px 0 14px', fontSize: 11, color: resetMsg.startsWith('Error') ? 'oklch(0.72 0.18 22)' : 'var(--hds-txt-3)' }}>
-            {resetMsg}
+
+            {/* Real progress instead of a static "Refreshing metadata…" button
+                label — a library-wide refresh iterates every matched show/
+                movie against rate-limited scraper APIs and can run for many
+                minutes, so a bar + counts is the difference between "working"
+                and "looks stuck." Stays visible with its final tally after
+                completion (running flips false, total/processed don't reset)
+                until the next run clears it back to null. */}
+            {refreshAllProgress && refreshAllProgress.total > 0 && (
+              <div className={styles.refreshProgressWrap}>
+                <div className={styles.refreshProgressTrack}>
+                  <div
+                    className={styles.refreshProgressFill}
+                    style={{ width: `${Math.min(100, (refreshAllProgress.processed / refreshAllProgress.total) * 100)}%` }}
+                  />
+                </div>
+                <div className={styles.refreshProgressLabel}>
+                  {refreshingAll ? 'Refreshing' : 'Finished'} {refreshAllProgress.processed} / {refreshAllProgress.total}
+                  {' — '}{refreshAllProgress.refreshed} refreshed
+                  {refreshAllProgress.failed > 0 && `, ${refreshAllProgress.failed} failed`}
+                </div>
+              </div>
+            )}
+
+            <SettingRow
+              label="Confirm All Matches"
+              hint="Marks every currently auto-matched, unconfirmed item as human-confirmed — the same effect as clicking Confirm Match on each one individually. Unlocks Push to Sources / Refresh Metadata for all of them at once. Does not re-fetch metadata (already pulled at match time — use Refresh All Metadata for that)."
+            >
+              {!confirmAllPending ? (
+                <NavButton
+                  id="confirm-all-matches"
+                  onClick={() => { setConfirmAllPending(true); setConfirmAllMsg(null) }}
+                  className={`${styles.navBtn} ${styles.navBtnNeutral16} ${styles.navBtnNeutral16TxtA} ${styles.navBtnCursorPointer}`}
+                >
+                  Confirm All Matches
+                </NavButton>
+              ) : (
+                <div className={styles.inlineRow}>
+                  <span className={styles.confirmText}>
+                    This will confirm all active unconfirmed matches in the library. Sure?
+                  </span>
+                  <NavButton
+                    id="confirm-all-matches-confirm"
+                    onClick={confirmAllMatches}
+                    disabled={confirmingAll}
+                    className={`${styles.navBtn} ${styles.navBtnGreen14} ${confirmingAll ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${confirmingAll ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+                  >
+                    {confirmingAll ? 'Confirming…' : 'Yes, confirm all'}
+                  </NavButton>
+                  <NavButton
+                    id="confirm-all-matches-cancel"
+                    onClick={() => setConfirmAllPending(false)}
+                    disabled={confirmingAll}
+                    className={`${styles.navBtn} ${styles.navBtnCancel10} ${styles.navBtnCursorPointer}`}
+                  >
+                    Cancel
+                  </NavButton>
+                </div>
+              )}
+            </SettingRow>
+            {confirmAllMsg && (
+              <div className={`${styles.msgRow} ${confirmAllMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
+                {confirmAllMsg}
+              </div>
+            )}
+
+              <SettingRow
+                  label="Unconfirm All Matches"
+                  hint="Undo button for an accidental Confirm All Matches (or any other bulk-confirm mistake) — clears human-confirmed status on every currently-confirmed item. Matches stay matched (no re-scrape, nothing re-enters the review queue); they just go back to needing a Confirm Match before Push to Sources will run for them again."
+              >
+                  {!unconfirmAllPending ? (
+                      <NavButton
+                          id="unconfirm-all-matches"
+                          onClick={() => {
+                              setUnconfirmAllPending(true);
+                              setUnconfirmAllMsg(null)
+                          }}
+                          className={`${styles.navBtn} ${styles.navBtnNeutral16} ${styles.navBtnNeutral16TxtA} ${styles.navBtnCursorPointer}`}
+                      >
+                          Unconfirm All Matches
+                      </NavButton>
+                  ) : (
+                      <div className={styles.inlineRow}>
+                  <span className={styles.confirmText}>
+                    This will un-confirm every currently confirmed match in the library. Sure?
+                  </span>
+                          <NavButton
+                              id="unconfirm-all-matches-confirm"
+                              onClick={unconfirmAllMatches}
+                              disabled={unconfirmingAll}
+                              className={`${styles.navBtn} ${styles.navBtnGreen14} ${unconfirmingAll ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${unconfirmingAll ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+                          >
+                              {unconfirmingAll ? 'Un-confirming…' : 'Yes, unconfirm all'}
+                          </NavButton>
+                          <NavButton
+                              id="unconfirm-all-matches-cancel"
+                              onClick={() => setUnconfirmAllPending(false)}
+                              disabled={unconfirmingAll}
+                              className={`${styles.navBtn} ${styles.navBtnCancel10} ${styles.navBtnCursorPointer}`}
+                          >
+                              Cancel
+                          </NavButton>
+                      </div>
+                  )}
+              </SettingRow>
+              {unconfirmAllMsg && (
+                  <div className={`${styles.msgRow} ${unconfirmAllMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
+                      {unconfirmAllMsg}
+                  </div>
+              )}
+          </Section>
+
+          <div className={styles.inlineRowGap12}>
+            <NavButton
+              id="save-scraper"
+              onClick={saveScraperSettings}
+              disabled={!scraperDirty || scraperSaving}
+              className={`${styles.navBtn} ${styles.navBtnGold18} ${(!scraperDirty || scraperSaving) ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${(!scraperDirty || scraperSaving) ? styles.navBtnFaded45 : styles.navBtnOpaque}`}
+            >
+              {scraperSaving ? 'Saving…' : scraperSaved ? '✓ Saved' : 'Save Scraper Settings'}
+            </NavButton>
           </div>
+        </>
+      )}
+
+      {/* ── Integrations ────────────────────────────────────────────────────── */}
+      {tab === 'integrations' && (
+        <>
+          <Section title="Sonarr">
+            <ArrField label="URL" hint="e.g. http://sonarr:8989" value={arr.sonarr_url}
+              onChange={v => setArr(a => ({ ...a, sonarr_url: v }))} />
+            <ArrField label="API Key" value={arr.sonarr_api_key} password
+              onChange={v => setArr(a => ({ ...a, sonarr_api_key: v }))} />
+          </Section>
+
+          <Section title="Radarr">
+            <ArrField label="URL" hint="e.g. http://radarr:7878" value={arr.radarr_url}
+              onChange={v => setArr(a => ({ ...a, radarr_url: v }))} />
+            <ArrField label="API Key" value={arr.radarr_api_key} password
+              onChange={v => setArr(a => ({ ...a, radarr_api_key: v }))} />
+          </Section>
+
+          <div className={styles.inlineRowGap12}>
+            <NavButton
+              id="save-arr"
+              onClick={async () => {
+                setArrSave('saving')
+                try { await api.patchArrConfig(arr); setArrSave('ok') }
+                catch { setArrSave('err') }
+                setTimeout(() => setArrSave('idle'), 2000)
+              }}
+              disabled={arrSave === 'saving'}
+              className={`${styles.navBtn} ${styles.navBtnGold18} ${arrSave === 'saving' ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${arrSave === 'saving' ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+            >
+              {arrSave === 'saving' ? 'Saving…' : arrSave === 'ok' ? 'Saved' : arrSave === 'err' ? 'Error' : 'Save Settings'}
+            </NavButton>
+            <span className={styles.captionText}>
+              Used when adding missing media from the import preview.
+            </span>
+          </div>
+
+          <Section title="Email / SMTP">
+            <ArrField label="Host" hint="e.g. smtp.gmail.com" value={smtp.host}
+              onChange={v => setSmtp(s => ({ ...s, host: v }))} />
+            <ArrField label="Port" hint="STARTTLS only — 587 is the common case" value={smtp.port}
+              onChange={v => setSmtp(s => ({ ...s, port: v }))} />
+            <ArrField label="Username" value={smtp.username}
+              onChange={v => setSmtp(s => ({ ...s, username: v }))} />
+            <SettingRow label="Password" hint={smtpHasPassword ? 'Leave blank to keep the current one' : undefined}>
+              <input
+                type="password"
+                placeholder={smtpHasPassword ? '••••••••  (unchanged)' : ''}
+                value={smtp.password}
+                onChange={e => setSmtp(s => ({ ...s, password: e.target.value }))}
+                className={`${styles.input} ${styles.w240}`}
+              />
+            </SettingRow>
+            <ArrField label="From address" hint="What recipients see as the sender" value={smtp.from_address}
+              onChange={v => setSmtp(s => ({ ...s, from_address: v }))} />
+            <ArrField label="Public base URL" hint="e.g. https://pantheon.example.com — used to build invite links" value={smtp.public_base_url}
+              onChange={v => setSmtp(s => ({ ...s, public_base_url: v }))} />
+          </Section>
+
+          <div className={styles.inlineRowGap12Wrap}>
+            <NavButton
+              id="save-smtp"
+              onClick={async () => {
+                setSmtpSave('saving')
+                try {
+                  const body: Partial<Record<keyof SmtpForm, string>> = {
+                    host: smtp.host, port: smtp.port, username: smtp.username,
+                    from_address: smtp.from_address, public_base_url: smtp.public_base_url,
+                  }
+                  if (smtp.password) body.password = smtp.password
+                  await api.setSmtpConfig(body)
+                  setSmtpSave('ok')
+                  if (smtp.password) { setSmtpHasPassword(true); setSmtp(s => ({ ...s, password: '' })) }
+                } catch { setSmtpSave('err') }
+                setTimeout(() => setSmtpSave('idle'), 2000)
+              }}
+              disabled={smtpSave === 'saving'}
+              className={`${styles.navBtn} ${styles.navBtnGold18} ${smtpSave === 'saving' ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${smtpSave === 'saving' ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+            >
+              {smtpSave === 'saving' ? 'Saving…' : smtpSave === 'ok' ? 'Saved' : smtpSave === 'err' ? 'Error' : 'Save Settings'}
+            </NavButton>
+
+            <input
+              placeholder="you@example.com"
+              value={testEmailTo}
+              onChange={e => setTestEmailTo(e.target.value)}
+              className={`${styles.input} ${styles.w200}`}
+            />
+            <NavButton
+              id="test-smtp"
+              onClick={async () => {
+                if (!testEmailTo) return
+                setTestSend('sending'); setTestError('')
+                try { await api.testSmtp(testEmailTo); setTestSend('ok') }
+                catch (e: any) { setTestSend('err'); setTestError(e.message ?? 'Send failed') }
+                setTimeout(() => setTestSend('idle'), 4000)
+              }}
+              disabled={testSend === 'sending' || !testEmailTo}
+              className={`${styles.navBtn} ${styles.navBtnLine18} ${(testSend === 'sending' || !testEmailTo) ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${(testSend === 'sending' || !testEmailTo) ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
+            >
+              {testSend === 'sending' ? 'Sending…' : testSend === 'ok' ? 'Sent ✓' : testSend === 'err' ? 'Failed' : 'Send Test Email'}
+            </NavButton>
+            {testSend === 'err' && testError && (
+              <span className={styles.captionTextDanger}>{testError}</span>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── Devices ─────────────────────────────────────────────────────────── */}
+      {tab === 'devices' && (
+        <>
+          <Section title="Chromecast">
+            <SettingRow
+              label="Receiver Application ID"
+              hint="From the Google Cast SDK Developer Console, registered against the Pantheon custom receiver's hosted URL. Leave blank to disable the Cast button."
+            >
+              <input
+                className={`${styles.input} ${styles.w200}`}
+                placeholder="XXXXXXXX"
+                value={castAppId}
+                onChange={e => setCastAppId(e.target.value)}
+                onBlur={applyCastAppId}
+                onKeyDown={e => e.key === 'Enter' && applyCastAppId()}
+                disabled={!settings || saving}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Remote / HTTPS Access"
+              hint="Chrome only enables the Cast button on a secure origin (HTTPS, or localhost) — a plain http://<lan-ip> address never satisfies this. Cloudflare Tunnel is one free way to get a real HTTPS URL for Pantheon without port-forwarding."
+            >
+              <HelpTip title="Cloudflare Tunnel Setup" label="Setup Guide">
+                <HelpSection title="Why">
+                  Google Chrome disables the Chromecast Sender API entirely on insecure origins — casting only works from an <code>https://</code> URL, or from <code>http://localhost</code> on the machine Pantheon itself runs on. A LAN address like <code>http://192.168.1.20:8000</code> will never show a Cast button, no matter what's configured elsewhere in this app.
+                </HelpSection>
+                <HelpSection title="What Cloudflare Tunnel does">
+                  Gives Pantheon a real <code>https://</code> hostname (e.g. <code>pantheon.yourdomain.com</code>) that reaches your server without opening any inbound ports on your router — the tunnel is outbound-only from your network to Cloudflare's edge.
+                </HelpSection>
+                <HelpSection title="Setup">
+                  <ol className={styles.helpList}>
+                    <li className={styles.helpListItemGap}>You need a domain added to Cloudflare (DNS managed by Cloudflare — free tier is fine).</li>
+                    <li className={styles.helpListItemGap}>Cloudflare Zero Trust dashboard → <b className={styles.helpTextBold}>Networks → Tunnels → Create a tunnel</b> → connector type <b className={styles.helpTextBold}>Docker</b> → copy the token it gives you.</li>
+                    <li className={styles.helpListItemGap}>In the same wizard, add a <b className={styles.helpTextBold}>Public Hostname</b>: the hostname you want (e.g. <code>pantheon.yourdomain.com</code>) → service type <b className={styles.helpTextBold}>HTTP</b> → URL <code>hermes:8000</code>. This is also where the hostname itself is configured — nothing in Pantheon's own files needs your hostname hardcoded.</li>
+                    <li className={styles.helpListItemGap}>Put that token in a <code>.env</code> file next to Pantheon's <code>docker-compose.yml</code>:<br /><code>CLOUDFLARE_TUNNEL_TOKEN=eyJ...</code></li>
+                    <li>Start/restart the stack however you normally do (plain <code>docker compose up -d</code>, or the Unraid Compose Manager UI) — no extra flags needed. Leaving the token blank keeps the container quietly stopped and doesn't affect anything else.</li>
+                  </ol>
+                </HelpSection>
+                <HelpSection title="Important">
+                  <p className={styles.helpParaFlat}>
+                    The <code>cloudflared</code> container has to actually be running — the tunnel
+                    only exists while it's up. Registering a tunnel and hostname in the Cloudflare
+                    dashboard doesn't do anything on its own if <code>CLOUDFLARE_TUNNEL_TOKEN</code>{' '}
+                    isn't set, or the container ever gets stopped — the hostname will simply fail to
+                    connect until it's running again. Check it with{' '}
+                    <code>docker compose ps cloudflared</code>.
+                  </p>
+                </HelpSection>
+                <HelpSection title="Security note">
+                  This makes Pantheon reachable from the public internet at whatever hostname you choose, not just your LAN. Kairos's own login screen still gates access — if you want an extra layer, Cloudflare Zero Trust Access can require an email/SSO check before a request ever reaches Pantheon, configured separately in the same dashboard.
+                </HelpSection>
+              </HelpTip>
+            </SettingRow>
+          </Section>
+
+          <Section title="Cast Devices">
+            {castSessions === null ? (
+              <div className={styles.listMsg}>Loading…</div>
+            ) : castSessions.length === 0 ? (
+              <div className={styles.listMsg}>
+                No devices paired yet — casting to a Chromecast or Google TV for the first time will add one here.
+              </div>
+            ) : (
+              castSessions.map(s => (
+                <SettingRow
+                  key={s.session_id}
+                  label={`Paired ${new Date(s.created_at * 1000).toLocaleDateString()}`}
+                  hint={`Last used ${new Date(s.last_seen * 1000).toLocaleString()}`}
+                >
+                  <NavButton
+                    id={`cast-revoke-${s.session_id}`}
+                    onClick={() => revokeCastSession(s.session_id)}
+                    disabled={revokingCast === s.session_id}
+                    className={`${styles.navBtn} ${styles.navBtnRevoke12} ${styles.navBtnCursorPointer} ${revokingCast === s.session_id ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
+                  >
+                    {revokingCast === s.session_id ? 'Revoking…' : 'Revoke'}
+                  </NavButton>
+                </SettingRow>
+              ))
+            )}
+          </Section>
+
+          <Section title="Roku Devices">
+            <SettingRow
+              label="Add a Roku device"
+              hint="Enter the IP address shown on the Roku itself (Settings → Network → About) — the Pantheon channel must already be open and signed in on it once before pairing can complete."
+            >
+              <div className={styles.rokuAddRow}>
+                <input
+                  type="text" placeholder="Living Room TV" value={rokuName}
+                  onChange={e => setRokuName(e.target.value)}
+                  className={`${styles.rokuField} ${styles.w140}`}
+                />
+                <input
+                  type="text" placeholder="192.168.1.50" value={rokuIp}
+                  onChange={e => setRokuIp(e.target.value)}
+                  className={`${styles.rokuField} ${styles.w120}`}
+                />
+                <NavButton
+                  id="roku-add" onClick={addRokuDevice} disabled={addingRoku || !rokuName.trim() || !rokuIp.trim()}
+                  className={`${styles.navBtn} ${styles.navBtnViolet14} ${styles.navBtnCursorPointer} ${addingRoku ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
+                >
+                  {addingRoku ? 'Adding…' : 'Add'}
+                </NavButton>
+              </div>
+            </SettingRow>
+            {rokuError && <div className={styles.rokuErrorMsg}>{rokuError}</div>}
+
+            {rokuDevices === null ? (
+              <div className={styles.listMsg}>Loading…</div>
+            ) : rokuDevices.length === 0 ? (
+              <div className={styles.listMsg}>No Roku devices added yet.</div>
+            ) : (
+              rokuDevices.map(d => (
+                <SettingRow
+                  key={d.id}
+                  label={d.name}
+                  hint={d.paired ? d.ip_address : `${d.ip_address} — waiting for the channel to confirm pairing…`}
+                >
+                  <NavButton
+                    id={`roku-remove-${d.id}`}
+                    onClick={() => removeRokuDevice(d.id)}
+                    disabled={removingRoku === d.id}
+                    className={`${styles.navBtn} ${styles.navBtnRevoke12} ${styles.navBtnCursorPointer} ${removingRoku === d.id ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
+                  >
+                    {removingRoku === d.id ? 'Removing…' : 'Remove'}
+                  </NavButton>
+                </SettingRow>
+              ))
+            )}
+          </Section>
+        </>
+      )}
+
+        {/* ── Jobs ─────────────────────────────────────────────────────────────── */}
+        {tab === 'jobs' && (
+            <>
+                <Section title="Scheduled Jobs">
+                    {jobs === null ? (
+                        <div className={styles.listMsg}>Loading…</div>
+                    ) : (
+                        <>
+                            {(['sync', 'metadata_refresh', 'chapter_detection', 'writeback_sweep', 'media_normalize'] as const).map(name => {
+                                const job = jobs.find(j => j.name === name)
+                                if (!job) return null
+                                const meta: Record<string, { label: string; hint: string }> = {
+                                    sync: {
+                                        label: 'Library Sync',
+                                        hint: 'Pulls new/changed content from every configured source, then runs matching, orphan cleanup, specials linking, and chapter sync as part of the same pass.',
+                                    },
+                                    metadata_refresh: {
+                                        label: 'Metadata Refresh',
+                                        hint: 'Re-pulls full metadata (title, overview, posters, ratings) from each linked source for every already-matched show and movie.',
+                                    },
+                                    chapter_detection: {
+                                        label: 'Chapter Detection',
+                                        hint: 'Runs intro/credits detection for one show without it yet, per run — CPU/IO-heavy, so this trickles across the library instead of all at once.',
+                                    },
+                                    writeback_sweep: {
+                                        label: 'Writeback Sweep',
+                                        hint: 'Pushes confirmed metadata to every source with auto-writeback enabled, catching anything a per-item save might have missed.',
+                                    },
+                                    media_normalize: {
+                                        label: 'Normalize to H.264/AAC',
+                                        hint: 'Re-encodes any library file that isn’t H.264/AAC (or has variable frame rate) in place, so more of the library can use cheap direct-stream playback instead of a live transcode. Slow, CPU-heavy — runs one file at a time.',
+                                    },
+                                }
+                                return (
+                                    <JobRow
+                                        key={name}
+                                        job={job}
+                                        label={meta[name].label}
+                                        hint={meta[name].hint}
+                                        busy={jobBusy === name}
+                                        onPatch={p => patchJob(name, p)}
+                                        onRunNow={() => runJobNow(name)}
+                                    />
+                                )
+                            })}
+                        </>
+                    )}
+                    {jobMsg && (
+                        <div className={`${styles.msgRow} ${jobMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
+                            {jobMsg}
+                        </div>
+                    )}
+                </Section>
+
+                <Section title="Backups">
+                    {jobs?.find(j => j.name === 'backup') && (
+                        <JobRow
+                            job={jobs.find(j => j.name === 'backup')!}
+                            label="Scheduled Backup"
+                            hint="Snapshots the database and config file (SQLite online backup — safe to run against a live server) into data/backups/."
+                            busy={jobBusy === 'backup' || backupBusy === 'run'}
+                            onPatch={p => patchJob('backup', p)}
+                            onRunNow={runBackupNow}
+                        />
+                    )}
+
+                    <SettingRow
+                        label="Keep last N backups"
+                        hint="Oldest backups beyond this count are deleted automatically after each successful run."
+                    >
+                        <input
+                            type="number" min={1}
+                            value={backupMaxCount}
+                            disabled={backupBusy === 'config'}
+                            onChange={e => setBackupMaxCount(e.target.value)}
+                            onBlur={applyBackupMaxCount}
+                            onKeyDown={e => e.key === 'Enter' && applyBackupMaxCount()}
+                            className={`${styles.input} ${styles.w80}`}
+                        />
+                    </SettingRow>
+
+                    {backupMsg && (
+                        <div className={`${styles.msgRow} ${backupMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
+                            {backupMsg}
+                        </div>
+                    )}
+
+                    {backups === null ? (
+                        <div className={styles.listMsg}>Loading…</div>
+                    ) : backups.length === 0 ? (
+                        <div className={styles.listMsg}>No backups yet — "Run now" above creates one immediately.</div>
+                    ) : (
+                        backups.map(b => (
+                            <SettingRow
+                                key={b.id}
+                                label={new Date(b.created_ms).toLocaleString()}
+                                hint={`${(b.size_bytes / 1024 / 1024).toFixed(1)} MB · ${relativeTime(b.created_ms)}`}
+                            >
+                                {restoreConfirmId !== b.id ? (
+                                    <div className={styles.inlineRow}>
+                                        <NavButton
+                                            id={`backup-restore-${b.id}`}
+                                            onClick={() => setRestoreConfirmId(b.id)}
+                                            disabled={backupBusy !== null}
+                                            className={`${styles.navBtn} ${styles.navBtnDangerSoft14} ${styles.navBtnCursorPointer} ${styles.navBtnOpaque}`}
+                                        >
+                                            Restore
+                                        </NavButton>
+                                        <NavButton
+                                            id={`backup-delete-${b.id}`}
+                                            onClick={() => deleteBackup(b.id)}
+                                            disabled={backupBusy !== null}
+                                            className={`${styles.navBtn} ${styles.navBtnRevoke12} ${styles.navBtnCursorPointer} ${backupBusy === b.id ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
+                                        >
+                                            {backupBusy === b.id ? 'Deleting…' : 'Delete'}
+                                        </NavButton>
+                                    </div>
+                                ) : (
+                                    <div className={styles.inlineRow}>
+                                        <span className={styles.confirmTextDanger}>Restarts Kairos — sure?</span>
+                                        <NavButton
+                                            id={`backup-restore-confirm-${b.id}`}
+                                            onClick={() => restoreBackup(b.id)}
+                                            disabled={backupBusy === b.id}
+                                            className={`${styles.navBtn} ${styles.navBtnDangerStrong14} ${backupBusy === b.id ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${backupBusy === b.id ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+                                        >
+                                            {backupBusy === b.id ? 'Restoring…' : 'Yes, restore'}
+                                        </NavButton>
+                                        <NavButton
+                                            id={`backup-restore-cancel-${b.id}`}
+                                            onClick={() => setRestoreConfirmId(null)}
+                                            className={`${styles.navBtn} ${styles.navBtnCancel10} ${styles.navBtnCursorPointer}`}
+                                        >
+                                            Cancel
+                                        </NavButton>
+                                    </div>
+                                )}
+                            </SettingRow>
+                        ))
+                    )}
+                </Section>
+            </>
         )}
-      </Section>
+
+      {/* ── Diagnostics ─────────────────────────────────────────────────────── */}
+      {tab === 'diagnostics' && (
+        <>
+          <Section title="Diagnostics">
+            <SettingRow
+              label="Sync Debug Logging"
+              hint="Verbose output for every sync, ffprobe call, and scraper query — phase timings, per-episode path mapping, and chapter probe results. Disable when not actively diagnosing."
+            >
+              <Toggle
+                id="sync_debug"
+                checked={settings?.sync_debug ?? false}
+                disabled={!settings || saving}
+                onChange={v => patch({ sync_debug: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              label="EPG Debug Logging"
+              hint="Emits verbose [epg] lines to stdout during schedule projection. Visible in engine logs and docker logs."
+            >
+              <Toggle
+                id="epg_debug"
+                checked={settings?.epg_debug ?? false}
+                disabled={!settings || saving}
+                onChange={v => patch({ epg_debug: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Verbose Transcode Logging"
+              hint="Logs full ffmpeg command lines and -v verbose output for every spawned transcode (live channels, VOD, previews) — noisy, enable only when debugging hardware acceleration issues. Applies to new streams within ~15s, no restart needed."
+            >
+              <Toggle
+                id="verbose_transcode_logs"
+                checked={settings?.verbose_transcode_logs ?? false}
+                disabled={!settings || saving}
+                onChange={v => patch({ verbose_transcode_logs: v })}
+              />
+            </SettingRow>
+              <SettingRow
+                  label="Ffmpeg Debug Logging"
+                  hint="Streams every spawned ffmpeg's stderr live into this Activity page instead of only capturing it for an on-failure dump — combine with Verbose Transcode Logging above for the full picture (command line, -v verbose detail, periodic stats) while diagnosing a live transcode issue. Applies to new streams within ~15s, no restart needed."
+              >
+                  <Toggle
+                      id="ffmpeg_debug_logs"
+                      checked={settings?.ffmpeg_debug_logs ?? false}
+                      disabled={!settings || saving}
+                      onChange={v => patch({ffmpeg_debug_logs: v})}
+                  />
+            </SettingRow>
+            <SettingRow
+              label="Verbose Gateway Logging"
+              hint="Shows Hermes's access-error log ([hermes] 4XX/5XX responses) and device-unreachable warnings ([roku-ecp]) in the Activity page — noisy on a busy or public-facing instance, enable only when diagnosing gateway/device issues. Always written to hermes.log either way. Applies within ~15s, no restart needed."
+            >
+              <Toggle
+                id="verbose_gateway_logs"
+                checked={settings?.verbose_gateway_logs ?? false}
+                disabled={!settings || saving}
+                onChange={v => patch({ verbose_gateway_logs: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Hades Console Error Logging"
+              hint="Forwards this browser's console.error() calls to the server log (as [hades] lines) in addition to uncaught errors, which always forward. Enable when reproducing a UI bug you need in the server-side log alongside backend activity."
+            >
+              <Toggle
+                id="hades_debug"
+                checked={settings?.hades_debug ?? false}
+                disabled={!settings || saving}
+                onChange={v => patch({ hades_debug: v })}
+              />
+            </SettingRow>
+              <SettingRow
+                  label="Internal Service Token"
+                  hint="Shared secret Hephaestus sends when reporting live-channel playback progress back to Kairos — auto-generated on first run, rotating it here takes effect on the next report with no restart needed. Only change this if you suspect it's been exposed."
+              >
+                  <div className={styles.inlineRow}>
+                      <input
+                          className={`${styles.input} ${styles.w200}`}
+                          value={internalToken}
+                          onChange={e => setInternalToken(e.target.value)}
+                          onBlur={applyInternalToken}
+                          onKeyDown={e => e.key === 'Enter' && applyInternalToken()}
+                          disabled={!settings || saving}
+                          spellCheck={false}
+                      />
+                      <NavButton
+                          id="regenerate-internal-token"
+                          onClick={regenerateInternalToken}
+                          disabled={!settings || saving || regeneratingToken}
+                          className={`${styles.navBtn} ${styles.navBtnNeutral14} ${(!settings || saving || regeneratingToken) ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${(!settings || saving || regeneratingToken) ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+                      >
+                          {regeneratingToken ? 'Generating…' : 'Regenerate'}
+                      </NavButton>
+                  </div>
+            </SettingRow>
+            <SettingRow
+              label="Download DB Snapshot"
+              hint="Downloads a sqlite file with just the library/matching tables (shows, movies, episodes, source mappings, scraper/review-queue data) — no login or session data. For sharing with support or digging into library-count/matching discrepancies offline."
+            >
+              <NavButton
+                id="debug-dump"
+                onClick={dumpDebugDb}
+                disabled={dumping}
+                className={`${styles.navBtn} ${styles.navBtnNeutral14} ${dumping ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${dumping ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+              >
+                {dumping ? 'Preparing…' : 'Download'}
+              </NavButton>
+            </SettingRow>
+            {dumpMsg && (
+              <div className={`${styles.msgRow} ${styles.msgRowError}`}>{dumpMsg}</div>
+            )}
+          </Section>
+
+          <Section title="EPG Cache">
+            <SettingRow
+              label="Clear All EPG Caches"
+              hint="Deletes all scheduled program rows across every channel. The guide will regenerate on next request."
+            >
+              <NavButton
+                id="clear-epg"
+                onClick={clearAllEpg}
+                disabled={clearing}
+                className={`${styles.navBtn} ${styles.navBtnDangerSoft14} ${clearing ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${clearing ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+              >
+                {clearing ? 'Clearing…' : 'Clear All'}
+              </NavButton>
+            </SettingRow>
+            {clearMsg && (
+              <div className={styles.msgRow}>{clearMsg}</div>
+            )}
+          </Section>
+
+          <Section title="Danger Zone">
+            <SettingRow
+              label="Reset Library Index"
+              hint="Wipes all shows, episodes, movies, and source mappings. Source/library config, channels, and users are kept. The next sync rebuilds everything from scratch."
+            >
+              {!resetConfirm ? (
+                <NavButton
+                  id="reset-library"
+                  onClick={() => { setResetConfirm(true); setResetMsg(null) }}
+                  className={`${styles.navBtn} ${styles.navBtnDangerSoft14} ${styles.navBtnCursorPointer} ${styles.navBtnOpaque}`}
+                >
+                  Reset
+                </NavButton>
+              ) : (
+                <div className={styles.inlineRow}>
+                  <span className={styles.confirmTextDanger}>Sure?</span>
+                  <NavButton
+                    id="reset-library-confirm"
+                    onClick={resetLibrary}
+                    disabled={resetting}
+                    className={`${styles.navBtn} ${styles.navBtnDangerStrong14} ${resetting ? styles.navBtnCursorNotAllowed : styles.navBtnCursorPointer} ${resetting ? styles.navBtnFaded6 : styles.navBtnOpaque}`}
+                  >
+                    {resetting ? 'Resetting…' : 'Yes, wipe it'}
+                  </NavButton>
+                  <NavButton
+                    id="reset-library-cancel"
+                    onClick={() => setResetConfirm(false)}
+                    className={`${styles.navBtn} ${styles.navBtnCancel10} ${styles.navBtnCursorPointer}`}
+                  >
+                    Cancel
+                  </NavButton>
+                </div>
+              )}
+            </SettingRow>
+            {resetMsg && (
+              <div className={`${styles.msgRow} ${resetMsg.startsWith('Error') ? styles.msgRowError : ''}`}>
+                {resetMsg}
+              </div>
+            )}
+          </Section>
+        </>
+      )}
     </div>
   )
 })
+
+// One row of the Scheduled Jobs / Backups sections — enable toggle, mode
+// (interval-hours vs. daily-at-HH:MM) picker, and a "Run now" button. Owns
+// its own local echo of the editable numeric fields (same on-blur-commit
+// shape as applyThreads/applyGuestIdleTimeoutDays above), re-seeded whenever
+// the authoritative `job` prop changes — e.g. after a successful patch, or
+// the periodic-ish refetches elsewhere on this page.
+function JobRow({job, label, hint, busy, onPatch, onRunNow}: {
+    job: ScheduledJob
+    label: string
+    hint: string
+    busy: boolean
+    onPatch: (patch: ScheduledJobPatch) => void
+    onRunNow: () => void
+}) {
+    const [intervalHours, setIntervalHours] = useState(String(job.interval_hours))
+    const [dailyHour, setDailyHour] = useState(String(job.daily_hour))
+    const [dailyMinute, setDailyMinute] = useState(String(job.daily_minute).padStart(2, '0'))
+
+    useEffect(() => {
+        setIntervalHours(String(job.interval_hours))
+        setDailyHour(String(job.daily_hour))
+        setDailyMinute(String(job.daily_minute).padStart(2, '0'))
+    }, [job.interval_hours, job.daily_hour, job.daily_minute])
+
+    const applyInterval = () => {
+        const n = parseInt(intervalHours, 10)
+        if (Number.isFinite(n) && n >= 1) onPatch({mode: 'interval', interval_hours: n})
+        else setIntervalHours(String(job.interval_hours))
+    }
+    const applyDaily = () => {
+        const h = parseInt(dailyHour, 10)
+        const m = parseInt(dailyMinute, 10)
+        if (Number.isFinite(h) && h >= 0 && h <= 23 && Number.isFinite(m) && m >= 0 && m <= 59) {
+            onPatch({mode: 'daily', daily_hour: h, daily_minute: m})
+        } else {
+            setDailyHour(String(job.daily_hour))
+            setDailyMinute(String(job.daily_minute).padStart(2, '0'))
+        }
+    }
+
+    const lastRan = job.last_run_ms
+        ? `${job.last_run_ok ? 'Last ran' : 'Last ran (failed)'} ${relativeTime(job.last_run_ms)}`
+        : 'Never run yet'
+
+    return (
+        <SettingRow label={label} hint={`${hint} ${lastRan}.`}>
+            <div className={styles.inlineRow}>
+                <Toggle
+                    id={`job-${job.name}-enabled`}
+                    checked={job.enabled}
+                    disabled={busy}
+                    onChange={v => onPatch({enabled: v})}
+                />
+                <select
+                    value={job.mode}
+                    disabled={busy}
+                    onChange={e => onPatch({mode: e.target.value as 'interval' | 'daily'})}
+                    className={`${styles.input} ${styles.w140} ${styles.inputCursorPointer}`}
+                >
+                    <option value="interval">Every N hours</option>
+                    <option value="daily">Daily at (UTC)</option>
+                </select>
+                {job.mode === 'interval' ? (
+                    <input
+                        type="number" min={1}
+                        value={intervalHours}
+                        disabled={busy}
+                        onChange={e => setIntervalHours(e.target.value)}
+                        onBlur={applyInterval}
+                        onKeyDown={e => e.key === 'Enter' && applyInterval()}
+                        className={`${styles.input} ${styles.w60}`}
+                    />
+                ) : (
+                    <>
+                        <input
+                            type="number" min={0} max={23}
+                            value={dailyHour}
+                            disabled={busy}
+                            onChange={e => setDailyHour(e.target.value)}
+                            onBlur={applyDaily}
+                            onKeyDown={e => e.key === 'Enter' && applyDaily()}
+                            className={`${styles.input} ${styles.w60}`}
+                        />
+                        <span>:</span>
+                        <input
+                            type="number" min={0} max={59}
+                            value={dailyMinute}
+                            disabled={busy}
+                            onChange={e => setDailyMinute(e.target.value)}
+                            onBlur={applyDaily}
+                            onKeyDown={e => e.key === 'Enter' && applyDaily()}
+                            className={`${styles.input} ${styles.w60}`}
+                        />
+                    </>
+                )}
+                <NavButton
+                    id={`job-${job.name}-run`}
+                    onClick={onRunNow}
+                    disabled={busy}
+                    className={`${styles.navBtn} ${styles.navBtnViolet14} ${styles.navBtnCursorPointer} ${busy ? styles.navBtnFaded5 : styles.navBtnOpaque}`}
+                >
+                    {busy ? 'Running…' : 'Run now'}
+                </NavButton>
+            </div>
+        </SettingRow>
+    )
+}
 
 function ArrField({ label, hint, value, onChange, password }: {
   label: string; hint?: string; value: string; onChange: (v: string) => void; password?: boolean
@@ -1057,12 +1942,7 @@ function ArrField({ label, hint, value, onChange, password }: {
         type={password ? 'password' : 'text'}
         value={value}
         onChange={e => onChange(e.target.value)}
-        style={{
-          width: 240, padding: '4px 8px', borderRadius: 6,
-          border: '1px solid oklch(0.3 0.01 286)',
-          background: 'oklch(0.13 0.01 286)', color: 'var(--hds-txt)',
-          fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
-        }}
+        className={`${styles.input} ${styles.w240}`}
       />
     </SettingRow>
   )

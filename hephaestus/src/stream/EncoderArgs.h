@@ -1,11 +1,42 @@
 #pragma once
-#include "ChannelSession.h" // HwAccel
-#include "MediaProbe.h"     // VideoTrack
+#include "ChannelSession.h"     // HwAccel
+#include "ClientCapabilities.h" // ClientCapabilities
+#include "MediaProbe.h"         // VideoTrack
+#include <cstdint>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 std::string fmtSpeed(double speed);
+
+// Replicates ffmpeg's own -hls_time cutting rule for a direct-stream (stream
+// copy) session: cut at the first keyframe at or after hls_time_secs seconds
+// have elapsed since the last cut. Given the file's real keyframe timestamps
+// (MediaProbe::probeKeyframeTimestampsMs), this predicts EXACTLY where a
+// -c:v copy invocation will actually cut segments, since stream copy can't
+// force keyframes onto any other cadence — the assumed-uniform-cadence
+// approach only holds for transcode/burn-in, where -force_key_frames
+// controls placement directly. Returns an empty vector if keyframes_ms is
+// empty (probe failed) — callers fall back to the uniform assumption.
+// Shared by VodSession and ChannelSession's spawn path — both need to predict
+// segment boundaries upfront rather than discover them from ffmpeg's output.
+std::vector<int64_t> simulateDirectStreamSegmentBoundaries(
+	const std::vector<int64_t>& keyframes_ms, int hls_time_secs);
+
+// Output-side duration bound (bounds a head to its own window) plus the
+// absolute-timeline timestamp rebasing that lets segments from *different*
+// ffmpeg processes covering the same logical item concatenate seamlessly:
+// without -output_ts_offset, each process resets its own PTS clock near zero
+// on restart, so segment N from one head and segment N+1 from a different
+// one covering the same item would carry genuinely discontinuous timestamps
+// even though they're meant to play as one continuous stream.
+// -output_ts_offset rebases this run's output onto the real absolute
+// position instead, so every head's segments land in the same timestamp
+// domain regardless of which one produced them. Shared by VOD (multiple
+// heads within one file) and the channel spawn path (multiple heads within
+// one scheduled item) — both need the same rebasing for the same reason.
+void pushHeadBoundArgs(std::vector<std::string>& a, int64_t positionMs, std::optional<double> windowDurationSecs);
 
 // Single shared HwAccel-to-string mapping, used by startup log lines
 // (HwProbe.cpp, main.cpp) so there's exactly one of these in the codebase.
@@ -31,7 +62,7 @@ std::string decodeCodecKey(const std::string& codec, int bit_depth);
 // decode offload needs the device set up globally the same way encode does.
 // No-op otherwise.
 void pushVaapiDeviceArg(std::vector<std::string>& a, HwAccel encode, HwAccel decode,
-                         const std::string& vaapi_device);
+						const std::string& vaapi_device);
 
 // NVDEC/VAAPI decode offload — insert right before -i. Deliberately just
 // "-hwaccel cuda"/"-hwaccel vaapi" without an explicit hwaccel_output_format:
@@ -59,8 +90,8 @@ void pushVaapiDeviceArg(std::vector<std::string>& a, HwAccel encode, HwAccel dec
 // it's a web/YouTube codec not relevant to a movie/TV library) all fall
 // through to ordinary CPU decode.
 void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel decode_backend,
-                            const std::set<std::string>& decodable_codecs,
-                            const std::string& source_codec);
+						   const std::set<std::string>& decodable_codecs,
+						   const std::string& source_codec);
 
 // Video encoder selection, shared across live-channel, offline-slate, and
 // VOD ffmpeg argument builders. Appends codec args to `a` and (for AMD,
@@ -87,14 +118,95 @@ void pushHwAccelDecodeArgs(std::vector<std::string>& a, HwAccel decode_backend,
 // washed out/hazy on any display); true re-encodes as real HEVC Main10
 // HDR10, preserving the source's actual color info instead of downgrading
 // it. See EncoderArgs.cpp for the long version of both.
-void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
-                           HwAccel hw_accel, int keyframeIntervalSecs,
-                           const VideoTrack* source_video = nullptr,
-                           bool client_hdr_capable = false);
+//
+// One entry per transcode-target video codec this codebase can actually
+// produce, best-to-worst. buildArgs is that codec's own per-HwAccel encode
+// args. Exposed (not EncoderArgs.cpp-local) so VodSessionManager can resolve
+// the same choice chooseVideoCodec() makes when deciding whether two
+// viewers' transcodes can share one encode — see its own comment.
+struct VideoCodecOption
+{
+	std::string name; // ffprobe-style codec name — must match ClientCapabilities::video_codecs entries
+	void (*buildArgs)(std::vector<std::string>& a, std::vector<std::string>& vfParts, HwAccel hw_accel);
+};
 
-// Audio encoder selection, shared the same way.
+const std::vector<VideoCodecOption>& videoCodecPriority();
+// Bounded by the source's own position in the list — never picks something
+// more "exotic"/modern than the source already is. See EncoderArgs.cpp for
+// the long version.
+const VideoCodecOption& chooseVideoCodec(const std::string& source_codec,
+										 const std::optional<ClientCapabilities>& client_caps);
+
+// Same idea for audio — bounded by channel count instead of codec
+// generation (a surround codec only matters once there's real surround
+// content to preserve). See EncoderArgs.cpp.
+struct AudioCodecOption
+{
+	std::string name;
+	bool preserve_channels;
+	int bitrate_kbps; // 0 = caller's own audio_bitrate_kbps applies instead
+};
+
+const std::vector<AudioCodecOption>& audioCodecPriority();
+const AudioCodecOption& chooseAudioCodec(const AudioTrack* source_audio,
+										 const std::optional<ClientCapabilities>& client_caps);
+
+// client_caps (VOD only — see its own default): "smart muxing" — the
+// non-HDR transcode target is chosen via chooseVideoCodec() (EncoderArgs.cpp)
+// instead of unconditionally hardcoding H.264, for the same reason
+// isVideoDirectStreamable/isAudioDirectStreamable check a *specific* client's own
+// declared support rather than a fixed allowlist: a re-encode is sometimes
+// unavoidable for a reason that has nothing to do with codec support
+// (resolution mismatch, subtitle burn-in, SDR tone-map), and a capable
+// client shouldn't lose codec generations just because *something else*
+// forced a transcode. Bounded by the source's own codec — see
+// chooseVideoCodec's own comment for why re-encoding "up" a generation the
+// source never actually had is pointless. Live-channel/preview callers have
+// no single-viewer capability to target (a live channel fans one encode out
+// to N simultaneous viewers via Hermes — see ChannelBroadcaster) and simply
+// don't pass this, keeping their existing fixed-H.264 behavior unchanged.
+void pushVideoEncoderArgs(std::vector<std::string>& a, std::vector<std::string>& vfParts,
+						  HwAccel hw_accel, int keyframeIntervalSecs,
+						  const VideoTrack* source_video                       = nullptr,
+						  bool client_hdr_capable                              = false,
+						  const std::optional<ClientCapabilities>& client_caps = std::nullopt);
+
+// Audio encoder selection, shared the same way. client_caps/source_audio:
+// same "smart muxing" reasoning as pushVideoEncoderArgs' own, via
+// chooseAudioCodec() (EncoderArgs.cpp) — a client that's declared real
+// eac3/ac3 decode support (native apps/TVs; see the stereo-forcing comment
+// in the .cpp for why this never applies to a browser tab) gets its source
+// channel layout preserved through a surround-capable codec instead of
+// being downmixed to stereo AAC for a browser-MSE limitation that no longer
+// applies once nothing here is actually targeting a browser — but only when
+// source_audio says there's actually more than stereo to preserve; a
+// surround codec buys nothing for an already-stereo source.
+// debug_showinfo: appends the `ashowinfo` filter, which logs each audio
+// frame's pts_time to stderr — paired with the `showinfo` video filter a
+// caller can push into its own vfParts, this gives a directly comparable
+// per-stream timestamp trail for diagnosing A/V drift (see
+// FfmpegProcess.cpp's stderr timestamp-prefixing, added for the same
+// purpose). Off by default: at normal per-frame audio rates this is one line
+// per ~20-40ms of audio, far too chatty to leave on outside active
+// diagnosis.
+//
+// resync_audio: appends `aresample=async=1`, which continuously nudges this
+// (re-encoded) audio stream's timestamps back toward the container's own —
+// a no-op when already in sync, a gentle correction otherwise. Only
+// meaningful for a caller pairing this against a *stream-copied* video track
+// (ChannelSession's direct-stream/native bucket): that's the one pipeline
+// shape here where video timestamps ride through untouched from the source
+// while audio is decoded/filtered/re-encoded, an asymmetry with no other
+// resync mechanism anywhere in this codebase (confirmed: no existing
+// aresample/-async/itsoffset/copyts usage). A full transcode re-generates
+// both streams' timing together via the same -fflags +genpts/-fps_mode cfr
+// pass, so it was never exposed to this and doesn't need it.
 void pushAudioEncoderArgs(std::vector<std::string>& a, bool loudnorm, double speed,
-                           int audio_bitrate_kbps);
+						  int audio_bitrate_kbps,
+						  const std::optional<ClientCapabilities>& client_caps = std::nullopt,
+						  const AudioTrack* source_audio                       = nullptr,
+						  bool debug_showinfo                                  = false,
+						  bool resync_audio                                    = false);
 
 // Joins vfParts with commas and appends "-vf <joined>" to `a` if non-empty.
 void pushVideoFilterArgs(std::vector<std::string>& a, const std::vector<std::string>& vfParts);
@@ -112,6 +224,25 @@ void pushScaleFilter(std::vector<std::string>& vfParts, int maxHeight);
 // Appends -maxrate/-bufsize (bufsize = 2x maxrate) if video_bitrate_kbps > 0,
 // a no-op otherwise.
 void pushBitrateCapArgs(std::vector<std::string>& a, int video_bitrate_kbps);
+
+// A sane default -maxrate ceiling (kbps) for a live channel's transcode
+// bucket when no admin-configured bitrate exists (channel.stream_video_bitrate
+// == 0, "quality-based/CRF auto"). Leaving CQ/VBR truly uncapped is a
+// documented live-streaming anti-pattern: a complex or forced I-frame can
+// spike bitrate arbitrarily, and a real-time (-re-paced) pipeline has no
+// slack to absorb that the way file-based encoding would. Generous enough
+// that ordinary CQ-23 output for real content should never actually hit
+// it — this exists purely to bound the pathological spike case, not to
+// meaningfully constrain quality. effective_height <= 0 (unknown, e.g. no
+// source_video probed yet) assumes ~1080p-ish.
+int defaultBitrateCapKbps(int effective_height);
+
+// The real output height a channel's transcode will land on: the smaller of
+// the configured max_resolution cap (resolveMaxHeight() — 0 = uncapped, i.e.
+// whatever the source is) and the source's own real height. Needed because
+// defaultBitrateCapKbps() has to size itself off what will actually be
+// encoded, not just whichever of those two happens to be set.
+int effectiveOutputHeight(int max_height_cap, const VideoTrack* source_video);
 
 // Appends "-v verbose" when verbose_transcode_logs is true (see
 // Config::verbose_transcode_logs / *StreamOptions::verbose_transcode_logs),

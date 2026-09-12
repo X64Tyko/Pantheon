@@ -7,7 +7,15 @@
 export interface CastCustomData {
   contentType: 'movie' | 'episode' | 'channel'
   contentId:   string
-  positionMs?: number
+  positionMs?:    number
+  // Carries the sender's *currently selected* tracks so the receiver's fresh
+  // session (see CastReceiverProvider's LOAD interceptor, which discards the
+  // sender's manifestUrl and starts its own /stream/vod/start) opens with the
+  // same tracks instead of silently resetting to audio-auto/subtitles-off.
+  // Mid-cast track switching is still out of scope for v1 (see castMedia.ts)
+  // — this only fixes the initial handoff.
+  audioTrack?:    number
+  subtitleTrack?: number
 }
 
 export function isCastCustomData(data: unknown): data is CastCustomData {

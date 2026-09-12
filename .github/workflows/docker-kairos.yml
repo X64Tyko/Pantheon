@@ -3,12 +3,30 @@ name: Kairos CI
 on:
   push:
     branches: [master]
+    # GitHub ignores `paths` entirely for tag pushes (it only applies to
+    # branch pushes), so a `vX.Y.Z` release tag always builds+publishes a
+    # versioned image regardless of what changed — this is what lets a
+    # user's compose.yml pin to a stable release instead of just `:latest`.
+    tags: ["v*.*.*"]
     paths:
       - "kairos/**"
+      - "shared/**"
       - "momus/kairos/**"
       - "momus/CMakeLists.txt"
+      - "VERSION"
       - ".github/workflows/docker-kairos.yml"
+      # Kairos's served theme (GET /api/tv/manifest) is generated from
+      # Hades' own CSS — see hades/scripts/generate-tv-tokens.mjs — so a
+      # token-affecting change there needs a Kairos rebuild too, not just
+      # Hades'.
+      - "hades/src/index.css"
+      - "hades/scripts/generate-tv-tokens.mjs"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional version tag to also publish (e.g. v0.2.0) — for backfilling a release whose tag push predates a CI fix"
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -22,7 +40,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install build deps
-        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ libssl-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ pkg-config libssl-dev libavformat-dev libavcodec-dev libavutil-dev
 
       - name: Cache FetchContent deps
         uses: actions/cache@v4
@@ -59,6 +77,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node (for design-token generation)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # kairos/assets/tv-tokens.json has to exist before the build step runs
+      # (the Dockerfile COPYs it in explicitly rather than generating it, to
+      # keep that stage dependency-free). A committed copy already ships in
+      # the repo (see hades/scripts/generate-tv-tokens.mjs's own comment) —
+      # this just guarantees the image always gets a fresh one, not a
+      # possibly-stale commit.
+      - name: Generate design tokens
+        run: node hades/scripts/generate-tv-tokens.mjs
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -73,7 +105,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./kairos
+          context: .
+          file: kairos/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
@@ -119,18 +152,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Compute tags
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-
+        run: |
+          TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA::7}"
+          if [ "${{ github.ref }}" = "refs/heads/master" ]; then
+            TAGS="$TAGS ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          fi
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAGS="$TAGS ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          fi
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            TAGS="$TAGS ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.release_tag }}"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
 
       - name: Create and push manifest
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(for t in ${{ steps.meta.outputs.tags }}; do printf -- '-t %s ' "$t"; done) \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)

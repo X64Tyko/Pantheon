@@ -9,7 +9,11 @@
 #include <vector>
 
 // One connection to Hephaestus per channel; fans out raw MPEG-TS bytes to N Hermes clients.
-class ChannelBroadcaster {
+// shared_ptr-owned by BroadcasterManager, whose map entry can be overwritten
+// with a fresh instance once this one is dead (see BroadcasterManager.cpp) —
+// enable_shared_from_this lets scheduleStop()'s linger thread keep itself
+// alive for as long as it runs instead of touching a freed `this`.
+class ChannelBroadcaster : public std::enable_shared_from_this<ChannelBroadcaster> {
 public:
     struct Sink {
         std::mutex              mtx;

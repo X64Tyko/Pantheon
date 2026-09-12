@@ -8,17 +8,21 @@
 #include "download/DownloadManager.h"
 #include "email/EmailService.h"
 #include "log/LogBuffer.h"
+#include "normalize/MediaNormalizeManager.h"
 #include "scheduler/EPGMaterializer.h"
 #include "scheduler/RuleEngine.h"
 #include "scraper/ScraperManager.h"
 #include "source/SyncManager.h"
+#include "services/AboutService.h"
 #include "services/ActivityService.h"
 #include "services/ArrService.h"
 #include "services/RequestService.h"
 #include "services/AuthService.h"
+#include "services/BackupService.h"
 #include "services/BlockService.h"
 #include "services/ChapterService.h"
 #include "services/ChannelService.h"
+#include "services/JobService.h"
 #include "services/KairosService.h"
 #include "services/ConfigService.h"
 #include "services/PlaybackService.h"
@@ -30,23 +34,33 @@
 #include "services/ScraperService.h"
 #include "services/SchedulerService.h"
 #include "services/SourceService.h"
+#include "services/SubtitleService.h"
 #include "services/TimeslotService.h"
+#include "services/TvManifestService.h"
+#include "services/WatchTogetherService.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 using Req  = httplib::Request;
 using Res  = httplib::Response;
 
-static bool isPublicPath(const std::string& method, const std::string& path) {
+static bool isPublicPath(const std::string& method, const std::string& path)
+{
 	if (!path.starts_with("/api/")) return true;
 	if (path == "/api/auth/setup") return true;
 	if (path == "/api/auth/login") return true;
+	// A visitor with no session yet creates their own guest account — see
+	// AuthService.cpp's own comment on why the route itself still gates on
+	// guest_profiles_enabled rather than relying on this exemption alone.
+	// Deliberately NOT extended to /api/auth/me/guest (the guest-only
+	// self-service PATCH/DELETE routes) — those require an already-valid
+	// session, checked via currentUser()->is_guest.
+	if (path == "/api/auth/guest") return true;
 	// Invite-claim flow — reached before the person has any session at all;
 	// only actionable with the unguessable token in the path itself (see
 	// AuthStore::claimInvite).
 	if (path.starts_with("/api/auth/invite/")) return true;
-	if (path.ends_with("/now") || path.ends_with("/next") || path.ends_with("/epg"))
-		return true;
+	if (path.ends_with("/now") || path.ends_with("/next") || path.ends_with("/epg")) return true;
 	// Paths called by internal services (Hermes, Hephaestus) with no user session
 	// — GET only. The same exact paths also carry admin-gated write methods
 	// (POST /api/channels creates a channel, POST /api/sources adds a source)
@@ -54,16 +68,33 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	// would never be populated and those routes' own admin check would always
 	// fail closed with a 403 no admin token could ever satisfy.
 	if (method == "GET" && path == "/api/channels") return true;
-	if (method == "GET" && path == "/api/sources")  return true;
-	if (path.ends_with("/played")) return true;
+	if (method == "GET" && path == "/api/sources") return true;
+	if (method == "POST" && path.ends_with("/played")) return true;
 	// Hephaestus resolving a library item to a playable file for VOD sessions.
 	if (path.starts_with("/api/playback/")) return true;
 	// Hephaestus fetching runtime flags.
 	if (method == "GET" && path == "/api/config/public-settings") return true;
+	// TV manifest — structural layout data, not per-user, same reasoning as
+	// public-settings above. Consumed by /tv (unauthenticated on first paint,
+	// before any session exists) and eventually native clients.
+	if (method == "GET" && path == "/api/tv/manifest") return true;
+	// About page — reachable pre-login (Hades' /about route, off the login
+	// page's footer link) since its audience is prospective contributors and
+	// supporters, not necessarily existing users.
+	if (method == "GET" && path == "/api/about") return true;
+	// Home shelves (smart playlists with show_on_home=1) — same "structural,
+	// not per-user" reasoning as the TV manifest above, consumed by the web
+	// Home page on first paint the same way.
+	if (method == "GET" && path == "/api/home-playlists") return true;
 	// Hermes aggregating system metrics across services for the Activity page.
 	if (method == "GET" && path == "/api/system/metrics") return true;
-	// Log stream — relayed by Hermes into the unified Hades log view.
-	if (path == "/api/logs/stream") return true;
+	// Log stream is intentionally NOT public — it's admin-only (see the role
+	// check in ActivityService.cpp) and holds an API-thread-pool slot open for
+	// up to 25s per idle cycle, so anonymous access would let a handful of
+	// concurrent connections starve the whole pool. The frontend already
+	// authenticates it via ?token= (EventSource can't set an Authorization
+	// header — see SystemStore.ts), which the token-parsing above this
+	// function already handles regardless of isPublicPath.
 	// Hades reporting console errors.
 	if (path == "/api/logs/client") return true;
 	// Image proxy — loaded by <img> tags that cannot send Authorization headers.
@@ -72,7 +103,8 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 	if (path.starts_with("/api/scrapers/anidb/poster/")) return true;
 	// M3U / XMLTV endpoints — accessed by DVR clients without auth.
 	if (path == "/api/epg.xml" || path == "/api/xmltv.xml" ||
-	    path == "/api/channels.xml" || path == "/api/channels.m3u") return true;
+		path == "/api/channels.xml" || path == "/api/channels.m3u")
+		return true;
 	// Channel logo — referenced by the <icon>/tvg-logo fields in the XMLTV/M3U
 	// feeds above, so it needs the same no-auth treatment those do (a DVR
 	// client fetching an icon URL has no Kairos session token).
@@ -81,81 +113,155 @@ static bool isPublicPath(const std::string& method, const std::string& path) {
 }
 
 Router::Router(httplib::Server& svr, Database& db, SyncManager& sync,
-               ConfStore& conf, LogBuffer& logs,
-               RuleEngine& engine, EPGMaterializer& materializer,
-               DownloadManager& dl, AuthStore& auth, EmailService& email)
-	: svr_(svr), db_(db), sync_(sync), conf_(conf), logs_(logs),
-	  engine_(engine), materializer_(materializer), dl_(dl), auth_(auth), email_(email),
-	  schedule_cache_(db)
-{}
+			   ConfStore& conf, LogBuffer& logs,
+			   RuleEngine& engine, EPGMaterializer& materializer,
+			   DownloadManager& dl, AuthStore& auth, EmailService& email,
+			   JobScheduler& jobs, BackupManager& backups)
+	: svr_(svr)
+	, db_(db)
+	, sync_(sync)
+	, conf_(conf)
+	, logs_(logs)
+	, engine_(engine)
+	, materializer_(materializer)
+	, dl_(dl)
+	, auth_(auth)
+	, email_(email)
+	, jobs_(jobs)
+	, backups_(backups)
+	, schedule_cache_(db)
+	, divergence_checker_(materializer)
+{
+}
 
 Router::~Router() = default;
 
-void Router::registerRoutes() {
+void Router::registerRoutes()
+{
 #ifdef KAIROS_DEV
-	svr_.Options(".*", [](const Req&, Res& res) {
-		res.set_header("Access-Control-Allow-Origin",  "*");
+	svr_.Options(".*", [](const Req&, Res& res)
+	{
+		res.set_header("Access-Control-Allow-Origin", "*");
 		res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
 		res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 		res.status = 204;
 	});
-	svr_.set_post_routing_handler([](const Req&, Res& res) {
-		res.set_header("Access-Control-Allow-Origin", "*");
-	});
 #endif
+	svr_.set_post_routing_handler([](const Req&, Res& res)
+	{
+		// Baseline hardening headers on every response — cheap, essentially
+		// never breaks anything, and matters more once this is reachable from
+		// the public internet rather than just a LAN. Deliberately NOT
+		// including a Content-Security-Policy here: Hades loads Google Fonts
+		// and the Chromecast Sender SDK from gstatic.com, hls.js may use a
+		// blob: worker, and Watch Together needs a websocket connect-src —
+		// getting a CSP subtly wrong (especially the Cast SDK, which can't be
+		// verified without real Chromecast hardware) is worse for a live
+		// public demo than not having one. That needs its own pass with real
+		// device testing, not a default added alongside everything else here.
+		res.set_header("X-Content-Type-Options", "nosniff");
+		res.set_header("X-Frame-Options", "DENY");
+		res.set_header("Referrer-Policy", "same-origin");
+		// Only takes effect once a browser sees this over an actual HTTPS
+		// connection (Cloudflare Tunnel or another TLS-terminating reverse
+		// proxy in front — see docker-compose.yml); harmless to send over the
+		// plain HTTP this process speaks internally otherwise.
+		res.set_header("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+#ifdef KAIROS_DEV
+		res.set_header("Access-Control-Allow-Origin", "*");
+#endif
+	});
 
 	svr_.set_pre_routing_handler([this](const Req& req, Res& res)
-	    -> httplib::Server::HandlerResponse
-	{
-		conf_.maybeReload();
-		clearCurrentUser();
+		-> httplib::Server::HandlerResponse
+		{
+			conf_.maybeReload();
+			clearCurrentUser();
 
-		bool required = !isPublicPath(req.method, req.path);
+			bool required = !isPublicPath(req.method, req.path);
 
-		std::string token;
-		if (req.has_header("Authorization")) {
-			const std::string& hdr = req.get_header_value("Authorization");
-			if (hdr.starts_with("Bearer ")) token = hdr.substr(7);
-		} else {
-			auto it = req.params.find("token");
-			if (it != req.params.end()) token = it->second;
-		}
+			// Mutates live schedule state / library metadata with no end-user
+			// session to check — gate on the shared internal secret instead (see
+			// getInternalToken()). Same reasoning applies to both: isPublicPath's
+			// blanket "/api/playback/" GET-shaped exemption (Hephaestus resolving
+			// a file to play) would otherwise also cover this PUT, which writes
+			// Hephaestus's own fallback keyframe probe back into movie/episode —
+			// see PlaybackService.cpp's PUT .../keyframes route.
+			if ((req.method == "POST" && req.path.ends_with("/played")) ||
+				(req.method == "PUT" && req.path.ends_with("/keyframes")))
+			{
+				const std::string expected = conf_.getInternalToken();
+				if (expected.empty() || req.get_header_value("X-Internal-Token") != expected)
+				{
+					res.status = 401;
+					res.set_content(R"({"error":"Unauthorized"})", "application/json");
+					return httplib::Server::HandlerResponse::Handled;
+				}
+			}
 
-		// A "public" path is public for callers with no session (internal
-		// services, DVR clients) — but if a real caller (e.g. Hades itself)
-		// still sends a valid token to one of these paths, currentUser() must
-		// be populated anyway, or every downstream restriction/role check on
-		// that path would silently see an anonymous caller and never fire.
-		auto user = token.empty() ? std::nullopt : auth_.validate(token);
-		if (required && !user) {
-			res.status = 401;
-			res.set_content(R"({"error":"Unauthorized"})", "application/json");
-			return httplib::Server::HandlerResponse::Handled;
-		}
-		if (!user) return httplib::Server::HandlerResponse::Unhandled;
+			// GET /api/logs/stream is admin-only (see ActivityService.cpp), but
+			// Hermes also relays it server-to-server with no user session of its
+			// own (relayUpstreamLogs in hermes/src/main.cpp) — same shared secret
+			// as above lets that internal call through the `required` gate below;
+			// ActivityService.cpp does the actual admin-or-internal-token check.
+			if (req.method == "GET" && req.path == "/api/logs/stream")
+			{
+				const std::string expected = conf_.getInternalToken();
+				if (!expected.empty() && req.get_header_value("X-Internal-Token") == expected) required = false;
+			}
 
-		// Any request tagged as coming through the /tv surface (Hades sets this
-		// header when mounted at /tv; Hermes forwards it) is treated as a viewer
-		// regardless of the underlying account's real role. This is downgrade-only
-		// — it can never grant privilege the token doesn't already have — so it's
-		// safe to trust from any hop. Single choke point: every role check in the
-		// app reads currentUser()->role, including /api/auth/me, so this covers
-		// the whole surface (API responses, not just UI rendering).
-		if (user->role == "admin" && req.get_header_value("X-Pantheon-Surface") == "tv")
-			user->role = "viewer";
+			std::string token;
+			if (req.has_header("Authorization"))
+			{
+				const std::string& hdr = req.get_header_value("Authorization");
+				if (hdr.starts_with("Bearer ")) token = hdr.substr(7);
+			}
+			else
+			{
+				auto it = req.params.find("token");
+				if (it != req.params.end()) token = it->second;
+			}
 
-		setCurrentUser(std::move(user));
-		return httplib::Server::HandlerResponse::Unhandled;
-	});
+			// A "public" path is public for callers with no session (internal
+			// services, DVR clients) — but if a real caller (e.g. Hades itself)
+			// still sends a valid token to one of these paths, currentUser() must
+			// be populated anyway, or every downstream restriction/role check on
+			// that path would silently see an anonymous caller and never fire.
+			auto user = token.empty() ? std::nullopt : auth_.validate(token);
+			if (required && !user)
+			{
+				res.status = 401;
+				res.set_content(R"({"error":"Unauthorized"})", "application/json");
+				return httplib::Server::HandlerResponse::Handled;
+			}
+			if (!user) return httplib::Server::HandlerResponse::Unhandled;
+
+			// Any request tagged as coming through the /tv surface (Hades sets this
+			// header when mounted at /tv; Hermes forwards it) is treated as a viewer
+			// regardless of the underlying account's real role. This is downgrade-only
+			// — it can never grant privilege the token doesn't already have — so it's
+			// safe to trust from any hop. Single choke point: every role check in the
+			// app reads currentUser()->role, including /api/auth/me, so this covers
+			// the whole surface (API responses, not just UI rendering).
+			if (user->role == "admin" && req.get_header_value("X-Pantheon-Surface") == "tv") user->role = "viewer";
+
+			setCurrentUser(std::move(user));
+			return httplib::Server::HandlerResponse::Unhandled;
+		});
 
 	scraper_mgr_ = std::make_unique<ScraperManager>(db_, conf_);
 	sync_.setScraperManager(scraper_mgr_.get());
 	chapter_detect_mgr_ = std::make_unique<ChapterDetectionManager>(db_, conf_, sync_);
 	sync_.setChapterDetectionManager(chapter_detect_mgr_.get());
+	normalize_mgr_ = std::make_unique<MediaNormalizeManager>(db_, conf_, sync_);
 
-	ServiceContext ctx{db_, conf_, sync_, schedule_cache_,
-	                   materializer_, engine_, auth_, logs_, dl_, email_};
+	ServiceContext ctx{
+		db_, conf_, sync_, schedule_cache_,
+		materializer_, divergence_checker_, engine_, auth_, logs_, dl_, email_,
+		guest_mutation_limiter_
+	};
 
+	services_.push_back(std::make_unique<AboutService>());
 	services_.push_back(std::make_unique<AuthService>(ctx));
 	services_.push_back(std::make_unique<SourceService>(ctx));
 	services_.push_back(std::make_unique<ConfigService>(ctx));
@@ -164,8 +270,36 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<ChannelService>(ctx));
 	services_.push_back(std::make_unique<KairosService>(ctx, *scraper_mgr_));
 	services_.push_back(std::make_unique<BlockService>(ctx));
-	services_.push_back(std::make_unique<ContentService>(ctx, *scraper_mgr_));
+	// ChapterService and PlaybackService are registered before ContentService
+	// on purpose: ContentService's /api/shows|movies|episodes/(.+) detail
+	// routes have to be slash-permissive (local-source kairos_ids are raw
+	// filesystem paths), which also makes them greedy with no trailing
+	// boundary — httplib tries every service's routes in one flat
+	// registration-order list (Server::dispatch_request), so if ContentService
+	// registered first, its catch-all would swallow ChapterService's
+	// /api/episodes/:id/chapters, /api/movies/:id/chapters and
+	// PlaybackService's /api/shows/:id/track-preference, .../watch-state,
+	// .../resolve-play-target etc. before those handlers ever ran, for every
+	// item regardless of source. Same reasoning as the specific-before-general
+	// ordering inside ContentService.cpp itself, just applied across files.
 	services_.push_back(std::make_unique<ChapterService>(ctx, *chapter_detect_mgr_));
+	services_.push_back(std::make_unique<PlaybackService>(ctx));
+	// Captured as a raw pointer before the unique_ptr moves into services_ so
+	// ScraperManager's match-confirmed callback (below) has something to call
+	// into — ContentService already depends on ScraperManager (previous
+	// line's constructor arg), so a direct ContentService& member on
+	// ScraperManager would be circular; wiring a std::function here after
+	// both exist isn't.
+	auto content_service = std::make_unique<ContentService>(ctx, *scraper_mgr_);
+	content_service_ptr_ = content_service.get();
+	scraper_mgr_->setOnMatchConfirmed([this](const std::string& item_type, const std::string& kairos_id)
+	{
+		content_service_ptr_->autoWritebackIfEnabled(item_type, kairos_id);
+	});
+	services_.push_back(std::move(content_service));
+	services_.push_back(std::make_unique<JobService>(ctx, jobs_, sync_, *scraper_mgr_, *chapter_detect_mgr_, *content_service_ptr_, *normalize_mgr_));
+	services_.push_back(std::make_unique<BackupService>(ctx, jobs_, backups_));
+	services_.push_back(std::make_unique<SubtitleService>(ctx));
 	services_.push_back(std::make_unique<PlaylistService>(ctx));
 	services_.push_back(std::make_unique<FillerService>(ctx));
 	services_.push_back(std::make_unique<ActivityService>(ctx));
@@ -174,7 +308,8 @@ void Router::registerRoutes() {
 	services_.push_back(std::make_unique<SchedulerService>(ctx));
 	services_.push_back(std::make_unique<TimeslotService>(ctx));
 	services_.push_back(std::make_unique<RokuDeviceService>(ctx));
-	services_.push_back(std::make_unique<PlaybackService>(ctx));
+	services_.push_back(std::make_unique<TvManifestService>(ctx));
+	services_.push_back(std::make_unique<WatchTogetherService>(ctx));
 
 	for (auto& svc : services_) svc->registerRoutes(svr_);
 }

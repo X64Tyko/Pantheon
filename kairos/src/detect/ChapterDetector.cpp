@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace {
 
@@ -17,6 +19,17 @@ std::string shellQuote(const std::string& s) {
         else           r += c;
     }
     return r + "'";
+}
+
+// The popen'd ffmpeg/fpcalc scan caches whatever it reads against this
+// container's cgroup; proactively evict it so a library scan doesn't look
+// like a growing app memory leak.
+void dropPageCache(const std::string& file_path)
+{
+	int fd = open(file_path.c_str(), O_RDONLY);
+	if (fd < 0) return;
+	posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+	close(fd);
 }
 
 constexpr int kSceneDetectTimeoutSecs = 900; // full-file video decode, no audio — generous ceiling
@@ -117,8 +130,9 @@ std::vector<int64_t> sceneChangeTimeline(const std::string& file_path) {
         } catch (...) {}
     }
     pclose(pipe);
+    dropPageCache(file_path);
 
-    std::sort(cuts.begin(), cuts.end());
+	std::sort(cuts.begin(), cuts.end());
     DLOG << "[detect] scene timeline done in " << elapsedMs(t0, std::chrono::steady_clock::now())
          << "ms → " << cuts.size() << " cut(s): " << file_path << '\n';
     return cuts;
@@ -207,8 +221,9 @@ std::vector<uint32_t> computeAudioFingerprint(const std::string& file_path) {
         }
     }
     pclose(pipe);
+    dropPageCache(file_path);
 
-    DLOG << "[detect] fingerprint done in " << elapsedMs(t0, std::chrono::steady_clock::now())
+	DLOG << "[detect] fingerprint done in " << elapsedMs(t0, std::chrono::steady_clock::now())
          << "ms → " << fp.size() << " item(s): " << file_path << '\n';
     return fp;
 }

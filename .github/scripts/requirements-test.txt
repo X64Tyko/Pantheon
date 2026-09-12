@@ -1,0 +1,3 @@
+# Test-only dependencies for .github/scripts/. Not used by release.yml itself --
+# extract_changelog_section.py has zero third-party imports at runtime.
+pytest

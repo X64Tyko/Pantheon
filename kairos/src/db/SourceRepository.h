@@ -17,9 +17,21 @@ public:
     void createSource(const std::string& source_id,
                       const std::string& source_type,
                       const std::string& display_name,
-                      const std::string& base_url);
+                      const std::string& base_url,
+                      int sync_priority = 0);
 
     void removeSource(const std::string& source_id);
+
+    // See MediaSourceConfig::sync_priority. Caller (SourceService) is
+    // responsible for calling SyncManager::loadSources() afterward so the
+    // new order/ranking actually takes effect on the next sync.
+    void setSyncPriority(const std::string& source_id, int priority);
+
+    // See MediaSourceConfig::auto_writeback / writeback_update_*.
+    void setAutoWriteback(const std::string& source_id, bool enabled);
+    void setWritebackUpdateArt(const std::string& source_id, bool enabled);
+    void setWritebackUpdateExternalIds(const std::string& source_id, bool enabled);
+    void setWritebackUpdateCollections(const std::string& source_id, bool enabled);
 
     // ── Libraries ─────────────────────────────────────────────────────────────
 
@@ -66,13 +78,21 @@ public:
                                 const std::string& external_id,
                                 const std::string& item_type);
 
+    // Reverse of the above — resolve a Kairos internal ID to its source-
+    // native external_id, for pushing a local item to a specific remote
+    // source (see PlaylistPushService). Empty string if this item was never
+    // mapped from that source (nothing to push it as).
+    std::string resolveExternalId(const std::string& source_id,
+                                  const std::string& kairos_id,
+                                  const std::string& item_type);
+
     // Sample a raw file path for a given source (for path-mapping UI).
     std::optional<std::string> samplePath(const std::string& source_id);
 
     struct SourceMappingRow { std::string source_id, external_id; };
     std::optional<SourceMappingRow> getSourceMapping(const std::string& kairos_id);
 
-    struct SourceBasicRow { std::string source_id, source_type, display_name; };
+    struct SourceBasicRow { std::string source_id, source_type, display_name; int syncPriority;};
     std::vector<SourceBasicRow> listSourcesBasic();
 
     // Returns external_lib_id for a library, or empty string if not found.
@@ -105,6 +125,13 @@ public:
         std::string external_id;
         std::string external_lib_id; // Plex "section" id; empty if not tracked for this mapping
         std::string display_name;   // media_source.display_name — for the detail panel's "Sources" list
+        // See MediaSourceConfig::auto_writeback / writeback_update_* —
+        // carried per-target (not a separate lookup) so ContentService can
+        // shape/filter without an extra query per target.
+        bool auto_writeback               = false;
+        bool writeback_update_art         = true;
+        bool writeback_update_external_ids = true;
+        bool writeback_update_collections  = true;
     };
     // Every source this show/movie is mapped to, with what's needed to push
     // metadata back to each one. Usually one row, but not assumed — an item

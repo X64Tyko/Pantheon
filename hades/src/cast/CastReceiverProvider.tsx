@@ -59,9 +59,20 @@ export function CastReceiverProvider() {
         if (!isCastCustomData(custom)) {
           return new cast.framework.messages.ErrorData(cast.framework.messages.ErrorType.LOAD_FAILED)
         }
+        // Channels have no track selection (live-only, see TrackMenu's isLive
+        // branch) — only build a query string for movie/episode targets.
+        let qs = ''
+        if (custom.contentType !== 'channel') {
+          const params = new URLSearchParams()
+          if (custom.positionMs) params.set('t', String(custom.positionMs))
+          if (custom.audioTrack != null && custom.audioTrack >= 0) params.set('audio', String(custom.audioTrack))
+          if (custom.subtitleTrack != null && custom.subtitleTrack !== -1) params.set('subtitle', String(custom.subtitleTrack))
+          const s = params.toString()
+          qs = s ? `?${s}` : ''
+        }
         const path = custom.contentType === 'channel'
           ? `/player/channel/${custom.contentId}`
-          : `/player/${custom.contentType}/${custom.contentId}${custom.positionMs ? `?t=${custom.positionMs}` : ''}`
+          : `/player/${custom.contentType}/${custom.contentId}${qs}`
         navigate(path)
         // Resolving with the original data (not null) is what lets the
         // sender's session.loadMedia() promise actually resolve instead of

@@ -1,4 +1,5 @@
 #include "ChannelBroadcaster.h"
+#include "thread/TaskRegistry.h"
 #include <httplib.h>
 #include <iostream>
 #include <algorithm>
@@ -127,11 +128,11 @@ void ChannelBroadcaster::broadcastDone() {
 void ChannelBroadcaster::scheduleStop() {
     uint32_t token = ++stop_token_;
     int linger = linger_secs_;
-    std::thread([this, token, linger] {
+    TaskRegistry::global().spawn([self = shared_from_this(), token, linger] {
         std::this_thread::sleep_for(std::chrono::seconds(linger));
-        if (stop_token_.load() != token) return;
-        std::lock_guard lock(sinks_mtx_);
-        if (!sinks_.empty()) return;
-        stop_requested_.store(true);
-    }).detach();
+        if (self->stop_token_.load() != token) return;
+        std::lock_guard lock(self->sinks_mtx_);
+        if (!self->sinks_.empty()) return;
+        self->stop_requested_.store(true);
+    });
 }

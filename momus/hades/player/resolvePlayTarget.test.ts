@@ -1,96 +1,104 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { resolvePlayPath } from '@/player/resolvePlayTarget'
+import { resolvePlayTarget, resolvePlayPath } from '@/player/resolvePlayTarget'
 import { api } from '@/api/client'
 
+// The show/movie resume-point branching (watch-state vs next-episode vs
+// earliest-episode fallback) moved server-side into Kairos's
+// GET /shows|movies/:id/resolve-play-target (see PlaybackService.cpp, tested
+// there) — these two functions are now just a thin client wrapper +
+// path-builder around those two endpoints, so that's all this file covers.
+// Movies get their own endpoint (not the shows one) because multi-part
+// movies (GitHub #3) need to translate a summed-across-parts position into
+// a part_num + in-part offset — see PlaybackService.cpp's own comment.
 vi.mock('@/api/client', () => ({
   api: {
-    getShowWatchState: vi.fn(),
-    getNextEpisode:    vi.fn(),
-    getEpisodes:       vi.fn(),
+    getResolvedPlayTarget: vi.fn(),
+      getMovieResolvedPlayTarget: vi.fn(),
   },
 }))
 
-const mockApi = api as Record<'getShowWatchState' | 'getNextEpisode' | 'getEpisodes', ReturnType<typeof vi.fn>>
+const mockApi = api as Record<'getResolvedPlayTarget' | 'getMovieResolvedPlayTarget', ReturnType<typeof vi.fn>>
 
-function ep(episode_id: string, season: number, episode: number) {
-  return { episode_id, season, episode, title: '', duration_ms: 0 }
-}
+describe('resolvePlayTarget', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
 
-function nextEp(episode_id: string, season = 1, episode = 2) {
-  return { episode_id, season, episode, title: '', duration_ms: 0, overview: '', air_date: '', thumb: '' }
-}
+    it('movies delegate to the server-resolved target', async () => {
+        mockApi.getMovieResolvedPlayTarget.mockResolvedValue({kind: 'movie', id: 'm1', position_ms: 30_000})
+        const target = await resolvePlayTarget('movie', 'm1')
+        expect(target).toEqual({kind: 'movie', id: 'm1', positionMs: 30_000, partNum: undefined, totalParts: undefined})
+        expect(mockApi.getMovieResolvedPlayTarget).toHaveBeenCalledWith('m1')
+    })
 
-function watchState(overrides: Partial<{
-  content_id: string; position_ms: number; duration_ms: number; completed: boolean; updated_at: number
-}> = {}) {
-  return {
-    content_id: 'e1', position_ms: 1000, duration_ms: 100_000, completed: false, updated_at: 1,
-    ...overrides,
-  }
-}
+    it('a movie with no saved progress resolves to position 0', async () => {
+        mockApi.getMovieResolvedPlayTarget.mockResolvedValue(null)
+    const target = await resolvePlayTarget('movie', 'm1')
+    expect(target).toEqual({ kind: 'movie', id: 'm1', positionMs: 0 })
+    })
+
+    it('a multi-part movie resolves with part_num/total_parts', async () => {
+        mockApi.getMovieResolvedPlayTarget.mockResolvedValue({
+            kind: 'movie', id: 'm1', position_ms: 10_000, part_num: 2, total_parts: 3,
+        })
+        const target = await resolvePlayTarget('movie', 'm1')
+        expect(target).toEqual({kind: 'movie', id: 'm1', positionMs: 10_000, partNum: 2, totalParts: 3})
+  })
+
+  it('shows delegate to the server-resolved target', async () => {
+    mockApi.getResolvedPlayTarget.mockResolvedValue({ kind: 'episode', id: 'e2', position_ms: 42_000 })
+    const target = await resolvePlayTarget('show', 'sh1')
+    expect(target).toEqual({ kind: 'episode', id: 'e2', positionMs: 42_000 })
+    expect(mockApi.getResolvedPlayTarget).toHaveBeenCalledWith('sh1')
+  })
+
+  it('a show the server has no target for resolves to null', async () => {
+    mockApi.getResolvedPlayTarget.mockResolvedValue(null)
+    const target = await resolvePlayTarget('show', 'sh1')
+    expect(target).toBeNull()
+  })
+})
 
 describe('resolvePlayPath', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    mockApi.getShowWatchState.mockResolvedValue(null)
-    mockApi.getNextEpisode.mockResolvedValue(null)
-    mockApi.getEpisodes.mockResolvedValue([])
   })
 
-  it('movies resolve directly with no API calls', async () => {
+    it('movie with no saved progress has no ?t=', async () => {
+        mockApi.getMovieResolvedPlayTarget.mockResolvedValue(null)
     const path = await resolvePlayPath('movie', 'm1')
     expect(path).toBe('/player/movie/m1')
-    expect(mockApi.getShowWatchState).not.toHaveBeenCalled()
-    expect(mockApi.getNextEpisode).not.toHaveBeenCalled()
-    expect(mockApi.getEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('movie mid-playback includes ?t=', async () => {
+        mockApi.getMovieResolvedPlayTarget.mockResolvedValue({kind: 'movie', id: 'm1', position_ms: 30_000})
+        const path = await resolvePlayPath('movie', 'm1')
+        expect(path).toBe('/player/movie/m1?t=30000')
+    })
+
+    it('multi-part movie includes ?t= and ?part=', async () => {
+        mockApi.getMovieResolvedPlayTarget.mockResolvedValue({
+            kind: 'movie', id: 'm1', position_ms: 5_000, part_num: 2, total_parts: 3,
+        })
+        const path = await resolvePlayPath('movie', 'm1')
+        expect(path).toBe('/player/movie/m1?t=5000&part=2')
   })
 
-  it('a show with no watch state and no episodes resolves to null', async () => {
-    const path = await resolvePlayPath('show', 'sh1')
-    expect(path).toBeNull()
-  })
-
-  it('a show with episodes but no watch state starts at the earliest episode', async () => {
-    mockApi.getEpisodes.mockResolvedValue([ep('e3', 2, 1), ep('e1', 1, 1), ep('e2', 1, 2)])
-    const path = await resolvePlayPath('show', 'sh1')
-    expect(path).toBe('/player/episode/e1')
-  })
-
-  it('resumes an in-progress episode at its saved position', async () => {
-    mockApi.getShowWatchState.mockResolvedValue(watchState({ content_id: 'e2', position_ms: 42_000, completed: false }))
+  it('includes ?t= when the resolved target has a non-zero position', async () => {
+    mockApi.getResolvedPlayTarget.mockResolvedValue({ kind: 'episode', id: 'e2', position_ms: 42_000 })
     const path = await resolvePlayPath('show', 'sh1')
     expect(path).toBe('/player/episode/e2?t=42000')
-    expect(mockApi.getNextEpisode).not.toHaveBeenCalled()
   })
 
-  it('continues at the next episode once the last-watched one was completed', async () => {
-    mockApi.getShowWatchState.mockResolvedValue(watchState({ content_id: 'e1', completed: true }))
-    mockApi.getNextEpisode.mockResolvedValue(nextEp('e2'))
-    const path = await resolvePlayPath('show', 'sh1')
-    expect(path).toBe('/player/episode/e2')
-    expect(mockApi.getNextEpisode).toHaveBeenCalledWith('e1')
-  })
-
-  it('falls back to the earliest episode when the completed episode was the last one', async () => {
-    mockApi.getEpisodes.mockResolvedValue([ep('e1', 1, 1)])
-    mockApi.getShowWatchState.mockResolvedValue(watchState({ content_id: 'e1', completed: true }))
-    mockApi.getNextEpisode.mockResolvedValue(null)
+  it('omits ?t= when the resolved target starts at position 0', async () => {
+    mockApi.getResolvedPlayTarget.mockResolvedValue({ kind: 'episode', id: 'e1', position_ms: 0 })
     const path = await resolvePlayPath('show', 'sh1')
     expect(path).toBe('/player/episode/e1')
   })
 
-  it('treats a getShowWatchState failure as no watch state rather than rejecting', async () => {
-    mockApi.getEpisodes.mockResolvedValue([ep('e1', 1, 1)])
-    mockApi.getShowWatchState.mockRejectedValue(new Error('network error'))
+  it('returns null when the show has no resolvable target', async () => {
+    mockApi.getResolvedPlayTarget.mockResolvedValue(null)
     const path = await resolvePlayPath('show', 'sh1')
-    expect(path).toBe('/player/episode/e1')
-  })
-
-  it('treats a getNextEpisode failure as no next episode rather than rejecting', async () => {
-    mockApi.getEpisodes.mockResolvedValue([ep('e1', 1, 1)])
-    mockApi.getShowWatchState.mockResolvedValue(watchState({ content_id: 'e1', completed: true }))
-    mockApi.getNextEpisode.mockRejectedValue(new Error('network error'))
-    const path = await resolvePlayPath('show', 'sh1')
-    expect(path).toBe('/player/episode/e1')
+    expect(path).toBeNull()
   })
 })

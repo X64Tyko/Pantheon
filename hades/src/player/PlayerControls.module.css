@@ -1,0 +1,42 @@
+.wrap {
+  position: absolute; inset: 0; z-index: 10; pointer-events: none;
+  display: flex; flex-direction: column; justify-content: space-between;
+}
+
+.topBar {
+  pointer-events: auto; display: flex; align-items: center; gap: var(--hds-space-4);
+  padding: 18px var(--hds-space-6); background: linear-gradient(to bottom, oklch(0 0 0 / 0.6), transparent);
+}
+
+.title { font-family: var(--hds-font-display); font-size: var(--hds-font-size-tv-heading); font-weight: 600; color: #fff; }
+
+.spacer { flex: 1; }
+
+.bottomBar {
+  pointer-events: auto; padding: 10px var(--hds-space-6) 20px;
+  background: linear-gradient(to top, oklch(0 0 0 / 0.75), transparent);
+  display: flex; flex-direction: column; gap: var(--hds-space-3);
+}
+
+/* Real hit area — a 5px-tall track alone is very hard to drag precisely with
+   a finger, so the clickable/draggable region is much taller than what's
+   actually drawn. */
+.scrubHitArea { padding: 14px 0; cursor: pointer; }
+.scrubTrack { position: relative; height: 5px; border-radius: 3px; background: oklch(1 0 0 / 0.2); }
+.scrubFill { position: absolute; top: 0; left: 0; bottom: 0; border-radius: 3px; background: var(--hds-violet); }
+
+.controlsRow { display: flex; align-items: center; gap: var(--hds-space-1); flex-wrap: wrap; }
+
+/* 44x44 — below Apple/Google's ~44-48px minimum recommended touch target,
+   36px was hard to hit precisely with a finger. Fine on desktop too. */
+.iconBtn {
+  display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: var(--hds-radius-tile); cursor: pointer;
+  background: transparent; border: none; color: #fff; flex-shrink: 0;
+}
+
+.volumeSlider { width: 70px; accent-color: var(--hds-violet); margin-right: var(--hds-space-3); }
+
+.timeText { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-label); color: oklch(0.85 0.01 285); margin-left: var(--hds-space-1); }
+.liveBadge { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-small-title); font-weight: 600; color: var(--hds-match-red); letter-spacing: 0.04em; margin-left: var(--hds-space-1); }
+.castingLabel { font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-label); font-weight: 600; color: var(--hds-violet); letter-spacing: 0.02em; margin-left: var(--hds-space-1); }

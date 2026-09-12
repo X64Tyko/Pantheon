@@ -1,0 +1,46 @@
+name: Roadmap Sync
+
+# Regenerates docs/ROADMAP.md's Beta/V1.0 checklists from live Issue/
+# Milestone state (.github/scripts/generate_roadmap.sh) whenever either
+# changes, so the roadmap doc can't drift out of sync with the actual
+# tracker the way a hand-maintained parallel checklist inevitably does.
+# The schedule run is a safety net for anything the event list below misses
+# (e.g. a milestone being renamed) — everything else is event-driven.
+
+on:
+  issues:
+    types: [opened, closed, reopened, edited, labeled, unlabeled, milestoned, demilestoned]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Regenerate docs/ROADMAP.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/generate_roadmap.sh
+
+      - name: Commit if changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- docs/ROADMAP.md; then
+            echo "No roadmap changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/ROADMAP.md
+          git commit -m "Sync docs/ROADMAP.md from Issues/Milestones [skip ci]"
+          git push

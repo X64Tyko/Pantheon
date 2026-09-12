@@ -1,6 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect, useState } from 'react'
 import { tourStore, type TourStep } from '../../stores/TourStore'
+import styles from './TourSpotlight.module.css'
 
 interface Rect { top: number; left: number; width: number; height: number }
 
@@ -60,46 +61,29 @@ export const TourSpotlight = observer(function TourSpotlight({ step }: { step: T
       {/* Single-element spotlight: a transparent box sized exactly to the
           target, whose oversized box-shadow doubles as the dimmed backdrop
           everywhere else — no SVG mask needed for a plain rectangular cutout. */}
-      <div style={{
-        position: 'fixed', zIndex: 400, pointerEvents: 'none',
+      <div className={styles.spotlight} style={{
         top: spot.top, left: spot.left, width: spot.width, height: spot.height,
-        borderRadius: 10,
-        boxShadow: '0 0 0 9999px oklch(0 0 0 / 0.65)',
-        border: '2px solid var(--hds-gold)',
-        transition: 'top .18s ease, left .18s ease, width .18s ease, height .18s ease',
       }} />
-      <div style={{
-        position: 'fixed', zIndex: 401,
+      <div className={styles.tooltip} style={{
         top:    tooltipBelow ? spot.top + spot.height + 12 : undefined,
         bottom: tooltipBelow ? undefined : Math.max(12, window.innerHeight - spot.top + 12),
         left: Math.min(Math.max(spot.left, 16), window.innerWidth - tooltipWidth - 16),
-        width: tooltipWidth, padding: 16, borderRadius: 12,
-        background: 'oklch(0.16 0.022 286)', border: '1px solid var(--hds-glass-border)',
-        boxShadow: '0 16px 48px -8px rgba(0,0,0,0.7)',
-        fontFamily: "'JetBrains Mono', monospace",
+        width: tooltipWidth,
       }}>
-        <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--hds-gold)', marginBottom: 6 }}>
+        <div className={styles.tooltipTitle}>
           {step.title}
         </div>
-        <div style={{ fontSize: 12, color: 'var(--hds-txt-2)', lineHeight: 1.55, marginBottom: 12 }}>
+        <div className={styles.tooltipBody}>
           {step.body}
         </div>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <div className={styles.tooltipActions}>
           <button
             onClick={() => tourStore.skipStep(stepIndex)}
-            style={{
-              padding: '6px 12px', borderRadius: 7, cursor: 'pointer',
-              border: '1px solid var(--hds-line)', background: 'transparent',
-              color: 'var(--hds-txt-2)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
-            }}
+            className={styles.skipBtn}
           >Skip this step</button>
           <button
             onClick={() => tourStore.dismiss()}
-            style={{
-              padding: '6px 10px', borderRadius: 7, cursor: 'pointer',
-              border: 'none', background: 'transparent',
-              color: 'var(--hds-txt-3)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
-            }}
+            className={styles.endBtn}
           >End tour</button>
         </div>
       </div>

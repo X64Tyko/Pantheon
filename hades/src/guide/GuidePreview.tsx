@@ -1,36 +1,88 @@
 import { useEffect, useRef } from 'react'
 import type { Channel, EpgProgram } from '../api/types'
 import { VideoPlayer } from '../player/VideoPlayer'
+import {goldBtnStyle} from '../channel/styles'
+import styles from './GuidePreview.module.css'
 
 interface GuidePreviewProps {
-  channel:      Channel | null
-  nowProgram:   EpgProgram | null
-  manifestUrl:  string | null
-  onWatch:      () => void
+    channel: Channel | null
+    // The program whose TEXT should be shown — either whatever's live right
+    // now (nothing specific focused) or a specific cell (now or future) the
+    // viewer focused/hovered. Independent of manifestUrl/the video itself,
+    // which always tracks `channel` alone — see useGuideSession's own comment
+    // on why (you can't actually preview a future program).
+    previewProgram: EpgProgram | null
+    nowMs: number
+    manifestUrl: string | null
+    onWatch: () => void
 }
 
-export function GuidePreview({ channel, nowProgram, manifestUrl, onWatch }: GuidePreviewProps) {
+// Exported for direct unit testing (momus/hades/guide/GuidePreview.test.ts) —
+// both are pure and easy to regress (e.g. fmtCountdown's 60-minute rollover).
+export function fmtClock(ms: number): string {
+    return new Date(ms).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'})
+}
+
+export function fmtCountdown(ms: number): string {
+    const mins = Math.round(ms / 60000)
+    if (mins < 60) return `${mins}m`
+    const h = Math.floor(mins / 60), m = mins % 60
+    return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
+
+export interface PreviewTiming {
+    isLive: boolean
+    // Only set when NOT live and the program is genuinely in the future —
+    // you can't show a countdown for something already over.
+    startsInMs: number | null
+}
+
+// A program is "live" iff wall_clock_start_ms <= nowMs < wall_clock_end_ms
+// (start inclusive, end exclusive — a program ending exactly at nowMs is NOT
+// live). Extracted from the component body so this boundary logic is
+// directly unit-testable without rendering.
+export function computePreviewTiming(program: EpgProgram | null, nowMs: number): PreviewTiming {
+    const isLive = !!program && program.wall_clock_start_ms <= nowMs && nowMs < program.wall_clock_end_ms
+    const startsInMs = program && !isLive && program.wall_clock_start_ms > nowMs
+        ? program.wall_clock_start_ms - nowMs
+        : null
+    return {isLive, startsInMs}
+}
+
+export function GuidePreview({channel, previewProgram, nowMs, manifestUrl, onWatch}: GuidePreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.muted = true
   }, [manifestUrl])
 
-  const label = nowProgram && nowProgram.item_type === 'episode' && nowProgram.season != null && nowProgram.episode_num != null
-    ? `S${String(nowProgram.season).padStart(2, '0')}E${String(nowProgram.episode_num).padStart(2, '0')}`
+    // "we can remove it if we don't like it" — kept as its own small, isolated
+    // bit of markup on purpose, easy to delete wholesale later.
+    const {startsInMs} = computePreviewTiming(previewProgram, nowMs)
+
+    const label = previewProgram && previewProgram.item_type === 'episode' && previewProgram.season != null && previewProgram.episode_num != null
+        ? `S${String(previewProgram.season).padStart(2, '0')}E${String(previewProgram.episode_num).padStart(2, '0')}`
     : undefined
 
   return (
-    <div className="hds-guide-preview-row" style={{
-      display: 'flex', gap: 20, padding: '16px 20px', marginBottom: 12,
-      background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line-s)', borderRadius: 10,
-    }}>
-      <div style={{ width: 220, aspectRatio: '16/9', borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: '#000' }}>
+      <div className={styles.root}>
+          <div className={styles.videoLayer}>
         {manifestUrl && (
+            // key={channel.channel_id}: PreviewSession.h's switchChannel()
+            // deliberately reuses the exact same manifest_url for the
+            // session's whole life (never issues a new one on switch), so
+            // VideoPlayer's own [manifestUrl]-keyed load effect never re-fires
+            // after the first channel — hls.js was left to notice on its own
+            // that the server deleted and recreated the segments underneath
+            // it, which it doesn't reliably do. Forcing a full remount on
+            // channel change (the same "channel changed" signal the header's
+            // own focus highlight already reacts to) sidesteps that instead of
+            // trying to make hls.js self-recover from a live media-sequence
+            // reset.
           <VideoPlayer
+              key={channel?.channel_id}
             videoRef={videoRef}
             manifestUrl={manifestUrl}
-            subtitleUrl={null}
             isLive
             autoPlay
             onTimeUpdate={() => {}}
@@ -39,32 +91,35 @@ export function GuidePreview({ channel, nowProgram, manifestUrl, onWatch }: Guid
           />
         )}
       </div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--hds-txt)' }}>
-          {nowProgram?.item_type === 'episode' ? (nowProgram.show_title ?? nowProgram.title) : nowProgram?.title ?? 'No program info'}
-        </div>
-        {nowProgram && (
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-txt-3)', marginTop: 4 }}>
-            {label && <>{label} — </>}{nowProgram.item_type === 'episode' ? nowProgram.title : ''}
-          </div>
-        )}
-        {nowProgram?.overview && (
-          <p style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, lineHeight: 1.6, color: 'var(--hds-txt-2)',
-            margin: '10px 0 0', maxWidth: 560, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-          }}>{nowProgram.overview}</p>
-        )}
+          <div className={styles.scrim}/>
+
+          <div className={styles.textBlock}>
         {channel && (
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 10 }}>
-            Ch {channel.number} · {channel.name}
+          <div className={styles.channelLine}>
+              <span className={styles.channelName}>Ch {channel.number} · {channel.name}</span>
+              {channel.content_tag && <span className={styles.ratingChip}>{channel.content_tag}</span>}
+              <span className={styles.clock}>{fmtClock(nowMs)}</span>
           </div>
         )}
-        <button onClick={onWatch} style={{
-          display: 'flex', alignItems: 'center', gap: 7, marginTop: 12, padding: '7px 14px', borderRadius: 7, cursor: 'pointer',
-          border: '1px solid var(--hds-violet)', background: 'oklch(0.55 0.14 292 / 0.15)', color: 'var(--hds-violet)',
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 600,
-        }}>
-          <svg width="11" height="11" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
+
+              <h1 className={styles.title}>
+                  {previewProgram?.item_type === 'episode' ? (previewProgram.show_title ?? previewProgram.title) : previewProgram?.title ?? 'No program info'}
+              </h1>
+
+              <div className={styles.metaRow}>
+                  {label && <span>{label}</span>}
+                  {previewProgram?.item_type === 'episode' && <span>{previewProgram.title}</span>}
+                  {startsInMs != null && <span className={styles.countdown}>Starts in {fmtCountdown(startsInMs)}</span>}
+              </div>
+
+              {previewProgram?.overview && (
+                  <p className={styles.overview}>{previewProgram.overview}</p>
+              )}
+
+              <button onClick={onWatch} style={goldBtnStyle} className={styles.watchBtn}>
+                  <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor">
+                      <path d="M3 1.5v11l9-5.5-9-5.5z"/>
+                  </svg>
           Watch
         </button>
       </div>

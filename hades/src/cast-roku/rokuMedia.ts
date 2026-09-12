@@ -13,5 +13,12 @@ export function buildRokuLoadCommand(args: CastMediaArgs): Record<string, unknow
     contentType: args.route.contentType,
     contentId:   args.route.contentId,
     positionMs:  args.isLive ? undefined : args.currentMs,
+    // PlayerScreen.brs's startPlayback already reads these off any "load"
+    // command (same fields TrackMenu.brs's switch-track-restart-at-position
+    // flow uses) and forwards them to /stream/vod/start — just never
+    // populated for a device-load command before now, so a cast-to-Roku
+    // always silently reset to audio-auto/subtitles-off.
+    audioTrack:    args.isLive ? undefined : args.audioTrack,
+    subtitleTrack: args.isLive ? undefined : args.subtitleTrack,
   }
 }

@@ -20,7 +20,7 @@ std::vector<Block> BlockRepository::loadBlocks(const std::string& channel_id) {
                interstitial_content_type, interstitial_content_id, interstitial_every_n,
                snap_to_group_start, name
         FROM block WHERE channel_id = ?
-        ORDER BY priority DESC
+        ORDER BY priority DESC, start_time DESC
     )");
     q.bind(1, channel_id);
 
@@ -283,16 +283,6 @@ std::string BlockRepository::channelTimezone(const std::string& channel_id) {
         if (!tz.empty()) return tz;
     }
     return "UTC";
-}
-
-std::string BlockRepository::channelAdvanceMode(const std::string& channel_id) {
-    SQLite::Statement q(db_.get(), "SELECT advance_mode FROM channel WHERE channel_id=?");
-    q.bind(1, channel_id);
-    if (q.executeStep()) {
-        auto m = q.getColumn(0).getString();
-        if (!m.empty()) return m;
-    }
-    return "scheduled";
 }
 
 int BlockRepository::readCursorPos(const std::string& content_type,

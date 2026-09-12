@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { Block, EpgProgram } from '../api/types'
 import { BLOCK_META, DAY_BITS, DAYS } from './constants'
 import { endOf, m2t, t2m } from './utils'
+import styles from './EpgPreview.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -162,7 +163,7 @@ export class EpgErrorBoundary extends Component<{ children: ReactNode }, { error
   static getDerivedStateFromError(e: unknown) { return { error: String(e) } }
   render() {
     if (this.state.error) return (
-      <div style={{ padding: '12px 24px', fontSize: 11, color: 'oklch(0.65 0.12 22)', borderTop: '1px solid var(--hds-line-s)' }}>
+      <div className={styles.errorBoundary}>
         EPG preview error: {this.state.error}
       </div>
     )
@@ -248,42 +249,42 @@ export default function EpgPreview({ blocks, epgItems, epgLoading, epgDay, timez
       ? `${hasCached ? 'live' : 'simulated'} · ${dayItems.length} items${dateLabel}`
       : `block coverage · no scheduled programs${dateLabel}`
 
-  const btnBase: React.CSSProperties = { padding: '3px 7px', border: '1px solid var(--hds-line)', borderRadius: 5, background: 'transparent', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, cursor: 'pointer', color: 'var(--hds-txt-2)' }
+  const statusClass = hasCached ? styles.statusCached : hasEpg ? styles.statusEpg : styles.statusNone
 
   return (
-    <div style={{ flexShrink: 0, borderTop: '1px solid var(--hds-line-s)', background: 'oklch(0.17 0.018 286 / 0.7)', padding: '12px 24px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-        <span style={{ fontSize: 10, letterSpacing: '0.22em', color: 'var(--hds-txt-2)', whiteSpace: 'nowrap' }}>EPG PREVIEW</span>
-        <span style={{ flex: 1, fontSize: 10, color: hasCached ? 'oklch(0.62 0.1 145)' : hasEpg ? 'oklch(0.62 0.1 220)' : 'var(--hds-txt-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+    <div className={styles.root}>
+      <div className={styles.headerRow}>
+        <span className={styles.headerLabel}>EPG PREVIEW</span>
+        <span className={`${styles.statusText} ${statusClass}`}>
           {statusText}
         </span>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-          <button onClick={() => canZoomOut && setZoom(EPG_ZOOM_LEVELS[zoomIdx - 1])} disabled={!canZoomOut} title="Zoom out" style={{ ...btnBase, opacity: canZoomOut ? 1 : 0.35, cursor: canZoomOut ? 'pointer' : 'default' }}>−</button>
-          <span style={{ fontSize: 9, color: 'var(--hds-txt-3)', width: 24, textAlign: 'center', letterSpacing: '0.05em' }}>{zoom}×</span>
-          <button onClick={() => canZoomIn  && setZoom(EPG_ZOOM_LEVELS[zoomIdx + 1])} disabled={!canZoomIn}  title="Zoom in"  style={{ ...btnBase, opacity: canZoomIn  ? 1 : 0.35, cursor: canZoomIn  ? 'pointer' : 'default' }}>+</button>
+        <div className={styles.zoomGroup}>
+          <button onClick={() => canZoomOut && setZoom(EPG_ZOOM_LEVELS[zoomIdx - 1])} disabled={!canZoomOut} title="Zoom out" className={`${styles.iconBtn} ${!canZoomOut ? styles.iconBtnDisabled : ''}`}>−</button>
+          <span className={styles.zoomLabel}>{zoom}×</span>
+          <button onClick={() => canZoomIn  && setZoom(EPG_ZOOM_LEVELS[zoomIdx + 1])} disabled={!canZoomIn}  title="Zoom in"  className={`${styles.iconBtn} ${!canZoomIn ? styles.iconBtnDisabled : ''}`}>+</button>
         </div>
 
-        <button onClick={onRefresh} title="Refresh EPG" style={{ ...btnBase, color: epgLoading ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)', cursor: epgLoading ? 'default' : 'pointer', opacity: epgLoading ? 0.5 : 1 }}>↺</button>
-        <button onClick={() => exportEpg(epgItems, tz)} disabled={epgItems.length === 0} title="Export EPG data as JSON" style={{ ...btnBase, opacity: epgItems.length === 0 ? 0.35 : 1, cursor: epgItems.length === 0 ? 'default' : 'pointer' }}>↓ JSON</button>
+        <button onClick={onRefresh} title="Refresh EPG" className={`${styles.iconBtn} ${epgLoading ? styles.iconBtnMuted : ''}`}>↺</button>
+        <button onClick={() => exportEpg(epgItems, tz)} disabled={epgItems.length === 0} title="Export EPG data as JSON" className={`${styles.iconBtn} ${epgItems.length === 0 ? styles.iconBtnDisabled : ''}`}>↓ JSON</button>
 
         {hasWeek2 && (
-          <div style={{ display: 'flex', gap: 2, background: 'var(--hds-bg-3)', borderRadius: 8, padding: 3, flexShrink: 0 }}>
+          <div className={styles.weekToggle}>
             {(['Wk 1', 'Wk 2'] as const).map((label, wi) => (
-              <button key={wi} onClick={() => setEpgWeek(wi as 0 | 1)} style={{ padding: '5px 8px', border: 'none', borderRadius: 6, background: epgWeek === wi ? 'oklch(0.38 0.09 287)' : 'transparent', color: epgWeek === wi ? 'var(--hds-txt)' : 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: '0.06em', cursor: 'pointer' }}>
+              <button key={wi} onClick={() => setEpgWeek(wi as 0 | 1)} className={`${styles.weekBtn} ${epgWeek === wi ? styles.weekBtnActive : ''}`}>
                 {label}
               </button>
             ))}
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 3, background: 'var(--hds-bg-3)', borderRadius: 8, padding: 3, flexShrink: 0 }}>
+        <div className={styles.dayToggle}>
           {DAYS.map(([short], i) => {
             const active  = epgDay === i
             const dowJs   = [1, 2, 3, 4, 5, 6, 0][i]
             const hasData = weekDates.some(d => getDayInTZ(Date.parse(d + 'T12:00:00Z'), tz) === dowJs)
             return (
-              <button key={short} onClick={() => onDay(i)} disabled={!hasData} style={{ padding: '5px 9px', border: 'none', borderRadius: 6, background: active ? 'var(--hds-gold)' : 'transparent', color: active ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: '0.1em', cursor: hasData ? 'pointer' : 'default', opacity: hasData ? 1 : 0.3 }}>
+              <button key={short} onClick={() => onDay(i)} disabled={!hasData} className={`${styles.dayBtn} ${active ? styles.dayBtnActive : ''} ${!hasData ? styles.dayBtnDisabled : ''}`}>
                 {short}
               </button>
             )
@@ -291,45 +292,40 @@ export default function EpgPreview({ blocks, epgItems, epgLoading, epgDay, timez
         </div>
       </div>
 
-      <div style={{ borderRadius: 8, border: '1px solid var(--hds-line-s)', overflowX: zoom > 1 ? 'auto' : 'hidden', overflowY: 'hidden' }}>
-        <div style={{ position: 'relative', height: 68, width: `${zoom * 100}%`, minWidth: '100%', background: 'oklch(0.13 0.014 286)' }}>
+      <div className={`${styles.stripFrame} ${zoom > 1 ? styles.stripFrameZoomed : styles.stripFrameNoZoom}`}>
+        {/* height/width here are per-render zoom-level values (1x/2x/3x/6x),
+            genuinely dynamic — not a fixed design value. */}
+        <div className={styles.stripInner} style={{ width: `${zoom * 100}%` }}>
           {segs.map((s, i) => {
             const clickable = !!s.blockId && !s.faded
             const tooltip   = [s.time, s.title, s.subtitle, s.epLabel].filter(Boolean).join('  ·  ')
             return (
+              // left/width/background are per-segment values computed from
+              // EPG data (block time ranges + BLOCK_META colors) — same
+              // "absolutely-positioned, data-driven" exception as the Guide
+              // grid's program blocks elsewhere in this app.
               <div
                 key={i}
                 title={tooltip}
                 onClick={() => s.blockId && onSelectBlock(s.blockId)}
-                style={{
-                  position: 'absolute', top: 0, bottom: 0,
-                  left: `${s.leftPct}%`, width: `${s.widthPct}%`,
-                  background: s.bg,
-                  borderLeft: '1px solid oklch(0.13 0.014 286)',
-                  padding: '7px 8px',
-                  overflow: 'hidden',
-                  cursor: clickable ? 'pointer' : 'default',
-                  opacity: s.faded ? 0.5 : 1,
-                  transition: 'filter .1s',
-                }}
-                onMouseEnter={e => { if (clickable) (e.currentTarget as HTMLDivElement).style.filter = 'brightness(1.2)' }}
-                onMouseLeave={e => { if (clickable) (e.currentTarget as HTMLDivElement).style.filter = '' }}
+                className={`${styles.seg} ${clickable ? styles.segClickable : ''} ${s.faded ? styles.segFaded : styles.segNotFaded}`}
+                style={{ left: `${s.leftPct}%`, width: `${s.widthPct}%`, background: s.bg }}
               >
-                <div style={{ fontSize: 9, color: s.faded ? 'var(--hds-txt-3)' : 'oklch(0.78 0.04 286)', letterSpacing: '0.06em', lineHeight: 1 }}>
+                <div className={`${styles.segTime} ${s.faded ? styles.segTimeFaded : styles.segTimeNotFaded}`}>
                   {s.time}
                 </div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: s.faded ? 'var(--hds-txt-3)' : 'var(--hds-txt)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 3, lineHeight: 1.2 }}>
+                <div className={`${styles.segTitle} ${s.faded ? styles.segTitleFaded : styles.segTitleNotFaded}`}>
                   {s.title}
                 </div>
                 {(s.subtitle || s.epLabel) && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3, minWidth: 0 }}>
+                  <div className={styles.segSubRow}>
                     {s.epLabel && (
-                      <span style={{ flexShrink: 0, fontSize: 8.5, letterSpacing: '0.06em', padding: '1px 4px', borderRadius: 3, background: 'oklch(0.98 0 0 / 0.13)', color: 'oklch(0.82 0.05 286)' }}>
+                      <span className={styles.segEpLabel}>
                         {s.epLabel}
                       </span>
                     )}
                     {s.subtitle && (
-                      <span style={{ fontSize: 10, color: 'var(--hds-txt-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <span className={styles.segSubtitle}>
                         {s.subtitle}
                       </span>
                     )}
@@ -339,10 +335,10 @@ export default function EpgPreview({ blocks, epgItems, epgLoading, epgDay, timez
             )
           })}
           {segs.length === 0 && !epgLoading && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>No programs scheduled for this day</div>
+            <div className={styles.stripEmptyState}>No programs scheduled for this day</div>
           )}
           {epgLoading && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>Loading…</div>
+            <div className={styles.stripEmptyState}>Loading…</div>
           )}
         </div>
       </div>

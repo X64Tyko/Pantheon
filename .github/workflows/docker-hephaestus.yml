@@ -3,12 +3,24 @@ name: Hephaestus CI
 on:
   push:
     branches: [master]
+    # GitHub ignores `paths` entirely for tag pushes (it only applies to
+    # branch pushes), so a `vX.Y.Z` release tag always builds+publishes a
+    # versioned image regardless of what changed — this is what lets a
+    # user's compose.yml pin to a stable release instead of just `:latest`.
+    tags: ["v*.*.*"]
     paths:
       - "hephaestus/**"
+      - "shared/**"
       - "momus/hephaestus/**"
       - "momus/CMakeLists.txt"
+      - "VERSION"
       - ".github/workflows/docker-hephaestus.yml"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional version tag to also publish (e.g. v0.2.0) — for backfilling a release whose tag push predates a CI fix"
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -21,8 +33,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Configure (below) runs the repo-root CMakeLists.txt, which unconditionally
+      # add_subdirectory(kairos) alongside hephaestus — kairos's own CMakeLists.txt
+      # pkg_check_modules for libavformat/libavcodec/libavutil (its native probe
+      # path, see kairos/src/source/MediaProbe.cpp), so this job needs those dev
+      # packages too even though it only builds/tests momus_hephaestus.
       - name: Install build deps
-        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ libssl-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build g++ pkg-config libssl-dev libavformat-dev libavcodec-dev libavutil-dev
 
       - name: Cache FetchContent deps
         uses: actions/cache@v4
@@ -73,7 +90,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./hephaestus
+          context: .
+          file: hephaestus/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
@@ -127,6 +145,8 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
+            type=ref,event=tag
+            type=raw,value=${{ inputs.release_tag }},enable=${{ inputs.release_tag != '' }}
 
       - name: Create and push manifest
         working-directory: /tmp/digests

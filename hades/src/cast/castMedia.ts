@@ -28,7 +28,12 @@ export interface CastMediaArgs {
   // Lets a receiver running Hades' own /tv (CastReceiverProvider.tsx) route
   // to the matching /player/* screen on LOAD — an opaque HLS manifest URL
   // alone can't be reversed back into one.
-  route: Omit<CastCustomData, 'positionMs'>
+  route: Omit<CastCustomData, 'positionMs' | 'audioTrack' | 'subtitleTrack'>
+  // Sender's currently-selected tracks (session.audioTrack/subtitleTrack) —
+  // -1 means "off"/"unset". Forwarded so the receiver's own fresh session
+  // opens with the same selection instead of resetting to defaults.
+  audioTrack:    number
+  subtitleTrack: number
 }
 
 // Hephaestus's in-progress VOD manifests are tagged EVENT (no ENDLIST) until
@@ -37,7 +42,7 @@ export interface CastMediaArgs {
 // (VideoPlayer.tsx). Passing an explicit streamType/currentTime here avoids
 // relying on the receiver's own auto-detection making the same mistake hls.js
 // would without that workaround.
-export function buildLoadRequest({ manifestUrl, isLive, currentMs, metadata, route }: CastMediaArgs): chrome.cast.media.LoadRequest {
+export function buildLoadRequest({ manifestUrl, isLive, currentMs, metadata, route, audioTrack, subtitleTrack }: CastMediaArgs): chrome.cast.media.LoadRequest {
   const mediaInfo = new chrome.cast.media.MediaInfo(toAbsoluteStreamUrl(manifestUrl), 'application/x-mpegURL')
   mediaInfo.streamType = isLive ? chrome.cast.media.StreamType.LIVE : chrome.cast.media.StreamType.BUFFERED
 
@@ -54,7 +59,12 @@ export function buildLoadRequest({ manifestUrl, isLive, currentMs, metadata, rou
   if (metadata.imageUrl) meta.images = [new chrome.cast.Image(toAbsoluteStreamUrl(metadata.imageUrl))]
   mediaInfo.metadata = meta
 
-  const customData: CastCustomData = { ...route, positionMs: isLive ? undefined : currentMs }
+  const customData: CastCustomData = {
+    ...route,
+    positionMs:    isLive ? undefined : currentMs,
+    audioTrack:    isLive ? undefined : audioTrack,
+    subtitleTrack: isLive ? undefined : subtitleTrack,
+  }
   mediaInfo.customData = customData
 
   const request = new chrome.cast.media.LoadRequest(mediaInfo)

@@ -5,6 +5,7 @@ import type { ImportUserResult, Library, LibraryInfo, PathMap, SourceUser } from
 import { sourceStore, systemStore, userStore } from '../stores'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
+import {LANGUAGE_OPTIONS} from '../constants/languages'
 
 type TestState = 'idle' | 'testing' | 'ok' | 'failed'
 
@@ -288,8 +289,7 @@ const PerAccountWatchSyncCard = observer(function PerAccountWatchSyncCard({ sour
           <div key={u.external_user_id} className="flex items-center justify-between gap-2">
             <span className="text-xs text-zinc-300 truncate">{u.display_name || u.external_user_id}</span>
             <select
-              className="input text-xs"
-              style={{ minWidth: 150 }}
+              className="input text-xs min-w-[150px]"
               disabled={pending === u.external_user_id}
               value={u.imported_user_id}
               onChange={e => handleChange(u.external_user_id, e.target.value)}
@@ -311,7 +311,7 @@ export default observer(function SourcesPage() {
 
   // ── Add-source form ────────────────────────────────────────────────────────
   const [showAdd, setShowAdd]   = useState(false)
-  const [form, setForm]         = useState({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '' })
+  const [form, setForm]         = useState({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '', sync_priority: 0 })
   const [testState, setTest]    = useState<TestState>('idle')
   const [testError, setTestErr] = useState('')
 
@@ -333,10 +333,10 @@ export default observer(function SourcesPage() {
   }
 
   const addSource = async () => {
-    await store.addSource({ source_id: form.source_id, source_type: form.source_type as any, display_name: form.display_name, base_url: form.base_url })
+    await store.addSource({ source_id: form.source_id, source_type: form.source_type as any, display_name: form.display_name, base_url: form.base_url, sync_priority: form.sync_priority })
     if (form.token) await store.setCredentials(form.source_id, form.token, form.user_id)
     setShowAdd(false)
-    setForm({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '' })
+    setForm({ source_id: '', source_type: 'plex', display_name: '', base_url: '', token: '', user_id: '', sync_priority: 0 })
     setTest('idle'); setTestErr('')
   }
 
@@ -351,11 +351,11 @@ export default observer(function SourcesPage() {
 
   // ── Add-library form ───────────────────────────────────────────────────────
   const [showAddLib, setShowAddLib] = useState(false)
-  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false })
+  const [libForm, setLibForm]       = useState({ external_lib_id: '', display_name: '', library_type: 'show' as 'show' | 'movie' | 'mixed' | 'music' | 'photo', preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist' | 'wikidata', preferred_language: '', include_anidb: false })
 
   // ── Library edit state ─────────────────────────────────────────────────────
   const [editingLib, setEditingLib] = useState<string | null>(null)
-  const [editForm, setEditForm]     = useState({ display_name: '', library_type: 'show' as Library['library_type'], preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb', preferred_language: '', include_anidb: false, show_on_home: true, skip_scraping: false })
+  const [editForm, setEditForm]     = useState({ display_name: '', library_type: 'show' as Library['library_type'], preferred_scraper: '' as '' | 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist' | 'wikidata', preferred_language: '', include_anidb: false, show_on_home: true, skip_scraping: false })
 
   // ── Local folder browser ───────────────────────────────────────────────────
   const [localBrowsePath,    setLocalBrowsePath]   = useState('')
@@ -381,7 +381,7 @@ export default observer(function SourcesPage() {
     setLocalBrowsePath(''); setLocalEntries([])
   }
 
-  const openEditLib = (lib: { library_id: string; display_name: string; library_type: Library['library_type']; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb'; preferred_language: string; include_anidb: boolean; show_on_home: boolean; skip_scraping: boolean }) => {
+  const openEditLib = (lib: { library_id: string; display_name: string; library_type: Library['library_type']; preferred_scraper: '' | 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist' | 'wikidata'; preferred_language: string; include_anidb: boolean; show_on_home: boolean; skip_scraping: boolean }) => {
     setEditingLib(lib.library_id)
     setEditForm({ display_name: lib.display_name, library_type: lib.library_type, preferred_scraper: lib.preferred_scraper, preferred_language: lib.preferred_language ?? '', include_anidb: lib.include_anidb, show_on_home: lib.show_on_home, skip_scraping: lib.skip_scraping })
     setConfirmLib(null)
@@ -412,7 +412,11 @@ export default observer(function SourcesPage() {
   const [pmTo, setPmTo]           = useState('')
   const [showAddPm, setShowAddPm] = useState(false)
 
-  useEffect(() => { setEditingCreds(false); setCredToken(''); setCredUserId(''); setEditingLib(null) }, [store.selectedId])
+  // ── Sync priority ─────────────────────────────────────────────────────────
+  // Local staging so typing doesn't fire a PATCH per keystroke — persisted on blur.
+  const [priorityDraft, setPriorityDraft] = useState<number | null>(null)
+
+  useEffect(() => { setEditingCreds(false); setCredToken(''); setCredUserId(''); setEditingLib(null); setPriorityDraft(null) }, [store.selectedId])
   useEffect(() => {
     if (!store.selectedId) { setPathMaps([]); setSample(null); return }
     api.getPathMaps(store.selectedId).then(setPathMaps).catch(() => setPathMaps([]))
@@ -519,6 +523,13 @@ export default observer(function SourcesPage() {
                 className="input"
               />
             )}
+            <input
+              type="number"
+              placeholder="Sync priority (lower syncs/wins first, 0 default)"
+              value={form.sync_priority}
+              onChange={e => updateForm({ sync_priority: Number(e.target.value) })}
+              className="input"
+            />
             <SourceHelpGuide sourceType={form.source_type} />
           </div>
 
@@ -748,6 +759,77 @@ export default observer(function SourcesPage() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Sync priority */}
+            <div className="card p-3 space-y-2">
+              <span className="section-label">Sync Priority</span>
+              <p className="text-xs text-zinc-600">
+                Lower syncs first. When the same show or movie is matched across
+                multiple sources, the higher-priority (lower-numbered) source's
+                data wins conflicts — a lower-priority source only fills in
+                fields it left empty, it's never locked out entirely.
+              </p>
+              <input
+                type="number"
+                value={priorityDraft ?? store.selected?.sync_priority ?? 0}
+                onChange={e => setPriorityDraft(Number(e.target.value))}
+                onBlur={() => {
+                  if (priorityDraft !== null && priorityDraft !== store.selected?.sync_priority)
+                    store.setSyncPriority(store.selectedId!, priorityDraft)
+                }}
+                className="input w-full"
+              />
+            </div>
+
+            {/* Writeback settings */}
+            {store.selected?.source_type !== 'local' && (
+              <div className="card p-3 space-y-2">
+                <span className="section-label">Writeback</span>
+                <p className="text-xs text-zinc-600">
+                  Pushes confirmed metadata back to this source. Manual (the item's own "Push
+                  to Sources" button) and bulk ("Writeback All" on the Activity page) always
+                  work regardless of the setting below — Auto only controls whether a scraper
+                  match confirmation or refresh also pushes here on its own.
+                </p>
+                <label className="flex items-center gap-2 text-sm text-zinc-400">
+                  <input
+                    type="checkbox"
+                    checked={store.selected?.auto_writeback ?? false}
+                    onChange={e => store.setAutoWriteback(store.selectedId!, e.target.checked)}
+                  />
+                  Auto writeback on match confirm/refresh
+                </label>
+                <div className="pl-1 pt-1 space-y-2 border-l border-zinc-800 ml-1">
+                  <p className="text-[11px] text-zinc-600 pl-2">
+                    Applies whenever writeback runs against this source, auto or manual:
+                  </p>
+                  <label className="flex items-center gap-2 text-sm text-zinc-400 pl-2">
+                    <input
+                      type="checkbox"
+                      checked={store.selected?.writeback_update_art ?? true}
+                      onChange={e => store.setWritebackUpdateArt(store.selectedId!, e.target.checked)}
+                    />
+                    Update poster/backdrop art
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-400 pl-2">
+                    <input
+                      type="checkbox"
+                      checked={store.selected?.writeback_update_external_ids ?? true}
+                      onChange={e => store.setWritebackUpdateExternalIds(store.selectedId!, e.target.checked)}
+                    />
+                    Update external IDs (IMDb/TVDB/TMDB)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-400 pl-2">
+                    <input
+                      type="checkbox"
+                      checked={store.selected?.writeback_update_collections ?? true}
+                      onChange={e => store.setWritebackUpdateCollections(store.selectedId!, e.target.checked)}
+                    />
+                    Update collections
+                  </label>
+                </div>
               </div>
             )}
 
@@ -1017,16 +1099,7 @@ export default observer(function SourcesPage() {
                     className="input w-full"
                   >
                     <option value="">Language — scraper default</option>
-                    <option value="en">English</option>
-                    <option value="ja">Japanese</option>
-                    <option value="ko">Korean</option>
-                    <option value="zh">Chinese</option>
-                    <option value="fr">French</option>
-                    <option value="de">German</option>
-                    <option value="es">Spanish</option>
-                    <option value="it">Italian</option>
-                    <option value="pt">Portuguese</option>
-                    <option value="ru">Russian</option>
+                      {LANGUAGE_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                   </select>
                   <div className="flex gap-2">
                     <button
@@ -1168,16 +1241,7 @@ export default observer(function SourcesPage() {
                         className="input w-full text-sm"
                       >
                         <option value="">Language — scraper default</option>
-                        <option value="en">English</option>
-                        <option value="ja">Japanese</option>
-                        <option value="ko">Korean</option>
-                        <option value="zh">Chinese</option>
-                        <option value="fr">French</option>
-                        <option value="de">German</option>
-                        <option value="es">Spanish</option>
-                        <option value="it">Italian</option>
-                        <option value="pt">Portuguese</option>
-                        <option value="ru">Russian</option>
+                          {LANGUAGE_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                       </select>
                       <div className="flex gap-2 pt-0.5">
                         <button

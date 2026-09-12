@@ -5,28 +5,28 @@ import { userStore } from '../stores'
 import { TV_RATINGS, MOVIE_RATINGS } from '../api/ratingScales'
 import type { InviteUserResult, User } from '../api/types'
 import UserOverridesOverlay from './UserOverridesOverlay'
+import PinPad from '../auth/PinPad'
+import styles from './UsersPage.module.css'
 
-const inputStyle: React.CSSProperties = {
-  padding: '7px 10px', background: 'var(--hds-bg-3)',
-  border: '1px solid var(--hds-line)', borderRadius: 7,
-  color: 'var(--hds-txt)', fontSize: 12,
-  fontFamily: "'JetBrains Mono', monospace", outline: 'none',
-  width: '100%', boxSizing: 'border-box',
+const BTN_VARIANT_CLASS = {
+  primary: styles.btnPrimary,
+  ghost:   styles.btnGhost,
+  danger:  styles.btnDanger,
+} as const
+const btnClass = (variant: 'primary' | 'ghost' | 'danger') => `${styles.btn} ${BTN_VARIANT_CLASS[variant]}`
+
+// last_seen is epoch seconds — most recent activity across every session
+// this account has ever held (see AuthStore::listUsers). Guest-only display;
+// coarse buckets are plenty for "is this account still being used" at a
+// glance, not a precise clock.
+export function formatLastActive(lastSeenSec: number): string {
+    if (!lastSeenSec) return 'never'
+    const deltaSec = Date.now() / 1000 - lastSeenSec
+    if (deltaSec < 60) return 'just now'
+    if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`
+    if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h ago`
+    return `${Math.floor(deltaSec / 86400)}d ago`
 }
-
-const btnStyle = (variant: 'primary' | 'ghost' | 'danger'): React.CSSProperties => ({
-  padding: '7px 14px', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-  fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em',
-  background: variant === 'primary' ? 'oklch(0.83 0.13 84 / 0.13)'
-            : variant === 'danger'  ? 'oklch(0.55 0.22 22 / 0.12)'
-            : 'transparent',
-  border: variant === 'primary' ? '1px solid oklch(0.83 0.13 84 / 0.4)'
-        : variant === 'danger'  ? '1px solid oklch(0.55 0.22 22 / 0.35)'
-        : '1px solid var(--hds-line)',
-  color: variant === 'primary' ? 'var(--hds-gold)'
-       : variant === 'danger'  ? 'oklch(0.72 0.18 22)'
-       : 'var(--hds-txt-2)',
-})
 
 type CreateMode = 'password' | 'temp_password' | 'email'
 interface NewUserForm { username: string; password: string; role: 'admin' | 'viewer'; mode: CreateMode; email: string }
@@ -38,11 +38,13 @@ interface EditState {
   maxTv:      string
   maxMovie:   string
   maxChannel: string
+    channelBuilderEnabled: boolean
 }
 
 const editStateFor = (u: User): EditState => ({
   userId: u.user_id, password: '', role: u.role,
   restricted: u.restricted, maxTv: u.max_tv_rating, maxMovie: u.max_movie_rating, maxChannel: u.max_channel_rating,
+    channelBuilderEnabled: u.channel_builder_enabled,
 })
 
 export default observer(function UsersPage() {
@@ -62,11 +64,15 @@ export default observer(function UsersPage() {
   const [deleting,   setDeleting]   = useState<string | null>(null)
   const [overridesFor, setOverridesFor] = useState<User | null>(null)
 
+  const [showPinPad, setShowPinPad] = useState(false)
+  const [pinBusy,    setPinBusy]    = useState(false)
+  const [pinError,   setPinError]   = useState('')
+
   useEffect(() => { store.fetchAll() }, [])
 
   if (self?.role !== 'admin') {
     return (
-      <div style={{ padding: 32, color: 'var(--hds-txt-3)', fontSize: 13 }}>
+      <div className={styles.adminRequired}>
         Admin access required.
       </div>
     )
@@ -110,6 +116,12 @@ export default observer(function UsersPage() {
         max_movie_rating:   editing.maxMovie,
         max_channel_rating: editing.maxChannel,
       })
+        // Meaningless for a guest account (they use the separate guest-wide
+        // toggle on the Settings page instead) — editStateFor still seeds it
+        // from u.channel_builder_enabled, but the checkbox itself is hidden
+        // for guest rows, so this is always the account's existing value for
+        // them and a harmless no-op write.
+        await store.updateChannelBuilder(editing.userId, editing.channelBuilderEnabled)
       setEditing(null)
     } catch (err: any) {
       setEditError(err.message ?? 'Failed to update user')
@@ -124,158 +136,170 @@ export default observer(function UsersPage() {
     } finally { setDeleting(null) }
   }
 
+  const setPin = async (userId: string, pin: string) => {
+    setPinError(''); setPinBusy(true)
+    try {
+      await store.setPin(userId, pin)
+      setShowPinPad(false)
+    } catch (err: any) {
+      setPinError(err.message ?? 'Failed to set PIN')
+    } finally { setPinBusy(false) }
+  }
+
+  const clearPin = async (userId: string) => {
+    setPinError(''); setPinBusy(true)
+    try {
+      await store.setPin(userId, '')
+    } catch (err: any) {
+      setPinError(err.message ?? 'Failed to clear PIN')
+    } finally { setPinBusy(false) }
+  }
+
   return (
-    <div style={{ maxWidth: 640 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>
+    <div className={styles.root}>
+      <div className={styles.pageHeader}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--hds-txt)', letterSpacing: '0.04em' }}>Users</div>
-          <div style={{ fontSize: 11, color: 'var(--hds-txt-3)', marginTop: 3 }}>Manage who can access Hades.</div>
+          <div className={styles.pageTitle}>Users</div>
+          <div className={styles.pageSubtitle}>Manage who can access Hades.</div>
         </div>
-        <button style={btnStyle('primary')} onClick={() => { setShowNew(v => !v); setNewError(''); setNewResult(null) }}>
+        <button className={btnClass('primary')} onClick={() => { setShowNew(v => !v); setNewError(''); setNewResult(null) }}>
           {showNew ? 'Cancel' : '+ New User'}
         </button>
       </div>
 
       {store.error && (
-        <div style={{ marginBottom: 14, fontSize: 11, color: 'oklch(0.72 0.18 22)', padding: '8px 10px', background: 'oklch(0.55 0.22 22 / 0.1)', borderRadius: 7, border: '1px solid oklch(0.55 0.22 22 / 0.3)' }}>
+        <div className={styles.storeError}>
           {store.error}
         </div>
       )}
 
       {/* New user form */}
       {showNew && (
-        <form onSubmit={submitNew} style={{
-          marginBottom: 18, padding: 18,
-          background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line-s)',
-          borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 12,
-          animation: 'hds-in 0.15s ease both',
-        }}>
-          <div style={{ fontSize: 11, color: 'var(--hds-txt-2)', fontWeight: 600, letterSpacing: '0.08em' }}>NEW USER</div>
+        <form onSubmit={submitNew} className={styles.formPanel}>
+          <div className={styles.formPanelHeading}>NEW USER</div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>ACCOUNT SETUP</label>
+          <div className={styles.fieldCol}>
+            <label className={styles.fieldLabel}>ACCOUNT SETUP</label>
             <select value={newForm.mode}
               onChange={e => { setNewForm(f => ({ ...f, mode: e.target.value as CreateMode })); setNewResult(null) }}
-              style={inputStyle}>
+              className={styles.input}>
               <option value="password">I'll set their password</option>
               <option value="temp_password">Invite — I'll relay a one-time password</option>
               <option value="email">Invite — email them a setup link</option>
             </select>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: newForm.mode === 'password' ? '1fr 1fr' : '1fr', gap: 10 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>USERNAME</label>
+          <div className={newForm.mode === 'password' ? styles.formGrid2 : styles.formGrid1}>
+            <div className={styles.fieldCol}>
+              <label className={styles.fieldLabel}>USERNAME</label>
               <input type="text" required autoFocus value={newForm.username}
-                onChange={e => setNewForm(f => ({ ...f, username: e.target.value }))} style={inputStyle} />
+                onChange={e => setNewForm(f => ({ ...f, username: e.target.value }))} className={styles.input} />
             </div>
             {newForm.mode === 'password' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>PASSWORD</label>
+              <div className={styles.fieldCol}>
+                <label className={styles.fieldLabel}>PASSWORD</label>
                 <input type="password" required value={newForm.password}
-                  onChange={e => setNewForm(f => ({ ...f, password: e.target.value }))} style={inputStyle} />
+                  onChange={e => setNewForm(f => ({ ...f, password: e.target.value }))} className={styles.input} />
               </div>
             )}
           </div>
           {newForm.mode === 'email' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>EMAIL</label>
+            <div className={styles.fieldCol}>
+              <label className={styles.fieldLabel}>EMAIL</label>
               <input type="email" required value={newForm.email}
-                onChange={e => setNewForm(f => ({ ...f, email: e.target.value }))} style={inputStyle} />
+                onChange={e => setNewForm(f => ({ ...f, email: e.target.value }))} className={styles.input} />
             </div>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>ROLE</label>
+          <div className={styles.fieldCol}>
+            <label className={styles.fieldLabel}>ROLE</label>
             <select value={newForm.role}
               onChange={e => setNewForm(f => ({ ...f, role: e.target.value as 'admin' | 'viewer' }))}
-              style={{ ...inputStyle, width: 'auto' }}>
+              className={`${styles.input} ${styles.inputAuto}`}>
               <option value="viewer">viewer</option>
               <option value="admin">admin</option>
             </select>
           </div>
-          {newError && <div style={{ fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{newError}</div>}
+          {newError && <div className={styles.inlineError}>{newError}</div>}
 
           {newResult && (
             newResult.ok ? (
-              <div style={{ fontSize: 11.5, color: 'oklch(0.75 0.16 145)', padding: '10px 12px', background: 'oklch(0.5 0.15 145 / 0.1)', borderRadius: 7, border: '1px solid oklch(0.5 0.15 145 / 0.3)', lineHeight: 1.6 }}>
+              <div className={styles.resultBox}>
                 {newForm.mode === 'temp_password' ? (
                   <>Account created. Temp password (share once, then discard):{' '}
-                    <code style={{ userSelect: 'all', color: 'oklch(0.85 0.14 145)' }}>{newResult.temp_password}</code>
+                    <code className={styles.resultCode}>{newResult.temp_password}</code>
                   </>
                 ) : (
                   <>Account created. Invite email {newResult.invite_sent ? 'sent' : `could not be sent (${newResult.invite_error ?? 'unknown error'})`} — link:{' '}
-                    <code style={{ userSelect: 'all', wordBreak: 'break-all', color: 'oklch(0.85 0.14 145)' }}>{newResult.invite_link}</code>
+                    <code className={styles.resultCodeBreak}>{newResult.invite_link}</code>
                   </>
                 )}
               </div>
             ) : null
           )}
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="submit" disabled={newBusy} style={btnStyle('primary')}>
+          <div className={styles.btnRow}>
+            <button type="submit" disabled={newBusy} className={btnClass('primary')}>
               {newBusy ? 'Creating…' : newForm.mode === 'password' ? 'Create' : newResult ? 'Send Another' : 'Create & Invite'}
             </button>
-            <button type="button" style={btnStyle('ghost')} onClick={() => setShowNew(false)}>Cancel</button>
+            <button type="button" className={btnClass('ghost')} onClick={() => setShowNew(false)}>Cancel</button>
           </div>
         </form>
       )}
 
       {/* User list */}
       {store.loading ? (
-        <div style={{ fontSize: 12, color: 'var(--hds-txt-3)' }}>Loading…</div>
+        <div className={styles.loadingText}>Loading…</div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className={styles.userList}>
           {store.users.map(u => (
             <div key={u.user_id}>
               {editing?.userId !== u.user_id && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '12px 16px',
-                  background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line-s)',
-                  borderRadius: 9,
-                }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: 13, color: 'var(--hds-txt)', fontWeight: u.user_id === self?.user_id ? 600 : 400 }}>
+                <div className={styles.userRow}>
+                  <div className={styles.userNameCol}>
+                    <span className={`${styles.userName} ${u.user_id === self?.user_id ? styles.userNameSelf : styles.userNameNotSelf}`}>
                       {u.username}
-                      {u.user_id === self?.user_id && <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--hds-txt-3)' }}>(you)</span>}
+                      {u.user_id === self?.user_id && <span className={styles.youTag}>(you)</span>}
                     </span>
                   </div>
-                  <span style={{
-                    fontSize: 9.5, letterSpacing: '0.1em', fontWeight: 700, padding: '2px 7px',
-                    borderRadius: 4,
-                    background: u.role === 'admin' ? 'oklch(0.83 0.13 84 / 0.12)' : 'var(--hds-bg-3)',
-                    color:      u.role === 'admin' ? 'var(--hds-gold)'              : 'var(--hds-txt-3)',
-                    border:     u.role === 'admin' ? '1px solid oklch(0.83 0.13 84 / 0.3)' : '1px solid var(--hds-line)',
-                  }}>
+                  <span className={`${styles.roleBadge} ${u.role === 'admin' ? styles.roleBadgeAdmin : styles.roleBadgeViewer}`}>
                     {u.role}
                   </span>
+                    {u.is_guest && (
+                        <span className={styles.guestBadge}>
+                      GUEST
+                    </span>
+                    )}
                   {u.restricted && (
-                    <span style={{
-                      fontSize: 9.5, letterSpacing: '0.1em', fontWeight: 700, padding: '2px 7px',
-                      borderRadius: 4, background: 'oklch(0.6 0.2 22 / 0.12)', color: 'oklch(0.75 0.18 22)',
-                      border: '1px solid oklch(0.6 0.2 22 / 0.3)',
-                    }}>
+                    <span className={styles.restrictedBadge}>
                       RESTRICTED
                     </span>
                   )}
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  {u.has_pin && (
+                    <span title="PIN set" className={styles.pinIcon}>🔒</span>
+                  )}
+                    {u.is_guest && (
+                        <span className={styles.lastActive}>
+                      active {formatLastActive(u.last_seen)}
+                    </span>
+                    )}
+                  <div className={styles.rowActions}>
                     {u.restricted && (
-                      <button style={btnStyle('ghost')} onClick={() => setOverridesFor(u)}>
+                      <button className={btnClass('ghost')} onClick={() => setOverridesFor(u)}>
                         Overrides
                       </button>
                     )}
-                    <button style={btnStyle('ghost')}
-                      onClick={() => { setEditing(editStateFor(u)); setEditError('') }}>
+                    <button className={btnClass('ghost')}
+                      onClick={() => { setEditing(editStateFor(u)); setEditError(''); setShowPinPad(false); setPinError('') }}>
                       Edit
                     </button>
                     {u.user_id !== self?.user_id && (
                       deleting === u.user_id ? (
                         <>
-                          <button style={btnStyle('danger')} onClick={() => confirmDelete(u.user_id)}>Confirm</button>
-                          <button style={btnStyle('ghost')} onClick={() => setDeleting(null)}>Cancel</button>
+                          <button className={btnClass('danger')} onClick={() => confirmDelete(u.user_id)}>Confirm</button>
+                          <button className={btnClass('ghost')} onClick={() => setDeleting(null)}>Cancel</button>
                         </>
                       ) : (
-                        <button style={btnStyle('danger')} onClick={() => setDeleting(u.user_id)}>Delete</button>
+                        <button className={btnClass('danger')} onClick={() => setDeleting(u.user_id)}>Delete</button>
                       )
                     )}
                   </div>
@@ -283,58 +307,53 @@ export default observer(function UsersPage() {
               )}
 
               {editing?.userId === u.user_id && (
-                <form onSubmit={submitEdit} style={{
-                  padding: '14px 16px',
-                  background: 'var(--hds-bg-2)', border: '1px solid var(--hds-line)',
-                  borderRadius: 9, display: 'flex', flexDirection: 'column', gap: 12,
-                  animation: 'hds-in 0.15s ease both',
-                }}>
-                  <div style={{ fontSize: 11, color: 'var(--hds-txt-2)', fontWeight: 600, letterSpacing: '0.08em' }}>
+                <form onSubmit={submitEdit} className={styles.editForm}>
+                  <div className={styles.editFormHeading}>
                     EDIT · {u.username}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>NEW PASSWORD <span style={{ opacity: 0.6 }}>(leave blank to keep)</span></label>
+                  <div className={styles.formGrid2}>
+                    <div className={styles.fieldCol}>
+                      <label className={styles.fieldLabel}>NEW PASSWORD <span className={styles.fieldLabelHint}>(leave blank to keep)</span></label>
                       <input type="password" autoFocus value={editing.password}
-                        onChange={e => setEditing(s => s && ({ ...s, password: e.target.value }))} style={inputStyle} />
+                        onChange={e => setEditing(s => s && ({ ...s, password: e.target.value }))} className={styles.input} />
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>ROLE</label>
+                    <div className={styles.fieldCol}>
+                      <label className={styles.fieldLabel}>ROLE</label>
                       <select value={editing.role}
                         onChange={e => setEditing(s => s && ({ ...s, role: e.target.value as 'admin' | 'viewer' }))}
-                        style={{ ...inputStyle, width: 'auto' }}>
+                        className={`${styles.input} ${styles.inputAuto}`}>
                         <option value="viewer">viewer</option>
                         <option value="admin">admin</option>
                       </select>
                     </div>
                   </div>
 
-                  <div style={{ borderTop: '1px solid var(--hds-line-s)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--hds-txt-2)', cursor: 'pointer' }}>
+                  <div className={styles.editSection}>
+                    <label className={styles.checkboxLabel}>
                       <input type="checkbox" checked={editing.restricted}
                         onChange={e => setEditing(s => s && ({ ...s, restricted: e.target.checked }))} />
-                      Restricted account <span style={{ opacity: 0.6 }}>(limit by content rating; overrides always win)</span>
+                      Restricted account <span className={styles.fieldLabelHint}>(limit by content rating; overrides always win)</span>
                     </label>
                     {editing.restricted && (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                          <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>MAX TV RATING</label>
+                      <div className={styles.formGrid3}>
+                        <div className={styles.fieldCol}>
+                          <label className={styles.fieldLabel}>MAX TV RATING</label>
                           <select value={editing.maxTv}
-                            onChange={e => setEditing(s => s && ({ ...s, maxTv: e.target.value }))} style={inputStyle}>
+                            onChange={e => setEditing(s => s && ({ ...s, maxTv: e.target.value }))} className={styles.input}>
                             {TV_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
                           </select>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                          <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>MAX MOVIE RATING</label>
+                        <div className={styles.fieldCol}>
+                          <label className={styles.fieldLabel}>MAX MOVIE RATING</label>
                           <select value={editing.maxMovie}
-                            onChange={e => setEditing(s => s && ({ ...s, maxMovie: e.target.value }))} style={inputStyle}>
+                            onChange={e => setEditing(s => s && ({ ...s, maxMovie: e.target.value }))} className={styles.input}>
                             {MOVIE_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
                           </select>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                          <label style={{ fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.06em' }}>MAX CHANNEL RATING</label>
+                        <div className={styles.fieldCol}>
+                          <label className={styles.fieldLabel}>MAX CHANNEL RATING</label>
                           <select value={editing.maxChannel}
-                            onChange={e => setEditing(s => s && ({ ...s, maxChannel: e.target.value }))} style={inputStyle}>
+                            onChange={e => setEditing(s => s && ({ ...s, maxChannel: e.target.value }))} className={styles.input}>
                             {TV_RATINGS.map(r => <option key={r} value={r}>{r}</option>)}
                           </select>
                         </div>
@@ -342,12 +361,53 @@ export default observer(function UsersPage() {
                     )}
                   </div>
 
-                  {editError && <div style={{ fontSize: 11, color: 'oklch(0.72 0.18 22)' }}>{editError}</div>}
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="submit" disabled={editBusy} style={btnStyle('primary')}>
+                    {!u.is_guest && (
+                        <div className={styles.editSection}>
+                            <label className={styles.checkboxLabel}>
+                                <input type="checkbox" checked={editing.channelBuilderEnabled}
+                                       onChange={e => setEditing(s => s && ({
+                                           ...s,
+                                           channelBuilderEnabled: e.target.checked
+                                       }))}/>
+                                Channel builder access <span className={styles.fieldLabelHint}>(build and edit their own channel against the real library)</span>
+                            </label>
+                        </div>
+                    )}
+
+                  <div className={styles.editSection}>
+                    <div className={styles.pinRow}>
+                      <div className={styles.pinRowLabel}>
+                        Profile-switch PIN <span className={styles.fieldLabelHint}>({u.has_pin ? 'set' : 'not set'}) — used by the "Who\'s watching?" picker</span>
+                      </div>
+                      <div className={styles.rowActions}>
+                        {u.has_pin && (
+                          <button type="button" disabled={pinBusy} className={btnClass('ghost')} onClick={() => clearPin(u.user_id)}>
+                            Clear PIN
+                          </button>
+                        )}
+                        <button type="button" className={btnClass('ghost')} onClick={() => { setShowPinPad(v => !v); setPinError('') }}>
+                          {showPinPad ? 'Cancel' : u.has_pin ? 'Change PIN' : 'Set PIN'}
+                        </button>
+                      </div>
+                    </div>
+                    {editing.role === 'admin' && !u.has_pin && (
+                      <div className={styles.pinWarning}>
+                        Admin profiles need a PIN before they can be used from the profile picker.
+                      </div>
+                    )}
+                    {showPinPad && (
+                      <div className={styles.pinPadWrap}>
+                        <PinPad busy={pinBusy} error={pinError} confirmLabel="SAVE" onComplete={pin => setPin(u.user_id, pin)} />
+                      </div>
+                    )}
+                  </div>
+
+                  {editError && <div className={styles.inlineError}>{editError}</div>}
+                  <div className={styles.btnRow}>
+                    <button type="submit" disabled={editBusy} className={btnClass('primary')}>
                       {editBusy ? 'Saving…' : 'Save'}
                     </button>
-                    <button type="button" style={btnStyle('ghost')} onClick={() => setEditing(null)}>Cancel</button>
+                    <button type="button" className={btnClass('ghost')} onClick={() => setEditing(null)}>Cancel</button>
                   </div>
                 </form>
               )}

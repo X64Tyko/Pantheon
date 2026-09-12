@@ -5,8 +5,10 @@
 #include "db/ContentRepository.h"
 #include "db/SourceRepository.h"
 #include "source/SyncManager.h"
+#include "thread/TaskRegistry.h"
 #include <atomic>
 #include <iostream>
+#include <malloc.h> // malloc_trim — glibc extension, not declared by <cstdlib>
 #include <thread>
 #include <vector>
 
@@ -16,20 +18,20 @@ ChapterDetectionManager::ChapterDetectionManager(Database& db, ConfStore& conf, 
 bool ChapterDetectionManager::triggerShowDetect(const std::string& show_id) {
     bool expected = false;
     if (!detecting_.compare_exchange_strong(expected, true)) return false;
-    std::thread([this, show_id]() {
+    TaskRegistry::global().spawn([this, show_id]() {
         runShowDetect(show_id);
         detecting_.store(false);
-    }).detach();
+    });
     return true;
 }
 
 bool ChapterDetectionManager::triggerMovieDetect(const std::string& movie_id) {
     bool expected = false;
     if (!detecting_.compare_exchange_strong(expected, true)) return false;
-    std::thread([this, movie_id]() {
+    TaskRegistry::global().spawn([this, movie_id]() {
         runMovieDetect(movie_id);
         detecting_.store(false);
-    }).detach();
+    });
     return true;
 }
 
@@ -109,6 +111,12 @@ void ChapterDetectionManager::runShowDetect(const std::string& show_id) {
     }
     std::cout << "[detect] show " << show_id << ": detection wrote " << written
                << "/" << items.size() << " episode(s)\n";
+
+	// Same reasoning as SyncManager::syncAll's own malloc_trim(0) call: the
+	// worker pool above briefly allocates large per-episode scratch vectors
+	// (scene cuts, fingerprints) that glibc's malloc won't hand back to the
+	// OS on its own once freed.
+	malloc_trim(0);
 }
 
 void ChapterDetectionManager::runMovieDetect(const std::string& movie_id) {

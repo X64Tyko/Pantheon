@@ -7,14 +7,23 @@
 // Returns a validated duration_ms for a media file.
 //
 // If dur is already in [1 000, 86 400 000] ms (1 s – 24 h) it is returned
-// unchanged.  Otherwise ffprobe is invoked on file_path to obtain the real
-// container duration.  If ffprobe succeeds and the result is in range, the
-// probed value is returned; if not, 0 is returned and a warning is emitted.
+// unchanged.  Otherwise the container is probed natively via libavformat
+// (avformat_open_input), falling back to ffprobe on any open failure.
+// Returns the probed value when it is in range, or 0 when it is not, with a
+// warning emitted.
 //
 // Intended to be called before writing duration_ms to the DB so that stale,
 // missing, or corrupt source metadata does not silently produce zero-duration
 // items that stall the scheduler.
 int64_t validateDurationMs(int64_t dur, const std::string& file_path);
+
+// The same [1 000, 86 400 000] ms range validateDurationMs checks internally,
+// exposed so a caller can decide whether a value needs re-probing without
+// paying for a probe just to find out. Used by SyncManager's
+// syncMediaProbeFromFiles to fold duration re-validation into the same
+// combined probeFileInfo() call it needs anyway for resolution/languages,
+// rather than a separate probe spawn via validateDurationMs.
+bool durationLooksValid(int64_t ms);
 
 // Reads chapter markers embedded in a media file via ffprobe.
 // Returns chapters in position order with source="file" and chapter_type="unclassified".
@@ -22,11 +31,17 @@ int64_t validateDurationMs(int64_t dur, const std::string& file_path);
 // Returns empty vector if ffprobe fails or the file has no chapters.
 std::vector<Chapter> probeChapters(const std::string& file_path);
 
-// Returns the distinct audio and subtitle language codes found in a file.
-// Language codes are ISO 639-2 strings (e.g. "eng", "jpn"). "und" is excluded.
-// Returns empty lists if ffprobe fails or the file has no tagged streams.
-struct StreamLanguages { std::vector<std::string> audio, subtitle; };
-StreamLanguages probeStreamLanguages(const std::string& file_path);
+// Distinct audio and subtitle language codes found in a file (ISO 639-2,
+// e.g. "eng", "jpn"; "und" excluded) — populated only via probeFileInfo's
+// combined probe below, there's no standalone per-field prober for this one
+// (unlike VideoInfo/probeVideoInfo, still probed on-demand by
+// ContentService.cpp's /videoinfo endpoint since resolution/codec/bit-depth
+// aren't persisted columns the way audio_languages/embedded_subtitle_
+// languages are — see Database.cpp's v86 migration comment).
+struct StreamLanguages
+{
+	std::vector<std::string> audio, subtitle;
+};
 
 // Video codec/resolution/bit-depth of the first video stream, for display on
 // library detail panels (distinct from Hephaestus's own MediaProbe, which
@@ -35,5 +50,41 @@ StreamLanguages probeStreamLanguages(const std::string& file_path);
 // nor a pix_fmt with a 10le/12le suffix. Returns a zero-valued struct
 // (empty codec, 0x0, bit_depth 8) if ffprobe fails or the file has no video
 // stream.
-struct VideoInfo { std::string codec; int width = 0, height = 0, bit_depth = 8; };
+struct VideoInfo
+{
+	std::string codec;
+	int width = 0, height = 0, bit_depth = 8;
+};
+
 VideoInfo probeVideoInfo(const std::string& file_path);
+
+// Combined probe: one avformat_open_input + avformat_find_stream_info call
+// for everything sync-time file inspection needs — duration (format-level,
+// falling back to the longest per-stream duration), video codec/resolution/
+// bit-depth, audio/subtitle stream languages, and keyframe timestamps.
+// Falls back to ffprobe subprocesses only when avformat_open_input itself
+// fails (exotic or unsupported container).
+// keyframes_ms is every keyframe timestamp in the primary video stream read
+// directly from the container's seek index (MP4 stss/stts atoms, MKV Cues
+// element) — no packet scan or decode needed for well-formed files.  When the
+// seek index is absent a packet-level ffprobe scan is used as a fallback.
+// duration_ms is 0 if undeterminable. keyframes_ms is empty if the file has
+// no video stream or the scan failed.
+struct FileProbeInfo
+{
+	int64_t duration_ms = 0;
+	VideoInfo video;
+	StreamLanguages langs;
+	std::vector<int64_t> keyframes_ms;
+};
+
+FileProbeInfo probeFileInfo(const std::string& file_path);
+
+// Buckets a probed video height into the same "4K"/"1080p"/"720p"/"SD"
+// labels the Library filter/sort UI already offers (see RESOLUTIONS in
+// hades/src/components/PickerFilters.tsx) — persisted on sync so it's
+// filterable without re-probing on every request. Thresholds are set below
+// each label's nominal height to tolerate slightly-off encodes (e.g. a
+// 1088-line "1080p" mezzanine). Returns "" for height <= 0 (probe failed or
+// no video stream), so the column stays empty rather than mislabeled SD.
+std::string bucketResolutionLabel(int height);

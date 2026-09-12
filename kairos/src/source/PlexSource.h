@@ -44,8 +44,32 @@ public:
                        const std::string& item_type,
                        const WritebackFields& fields) override;
 
+    std::optional<std::string> createRemoteList(const std::string& title, const std::string& kind,
+                                                 const std::vector<IMediaSource::PushListItem>& items,
+                                                 const std::string& external_lib_id) override;
+    bool addRemoteListItems(const std::string& list_external_id, const std::string& kind,
+                             const std::vector<IMediaSource::PushListItem>& items) override;
+    bool removeRemoteListItems(const std::string& list_external_id, const std::string& kind,
+                                const std::vector<IMediaSource::PushListItem>& items) override;
+
 private:
     httplib::Result get(const std::string& path);
+
+    // Plex's own server-instance id, needed for the "server://{id}/..."
+    // library URIs createRemoteList/addRemoteListItems send — fetched once
+    // (GET /identity) and cached; empty string means the fetch failed, which
+    // callers treat as "push unsupported right now" rather than crashing.
+    std::string machineIdentifier();
+    std::optional<std::string> machine_identifier_;
+
+    // Paginated GET across a playlist/collection-items endpoint (same
+    // X-Plex-Container-Start/Size chunking as fetchShows/fetchMovies/
+    // fetchEpisodes) — shared by browsePlaylistItems/browseCollectionItems/
+    // fetchListItems so the pagination fix only has to exist once. nullopt
+    // only when the *first* page request fails outright; a later page
+    // failing mid-fetch just stops pagination and keeps whatever was
+    // already collected.
+    std::optional<std::vector<BrowseContentItem>> fetchAllBrowseItems(const std::string& basePath);
 
     std::string     source_id_;
     std::string     base_url_;

@@ -1,0 +1,21 @@
+.overlay {
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 0 var(--hds-space-7) 88px 0;
+}
+.panel {
+  width: 280px; max-height: 50vh; overflow-y: auto;
+  background: var(--hds-glass); backdrop-filter: blur(14px);
+  border: 1px solid var(--hds-glass-border); border-radius: var(--hds-radius-tile);
+  padding: var(--hds-space-4) var(--hds-space-5); box-shadow: 0 12px 40px oklch(0 0 0 / 0.5);
+}
+.sectionTitle {
+  font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-caption); letter-spacing: 0.1em;
+  color: var(--hds-txt-3); margin-bottom: var(--hds-space-2); text-transform: uppercase;
+}
+.optionList { display: flex; flex-direction: column; gap: 2px; }
+.option {
+  text-align: left; padding: 7px var(--hds-space-3); border-radius: var(--hds-radius-sm); cursor: pointer;
+  font-family: var(--hds-font-mono-brand); font-size: var(--hds-font-size-tv-meta);
+  border: 1px solid transparent; background: transparent; color: var(--hds-txt-2);
+}

@@ -21,7 +21,6 @@ public:
 
     // Channel scheduling metadata.
     std::string channelTimezone(const std::string& channel_id);
-    std::string channelAdvanceMode(const std::string& channel_id);
 
     // media_cursor R/W (show/playlist/filler_list sequential position).
     int  readCursorPos(const std::string& content_type, const std::string& content_id,

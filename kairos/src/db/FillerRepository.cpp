@@ -3,80 +3,121 @@
 #include "DbHelpers.h"
 #include <SQLiteCpp/SQLiteCpp.h>
 
-FillerRepository::FillerRepository(Database& db) : db_(db) {}
+FillerRepository::FillerRepository(Database& db)
+	: db_(db)
+{
+}
 
-std::string FillerRepository::create(const std::string& title, const std::string& advancement) {
+std::string FillerRepository::create(const std::string& title, const std::string& advancement)
+{
 	std::string fid = db::generateId();
 	SQLite::Statement s(db_.get(),
-		"INSERT INTO filler_list (filler_list_id, title, advancement) VALUES (?,?,?)");
-	s.bind(1, fid); s.bind(2, title); s.bind(3, advancement);
+						"INSERT INTO filler_list (filler_list_id, title, advancement) VALUES (?,?,?)");
+	s.bind(1, fid);
+	s.bind(2, title);
+	s.bind(3, advancement);
 	s.exec();
 	return fid;
 }
 
 void FillerRepository::updateField(const std::string& filler_list_id,
-                                    const std::string& col, const std::string& val) {
+								   const std::string& col, const std::string& val)
+{
 	SQLite::Statement s(db_.get(),
-		"UPDATE filler_list SET " + col + " = ? WHERE filler_list_id = ?");
-	s.bind(1, val); s.bind(2, filler_list_id); s.exec();
+						"UPDATE filler_list SET " + col + " = ? WHERE filler_list_id = ?");
+	s.bind(1, val);
+	s.bind(2, filler_list_id);
+	s.exec();
 }
 
-void FillerRepository::remove(const std::string& filler_list_id) {
+void FillerRepository::remove(const std::string& filler_list_id)
+{
+	// Same orphaned-link hazard as PlaylistRepository::remove()'s own comment:
+	// plex_list_link has no FK back to filler_list, so leaving this row behind
+	// makes the next syncPlexLinks() pass hit a FOREIGN KEY constraint failure
+	// inserting into filler_list_item for a filler_list_id that no longer
+	// exists.
+	SQLite::Transaction tx(db_.get());
+	SQLite::Statement link(db_.get(), "DELETE FROM plex_list_link WHERE list_type = 'filler_list' AND list_id = ?");
+	link.bind(1, filler_list_id);
+	link.exec();
 	SQLite::Statement s(db_.get(), "DELETE FROM filler_list WHERE filler_list_id = ?");
-	s.bind(1, filler_list_id); s.exec();
+	s.bind(1, filler_list_id);
+	s.exec();
+	tx.commit();
 }
 
-void FillerRepository::unlinkPlex(const std::string& filler_list_id) {
+void FillerRepository::unlinkPlex(const std::string& filler_list_id)
+{
 	SQLite::Statement s(db_.get(),
-		"DELETE FROM plex_list_link WHERE list_type = 'filler_list' AND list_id = ?");
-	s.bind(1, filler_list_id); s.exec();
+						"DELETE FROM plex_list_link WHERE list_type = 'filler_list' AND list_id = ?");
+	s.bind(1, filler_list_id);
+	s.exec();
 }
 
 std::pair<int64_t, int> FillerRepository::addItem(const std::string& filler_list_id,
-                                                    const std::string& item_type,
-                                                    const std::string& item_id) {
+												  const std::string& item_type,
+												  const std::string& item_id)
+{
 	int position = 0;
 	{
 		SQLite::Statement pq(db_.get(),
-			"SELECT COALESCE(MAX(position), -1) + 1 FROM filler_list_item WHERE filler_list_id = ?");
+							 "SELECT COALESCE(MAX(position), -1) + 1 FROM filler_list_item WHERE filler_list_id = ?");
 		pq.bind(1, filler_list_id);
 		if (pq.executeStep()) position = pq.getColumn(0).getInt();
 	}
 	SQLite::Statement s(db_.get(),
-		"INSERT INTO filler_list_item (filler_list_id, item_type, item_id, position) VALUES (?,?,?,?)");
-	s.bind(1, filler_list_id); s.bind(2, item_type); s.bind(3, item_id); s.bind(4, position);
+						"INSERT INTO filler_list_item (filler_list_id, item_type, item_id, position) VALUES (?,?,?,?)");
+	s.bind(1, filler_list_id);
+	s.bind(2, item_type);
+	s.bind(3, item_id);
+	s.bind(4, position);
 	s.exec();
 	return {db_.get().getLastInsertRowid(), position};
 }
 
 int FillerRepository::addItems(const std::string& filler_list_id,
-                                const std::vector<std::pair<std::string, std::string>>& items) {
+							   const std::vector<std::pair<std::string, std::string>>& items)
+{
 	SQLite::Statement pq(db_.get(),
-		"SELECT COALESCE(MAX(position), -1) + 1 FROM filler_list_item WHERE filler_list_id = ?");
+						 "SELECT COALESCE(MAX(position), -1) + 1 FROM filler_list_item WHERE filler_list_id = ?");
 	pq.bind(1, filler_list_id);
 	int position = pq.executeStep() ? pq.getColumn(0).getInt() : 0;
-	int added = 0;
+	int added    = 0;
 	SQLite::Transaction tx(db_.get());
-	for (const auto& [item_type, item_id] : items) {
+	for (const auto& [item_type, item_id] : items)
+	{
 		if (item_id.empty()) continue;
-		try {
+		try
+		{
 			SQLite::Statement s(db_.get(),
-				"INSERT INTO filler_list_item (filler_list_id, item_type, item_id, position) VALUES (?,?,?,?)");
-			s.bind(1, filler_list_id); s.bind(2, item_type); s.bind(3, item_id); s.bind(4, position);
+								"INSERT INTO filler_list_item (filler_list_id, item_type, item_id, position) VALUES (?,?,?,?)");
+			s.bind(1, filler_list_id);
+			s.bind(2, item_type);
+			s.bind(3, item_id);
+			s.bind(4, position);
 			s.exec();
-			++position; ++added;
-		} catch (const SQLite::Exception&) { /* skip duplicates */ }
+			++position;
+			++added;
+		}
+		catch (const SQLite::Exception&)
+		{
+			/* skip duplicates */
+		}
 	}
 	tx.commit();
 	return added;
 }
 
-void FillerRepository::removeItem(int item_id) {
+void FillerRepository::removeItem(int item_id)
+{
 	SQLite::Statement s(db_.get(), "DELETE FROM filler_list_item WHERE id = ?");
-	s.bind(1, item_id); s.exec();
+	s.bind(1, item_id);
+	s.exec();
 }
 
-std::vector<FillerListRow> FillerRepository::listAll() {
+std::vector<FillerListRow> FillerRepository::listAll()
+{
 	SQLite::Statement q(db_.get(), R"(
 		SELECT fl.filler_list_id, fl.title, fl.advancement,
 		       COUNT(fi.id) AS item_count,
@@ -92,14 +133,16 @@ std::vector<FillerListRow> FillerRepository::listAll() {
 		GROUP BY fl.filler_list_id ORDER BY fl.title
 	)");
 	std::vector<FillerListRow> rows;
-	while (q.executeStep()) {
+	while (q.executeStep())
+	{
 		FillerListRow r;
 		r.filler_list_id = q.getColumn(0).getString();
 		r.title          = q.getColumn(1).getString();
 		r.advancement    = q.getColumn(2).getString();
 		r.item_count     = q.getColumn(3).getInt();
 		r.total_ms       = q.getColumn(4).getInt64();
-		if (!q.getColumn(5).isNull()) {
+		if (!q.getColumn(5).isNull())
+		{
 			PlexLinkRow pl;
 			pl.source_id   = q.getColumn(5).getString();
 			pl.external_id = q.getColumn(6).getString();
@@ -112,9 +155,10 @@ std::vector<FillerListRow> FillerRepository::listAll() {
 	return rows;
 }
 
-std::optional<FillerListDetail> FillerRepository::getDetail(const std::string& filler_list_id) {
+std::optional<FillerListDetail> FillerRepository::getDetail(const std::string& filler_list_id)
+{
 	SQLite::Statement fh(db_.get(),
-		"SELECT filler_list_id, title, advancement FROM filler_list WHERE filler_list_id = ?");
+						 "SELECT filler_list_id, title, advancement FROM filler_list WHERE filler_list_id = ?");
 	fh.bind(1, filler_list_id);
 	if (!fh.executeStep()) return std::nullopt;
 
@@ -141,7 +185,8 @@ std::optional<FillerListDetail> FillerRepository::getDetail(const std::string& f
 		WHERE fi.filler_list_id = ? ORDER BY fi.position
 	)");
 	q.bind(1, filler_list_id);
-	while (q.executeStep()) {
+	while (q.executeStep())
+	{
 		FillerItemRow r;
 		r.id          = q.getColumn(0).getInt64();
 		r.item_type   = q.getColumn(1).getString();

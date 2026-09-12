@@ -1,0 +1,107 @@
+.input {
+  padding: 5px var(--hds-space-3);
+  border-radius: var(--hds-radius-sm);
+  border: 1px solid var(--hds-line);
+  background: var(--hds-bg-3);
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-small-title);
+}
+
+/* ─── FilterTagInput ─────────────────────────────────────────────────────── */
+
+.tagInputWrap { position: relative; flex: 1; }
+
+.tagInput { width: 100%; box-sizing: border-box; }
+
+.dropdown {
+  position: absolute; z-index: 50; top: 100%; left: 0; right: 0; margin-top: 2px;
+  max-height: 190px; overflow-y: auto; list-style: none; padding: 0; margin: 0;
+  background: var(--hds-bg-2); border: 1px solid var(--hds-line); border-radius: var(--hds-radius-tile);
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.6);
+}
+
+.option {
+  padding: var(--hds-space-2) 10px; cursor: pointer; font-size: var(--hds-font-size-tv-small-title);
+  font-family: var(--hds-font-mono-brand);
+  background: transparent; color: var(--hds-txt-2);
+}
+.optionHighlighted {
+  background: var(--hds-violet);
+  color: oklch(0.1 0.02 287);
+}
+
+/* ─── FilterRuleRow ──────────────────────────────────────────────────────── */
+
+.removeBtn {
+  background: none; border: none; cursor: pointer; flex-shrink: 0;
+  color: var(--hds-txt-3); font-size: var(--hds-font-size-tv-small-title); padding: 0 var(--hds-space-1); line-height: 1;
+}
+.removeBtn:hover { color: oklch(0.7 0.18 25); }
+
+.row { display: flex; align-items: center; gap: var(--hds-space-2); }
+
+.selectFixed { width: 118px; flex-shrink: 0; }
+
+.valueFlex { flex: 1; }
+
+.daysRow { display: flex; align-items: center; gap: var(--hds-space-2); flex: 1; }
+.daysLabel { font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); flex-shrink: 0; }
+
+/* ─── MatchSelect ────────────────────────────────────────────────────────── */
+
+.matchSelect { width: 64px; padding: 5px 6px; flex-shrink: 0; }
+
+/* ─── FilterSection ──────────────────────────────────────────────────────── */
+
+.section { border-top: 1px solid var(--hds-line-s); }
+.sectionHorizontal { border-top: none; }
+
+.toggleBtn {
+  width: 100%; display: flex; align-items: center; gap: var(--hds-space-3);
+  padding: var(--hds-space-3) 12px; background: none; border: none; cursor: pointer;
+  font-size: var(--hds-font-size-tv-small-title); color: var(--hds-txt-3); text-align: left;
+  font-family: var(--hds-font-mono-brand);
+}
+.toggleBtnHorizontal { width: auto; padding: var(--hds-space-1) 0; }
+
+.toggleIcon { font-size: var(--hds-font-size-tv-badge); }
+.ruleCountText { color: var(--hds-violet); }
+
+.panel {
+  padding: var(--hds-space-1) 12px 12px;
+  display: flex; flex-direction: column; gap: var(--hds-space-3);
+  background: oklch(0.14 0.012 286 / 0.4);
+  border-top: 1px solid var(--hds-line-s);
+}
+.panelHorizontal { padding: var(--hds-space-2) 0 var(--hds-space-1); background: none; border-top: none; }
+
+.matchRow { display: flex; align-items: center; gap: var(--hds-space-3); padding-top: var(--hds-space-2); }
+.matchRowHorizontal { padding-top: 0; }
+.matchText { font-size: var(--hds-font-size-tv-caption); color: var(--hds-txt-3); }
+
+.itemsRow { display: flex; gap: var(--hds-space-3); flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+.itemsRowHorizontal { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+
+.itemBoxFixed { width: 380px; flex-shrink: 0; }
+
+.groupBox {
+  display: flex; flex-direction: column; gap: var(--hds-space-2);
+  padding: var(--hds-space-3) 10px; border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-violet); background: oklch(0.55 0.14 292 / 0.08);
+}
+.groupHeader { display: flex; align-items: center; gap: var(--hds-space-3); }
+.removeGroupBtn { margin-left: auto; }
+
+.addRuleToGroupBtn {
+  background: none; border: none; cursor: pointer; align-self: flex-start;
+  color: var(--hds-violet); font-size: var(--hds-font-size-tv-small-title); padding: 2px 0;
+  font-family: var(--hds-font-mono-brand);
+}
+
+.actionsRow { display: flex; gap: 14px; padding-top: 2px; }
+.actionBtn {
+  background: none; border: none; cursor: pointer;
+  color: var(--hds-violet); font-size: var(--hds-font-size-tv-small-title); padding: 0;
+  font-family: var(--hds-font-mono-brand);
+}

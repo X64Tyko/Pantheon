@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(Kairos VERSION 0.1.0 LANGUAGES CXX)
+
+# Single source of truth for the version (see VERSION at repo root) — bump
+# that file only. CMAKE_SOURCE_DIR resolves correctly both here (as part of
+# the monorepo build) and in the standalone Docker build, where this file is
+# flattened to the top level and VERSION is copied alongside it.
+file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" PANTHEON_VERSION)
+project(Kairos VERSION ${PANTHEON_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,24 +47,45 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
+# ── pugixml (NFO sidecar parsing — LocalSource only) ───────────────────────────
+FetchContent_Declare(
+    pugixml
+    GIT_REPOSITORY https://github.com/zeux/pugixml.git
+    GIT_TAG        v1.14
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(pugixml)
+
 # ── kairos_core (all sources except main.cpp — linkable by tests) ─────────────
 file(GLOB_RECURSE ALL_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 list(FILTER ALL_SOURCES EXCLUDE REGEX ".*[/\\\\]main\\.cpp$")
 
 find_package(OpenSSL REQUIRED)
 
+# ── libavformat / libavcodec / libavutil (native media probing) ───────────────
+# Used by MediaProbe.cpp to read container headers directly instead of spawning
+# ffprobe subprocesses — avoids JSON serialization overhead and lets us read the
+# keyframe index directly from the MP4 stss/stts atoms or MKV Cues element.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAVFORMAT REQUIRED libavformat)
+pkg_check_modules(LIBAVCODEC REQUIRED libavcodec)
+pkg_check_modules(LIBAVUTIL REQUIRED libavutil)
+
 # Guard: during the Docker layer-split build the configure step runs before
 # src/ is copied in, leaving ALL_SOURCES empty. Use INTERFACE in that case so
 # the target exists for the executable to link against unconditionally.
 if(ALL_SOURCES)
     add_library(kairos_core STATIC ${ALL_SOURCES})
-    target_include_directories(kairos_core PUBLIC src)
+    target_include_directories(kairos_core PUBLIC src "${CMAKE_SOURCE_DIR}/shared"
+            ${LIBAVFORMAT_INCLUDE_DIRS} ${LIBAVCODEC_INCLUDE_DIRS} ${LIBAVUTIL_INCLUDE_DIRS})
     target_link_libraries(kairos_core
         PUBLIC
         nlohmann_json::nlohmann_json
         SQLiteCpp
         httplib::httplib
+        pugixml
         OpenSSL::SSL OpenSSL::Crypto
+            ${LIBAVFORMAT_LIBRARIES} ${LIBAVCODEC_LIBRARIES} ${LIBAVUTIL_LIBRARIES}
     )
     if(UNIX)
         target_link_libraries(kairos_core PUBLIC pthread dl crypt)
@@ -66,13 +93,16 @@ if(ALL_SOURCES)
     target_compile_definitions(kairos_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
 else()
     add_library(kairos_core INTERFACE)
-    target_include_directories(kairos_core INTERFACE src)
+    target_include_directories(kairos_core INTERFACE src "${CMAKE_SOURCE_DIR}/shared"
+            ${LIBAVFORMAT_INCLUDE_DIRS} ${LIBAVCODEC_INCLUDE_DIRS} ${LIBAVUTIL_INCLUDE_DIRS})
     target_link_libraries(kairos_core
         INTERFACE
         nlohmann_json::nlohmann_json
         SQLiteCpp
         httplib::httplib
+        pugixml
         OpenSSL::SSL OpenSSL::Crypto
+            ${LIBAVFORMAT_LIBRARIES} ${LIBAVCODEC_LIBRARIES} ${LIBAVUTIL_LIBRARIES}
     )
     if(UNIX)
         target_link_libraries(kairos_core INTERFACE pthread dl crypt)

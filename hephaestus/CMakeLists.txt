@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(Hephaestus VERSION 0.1.0 LANGUAGES CXX)
+
+# Single source of truth for the version (see VERSION at repo root) — bump
+# that file only. CMAKE_SOURCE_DIR resolves correctly both here (as part of
+# the monorepo build) and in the standalone Docker build, where this file is
+# flattened to the top level and VERSION is copied alongside it.
+file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" PANTHEON_VERSION)
+project(Hephaestus VERSION ${PANTHEON_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,7 +39,7 @@ list(FILTER CORE_SOURCES EXCLUDE REGEX ".*[/\\\\]main\\.cpp$")
 
 if(CORE_SOURCES)
     add_library(hephaestus_core STATIC ${CORE_SOURCES})
-    target_include_directories(hephaestus_core PUBLIC src)
+    target_include_directories(hephaestus_core PUBLIC src "${CMAKE_SOURCE_DIR}/shared")
     target_link_libraries(hephaestus_core
         PUBLIC
         nlohmann_json::nlohmann_json
@@ -46,7 +52,7 @@ if(CORE_SOURCES)
     target_compile_definitions(hephaestus_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
 else()
     add_library(hephaestus_core INTERFACE)
-    target_include_directories(hephaestus_core INTERFACE src)
+    target_include_directories(hephaestus_core INTERFACE src "${CMAKE_SOURCE_DIR}/shared")
     target_link_libraries(hephaestus_core
         INTERFACE
         nlohmann_json::nlohmann_json
@@ -62,6 +68,6 @@ endif()
 # ── hephaestus executable ─────────────────────────────────────────────────────
 if(CORE_SOURCES)
     add_executable(hephaestus src/main.cpp)
-    target_include_directories(hephaestus PRIVATE src)
+    target_include_directories(hephaestus PRIVATE src "${CMAKE_SOURCE_DIR}/shared")
     target_link_libraries(hephaestus PRIVATE hephaestus_core)
 endif()

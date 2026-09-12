@@ -1,0 +1,33 @@
+/* Single-element spotlight: a transparent box sized exactly to the target,
+   whose oversized box-shadow doubles as the dimmed backdrop everywhere else —
+   no SVG mask needed for a plain rectangular cutout. */
+.spotlight {
+  position: fixed; z-index: 400; pointer-events: none;
+  border-radius: var(--hds-radius-tile);
+  box-shadow: 0 0 0 9999px oklch(0 0 0 / 0.65);
+  border: 2px solid var(--hds-gold);
+  transition: top .18s ease, left .18s ease, width .18s ease, height .18s ease;
+}
+
+.tooltip {
+  position: fixed; z-index: 401;
+  padding: var(--hds-space-5); border-radius: var(--hds-radius-skeleton);
+  background: oklch(0.16 0.022 286); border: 1px solid var(--hds-glass-border);
+  box-shadow: 0 16px 48px -8px rgba(0, 0, 0, 0.7);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.tooltipTitle { font-family: var(--hds-font-display); font-weight: 700; font-size: 14px; color: var(--hds-gold); margin-bottom: var(--hds-space-2); }
+.tooltipBody { font-size: var(--hds-font-size-tv-meta); color: var(--hds-txt-2); line-height: 1.55; margin-bottom: var(--hds-space-4); }
+.tooltipActions { display: flex; gap: var(--hds-space-3); justify-content: flex-end; }
+
+.skipBtn {
+  padding: var(--hds-space-2) var(--hds-space-4); border-radius: var(--hds-radius-sm); cursor: pointer;
+  border: 1px solid var(--hds-line); background: transparent;
+  color: var(--hds-txt-2); font-size: var(--hds-font-size-tv-small-title); font-family: var(--hds-font-mono-brand);
+}
+.endBtn {
+  padding: var(--hds-space-2) var(--hds-space-3); border-radius: var(--hds-radius-sm); cursor: pointer;
+  border: none; background: transparent;
+  color: var(--hds-txt-3); font-size: var(--hds-font-size-tv-small-title); font-family: var(--hds-font-mono-brand);
+}

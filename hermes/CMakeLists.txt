@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(Hermes VERSION 0.1.0 LANGUAGES CXX)
+
+# Single source of truth for the version (see VERSION at repo root) — bump
+# that file only. CMAKE_SOURCE_DIR resolves correctly both here (as part of
+# the monorepo build) and in the standalone Docker build, where this file is
+# flattened to the top level and VERSION is copied alongside it.
+file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" PANTHEON_VERSION)
+project(Hermes VERSION ${PANTHEON_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,7 +39,7 @@ list(FILTER CORE_SOURCES EXCLUDE REGEX ".*[/\\\\]main\\.cpp$")
 
 if(CORE_SOURCES)
     add_library(hermes_core STATIC ${CORE_SOURCES})
-    target_include_directories(hermes_core PUBLIC src)
+    target_include_directories(hermes_core PUBLIC src "${CMAKE_SOURCE_DIR}/shared")
     target_link_libraries(hermes_core
         PUBLIC
         nlohmann_json::nlohmann_json
@@ -46,7 +52,7 @@ if(CORE_SOURCES)
     target_compile_definitions(hermes_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
 else()
     add_library(hermes_core INTERFACE)
-    target_include_directories(hermes_core INTERFACE src)
+    target_include_directories(hermes_core INTERFACE src "${CMAKE_SOURCE_DIR}/shared")
     target_link_libraries(hermes_core
         INTERFACE
         nlohmann_json::nlohmann_json
@@ -62,6 +68,6 @@ endif()
 # ── hermes executable ─────────────────────────────────────────────────────────
 if(CORE_SOURCES)
     add_executable(hermes src/main.cpp)
-    target_include_directories(hermes PRIVATE src)
+    target_include_directories(hermes PRIVATE src "${CMAKE_SOURCE_DIR}/shared")
     target_link_libraries(hermes PRIVATE hermes_core)
 endif()

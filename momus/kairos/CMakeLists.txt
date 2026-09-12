@@ -13,23 +13,53 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 add_executable(momus_kairos
+        backup/test_backup_manager.cpp
+    api/test_content_service_security.cpp
+    api/test_list_push_helper.cpp
+    api/test_sync_source_list_items.cpp
+    api/test_playlist_play_target.cpp
+    api/test_auth_service_routes.cpp
+    api/test_restriction_access_check.cpp
+    api/test_playback_and_channel_routes.cpp
+        api/test_schedule_cache.cpp
+        api/test_channel_ownership_routes.cpp
+        api/test_preserve_cursor.cpp
+        api/test_config_service_library_reset.cpp
+        api/test_playback_keyframes_and_resolve_routes.cpp
+        api/test_tv_manifest_service.cpp
+    api/test_writeback_all.cpp
+    api/test_content_service_auto_writeback.cpp
+        api/test_scraper_service_security.cpp
     auth/test_auth_store.cpp
     conf/test_conf_store.cpp
     db/test_migrations.cpp
+        db/test_movie_parts.cpp
     db/test_schema_constraints.cpp
     db/test_chapter_repository.cpp
     db/test_block_repository.cpp
+        db/test_schedule_repository.cpp
     db/test_source_repository.cpp
+    db/test_content_repository_writeback.cpp
+    db/test_filter_expr.cpp
+    db/test_search_episodes.cpp
+    db/test_playlist_repository.cpp
     detect/test_chapter_detector.cpp
+        jobs/test_job_scheduler.cpp
+        normalize/test_media_normalizer.cpp
     scheduler/test_cursor_state.cpp
     scheduler/test_rule_engine.cpp
     scheduler/test_epg_output.cpp
     scheduler/test_timeslot_block.cpp
+    scheduler/test_natural_advance.cpp
+    scheduler/test_determinism_regression.cpp
     scraper/test_scraper_manager.cpp
     scraper/test_tmdb_scraper.cpp
     source/test_jellyfin_source.cpp
     source/test_plex_source.cpp
     source/test_local_source.cpp
+    source/test_sync_manager.cpp
+        source/test_media_probe_resource_release.cpp
+        util/test_title_match.cpp
 )
 
 # kairos_core brings in SQLiteCpp, nlohmann_json, httplib, and the src/ include
@@ -39,6 +69,11 @@ target_link_libraries(momus_kairos
     kairos_core
     GTest::gtest_main
 )
+
+# Absolute path to the committed media fixture used by
+# test_media_probe_resource_release.cpp — avoids depending on ctest's CWD.
+target_compile_definitions(momus_kairos PRIVATE
+        MOMUS_KAIROS_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 include(GoogleTest)
 gtest_discover_tests(momus_kairos)

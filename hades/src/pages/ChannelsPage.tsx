@@ -3,13 +3,15 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { channelStore } from '../stores'
 import { api } from '../api/client'
+import {useAuth} from '../auth/AuthContext'
 import type { Channel, ChannelExport, EpgProgram, ExportDepth, ImportPreviewResult } from '../api/types'
-import { BLOCK_META, DAYS } from '../channel/constants'
+import {BLOCK_META, DAYS, TIMEZONE_SUGGESTIONS} from '../channel/constants'
 import { todayEpgDay } from '../channel/utils'
 import { msToTzMins, mergeFiller, localDateStr } from '../channel/EpgPreview'
 import ArrAddModal from '../components/ArrAddModal'
 import { tourStore } from '../stores/TourStore'
 import { TourSpotlight } from '../components/tour/TourSpotlight'
+import stripStyles from './ChannelGuideStrip.module.css'
 
 function triggerJsonDownload(data: object, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -21,6 +23,8 @@ function triggerJsonDownload(data: object, filename: string) {
 
 export default observer(function ChannelsPage() {
   const store = channelStore
+    const {user} = useAuth()
+    const isAdmin = user?.role === 'admin'
   const [showAdd, setShowAdd]           = useState(false)
   const [form, setForm]                 = useState({ name: '', number: '', timezone: 'UTC' })
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
@@ -35,6 +39,32 @@ export default observer(function ChannelsPage() {
   const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null)
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+    // Non-admin channel-builder access is gated two different ways — a guest
+    // via the server-wide guest_channel_builder_enabled toggle, a real named
+    // account via the per-user grant already on their own user object (see
+    // AuthStore::updateChannelBuilderEnabled). Fetched from public-settings
+    // since it must be readable before/without admin rights, same reasoning
+    // as guest_profiles_enabled there.
+    const [guestBuilderSettings, setGuestBuilderSettings] = useState<{
+        enabled: boolean; maxDemoChannels: number
+    } | null>(null)
+    useEffect(() => {
+        if (isAdmin) return
+        api.getPublicSettings().then(s => setGuestBuilderSettings({
+            enabled: s.guest_channel_builder_enabled,
+            maxDemoChannels: s.guest_max_demo_channels,
+        })).catch(() => {
+        })
+    }, [isAdmin])
+
+    const ownedCount = user ? store.channels.filter(c => c.owner_user_id === user.user_id).length : 0
+    const canBuild = isAdmin || (user?.is_guest
+        ? !!guestBuilderSettings?.enabled
+        : !!user?.channel_builder_enabled)
+    const buildQuota = user?.is_guest ? (guestBuilderSettings?.maxDemoChannels ?? 1) : Infinity
+    const canAddMore = canBuild && ownedCount < buildQuota
+    const canEdit = (ch: Channel) => isAdmin || ch.owner_user_id === user?.user_id
 
   useEffect(() => { store.fetchAll() }, [])
 
@@ -109,15 +139,33 @@ export default observer(function ChannelsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-zinc-100">Channels</h1>
         <div className="flex gap-2">
-          <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImportFile} />
-          <button onClick={() => fileRef.current?.click()} className="btn-secondary">
-            Import Channel
-          </button>
-          <button onClick={() => setShowAdd(v => !v)} className="btn-primary" data-tour="add-channel-btn">
-            + Add Channel
-          </button>
+            {isAdmin && (
+                <>
+                    <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImportFile}/>
+                    <button onClick={() => fileRef.current?.click()} className="btn-secondary">
+                        Import Channel
+                    </button>
+                </>
+            )}
+            {canAddMore && (
+                <button onClick={() => setShowAdd(v => !v)} className="btn-primary" data-tour="add-channel-btn">
+                    + Add Channel
+                </button>
+            )}
         </div>
       </div>
+
+        {!isAdmin && user?.is_guest && !canBuild && (
+            <p className="text-zinc-600 text-sm">
+                Channel building isn't available on this server right now — you can still browse and watch the channels
+                below.
+            </p>
+        )}
+        {!isAdmin && canBuild && !canAddMore && (
+            <p className="text-zinc-600 text-sm">
+                You've reached your channel limit ({buildQuota}). Remove one to build another.
+            </p>
+        )}
 
       {store.error && (
         <div className="text-red-400 text-sm bg-red-950/30 border border-red-900/40 rounded-lg p-3">
@@ -184,11 +232,16 @@ export default observer(function ChannelsPage() {
               className="input"
             />
             <input
-              placeholder="Timezone  (e.g. America/Chicago)"
+                list="new-channel-tz-suggestions"
+                placeholder="Timezone (e.g. America/Chicago)"
               value={form.timezone}
               onChange={e => setForm({ ...form, timezone: e.target.value })}
               className="input"
+                spellCheck={false}
             />
+              <datalist id="new-channel-tz-suggestions">
+                  {TIMEZONE_SUGGESTIONS.map(tz => <option key={tz} value={tz}/>)}
+              </datalist>
           </div>
           <div className="flex gap-2">
             <button onClick={add} className="btn-primary">Save</button>
@@ -209,7 +262,15 @@ export default observer(function ChannelsPage() {
                   {ch.number}
                 </span>
                 <div>
-                  <div className="font-medium text-sm text-zinc-100">{ch.name}</div>
+                    <div className="font-medium text-sm text-zinc-100 flex items-center gap-1.5">
+                        {ch.name}
+                        {ch.is_demo && (
+                            <span
+                                className="text-[9px] font-mono uppercase tracking-widest text-amber-500 border border-amber-700/50 rounded px-1">
+                        demo
+                      </span>
+                        )}
+                    </div>
                   <div className="text-[10px] text-zinc-600 mt-0.5">{ch.timezone}</div>
                 </div>
               </div>
@@ -217,11 +278,13 @@ export default observer(function ChannelsPage() {
                 <Link to={`/player/channel/${ch.channel_id}`} className="btn-primary">
                   Watch
                 </Link>
-                <Link to={`/channels/${ch.channel_id}`} className="btn-secondary">
-                  Edit Schedule
-                </Link>
-                <ExportButton channel={ch} onExport={handleExport} />
-                {confirmRemove === ch.channel_id ? (
+                  {canEdit(ch) && (
+                      <Link to={`/channels/${ch.channel_id}`} className="btn-secondary">
+                          Edit Schedule
+                      </Link>
+                  )}
+                  {isAdmin && <ExportButton channel={ch} onExport={handleExport}/>}
+                  {canEdit(ch) && (confirmRemove === ch.channel_id ? (
                   <span className="flex items-center gap-1.5 text-xs">
                     <span className="text-red-400">Delete channel?</span>
                     <button
@@ -237,7 +300,7 @@ export default observer(function ChannelsPage() {
                   <button onClick={() => setConfirmRemove(ch.channel_id)} className="btn-danger">
                     Remove
                   </button>
-                )}
+                  ))}
               </div>
             </div>
             <ChannelGuideStrip channelId={ch.channel_id} timezone={ch.timezone} />
@@ -520,44 +583,41 @@ function ChannelGuideStrip({ channelId, timezone }: { channelId: string; timezon
   })
 
   return (
-    <div style={{ marginTop: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-        <span style={{ fontSize: 9, letterSpacing: '0.18em', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>
+    <div className={stripStyles.stripWrap}>
+      <div className={stripStyles.stripHeader}>
+        <span className={stripStyles.stripDayLabel}>
           {dayLabel}
         </span>
         {programs && (
-          <span style={{ fontSize: 9, color: 'var(--hds-txt-3)' }}>
+          <span className={stripStyles.stripProgramCount}>
             {todayItems.length === 0 ? 'no programs' : `${todayItems.length} program${todayItems.length !== 1 ? 's' : ''}`}
           </span>
         )}
       </div>
-      <div style={{ borderRadius: 6, border: '1px solid var(--hds-line-s)', overflow: 'hidden' }}>
-        <div style={{ position: 'relative', height: 44, background: 'oklch(0.13 0.014 286)' }}>
+      <div className={stripStyles.stripFrame}>
+        <div className={stripStyles.stripTrack}>
           {!programs && (
-            <div style={{ position: 'absolute', inset: 0, background: 'oklch(0.16 0.014 286)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+            <div className={stripStyles.stripLoadingPulse} />
           )}
           {segs.map((s, i) => (
             <div
               key={i}
               title={[s.time, s.title, s.subtitle].filter(Boolean).join('  ·  ')}
+              className={stripStyles.stripSeg}
               style={{
-                position: 'absolute', top: 0, bottom: 0,
                 left: `${s.leftPct}%`, width: `${s.widthPct}%`,
                 background: s.bg,
-                borderLeft: '1px solid oklch(0.13 0.014 286)',
-                padding: '5px 7px',
-                overflow: 'hidden',
                 opacity: s.faded ? 0.45 : 1,
               }}
             >
-              <div style={{ fontSize: 8.5, color: s.faded ? 'var(--hds-txt-3)' : 'oklch(0.78 0.04 286)', letterSpacing: '0.06em', lineHeight: 1 }}>
+              <div className={`${stripStyles.stripSegTime} ${s.faded ? stripStyles.stripSegTimeFaded : stripStyles.stripSegTimeActive}`}>
                 {s.time}
               </div>
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: s.faded ? 'var(--hds-txt-3)' : 'var(--hds-txt)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 3, lineHeight: 1.2 }}>
+              <div className={`${stripStyles.stripSegTitle} ${s.faded ? stripStyles.stripSegTitleFaded : stripStyles.stripSegTitleActive}`}>
                 {s.title}
               </div>
               {s.subtitle && (
-                <div style={{ fontSize: 9, color: 'var(--hds-txt-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
+                <div className={stripStyles.stripSegSubtitle}>
                   {s.subtitle}
                 </div>
               )}
@@ -565,15 +625,10 @@ function ChannelGuideStrip({ channelId, timezone }: { channelId: string; timezon
           ))}
           {/* Now indicator */}
           {programs && segs.length > 0 && (
-            <div style={{
-              position: 'absolute', top: 0, bottom: 0, width: 2,
-              left: `${nowMins / 1440 * 100}%`,
-              background: 'oklch(0.85 0.18 50 / 0.9)',
-              pointerEvents: 'none',
-            }} />
+            <div className={stripStyles.stripNowIndicator} style={{ left: `${nowMins / 1440 * 100}%` }} />
           )}
           {programs && segs.length === 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--hds-txt-3)', fontSize: 11 }}>
+            <div className={stripStyles.stripEmpty}>
               No programs scheduled for today
             </div>
           )}
@@ -595,16 +650,14 @@ function ExportButton({ channel, onExport }: {
       <select
         value={depth}
         onChange={e => setDepth(e.target.value as ExportDepth)}
-        className="input text-xs rounded-r-none border-r-0 pr-1 pl-2 py-1 h-auto"
-        style={{ borderRight: 'none', borderRadius: '6px 0 0 6px' }}
+        className="input text-xs rounded-r-none rounded-l-md border-r-0 pr-1 pl-2 py-1 h-auto"
       >
         <option value="shallow">Shallow</option>
         <option value="deep">Deep</option>
       </select>
       <button
         onClick={() => onExport(channel, depth)}
-        className="btn-secondary rounded-l-none text-xs px-2"
-        style={{ borderRadius: '0 6px 6px 0' }}
+        className="btn-secondary rounded-l-none rounded-r-md text-xs px-2"
       >
         Export
       </button>

@@ -1,7 +1,8 @@
 import { observer } from 'mobx-react-lite'
-import { useEffect, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import {useEffect, useRef, useState} from 'react'
+import {useParams, useNavigate, Link} from 'react-router-dom'
 import { channelStore } from '../stores'
+import {useAuth} from '../auth/AuthContext'
 import { store } from '../channel/store'
 import { DAYS, GUTTER_W, DAY_MIN_W, PPH_DEFAULT } from '../channel/constants'
 import { zoomBtnStyle } from '../channel/styles'
@@ -14,11 +15,22 @@ import { BulkEditPanel } from '../channel/BulkEditPanel'
 import ChannelFillerOverlay from '../channel/ChannelFillerOverlay'
 import ChannelBumperOverlay from '../channel/ChannelBumperOverlay'
 import type { Block } from '../api/types'
+import styles from './ChannelDetailPage.module.css'
 
 export default observer(function ChannelDetailPage() {
   const { id } = useParams<{ id: string }>()
+    const navigate = useNavigate()
+    const {user} = useAuth()
   const channel   = channelStore.channels.find(c => c.channel_id === id)
   const scrollRef = useRef<HTMLDivElement>(null)
+    const [confirmingLiveSave, setConfirmingLiveSave] = useState(false)
+    // 'ask-reset' gates a save that would hard-reset every viewer's place in
+    // this channel (see store.hasStructuralChanges) behind an explicit
+    // reset-vs-keep choice instead of doing it silently. pendingApplyLive
+    // carries along whichever save button (Save Channel vs Update Live…)
+    // triggered the prompt, since both can hit a structural change.
+    const [saveMode, setSaveMode] = useState<null | 'ask-reset'>(null)
+    const [pendingApplyLive, setPendingApplyLive] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -29,7 +41,24 @@ export default observer(function ChannelDetailPage() {
         if (scrollRef.current) scrollRef.current.scrollTop = Math.round(15.5 * store.pxPerHour)
       }, 80)
     })
+      return () => store.dispose()
   }, [id])
+
+    // The full drag-and-drop editor below assumes write access to whatever
+    // channel it's pointed at — it predates non-admin access entirely, and
+    // teaching every panel (DayColumn, EditorPanel, BlockEditMain, ...) a
+    // parallel read-only mode is out of scope here. The server is the real
+    // authorization boundary (channel_auth::canEditChannel 403s every
+    // mutation regardless) — this is just a coarse client-side bounce away
+    // from an editor a non-owner would only see broken write attempts in,
+    // for someone who reached this URL directly rather than through
+    // ChannelsPage's own canEdit-gated "Edit Schedule" link.
+    useEffect(() => {
+        if (!channel || !user) return
+        if (user.role !== 'admin' && channel.owner_user_id !== user.user_id) {
+            navigate('/channels', {replace: true})
+        }
+    }, [channel, user, navigate])
 
   useEffect(() => {
     if (channel) store.initChannelDraft(channel)
@@ -51,6 +80,27 @@ export default observer(function ChannelDetailPage() {
 
   const editing = store.selectedId !== null || store.isNewMode
 
+    // Entry point for both "Save Channel" and "Update Live…" — routes into the
+    // reset-positions prompt when the pending edit is structural enough to wipe
+    // cursor state, otherwise falls back to the pre-existing behavior for each
+    // (a plain save, or the live-interrupt confirmation).
+    function requestSave(applyLive: boolean) {
+        if (channel && store.hasStructuralChanges(channel)) {
+            setPendingApplyLive(applyLive)
+            setSaveMode('ask-reset')
+        } else if (applyLive) {
+            setConfirmingLiveSave(true)
+        } else {
+            store.saveChannel(id!)
+        }
+    }
+
+    async function finalizeSave(preserveCursor: boolean) {
+        const applyLive = pendingApplyLive
+        setSaveMode(null)
+        await store.saveChannel(id!, applyLive, preserveCursor)
+    }
+
   // Merge the active draft into blocks so the EPG preview reacts to unsaved changes.
   const epgBlocks: Block[] = (() => {
     if (store.editing) {
@@ -70,138 +120,210 @@ export default observer(function ChannelDetailPage() {
   })()
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--hds-bg)', fontFamily: "'JetBrains Mono', monospace", fontSize: 13, letterSpacing: '0.01em', color: 'var(--hds-txt)' }}>
+    <div className={styles.root}>
 
       {/* ── Top bar ───────────────────────────────────────────────────────── */}
-      <header style={{ display: 'flex', alignItems: 'center', gap: 18, padding: '14px 24px', borderBottom: '1px solid var(--hds-line-s)', background: 'oklch(0.17 0.018 286 / 0.6)', flexShrink: 0 }}>
-        <Link to="/channels" style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--hds-txt-2)', textDecoration: 'none', padding: '6px 9px', borderRadius: 7 }}>
-          <span style={{ fontSize: 14 }}>←</span><span>Channels</span>
+      <header className={styles.header}>
+        <Link to="/channels" className={styles.backLink}>
+          <span className={styles.backArrow}>←</span><span>Channels</span>
         </Link>
-        <div style={{ width: 1, height: 22, background: 'var(--hds-line-s)' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 28, height: 28, padding: '0 8px', borderRadius: 7, background: 'var(--hds-bg-3)', color: 'var(--hds-gold)', fontWeight: 700, fontSize: 13, boxShadow: 'inset 0 0 0 1px var(--hds-line)' }}>
+        <div className={styles.divider} />
+        <div className={styles.channelIdentity}>
+          <span className={styles.channelNumberBadge}>
             {channel?.number ?? '?'}
           </span>
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: '0.01em' }}>
+          <span className={styles.channelName}>
             {channel?.name ?? 'Channel'}
           </span>
-          <span style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--hds-txt-3)', padding: '3px 7px', border: '1px solid var(--hds-line-s)', borderRadius: 5 }}>
+          <span className={styles.timezoneBadge}>
             {channel?.timezone ?? 'UTC'}
           </span>
         </div>
 
-        <div style={{ flex: 1 }} />
+        <div className={styles.spacer} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--hds-bg-3)', border: '1px solid var(--hds-line-s)', borderRadius: 9, padding: 3 }}>
+        <div className={styles.zoomControl}>
           <button onClick={() => store.zoom(-1)} style={zoomBtnStyle}>−</button>
-          <span style={{ minWidth: 52, textAlign: 'center', fontSize: 11, color: 'var(--hds-txt-2)', letterSpacing: '0.06em' }}>{zoomPct}</span>
+          <span className={styles.zoomLabel}>{zoomPct}</span>
           <button onClick={() => store.zoom(1)} style={zoomBtnStyle}>+</button>
         </div>
 
         <button
           onClick={() => store.toggleBulkMode()}
-          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 14px', border: `1px solid ${store.bulkMode ? 'var(--hds-violet)' : 'var(--hds-line)'}`, borderRadius: 9, background: store.bulkMode ? 'oklch(0.38 0.09 287 / 0.25)' : 'transparent', color: store.bulkMode ? 'var(--hds-txt)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, cursor: 'pointer', transition: '.12s' }}
+          className={`${styles.headerBtn} ${store.bulkMode ? styles.headerBtnActive : styles.headerBtnNeutral}`}
         >
           ⊞ Multi
         </button>
 
-        {store.isDirty && (
+          {store.isDirty && !confirmingLiveSave && saveMode !== 'ask-reset' && (
           <button
             onClick={() => store.discardChanges(id)}
             disabled={store.channelSaving}
-            style={{ padding: '9px 14px', border: '1px solid var(--hds-line)', borderRadius: 9, background: 'transparent', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, cursor: 'pointer', transition: '.12s' }}
+            className={`${styles.headerBtn} ${styles.headerBtnNeutralMuted}`}
           >
             Discard
           </button>
         )}
 
-        <button
-          onClick={() => store.saveChannel(id)}
-          disabled={store.channelSaving || !store.isDirty}
-          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', border: 'none', borderRadius: 9, background: store.isDirty ? 'oklch(0.42 0.13 145)' : 'oklch(0.28 0.04 145)', color: store.isDirty ? 'oklch(0.95 0.03 145)' : 'oklch(0.5 0.04 145)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: store.isDirty ? 'pointer' : 'default', transition: '.15s', boxShadow: store.isDirty ? '0 4px 16px -4px oklch(0.42 0.13 145 / 0.5)' : 'none' }}
-        >
-          {store.channelSaving ? 'Saving…' : 'Save Channel'}
-        </button>
+          {saveMode === 'ask-reset' ? (
+              <span className={styles.liveSaveWarning}>See prompt below ↓</span>
+          ) : confirmingLiveSave ? (
+              <>
+            <span className={styles.liveSaveWarning}>
+              Interrupts anyone currently watching this channel — apply now?
+            </span>
+                  <button
+                      onClick={async () => {
+                          await store.saveChannel(id, true);
+                          setConfirmingLiveSave(false)
+                      }}
+                      disabled={store.channelSaving}
+                      className={`${styles.headerBtn} ${styles.headerBtnWarning}`}
+                  >
+                      {store.channelSaving ? 'Saving…' : 'Yes, update live'}
+                  </button>
+                  <button
+                      onClick={() => setConfirmingLiveSave(false)}
+                      disabled={store.channelSaving}
+                      className={`${styles.headerBtn} ${styles.headerBtnNeutralMuted}`}
+                  >
+                      Cancel
+                  </button>
+              </>
+          ) : (
+              <>
+                  {store.isDirty && (
+                      <button
+                          onClick={() => requestSave(true)}
+                          disabled={store.channelSaving}
+                          title="Save and also cut over anything currently streaming this channel to the new programming immediately, instead of only applying it going forward"
+                          className={`${styles.headerBtn} ${styles.headerBtnNeutralMuted}`}
+                      >
+                          Update Live…
+                      </button>
+                  )}
+                  <button
+                      onClick={() => requestSave(false)}
+                      disabled={store.channelSaving || !store.isDirty}
+                      className={`${styles.saveBtn} ${store.isDirty ? styles.saveBtnDirty : styles.saveBtnClean}`}
+                  >
+                      {store.channelSaving ? 'Saving…' : 'Save Channel'}
+                  </button>
+              </>
+          )}
 
         <button
           onClick={() => store.clearEpgCache(id)}
           disabled={store.epgClearing}
           title="Delete the committed EPG cache and regenerate from the current cursor position"
-          style={{ padding: '9px 14px', border: '1px solid var(--hds-line)', borderRadius: 9, background: 'transparent', color: store.epgClearing ? 'var(--hds-txt-3)' : 'var(--hds-txt-2)', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, cursor: store.epgClearing ? 'default' : 'pointer', transition: '.12s' }}
+          className={`${styles.headerBtn} ${store.epgClearing ? `${styles.headerBtnNeutralMuted} ${styles.headerBtnDisabledCursor}` : styles.headerBtnNeutral}`}
         >
           {store.epgClearing ? 'Clearing…' : 'Regen EPG'}
         </button>
 
         <button
           onClick={() => store.openNew()}
-          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', border: 'none', borderRadius: 9, background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))', color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: '0 4px 16px -4px oklch(0.83 0.13 84 / 0.5)' }}
+          className={styles.addBlockBtn}
         >
-          <span style={{ fontSize: 15, lineHeight: 1 }}>+</span> Add Block
+          <span className={styles.addBlockPlus}>+</span> Add Block
         </button>
       </header>
 
       {store.error && (
-        <div style={{ padding: '10px 24px', background: 'oklch(0.2 0.05 22 / 0.3)', borderBottom: '1px solid oklch(0.4 0.1 22 / 0.4)', color: 'oklch(0.72 0.16 22)', fontSize: 12, flexShrink: 0 }}>
+        <div className={styles.errorBanner}>
           {store.error}
         </div>
       )}
 
       {store.scheduleChanged && !store.channelSaving && (
-        <div style={{ padding: '9px 24px', background: 'oklch(0.22 0.07 76 / 0.4)', borderBottom: '1px solid oklch(0.45 0.1 76 / 0.5)', color: 'oklch(0.82 0.12 80)', fontSize: 11, letterSpacing: '0.03em', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ opacity: 0.7 }}>⚠</span>
+        <div className={styles.scheduleChangedBanner}>
+          <span className={styles.scheduleChangedIcon}>⚠</span>
           Schedule has changed since last save — weekly anchor seeds differ from confirmed. Save Channel to lock in the new schedule.
         </div>
       )}
 
+        {saveMode === 'ask-reset' && (
+            <div className={styles.resetPromptBanner}>
+                <span className={styles.scheduleChangedIcon}>⚠</span>
+                <span className={styles.resetPromptText}>
+            This changes the schedule's structure (timing, priority, cursor scope, or an added/removed block)
+                    {pendingApplyLive ? ' and will interrupt anyone watching this channel right now. ' : '. '}
+                    By default that resets every viewer's place in this channel's content back to the start —
+            you can keep everyone's current position instead, though the schedule around it may not line up as cleanly.
+          </span>
+                <button
+                    onClick={() => finalizeSave(false)}
+                    disabled={store.channelSaving}
+                    className={`${styles.headerBtn} ${styles.headerBtnWarning}`}
+                >
+                    {store.channelSaving ? 'Saving…' : 'Reset positions & save'}
+                </button>
+                <button
+                    onClick={() => finalizeSave(true)}
+                    disabled={store.channelSaving}
+                    className={`${styles.headerBtn} ${styles.headerBtnNeutral}`}
+                >
+                    {store.channelSaving ? 'Saving…' : 'Keep positions & save'}
+                </button>
+                <button
+                    onClick={() => setSaveMode(null)}
+                    disabled={store.channelSaving}
+                    className={`${styles.headerBtn} ${styles.headerBtnNeutralMuted}`}
+                >
+                    Cancel
+                </button>
+            </div>
+        )}
+
       {store.channelSaveErr && (
-        <div style={{ padding: '9px 24px', background: 'oklch(0.2 0.05 22 / 0.3)', borderBottom: '1px solid oklch(0.4 0.1 22 / 0.4)', color: 'oklch(0.72 0.16 22)', fontSize: 11, flexShrink: 0 }}>
+        <div className={styles.errorBanner}>
           Save failed: {store.channelSaveErr}
         </div>
       )}
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div className={styles.bodyWrap}>
 
         {/* Content area — switches between block edit mode and week grid */}
-        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        <div className={styles.contentArea}>
 
           {editing ? (
             /* ── Block editing mode ─────────────────────────────────────── */
             <>
               <BlockEditMain channelId={id} store={store} />
-              <aside style={{ flexShrink: 0, width: 360, borderLeft: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <aside className={styles.editorAside}>
                 <EditorPanel channelId={id} store={store} />
               </aside>
             </>
           ) : (
             /* ── Default view: week grid + channel/bulk sidebar ─────────── */
             <>
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: 'auto' }} className="scrollbar-dark">
+              <div className={styles.gridViewCol}>
+                <div ref={scrollRef} className={`${styles.gridScroll} scrollbar-dark`}>
                   <div style={{ minWidth: GUTTER_W + DAY_MIN_W * 7 }}>
 
                     {/* Sticky day header */}
-                    <div style={{ display: 'flex', position: 'sticky', top: 0, zIndex: 25, borderBottom: '1px solid var(--hds-line-s)', background: 'var(--hds-bg)' }}>
+                    <div className={styles.dayHeaderRow}>
                       <div style={{ width: GUTTER_W, flexShrink: 0 }} />
                       {DAYS.map(([, long]) => (
-                        <div key={long} style={{ flex: `1 0 ${DAY_MIN_W}px`, textAlign: 'center', padding: '11px 0', fontSize: 10, letterSpacing: '0.24em', color: 'var(--hds-txt-2)', borderLeft: '1px solid var(--hds-line-s)' }}>
+                        <div key={long} className={styles.dayHeaderLabel} style={{ flex: `1 0 ${DAY_MIN_W}px` }}>
                           {long}
                         </div>
                       ))}
                     </div>
 
                     {/* Grid body */}
-                    <div style={{ display: 'flex' }}>
+                    <div className={styles.gridBodyRow}>
                       {/* Time gutter */}
-                      <div style={{ width: GUTTER_W, flexShrink: 0, position: 'relative', height: gridH }}>
+                      <div className={styles.timeGutter} style={{ width: GUTTER_W, height: gridH }}>
                         {Array.from({ length: 25 }, (_, h) => (
-                          <div key={h} style={{ position: 'absolute', top: h * pph, right: 9, transform: 'translateY(-50%)', fontSize: 10, color: 'var(--hds-txt-3)', letterSpacing: '0.04em' }}>
+                          <div key={h} className={styles.timeGutterLabel} style={{ top: h * pph }}>
                             {String(h).padStart(2, '0')}:00
                           </div>
                         ))}
                       </div>
                       {DAYS.map(([, long], di) => (
-                        <DayColumn key={long} dayIdx={di} blocks={store.blocks} pph={pph} selectedId={store.selectedId} store={store} channelId={id} />
+                        <DayColumn key={long} dayIdx={di} blocks={store.blocks} pph={pph} selectedId={store.selectedId} store={store} channelId={id} enableCreate />
                       ))}
                     </div>
 
@@ -209,7 +331,7 @@ export default observer(function ChannelDetailPage() {
                 </div>
               </div>
 
-              <aside style={{ flexShrink: 0, width: 392, borderLeft: '1px solid var(--hds-line-s)', background: 'var(--hds-bg-2)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <aside className={styles.bulkAside}>
                 {store.bulkMode ? (
                   <BulkEditPanel channelId={id} store={store} />
                 ) : (

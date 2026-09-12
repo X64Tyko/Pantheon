@@ -322,6 +322,51 @@ TEST_F(CursorStateTest, ApplyToDB_GlobalCursorsAreUpserted) {
     EXPECT_EQ(q.getColumn(1).getInt(), 9);
 }
 
+// Regression: a stale episode_id watermark (episode deleted since the cursor
+// was last written — orphan cleanup nulls *live* media_cursor rows when that
+// happens, but never scrubs a channel's anchor_hashes snapshot, so a stale id
+// can resurface here after being deserialized back out of one) used to throw
+// a FOREIGN KEY constraint violation straight out of applyToDB, which
+// EPGMaterializer::commit() had no per-entry guard against — one dangling
+// reference aborted the *entire* commit and 500'd GET /api/channels/:id/epg
+// for the whole channel. Reproduced live against a real dev DB with an
+// orphaned channel before fixing.
+TEST_F(CursorStateTest, ApplyToDB_SkipsStaleEpisodeWatermarkInsteadOfThrowing) {
+    insertChannel(db.get(), "c1");
+    db.get().exec("INSERT INTO show (show_id, title) VALUES ('s1','Test')");
+    // Deliberately no INSERT INTO episode — 'e-deleted' doesn't exist.
+
+    CursorState state;
+    state.setCursorPos("show", "s1", "channel", "c1", 3, "e-deleted");
+    EXPECT_NO_THROW(state.applyToDB(db, "c1"));
+
+    SQLite::Statement q(db.get(),
+        "SELECT COUNT(*) FROM media_cursor WHERE content_type='show' AND content_id='s1'");
+    q.executeStep();
+    EXPECT_EQ(q.getColumn(0).getInt(), 0) << "The bad row is dropped, not silently left half-written";
+}
+
+// A stale cursor for one show shouldn't take a healthy cursor for another
+// show down with it — same "skip just the one bad entry" contract as
+// commit()'s scheduled_program insert loop.
+TEST_F(CursorStateTest, ApplyToDB_GoodCursorsSurviveAlongsideAStaleOne) {
+    insertChannel(db.get(), "c1");
+    db.get().exec("INSERT INTO show (show_id, title) VALUES ('s1','Test')");
+    db.get().exec("INSERT INTO show (show_id, title) VALUES ('s2','Test2')");
+    db.get().exec("INSERT INTO episode (episode_id, show_id, season, episode, title, file_path, duration_ms) "
+                  "VALUES ('e2','s2',1,1,'Ep','/x/e2.mkv',1800000)");
+
+    CursorState state;
+    state.setCursorPos("show", "s1", "channel", "c1", 3, "e-deleted");
+    state.setCursorPos("show", "s2", "channel", "c1", 7, "e2");
+    EXPECT_NO_THROW(state.applyToDB(db, "c1"));
+
+    SQLite::Statement q(db.get(),
+        "SELECT position FROM media_cursor WHERE content_type='show' AND content_id='s2'");
+    ASSERT_TRUE(q.executeStep());
+    EXPECT_EQ(q.getColumn(0).getInt(), 7);
+}
+
 TEST_F(CursorStateTest, ClearFromDB_RemovesChannelAndBlockScopedState) {
     insertChannel(db.get(), "c1");
     insertBlock(db.get(), "b1", "c1");

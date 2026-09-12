@@ -1,5 +1,5 @@
 import { FocusContext, setFocus, doesFocusableExist } from '@noriginmedia/norigin-spatial-navigation'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { useNavigate } from 'react-router-dom'
 import { libraryStore } from '../stores/LibraryStore'
@@ -10,6 +10,8 @@ import { useFocusable } from '../nav/useFocusable'
 import { useNavBack } from '../nav/back'
 import { TvMediaGrid } from './TvMediaGrid'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
+import { useZoneManifest } from './useZoneManifest'
+import styles from './TvLibrary.module.css'
 
 const TV_LIBRARY_PATH = '/tv/library'
 
@@ -24,6 +26,19 @@ export const TvLibrary = observer(function TvLibrary() {
   const debouncedQ = useDebounce(rawQ, 300)
   const [genres, setGenres] = useState<string[]>([])
   const [isFilterOpen, setIsFilterOpen] = useState(false)
+  // Which zones this screen actually renders — search-bar/library-pills/
+  // filter-pills/tile-grid, per GET /api/tv/manifest's library.zones. Gates
+  // presence of the secondary chrome (search, content-type toggle, genre
+  // filter); the grid itself always attempts to render regardless of
+  // manifest load state, same resilience the Home shelves already have.
+  const { hasZone, zone } = useZoneManifest('library')
+  // filter-pills declares which fields are filterable (today just
+  // ["genre"]) — this screen only has genre filtering actually wired up, so
+  // the check is "is genre among the declared fields" rather than a fully
+  // generic loop. A real multi-field filter system (LibraryStore currently
+  // only has a dedicated filterGenre, not a generic filter-value map) is
+  // real follow-up scope, not built in this pass.
+  const genreFilterEnabled = (zone('filter-pills')?.filterFields ?? []).includes('genre')
 
   // Set only when this mount is the remote's Back arriving from a grid
   // item's Detail route (TvMediaCard's onClick below) — consumed once so a
@@ -66,34 +81,32 @@ export const TvLibrary = observer(function TvLibrary() {
   }, [restoreFocusKey, store.loading])
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '24px 48px 16px', display: 'flex', flexDirection: 'column', gap: 14, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+    <div className={styles.screen}>
+      <div className={styles.header}>
+        <div className={styles.headerRow}>
           <TvBackButton onClick={() => navigate('/tv')} forceFocus={!restoreFocusKey} />
-          <h1 style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 24, fontWeight: 700,
-            color: 'var(--hds-txt)', margin: 0, letterSpacing: '-0.02em',
-          }}>Library</h1>
-          <TvSearchField value={rawQ} onChange={setRawQ} />
-          <TvFilterToggle active={isFilterOpen} onClick={() => setIsFilterOpen(!isFilterOpen)} />
+          <h1 className={styles.title}>Library</h1>
+          {hasZone('search-bar') && <TvSearchField value={rawQ} onChange={setRawQ} />}
+          {(hasZone('library-pills') || genreFilterEnabled) && (
+            <TvFilterToggle active={isFilterOpen} onClick={() => setIsFilterOpen(!isFilterOpen)} />
+          )}
         </div>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      <div className={styles.gridArea}>
         <TvFilterOverlay
           open={isFilterOpen}
           onClose={() => setIsFilterOpen(false)}
           genres={genres}
+          showContentTypeSection={hasZone('library-pills')}
+          showGenreSection={genreFilterEnabled}
         />
 
-        <div style={{ height: '100%', overflowY: 'auto' }} className="scrollbar-dark">
+        <div className={`${styles.scrollArea} scrollbar-dark`}>
         {store.loading ? (
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-            gap: 24, padding: '8px 48px',
-          }}>
+          <div className={styles.skeletonGrid}>
             {Array.from({ length: 12 }, (_, i) => (
-              <div key={i} className="hds-skeleton" style={{ aspectRatio: '2/3', borderRadius: 12 }} />
+              <div key={i} className={`hds-skeleton ${styles.skeletonTile}`} />
             ))}
           </div>
         ) : (
@@ -126,11 +139,7 @@ function TvBackButton({ onClick, forceFocus = true }: { onClick: () => void; for
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        width: 38, height: 38, borderRadius: '50%', cursor: 'pointer', flexShrink: 0,
-        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}
+      className={styles.backButton}
     >
       <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 2L4 7l5 5" />
@@ -149,19 +158,12 @@ function TvSearchField({ value, onChange }: { value: string; onChange: (v: strin
     onEnterPress: () => (ref.current?.querySelector('input') as HTMLInputElement | null)?.focus(),
   })
   return (
-    <div ref={ref} data-tv-focused={focused} style={{
-      flex: 1, maxWidth: 380,
-      border: `1px solid ${focused ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-      borderRadius: 10, background: 'var(--hds-bg-2)',
-    }}>
+    <div ref={ref} data-tv-focused={focused} className={`${styles.searchField} ${focused ? styles.searchFieldFocused : ''}`}>
       <input
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder="Search library…"
-        style={{
-          width: '100%', height: 38, padding: '0 16px', border: 'none', background: 'transparent',
-          color: 'var(--hds-txt)', fontFamily: "'JetBrains Mono', monospace", fontSize: 14, outline: 'none',
-        }}
+        className={styles.searchInput}
       />
     </div>
   )
@@ -176,14 +178,7 @@ function TvFilterToggle({ active, onClick }: { active: boolean; onClick: () => v
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-        padding: '0 16px', height: 38, borderRadius: 10,
-        border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-        background: active ? 'oklch(0.55 0.14 292 / 0.2)' : 'var(--hds-bg-2)',
-        color: active ? 'var(--hds-violet)' : 'var(--hds-txt)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 13,
-      }}
+      className={`${styles.filterToggle} ${active ? styles.filterToggleActive : ''}`}
     >
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
         <path d="M1.5 3.5h11M3.5 7h7M5.5 10.5h3" strokeLinecap="round" />
@@ -193,8 +188,9 @@ function TvFilterToggle({ active, onClick }: { active: boolean; onClick: () => v
   )
 }
 
-const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genres }: {
+const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genres, showContentTypeSection, showGenreSection }: {
   open: boolean; onClose: () => void; genres: string[]
+  showContentTypeSection: boolean; showGenreSection: boolean
 }) {
   const store = libraryStore
   const { ref, focusKey } = useFocusable<object, HTMLDivElement>({
@@ -204,59 +200,67 @@ const TvFilterOverlay = observer(function TvFilterOverlay({ open, onClose, genre
     autoRestoreFocus: true,
   })
 
+  // isFocusBoundary only stops focus that's already inside this subtree from
+  // leaving it — it does nothing if focus never actually moved in here to
+  // begin with. Opening the overlay was pure React state with no setFocus()
+  // call, so the D-pad kept driving whatever grid tile was focused
+  // underneath (visually hidden but still logically focused) — reported as
+  // "pressing down scrolls the library instead of focusing filter options."
+  // Close needs its own real focusKey to have a first target at all — it was
+  // a plain <button>, entirely outside spatial-nav before this.
+  useLayoutEffect(() => {
+    if (open) setFocus('tv-library-filter-close')
+  }, [open])
+
   if (!open) return null
 
   return (
     <FocusContext.Provider value={focusKey}>
-    <div
-      ref={ref}
-      style={{
-        position: 'absolute', inset: 0, zIndex: 10,
-        background: 'oklch(0 0 0 / 0.65)', backdropFilter: 'blur(12px)',
-        display: 'flex', flexDirection: 'column',
-      }}
-    >
-      <div style={{
-        padding: '32px 48px', display: 'flex', flexDirection: 'column', gap: 24,
-        maxHeight: '100%', overflowY: 'auto',
-      }} className="scrollbar-dark">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 20, fontWeight: 700,
-            color: 'var(--hds-txt)', margin: 0,
-          }}>Filters</h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none', border: 'none', color: 'var(--hds-txt-3)', cursor: 'pointer',
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 13,
-            }}
-          >Close (Back)</button>
+    <div ref={ref} className={styles.filterOverlay}>
+      <div className={`${styles.filterOverlayInner} scrollbar-dark`}>
+        <div className={styles.filterHeaderRow}>
+          <h2 className={styles.filterTitle}>Filters</h2>
+          <TvFilterCloseButton onClick={onClose} />
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--hds-txt-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Content Type</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <GenreChip label="All Types" active={store.contentType === 'all'} onClick={() => store.setContentType('all')} />
-            <GenreChip label="Shows"     active={store.contentType === 'show'} onClick={() => store.setContentType('show')} />
-            <GenreChip label="Movies"    active={store.contentType === 'movie'} onClick={() => store.setContentType('movie')} />
+        {showContentTypeSection && (
+          <div className={styles.filterSection}>
+            <div className={styles.filterSectionLabel}>Content Type</div>
+            <div className={styles.chipRow}>
+              <GenreChip label="All Types" active={store.contentType === 'all'} onClick={() => store.setContentType('all')} />
+              <GenreChip label="Shows"     active={store.contentType === 'show'} onClick={() => store.setContentType('show')} />
+              <GenreChip label="Movies"    active={store.contentType === 'movie'} onClick={() => store.setContentType('movie')} />
+            </div>
           </div>
-        </div>
+        )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--hds-txt-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Genres</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <GenreChip label="All Genres" active={!store.filterGenre} onClick={() => store.setFilterGenre('')} />
-            {genres.map(g => (
-              <GenreChip key={g} label={g} active={store.filterGenre === g} onClick={() => store.setFilterGenre(g)} />
-            ))}
+        {showGenreSection && (
+          <div className={styles.filterSection}>
+            <div className={styles.filterSectionLabel}>Genres</div>
+            <div className={styles.chipRow}>
+              <GenreChip label="All Genres" active={!store.filterGenre} onClick={() => store.setFilterGenre('')} />
+              {genres.map(g => (
+                <GenreChip key={g} label={g} active={store.filterGenre === g} onClick={() => store.setFilterGenre(g)} />
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
     </FocusContext.Provider>
   )
 })
+
+function TvFilterCloseButton({ onClick }: { onClick: () => void }) {
+  const { ref, focused } = useFocusable<object, HTMLButtonElement>({
+    focusKey: 'tv-library-filter-close', onEnterPress: onClick,
+  })
+  return (
+    <button ref={ref} data-tv-focused={focused} onClick={onClick} className={styles.closeButton}>
+      Close (Back)
+    </button>
+  )
+}
 
 function GenreChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   const { ref, focused } = useFocusable<object, HTMLButtonElement>({
@@ -266,16 +270,7 @@ function GenreChip({ label, active, onClick }: { label: string; active: boolean;
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        padding: '8px 16px', borderRadius: 20, cursor: 'pointer',
-        border: `1px solid ${active ? 'var(--hds-violet)' : 'var(--hds-line)'}`,
-        background: active ? 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))' : 'var(--hds-bg-2)',
-        color: active ? 'oklch(0.2 0.04 70)' : 'var(--hds-txt-2)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 13, whiteSpace: 'nowrap',
-        fontWeight: active ? 700 : 400,
-        boxShadow: active ? '0 4px 12px -2px oklch(0.83 0.13 84 / 0.3)' : 'none',
-        transition: 'all 0.15s',
-      }}
+      className={`${styles.chip} ${active ? styles.chipActive : ''}`}
     >{label}</button>
   )
 }

@@ -1,14 +1,58 @@
 # Pantheon
 
-A media platform built around three pillars:
+A self-hosted media platform that goes further than library management. Three things it does that nothing else does the
+same way:
 
-- **Media library management** — sync from Plex, Jellyfin, Emby, or local filesystem; scrape metadata from TMDB/TVDB/AniDB; manage collections, and content catalogues across sources.
-- **IPTV scheduling** — build 24/7 channels with block schedules, rerun rules, filler, bumpers, and live EPG. Connect any IPTV client or route through XTeve into Plex DVR.
-- **Media player** — direct playback within Hades and native client applications.
+- **Block-based channel scheduling** — build the *structure* of a 24/7 channel (blocks, rerun rules, true
+  Toonami/OSM-style timeslots with intro/outro/interstitials) and let Pantheon project a deterministic, memory-first EPG
+  from it. No manual slot filling, no drift, no surprises.
+- **Unified library with cross-source intelligence** — movies and shows live in one library, not separate ones. Filter
+  by Horror released after 2000, sort by audience rating, and you get a single list across your entire server not a
+  movie result and a separate TV result. Pantheon also deduplicates across sources, links specials automatically,
+  enriches metadata with extra tags, and writes corrections back to your original libraries.
+- **Native clients, not webview wrappers** — web, Android, and Roku are built on SDUI manifests with real capability
+  detection so each client direct-streams what it can and transcodes only what it must.
 
-## Alpha Release Notice
+## Live Demo
 
-Pantheon is currently in **Alpha**. This is a source-available engineering artifact. We do not accept unsolicited pull requests. If you encounter an issue, please read our [Contributing Guidelines](CONTRIBUTING.md), check the [Roadmap](docs/ROADMAP.md), and use the [Issue Template](.github/ISSUE_TEMPLATE/bug_report.yml).
+Try Pantheon without installing anything: **[pantheonmedia.app](http://pantheonmedia.app)**
+
+Hit "Continue as Guest" on the login screen for a passwordless, self-service account — browse the demo library, build
+your own live channel against it, and watch it right in the browser. Guest accounts are yours alone (nobody can modify
+your channel but you) and are automatically cleaned up after a period of inactivity, so there's nothing to reset on your
+way out.
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><a href="docs/screens/HomePage.jpg"><img src="docs/screens/HomePage.jpg" width="100%"/></a><br/><sub><b>Home</b> — hero carousel, Continue Watching, and library shelves.</sub></td>
+<td width="50%"><a href="docs/screens/Guide.jpg"><img src="docs/screens/Guide.jpg" width="100%"/></a><br/><sub><b>Live guide</b> — its own page now, with a synced channel grid and a live now-playing hero.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/screens/Channels01.png"><img src="docs/screens/Channels01.png" width="100%"/></a><br/><sub><b>Channels</b> — every channel's day at a glance.</sub></td>
+<td width="50%"><a href="docs/screens/ChannelEditor.png"><img src="docs/screens/ChannelEditor.png" width="100%"/></a><br/><sub><b>Channel editor</b> — full weekly schedule grid with timezone, EPG seed, and content-rating settings.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/screens/Sources01.png"><img src="docs/screens/Sources01.png" width="100%"/></a><br/><sub><b>Media sources</b> — Plex, Jellyfin, Emby, and local, side by side.</sub></td>
+<td width="50%"><a href="docs/screens/Review01.png"><img src="docs/screens/Review01.png" width="100%"/></a><br/><sub><b>Metadata review</b> — accept or reject uncertain scraper matches.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/screens/Activity.png"><img src="docs/screens/Activity.png" width="100%"/></a><br/><sub><b>Live activity</b> — sync status, now playing, system resources.</sub></td>
+<td width="50%"></td>
+</tr>
+</table>
+
+More in the full gallery — chapter review, per-account sync, multi-user & parental controls: **[x64tyko.github.io/Pantheon/Screenshots.html](https://x64tyko.github.io/Pantheon/Screenshots.html)**
+
+## Release Notice
+
+Pantheon is currently in **Beta** ([v0.3.0](https://github.com/X64Tyko/Pantheon/releases/latest) — Alpha completed
+at v0.2.0; track Beta progress on the [Beta Complete milestone](https://github.com/X64Tyko/Pantheon/milestone/1)).
+Pull requests come from official contributors and by invitation —
+see [About Pantheon](https://x64tyko.github.io/Pantheon/About.html)
+for why and how that works. If you encounter an issue, please read our [Contributing Guidelines](CONTRIBUTING.md),
+check the [Roadmap](docs/ROADMAP.md), and use the [Issue Template](.github/ISSUE_TEMPLATE/bug_report.yml).
 
 ---
 
@@ -18,14 +62,28 @@ Pantheon is currently in **Alpha**. This is a source-available engineering artif
 [![Hephaestus CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hephaestus.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hephaestus.yml)
 [![Hermes CI](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hermes.yml/badge.svg)](https://github.com/X64Tyko/Pantheon/actions/workflows/docker-hermes.yml)
 
-| Component | Status | Test Suite | Tests | Coverage (Target) |
-|---|---|---|---|---|
-| **Kairos** | Alpha | `momus_kairos` | 352 | ~85% (Core / Scheduler) |
-| **Hades** | Alpha | `vitest` | 135 | ~40% (API / Stores) |
-| **Hermes** | Alpha | `momus_hermes` | 19 | ~25% (Gateway) |
-| **Hephaestus** | Alpha | `momus_hephaestus` | 26 | ~25% (Transcoder) |
+| Component      | Status | Test Suite         | Tests | Risk Coverage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+|----------------|--------|--------------------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Kairos**     | Beta   | `momus_kairos`     | 766   | ~80% — dedicated regression suites for auth/session security, injection/SSRF, ownership permissions, and scheduler determinism; gaps are mostly in narrower repository-level edge cases (e.g. cross-table cleanup on delete) rather than the core request/scheduling paths                                                                                                                                                                                                                                  |
+| **Hades**      | Beta   | `vitest`           | 237   | ~45% — core stores/API client well exercised; `LibraryStore`'s mixed-browse fetch path (the default content view) now has direct coverage, closing what had been a real gap where the whole default browsing mode ran untested                                                                                                                                                                                                                                                                          |
+| **Hermes**     | Beta   | `momus_hermes`     | 58    | ~68% — the auth boundary in front of VOD/preview streaming (token validation, parental-controls access-check, fail-open-vs-fail-closed policy on both its branches) now has a dedicated end-to-end suite against a real router, closing what had been its single biggest gap; the broadcaster retry/death-ordering invariant and a real reconnect-under-a-different-user bug (now fixed) are also covered. Device/Watch Together routers' own separate auth gates are the next-largest piece still untested |
+| **Hephaestus** | Beta   | `momus_hephaestus` | 69    | ~50% — the two concurrency bugs with the widest blast radius (the multi-head segment-collision class, and the retry-on-unreachable-Kairos gap) now have real regression tests using actual spawned processes, not mocks. Still uncovered: the `current_item` data-race fix (races are inherently hard to pin in a deterministic test), the ffprobe-hang timeout, and `PreviewSession`'s/the HLS routes' real request-handling paths                                                                         |
 
-*Pantheon currently runs **532 automated tests** across the stack using the **Momus** framework and **Vitest**.*
+*Risk coverage above is a qualitative estimate of how much of each component's actual failure surface (security,
+concurrency, data integrity) has real test coverage — not a line/branch coverage percentage. More lines executed by a
+test doesn't mean more risk is covered: Hephaestus's number moved from ~25% to ~50% by adding 9 tests, not by adding the
+most tests — they were aimed at the two specific gaps with the highest actual blast radius, and real gaps (the ones
+listed above) remain even after that.*
+
+*Pantheon currently runs **1,130 automated tests** across the stack using the **Momus** framework and **Vitest** *
+
+Kairos's suite includes endpoint-level security regression tests (`momus/kairos/api/test_content_service_security.cpp`) that spin up a real `Router` against a throwaway database and fire actual attack payloads at the running server — e.g. confirming an admin can't forge the locally-cached-poster path sentinel into an arbitrary local file read via `PATCH /api/shows/:id` or the public `/api/images/proxy` endpoint, and that no secret content ever appears in a response when the attack is (correctly) rejected.
+
+The profile-switch PIN system (Netflix/Plex-style "Who's watching?" picker layered on top of the existing username/password login) is covered at two levels: `auth/test_auth_store.cpp` exercises `AuthStore::switchProfile` directly (PIN set/clear, correct/incorrect/absent PIN, the admin-profiles-always-require-a-PIN rule, and the 5-attempt lockout with its recovery window), while `api/test_auth_service_routes.cpp` spins up a real `Router` the same way the security regression tests do and drives the actual HTTP endpoints (`GET /api/auth/profiles`, `POST /api/auth/switch/:id`, `PATCH /api/users/:id/pin`) to confirm the routing/auth-gating layer wires that logic up correctly — e.g. that the profile picker is visible to any authenticated viewer (not admin-gated like `/api/users`), while setting a PIN is admin-only, and that switching profiles is denied without the right PIN.
+
+Kairos's endpoint tests also cover most of Hermes's and Hephaestus's own security surface: neither proxies to Kairos with any logic of its own, so Kairos's route-level suites (including the two above, plus `api/test_restriction_access_check.cpp` and `api/test_playback_and_channel_routes.cpp` for the `access-check`, `/api/auth/me`, `/api/channels`, and `/api/playback/:content_type/:id` endpoints those services depend on) validate what a client sees through either of them too.
+
+Scheduler determinism — the property the [Memory-First EPG Projection](docs/ARCHITECTURE.md) model depends on — is covered by `scheduler/test_natural_advance.cpp` (episode-order advancement against a library that changes shape mid-run: out-of-order backfills, multiple simultaneous gaps, season boundaries) and `scheduler/test_determinism_regression.cpp`, which runs the exact scenario that would otherwise let live schedule activity leak into a projection: generate a preview, commit an unrelated short-horizon schedule update in between (simulating ordinary background polling), then generate the same preview again and assert every item is still identical — across both UTC and non-UTC channel timezones.
 
 ---
 
@@ -42,6 +100,8 @@ curl -O https://raw.githubusercontent.com/X64Tyko/Pantheon/master/docker-compose
 
 (Or point Unraid's Compose Manager at that same URL.)
 
+This is the plain CPU-only, no-Cloudflare-Tunnel variant. If you know you want NVENC/VAAPI hardware transcoding and/or a Cloudflare Tunnel already, grab the matching pre-toggled variant instead from the [latest release's assets](https://github.com/X64Tyko/Pantheon/releases/latest) (`docker-compose.nvenc.yml`, `docker-compose.vaapi.yml`, or either with a `.cloudflared` suffix) — same file, just with the relevant lines below already uncommented, so you can skip steps 3 and the Remote Access section. All variants are otherwise identical, so switching later just means copying the toggled block into your own already-customized file.
+
 **2. Set your paths**
 
 Open `docker-compose.yml` and update the volume lines under `kairos` to point at your own directories:
@@ -57,7 +117,7 @@ These are Unraid-style example paths — any absolute host path works (e.g. `/ho
 
 **3. Pick your transcoding hardware** *(optional)*
 
-The `hephaestus` service transcodes on CPU by default. If you have a GPU, uncomment the matching block in its `environment`/`devices`/`runtime` lines:
+The `hephaestus` service transcodes on CPU by default. If you have a GPU, either grab `docker-compose.nvenc.yml` / `docker-compose.vaapi.yml` from the [latest release's assets](https://github.com/X64Tyko/Pantheon/releases/latest) instead of the plain file, or uncomment the matching block in its `environment`/`devices`/`runtime` lines yourself:
 
 | Hardware | What to uncomment |
 |---|---|
@@ -77,7 +137,7 @@ docker compose up -d
 docker compose ps
 ```
 
-All services should show `Up` — except `cloudflared`, which exits cleanly (`Exited (0)`) unless you've set up the optional [Cloudflare Tunnel](#remote-access-optional) token. That's expected, not a failure.
+All services should show `Up`. (If you're using a `.cloudflared` variant, that one service is the exception — it exits cleanly (`Exited (0)`) unless you've set up the optional [Cloudflare Tunnel](#remote-access-optional) token. That's expected, not a failure.)
 
 Open **http://your-server:8000** — that's the Hades management UI, served through Hermes.
 
@@ -89,7 +149,7 @@ Direct Kairos access (API, debugging) is on **:8081**.
 
 LAN-only `http://your-server:8000` works fine for local use, but some features — notably Chromecast sending from Hades — need a secure (HTTPS) context, which plain HTTP over a LAN address never satisfies.
 
-The compose file ships with an optional `cloudflared` service for exactly this, off by default:
+There's an optional `cloudflared` service for exactly this. It's commented out in the plain `docker-compose.yml` (nothing extra gets pulled if you don't need it) — either grab a `docker-compose.*.cloudflared.yml` variant from the [latest release's assets](https://github.com/X64Tyko/Pantheon/releases/latest) instead, or uncomment the `cloudflared:` block near the bottom of your own file yourself:
 
 1. In [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → **Networks → Tunnels → Create a tunnel** → connector type **Docker** → copy the token.
 2. In the same wizard, add a **Public Hostname** (e.g. `pantheon.yourdomain.com`) → service type **HTTP** → URL `hermes:8000`.
@@ -122,11 +182,16 @@ Enter the connection details and test the connection.
 
 ### 2. Add libraries and sync
 
-After saving the source, go back into it and add the libraries you want Kairos to know about (TV Shows, Movies). Hit **Sync** — Kairos fetches all episode metadata and file paths. 
+After saving the source, go back into it and add the libraries you want Kairos to know about (TV Shows, Movies). Hit *
+*Sync** — Kairos fetches all episode metadata and file paths. Watch state, play counts, and added dates are pulled from
+Plex/Jellyfin/Emby automatically, so your history comes with it.
 
-> **Important:** If you have the same media on multiple sources (e.g., Plex and a local mount), make sure to configure **Path Maps** (Step 3) *before* syncing. This allows Pantheon to deduplicate items and register them as the same piece of media rather than creating duplicates.
+> **Important:** If you have the same media on multiple sources (e.g., Plex and a local mount), make sure to configure *
+*Path Maps** (Step 3) *before* syncing. This allows Pantheon to deduplicate items across sources and register them as a
+> single canonical piece of media — one entry in your library, not two. Source priority controls which version plays back.
 
-Large libraries take a few minutes; progress is visible in the **Activity** log.
+Large libraries take a few minutes; progress is visible in the **Activity** log. Specials are linked across libraries
+automatically — no manual intervention needed.
 
 ### 3. Set the path map
 
@@ -181,14 +246,16 @@ TiViMate, Channels DVR, and most IPTV apps can consume the M3U and XMLTV endpoin
 
 Channels are built from **blocks** — recurring time slots on chosen days, each with a content list and an advancement rule.
 
-| Concept | What it does |
-|---|---|
-| **Block** | Owns a time window on specific days. Higher priority wins when blocks overlap. |
-| **Advancement** | How the block walks its list: `sequential`, `shuffle`, `smart_shuffle`, `rerun_shuffle`, `rerun_smart` |
-| **Cursor** | Bookmark inside a show — global (shared everywhere), channel (shared on this channel), or block (private). |
-| **Timeslot block** | Allows fixed-time programming slots (e.g. "Toonami") with multiple rotating shows and premiere dates. |
-| **Filler** | Patches gaps between programs so the channel never goes dark. Duration-aware: fits clips to the seam. |
-| **Bumpers** | Intro/outro branding clips at block boundaries, plus interstitials every N programs. |
+| Concept                 | What it does                                                                                                                               |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| **Block**               | Owns a time window on specific days. Higher priority wins when blocks overlap.                                                             |
+| **Advancement**         | How the block walks its list: `sequential`, `shuffle`, `smart_shuffle`, `rerun_shuffle`, `rerun_smart`                                     |
+| **Cursor**              | Bookmark inside a show — global (shared everywhere), channel (shared on this channel), or block (private).                                 |
+| **Timeslot block**      | Fixed-time programming slots (e.g. "Toonami") with multiple rotating shows, premiere dates, and per-block intro, outro, and interstitials. |
+| **Rerun blocks**        | True independent reruns — not linked slots replaying the same file, but a separate block advancing its own cursor through the content.     |
+| **Filler**              | Patches gaps between programs so the channel never goes dark. Duration-aware: fits clips to the seam.                                      |
+| **Bumpers**             | Intro/outro branding clips at block boundaries, plus interstitials every N programs.                                                       |
+| **Shareable structure** | Channel layouts can be exported and shared — the structure, not a snapshot of the EPG.                                                     |
 
 For a full visual breakdown of how all these interact, see the scheduling diagram in `/docs`.
 
@@ -198,8 +265,29 @@ For a full visual breakdown of how all these interact, see the scheduling diagra
 
 Kairos includes yt-dlp integration and *arr stack support:
 
-- **Discovery:** Search TMDB, TVDB, or AniDB directly from Hades and request new content. Requests can be approved to automatically push the media to your Sonarr or Radarr stack.
+- **Discovery:** Search TMDB, TVDB, or AniDB directly from Hades and request new content. Requests flow through a review
+  queue before being approved and pushed to your Sonarr or Radarr stack — nothing lands in your library without a human
+  sign-off.
 - **yt-dlp:** Paste a URL (YouTube playlist, video, etc.) in the Downloads page to pull bumpers and filler directly to your local media folders.
+
+The same review queue surfaces uncertain scraper matches, chapter detections, and duplicate flags — so edge cases get
+human eyes instead of silently writing bad data.
+
+---
+
+## Multi-user, parental controls & guest access
+
+Pantheon is multi-user by design. Each account has its own watch state, home screen, and playlists. Access controls are
+enforced server-side:
+
+- **Parental controls** with separate gates for movies, TV shows, and channels — so a kids' profile can have full access
+  to the channel grid but a rating cap on the library.
+- **Profile PINs** — Netflix-style "Who's watching?" switcher with per-profile PIN protection.
+- **Guest mode** — passwordless guest accounts for shared installs. The [live demo](http://pantheonmedia.app) runs on
+  this; hit "Continue as Guest" to try it without creating an account.
+
+Seasonal and filter-driven smart playlists (e.g. "currently airing", "added this month") can be pinned to the home
+screen per-profile.
 
 ---
 
@@ -259,26 +347,30 @@ Full endpoint-by-endpoint reference: **[x64tyko.github.io/Pantheon/API.html](htt
 
 ## Status
 
-Alpha.
+Alpha Complete.
 
-| Area | State   |
-|---|---------|
-| Library sync (Plex, Jellyfin, Emby, local) | Working |
-| Cross-source merge & canonical settings | Working |
-| Metadata scraping (TMDB, TVDB, AniDB) | Working <experimental> |
-| Metadata writeback (Plex, Jellyfin) | Working <experimental> |
-| Discovery & Requests (*arr stack integration) | Working <experimental> |
-| Chapter detection & review | Working <experimental> |
-| Series continuation (skip intro/credits, up next, auto-advance) | Code-complete, untested against a real library |
-| Show specials linking | Working |
-| IPTV channel scheduling + EPG | Working |
-| Stream delivery (Hermes + Hephaestus) | Working |
-| Media player | Working |
-| Chromecast (browser) | Working <experimental> |
-| Chromecast relay (pantheon-relay) | Working |
-| Roku native app (pantheon-roku) | Code-complete, untested on hardware |
-| Multi-User & Parental Controls | Working <experimental> |
-| HDHomeRun emulation | Working |
-| Log Centralization | Working |
+| Area                                                              | State                                                                                                   |
+|-------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| Library sync (Plex, Jellyfin, Emby, local)                        | Working                                                                                                 |
+| Cross-source merge & canonical settings                           | Working                                                                                                 |
+| Metadata scraping (TMDB, TVDB, AniDB)                             | Working <experimental>                                                                                  |
+| Metadata writeback (Plex, Jellyfin)                               | Working <experimental>                                                                                  |
+| Playlists (static + smart/filter-driven, source sync + writeback) | Working                                                                                                 |
+| Home page shelves (incl. seasonal/tag-driven)                     | Working                                                                                                 |
+| Audio/subtitle language filtering + external subtitles            | Working                                                                                                 |
+| Per-client direct-stream capability declaration                   | Working                                                                                                 |
+| Discovery & Requests (*arr stack integration)                     | Working <experimental>                                                                                  |
+| Chapter detection & review                                        | Working <experimental>                                                                                  |
+| Series continuation (skip intro/credits, up next, auto-advance)   | Code-complete, untested against a real library                                                          |
+| Show specials linking                                             | Working                                                                                                 |
+| IPTV channel scheduling + EPG                                     | Working                                                                                                 |
+| Stream delivery (Hermes + Hephaestus)                             | Working                                                                                                 |
+| Media player                                                      | Working                                                                                                 |
+| Chromecast (browser)                                              | Working <experimental>                                                                                  |
+| Chromecast relay (pantheon-relay)                                 | Working                                                                                                 |
+| Roku native app (pantheon-roku)                                   | Verified functional on real hardware; pending capability-manifest update + retest before public release |
+| Multi-User & Parental Controls                                    | Working <experimental>                                                                                  |
+| HDHomeRun emulation                                               | Working                                                                                                 |
+| Log Centralization                                                | Working                                                                                                 |
 
 Issues and feedback welcome.

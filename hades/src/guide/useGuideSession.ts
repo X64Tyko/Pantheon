@@ -2,10 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import type { Channel, EpgProgram } from '../api/types'
 import { startPreview, switchPreview, stopPreview } from './previewApi'
+import {PreviewSessionController} from './previewSessionController'
 import { WINDOW_LOOKBACK_MIN, WINDOW_FORWARD_HOURS } from './constants'
+import {playbackDebugLog} from '../player/playbackDebugLog'
 
 const FOCUS_DEBOUNCE_MS  = 300
 const HIDDEN_STOP_MS     = 20_000 // grace period before a backgrounded tab's preview is actually torn down
+
+// Whatever's airing on this channel right this instant, if anything — same
+// live boundary rule as GuidePreview's own computePreviewTiming (start
+// inclusive, end exclusive). Exported standalone (not just inlined in the
+// hook) so it's directly unit-testable without a React renderer.
+export function findLiveProgram(programs: EpgProgram[], nowMs: number): EpgProgram | null {
+    return programs.find(p => p.wall_clock_start_ms <= nowMs && nowMs < p.wall_clock_end_ms) ?? null
+}
 
 // Channel/EPG data + live-preview session lifecycle, shared by the desktop
 // GuidePage and TvGuideSection — extracted so both shells drive the same
@@ -14,12 +24,25 @@ export function useGuideSession() {
   const [channels,     setChannels]     = useState<Channel[]>([])
   const [epgByChannel, setEpgByChannel] = useState<Record<string, EpgProgram[]>>({})
   const [focusedId,    setFocusedId]    = useState<string | null>(null)
+    // Which specific EpgProgram cell is focused, independent of focusedId (the
+    // channel) — null means "nothing specific," i.e. show that channel's own
+    // live/now program. Only ever drives the preview hero's TEXT; the live
+    // video always follows focusedId alone (see GuidePage.tsx) — you can't
+    // actually preview a future program, only read about it.
+    const [focusedProgram, setFocusedProgram] = useState<EpgProgram | null>(null)
   const [manifestUrl,  setManifestUrl]  = useState<string | null>(null)
   const [nowMs,        setNowMs]        = useState(() => Date.now())
 
-  const sessionIdRef  = useRef<string | null>(null)
-  const startingRef   = useRef<Promise<string | null> | null>(null) // in-flight startPreview() call, if any
-  const genRef        = useRef(0) // bumped to invalidate in-flight/pending work (hidden, unmount)
+    // Start/switch/stop orchestration lives in PreviewSessionController (see
+    // its own class comment) — held in a ref since it's plain, framework-free
+    // state that must survive across renders without itself triggering any.
+    const controllerRef = useRef<PreviewSessionController | null>(null)
+    if (!controllerRef.current) {
+        controllerRef.current = new PreviewSessionController(
+            {startPreview, switchPreview, stopPreview},
+            setManifestUrl,
+        )
+    }
   const debounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hiddenStopRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const windowStartMs = useRef(Date.now() - WINDOW_LOOKBACK_MIN * 60_000).current
@@ -49,45 +72,20 @@ export function useGuideSession() {
     return () => clearInterval(tick)
   }, [])
 
-  // Only one startPreview() may ever be in flight at a time — sessionIdRef
-  // isn't set until the async call resolves, so without startingRef as a
-  // synchronous guard, a second trigger arriving before a slow cold-start
-  // resolves (rapid re-focus, or a visibility toggle) would fire a second
-  // startPreview() and spawn a second ffmpeg process; only the last one to
-  // resolve would ever get tracked, orphaning the other forever.
-  //
-  // genRef guards the other direction: if we're told to stop (tab hidden)
-  // while a start is still in flight, bumping genRef lets the eventual
-  // resolution recognize it's stale and self-stop instead of resurrecting a
-  // session for a tab nobody's looking at anymore.
-  const beginPreview = (channelId: string) => {
-    const myGen = genRef.current
-    if (sessionIdRef.current) {
-      switchPreview(sessionIdRef.current, channelId).catch(() => {})
-      return
+    // Thin wrappers so the rest of this hook doesn't need to know the
+    // controller exists as a ref — see PreviewSessionController's own comment
+    // for the actual start/switch/queue/self-stop state machine. Logged here
+    // rather than inside the controller itself, which is deliberately
+    // framework-free/side-effect-free beyond the injected api (see its own
+    // class comment) for unit-testability.
+    const beginPreview = (channelId: string) => {
+        playbackDebugLog('session', `guide preview begin(${channelId}) hasSession=${controllerRef.current!.hasSession()} starting=${controllerRef.current!.isStarting()}`)
+        controllerRef.current!.begin(channelId)
     }
-    if (startingRef.current) {
-      startingRef.current.then(sid => {
-        if (sid && genRef.current === myGen) switchPreview(sid, channelId).catch(() => {})
-      })
-      return
+    const stopCurrentPreview = () => {
+        if (controllerRef.current!.hasSession()) playbackDebugLog('session', 'guide preview stop')
+        controllerRef.current!.stop()
     }
-    startingRef.current = startPreview(channelId).then(res => {
-      if (genRef.current !== myGen) { stopPreview(res.session_id); return null }
-      sessionIdRef.current = res.session_id
-      setManifestUrl(res.manifest_url)
-      return res.session_id
-    }).catch(() => null).finally(() => { startingRef.current = null })
-  }
-
-  const stopCurrentPreview = () => {
-    genRef.current++ // invalidate any in-flight startPreview() so it self-stops on resolve
-    if (sessionIdRef.current) {
-      stopPreview(sessionIdRef.current)
-      sessionIdRef.current = null
-      setManifestUrl(null)
-    }
-  }
 
   useEffect(() => {
     if (!focusedId) return
@@ -121,7 +119,7 @@ export function useGuideSession() {
         // Session (or an in-flight start for it) is still alive from before
         // we were hidden — nothing to do. Only re-start if it was actually
         // torn down (grace period elapsed while we were away).
-        if (focusedId && !sessionIdRef.current && !startingRef.current) beginPreview(focusedId)
+          if (focusedId && !controllerRef.current!.hasSession() && !controllerRef.current!.isStarting()) beginPreview(focusedId)
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
@@ -136,13 +134,27 @@ export function useGuideSession() {
   }, [])
 
   const focusedChannel = channels.find(c => c.channel_id === focusedId) ?? null
-  const nowProgram = focusedId
-    ? (epgByChannel[focusedId] ?? []).find(p => p.wall_clock_start_ms <= nowMs && nowMs < p.wall_clock_end_ms) ?? null
-    : null
+    const nowProgram = focusedId ? findLiveProgram(epgByChannel[focusedId] ?? [], nowMs) : null
+
+    // Header focus (or a plain channel switch) — "nothing specific," fall back
+    // to that channel's own live program in the hero.
+    const selectChannel = (channelId: string) => {
+        setFocusedId(channelId)
+        setFocusedProgram(null)
+    }
+    // A specific program cell (now OR future) was focused/hovered — still
+    // switches the live preview to that channel (same as selectChannel), but
+    // also pins the hero's text to this exact program rather than whatever's
+    // live right now.
+    const selectProgram = (channelId: string, program: EpgProgram) => {
+        setFocusedId(channelId)
+        setFocusedProgram(program)
+    }
 
   return {
     channels, epgByChannel, windowStartMs, nowMs,
-    focusedId, setFocusedId, focusedChannel, nowProgram,
+      focusedId, focusedChannel, focusedProgram, nowProgram,
+      selectChannel, selectProgram,
     manifestUrl,
   }
 }

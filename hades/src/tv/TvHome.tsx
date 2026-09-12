@@ -1,29 +1,52 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FocusContext, setFocus, doesFocusableExist } from '@noriginmedia/norigin-spatial-navigation'
 import { useCastSession } from '../cast/useCastSession'
 import { startVodPlayback, stopVodPlayback } from '../player/playbackApi'
 import { api, mediaUrl } from '../api/client'
-import type { Show, Movie, ShowDetail, MovieDetail, WatchProgress } from '../api/types'
+import type {ShowDetail, MovieDetail, WatchProgress} from '../api/types'
 import { resolvePlayTarget } from '../player/resolvePlayTarget'
 import { useFocusable } from '../nav/useFocusable'
 import { useTravelingFocus } from '../nav/useTravelingFocus'
 import { TravelingFocusFrame } from '../nav/TravelingFocusFrame'
-import { TvGuideSection } from './TvGuideSection'
-import { ghostBtnStyle, goldBtnStyle, heroTextShadow } from '../channel/styles'
 import { rememberDetailReturn, consumeReturnFocusKey } from './tvDetailNav'
+import {useHomeManifest} from './useHomeManifest'
+import type {TvHomeRow, TvShelfTile} from '../api/types'
+import styles from './TvHome.module.css'
+import sharedStyles from '../channel/sharedStyles.module.css'
 
 const HOME_FOCUS_KEY = 'TV_HOME'
 const TV_HOME_PATH = '/tv'
 
-function isShow(item: Show | Movie): item is Show { return 'show_id' in item }
-function thumbUrl(item: Show | Movie) {
+// TvShelfTile.content_type is already an explicit "show"|"movie"|"episode"
+// field (unlike the old Show|Movie union, which needed a structural
+// 'show_id' in item guess) — thumbUrl/artUrl just pluralize it into the
+// proxy path, same trick desktop's proxyMixedThumb uses.
+function thumbUrl(item: TvShelfTile) {
   if (!item.thumb) return undefined
-  return mediaUrl(isShow(item) ? `/api/shows/${item.show_id}/thumb` : `/api/movies/${item.movie_id}/thumb`)
+    return mediaUrl(`/api/${item.content_type}s/${item.id}/thumb`)
 }
-function artUrl(item: Show | Movie) {
+
+// Hero-only (show/movie) — there's no /api/episodes/:id/art route (episode
+// tiles never carry their own art, only a parent-show-derived one — see
+// MixedTileRow's own comment), and episode tiles never become hero
+// candidates in the first place (see the main data-load effect below), so
+// this never actually gets called with one.
+function artUrl(item: TvShelfTile) {
   if (!item.art) return undefined
-  return mediaUrl(isShow(item) ? `/api/shows/${item.show_id}/art` : `/api/movies/${item.movie_id}/art`)
+    return mediaUrl(`/api/${item.content_type}s/${item.id}/art`)
+}
+
+// Continue Watching's movie-hover path (handleContinueWatchingFocus below)
+// fetches a full MovieDetail to swap into the hero directly — project it
+// down to a TvShelfTile so it can go through the same hero state as every
+// other hero candidate.
+function movieDetailToTile(d: MovieDetail): TvShelfTile {
+    return {
+        content_type: 'movie', id: d.movie_id, title: d.title, thumb: d.thumb, art: d.art,
+        year: d.year, audience_rating: d.audience_rating,
+        watched: (d.view_count ?? 0) > 0, view_count: d.view_count ?? 0,
+    }
 }
 
 export function TvHome() {
@@ -35,13 +58,17 @@ export function TvHome() {
   // going through that hook since, unlike PlayerPage, it never navigates
   // away and needs to survive across repeated Play presses).
   const castVodSessionRef = useRef<string | null>(null)
-  const allItemsRef = useRef<Map<string, Show | Movie>>(new Map())
-  const guideRef = useRef<HTMLDivElement>(null)
+    // Show/movie tiles only (episode tiles from a mixed shelf never register
+    // here — see handleShelfFocus below) — hover-into-hero-preview needs a
+    // real Show/Movie detail page to load, which an episode tile has no
+    // equivalent of (matches desktop HomePage.tsx's own allItemsRef, which
+    // likewise only ever populates from whole-show/whole-movie shelves).
+    const allItemsRef = useRef<Map<string, TvShelfTile>>(new Map())
 
-  const [recentShows,      setRecentShows]      = useState<Show[]>([])
-  const [recentMovies,     setRecentMovies]     = useState<Movie[]>([])
-  const [recentlyReleased, setRecentlyReleased] = useState<Movie[]>([])
-  const [recentlyAired,    setRecentlyAired]    = useState<Show[]>([])
+    // Every shelf row's real items, keyed by row id — not a fixed set of named
+    // slots, so a shelf Kairos adds/removes only needs a tv_shelf DB row (see
+    // that table's own v81 seed comment), no client change.
+    const [rowItemsState, setRowItemsState] = useState<Record<string, TvShelfTile[]>>({})
   const [continueWatching, setContinueWatching] = useState<WatchProgress[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -53,23 +80,29 @@ export function TvHome() {
 
   // Hero — same rotate/hover-swap model as the desktop HomePage, minus the
   // inline detail overlay (View Details is a real /tv/library/* route here).
-  const heroCandidates  = useRef<(Show | Movie)[]>([])
+    // Always show/movie tiles (server-resolved — see GET /api/tv/shelf-items'
+    // "hero" content_type branch — never episodes).
+    const heroCandidates = useRef<TvShelfTile[]>([])
   const heroIdx         = useRef(0)
-  const hoverRestoreRef = useRef<{ item: Show | Movie; detail: ShowDetail | MovieDetail | null; idx: number } | null>(null)
+    const hoverRestoreRef = useRef<{
+        item: TvShelfTile;
+        detail: ShowDetail | MovieDetail | null;
+        idx: number
+    } | null>(null)
   const heroIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [heroItem,   setHeroItem]   = useState<Show | Movie | null>(null)
+    const [heroItem, setHeroItem] = useState<TvShelfTile | null>(null)
   const [heroDetail, setHeroDetail] = useState<ShowDetail | MovieDetail | null>(null)
   // Continue Watching's episode entries — mirrors HomePage.tsx's heroEpisode
   // exactly, see its comment there.
   const [heroEpisode, setHeroEpisode] = useState<HeroEpisodeOverride | null>(null)
   const [heroFading, setHeroFading] = useState(false)
 
-  const loadHeroDetail = (item: Show | Movie) => {
-    const p = isShow(item) ? api.getShow(item.show_id) : api.getMovie(item.movie_id)
+    const loadHeroDetail = (item: TvShelfTile) => {
+        const p = item.content_type === 'show' ? api.getShow(item.id) : api.getMovie(item.id)
     p.then(d => setHeroDetail(d)).catch(() => {})
   }
 
-  const transitionHeroTo = (item: Show | Movie, detail: ShowDetail | MovieDetail | null = null) => {
+    const transitionHeroTo = (item: TvShelfTile, detail: ShowDetail | MovieDetail | null = null) => {
     setHeroFading(true)
     setTimeout(() => {
       setHeroItem(item)
@@ -121,7 +154,8 @@ export function TvHome() {
       if (!hoverRestoreRef.current && heroItem) {
         hoverRestoreRef.current = { item: heroItem, detail: heroDetail, idx: heroIdx.current }
       }
-      api.getMovie(cw.content_id).then(d => transitionHeroTo(d, d)).catch(() => {})
+        api.getMovie(cw.content_id).then(d => transitionHeroTo(movieDetailToTile(d), d)).catch(() => {
+        })
       return
     }
 
@@ -140,31 +174,66 @@ export function TvHome() {
     handleShelfBlur()
   }
 
+  // Home's manifest — which rows exist, in what order, fed by what query,
+  // with what per-item action on select. See useHomeManifest.ts. Everything
+  // below reacts to this instead of hardcoding shelf definitions, so a
+  // server-side change to e.g. recent-aired's sort/filter, or its removal
+  // entirely, needs zero changes here.
+  const { rows: manifestRows, loading: manifestLoading } = useHomeManifest()
+  const findRow = (id: string) => manifestRows.find(r => r.id === id)
+
+    // The one generic fetch every shelf/hero row goes through, regardless of
+    // what its filter's content_type says — the server (GET /api/tv/
+    // shelf-items) decides how to resolve it into tiles; this never inspects
+    // filter's keys, so a new shelf "shape" appearing there needs zero
+    // changes here (the actual bug that prompted this refactor: a "mixed"
+    // shelf used to have no dataSource.endpoint this client recognized at
+    // all and silently rendered empty/wrong).
+    const fetchShelfItems = (filter?: Record<string, unknown>): Promise<{ items: TvShelfTile[] }> =>
+        api.getTvShelfItems(filter ?? {}).catch(() => ({items: [] as TvShelfTile[]}))
+
   useEffect(() => {
+    if (manifestLoading) return
+
+      const shelfRows = manifestRows.filter(r => r.type === 'shelf' && r.id !== 'continue-watching')
+      const cwRow = findRow('continue-watching')
+      const heroRow = manifestRows.find(r => r.type === 'hero')
+
     Promise.all([
-      api.getShows({ limit: 16, sort: 'recently_added', home: true, hideEmpty: true }),
-      api.getMovies({ limit: 16, sort: 'recently_added', home: true, hideEmpty: true }),
-      api.getMovies({ limit: 16, sort: 'recently_released', home: true, hideEmpty: true }).catch(() => ({ items: [] as Movie[], total: 0 })),
-      api.getShows({ limit: 16, sort: 'recently_aired', home: true, hideEmpty: true }).catch(() => ({ items: [] as Show[], total: 0 })),
-      api.getWatchProgress().catch(() => []),
-    ]).then(([sr, mr, rr, ra, cw]) => {
-      setRecentShows(sr.items)
-      setRecentMovies(mr.items)
-      setRecentlyReleased(rr.items)
-      setRecentlyAired(ra.items)
+        Promise.all(shelfRows.map(row => fetchShelfItems(row.filter).then(res => [row, res] as const))),
+        cwRow ? api.getWatchProgress().catch(() => [] as WatchProgress[]) : Promise.resolve([] as WatchProgress[]),
+        heroRow ? fetchShelfItems(heroRow.filter) : Promise.resolve(null),
+    ]).then(([shelfResults, cw, heroResult]) => {
+        const newRowItems: Record<string, TvShelfTile[]> = {}
+        shelfResults.forEach(([row, res]) => {
+            // recent-aired's real item list also filters to shows that actually
+            // have a latest_episode — generalized from "recent-aired specifically"
+            // to "any row whose click action plays the latest episode," since a
+            // row without one wouldn't make sense to show here anyway.
+            const items = row.itemAction === 'play-latest-episode'
+                ? res.items.filter(i => i.content_type === 'show' && i.latest_episode)
+                : res.items
+            newRowItems[row.id] = items
+            // Episode tiles (from a mixed shelf) skip hero-hover-preview —
+            // see allItemsRef's own comment above.
+            items.forEach(item => {
+                if (item.content_type !== 'episode') allItemsRef.current.set(item.id, item)
+            })
+        })
+        setRowItemsState(newRowItems)
       setContinueWatching(cw)
 
-      sr.items.forEach(s => allItemsRef.current.set(s.show_id, s))
-      mr.items.forEach(m => allItemsRef.current.set(m.movie_id, m))
-      rr.items.forEach(m => allItemsRef.current.set(m.movie_id, m))
-      ra.items.forEach(s => allItemsRef.current.set(s.show_id, s))
-
-      const withArt = [...sr.items.filter(s => s.art), ...mr.items.filter(m => m.art)]
-      heroCandidates.current = withArt
-      const first = withArt[0] ?? sr.items[0]
+        // The hero's art-filtered shows+movies merge is now resolved
+        // server-side (GET /api/tv/shelf-items' "hero" content_type branch —
+        // see TvManifestService.cpp) instead of this client fetching two
+        // sources and merging them itself.
+        const candidates = heroResult?.items ?? []
+        heroCandidates.current = candidates
+        const first = candidates[0]
       if (first) { heroIdx.current = 0; setHeroItem(first); loadHeroDetail(first) }
     }).finally(() => setLoading(false))
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manifestLoading])
 
   // Only ever applies once — see the identical guard in TvLibrary.tsx. Falls
   // back to the hero Play button (the same target its own suppressed
@@ -201,12 +270,34 @@ export function TvHome() {
     navigate(`/tv/library/${type}/${id}`)
   }
 
+    // Three tile click behaviors: an episode tile (from a mixed shelf) always
+    // jumps straight into that episode, same as desktop's directPlayPath —
+    // there's no episode detail page to open. Otherwise, 'play-latest-episode'
+    // (Recently Aired only, and only when this particular show actually has
+    // one) or the open-detail default. Any other itemAction on a plain shelf
+    // row is a manifest/client vocabulary drift, not a state this should
+    // silently render around.
+    const resolveShelfItemOnClick = (row: TvHomeRow, item: TvShelfTile): () => void => {
+        if (item.content_type === 'episode') {
+            return () => navigate(`/player/episode/${item.id}`)
+        }
+        if (row.itemAction === 'play-latest-episode' && item.content_type === 'show' && item.latest_episode) {
+      const episodeId = item.latest_episode.episode_id
+      return () => navigate(`/player/episode/${episodeId}`)
+    }
+        // Narrowed to 'show'|'movie' by the episode early-return above, but a
+        // closure defined after a narrowing check doesn't retain it for a
+        // captured property access — a local const does.
+        const type = item.content_type
+        return () => goToLibrary(item.id, type, tvShelfCardFocusKey(row.title ?? row.id, item.id))
+  }
+
   return (
     <FocusContext.Provider value={homeFocusKey}>
-    <div ref={homeRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ flexShrink: 0 }}>
+    <div ref={homeRef} className={styles.homeContainer}>
+      <div className={styles.heroWrap}>
         {loading ? (
-          <div className="hds-skeleton" style={{ height: '24vh', minHeight: 190 }} />
+          <div className={`hds-skeleton ${styles.heroSkeleton}`} />
         ) : heroItem ? (
           <TvHeroPanel
             item={heroItem}
@@ -216,10 +307,15 @@ export function TvHome() {
             totalCandidates={heroCandidates.current.length}
             currentIdx={heroIdx.current}
             autoFocusPlay={!restoreFocusKey}
-            onViewDetail={() => goToLibrary(isShow(heroItem) ? heroItem.show_id : heroItem.movie_id, isShow(heroItem) ? 'show' : 'movie')}
+              // Hero candidates are always show/movie (server-resolved — see
+              // GET /api/tv/shelf-items' "hero" branch), never episode; the
+              // TvShelfTile type is shared with shelf tiles (which can be
+              // episodes), so this narrows a runtime invariant the type alone
+              // doesn't express.
+            onViewDetail={() => goToLibrary(heroItem.id, heroItem.content_type as 'show' | 'movie')}
             onPlay={async () => {
-              const id = isShow(heroItem) ? heroItem.show_id : heroItem.movie_id
-              const type = isShow(heroItem) ? 'show' : 'movie'
+                const id = heroItem.id
+                const type = heroItem.content_type as 'show' | 'movie'
               const target = await resolvePlayTarget(type, id)
               if (!target) return
 
@@ -241,9 +337,14 @@ export function TvHome() {
                   metadata: {
                     title: vod.title,
                     imageUrl: artUrl(heroItem),
-                    seriesTitle: isShow(heroItem) ? heroItem.title : undefined,
+                      seriesTitle: heroItem.content_type === 'show' ? heroItem.title : undefined,
                   },
                   route: { contentType: target.kind, contentId: target.id },
+                  // No track-selection UI on this quick-cast path (unlike
+                  // PlayerPage's TrackMenu) — vod.session already started
+                  // with server defaults, so just carry those through as-is.
+                  audioTrack:    vod.tracks?.audio[0]?.index ?? -1,
+                  subtitleTrack: -1,
                 })
                 return
               }
@@ -266,88 +367,67 @@ export function TvHome() {
             onDotClick={i => { startRotation(); goToHero(i) }}
           />
         ) : (
-          <div style={{
-            height: '24vh', minHeight: 190, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'linear-gradient(135deg, oklch(0.12 0.04 292), oklch(0.16 0.03 280))',
-            fontFamily: "'Chakra Petch', sans-serif", fontSize: 18, color: 'var(--hds-txt-3)',
-          }}>No content yet</div>
+          <div className={styles.heroEmpty}>No content yet</div>
         )}
       </div>
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          padding: '6px 48px 0', flexShrink: 0,
-        }}>
+        <div className={styles.quickActionRow}>
           <LibraryButton onClick={() => navigate('/tv/library')} />
-          <GuideButton onClick={() => guideRef.current?.scrollIntoView({ behavior: 'smooth' })} />
+            {/* Guide is a real route (/tv/guide, TvGuidePage.tsx) rather than
+              a scroll-and-refocus target now — matches desktop Guide's own
+              standalone-route treatment (TvGuideSection itself is unchanged,
+              just no longer embedded here). */}
+            {manifestRows.some(row => row.type === 'guide') && (
+                <GuideButton onClick={() => navigate('/tv/guide')}/>
+            )}
         </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} className="scrollbar-dark">
-        {loading ? (
-          <div style={{ padding: '24px 48px', color: 'var(--hds-txt-3)', fontFamily: "'JetBrains Mono', monospace" }}>Loading…</div>
+      <div className={`${styles.shelvesScroll} scrollbar-dark`}>
+        {loading || manifestLoading ? (
+          <div className={styles.loadingText}>Loading…</div>
         ) : (
           <>
-            {continueWatching.length > 0 && (
-              <TvContinueWatchingShelf
-                items={continueWatching} onNavigate={navigate}
-                onItemFocus={handleContinueWatchingFocus} onRowBlur={handleContinueWatchingBlur}
-              />
-            )}
-            {recentShows.length > 0 && (
-              <TvShelf
-                title="Recently Added Shows"
-                items={recentShows.map(s => ({
-                  key: s.show_id, id: s.show_id, title: s.title, year: s.year, rating: s.audience_rating,
-                  thumb_url: thumbUrl(s),
-                  onClick: () => goToLibrary(s.show_id, 'show', tvShelfCardFocusKey('Recently Added Shows', s.show_id)),
-                  onFocus: () => handleShelfFocus(s.show_id),
-                }))}
-                onBlur={handleShelfBlur}
-                endTile={{ focusKey: 'tv-shelf-end-shows', onClick: () => navigate('/tv/library') }}
-              />
-            )}
-            {recentMovies.length > 0 && (
-              <TvShelf
-                title="Recently Added Movies"
-                items={recentMovies.map(m => ({
-                  key: m.movie_id, id: m.movie_id, title: m.title, year: m.year, rating: m.audience_rating,
-                  thumb_url: thumbUrl(m),
-                  onClick: () => goToLibrary(m.movie_id, 'movie', tvShelfCardFocusKey('Recently Added Movies', m.movie_id)),
-                  onFocus: () => handleShelfFocus(m.movie_id),
-                }))}
-                onBlur={handleShelfBlur}
-                endTile={{ focusKey: 'tv-shelf-end-movies', onClick: () => navigate('/tv/library') }}
-              />
-            )}
-            {recentlyReleased.length > 0 && (
-              <TvShelf
-                title="Recently Released"
-                items={recentlyReleased.map(m => ({
-                  key: m.movie_id, id: m.movie_id, title: m.title, year: m.year, rating: m.audience_rating,
-                  thumb_url: thumbUrl(m),
-                  onClick: () => goToLibrary(m.movie_id, 'movie', tvShelfCardFocusKey('Recently Released', m.movie_id)),
-                  onFocus: () => handleShelfFocus(m.movie_id),
-                }))}
-                onBlur={handleShelfBlur}
-                endTile={{ focusKey: 'tv-shelf-end-released', onClick: () => navigate('/tv/library') }}
-              />
-            )}
-            {recentlyAired.filter(s => s.latest_episode).length > 0 && (
-              <TvShelf
-                title="Recently Aired"
-                items={recentlyAired.filter(s => s.latest_episode).map(s => ({
-                  key: s.show_id, id: s.show_id, title: s.title, year: s.year, rating: s.audience_rating,
-                  thumb_url: thumbUrl(s), onClick: () => navigate(`/player/episode/${s.latest_episode!.episode_id}`),
-                  onFocus: () => handleShelfFocus(s.show_id),
-                }))}
-                onBlur={handleShelfBlur}
-                endTile={{ focusKey: 'tv-shelf-end-aired', onClick: () => navigate('/tv/library') }}
-              />
-            )}
+              {manifestRows.filter(row => row.type !== 'hero' && row.type !== 'guide').map(row => {
 
-            <div ref={guideRef} style={{ padding: '8px 0 64px' }}>
-              <TvGuideSection />
-            </div>
+              if (row.id === 'continue-watching') {
+                return continueWatching.length > 0 ? (
+                  <TvContinueWatchingShelf
+                    key={row.id}
+                    items={continueWatching} onNavigate={navigate}
+                    onItemFocus={handleContinueWatchingFocus} onRowBlur={handleContinueWatchingBlur}
+                  />
+                ) : null
+              }
+
+                  const items = rowItemsState[row.id] ?? []
+              if (items.length === 0) return null
+              const title = row.title ?? row.id
+              return (
+                <TvShelf
+                  key={row.id}
+                  title={title}
+                  items={items.map(item => ({
+                      key: item.id,
+                      id: item.id,
+                      title: item.title,
+                      year: item.content_type === 'episode' ? undefined : item.year,
+                      rating: item.content_type === 'episode' ? undefined : item.audience_rating,
+                    thumb_url: thumbUrl(item),
+                    onClick: resolveShelfItemOnClick(row, item),
+                      onFocus: () => handleShelfFocus(item.id),
+                      // Episode tiles (mixed shelves) show their parent show's
+                      // title + S/E code instead of the episode's own title —
+                      // same convention as desktop's mixedToShelfEntry.
+                      ...(item.content_type === 'episode' ? {
+                          showTitle: item.show_title,
+                          episodeCode: `S${String(item.season ?? 0).padStart(2, '0')}E${String(item.episode ?? 0).padStart(2, '0')}`,
+                      } : {}),
+                  }))}
+                  onBlur={handleShelfBlur}
+                  endTile={row.endTile ? { focusKey: `tv-shelf-end-${row.id}`, onClick: () => navigate('/tv/library') } : undefined}
+                />
+              )
+            })}
           </>
         )}
       </div>
@@ -362,12 +442,7 @@ function LibraryButton({ onClick }: { onClick: () => void }) {
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-        padding: '8px 20px', borderRadius: 10,
-        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
-      }}
+      className={styles.quickActionButton}
     >
       <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
         <rect x="1.5" y="1.5" width="4.5" height="11" rx="1" /><rect x="8" y="1.5" width="4.5" height="11" rx="1" />
@@ -383,12 +458,7 @@ function GuideButton({ onClick }: { onClick: () => void }) {
     <button
       ref={ref} data-tv-focused={focused}
       onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-        padding: '8px 20px', borderRadius: 10,
-        border: '1px solid var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt)',
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 14,
-      }}
+      className={styles.quickActionButton}
     >
       <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
         <rect x="1.5" y="2.5" width="11" height="9" rx="1.5" /><path d="M4 11.5h6" />
@@ -412,7 +482,7 @@ interface HeroEpisodeOverride {
 }
 
 function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentIdx, autoFocusPlay, onViewDetail, onPlay, onCast, castAvailable, onDotClick }: {
-  item: Show | Movie
+    item: TvShelfTile
   detail: ShowDetail | MovieDetail | null
   episode?: HeroEpisodeOverride | null
   fading: boolean
@@ -429,9 +499,13 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
   onDotClick: (i: number) => void
 }) {
   const backdrop = episode ? episode.backdropUrl : artUrl(item)
-  const bg = backdrop
-    ? `url(${backdrop}) center/cover no-repeat`
-    : 'linear-gradient(135deg, oklch(0.12 0.04 292) 0%, oklch(0.18 0.06 270) 50%, oklch(0.14 0.03 280) 100%)'
+  // Backdrop is a genuinely dynamic runtime value (an arbitrary image URL, or
+  // a fallback gradient using the shared --hds-backdrop-fallback-* tokens
+  // when there's no art) — kept as a targeted inline style rather than a
+  // static class for that reason, same pattern as TvLibraryDetail's backdrop.
+  const heroBgStyle: CSSProperties = backdrop
+    ? { backgroundImage: `url(${backdrop})`, backgroundPosition: 'center', backgroundSize: 'cover', backgroundRepeat: 'no-repeat' }
+    : { background: 'linear-gradient(135deg, var(--hds-backdrop-fallback-1) 0%, var(--hds-backdrop-fallback-2) 50%, var(--hds-backdrop-fallback-3) 100%)' }
 
   const genres: string[] = !episode && detail && 'genres' in detail && Array.isArray(detail.genres) ? (detail.genres as string[]).slice(0, 4) : []
   const overview     = episode ? episode.overview : (detail?.overview ?? '')
@@ -443,72 +517,42 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
   const castBtn    = useFocusable<object, HTMLButtonElement>({ focusKey: 'tv-hero-cast',   onEnterPress: onCast,       focusable: castAvailable })
 
   return (
-    <div style={{
-      position: 'relative', height: '24vh', minHeight: 190,
-      background: bg, flexShrink: 0,
-      opacity: fading ? 0 : 1, transition: 'opacity .26s ease',
-      overflow: 'hidden',
-    }}>
-      <div style={{
-        position: 'absolute', inset: 0,
-        background: 'linear-gradient(to right, oklch(0 0 0 / 0.88) 0%, oklch(0 0 0 / 0.42) 52%, transparent 100%)',
-      }} />
-      <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%',
-        background: 'linear-gradient(to top, var(--hds-bg) 0%, transparent 100%)',
-        pointerEvents: 'none',
-      }} />
+    <div className={`${styles.heroRoot} ${fading ? styles.heroRootFading : ''}`} style={heroBgStyle}>
+      <div className={styles.heroScrimH} />
+      <div className={styles.heroScrimV} />
 
-      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 48px 18px', maxWidth: 780 }}>
+      <div className={styles.heroTextBlock}>
         {genres.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          <div className={styles.heroGenreRow}>
             {genres.map(g => (
-              <span key={g} style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-                padding: '2px 8px', borderRadius: 12,
-                background: 'var(--hds-glass)', border: '1px solid var(--hds-glass-border)',
-                color: 'var(--hds-txt-2)', letterSpacing: '0.06em',
-              }}>{g}</span>
+              <span key={g} className={styles.heroGenreChip}>{g}</span>
             ))}
           </div>
         )}
 
-        <h1 style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 24, fontWeight: 700,
-          color: 'oklch(1 0 0)', margin: 0, lineHeight: 1.1, letterSpacing: '-0.02em',
-          textShadow: heroTextShadow,
-        }}>{displayTitle}</h1>
+        <h1 className={`${styles.heroTitle} ${styles.textShadowHero}`}>{displayTitle}</h1>
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 16, marginTop: 6, marginBottom: 8,
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-2)',
-          textShadow: heroTextShadow,
-        }}>
+        <div className={`${styles.heroMetaRow} ${styles.textShadowHero}`}>
           {episode ? (
             <span>{episode.metaLine}</span>
           ) : (
             <>
               {item.year && <span>{item.year}</span>}
-              {rating != null && <span style={{ color: 'var(--hds-gold)' }}>★ {rating.toFixed(1)}</span>}
-              <span style={{ opacity: 0.5 }}>{'show_id' in item ? 'series' : 'film'}</span>
+              {rating != null && <span className={styles.heroRatingText}>★ {rating.toFixed(1)}</span>}
+                <span className={styles.heroContentTypeText}>{item.content_type === 'show' ? 'series' : 'film'}</span>
             </>
           )}
         </div>
 
         {overview && (
-          <p style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, lineHeight: 1.5,
-            color: 'oklch(0.75 0.01 285)', margin: '0 0 12px',
-            display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-            textShadow: heroTextShadow,
-          }}>{overview}</p>
+          <p className={`${styles.heroOverview} ${styles.textShadowHero}`}>{overview}</p>
         )}
 
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div className={styles.heroButtonRow}>
           <button
             ref={play.ref} data-tv-focused={play.focused}
             onClick={onPlay}
-            style={{ ...goldBtnStyle, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 18px' }}
+            className={`${sharedStyles.goldBtn} ${styles.heroPlayBtn}`}
           >
             <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1.5v11l9-5.5-9-5.5z" /></svg>
             Play
@@ -516,7 +560,7 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
           <button
             ref={viewDetail.ref} data-tv-focused={viewDetail.focused}
             onClick={onViewDetail}
-            style={{ ...ghostBtnStyle, backdropFilter: 'blur(8px)', padding: '8px 18px' }}
+            className={`${sharedStyles.ghostBtn} ${styles.heroDetailBtn}`}
           >View Details</button>
         </div>
       </div>
@@ -527,14 +571,7 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
           ref={castBtn.ref} data-tv-focused={castBtn.focused}
           onClick={onCast}
           aria-label="Cast"
-          style={{
-            position: 'absolute', top: 18, right: 24, zIndex: 3,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 34, height: 34, borderRadius: '50%',
-            border: '1px solid var(--hds-glass-border)',
-            background: 'var(--hds-glass)', backdropFilter: 'blur(8px)',
-            color: 'oklch(0.92 0.01 285)', cursor: 'pointer',
-          }}
+          className={styles.heroCastButton}
         >
           <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
             <rect x="2" y="2.5" width="14" height="10" rx="1.2" />
@@ -545,14 +582,12 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
       )}
 
       {totalCandidates > 1 && (
-        <div style={{ position: 'absolute', bottom: 20, right: 48, display: 'flex', gap: 6, zIndex: 2 }}>
+        <div className={styles.heroDots}>
           {Array.from({ length: Math.min(totalCandidates, 8) }, (_, i) => (
-            <button key={i} onClick={() => onDotClick(i)} style={{
-              width: i === currentIdx ? 18 : 6, height: 6, borderRadius: 3,
-              border: 'none', cursor: 'pointer', padding: 0,
-              background: i === currentIdx ? 'var(--hds-gold)' : 'oklch(1 0 0 / 0.3)',
-              transition: 'width .2s, background .2s',
-            }} />
+            <button
+              key={i} onClick={() => onDotClick(i)}
+              className={`${styles.heroDot} ${i === currentIdx ? styles.heroDotActive : ''}`}
+            />
           ))}
         </div>
       )}
@@ -565,6 +600,10 @@ function TvHeroPanel({ item, detail, episode, fading, totalCandidates, currentId
 interface TvShelfEntry {
   key: string; id: string; title: string; year?: number; rating?: number
   thumb_url?: string; onClick: () => void; onFocus?: () => void
+    // Episode tiles only (a mixed shelf's per-episode items) — displayed
+    // instead of title/year, same convention as desktop's ShelfEntry.
+    episodeCode?: string;
+    showTitle?: string
 }
 
 // Shared by TvShelfCard (to register) and TvHome's onClick handlers (to
@@ -591,19 +630,13 @@ function TvShelf({ title, items, onBlur, endTile }: {
     focusBoundaryDirections: ['left', 'right'],
   })
   return (
-    <div style={{ marginBottom: 10 }} onMouseLeave={onBlur}>
-      <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 6px',
-      }}>{title}</div>
-      <div ref={rowRef} style={{
-        display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
-        padding: '2px 48px 8px', scrollbarWidth: 'none', position: 'relative',
-      }}>
+    <div className={styles.shelfWrap} onMouseLeave={onBlur}>
+      <div className={styles.shelfTitle}>{title}</div>
+      <div ref={rowRef} className={styles.shelfRow}>
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(item => (
-          <div key={item.key} style={{ flexShrink: 0, width: 108 }}>
+          <div key={item.key} className={styles.shelfCardWrap}>
             <TvShelfCard {...item} shelfTitle={title} onBlur={onBlur} onActivate={travel.activate} onDeactivate={travel.deactivate} />
           </div>
         ))}
@@ -619,12 +652,29 @@ function TvShelf({ title, items, onBlur, endTile }: {
   )
 }
 
-function TvShelfCard({ id, title, year, rating, thumb_url, shelfTitle, onClick, onFocus, onBlur, onActivate, onDeactivate }: TvShelfEntry & {
+function TvShelfCard({
+                         id,
+                         title,
+                         year,
+                         rating,
+                         thumb_url,
+                         episodeCode,
+                         showTitle,
+                         shelfTitle,
+                         onClick,
+                         onFocus,
+                         onBlur,
+                         onActivate,
+                         onDeactivate
+                     }: TvShelfEntry & {
   shelfTitle: string; onBlur?: () => void; onActivate: (el: HTMLElement | null) => void; onDeactivate: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const [imgErr,  setImgErr]  = useState(false)
   const showImg = thumb_url && !imgErr
+    // Episode tile (mixed shelf) — show the parent show's title instead of
+    // the episode's own, same convention as desktop's mixedToShelfEntry.
+    const displayTitle = showTitle ?? title
   const { ref, focused } = useFocusable<object, HTMLDivElement>({
     focusKey: tvShelfCardFocusKey(shelfTitle, id), onEnterPress: onClick,
     onFocus: () => { onFocus?.(); onActivate(ref.current) },
@@ -638,46 +688,32 @@ function TvShelfCard({ id, title, year, rating, thumb_url, shelfTitle, onClick, 
       onClick={onClick}
       onMouseEnter={() => { setHovered(true); onFocus?.(); onActivate(ref.current) }}
       onMouseLeave={() => { setHovered(false); onBlur?.(); onDeactivate() }}
-      style={{
-        borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
-        transform: active ? 'translateY(-4px)' : 'none',
-        transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
-      }}
+      className={`${styles.shelfCard} ${active ? styles.shelfCardActive : ''}`}
     >
-      <div style={{
-        aspectRatio: '2/3', width: '100%', position: 'relative',
-        background: 'linear-gradient(135deg, oklch(0.18 0.03 287), oklch(0.13 0.02 285))',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-      }}>
+      <div className={styles.shelfCardPoster}>
         {showImg ? (
-          <img src={thumb_url} alt={title} onError={() => setImgErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <img src={thumb_url} alt={displayTitle} onError={() => setImgErr(true)} className={styles.shelfCardImg}/>
         ) : (
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 24, color: 'var(--hds-violet)', opacity: 0.4 }}>
-            {title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
+          <span className={styles.shelfCardMonogram}>
+            {displayTitle.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
         )}
         {active && (
-          <div style={{
-            position: 'absolute', bottom: 0, left: 0, right: 0,
-            background: 'linear-gradient(to top, oklch(0 0 0 / 0.85), transparent)',
-            padding: '28px 10px 10px',
-          }}>
-            <div style={{
-              fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-              color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>{title}</div>
+          <div className={styles.shelfCardHoverOverlay}>
+            <div className={styles.shelfCardHoverTitle}>{title}</div>
             {rating != null && (
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--hds-gold)', marginTop: 2 }}>★ {rating.toFixed(1)}</div>
+              <div className={styles.shelfCardHoverRating}>★ {rating.toFixed(1)}</div>
             )}
           </div>
         )}
       </div>
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-          color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>{title}</div>
-        {year && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 1 }}>{year}</div>}
+      <div className={styles.shelfCardInfo}>
+          <div className={styles.shelfCardTitle}>{displayTitle}</div>
+          {episodeCode ? (
+              <div className={styles.shelfCardYear}>{episodeCode}</div>
+          ) : (
+              year && <div className={styles.shelfCardYear}>{year}</div>
+          )}
       </div>
     </div>
   )
@@ -701,20 +737,13 @@ function TvShelfEndTile({ focusKey, onClick, onBlur, onActivate, onDeactivate }:
       onClick={onClick}
       onMouseEnter={() => { setHovered(true); onActivate(ref.current) }}
       onMouseLeave={() => { setHovered(false); onBlur?.(); onDeactivate() }}
-      style={{
-        flexShrink: 0, width: 108, aspectRatio: '2/3', borderRadius: 10, cursor: 'pointer',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
-        border: '1px dashed var(--hds-line)', background: 'var(--hds-bg-2)', color: 'var(--hds-txt-3)',
-        transform: active ? 'translateY(-4px)' : 'none',
-        transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
-        textAlign: 'center', padding: '0 12px',
-      }}
+      className={`${styles.endTile} ${active ? styles.endTileActive : ''}`}
     >
       <svg width="26" height="26" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.6">
         <rect x="3" y="3" width="7" height="7" rx="1.2" /><rect x="12" y="3" width="7" height="7" rx="1.2" />
         <rect x="3" y="12" width="7" height="7" rx="1.2" /><rect x="12" y="12" width="7" height="7" rx="1.2" />
       </svg>
-      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, letterSpacing: '0.04em', lineHeight: 1.4 }}>
+      <span className={styles.endTileLabel}>
         Continue in Library
       </span>
     </div>
@@ -735,19 +764,13 @@ function TvContinueWatchingShelf({ items, onNavigate, onItemFocus, onRowBlur }: 
     focusBoundaryDirections: ['left', 'right'],
   })
   return (
-    <div style={{ marginBottom: 10 }} onMouseLeave={onRowBlur}>
-      <div style={{
-        fontFamily: "'Chakra Petch', sans-serif", fontSize: 14, fontWeight: 600,
-        color: 'var(--hds-txt)', padding: '0 48px 6px',
-      }}>Continue Watching</div>
-      <div ref={rowRef} style={{
-        display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden',
-        padding: '4px 48px 8px', scrollbarWidth: 'none', position: 'relative',
-      }}>
+    <div className={styles.shelfWrap} onMouseLeave={onRowBlur}>
+      <div className={styles.shelfTitle}>Continue Watching</div>
+      <div ref={rowRef} className={styles.continueWatchingRow}>
         <TravelingFocusFrame rect={travel.rect} active={travel.active} />
         <FocusContext.Provider value={rowFocusKey}>
         {items.map(p => (
-          <div key={`${p.content_type}:${p.content_id}`} style={{ flexShrink: 0, width: 108 }}>
+          <div key={`${p.content_type}:${p.content_id}`} className={styles.shelfCardWrap}>
             <TvContinueWatchingCard
               item={p} onNavigate={onNavigate} onActivate={travel.activate} onDeactivate={travel.deactivate}
               onFocus={onItemFocus} onBlur={onRowBlur}
@@ -793,55 +816,32 @@ function TvContinueWatchingCard({ item, onNavigate, onActivate, onDeactivate, on
       onClick={go}
       onMouseEnter={() => { setHovered(true); onActivate(ref.current); onFocus?.(item) }}
       onMouseLeave={() => { setHovered(false); onDeactivate(); onBlur?.() }}
-      style={{
-        borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
-        transform: active ? 'translateY(-4px)' : 'none',
-        transition: 'transform 0.15s cubic-bezier(0.2,0,0.2,1)',
-      }}
+      className={`${styles.shelfCard} ${active ? styles.shelfCardActive : ''}`}
     >
-      <div style={{
-        aspectRatio: '2/3', width: '100%', position: 'relative',
-        background: 'linear-gradient(135deg, oklch(0.18 0.03 287), oklch(0.13 0.02 285))',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-      }}>
+      <div className={styles.shelfCardPoster}>
         {thumbPath && !imgErr ? (
-          <img src={mediaUrl(thumbPath)} alt={title} onError={() => setImgErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <img src={mediaUrl(thumbPath)} alt={title} onError={() => setImgErr(true)} className={styles.shelfCardImg} />
         ) : (
-          <span style={{ fontFamily: "'Chakra Petch', sans-serif", fontWeight: 700, fontSize: 24, color: 'var(--hds-violet)', opacity: 0.4 }}>
+          <span className={styles.shelfCardMonogram}>
             {title.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()}
           </span>
         )}
         {epCode && (
-          <span style={{
-            position: 'absolute', top: 8, left: 8,
-            background: 'oklch(0 0 0 / 0.6)', borderRadius: 5, padding: '3px 7px',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'oklch(0.9 0.01 285)',
-          }}>{epCode}</span>
+          <span className={styles.cwEpBadge}>{epCode}</span>
         )}
         {item.up_next && (
-          <span style={{
-            position: 'absolute', top: 8, right: 8,
-            background: 'var(--hds-violet)', borderRadius: 5, padding: '3px 7px',
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700,
-            letterSpacing: '0.04em', color: 'oklch(0.13 0.02 285)',
-          }}>UP NEXT</span>
+          <span className={styles.cwUpNextBadge}>UP NEXT</span>
         )}
         {!item.up_next && (
-          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'oklch(0 0 0 / 0.5)' }}>
-            <div style={{ height: '100%', width: `${progress * 100}%`, background: 'var(--hds-violet)' }} />
+          <div className={styles.cwProgressTrack}>
+            <div className={styles.cwProgressFill} style={{ width: `${progress * 100}%` }} />
           </div>
         )}
       </div>
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{
-          fontFamily: "'Chakra Petch', sans-serif", fontSize: 13, fontWeight: 600,
-          color: 'var(--hds-txt)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>{title}</div>
+      <div className={styles.shelfCardInfo}>
+        <div className={styles.shelfCardTitle}>{title}</div>
         {item.content_type === 'episode' && (
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--hds-txt-3)', marginTop: 1,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>{item.title}</div>
+          <div className={styles.cwSubtitle}>{item.title}</div>
         )}
       </div>
     </div>

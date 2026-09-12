@@ -1,0 +1,7 @@
+.frame {
+  position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none;
+  border-radius: var(--hds-radius-skeleton);
+  border: 1.5px solid var(--hds-gold);
+  box-shadow: 0 0 18px 2px oklch(0.83 0.13 84 / 0.4), 0 10px 24px oklch(0 0 0 / 0.45);
+  transition: transform .22s cubic-bezier(0.22, 1, 0.36, 1), opacity .18s ease;
+}

@@ -1,11 +1,15 @@
 #include "LocalSource.h"
+#include "SidecarMetadata.h"
 #include "conf/ConfStore.h"
 #include "model/Episode.h"
 #include "model/Movie.h"
 #include "model/Show.h"
+#include "util/TitleMatch.h"
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <regex>
 #include <string>
@@ -18,187 +22,264 @@ namespace fs = std::filesystem;
 // Constants
 // ---------------------------------------------------------------------------
 
-namespace {
+namespace
+{
+	const std::unordered_set<std::string> kVideoExts = {
+		".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv",
+		".flv", ".ts", ".mpg", ".mpeg", ".m2ts", ".webm", ".ogv",
+	};
 
-const std::unordered_set<std::string> kVideoExts = {
-    ".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv",
-    ".flv", ".ts", ".mpg", ".mpeg", ".m2ts", ".webm",
-};
+	// Last-resort "date added" signal for local files — there's no real "added
+	// to library" metadata on a bare filesystem the way Plex/Jellyfin track it,
+	// so last_write_time is the closest portable proxy (creation time isn't
+	// exposed by std::filesystem pre-C++23, and isn't reliable across all
+	// filesystems/copy tools even where the OS exposes it). Returns 0 on any
+	// error rather than throwing — this is best-effort, not authoritative.
+	int64_t fsAddedAtEpoch(const fs::path& p)
+	{
+		std::error_code ec;
+		auto ftime = fs::last_write_time(p, ec);
+		if (ec) return 0;
+		auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+		return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+	}
 
-// S01E01, S1E1 — or 1x01, 1x1 (common alt notation)
-const std::regex kEpisodeRe(
-    R"(S(\d{1,2})E(\d{1,3})|(\d{1,2})[xX](\d{1,3}))",
-    std::regex::icase
-);
+	// S01E01, S1E1 — or 1x01, 1x1 (common alt notation). Also captures an
+	// optional multi-episode range end: S01E01E02, S01E01-E02, S01E01-02, or
+	// 1x01-02 — common for double-length episodes and multi-part anime arcs.
+	// The trailing \b on the range-end group stops it from swallowing digits out
+	// of an adjacent tag with no real separator (e.g. "S01E01-1080p" must NOT
+	// read as a range ending at episode 108).
+	const std::regex kEpisodeRe(
+		R"(S(\d{1,2})E(\d{1,3})(?:-?E?(\d{1,3})\b)?|(\d{1,2})[xX](\d{1,3})(?:-(\d{1,3})\b)?)",
+		std::regex::icase
+	);
 
-// A standalone 4-digit release year (1900-2099), whether bare ("Title 2023 ...")
-// or parenthesised ("Title (2023)"). Word-bounded so it can't fire inside a
-// resolution/codec tag like "2160p" or "x264".
-const std::regex kYearTokenRe(R"(\b(19\d{2}|20\d{2})\b)");
+	// Multi-episode ranges wider than this are almost certainly a bad match
+	// (e.g. an absolute episode number misread as a range end), not a real
+	// double/triple episode file — treat as a single episode instead of
+	// exploding into dozens of bogus episode rows and scraper lookups.
+	constexpr int kMaxEpisodeRangeSpan = 12;
 
-// Scene-release quality/source/codec/audio/edition tags. The *earliest* match
-// marks where junk starts when no year token is present to anchor the cut —
-// e.g. "The.Toxic.Avenger.UNRATED.BluRay.x264-GROUP" has no year at all.
-const std::regex kJunkTagRe(
-    R"(\b(2160p|1080p|720p|480p|360p|4k|8k|uhd|hdr10?|dolby ?vision|)"
-    R"(bluray|blu-ray|bdrip|brrip|bdremux|remux|webrip|web-?dl|webdl|hdtv|pdtv|)"
-    R"(dvdrip|dvdscr|dvd5|dvd9|hdcam|camrip|cam|telesync|hdrip|)"
-    R"(x264|x265|h ?264|h ?265|hevc|avc1?|xvid|divx|)"
-    R"(aac(?:2 ?0)?|ac3|eac3|dts(?:-?hd)?|ddp?5 ?1|ddp?7 ?1|atmos|truehd|flac|)"
-    R"(proper|repack|internal|limited|extended(?:\s?cut)?|unrated|uncut|)"
-    R"(director'?s cut|theatrical(?:\s?cut)?|remastered|imax|10bit|8bit|)"
-    R"(yify|yts(?:\.mx)?|rarbg)\b)",
-    std::regex::icase
-);
+	// Season directory name: "Season 1", "Season 01", "S01", "Series 2", etc.
+	const std::regex kSeasonDirRe(
+		R"((?:Season|Series|S(?:eason)?)\s*0*(\d+))",
+		std::regex::icase
+	);
 
-// Season directory name: "Season 1", "Season 01", "S01", "Series 2", etc.
-const std::regex kSeasonDirRe(
-    R"((?:Season|Series|S(?:eason)?)\s*0*(\d+))",
-    std::regex::icase
-);
+	bool isVideo(const fs::path& p)
+	{
+		if (!fs::is_regular_file(p)) return false;
+		std::string ext = p.extension().string();
+		for (char& c : ext) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+		return kVideoExts.count(ext) > 0;
+	}
 
-bool isVideo(const fs::path& p) {
-    if (!fs::is_regular_file(p)) return false;
-    std::string ext = p.extension().string();
-    for (char& c : ext) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-    return kVideoExts.count(ext) > 0;
-}
+	bool isHidden(const fs::path& p)
+	{
+		const std::string name = p.filename().string();
+		return !name.empty() && name[0] == '.';
+	}
 
-bool isHidden(const fs::path& p) {
-    const std::string name = p.filename().string();
-    return !name.empty() && name[0] == '.';
-}
+	// Parse a directory or file stem into a clean search title + release year.
+	// Handles both tidy "Title (YYYY)" names and scene-release names like
+	// "The.Thing.1982.1080p.BluRay.x264-GROUP" or "The Toxic Avenger UNRATED
+	// BDRip x264-GROUP" (no year at all). Anything from the year token / first
+	// recognised quality-or-edition tag onward is dropped as not part of the title.
+	// Shared with ScraperManager's folder-mismatch recovery — see TitleMatch.h.
+	std::pair<std::string, std::optional<int>> parseTitle(const std::string& raw)
+	{
+		return titlematch::parseReleaseTitle(raw);
+	}
 
-// Parse a directory or file stem into a clean search title + release year.
-// Handles both tidy "Title (YYYY)" names and scene-release names like
-// "The.Thing.1982.1080p.BluRay.x264-GROUP" or "The Toxic Avenger UNRATED
-// BDRip x264-GROUP" (no year at all). Anything from the year token / first
-// recognised quality-or-edition tag onward is dropped as not part of the title.
-std::pair<std::string, std::optional<int>> parseTitle(const std::string& raw) {
-    // Scene releases use '.'/'_' as word separators; normalise to spaces so
-    // the regexes below see real word boundaries ("The.Thing" -> "The Thing").
-    // Collapse runs of spaces this creates (also tidies "Mr. Robot"-style names).
-    std::string name;
-    name.reserve(raw.size());
-    bool prev_space = false;
-    for (char c : raw) {
-        if (c == '.' || c == '_') c = ' ';
-        if (c == ' ') {
-            if (prev_space) continue;
-            prev_space = true;
-        } else {
-            prev_space = false;
-        }
-        name += c;
-    }
+	// Returns the season index from a directory name, or -1 if not a season dir.
+	int parseSeasonDir(const std::string& name)
+	{
+		std::smatch m;
+		if (std::regex_search(name, m, kSeasonDirRe)) return std::stoi(m[1].str());
+		return -1;
+	}
 
-    auto trimmed = [](std::string s) {
-        while (!s.empty() && (s.back() == ' ' || s.back() == '.' ||
-                               s.back() == '-' || s.back() == '('))
-            s.pop_back();
-        size_t start = s.find_first_not_of(' ');
-        return start == std::string::npos ? std::string() : s.substr(start);
-    };
+	// episode_end is 0 for a single episode, otherwise the inclusive end of a
+	// multi-episode range (e.g. S01E01-E03 -> episode=1, episode_end=3).
+	struct EpisodeLoc
+	{
+		int season      = 0;
+		int episode     = 0;
+		int episode_end = 0;
+		std::string title;
+	};
 
-    // Look for a year token, skipping one that sits at the very start of the
-    // name — that's almost always the title itself ("1917", "2001 A Space
-    // Odyssey"), not a release-year marker, so keep scanning for a later one.
-    std::optional<int> year;
-    size_t cut = std::string::npos;
-    for (auto it = std::sregex_iterator(name.begin(), name.end(), kYearTokenRe);
-         it != std::sregex_iterator(); ++it) {
-        size_t pos = static_cast<size_t>(it->position());
-        if (trimmed(name.substr(0, pos)).empty()) continue;
-        year = std::stoi((*it)[1].str());
-        cut = pos;
-        break;
-    }
+	std::optional<EpisodeLoc> parseEpisodeFilename(const std::string& stem)
+	{
+		std::smatch m;
+		if (!std::regex_search(stem, m, kEpisodeRe)) return std::nullopt;
 
-    // No year marker found: fall back to the first quality/source/edition tag.
-    if (cut == std::string::npos) {
-        std::smatch jm;
-        if (std::regex_search(name, jm, kJunkTagRe) && jm.position() > 0)
-            cut = static_cast<size_t>(jm.position());
-    }
+		EpisodeLoc loc;
+		if (m[1].matched)
+		{
+			loc.season  = std::stoi(m[1].str());
+			loc.episode = std::stoi(m[2].str());
+			if (m[3].matched) loc.episode_end = std::stoi(m[3].str());
+		}
+		else
+		{
+			loc.season  = std::stoi(m[4].str());
+			loc.episode = std::stoi(m[5].str());
+			if (m[6].matched) loc.episode_end = std::stoi(m[6].str());
+		}
+		// A range end that isn't strictly after the start, or spans an
+		// implausible number of episodes, is more likely a misread tag than a
+		// genuine multi-episode file — fall back to treating it as a single
+		// episode rather than exploding into bogus episode rows.
+		if (loc.episode_end <= loc.episode ||
+			loc.episode_end - loc.episode > kMaxEpisodeRangeSpan)
+			loc.episode_end = 0;
 
-    std::string title = trimmed(cut == std::string::npos ? name : name.substr(0, cut));
-    return {title, year};
-}
+		// Title: text after the match, stripping a leading " - " or "."
+		std::string after = stem.substr(static_cast<size_t>(m.position()) + m.length());
+		static const std::regex kSep(R"(^\s*[-–.]\s*)");
+		after = std::regex_replace(after, kSep, "");
+		while (!after.empty() && (after.back() == ' ' || after.back() == '-')) after.pop_back();
+		loc.title = after;
+		return loc;
+	}
 
-// Returns the season index from a directory name, or -1 if not a season dir.
-int parseSeasonDir(const std::string& name) {
-    std::smatch m;
-    if (std::regex_search(name, m, kSeasonDirRe))
-        return std::stoi(m[1].str());
-    return -1;
-}
+	// Non-recursive: collect video files directly inside dir, sorted by name.
+	std::vector<fs::path> videosIn(const fs::path& dir)
+	{
+		std::vector<fs::path> out;
+		std::error_code ec;
+		for (const auto& e : fs::directory_iterator(dir, ec)) if (isVideo(e.path())) out.push_back(e.path());
+		std::sort(out.begin(), out.end());
+		return out;
+	}
 
-struct EpisodeLoc { int season = 0; int episode = 0; std::string title; };
+	// Whether `dir` structurally looks like a show folder: a lone season-named
+	// directory itself, a season subdirectory one level deeper, or a flat layout
+	// (no season wrapper) with multiple video files where at least one filename
+	// carries an episode number. Shared by guessLibraryType() (initial per-library
+	// suggestion) and fetchShows()/fetchMovies() (per-subdirectory routing inside
+	// an actual "mixed" library) so both agree on what counts as a show.
+	bool looksLikeShowDir(const fs::path& dir)
+	{
+		if (parseSeasonDir(dir.filename().string()) >= 0) return true;
 
-std::optional<EpisodeLoc> parseEpisodeFilename(const std::string& stem) {
-    std::smatch m;
-    if (!std::regex_search(stem, m, kEpisodeRe)) return std::nullopt;
+		std::error_code ec;
+		int video_count                 = 0;
+		bool has_episode_numbered_video = false;
+		for (const auto& e : fs::directory_iterator(dir, ec))
+		{
+			if (isHidden(e.path())) continue;
+			if (e.is_directory())
+			{
+				if (parseSeasonDir(e.path().filename().string()) >= 0) return true;
+			}
+			else if (isVideo(e.path()))
+			{
+				++video_count;
+				if (std::regex_search(e.path().stem().string(), kEpisodeRe)) has_episode_numbered_video = true;
+			}
+		}
+		return video_count >= 2 && has_episode_numbered_video;
+	}
 
-    EpisodeLoc loc;
-    if (m[1].matched) { loc.season = std::stoi(m[1].str()); loc.episode = std::stoi(m[2].str()); }
-    else              { loc.season = std::stoi(m[3].str()); loc.episode = std::stoi(m[4].str()); }
+	// Whether `dir` structurally looks like a movie folder: has video file(s)
+	// directly inside, and doesn't already look like a show.
+	bool looksLikeMovieDir(const fs::path& dir)
+	{
+		return !looksLikeShowDir(dir) && !videosIn(dir).empty();
+	}
 
-    // Title: text after the match, stripping a leading " - " or "."
-    std::string after = stem.substr(static_cast<size_t>(m.position()) + m.length());
-    static const std::regex kSep(R"(^\s*[-–.]\s*)");
-    after = std::regex_replace(after, kSep, "");
-    while (!after.empty() && (after.back() == ' ' || after.back() == '-')) after.pop_back();
-    loc.title = after;
-    return loc;
-}
+	// Attempts to detect that every file in `files` is one part of the same
+	// multi-part movie (CD1/CD2, Part 1/Part 2, Disc 1/Disc 2 naming) — see
+	// titlematch::groupFileParts. Requires >=2 files, a consistent base title
+	// across all of them, and distinct part numbers; anything less consistent
+	// returns nullopt so the caller falls back to the old single-file
+	// behavior rather than risk grouping unrelated files (e.g. a trailer
+	// alongside the main feature) into a bogus movie. Result is sorted by
+	// part number. See GitHub #3.
+	std::optional<std::vector<std::pair<int, fs::path>>> tryGroupParts(const std::vector<fs::path>& files)
+	{
+		std::vector<std::string> stems;
+		stems.reserve(files.size());
+		for (const auto& f : files) stems.push_back(f.stem().string());
 
-// Non-recursive: collect video files directly inside dir, sorted by name.
-std::vector<fs::path> videosIn(const fs::path& dir) {
-    std::vector<fs::path> out;
-    std::error_code ec;
-    for (const auto& e : fs::directory_iterator(dir, ec))
-        if (isVideo(e.path())) out.push_back(e.path());
-    std::sort(out.begin(), out.end());
-    return out;
-}
+		auto part_nums = titlematch::groupFileParts(stems);
+		if (part_nums.empty()) return std::nullopt;
 
-// Whether `dir` structurally looks like a show folder: a lone season-named
-// directory itself, a season subdirectory one level deeper, or a flat layout
-// (no season wrapper) with multiple video files where at least one filename
-// carries an episode number. Shared by guessLibraryType() (initial per-library
-// suggestion) and fetchShows()/fetchMovies() (per-subdirectory routing inside
-// an actual "mixed" library) so both agree on what counts as a show.
-bool looksLikeShowDir(const fs::path& dir) {
-    if (parseSeasonDir(dir.filename().string()) >= 0) return true;
+		std::vector<std::pair<int, fs::path>> parts;
+		parts.reserve(files.size());
+		for (size_t i = 0; i < files.size(); ++i) parts.emplace_back(part_nums[i], files[i]);
+		std::sort(parts.begin(), parts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		return parts;
+	}
 
-    std::error_code ec;
-    int video_count = 0;
-    bool has_episode_numbered_video = false;
-    for (const auto& e : fs::directory_iterator(dir, ec)) {
-        if (isHidden(e.path())) continue;
-        if (e.is_directory()) {
-            if (parseSeasonDir(e.path().filename().string()) >= 0) return true;
-        } else if (isVideo(e.path())) {
-            ++video_count;
-            if (std::regex_search(e.path().stem().string(), kEpisodeRe))
-                has_episode_numbered_video = true;
-        }
-    }
-    return video_count >= 2 && has_episode_numbered_video;
-}
+	// Clusters bare root-level video files (siblings of the library directory
+	// itself, not inside a per-movie folder) into multi-part groups by shared
+	// base title. Any file that doesn't end up in a validated 2+-member group
+	// — including one whose bucket has duplicate part numbers, per
+	// tryGroupParts — comes back as its own one-element group, i.e. treated
+	// exactly as before this feature (one Movie per file).
+	std::vector<std::vector<fs::path>> clusterRootMovieParts(const std::vector<fs::path>& files)
+	{
+		std::map<std::string, std::vector<fs::path>> byBase;
+		std::vector<fs::path> standalone;
+		for (const auto& f : files)
+		{
+			auto marker = titlematch::detectFilePart(f.stem().string());
+			if (!marker)
+			{
+				standalone.push_back(f);
+				continue;
+			}
+			byBase[titlematch::normalizeTitle(marker->first)].push_back(f);
+		}
 
-// Whether `dir` structurally looks like a movie folder: has video file(s)
-// directly inside, and doesn't already look like a show.
-bool looksLikeMovieDir(const fs::path& dir) {
-    return !looksLikeShowDir(dir) && !videosIn(dir).empty();
-}
+		std::vector<std::vector<fs::path>> groups;
+		for (auto& [base, bucket] : byBase)
+		{
+			if (bucket.size() >= 2 && tryGroupParts(bucket)) groups.push_back(std::move(bucket));
+			else for (auto& f : bucket) standalone.push_back(f);
+		}
+		for (auto& f : standalone) groups.push_back({f});
+		return groups;
+	}
 
+	// A movie.nfo (or "<video>.nfo") is authoritative when present, same "NFO
+	// wins" precedent as loadShowSidecar's caller — overrides filename-parsed
+	// title/year too, not just fields the filename can't provide.
+	void applyMovieSidecar(Movie& movie, std::optional<NfoMovie> nfo)
+	{
+		if (!nfo) return;
+		if (!nfo->title.empty()) movie.title = nfo->title;
+		if (nfo->year) movie.year = nfo->year;
+		if (!nfo->overview.empty()) movie.overview = nfo->overview;
+		if (!nfo->tagline.empty()) movie.tagline = nfo->tagline;
+		if (!nfo->content_rating.empty()) movie.content_rating = nfo->content_rating;
+		if (nfo->genres != "[]") movie.genres = nfo->genres;
+		if (!nfo->studio.empty()) movie.studio = nfo->studio;
+		if (!nfo->director.empty()) movie.director = nfo->director;
+		if (nfo->actors != "[]") movie.actors = nfo->actors;
+		if (nfo->countries != "[]") movie.countries = nfo->countries;
+		if (!nfo->release_date.empty()) movie.release_date = nfo->release_date;
+		if (!nfo->imdb_id.empty()) movie.imdb_id = nfo->imdb_id;
+		if (!nfo->tmdb_id.empty()) movie.tmdb_id = nfo->tmdb_id;
+		if (nfo->audience_rating) movie.audience_rating = nfo->audience_rating;
+		if (!nfo->thumb.empty()) movie.thumb = nfo->thumb;
+		if (!nfo->art.empty()) movie.art = nfo->art;
+		movie.nfo_confirmed = nfo->confirmed;
+	}
 } // namespace
 
 // ---------------------------------------------------------------------------
 
 LocalSource::LocalSource(const std::string& source_id, const std::string& base_path, ConfStore& conf)
-    : source_id_(source_id), base_path_(base_path), conf_(conf) {}
+	: source_id_(source_id)
+	, base_path_(base_path)
+	, conf_(conf)
+{
+}
 
 // ---------------------------------------------------------------------------
 // Library discovery — each non-hidden immediate subdirectory of base_path_
@@ -216,179 +297,316 @@ LocalSource::LocalSource(const std::string& source_id, const std::string& base_p
 // to "show". Both signals present → "mixed" (safe: fetchShows()/fetchMovies()
 // route each subdirectory individually in that case, see below). Neither
 // signal → "mixed" too, same safe fallback as the previous empty-library case.
-static std::string guessLibraryType(const fs::path& dir) {
-    std::error_code ec;
-    bool hasShowSignal = false, hasMovieSignal = false;
-    int scanned = 0;
-    // Bounded so a library with thousands of entries — especially over
-    // network/FUSE-backed storage (e.g. Unraid's shfs), where every
-    // directory read costs real round-trip latency — can't turn a single UI
-    // browse click into a multi-second-or-worse stall. A few hundred
-    // children is already far more evidence than the single early-return
-    // this tally replaced ever looked at, so the cap doesn't reintroduce
-    // that bug. Stops even earlier once both signals are already confirmed,
-    // since no further child can change a "mixed" verdict.
-    constexpr int kMaxScan = 300;
-    for (const auto& child : fs::directory_iterator(dir, ec)) {
-        if (isHidden(child.path())) continue;
-        if (child.is_directory()) {
-            // looksLikeShowDir() is checked once and reused directly here
-            // instead of via looksLikeMovieDir() (which would re-run it) —
-            // avoids scanning the same subdirectory's contents twice.
-            if (looksLikeShowDir(child.path())) hasShowSignal = true;
-            else if (!videosIn(child.path()).empty()) hasMovieSignal = true;
-        } else if (isVideo(child.path())) {
-            hasMovieSignal = true;
-        }
-        if (hasShowSignal && hasMovieSignal) break;
-        if (++scanned >= kMaxScan) break;
-    }
-    if (hasShowSignal && hasMovieSignal) return "mixed";
-    if (hasShowSignal)  return "show";
-    if (hasMovieSignal) return "movie";
-    return "mixed";
+static std::string guessLibraryType(const fs::path& dir)
+{
+	std::error_code ec;
+	bool hasShowSignal = false, hasMovieSignal = false;
+	int scanned        = 0;
+	// Bounded so a library with thousands of entries — especially over
+	// network/FUSE-backed storage (e.g. Unraid's shfs), where every
+	// directory read costs real round-trip latency — can't turn a single UI
+	// browse click into a multi-second-or-worse stall. A few hundred
+	// children is already far more evidence than the single early-return
+	// this tally replaced ever looked at, so the cap doesn't reintroduce
+	// that bug. Stops even earlier once both signals are already confirmed,
+	// since no further child can change a "mixed" verdict.
+	constexpr int kMaxScan = 300;
+	for (const auto& child : fs::directory_iterator(dir, ec))
+	{
+		if (isHidden(child.path())) continue;
+		if (child.is_directory())
+		{
+			// looksLikeShowDir() is checked once and reused directly here
+			// instead of via looksLikeMovieDir() (which would re-run it) —
+			// avoids scanning the same subdirectory's contents twice.
+			if (looksLikeShowDir(child.path())) hasShowSignal = true;
+			else if (!videosIn(child.path()).empty()) hasMovieSignal = true;
+		}
+		else if (isVideo(child.path()))
+		{
+			hasMovieSignal = true;
+		}
+		if (hasShowSignal && hasMovieSignal) break;
+		if (++scanned >= kMaxScan) break;
+	}
+	if (hasShowSignal && hasMovieSignal) return "mixed";
+	if (hasShowSignal) return "show";
+	if (hasMovieSignal) return "movie";
+	return "mixed";
 }
 
-std::vector<LibraryInfo> LocalSource::listAvailableLibraries() {
-    std::error_code ec;
-    const fs::path root(base_path_);
-    if (!fs::is_directory(root, ec)) {
-        std::cerr << "[local:" << source_id_ << "] not a directory: " << base_path_ << '\n';
-        return {};
-    }
+std::vector<LibraryInfo> LocalSource::listAvailableLibraries()
+{
+	std::error_code ec;
+	const fs::path root(base_path_);
+	if (!fs::is_directory(root, ec))
+	{
+		std::cerr << "[local:" << source_id_ << "] not a directory: " << base_path_ << '\n';
+		return {};
+	}
 
-    std::vector<LibraryInfo> result;
-    for (const auto& entry : fs::directory_iterator(root, ec)) {
-        if (!entry.is_directory() || isHidden(entry.path())) continue;
-        LibraryInfo info;
-        info.external_lib_id = entry.path().string();
-        info.name            = entry.path().filename().string();
-        info.type            = guessLibraryType(entry.path());
-        result.push_back(std::move(info));
-    }
-    std::sort(result.begin(), result.end(), [](const LibraryInfo& a, const LibraryInfo& b) {
-        return a.name < b.name;
-    });
+	std::vector<LibraryInfo> result;
+	for (const auto& entry : fs::directory_iterator(root, ec))
+	{
+		if (!entry.is_directory() || isHidden(entry.path())) continue;
+		LibraryInfo info;
+		info.external_lib_id = entry.path().string();
+		info.name            = entry.path().filename().string();
+		info.type            = guessLibraryType(entry.path());
+		result.push_back(std::move(info));
+	}
+	std::sort(result.begin(), result.end(), [](const LibraryInfo& a, const LibraryInfo& b)
+	{
+		return a.name < b.name;
+	});
 
-    // If there are no subdirectories, fall back to the root itself.
-    if (result.empty()) {
-        LibraryInfo info;
-        info.external_lib_id = base_path_;
-        info.name            = root.filename().string();
-        if (info.name.empty()) info.name = base_path_;
-        info.type            = "mixed";
-        result.push_back(std::move(info));
-    }
-    return result;
+	// If there are no subdirectories, fall back to the root itself.
+	if (result.empty())
+	{
+		LibraryInfo info;
+		info.external_lib_id = base_path_;
+		info.name            = root.filename().string();
+		if (info.name.empty()) info.name = base_path_;
+		info.type = "mixed";
+		result.push_back(std::move(info));
+	}
+	return result;
 }
 
-std::vector<LibraryInfo> LocalSource::listSubdirectories(const std::string& path) {
-    std::error_code ec;
-    const fs::path target(path.empty() ? base_path_ : path);
-    const fs::path base(base_path_);
+std::vector<LibraryInfo> LocalSource::listSubdirectories(const std::string& path)
+{
+	std::error_code ec;
+	const fs::path target(path.empty() ? base_path_ : path);
+	const fs::path base(base_path_);
 
-    // Reject any path that escapes base_path_.
-    auto normTarget = fs::weakly_canonical(target, ec);
-    auto normBase   = fs::weakly_canonical(base, ec);
-    auto rel = normTarget.lexically_relative(normBase);
-    if (rel.empty() || rel.native().rfind("..", 0) == 0) return {};
+	// Reject any path that escapes base_path_.
+	auto normTarget = fs::weakly_canonical(target, ec);
+	auto normBase   = fs::weakly_canonical(base, ec);
+	auto rel        = normTarget.lexically_relative(normBase);
+	if (rel.empty() || rel.native().rfind("..", 0) == 0) return {};
 
-    if (!fs::is_directory(normTarget, ec)) return {};
+	if (!fs::is_directory(normTarget, ec)) return {};
 
-    std::vector<LibraryInfo> result;
-    for (const auto& entry : fs::directory_iterator(normTarget, ec)) {
-        if (!entry.is_directory() || isHidden(entry.path())) continue;
-        LibraryInfo info;
-        info.external_lib_id = entry.path().string();
-        info.name            = entry.path().filename().string();
-        info.type            = guessLibraryType(entry.path());
-        result.push_back(std::move(info));
-    }
-    std::sort(result.begin(), result.end(), [](const LibraryInfo& a, const LibraryInfo& b) {
-        return a.name < b.name;
-    });
-    return result;
+	std::vector<LibraryInfo> result;
+	for (const auto& entry : fs::directory_iterator(normTarget, ec))
+	{
+		if (!entry.is_directory() || isHidden(entry.path())) continue;
+		LibraryInfo info;
+		info.external_lib_id = entry.path().string();
+		info.name            = entry.path().filename().string();
+		info.type            = guessLibraryType(entry.path());
+		result.push_back(std::move(info));
+	}
+	std::sort(result.begin(), result.end(), [](const LibraryInfo& a, const LibraryInfo& b)
+	{
+		return a.name < b.name;
+	});
+	return result;
 }
 
 // ---------------------------------------------------------------------------
 // Shows — each non-hidden top-level subdirectory is a show validte with looksLikeShowDir.
 // ---------------------------------------------------------------------------
 
-std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id) {
-    std::error_code ec;
-    if (!fs::is_directory(external_lib_id, ec)) return {};
+std::vector<Show> LocalSource::fetchShows(const std::string& external_lib_id)
+{
+	std::error_code ec;
+	if (!fs::is_directory(external_lib_id, ec)) return {};
 
-    std::vector<Show> result;
-    for (const auto& entry : fs::directory_iterator(external_lib_id, ec)) {
-        if (!entry.is_directory() || isHidden(entry.path())) continue;
-        if (!looksLikeShowDir(entry.path())) continue;
-        auto [title, year] = parseTitle(entry.path().filename().string());
-        Show show;
-        show.show_id     = conf_.applyPathMap(entry.path().string()); // mapped path as external key
-        show.title       = title;
-        show.folder_path = entry.path().string(); // raw, unmapped — mapping happens at dedup-compare time
-        show.genres      = "[]";
-        show.labels      = "[]";
-        show.actors      = "[]";
-        show.countries   = "[]";
-        show.collections = "[]";
-        if (year) show.year = year;
-        result.push_back(std::move(show));
-    }
-    std::sort(result.begin(), result.end(), [](const Show& a, const Show& b) {
-        return a.title < b.title;
-    });
-    return result;
+	std::vector<Show> result;
+	for (const auto& entry : fs::directory_iterator(external_lib_id, ec))
+	{
+		if (!entry.is_directory() || isHidden(entry.path())) continue;
+		if (!looksLikeShowDir(entry.path())) continue;
+		auto [title, year] = parseTitle(entry.path().filename().string());
+		Show show;
+		show.show_id     = conf_.applyPathMap(entry.path().string()); // mapped path as external key
+		show.title       = title;
+		show.folder_path = entry.path().string(); // raw, unmapped — mapping happens at dedup-compare time
+		show.genres      = "[]";
+		show.labels      = "[]";
+		show.actors      = "[]";
+		show.countries   = "[]";
+		show.collections = "[]";
+		if (year) show.year = year;
+		if (int64_t added = fsAddedAtEpoch(entry.path()); added > 0)
+		{
+			show.added_at        = added;
+			show.added_at_source = source_id_;
+		}
+
+		// A Kodi-style tvshow.nfo (plus poster.jpg/fanart.jpg alongside it) is
+		// authoritative when present — same "NFO wins" precedent every other
+		// media server built on this convention follows — filling in fields
+		// the bare folder name can't provide (overview, genres, ratings,
+		// provider ids) and taking priority over the filename-parsed
+		// title/year, not just filling gaps.
+		if (auto nfo = loadShowSidecar(entry.path()))
+		{
+			if (!nfo->title.empty()) show.title = nfo->title;
+			if (nfo->year) show.year = nfo->year;
+			if (!nfo->overview.empty()) show.overview = nfo->overview;
+			if (!nfo->content_rating.empty()) show.content_rating = nfo->content_rating;
+			if (nfo->genres != "[]") show.genres = nfo->genres;
+			if (!nfo->network.empty()) show.network = nfo->network;
+			if (!nfo->status.empty()) show.status = nfo->status;
+			if (nfo->actors != "[]") show.actors = nfo->actors;
+			if (nfo->countries != "[]") show.countries = nfo->countries;
+			if (!nfo->release_date.empty()) show.originally_available_at = nfo->release_date;
+			if (!nfo->imdb_id.empty()) show.imdb_id = nfo->imdb_id;
+			if (!nfo->tmdb_id.empty()) show.tmdb_id = nfo->tmdb_id;
+			if (!nfo->tvdb_id.empty()) show.tvdb_id = nfo->tvdb_id;
+			if (nfo->audience_rating) show.audience_rating = nfo->audience_rating;
+			if (!nfo->thumb.empty()) show.thumb = nfo->thumb;
+			if (!nfo->art.empty()) show.art = nfo->art;
+			show.nfo_confirmed = nfo->confirmed;
+		}
+		result.push_back(std::move(show));
+	}
+	std::sort(result.begin(), result.end(), [](const Show& a, const Show& b)
+	{
+		return a.title < b.title;
+	});
+	return result;
 }
 
 // ---------------------------------------------------------------------------
 // Movies — subdirectory-per-movie or bare video files at root level.
 // ---------------------------------------------------------------------------
 
-std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) {
-    std::error_code ec;
-    if (!fs::is_directory(external_lib_id, ec)) return {};
+std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id)
+{
+	std::error_code ec;
+	if (!fs::is_directory(external_lib_id, ec)) return {};
 
-    std::vector<Movie> result;
-    for (const auto& entry : fs::directory_iterator(external_lib_id, ec)) {
-        const fs::path p = entry.path();
-        if (isHidden(p)) continue;
+	std::vector<Movie> result;
+	std::vector<fs::path> rootVideos; // bare files at library root — grouped after the loop, see below
 
-        if (entry.is_directory()) {
-            if (!looksLikeMovieDir(p)) continue;
-            auto vfiles = videosIn(p);
-            if (vfiles.empty()) continue;
-            auto [title, year] = parseTitle(p.filename().string());
-            Movie movie;
-            movie.movie_id    = conf_.applyPathMap(p.string());
-            movie.title       = title;
-            movie.file_path   = conf_.applyPathMap(vfiles.front().string());
-            movie.genres      = "[]";
-            movie.labels      = "[]";
-            movie.actors      = "[]";
-            movie.countries   = "[]";
-            movie.collections = "[]";
-            if (year) movie.year = year;
-            result.push_back(std::move(movie));
-        } else if (isVideo(p)) {
-            auto [title, year] = parseTitle(p.stem().string());
-            Movie movie;
-            movie.movie_id    = conf_.applyPathMap(p.string());
-            movie.title       = title;
-            movie.file_path   = conf_.applyPathMap(p.string());
-            movie.genres      = "[]";
-            movie.labels      = "[]";
-            movie.actors      = "[]";
-            movie.countries   = "[]";
-            movie.collections = "[]";
-            if (year) movie.year = year;
-            result.push_back(std::move(movie));
-        }
-    }
-    std::sort(result.begin(), result.end(), [](const Movie& a, const Movie& b) {
-        return a.title < b.title;
-    });
-    return result;
+	for (const auto& entry : fs::directory_iterator(external_lib_id, ec))
+	{
+		const fs::path p = entry.path();
+		if (isHidden(p)) continue;
+
+		if (entry.is_directory())
+		{
+			if (!looksLikeMovieDir(p)) continue;
+			auto vfiles = videosIn(p);
+			if (vfiles.empty()) continue;
+			auto [title, year] = parseTitle(p.filename().string());
+			Movie movie;
+			movie.movie_id    = conf_.applyPathMap(p.string());
+			movie.title       = title;
+			movie.genres      = "[]";
+			movie.labels      = "[]";
+			movie.actors      = "[]";
+			movie.countries   = "[]";
+			movie.collections = "[]";
+			if (year) movie.year = year;
+			if (int64_t added = fsAddedAtEpoch(p); added > 0)
+			{
+				movie.added_at        = added;
+				movie.added_at_source = source_id_;
+			}
+
+			// A movie folder holding 2+ video files that all carry a
+			// consistent CD1/CD2-style marker is a multi-part movie, not
+			// duplicate/orphan entries — see GitHub #3.
+			fs::path sidecar_file = vfiles.front();
+			if (auto grouped = tryGroupParts(vfiles); grouped && grouped->size() >= 2)
+			{
+				movie.is_multi_part = true;
+				for (const auto& [part_num, path] : *grouped)
+				{
+					MoviePart mp;
+					mp.part_num  = part_num;
+					mp.file_path = conf_.applyPathMap(path.string());
+					movie.parts.push_back(std::move(mp));
+				}
+				sidecar_file    = grouped->front().second;
+				movie.file_path = movie.parts.front().file_path;
+			}
+			else
+			{
+				movie.file_path = conf_.applyPathMap(vfiles.front().string());
+			}
+			applyMovieSidecar(movie, loadMovieSidecar(sidecar_file, p, /*has_own_folder=*/true));
+			result.push_back(std::move(movie));
+		}
+		else if (isVideo(p))
+		{
+			rootVideos.push_back(p);
+		}
+	}
+
+	// Bare video files directly at the library root: cluster siblings that
+	// share a multi-part marker into one Movie each, same as a movie
+	// folder's videos above; everything else stays one Movie per file,
+	// unchanged from before this feature.
+	for (const auto& group : clusterRootMovieParts(rootVideos))
+	{
+		if (group.size() < 2)
+		{
+			const fs::path& p  = group.front();
+			auto [title, year] = parseTitle(p.stem().string());
+			Movie movie;
+			movie.movie_id    = conf_.applyPathMap(p.string());
+			movie.title       = title;
+			movie.file_path   = conf_.applyPathMap(p.string());
+			movie.genres      = "[]";
+			movie.labels      = "[]";
+			movie.actors      = "[]";
+			movie.countries   = "[]";
+			movie.collections = "[]";
+			if (year) movie.year = year;
+			if (int64_t added = fsAddedAtEpoch(p); added > 0)
+			{
+				movie.added_at        = added;
+				movie.added_at_source = source_id_;
+			}
+			applyMovieSidecar(movie, loadMovieSidecar(p, p.parent_path(), /*has_own_folder=*/false));
+			result.push_back(std::move(movie));
+			continue;
+		}
+
+		auto grouped = tryGroupParts(group);
+		if (!grouped) continue; // shouldn't happen — clusterRootMovieParts already validated this bucket
+
+		const fs::path& part1 = grouped->front().second;
+		auto marker           = titlematch::detectFilePart(part1.stem().string());
+		auto [title, year]    = parseTitle(marker ? marker->first : part1.stem().string());
+
+		Movie movie;
+		movie.movie_id      = conf_.applyPathMap(part1.string());
+		movie.title         = title;
+		movie.genres        = "[]";
+		movie.labels        = "[]";
+		movie.actors        = "[]";
+		movie.countries     = "[]";
+		movie.collections   = "[]";
+		movie.is_multi_part = true;
+		if (year) movie.year = year;
+		if (int64_t added = fsAddedAtEpoch(part1); added > 0)
+		{
+			movie.added_at        = added;
+			movie.added_at_source = source_id_;
+		}
+		for (const auto& [part_num, path] : *grouped)
+		{
+			MoviePart mp;
+			mp.part_num  = part_num;
+			mp.file_path = conf_.applyPathMap(path.string());
+			movie.parts.push_back(std::move(mp));
+		}
+		movie.file_path = movie.parts.front().file_path;
+		applyMovieSidecar(movie, loadMovieSidecar(part1, part1.parent_path(), /*has_own_folder=*/false));
+		result.push_back(std::move(movie));
+	}
+
+	std::sort(result.begin(), result.end(), [](const Movie& a, const Movie& b)
+	{
+		return a.title < b.title;
+	});
+	return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -396,59 +614,203 @@ std::vector<Movie> LocalSource::fetchMovies(const std::string& external_lib_id) 
 // external_show_id is the directory path returned by fetchShows().
 // ---------------------------------------------------------------------------
 
-std::vector<Episode> LocalSource::fetchEpisodes(const std::string& external_show_id) {
-    std::error_code ec;
-    if (!fs::is_directory(external_show_id, ec)) return {};
+std::vector<Episode> LocalSource::fetchEpisodes(const std::string& external_show_id)
+{
+	std::error_code ec;
+	if (!fs::is_directory(external_show_id, ec)) return {};
 
-    const fs::path showDir(external_show_id);
-    std::vector<Episode> result;
+	const fs::path showDir(external_show_id);
+	std::vector<Episode> result;
 
-    // The caller (SyncManager) passes us the mapped show path if it was mapped,
-    // but we should still handle files inside consistently.
-    // However, external_show_id should already be mapped by SyncManager or LocalSource::fetchShows.
+	// The caller (SyncManager) passes us the mapped show path if it was mapped,
+	// but we should still handle files inside consistently.
+	// However, external_show_id should already be mapped by SyncManager or LocalSource::fetchShows.
 
-    // Collect season subdirectories (recognised by kSeasonDirRe).
-    std::vector<fs::path> seasonDirs;
-    for (const auto& e : fs::directory_iterator(showDir, ec)) {
-        if (!e.is_directory() || isHidden(e.path())) continue;
-        if (parseSeasonDir(e.path().filename().string()) >= 0)
-            seasonDirs.push_back(e.path());
-    }
-    std::sort(seasonDirs.begin(), seasonDirs.end());
+	// Collect season subdirectories (recognised by kSeasonDirRe).
+	std::vector<fs::path> seasonDirs;
+	for (const auto& e : fs::directory_iterator(showDir, ec))
+	{
+		if (!e.is_directory() || isHidden(e.path())) continue;
+		if (parseSeasonDir(e.path().filename().string()) >= 0) seasonDirs.push_back(e.path());
+	}
+	std::sort(seasonDirs.begin(), seasonDirs.end());
 
-    auto addEpisode = [&](const fs::path& file, int season_hint) {
-        auto loc = parseEpisodeFilename(file.stem().string());
-        Episode ep;
-        std::string mapped_file = conf_.applyPathMap(file.string());
-        ep.episode_id = mapped_file;
-        ep.show_id    = external_show_id;
-        ep.file_path  = mapped_file;
-        if (loc) {
-            ep.season  = loc->season;
-            ep.episode = loc->episode;
-            ep.title   = loc->title;
-        } else {
-            ep.season  = (season_hint > 0) ? season_hint : 1;
-            ep.episode = 0;
-            ep.title   = file.stem().string();
-        }
-        result.push_back(std::move(ep));
-    };
+	// id_suffix distinguishes rows that share the same physical file (a
+	// multi-episode file expands into one Episode per number below) — kept
+	// empty for the common single-episode case so episode_id stays exactly
+	// the mapped file path, unchanged from before this file could expand.
+	// A per-episode .nfo (title/plot/aired) plus a "<episode>-thumb.jpg"
+	// sidecar is authoritative when present, same "NFO wins" precedent as
+	// fetchShows/fetchMovies — season/episode numbers are deliberately left
+	// to the filename parse below regardless (that's what drives the
+	// multi-episode-range expansion a single NFO can't express per-number).
+	auto makeEpisode = [&](const std::string& mapped_file, int season, int episode,
+						   const std::string& title, const std::string& id_suffix,
+						   const NfoEpisode* nfo)
+	{
+		Episode ep;
+		ep.episode_id = mapped_file + id_suffix;
+		ep.show_id    = external_show_id;
+		ep.file_path  = mapped_file;
+		ep.season     = season;
+		ep.episode    = episode;
+		ep.title      = (nfo && !nfo->title.empty()) ? nfo->title : title;
+		if (nfo)
+		{
+			if (!nfo->overview.empty()) ep.overview = nfo->overview;
+			if (!nfo->air_date.empty()) ep.air_date = nfo->air_date;
+			if (!nfo->thumb.empty()) ep.thumb = nfo->thumb;
+		}
+		result.push_back(std::move(ep));
+	};
 
-    if (!seasonDirs.empty()) {
-        for (const auto& sdir : seasonDirs) {
-            const int snum = parseSeasonDir(sdir.filename().string());
-            for (const auto& f : videosIn(sdir))
-                addEpisode(f, snum);
-        }
-    } else {
-        // Flat layout: all video files sit directly in the show directory.
-        for (const auto& f : videosIn(showDir))
-            addEpisode(f, 1);
-    }
+	auto addEpisode = [&](const fs::path& file, int season_hint)
+	{
+		auto loc                  = parseEpisodeFilename(file.stem().string());
+		std::string mapped_file   = conf_.applyPathMap(file.string());
+		auto nfo                  = loadEpisodeSidecar(file);
+		const NfoEpisode* nfo_ptr = nfo ? &*nfo : nullptr;
+		if (loc && loc->episode_end > loc->episode)
+		{
+			for (int e = loc->episode; e <= loc->episode_end; ++e) makeEpisode(mapped_file, loc->season, e, loc->title, "#" + std::to_string(e), nfo_ptr);
+		}
+		else if (loc)
+		{
+			makeEpisode(mapped_file, loc->season, loc->episode, loc->title, "", nfo_ptr);
+		}
+		else
+		{
+			makeEpisode(mapped_file, (season_hint > 0) ? season_hint : 1, 0,
+						file.stem().string(), "", nfo_ptr);
+		}
+	};
 
-    std::sort(result.begin(), result.end(), [](const Episode& a, const Episode& b) {
-        return a.season != b.season ? a.season < b.season : a.episode < b.episode;
-    });
-    return result;
+	if (!seasonDirs.empty())
+	{
+		for (const auto& sdir : seasonDirs)
+		{
+			const int snum = parseSeasonDir(sdir.filename().string());
+			for (const auto& f : videosIn(sdir)) addEpisode(f, snum);
+		}
+	}
+	else
+	{
+		// Flat layout: all video files sit directly in the show directory.
+		for (const auto& f : videosIn(showDir)) addEpisode(f, 1);
+	}
+
+	std::sort(result.begin(), result.end(), [](const Episode& a, const Episode& b)
+	{
+		return a.season != b.season ? a.season < b.season : a.episode < b.episode;
+	});
+	return result;
+}
+
+// ---------------------------------------------------------------------------
+// Metadata writeback — see LocalSource.h's doc comment on pushMetadata.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+	std::optional<SidecarImage> toSidecarImage(const std::optional<WritebackImage>& img)
+	{
+		if (!img) return std::nullopt;
+		return SidecarImage{img->bytes, img->content_type};
+	}
+
+	// "YYYY-MM-DD" / "YYYY" -> YYYY, when the field looks date-shaped.
+	std::optional<int> yearFromReleaseDate(const std::string& release_date)
+	{
+		if (release_date.size() < 4) return std::nullopt;
+		if (!std::all_of(release_date.begin(), release_date.begin() + 4, ::isdigit)) return std::nullopt;
+		try { return std::stoi(release_date.substr(0, 4)); }
+		catch (...) { return std::nullopt; }
+	}
+} // namespace
+
+bool LocalSource::pushMetadata(const std::string& external_id, const std::string&,
+							   const std::string& item_type, const WritebackFields& fields)
+{
+	// external_id is the item's own movie_id/show_id, which may have gone
+	// through conf_.applyPathMap() once already when LocalSource first
+	// reported it (see fetchMovies/fetchShows) — re-applying it here mirrors
+	// ChapterDetectionManager's identical handling of a stored file_path
+	// before touching the real filesystem: a no-op unless a path map is
+	// actually configured, in which case it resolves back to what Kairos
+	// itself can open.
+	const fs::path resolved(conf_.applyPathMap(external_id));
+	std::error_code ec;
+
+	try
+	{
+		if (item_type == "show")
+		{
+			if (!fs::is_directory(resolved, ec)) return false;
+			NfoShow data;
+			data.title          = fields.title;
+			data.overview       = fields.overview;
+			data.content_rating = fields.content_rating;
+			data.genres         = fields.genres.empty() ? "[]" : fields.genres;
+			data.network        = fields.network;
+			data.actors         = fields.actors.empty() ? "[]" : fields.actors;
+			data.countries      = fields.countries.empty() ? "[]" : fields.countries;
+			data.release_date   = fields.release_date;
+			data.year           = yearFromReleaseDate(fields.release_date);
+			data.imdb_id        = fields.imdb_id;
+			data.tmdb_id        = fields.tmdb_id;
+			data.tvdb_id        = fields.tvdb_id;
+			if (fields.audience_rating) data.audience_rating = static_cast<float>(*fields.audience_rating);
+			data.confirmed = fields.match_confirmed;
+			data.locked    = fields.locked;
+			saveShowSidecar(resolved, data, toSidecarImage(fields.thumb), toSidecarImage(fields.art));
+			return true;
+		}
+
+		if (item_type == "movie")
+		{
+			bool has_own_folder = fs::is_directory(resolved, ec);
+			fs::path video_path, art_dir;
+			if (has_own_folder)
+			{
+				auto vfiles = videosIn(resolved);
+				if (vfiles.empty()) return false;
+				video_path = vfiles.front();
+				art_dir    = resolved;
+			}
+			else
+			{
+				if (!fs::is_regular_file(resolved, ec)) return false;
+				video_path = resolved;
+				art_dir    = resolved.parent_path();
+			}
+
+			NfoMovie data;
+			data.title          = fields.title;
+			data.overview       = fields.overview;
+			data.tagline        = fields.tagline;
+			data.content_rating = fields.content_rating;
+			data.genres         = fields.genres.empty() ? "[]" : fields.genres;
+			data.studio         = fields.studio;
+			data.director       = fields.director;
+			data.actors         = fields.actors.empty() ? "[]" : fields.actors;
+			data.countries      = fields.countries.empty() ? "[]" : fields.countries;
+			data.release_date   = fields.release_date;
+			data.year           = yearFromReleaseDate(fields.release_date);
+			data.imdb_id        = fields.imdb_id;
+			data.tmdb_id        = fields.tmdb_id;
+			if (fields.audience_rating) data.audience_rating = static_cast<float>(*fields.audience_rating);
+			data.confirmed = fields.match_confirmed;
+			data.locked    = fields.locked;
+			saveMovieSidecar(video_path, art_dir, has_own_folder, data,
+							 toSidecarImage(fields.thumb), toSidecarImage(fields.art));
+			return true;
+		}
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "[local:" << source_id_ << "] pushMetadata failed for " << resolved
+			<< ": " << e.what() << '\n';
+		return false;
+	}
+	return false;
 }

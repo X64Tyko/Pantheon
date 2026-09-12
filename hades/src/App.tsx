@@ -8,10 +8,14 @@ import AdminRoute             from './auth/AdminRoute'
 import SetupPage              from './auth/SetupPage'
 import SetPasswordPage        from './auth/SetPasswordPage'
 import InvitePage             from './auth/InvitePage'
+import ProfileSelectPage      from './auth/ProfileSelectPage'
+import GuestSetupPage from './auth/GuestSetupPage'
 import Layout                 from './components/Layout'
 import { FocusRoot }          from './nav/FocusRoot'
 import { CastProvider }       from './cast/CastProvider'
 import { CastReceiverProvider } from './cast/CastReceiverProvider'
+import AboutPage from './pages/AboutPage'
+import AccountPage            from './pages/AccountPage'
 import ActivityPage           from './pages/ActivityPage'
 import ChannelDetailPage      from './pages/ChannelDetailPage'
 import ChannelsPage           from './pages/ChannelsPage'
@@ -24,23 +28,28 @@ import ReviewPage             from './pages/ReviewPage'
 import SettingsPage           from './pages/SettingsPage'
 import SourcesPage            from './pages/SourcesPage'
 import UsersPage              from './pages/UsersPage'
+import styles from './App.module.css'
 
 // Lazy: hls.js is a ~500KB dependency that only the player route needs — every
 // other page load (the vast majority of app usage) shouldn't pay for it.
 const PlayerPage = lazy(() => import('./player/PlayerPage').then(m => ({ default: m.PlayerPage })))
+// Same reasoning — GuidePage's live preview also pulls in hls.js. Previously
+// only lazy-loaded at its embedded mount point inside HomePage; now that
+// it's a standalone route, the lazy boundary moves here with it.
+const GuidePage = lazy(() => import('./guide/GuidePage').then(m => ({default: m.GuidePage})))
 
 // Lazy: the whole /tv tree (10-foot screens, TV-sized grids) is dead weight
 // on every desktop/mobile page load — only devices actually navigating to
 // /tv should pay for this chunk.
 const TvShell         = lazy(() => import('./tv/TvShell').then(m => ({ default: m.TvShell })))
 const TvHome          = lazy(() => import('./tv/TvHome').then(m => ({ default: m.TvHome })))
+const TvGuidePage = lazy(() => import('./tv/TvGuidePage').then(m => ({default: m.TvGuidePage})))
 const TvLibrary       = lazy(() => import('./tv/TvLibrary').then(m => ({ default: m.TvLibrary })))
 const TvLibraryDetail = lazy(() => import('./tv/TvLibraryDetail').then(m => ({ default: m.TvLibraryDetail })))
+const TvProfileSelect = lazy(() => import('./tv/TvProfileSelect').then(m => ({ default: m.TvProfileSelect })))
 
-// Matches PlayerPage's own background so the moment before the lazy chunk
-// resolves doesn't flash unstyled content.
-const playerFallback = <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 100 }} />
-const tvFallback      = <div style={{ position: 'fixed', inset: 0, background: 'var(--hds-bg)', zIndex: 100 }} />
+const playerFallback = <div className={styles.playerFallback} />
+const tvFallback      = <div className={styles.tvFallback} />
 
 export default function App() {
   return (
@@ -52,6 +61,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
+          <Route path="/about" element={<AboutPage/>}/>
         {/* Unauthenticated invite-claim flow — only actionable with the
             unguessable token in the URL itself; see AuthStore::claimInvite. */}
         <Route path="/invite/:token" element={<InvitePage />} />
@@ -62,6 +72,18 @@ export default function App() {
               a normal nav target. Deliberately outside <Layout>: the rest of
               the app is blocked until this is done. */}
           <Route path="set-password" element={<SetPasswordPage />} />
+
+          {/* "Who's watching?" profile picker — reached via ProtectedRoute's
+              !profileChosen redirect, not a normal nav target. Same
+              deliberately-outside-<Layout> treatment as set-password above. */}
+          <Route path="profiles" element={<ProfileSelectPage />} />
+
+            {/* First-run wizard after "Continue as Guest" (LoginPage) — reached
+              via an explicit navigate() right after guest account creation,
+              not a ProtectedRoute redirect (unlike set-password/profiles
+              above, this step is skippable). Same deliberately-outside-
+              <Layout> treatment. */}
+            <Route path="guest-setup" element={<GuestSetupPage/>}/>
 
           {/* Full-screen takeover — no sidebar chrome during playback. */}
           <Route path="player/movie/:id" element={
@@ -79,16 +101,40 @@ export default function App() {
             <Suspense fallback={tvFallback}><TvShell /></Suspense>
           }>
             <Route index                    element={<TvHome />} />
+              <Route path="guide" element={<TvGuidePage/>}/>
             <Route path="library"           element={<TvLibrary />} />
             <Route path="library/:type/:id" element={<TvLibraryDetail />} />
+            {/* Reached via ProtectedRoute's !profileChosen redirect when it
+                fires from inside /tv (e.g. a Cast handoff) — not a normal
+                nav target. See ProtectedRoute.tsx and TvProfileSelect.tsx. */}
+            <Route path="profiles"          element={<TvProfileSelect />} />
           </Route>
 
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
             <Route path="library" element={<LibraryPage />} />
+              <Route path="guide" element={
+                  <Suspense fallback={playerFallback}><GuidePage/></Suspense>
+              }/>
 
-            {/* Everything else under Layout is admin-only — system/source/
-                channel configuration, scraper+credential settings, download
+            {/* Self-service, any authenticated user — deliberately outside
+                <AdminRoute /> below, unlike SettingsPage. */}
+            <Route path="account" element={<AccountPage />} />
+
+              {/* Same "deliberately outside AdminRoute" reasoning as /account —
+                any authenticated viewer (guest or real account) can reach
+                the channel builder now, not just admin. ChannelsPage/
+                ChannelDetailPage render a read-only view themselves when
+                neither guest_channel_builder_enabled nor the caller's own
+                channel_builder_enabled grant applies; every actual mutation
+                is still authorized server-side per-resource by
+                channel_auth::canEditChannel regardless of what this route
+                lets through. */}
+              <Route path="channels" element={<ChannelsPage/>}/>
+              <Route path="channels/:id" element={<ChannelDetailPage/>}/>
+
+              {/* Everything else under Layout is admin-only — system/source
+                configuration, scraper+credential settings, download
                 triggering, and internal activity/logs. Viewers get browsing
                 (Home/Library), requesting content (from within Library's
                 detail view), and /tv. Nav-link visibility (Layout.tsx's
@@ -98,8 +144,6 @@ export default function App() {
                 shared source of truth for "admin-only" between them. */}
             <Route element={<AdminRoute />}>
               <Route path="sources"      element={<SourcesPage />} />
-              <Route path="channels"     element={<ChannelsPage />} />
-              <Route path="channels/:id" element={<ChannelDetailPage />} />
               <Route path="playlists"    element={<PlaylistPage />} />
               <Route path="filler"       element={<FillerPage />} />
               <Route path="downloads"    element={<DownloadPage />} />

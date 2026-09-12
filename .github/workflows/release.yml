@@ -1,0 +1,79 @@
+name: GitHub Release
+
+# Publishes the repo's Releases-tab entry for a version tag — separate from
+# docker-*.yml (which build/push the GHCR images for the same tag) since a
+# release doesn't need to wait on those, and a failure in one shouldn't block
+# the other. Notes are pulled straight from CHANGELOG.md's matching
+# `## [x.y.z]` section rather than written twice; a milestone release that
+# wants v0.2.0-style hand-written highlights can still `gh release edit`
+# afterward — this just guarantees every tag gets *something* correct.
+
+on:
+  push:
+    tags: [ "v*.*.*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to (re)publish a release for, e.g. v0.2.1 — for backfilling a release whose tag push predates this workflow, or re-running after a CHANGELOG fix"
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Extract CHANGELOG section and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+
+          # CHANGELOG.md is hard-wrapped for readable diffs/terminal viewing,
+          # which GitHub's own file-blob renderer handles fine (soft breaks
+          # collapse) but its release/issue/PR renderer does not — every one
+          # of those wrapped lines came out as a literal <br>, so the release
+          # notes looked like a wall of broken sentences. This script
+          # extracts the matching section and joins each entry's wrapped
+          # lines back into one — see its own docstring for what it assumes
+          # about this file's structure.
+          if ! python3 .github/scripts/extract_changelog_section.py CHANGELOG.md "$VERSION" > /tmp/release-notes.md
+          then
+            echo "::error::No '## [$VERSION]' section found in CHANGELOG.md for tag $TAG — add one before (re-)running this." >&2
+            exit 1
+          fi
+
+          # Historical precedent (v0.1.0-alpha.1) — a hyphenated version
+          # (alpha/beta/rc) publishes as a GitHub pre-release.
+          PRERELEASE_FLAG=()
+          if [[ "$VERSION" == *-* ]]; then PRERELEASE_FLAG=(--prerelease); fi
+
+          # The repo's own docker-compose*.yml pin our four images to :latest —
+          # right for building/running off master, wrong for a release asset:
+          # someone deploying from the vX.Y.Z release page should get the
+          # images that tag actually built (docker-*.yml already pushes a
+          # :vX.Y.Z tag alongside :latest on every version-tag push), not
+          # whatever :latest happens to resolve to by the time they pull.
+          # Rewritten into a staging dir so the in-repo files stay on :latest.
+          mkdir -p /tmp/release-compose
+          for f in docker-compose*.yml; do
+            sed -E "s#(ghcr\.io/x64tyko/(kairos|hephaestus|hades|hermes)):latest#\1:${TAG}#g" \
+              "$f" > "/tmp/release-compose/$f"
+          done
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file /tmp/release-notes.md "${PRERELEASE_FLAG[@]}"
+            gh release upload "$TAG" /tmp/release-compose/docker-compose*.yml --clobber
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file /tmp/release-notes.md \
+              "${PRERELEASE_FLAG[@]}" /tmp/release-compose/docker-compose*.yml
+          fi

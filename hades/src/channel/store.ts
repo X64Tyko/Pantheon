@@ -1,13 +1,13 @@
-import { makeAutoObservable, runInAction } from 'mobx'
+import { makeAutoObservable, reaction, runInAction } from 'mobx'
 import { api } from '../api/client'
 import { channelStore } from '../stores'
 import { BLANK_DRAFT, DAY_BITS } from './constants'
 import { defaultPickerTab, normalizeBlock, blockToDraft, m2t, t2m, todayEpgDay } from './utils'
-import { FIELD_DEFS } from '../components/PickerFilters'
-import type { FilterRule } from '../components/PickerFilters'
+import { FilterTreeStore } from '../components/media/filterTree'
+import { toFilterString } from '../components/media/filterQuery'
 import type { BlockDraft, LimitMode, PickerTab } from './types'
 import type {
-  AdvanceMode, Advancement, AnchorSnapshot, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
+    Advancement, AnchorSnapshot, Block, BlockContent, BlockType, Channel, ContentType, CursorScope,
   EpisodeOrder, EpisodeSearchResult, EpgPreviewResponse, EpgProgram, FillerEntry, FillerEntryAdvancement,
   FillerSelectionMode, LibraryWithSource, Movie, NoHistoryBehavior, Playlist,
   PlaylistMode, PlayStyle, Show, StartScope, TimeslotSlot, TimeslotQueueEntry,
@@ -15,8 +15,13 @@ import type {
 
 let _debounce:  ReturnType<typeof setTimeout>
 let _epgTimer:  ReturnType<typeof setTimeout> | null = null
-let _ruleId = 0
 let _searchCtrl: AbortController | null = null
+
+// Mirrors BlockService.cpp's kStructuralFields — see ChannelDetailStore::hasStructuralChanges.
+const STRUCTURAL_BLOCK_FIELDS: (keyof Block)[] = [
+    'day_mask', 'start_time', 'end_time', 'priority',
+    'play_style', 'advancement', 'cursor_scope', 'no_history_behavior',
+]
 
 // Slot offsets are purely derived — always the cumulative sum of preceding durations.
 function recomputeSlotOffsets(slots: TimeslotSlot[]): TimeslotSlot[] {
@@ -74,9 +79,7 @@ export class ChannelDetailStore {
 
   allLibraries:      LibraryWithSource[]   = []
 
-  filterRulesOpen:  boolean              = false
-  filterMatch:      'all' | 'any'        = 'all'
-  filterRules:      FilterRule[]         = []
+  filterTree:       FilterTreeStore      = new FilterTreeStore()
 
   expandedShowId:         string | null = null
   expandedSeasons:        {number: number; name: string}[] = []
@@ -124,7 +127,6 @@ export class ChannelDetailStore {
     number:              number
     timezone:            string
     seed:                number
-    advance_mode:        AdvanceMode
     offline_video_path:  string
     offline_image_path:  string
     offline_audio_id:    string
@@ -136,23 +138,62 @@ export class ChannelDetailStore {
     stream_resolution:   'source' | '1080p' | '720p' | '480p'
     stream_video_bitrate: number
     stream_audio_bitrate: number
+      force_transcode: boolean
     content_tag:         string
+    pre_seed_weeks:      number
   } = {
-    name: '', number: 1, timezone: 'UTC', seed: 12345, advance_mode: 'scheduled',
+      name: '', number: 1, timezone: 'UTC', seed: 12345,
     offline_video_path: '', offline_image_path: '',
     offline_audio_id: '', offline_audio_type: '', offline_audio_title: '',
     logo_path: '', audio_lang: '', subtitle_lang: '',
     stream_resolution: 'source', stream_video_bitrate: 0, stream_audio_bitrate: 192,
+      force_transcode: false,
     content_tag: '',
+    pre_seed_weeks: 0,
   }
   channelDirty:   boolean     = false
   channelSaving:        boolean = false
   channelSaveErr:       string | null = null
   epgClearing:          boolean = false
+  preSeedApplying:      boolean = false
+  preSeedErr:           string | null = null
 
-  constructor() { makeAutoObservable(this) }
+  constructor() {
+    makeAutoObservable(this)
+    // See LibraryStore's identical reaction — any change to the content
+    // picker's rule-builder tree re-searches, replacing the old per-mutator
+    // debounce-and-searchPicker() calls.
+    reaction(() => toFilterString(this.filterTree), () => {
+      clearTimeout(_debounce)
+      _debounce = setTimeout(() => this.searchPicker(), 250)
+    })
+  }
 
   get isDirty(): boolean { return this.channelDirty || this.blocksDirty }
+
+    // True when the pending edit would hit one of the structural triggers that
+    // make Kairos hard-reset accumulated cursor state (block day_mask/start_time/
+    // end_time/priority/play_style/advancement/cursor_scope/no_history_behavior,
+    // an added/removed block, or channel timezone/seed) — see BlockService.cpp
+    // and ChannelService.cpp's kStructuralFields / timezone-seed checks. Used to
+    // decide whether saveChannel() needs to ask the user first, since a hard
+    // reset silently restarts every viewer's place in the channel from scratch.
+    hasStructuralChanges(channel: Channel): boolean {
+        if (channel.timezone !== this.channelDraft.timezone) return true
+        if ((channel.seed ?? 12345) !== this.channelDraft.seed) return true
+
+        const savedIds = new Set(this.savedBlocks.map(b => b.block_id))
+        const draftIds = new Set(this.blocks.map(b => b.block_id))
+        if (this.savedBlocks.some(b => !draftIds.has(b.block_id))) return true // removed a block
+
+        for (const b of this.blocks) {
+            const isNew = b.block_id.startsWith('tmp_') || !savedIds.has(b.block_id)
+            if (isNew) return true // added a block
+            const orig = this.savedBlocks.find(s => s.block_id === b.block_id)
+            if (orig && STRUCTURAL_BLOCK_FIELDS.some(f => orig[f] !== b[f])) return true
+        }
+        return false
+    }
 
   // Only flags weeks that are confirmed AND recomputed with a different
   // snapshot. Weeks the preview looks ahead into that aren't confirmed yet
@@ -169,7 +210,6 @@ export class ChannelDetailStore {
       number:              channel.number,
       timezone:            channel.timezone,
       seed:                channel.seed ?? 12345,
-      advance_mode:        channel.advance_mode ?? 'scheduled',
       offline_video_path:  channel.offline_video_path  ?? '',
       offline_image_path:  channel.offline_image_path  ?? '',
       offline_audio_id:    channel.offline_audio_id    ?? '',
@@ -181,7 +221,9 @@ export class ChannelDetailStore {
       stream_resolution:   channel.stream_resolution    ?? 'source',
       stream_video_bitrate: channel.stream_video_bitrate ?? 0,
       stream_audio_bitrate: channel.stream_audio_bitrate ?? 192,
+        force_transcode: channel.force_transcode ?? false,
       content_tag:         channel.content_tag ?? '',
+      pre_seed_weeks:      channel.pre_seed_weeks ?? 0,
     }
     this.channelDirty    = false
     this.confirmedAnchors = channel.anchor_hashes ?? {}
@@ -196,10 +238,29 @@ export class ChannelDetailStore {
 
   // Commits all in-memory block changes + channel settings to the DB.
   // After success, sets savedBlocks = blocks and confirms anchor hashes.
-  async saveChannel(channelId: string) {
+    //
+    // applyLive=true additionally interrupts any currently-live stream on this
+    // channel to pick up the edit immediately (POST epg/clear?live=true, sent
+    // only once, after every individual block/content mutation below has already
+    // committed) — the user-confirmed alternative to the default behavior, where
+    // whatever's already on-air keeps playing out under the old programming and
+    // only the schedule going forward reflects the edit. Only meaningful once the
+    // whole edit is committed: firing it earlier, interleaved with the per-block
+    // mutation calls below (which each still default to the safe, non-disruptive
+    // clear), would just have a later mutation's own clear() re-cover the item
+    // this one just exposed to the live edit.
+    //
+    // preserveCursor=true is the other user-confirmed override: it tells every
+    // mutation below to keep accumulated cursor/RNG state instead of the
+    // default hard reset a structural change would otherwise trigger (see
+    // hasStructuralChanges) — the "keep positions" choice in ChannelDetailPage's
+    // save-confirmation prompt. Harmless to send even for non-structural
+    // mutations; the server only consults it where it would have hard-reset
+    // anyway.
+    async saveChannel(channelId: string, applyLive = false, preserveCursor = false) {
     this.channelSaving = true; this.channelSaveErr = null
     try {
-      await api.updateChannel(channelId, { ...this.channelDraft })
+        await api.updateChannel(channelId, {...this.channelDraft}, {preserveCursor})
 
       const savedIds = new Set(this.savedBlocks.map(b => b.block_id))
       const draftIds = new Set(this.blocks.map(b => b.block_id))
@@ -207,7 +268,7 @@ export class ChannelDetailStore {
       // Delete blocks removed in draft.
       for (const b of this.savedBlocks) {
         if (!draftIds.has(b.block_id)) {
-          await api.deleteBlock(channelId, b.block_id)
+            await api.deleteBlock(channelId, b.block_id, {preserveCursor})
         }
       }
 
@@ -218,7 +279,7 @@ export class ChannelDetailStore {
         const payload = blockToDraft(b)
 
         if (isNew) {
-          const res = await api.createBlock(channelId, payload)
+            const res = await api.createBlock(channelId, payload, {preserveCursor})
           const realId = res.block_id
           idMap[b.block_id] = realId
           for (const c of b.content) {
@@ -252,7 +313,7 @@ export class ChannelDetailStore {
           }
         } else {
           const realId = b.block_id
-          await api.updateBlock(channelId, realId, payload)
+            await api.updateBlock(channelId, realId, payload, {preserveCursor})
           const savedBlock = this.savedBlocks.find(s => s.block_id === realId)
           if (savedBlock) {
             const toRemoveContent = savedBlock.content.filter(c => !b.content.some(dc => dc.id === c.id && dc.id > 0))
@@ -359,6 +420,8 @@ export class ChannelDetailStore {
         await api.updateChannel(channelId, { anchor_hashes: this.previewAnchors })
       }
 
+        if (applyLive) await api.clearChannelEpgCache(channelId, {live: true})
+
       await channelStore.fetchAll()
       const blocks = await api.getBlocks(channelId)
       const normalizedBlocks = blocks.map(normalizeBlock)
@@ -403,6 +466,22 @@ export class ChannelDetailStore {
       await this.loadEpg(channelId)
     } finally {
       runInAction(() => { this.epgClearing = false })
+    }
+  }
+
+  // Triggers a server-side hard reset + virtual pre-seed projection. Saves
+  // the supplied weeks value first so both the setting and the run are atomic
+  // from the user's perspective. Only meaningful when weeks > 0.
+  async applyPreSeed(channelId: string, weeks: number) {
+    this.preSeedApplying = true; this.preSeedErr = null
+    try {
+      await api.updateChannel(channelId, { pre_seed_weeks: weeks, trigger_pre_seed: true })
+      runInAction(() => { this.channelDraft = { ...this.channelDraft, pre_seed_weeks: weeks } })
+      await channelStore.fetchAll()
+    } catch (e: any) {
+      runInAction(() => { this.preSeedErr = e.message })
+    } finally {
+      runInAction(() => { this.preSeedApplying = false })
     }
   }
 
@@ -474,12 +553,23 @@ export class ChannelDetailStore {
   }
 
   openNew() {
+    const maxP = this.resetNewState()
+    this.draft = { ...BLANK_DRAFT, priority: maxP + 1 }
+  }
+
+  // Opens a fresh block draft pre-filled from a click-and-drag range on the
+  // week grid — single day, exact start/end from the drag.
+  openNewAt(dayIdx: number, startMin: number, endMin: number) {
+    const maxP = this.resetNewState()
+    this.draft = { ...BLANK_DRAFT, priority: maxP + 1, day_mask: DAY_BITS[dayIdx], start_time: m2t(startMin), end_time: m2t(endMin) }
+  }
+
+  private resetNewState(): number {
     const maxP                 = Math.max(0, ...this.blocks.map(b => b.priority))
     this.selectedId            = null
     this.editing               = null
     this.isNewMode             = true
     this.editingSlotId         = null
-    this.draft                 = { ...BLANK_DRAFT, priority: maxP + 1 }
     this.draftContent          = []
     this.draftFillerEntries    = []
     this.draftSlots            = []
@@ -489,6 +579,7 @@ export class ChannelDetailStore {
     this.selectedContentItemId = null
     this.selectedFillerItemId  = null
     this.selectedBumperSlot    = null
+    return maxP
   }
 
   closeEditor() {
@@ -505,6 +596,35 @@ export class ChannelDetailStore {
     this.selectedFillerItemId  = null
     this.selectedBumperSlot    = null
   }
+
+    // Called when ChannelDetailPage unmounts (or switches to a different
+    // channel id). The store is a module-level singleton, so without this its
+    // block list, EPG preview, and content-picker results just sit in memory
+    // — and its debounce/EPG-refresh timers keep firing — until the next
+    // load() happens to overwrite them.
+    dispose() {
+        if (_epgTimer) {
+            clearTimeout(_epgTimer);
+            _epgTimer = null
+        }
+        clearTimeout(_debounce)
+        _searchCtrl?.abort()
+        _searchCtrl = null
+
+        this.closeEditor()
+        this.blocks = []
+        this.savedBlocks = []
+        this.blocksDirty = false
+        this.epgItems = []
+        this.confirmedAnchors = {}
+        this.previewAnchors = {}
+        this.pickerQuery = ''
+        this.pickerShows = []
+        this.pickerMovies = []
+        this.pickerEpisodes = []
+        this.pickerPlaylists = []
+        this.contentPlaylists = []
+    }
 
   setActiveBlockTab(tab: 'content' | 'filler' | 'bumpers') {
     this.activeBlockTab        = tab
@@ -813,8 +933,39 @@ export class ChannelDetailStore {
     const [moved] = items.splice(fromIdx, 1)
     const newTo   = items.findIndex(s => s.slot_id === toId)
     items.splice(half === 'top' ? newTo : newTo + 1, 0, moved)
-    recomputeSlotOffsets(items)
-    this.draftSlots = items
+      this.draftSlots = recomputeSlotOffsets(items)
+  }
+
+    // Drop a show/movie from the library browser at a specific position in the
+    // slot list (as opposed to addDraftSlot, which always appends).
+    insertDraftSlotAt(index: number, entry: { content_type: 'show' | 'movie'; content_id: string; title: string }) {
+        const items = [...this.draftSlots]
+        const idx = Math.max(0, Math.min(index, items.length))
+        const newSlot: TimeslotSlot = {
+            slot_id: `tmp_${Date.now()}_s${idx}`,
+            slot_index: idx,
+            slot_offset_mins: 0, // overwritten by recomputeSlotOffsets
+            slot_duration_mins: 30,
+            overflow: 'cutoff',
+            late_start_mins: 0,
+            early_start_secs: 0,
+            align_to_mins: 0,
+            start_scope: 'block',
+            queue_pos: 0,
+            episode_pos: 0,
+            queue: [{
+                entry_id: `tmp_${Date.now()}_q0`,
+                queue_index: 0,
+                content_type: entry.content_type,
+                content_id: entry.content_id,
+                title: entry.title,
+                premiere_date: '',
+                pre_premiere_behavior: 'replay_previous',
+            }],
+        }
+        items.splice(idx, 0, newSlot)
+        this.draftSlots = recomputeSlotOffsets(items)
+        this.contentDirty = true
   }
 
   updateContentField(channelId: string, cid: number, field: 'weight' | 'run_count' | 'episode_order' | 'include_specials', value: number | string | boolean) {
@@ -1123,34 +1274,6 @@ export class ChannelDetailStore {
     }
   }
 
-  addFilterRule() {
-    this.filterRules.push({ id: String(++_ruleId), field: 'genre', op: 'is', value: '' })
-    clearTimeout(_debounce)
-    _debounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  removeFilterRule(id: string) {
-    this.filterRules = this.filterRules.filter(r => r.id !== id)
-    clearTimeout(_debounce)
-    _debounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  updateFilterRule(id: string, patch: Partial<Omit<FilterRule, 'id'>>) {
-    const rule = this.filterRules.find(r => r.id === id)
-    if (!rule) return
-    if (patch.field !== undefined) { rule.field = patch.field; rule.op = FIELD_DEFS[patch.field].ops[0].id; rule.value = '' }
-    if (patch.op    !== undefined) rule.op    = patch.op
-    if (patch.value !== undefined) rule.value = patch.value
-    clearTimeout(_debounce)
-    _debounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
-  setFilterMatch(m: 'all' | 'any') {
-    this.filterMatch = m
-    clearTimeout(_debounce)
-    _debounce = setTimeout(() => this.searchPicker(), 250)
-  }
-
   toggleSection(s: string) {
     this.openSections = { ...this.openSections, [s]: !this.openSections[s] }
   }
@@ -1160,7 +1283,7 @@ export class ChannelDetailStore {
   openPicker() {
     clearTimeout(_debounce)
     this.pickerQuery = ''; this.pickerSeasonFilter = ''
-    this.filterRules     = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.expandedShowId  = null; this.expandedSeasons = []
     this.pickerShows     = []; this.pickerMovies = []; this.pickerEpisodes = []
     this.pickerPlaylists = []
@@ -1173,7 +1296,7 @@ export class ChannelDetailStore {
   closePicker() {
     clearTimeout(_debounce)
     this.pickerQuery = ''; this.pickerSeasonFilter = ''
-    this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.expandedShowId = null
     this.pickerShows = []; this.pickerMovies = []; this.pickerEpisodes = []
     this.pickerPlaylists = []
@@ -1182,7 +1305,7 @@ export class ChannelDetailStore {
   setPickerTab(t: PickerTab) {
     clearTimeout(_debounce)
     this.pickerTab   = t; this.expandedShowId = null; this.pickerSeasonFilter = ''; this.pickerDurationMax = ''
-    this.filterRules = []; this.filterRulesOpen = false; this.filterMatch = 'all'
+    this.filterTree.reset()
     this.searchPicker()
   }
 
@@ -1209,21 +1332,14 @@ export class ChannelDetailStore {
 
     this.pickerLoading = true
     const q       = this.pickerQuery || undefined
-    const isRules = this.filterRules.filter(r => r.op === 'is' && r.value.trim())
-    const lib     = isRules.find(r => r.field === 'library')?.value        || undefined
-    const genre   = isRules.find(r => r.field === 'genre')?.value          || undefined
-    const yearStr = isRules.find(r => r.field === 'year')?.value
-    const year    = yearStr ? parseInt(yearStr) : undefined
-    const rating  = isRules.find(r => r.field === 'content_rating')?.value || undefined
-    const label   = isRules.find(r => r.field === 'label')?.value          || undefined
-    const network = isRules.find(r => r.field === 'network')?.value        || undefined
-    const actor   = isRules.find(r => r.field === 'actor')?.value          || undefined
+    const lib     = this.filterTree.allRules.find(r => r.field === 'library' && r.op === 'is' && r.value.trim())?.value || undefined
+    const filter  = toFilterString(this.filterTree) || undefined
     const seasonParsed = this.pickerSeasonFilter.trim() !== '' ? parseInt(this.pickerSeasonFilter, 10) : undefined
     const season  = Number.isFinite(seasonParsed) ? seasonParsed : undefined
     try {
       switch (this.pickerTab) {
-        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, genre, year, content_rating: rating, label, network, actor }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
-        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, genre, year, content_rating: rating, label, actor }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
+        case 'shows':        { const r = await raceAbort(api.getShows({ limit: 50, q, library_id: lib, filter }), signal); runInAction(() => { this.pickerShows = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
+        case 'movies':       { const r = await raceAbort(api.getMovies({ limit: 50, q, library_id: lib, filter }), signal); runInAction(() => { this.pickerMovies = r.items; this.pickerTotal = r.total; this.pickerLoading = false }); break }
         case 'episodes':     { const r = await raceAbort(api.searchEpisodes({ q, season, limit: 50 }), signal); runInAction(() => { this.pickerEpisodes = r.items; this.pickerTotal = 0; this.pickerEpsHasMore = r.items.length >= 50; this.pickerLoading = false }); break }
         case 'playlists':    { const r = await raceAbort(api.getPlaylists(), signal); runInAction(() => { this.pickerPlaylists = r; this.pickerTotal = 0; this.pickerLoading = false }); break }
       }
@@ -1236,22 +1352,15 @@ export class ChannelDetailStore {
   async loadMorePicker() {
     if (this.pickerLoadingMore) return
     const q       = this.pickerQuery || undefined
-    const isRules = this.filterRules.filter(r => r.op === 'is' && r.value.trim())
-    const lib     = isRules.find(r => r.field === 'library')?.value        || undefined
-    const genre   = isRules.find(r => r.field === 'genre')?.value          || undefined
-    const yearStr = isRules.find(r => r.field === 'year')?.value
-    const year    = yearStr ? parseInt(yearStr) : undefined
-    const rating  = isRules.find(r => r.field === 'content_rating')?.value || undefined
-    const label   = isRules.find(r => r.field === 'label')?.value          || undefined
-    const network = isRules.find(r => r.field === 'network')?.value        || undefined
-    const actor   = isRules.find(r => r.field === 'actor')?.value          || undefined
+    const lib     = this.filterTree.allRules.find(r => r.field === 'library' && r.op === 'is' && r.value.trim())?.value || undefined
+    const filter  = toFilterString(this.filterTree) || undefined
     this.pickerLoadingMore = true
     try {
       if (this.pickerTab === 'shows') {
-        const r = await api.getShows({ limit: 50, offset: this.pickerShows.length, q, library_id: lib, genre, year, content_rating: rating, label, network, actor })
+        const r = await api.getShows({ limit: 50, offset: this.pickerShows.length, q, library_id: lib, filter })
         runInAction(() => { this.pickerShows = [...this.pickerShows, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
       } else if (this.pickerTab === 'movies') {
-        const r = await api.getMovies({ limit: 50, offset: this.pickerMovies.length, q, library_id: lib, genre, year, content_rating: rating, label, actor })
+        const r = await api.getMovies({ limit: 50, offset: this.pickerMovies.length, q, library_id: lib, filter })
         runInAction(() => { this.pickerMovies = [...this.pickerMovies, ...r.items]; this.pickerTotal = r.total; this.pickerLoadingMore = false })
       } else if (this.pickerTab === 'episodes') {
         const seasonParsed = this.pickerSeasonFilter.trim() !== '' ? parseInt(this.pickerSeasonFilter, 10) : undefined

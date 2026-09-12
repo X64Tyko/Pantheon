@@ -41,6 +41,12 @@ public:
     // is a different host from api.anidb.net:9001. Called by ContentService::proxyImage.
     void rateLimitImageWait();
 
+    // Downloads the raw bytes of a poster URL (as returned by posterUrl(),
+    // or Show::thumb/Movie::thumb after fetchShow/fetchMovie) for local
+    // persistence — same rate limit + hotlink-workaround headers as
+    // ContentService::proxyImage's live-fetch path. Empty return = failure.
+    std::string fetchImageBytes(const std::string& url);
+
 private:
     std::string              fetchAnimeXml(const std::string& aid);
 

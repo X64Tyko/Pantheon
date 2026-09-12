@@ -9,6 +9,36 @@ export interface User {
   // Set on invite-created accounts until the owner replaces the temp/
   // placeholder password with one of their own — gates the app shell.
   must_change_password: boolean
+  // True if a PIN is configured for the profile-switch picker (see
+  // ProfileSelectPage) — never the PIN itself, just whether to prompt for one.
+  has_pin: boolean
+  // Library-wide fallback audio/subtitle language — used by
+  // GET /api/playback/:content_type/:id whenever no item-specific
+  // preference exists (show/movie track-preference). '' means unset.
+  default_audio_lang:    string
+  default_subtitle_lang: string
+    // Which page this account lands on after login/profile-switch — ''
+    // (inherit the admin-configured global default), 'home', or 'guide'.
+    default_landing_page: string
+    // A self-created, passwordless demo-server account (see
+    // api.createGuest) — always role 'viewer'. Drives the "Guest" badge on
+    // UsersPage and the guest-only self-service setup/delete UI.
+    is_guest: boolean
+    // Admin grant of channel-builder access — see AuthStore::
+    // updateChannelBuilderEnabled. Meaningless for a guest account, which
+    // uses the separate guest_channel_builder_enabled server-wide setting
+    // (api.getPublicSettings) instead.
+    channel_builder_enabled: boolean
+    // Epoch seconds — most recent activity across every session this account
+    // has ever held (or created_at if it's never had one). Only meaningfully
+    // populated on the admin Users list (api.getProfiles); 0 elsewhere.
+    last_seen: number
+}
+
+// GET/PUT .../track-preference (shows, movies) — same shape both ways.
+export interface TrackPreference {
+  audio_lang:    string
+  subtitle_lang: string
 }
 
 export interface ContentOverride {
@@ -79,6 +109,39 @@ export interface DeviceConnection {
   }
 }
 
+// One row of kairos's playback_history table (see
+// kairos/src/db/PlaybackHistoryRepository.h) — an append-only "session" of
+// watching a title, separate from watch_progress (current resume state).
+// Same shape backs both GET /api/activity/history (past sessions) and
+// GET /api/activity/active (sessions still being pinged right now, the
+// cross-platform presence signal DeviceConnectionsPanel merges with Roku's
+// own ECP heartbeat).
+export interface PlaybackHistoryEntry {
+  event_id:            string
+  user_id:             string
+    content_type: 'movie' | 'episode' | 'channel'
+  content_id:           string
+  title:                string
+  device_type:          '' | 'web' | 'android-mobile' | 'android-tv' | 'roku' | 'cast'
+    direct_stream: boolean
+  started_at_ms:        number
+  ended_at_ms:          number
+  started_position_ms: number
+  last_position_ms:    number
+  duration_ms:          number
+  completed:            boolean
+}
+
+// GET /api/activity/crash (Hermes's own aggregating route, NOT proxied to
+// Kairos like most /api/* calls — see shared/crash/CrashHandler.h). Each
+// field is the raw marker text for that service, empty if it hasn't crashed
+// since its marker was last overwritten.
+export interface CrashStatus {
+  hermes:     string
+  kairos:     string
+  hephaestus: string
+}
+
 export interface Source {
   source_id:    string
   source_type:  'plex' | 'jellyfin' | 'emby' | 'local'
@@ -92,6 +155,18 @@ export interface Source {
   // otherwise a human-readable reason it came back with nothing (bad token
   // permissions, HTTP error, etc.) — see IMediaSource::lastUserDiscoveryError.
   user_sync_error: string
+  sync_priority:   number
+  // Whether a confirmed/refreshed scraper match automatically pushes
+  // writeback to this source, instead of requiring the "Push to Sources"
+  // button or a "Writeback All" run. Defaults false — writeback pushing to
+  // a real external library shouldn't newly start happening on its own.
+  auto_writeback: boolean
+  // Per-field writeback opt-outs, all default true (preserving existing
+  // manual/bulk-writeback behavior) — flip one off for a source you don't
+  // want that specific field touched on.
+  writeback_update_art:           boolean
+  writeback_update_external_ids:  boolean
+  writeback_update_collections:   boolean
 }
 
 // A source-reported account with no local Pantheon account imported for it
@@ -178,7 +253,7 @@ export interface Library {
   external_lib_id:     string
   display_name:        string
   library_type:        'show' | 'movie' | 'mixed' | 'music' | 'photo'
-  preferred_scraper:   '' | 'tmdb' | 'tvdb' | 'anidb'
+  preferred_scraper:   '' | ScraperSource
   preferred_language:  string
   // AniDB is anime-only — never queried for a library unless explicitly opted
   // in here (or preferred_scraper is set to 'anidb' outright).
@@ -192,15 +267,12 @@ export interface Library {
   skip_scraping:       boolean
 }
 
-export type AdvanceMode = 'scheduled' | 'on_play'
-
 export interface Channel {
   channel_id:               string
   name:                     string
   number:                   number
   timezone:                 string
   seed?:                    number
-  advance_mode?:            AdvanceMode     // default: 'scheduled'
   default_filler_entries:   FillerEntry[]
   default_filler_selection: FillerSelectionMode
   offline_video_path?:      string
@@ -215,7 +287,22 @@ export interface Channel {
   stream_resolution?:       'source' | '1080p' | '720p' | '480p'
   stream_video_bitrate?:    number  // kbps; 0 = CRF/CQ auto
   stream_audio_bitrate?:    number  // kbps; default 192
+    // Disables Hephaestus's native/direct-stream bucket for this channel
+    // entirely — every viewer gets the transcode bucket (smooth speed-based
+    // drift correction, always had loudnorm) at the cost of direct-stream's
+    // CPU/GPU savings. Default false/undefined: today's dual-bucket behavior.
+    force_transcode?: boolean
   content_tag?:             string  // admin-assigned rating tag, TV scale; empty = unrated (fails closed for restricted accounts)
+    // Server-derived on create (see POST /api/channels), never client-set —
+    // undefined/absent means an admin-owned channel, same as today.
+    // is_demo=true only for a guest's throwaway channel (excluded from the
+    // real lineup); a real viewer's owned channel has is_demo=false.
+    owner_user_id?: string
+    is_demo?: boolean
+  // Number of weeks to project backward on launch to stagger rerun cursors.
+  // 0 (default) = disabled; applied automatically at channel creation and
+  // manually via trigger_pre_seed in PATCH for an existing channel.
+  pre_seed_weeks?: number
 }
 
 export interface AnchorSnapshot {
@@ -249,7 +336,7 @@ export interface ActivitySession {
   hw_accel:        string
   decode_hw_accel: string
   started_at_ms:   number
-  direct_play?:    boolean // vod only
+    direct_stream?: boolean // vod only
 }
 
 // ── List-view types (minimal) ────────────────────────────────────────────────
@@ -270,6 +357,10 @@ export interface Show {
   title:           string
   content_rating:  string
   episode_count:   number
+  // Distinct episodes with a completed watch_progress entry for the caller
+  // — see kairos's ShowRow::watched_episode_count. 0 for a logged-out
+  // caller, same as everywhere else user-scoped fields default when unset.
+  watched_episode_count: number
   year?:           number
   thumb?:          string
   art?:            string
@@ -295,6 +386,37 @@ export interface Movie {
   audience_rating?: number
   match_status?:   MatchStatus
   match_score?:    number | null
+  watched?:        boolean
+  view_count?:     number
+    is_multi_part?: boolean
+}
+
+// A truly interleaved show+movie result (see kairos's MixedSort.h) — used
+// by the Library page's "All" content type and mixed-shelf browsing, not a
+// separate "every movie before every show" section of the same grid.
+export interface MixedIndexEntry {
+    content_type: 'show' | 'movie' | 'episode'
+    id: string
+    title: string
+}
+
+export interface MixedMediaItem {
+    content_type: 'show' | 'movie' | 'episode'
+    id: string
+    title: string
+    thumb?: string
+    art?: string
+    library_id?: string
+    year?: number
+    audience_rating?: number
+    watched: boolean
+    view_count: number
+    episode_count?: number // shows only
+    duration_ms?: number // episodes only
+    season?: number // episodes only
+    episode?: number // episodes only
+    show_id?: string // episodes only
+    show_title?: string // episodes only
 }
 
 // ── Detail types (full metadata) ─────────────────────────────────────────────
@@ -310,12 +432,17 @@ export interface MediaSourceRef {
 export interface ShowDetail {
   show_id:                 string
   title:                   string
+  original_title:          string
+    // Display-language override for this show — '' inherits the library's
+    // preferred_language (itself falling back to the scraper default).
+    preferred_language: string
   content_rating:          string
   overview:                string
   year?:                   number
   studio:                  string
   status:                  string
   genres:                  string[]
+  tags:                    string[]
   thumb:                   string
   art:                     string
   imdb_id:                 string
@@ -328,6 +455,7 @@ export interface ShowDetail {
   find_specials:           boolean
   episode_display_order:   'season' | 'aired'
   episode_count:           number
+  watched_episode_count:   number
   seasons:                 { number: number; name: string }[]
   external_id:             string
   source_id:               string
@@ -342,6 +470,9 @@ export interface ShowDetail {
 export interface MovieDetail {
   movie_id:         string
   title:            string
+  original_title:   string
+    // See ShowDetail's identical field.
+    preferred_language: string
   content_rating:   string
   duration_ms:      number
   year?:            number
@@ -350,7 +481,9 @@ export interface MovieDetail {
   tagline:          string
   studio:           string
   director:         string
+  writer:           string
   genres:           string[]
+  tags:             string[]
   thumb:            string
   art:              string
   imdb_id:          string
@@ -367,6 +500,32 @@ export interface MovieDetail {
   match_score?:     number
   match_confirmed?: boolean
   sources:          MediaSourceRef[]
+  watched?:         boolean
+  view_count?:      number
+    is_multi_part?: boolean
+    parts?: MoviePart[]
+}
+
+// ── Multi-part movies (GitHub #3) ─────────────────────────────────────────────
+
+export interface MoviePart {
+    part_num: number
+    file_path: string
+    duration_ms: number
+}
+
+export interface MovieGroupingCandidatePart {
+    movie_id: string
+    title: string
+    file_path: string
+    year?: number
+    part_num: number
+}
+
+export interface MovieGroupingCandidate {
+    base_title: string
+    confidence: number // 0-100
+    parts: MovieGroupingCandidatePart[]
 }
 
 export interface WritebackResult {
@@ -383,6 +542,8 @@ export interface Episode {
   air_date:    string
   thumb:       string
   file_path?:  string
+  watched?:    boolean
+  view_count?: number
 }
 
 export interface ExternalId {
@@ -391,9 +552,17 @@ export interface ExternalId {
   priority:    number
 }
 
+// language is an ISO 639-1 code when known, '' for untagged entries (e.g.
+// AniList synonyms, manually-entered titles).
+export interface AlternateTitle {
+    language: string
+    title: string
+    overview: string
+}
+
 export interface ItemMetadata {
   external_ids:     ExternalId[]
-  alternate_titles: string[]
+    alternate_titles: AlternateTitle[]
 }
 
 export interface WatchProgress {
@@ -413,6 +582,27 @@ export interface WatchProgress {
   // always 0 here since it hasn't actually been started (see Kairos's
   // GET /api/watch-progress).
   up_next?:     boolean
+}
+
+// See Kairos's WatchTogetherService.cpp (describeSession) — Kairos owns
+// identity/discovery only (this shape), never live playback state
+// (position/paused), which lives on Hermes instead — see watchTogetherApi.ts.
+export interface WatchTogetherSession {
+  session_id:     string
+  host_user_id:   string
+  host_username:  string
+  content_type:   'movie' | 'episode'
+  content_id:     string
+  title:          string
+  // episode only — same shape as WatchProgress above, so a session card can
+  // build the same `/api/shows/{show_id}/thumb` art URL / "SxEy Show" label.
+  season?:        number
+  episode?:       number
+  show_id?:       string
+  show_title?:    string
+  member_count:   number
+  created_at:     number
+  closed_at:      number | null
 }
 
 export interface CredentialStatus {
@@ -568,7 +758,6 @@ export interface ChannelExport {
     name:                     string
     number:                   number
     timezone:                 string
-    advance_mode?:            AdvanceMode
     default_filler_selection: FillerSelectionMode
     seed?:                    number
     default_filler_entries:   ChannelExportFillerEntry[]
@@ -685,7 +874,7 @@ export interface SpecialCandidate {
   special_overview: string
   special_air_date: string
   special_thumb:    string
-  source:           'tmdb' | 'tvdb' | 'anidb'
+  source:           ScraperSource
   score:            number   // 0-1
   accepted:         -1 | 0 | 1
   movie_id:         string
@@ -712,7 +901,9 @@ export interface PlexLink {
 
 // ── Playlists ────────────────────────────────────────────────────────────────
 
-export type PlaylistMode = 'sequential' | 'show_collection'
+export type PlaylistMode       = 'sequential' | 'show_collection' | 'shuffle'
+export type PlaylistMembership = 'static' | 'smart'
+export type SmartPlaylistType = 'show' | 'movie' | 'mixed'
 
 export interface Playlist {
   playlist_id: string
@@ -721,6 +912,82 @@ export interface Playlist {
   item_count:  number
   total_ms:    number
   plex_link?:  PlexLink
+  // Smart-membership fields (see kairos/src/db/Database.cpp migration 87) —
+  // membership==='smart' means item_count/total_ms reflect the last
+  // refresh-smart run, not a live count; filter_expr is the canon
+  // filter-syntax string (components/media/filterSyntax.ts) driving it.
+  membership:  PlaylistMembership
+  filter_expr: string
+  smart_type:  SmartPlaylistType
+  smart_sort:  string
+    // '' = the sort mode's own natural direction; 'asc'/'desc' overrides it
+    // (ignored by 'random'). Smart playlists had no direction control at all
+    // before kairos's Database.cpp migration 102.
+    smart_sort_dir: '' | 'asc' | 'desc'
+    // Show-typed only: flatten to a per-episode list under smart_sort (any
+    // mode) instead of "sort the shows, list each one's episodes in season
+    // order". See PlaylistRepository::refreshSmart.
+    smart_expand_episodes: boolean
+  smart_limit: number
+  last_smart_refresh_at: number | null
+  // Home-shelf fields (Database.cpp migration 88) — a Home shelf is just a
+  // smart playlist with show_on_home=true; there's no separate shelf entity.
+  // home_tile_limit is a *display* cap (how many tiles before "Continue in
+  // Library"), independent of smart_limit which caps actual membership.
+  // home_active_start/end are 'MM-DD' or '' (both empty = always shown).
+  show_on_home:      boolean
+  home_order:        number
+  home_tile_limit:   number
+  home_active_start: string
+  home_active_end:   string
+  // Library "Playlists" section tile poster — a pasted URL (same override
+  // convention as shows/movies' custom poster). Empty = the frontend falls
+  // back to a collage of the first few items' own posters (see
+  // PlaylistBrowseEntry.preview_items).
+  poster_source: string
+}
+
+// GET /api/playlists/browse — any-authenticated-user tile-rendering summary
+// for the Library's Playlists section (see PlaylistRepository::listBrowse).
+// Deliberately excludes membership/filter_expr/sync internals GET
+// /api/playlists exposes for editing — this is browse-only.
+export interface PlaylistBrowseEntry {
+  playlist_id:   string
+  title:         string
+  mode:          PlaylistMode
+  poster_source: string
+  item_count:    number
+  total_ms:      number
+  // First 4 items by position — only meaningful when poster_source is empty
+  // (client-side collage fallback).
+  preview_items: { item_type: 'episode' | 'movie'; item_id: string }[]
+}
+
+// A remote playlist/collection item that couldn't be resolved against this
+// library during an import/resync (see PlexSyncHelper.cpp's
+// syncSourceListItems) — reported by title so a hand-curated cross-source
+// watch order (e.g. a "Gundam Unicorn order" mixing movies/OVAs/specials)
+// shows exactly what's still missing, not just an unexplained item-count
+// shortfall.
+export interface UnresolvedSyncItem {
+  title:     string
+  item_type: 'movie' | 'episode' | 'show'
+}
+
+// GET /api/home-playlists — the subset of fields the Home page actually
+// needs to render a shelf (see PlaylistRepository::HomeShelfRow/listHomeShelves).
+export interface HomePlaylistShelf {
+  playlist_id:     string
+  title:           string
+  smart_type:      SmartPlaylistType
+  filter_expr:     string
+  smart_sort:      string
+    smart_sort_dir: '' | 'asc' | 'desc'
+    // Show-typed only — when true, this shelf renders as a per-episode feed
+    // (see api.getMixedMediaIndex's expandEpisodes option) instead of one tile
+    // per matching show.
+    smart_expand_episodes: boolean
+  home_tile_limit: number
 }
 
 export interface PlaylistItem {
@@ -800,7 +1067,11 @@ export interface PlexBrowseList {
 }
 
 export interface PlexBrowseItem {
-  item_type:   'episode' | 'movie'
+  // A collection can contain whole shows, not just movies/episodes — see
+  // kairos/src/api/services/PlexSyncHelper.cpp's resolveAndExpand, which
+  // expands a resolved show into all its episodes when actually importing
+  // (playlist_item has no 'show' item_type of its own).
+  item_type:   'episode' | 'movie' | 'show'
   kairos_id:   string
   title:       string
   duration_ms: number
@@ -929,13 +1200,15 @@ export interface ArrServiceOptions {
 // ── Downloads ─────────────────────────────────────────────────────────────────
 
 export interface DownloadJob {
-  id:         string
-  url:        string
-  dest_path:  string
-  status:     'queued' | 'running' | 'done' | 'error'
-  progress:   number   // 0–100
-  log:        string[]
-  started_at: string   // ISO-8601
+    id: string
+    url: string
+    dest_path: string
+    status: 'queued' | 'running' | 'done' | 'error'
+    progress: number   // 0–100, current item
+    playlist_index: number   // current item number within a playlist (0 = not a playlist / unknown)
+    playlist_count: number   // total items in the playlist (0 = not a playlist / unknown)
+    log: string[]
+    started_at: string   // ISO-8601
 }
 
 // ── Library browser ──────────────────────────────────────────────────────────
@@ -956,20 +1229,27 @@ export interface MediaHeroItem {
 
 // ── Scraper infrastructure ────────────────────────────────────────────────────
 
-export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb'
+export type ScraperSource = 'tmdb' | 'tvdb' | 'anidb' | 'tvmaze' | 'trakt' | 'anilist' | 'wikidata'
 
 export interface ScraperConfig {
   source:          ScraperSource
+    // Always "" from the server now — GET /api/scrapers/config never returns
+    // the real key/pin (see has_api_key/has_pin below). Only meaningful as an
+    // outgoing value: leave blank to keep whatever's already configured,
+    // non-blank to set a new one. Never actually round-trips the stored value.
   api_key:         string
   enabled:         boolean
   language:        string
   language_weight: number
-  pin?:            string  // TVDB subscriber pin
+    pin?: string  // TVDB subscriber pin — same write-only convention as api_key
+    has_api_key?: boolean // true if a key is already configured server-side
+    has_pin?: boolean // TVDB only
 }
 
 export interface ScraperSettings {
-  configs:         ScraperConfig[]
-  match_threshold: number   // 0–1; default 1.0
+  configs:               ScraperConfig[]
+  match_threshold:       number   // 0–1; default 1.0
+  anidb_download_posters: boolean // off by default — see SettingsPage's AniDB section for the rate-limit tradeoff
 }
 
 export interface ItemMatchCandidate {
@@ -1057,6 +1337,29 @@ export interface ChapterReviewItem {
   chapters:    Chapter[]
 }
 
+// GET /api/subtitles/broken — a sidecar file kairos's sync-time content
+// check (see kairos/src/source/SubtitleValidation.h) flagged as broken,
+// e.g. found matching the "<video>.<lang>.srt" naming convention but
+// containing ~0 real cues. Excluded from playback while valid is false;
+// still recorded (not silently dropped) so this list has something to show.
+export interface BrokenSubtitleItem {
+  subtitle_id:    string
+  media_type:     'episode' | 'movie'
+  media_id:       string
+  title:          string
+  file_path:      string
+  language:       string
+  forced:         boolean
+  sdh:            boolean
+  source:         string
+  valid:          boolean
+  invalid_reason: string
+  // Bytes, stat()'d live off disk — omitted if the file's gone missing.
+  // Unusually small is a good tell for a broken sub (near-empty content
+  // that still matched the naming convention).
+  file_size?:     number
+}
+
 // GET /api/episodes/:id/next — the next playable episode after this one, or
 // null if it's the last (see ContentRepository::getNextEpisode).
 export interface NextEpisode {
@@ -1080,6 +1383,105 @@ export interface ShowWatchState {
   updated_at:  number
 }
 
+// GET /api/shows/:id/resolve-play-target — server-side resolvePlayTarget.ts
+// (see that file), collapsing what used to be 2-3 client round-trips
+// (watch-state, then conditionally next-episode or the full episode list)
+// into one.
+export interface ResolvedPlayTarget {
+  kind:       'movie' | 'episode'
+  id:         string
+  position_ms: number
+    // Multi-part movies (GitHub #3) — present only when the movie is
+    // multi-part; position_ms above is already the offset WITHIN part_num,
+    // not the summed position across parts.
+    part_num?: number
+    total_parts?: number
+}
+
+// GET /api/tv/manifest — backs Home's row composition and Library/Detail/
+// Guide's zone layout, shared identically by /tv and (eventually) native
+// clients. See kairos/src/db/Database.cpp's v81 migration + TvManifestService
+// for the server side; hades/src/tv/useHomeManifest.ts for how /tv consumes
+// it. Deliberately loose typing on zone config (Record<string, unknown>) —
+// the manifest is data describing composition, not a typed contract for
+// every possible future field.
+export type TvItemAction =
+  | 'open-detail' | 'play-direct-with-position' | 'play-latest-episode'
+  | 'play-resolved' | 'navigate-library' | 'watch-live'
+
+// TvDataSource/TvZone.dataSource removed in kairos v105 — confirmed dead on
+// every client (nothing anywhere ever read `.dataSource`, on this client or
+// Android's), a stale leftover from before Home rows moved to the opaque
+// `filter` shape below. Was a half-implemented per-zone endpoint/queryParam
+// config that no client ever actually fetched through automatically.
+
+export interface TvHomeRow {
+  id:    string
+  order: number
+    type: 'hero' | 'shelf' | 'guide' | 'watch-together'
+  title?: string
+    // Opaque — forwarded verbatim as query params to GET /api/tv/shelf-items
+    // (via api.getTvShelfItems). Never inspected/branched on client-side; the
+    // server decides what each key means and how to resolve it into tiles, so
+    // a new shelf "shape" (e.g. today's mixed-media shelves, which the old
+    // dataSource.endpoint design couldn't express at all) never needs a
+    // client-side change to support. Absent for 'guide'/'watch-together' rows
+    // — those carry no filter at all, since neither resolves through GET
+    // /api/tv/shelf-items (a session's host/member_count shape doesn't fit
+    // the uniform tile shape every other row's filter resolves to); the row's
+    // mere presence in `home.rows` is the whole signal, same as 'guide'.
+    filter?: Record<string, unknown>
+  itemAction?:  TvItemAction
+  endTile?:     TvItemAction
+  emptyBehavior?: 'hide'
+  requiresArt?: boolean
+  actions?:     TvItemAction[]
+}
+
+export interface TvZone {
+  id:    string
+  order: number
+  filterFields?: string[]
+  itemAction?:   TvItemAction
+  showOnly?:     boolean
+    // Which fields this zone renders — same "server owns which fields exist,
+    // client owns how each one is rendered" split filterFields already uses.
+    // Currently only detail/meta-block declares this (kairos v97); undefined/
+    // empty means a manifest that predates it, so callers fall back to their
+    // own fixed field set rather than rendering nothing.
+    fields?: string[]
+    // Which action buttons this zone offers — currently only detail's
+    // play-button zone declares this (kairos v105: "play"/"play-from-beginning"/
+    // "watch-together"). A loose string[] rather than a closed union, same
+    // "server owns the vocabulary" reasoning as filterFields/fields — a zone
+    // this generic can't assume every future consumer wants the same set of
+    // action ids. undefined means a manifest predating this field (or a zone
+    // that's never declared it), so callers should default to showing
+    // whatever they showed before this field existed rather than nothing.
+    actions?: string[]
+}
+
+// GET /api/tv/shelf-items' response item shape — the same render-ready tile
+// MixedMediaItem already is, plus latest_episode (shows only, populated only
+// when the row's filter.sort is "recently_aired" — needed by the "Recently
+// Aired" shelf's play-latest-episode itemAction).
+export type TvShelfTile = MixedMediaItem & {
+    latest_episode?: {
+        episode_id: string
+        season: number
+        episode: number
+        air_date: string
+    }
+}
+
+export interface TvManifest {
+  version: number
+  home:    { rows: TvHomeRow[] }
+  library: { zones: TvZone[] }
+  detail:  { zones: TvZone[] }
+  guide:   { zones: TvZone[] }
+}
+
 export interface ScraperStats {
   total:     number
   matched:   number
@@ -1101,3 +1503,54 @@ export interface ScraperSearchResult {
   library_id?:      string // this library's show_id/movie_id when in_library
   request_status?:  'pending' | 'approved' | 'rejected' // set if ANYONE has already requested this, regardless of in_library
 }
+
+// One completed run of a named "hot zone" operation (full sync, a sync
+// phase, an EPG regenerate, a scraper match, chapter sync) — see
+// shared/metrics/OperationMetrics.h. Distinct from ComponentMetrics
+// (MetricsStore.ts), which is a continuous whole-process gauge; this is a
+// bounded history of discrete completed jobs.
+export interface OperationRun {
+  started_at_ms:  number
+  duration_ms:    number
+  avg_cpu_pct:    number
+  max_cpu_pct:    number
+  avg_ram_bytes:  number
+  max_ram_bytes:  number
+  peak_threads:   number
+  samples:        number
+}
+
+// Keyed by operation name (e.g. "sync.full", "sync.phase.chapters",
+// "epg.generate"), most-recent-first, absent entirely for a name with no
+// runs yet.
+export type OperationMetricsResponse = Record<string, OperationRun[]>
+
+// One of the five JobScheduler-driven background jobs (see
+// kairos/src/jobs/JobScheduler.h) — sync/metadata_refresh/chapter_detection/
+// writeback_sweep/backup. mode picks which of interval_hours vs.
+// daily_hour+daily_minute is active; the other pair is still present
+// (whatever it was last set to) so switching modes in the UI doesn't lose
+// the previous value.
+export interface ScheduledJob {
+    name: 'sync' | 'metadata_refresh' | 'chapter_detection' | 'writeback_sweep' | 'media_normalize' | 'backup'
+    enabled: boolean
+    mode: 'interval' | 'daily'
+    interval_hours: number
+    daily_hour: number
+    daily_minute: number
+    next_run_ms: number | null
+    last_run_ms: number
+    last_run_ok: boolean
+    last_error: string
+}
+
+export type ScheduledJobPatch = Partial<
+    Pick<ScheduledJob, 'enabled' | 'mode' | 'interval_hours' | 'daily_hour' | 'daily_minute'>
+>
+
+export interface BackupInfo {
+    id: string
+    created_ms: number
+    size_bytes: number
+}
+

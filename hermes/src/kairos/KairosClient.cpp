@@ -34,3 +34,26 @@ std::vector<KairosChannel> KairosClient::getChannels() {
         return {};
     }
 }
+
+std::optional<bool> KairosClient::getVerboseGatewayLogs() {
+    httplib::Client cli(base_url_);
+    cli.set_connection_timeout(5);
+    cli.set_read_timeout(10);
+
+    auto res = cli.Get("/api/config/public-settings");
+    if (!res || res->status != 200) {
+        std::cerr << "[kairos] GET /api/config/public-settings -> "
+                  << (res ? std::to_string(res->status) : "no response") << "\n";
+        return std::nullopt;
+    }
+    try {
+        auto j = json::parse(res->body);
+        if (j.contains("verbose_gateway_logs") && j["verbose_gateway_logs"].is_boolean()) {
+            return j["verbose_gateway_logs"].get<bool>();
+        }
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        std::cerr << "[kairos] getVerboseGatewayLogs JSON parse error: " << e.what() << "\n";
+        return std::nullopt;
+    }
+}

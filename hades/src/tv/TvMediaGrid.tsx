@@ -1,6 +1,7 @@
 import type { Show, Movie } from '../api/types'
 import { mediaUrl } from '../api/client'
 import { TvMediaCard } from './TvMediaCard'
+import styles from './TvMediaGrid.module.css'
 
 function isShow(item: Show | Movie): item is Show { return 'show_id' in item }
 function thumbUrl(item: Show | Movie) {
@@ -16,10 +17,7 @@ export function TvMediaGrid({ shows, movies, onItemClick }: {
   const items: (Show | Movie)[] = [...shows, ...movies]
 
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-      gap: 24, padding: '8px 48px 64px',
-    }}>
+    <div className={styles.grid}>
       {items.map(item => {
         const id = isShow(item) ? item.show_id : item.movie_id
         const type = isShow(item) ? 'show' as const : 'movie' as const

@@ -149,9 +149,12 @@ describe('api client — query string builder (qs)', () => {
 
   it('encodes special characters', async () => {
     respondOk({ items: [], total: 0 })
+    // q gets folded into the canon `filter` query string (withCombinedFilter
+    // in client.ts) rather than sent as its own q= param — see the
+    // library-filter-syntax work this predates.
     await api.getShows({ q: 'Sci Fi & Fantasy' })
     const [url] = mockFetch.mock.calls[0]
-    expect(url).toContain('q=Sci%20Fi%20%26%20Fantasy')
+    expect(url).toContain('filter=Sci%20Fi%20%26%20Fantasy')
   })
 })
 
@@ -260,4 +263,64 @@ describe('api client — auth headers and X-Pantheon-Surface', () => {
     expect(handler).toHaveBeenCalledTimes(1)
     window.removeEventListener('kairos:unauthorized', handler)
   })
+})
+
+// Guest profiles (demo-server "Continue as Guest") — see
+// kairos/src/api/services/AuthService.cpp's POST /api/auth/guest,
+// PATCH/DELETE /api/auth/me/guest.
+describe('api client — guest profiles', () => {
+    beforeEach(() => mockFetch.mockReset())
+
+    describe('createGuest', () => {
+        it('POSTs /api/auth/guest with display_name and returns the auth response', async () => {
+            const user = {user_id: 'g1', username: 'Curious Visitor', role: 'viewer', is_guest: true}
+            respondOk({token: 'tok123', user})
+            const result = await api.createGuest('Curious Visitor')
+            const [url, opts] = mockFetch.mock.calls[0]
+            expect(url).toBe('/api/auth/guest')
+            expect(opts.method).toBe('POST')
+            expect(JSON.parse(opts.body)).toEqual({display_name: 'Curious Visitor'})
+            expect(result.token).toBe('tok123')
+            expect(result.user.is_guest).toBe(true)
+        })
+
+        it('propagates a 403 when guest profiles are disabled', async () => {
+            respondError(403, {error: 'Guest profiles are not enabled on this server'})
+            await expect(api.createGuest('Someone')).rejects.toThrow(/not enabled/)
+        })
+
+        it('propagates a 429 once the concurrent-guest cap is reached', async () => {
+            respondError(429, {error: 'Guest capacity reached — try again later'})
+            await expect(api.createGuest('Someone')).rejects.toThrow(/capacity/)
+        })
+    })
+
+    describe('updateGuestSetup', () => {
+        it('PATCHes /api/auth/me/guest with only the supplied fields', async () => {
+            respondOk({ok: true})
+            await api.updateGuestSetup({pin: '4242', restricted: true})
+            const [url, opts] = mockFetch.mock.calls[0]
+            expect(url).toBe('/api/auth/me/guest')
+            expect(opts.method).toBe('PATCH')
+            expect(JSON.parse(opts.body)).toEqual({pin: '4242', restricted: true})
+        })
+
+        it('sends an empty pin to clear it, distinct from omitting pin entirely', async () => {
+            respondOk({ok: true})
+            await api.updateGuestSetup({pin: ''})
+            const [, opts] = mockFetch.mock.calls[0]
+            expect(JSON.parse(opts.body)).toEqual({pin: ''})
+        })
+    })
+
+    describe('deleteGuest', () => {
+        it('DELETEs /api/auth/me/guest with no body', async () => {
+            respondOk({ok: true})
+            await api.deleteGuest()
+            const [url, opts] = mockFetch.mock.calls[0]
+            expect(url).toBe('/api/auth/me/guest')
+            expect(opts.method).toBe('DELETE')
+            expect(opts.body).toBeUndefined()
+        })
+    })
 })

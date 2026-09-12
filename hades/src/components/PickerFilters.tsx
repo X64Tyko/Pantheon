@@ -1,69 +1,33 @@
 import { useState, useEffect, useRef } from 'react'
 import { observer } from 'mobx-react-lite'
 import { api } from '../api/client'
-import type { LibraryWithSource } from '../api/types'
+import type { LibraryWithSource, PlaylistBrowseEntry } from '../api/types'
+import type { FilterTreeStore, FilterRuleItem } from './media/filterTree'
+import styles from './PickerFilters.module.css'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Field/operator registry lives in a dependency-free leaf module (media/
+// filterFields.ts) so filterSyntax.ts/filterTree.ts can import it without a
+// circular dependency on this file — re-exported here so existing call
+// sites importing from 'PickerFilters' don't all need new import paths.
+export {
+    FIELD_DEFS, RESOLUTIONS, DECADES, WATCH_STATES,
+  type FilterField, type FilterOp, type ValueType, type FieldDef,
+} from './media/filterFields'
+import {FIELD_DEFS, RESOLUTIONS, DECADES, WATCH_STATES, type FilterField} from './media/filterFields'
 
-export type FilterField =
-  | 'library' | 'title' | 'genre' | 'year' | 'content_rating' | 'studio'
-  | 'director' | 'actor' | 'writer' | 'country'
-  | 'collection' | 'network' | 'label' | 'resolution' | 'decade'
-  | 'critic_rating' | 'audience_rating' | 'duration' | 'added'
+// Same disambiguation as SourceSwitcher.tsx's identical helper — two
+// libraries from different sources can share a display name (e.g. both a
+// Plex and a Jellyfin "Movies" library), so the source name is appended
+// whenever that's the case.
+function libLabel(lib: LibraryWithSource, all: LibraryWithSource[]): string {
+  const dups = all.filter(l => l.display_name === lib.display_name)
+  return dups.length > 1 ? `${lib.display_name} (${lib.source_name})` : lib.display_name
+}
 
-export type FilterOp =
-  | 'is' | 'is_not'
-  | 'contains' | 'does_not_contain' | 'begins_with' | 'ends_with'
-  | 'gt' | 'gte' | 'lt' | 'lte'
-  | 'before' | 'after' | 'in_last'
-
-export type ValueType = 'text' | 'number' | 'days' | 'resolution' | 'decade' | 'library'
-
-export interface FilterRule { id: string; field: FilterField; op: FilterOp; value: string }
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-export const RESOLUTIONS = ['4K', '1080p', '720p', 'SD']
-export const DECADES     = ['2020s', '2010s', '2000s', '1990s', '1980s', '1970s', '1960s', '1950s', '1940s', '1930s']
-
-export type FieldDef = { label: string; valueType: ValueType; ops: { id: FilterOp; label: string }[] }
-
-const TEXT_OPS: { id: FilterOp; label: string }[] = [
-  { id: 'is',              label: 'is' },
-  { id: 'is_not',          label: 'is not' },
-  { id: 'contains',        label: 'contains' },
-  { id: 'does_not_contain',label: 'does not contain' },
-]
-
-const FULL_TEXT_OPS: { id: FilterOp; label: string }[] = [
-  { id: 'contains',        label: 'contains' },
-  { id: 'does_not_contain',label: 'does not contain' },
-  { id: 'begins_with',     label: 'begins with' },
-  { id: 'ends_with',       label: 'ends with' },
-  { id: 'is',              label: 'is' },
-  { id: 'is_not',          label: 'is not' },
-]
-
-export const FIELD_DEFS: Record<FilterField, FieldDef> = {
-  library:         { label: 'Library',         valueType: 'library',    ops: [{ id: 'is',      label: 'is' }] },
-  title:           { label: 'Title',           valueType: 'text',       ops: FULL_TEXT_OPS },
-  genre:           { label: 'Genre',           valueType: 'text',       ops: TEXT_OPS },
-  year:            { label: 'Year',            valueType: 'number',     ops: [{ id: 'is', label: 'is' }, { id: 'lt', label: 'is before' }, { id: 'gt', label: 'is after' }] },
-  content_rating:  { label: 'Content Rating',  valueType: 'text',       ops: TEXT_OPS },
-  studio:          { label: 'Studio',          valueType: 'text',       ops: FULL_TEXT_OPS },
-  director:        { label: 'Director',        valueType: 'text',       ops: TEXT_OPS },
-  actor:           { label: 'Actor',           valueType: 'text',       ops: TEXT_OPS },
-  writer:          { label: 'Writer',          valueType: 'text',       ops: TEXT_OPS },
-  country:         { label: 'Country',         valueType: 'text',       ops: TEXT_OPS },
-  collection:      { label: 'Collection',      valueType: 'text',       ops: TEXT_OPS },
-  network:         { label: 'Network',         valueType: 'text',       ops: TEXT_OPS },
-  label:           { label: 'Label',           valueType: 'text',       ops: TEXT_OPS },
-  resolution:      { label: 'Resolution',      valueType: 'resolution', ops: [{ id: 'is', label: 'is' }, { id: 'is_not', label: 'is not' }] },
-  decade:          { label: 'Decade',          valueType: 'decade',     ops: [{ id: 'is', label: 'is' }] },
-  critic_rating:   { label: 'Critic Rating',   valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  audience_rating: { label: 'Audience Rating', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  duration:        { label: 'Duration (mins)', valueType: 'number',     ops: [{ id: 'gte', label: 'is at least' }, { id: 'lte', label: 'is at most' }, { id: 'gt', label: 'is greater than' }, { id: 'lt', label: 'is less than' }] },
-  added:           { label: 'Date Added',      valueType: 'days',       ops: [{ id: 'in_last', label: 'in the last' }, { id: 'before', label: 'before' }, { id: 'after', label: 'after' }] },
+function distinctSources(libs: LibraryWithSource[]): { source_id: string; source_name: string }[] {
+  const seen = new Map<string, string>()
+  for (const l of libs) if (!seen.has(l.source_id)) seen.set(l.source_id, l.source_name)
+  return Array.from(seen, ([source_id, source_name]) => ({ source_id, source_name }))
 }
 
 // ─── FilterTagInput ───────────────────────────────────────────────────────────
@@ -93,13 +57,11 @@ function FilterTagInput({ field, value, onChange }: {
   const inputRef = useRef<HTMLInputElement>(null)
   const wrapRef  = useRef<HTMLDivElement>(null)
 
-  // Fetch / hydrate from cache on field change
   useEffect(() => {
     setOptions([])
     fetchFilterValues(field).then(setOptions)
   }, [field])
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
@@ -108,13 +70,11 @@ function FilterTagInput({ field, value, onChange }: {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Derive active token from raw value string
   const tokens        = value.split(';')
   const activeRaw     = tokens[tokens.length - 1]
   const confirmed     = tokens.slice(0, -1)
   const activeToken   = activeRaw.trimStart()
 
-  // Suggestions: match active token, exclude already-confirmed tokens
   const confirmedSet  = new Set(confirmed.map(t => t.trim().toLowerCase()))
   const filtered      = activeToken === ''
     ? options.filter(o => !confirmedSet.has(o.toLowerCase()))
@@ -137,27 +97,27 @@ function FilterTagInput({ field, value, onChange }: {
   }
 
   return (
-    <div ref={wrapRef} className="relative flex-1">
+    <div ref={wrapRef} className={styles.tagInputWrap}>
       <input
         ref={inputRef}
         value={value}
         onChange={e => { onChange(e.target.value); setOpen(true); setHiIdx(0) }}
         onFocus={() => setOpen(true)}
         onKeyDown={handleKeyDown}
-        className="input text-xs py-0.5 w-full"
+        className={`${styles.input} ${styles.tagInput}`}
         placeholder={options.length > 0 ? 'type or pick… ; for multiple' : 'value…'}
         autoComplete="off"
         spellCheck={false}
       />
       {open && filtered.length > 0 && (
-        <ul className="absolute z-50 top-full left-0 right-0 mt-0.5 max-h-48 overflow-y-auto
-                        bg-zinc-900 border border-zinc-700 rounded shadow-lg text-xs">
+        <ul className={styles.dropdown}>
           {filtered.map((opt, i) => (
             <li
               key={opt}
               onMouseDown={e => { e.preventDefault(); pick(opt) }}
               onMouseEnter={() => setHiIdx(i)}
-              className={`px-2 py-1 cursor-pointer ${i === hiIdx ? 'bg-violet-700 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}>
+              className={`${styles.option} ${i === hiIdx ? styles.optionHighlighted : ''}`}
+            >
               {opt}
             </li>
           ))}
@@ -169,115 +129,191 @@ function FilterTagInput({ field, value, onChange }: {
 
 // ─── FilterRuleRow ────────────────────────────────────────────────────────────
 
-export const FilterRuleRow = observer(function FilterRuleRow({ rule, filteredLibs, onUpdate, onRemove }: {
-  rule:         FilterRule
+const FilterRuleRow = observer(function FilterRuleRow({ rule, filteredLibs, playlists = [], onUpdate, onRemove }: {
+  rule:         FilterRuleItem
   filteredLibs: LibraryWithSource[]
-  onUpdate:     (id: string, patch: Partial<Omit<FilterRule, 'id'>>) => void
+  playlists?:   PlaylistBrowseEntry[]
+  onUpdate:     (id: string, patch: Partial<Pick<FilterRuleItem, 'field' | 'op' | 'value'>>) => void
   onRemove:     (id: string) => void
 }) {
   const def = FIELD_DEFS[rule.field]
-  const set = (patch: Partial<Omit<FilterRule, 'id'>>) => onUpdate(rule.id, patch)
+  const set = (patch: Partial<Pick<FilterRuleItem, 'field' | 'op' | 'value'>>) => onUpdate(rule.id, patch)
   return (
-    <div className="flex items-center gap-1.5">
+    <div className={styles.row}>
       <select value={rule.field} onChange={e => set({ field: e.target.value as FilterField })}
-        className="input text-xs py-0.5 w-32">
+        className={`${styles.input} ${styles.selectFixed}`}>
         {(Object.keys(FIELD_DEFS) as FilterField[]).map(f => (
           <option key={f} value={f}>{FIELD_DEFS[f].label}</option>
         ))}
       </select>
-      <select value={rule.op} onChange={e => set({ op: e.target.value as FilterOp })}
-        className="input text-xs py-0.5 w-32">
+      <select value={rule.op} onChange={e => set({ op: e.target.value as typeof rule.op })}
+        className={`${styles.input} ${styles.selectFixed}`}>
         {def.ops.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
       </select>
 
       {def.valueType === 'library' && (
         <select value={rule.value} onChange={e => set({ value: e.target.value })}
-          className="input text-xs py-0.5 flex-1">
+          className={`${styles.input} ${styles.valueFlex}`}>
           <option value="">Any</option>
-          {filteredLibs.map(l => <option key={l.library_id} value={l.library_id}>{l.display_name}</option>)}
+          {filteredLibs.map(l => <option key={l.library_id} value={l.library_id}>{libLabel(l, filteredLibs)}</option>)}
+        </select>
+      )}
+      {def.valueType === 'playlist' && (
+        <select value={rule.value} onChange={e => set({ value: e.target.value })}
+          className={`${styles.input} ${styles.valueFlex}`}>
+          <option value="">Any</option>
+          {playlists.map(p => <option key={p.playlist_id} value={p.playlist_id}>{p.title}</option>)}
+        </select>
+      )}
+      {def.valueType === 'source' && (
+        <select value={rule.value} onChange={e => set({ value: e.target.value })}
+          className={`${styles.input} ${styles.valueFlex}`}>
+          <option value="">Any</option>
+          {distinctSources(filteredLibs).map(s => <option key={s.source_id} value={s.source_id}>{s.source_name}</option>)}
         </select>
       )}
       {def.valueType === 'resolution' && (
         <select value={rule.value} onChange={e => set({ value: e.target.value })}
-          className="input text-xs py-0.5 flex-1">
+          className={`${styles.input} ${styles.valueFlex}`}>
           <option value="">Any</option>
           {RESOLUTIONS.map(r => <option key={r} value={r}>{r}</option>)}
         </select>
       )}
       {def.valueType === 'decade' && (
         <select value={rule.value} onChange={e => set({ value: e.target.value })}
-          className="input text-xs py-0.5 flex-1">
+          className={`${styles.input} ${styles.valueFlex}`}>
           <option value="">Any</option>
           {DECADES.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
       )}
+        {def.valueType === 'watch_state' && (
+            <select value={rule.value} onChange={e => set({value: e.target.value})}
+                    className={`${styles.input} ${styles.valueFlex}`}>
+                <option value="">Any</option>
+                {WATCH_STATES.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+            </select>
+      )}
       {def.valueType === 'number' && (
         <input value={rule.value} onChange={e => set({ value: e.target.value })}
-          className="input text-xs py-0.5 flex-1" type="number"
+          className={`${styles.input} ${styles.valueFlex}`} type="number"
           placeholder={rule.field === 'year' ? 'e.g. 2010' : rule.field === 'duration' ? 'mins' : '0–10'} />
       )}
       {def.valueType === 'days' && (
-        <div className="flex items-center gap-1 flex-1">
+        <div className={styles.daysRow}>
           <input value={rule.value} onChange={e => set({ value: e.target.value })}
-            className="input text-xs py-0.5 flex-1" type="number" placeholder="30" />
-          {rule.op === 'in_last' && <span className="text-xs text-zinc-500 shrink-0">days</span>}
+            className={`${styles.input} ${styles.valueFlex}`} type="number" placeholder="30" />
+          {rule.op === 'in_last' && <span className={styles.daysLabel}>days</span>}
         </div>
       )}
       {def.valueType === 'text' && (
         <FilterTagInput field={rule.field} value={rule.value} onChange={v => set({ value: v })} />
       )}
 
-      <button onClick={() => onRemove(rule.id)}
-        className="text-zinc-600 hover:text-red-400 transition-colors text-xs px-1 shrink-0">✕</button>
+      <button onClick={() => onRemove(rule.id)} className={styles.removeBtn}>✕</button>
     </div>
   )
 })
 
+// ─── Match All/Any selector ─────────────────────────────────────────────────
+
+function MatchSelect({ value, onChange }: { value: 'all' | 'any'; onChange: (m: 'all' | 'any') => void }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value as 'all' | 'any')}
+      className={`${styles.input} ${styles.matchSelect}`}
+    >
+      <option value="all">All</option>
+      <option value="any">Any</option>
+    </select>
+  )
+}
+
 // ─── FilterSection ────────────────────────────────────────────────────────────
 
-export const FilterSection = observer(function FilterSection({ rulesOpen, filterMatch, filterRules, filteredLibs, onToggleOpen, onSetMatch, onAddRule, onUpdateRule, onRemoveRule }: {
-  rulesOpen:     boolean
-  filterMatch:   'all' | 'any'
-  filterRules:   FilterRule[]
-  filteredLibs:  LibraryWithSource[]
-  onToggleOpen:  () => void
-  onSetMatch:    (m: 'all' | 'any') => void
-  onAddRule:     () => void
-  onUpdateRule:  (id: string, patch: Partial<Omit<FilterRule, 'id'>>) => void
-  onRemoveRule:  (id: string) => void
+// Rule-builder panel — one level of grouping ("(genre is Horror AND year is
+// after 2015) OR studio is A24"), matching Plex's smart-filter UX. Deeper
+// nesting is supported by the underlying canon syntax (filterSyntax.ts) for
+// power users typing directly into the search bar; the visual builder is
+// deliberately bounded to one level to stay usable.
+//
+// layout='vertical' (default) stacks each rule/group full-width, one per
+// line — right for a narrow host (Playlists/Filler Lists/channel picker's
+// side panels). layout='horizontal' wraps rules/groups left-to-right in a
+// bounded-width flow instead — for the Library page, where the rule builder
+// sits in a full-width bar above the library pills rather than a narrow
+// sidebar (a sidebar the rule list would otherwise grow to fill and force
+// into its own awkward internal scroll as rules/groups are added).
+export const FilterSection = observer(function FilterSection({ tree, filteredLibs, playlists = [], layout = 'vertical' }: {
+  tree:         FilterTreeStore
+  filteredLibs: LibraryWithSource[]
+  playlists?:   PlaylistBrowseEntry[]
+  layout?:      'vertical' | 'horizontal'
 }) {
+  const ruleCount = tree.items.reduce((n, it) => n + (it.kind === 'rule' ? 1 : it.rules.length), 0)
+  const horizontal = layout === 'horizontal'
+
   return (
-    <div className="border-t border-zinc-800/40">
+    <div className={`${styles.section} ${horizontal ? styles.sectionHorizontal : ''}`}>
       <button
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-400 transition-colors text-left"
-        onClick={onToggleOpen}>
-        <span className="text-[10px]">{rulesOpen ? '▼' : '▶'}</span>
+        onClick={() => tree.toggleOpen()}
+        className={`${styles.toggleBtn} ${horizontal ? styles.toggleBtnHorizontal : ''}`}
+      >
+        <span className={styles.toggleIcon}>{tree.open ? '▼' : '▶'}</span>
         <span>Filters</span>
-        {filterRules.length > 0 && (
-          <span className="text-violet-400 ml-1">
-            ({filterRules.length} rule{filterRules.length !== 1 ? 's' : ''})
-          </span>
+        {ruleCount > 0 && (
+          <span className={styles.ruleCountText}>({ruleCount} rule{ruleCount !== 1 ? 's' : ''})</span>
         )}
       </button>
-      {rulesOpen && (
-        <div className="px-3 pb-2.5 space-y-1.5 bg-zinc-900/40 border-t border-zinc-800/30">
-          <div className="flex items-center gap-2 pt-2">
-            <span className="text-xs text-zinc-500">Match</span>
-            <select className="input text-xs py-0.5 w-16" value={filterMatch}
-              onChange={e => onSetMatch(e.target.value as 'all' | 'any')}>
-              <option value="all">All</option>
-              <option value="any">Any</option>
-            </select>
-            <span className="text-xs text-zinc-500">of the following rules:</span>
+      {tree.open && (
+        <div className={`${styles.panel} ${horizontal ? styles.panelHorizontal : ''}`}>
+          <div className={`${styles.matchRow} ${horizontal ? styles.matchRowHorizontal : ''}`}>
+            <span className={styles.matchText}>Match</span>
+            <MatchSelect value={tree.match} onChange={m => tree.setMatch(m)} />
+            <span className={styles.matchText}>of the following:</span>
           </div>
-          {filterRules.map(rule => (
-            <FilterRuleRow key={rule.id} rule={rule} filteredLibs={filteredLibs}
-              onUpdate={onUpdateRule} onRemove={onRemoveRule} />
-          ))}
-          <button onClick={onAddRule}
-            className="text-xs text-violet-400 hover:text-violet-200 transition-colors pt-0.5 block">
-            + Add Rule
-          </button>
+
+          <div className={`${styles.itemsRow} ${horizontal ? styles.itemsRowHorizontal : ''}`}>
+            {tree.items.map(item => item.kind === 'rule' ? (
+              <div key={item.id} className={horizontal ? styles.itemBoxFixed : undefined}>
+                <FilterRuleRow
+                  rule={item} filteredLibs={filteredLibs} playlists={playlists}
+                  onUpdate={(id, patch) => tree.updateRule(id, patch)}
+                  onRemove={id => tree.removeItem(id)}
+                />
+              </div>
+            ) : (
+              <div key={item.id} className={`${styles.groupBox} ${horizontal ? styles.itemBoxFixed : ''}`}>
+                <div className={styles.groupHeader}>
+                  <span className={styles.matchText}>Match</span>
+                  <MatchSelect value={item.match} onChange={m => tree.setGroupMatch(item.id, m)} />
+                  <span className={styles.matchText}>within this group</span>
+                  <button onClick={() => tree.removeItem(item.id)} className={`${styles.removeBtn} ${styles.removeGroupBtn}`}>
+                    ✕ remove group
+                  </button>
+                </div>
+                {item.rules.map(rule => (
+                  <FilterRuleRow
+                    key={rule.id} rule={rule} filteredLibs={filteredLibs} playlists={playlists}
+                    onUpdate={(id, patch) => tree.updateRule(id, patch)}
+                    onRemove={id => tree.removeRuleFromGroup(item.id, id)}
+                  />
+                ))}
+                <button onClick={() => tree.addRuleToGroup(item.id)} className={styles.addRuleToGroupBtn}>
+                  + Add rule to group
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className={styles.actionsRow}>
+            <button onClick={() => tree.addRule()} className={styles.actionBtn}>
+              + Add Rule
+            </button>
+            <button onClick={() => tree.addGroup()} className={styles.actionBtn}>
+              + Add Group
+            </button>
+          </div>
         </div>
       )}
     </div>

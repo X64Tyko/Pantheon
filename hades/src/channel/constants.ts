@@ -11,6 +11,25 @@ export const DAY_MIN_W = 94
 export const DAYS = [['Mo', 'MON'], ['Tu', 'TUE'], ['We', 'WED'], ['Th', 'THU'], ['Fr', 'FRI'], ['Sa', 'SAT'], ['Su', 'SUN']] as const
 export const DAY_BITS = [2, 4, 8, 16, 32, 64, 1]
 
+// IANA timezone suggestions for the timezone field's <datalist> — shared
+// between ChannelDefaultsPanel.tsx (editing an existing channel) and
+// ChannelsPage.tsx (creating a new one) so both offer the same picker
+// rather than one being a bare free-text field.
+export const TIMEZONE_SUGGESTIONS = [
+    'UTC',
+    'America/New_York',
+    'America/Chicago',
+    'America/Denver',
+    'America/Los_Angeles',
+    'America/Anchorage',
+    'Pacific/Honolulu',
+    'Europe/London',
+    'Europe/Paris',
+    'Europe/Berlin',
+    'Australia/Sydney',
+    'Asia/Tokyo',
+] as const
+
 export const BLOCK_META: Record<BlockType, { name: string; bg: string; solid: string; edge: string; border: string }> = {
   episode:  { name: 'Episode',  bg: 'linear-gradient(160deg, oklch(0.37 0.095 287), oklch(0.31 0.08 287))', solid: 'oklch(0.36 0.09 287)', edge: 'oklch(0.74 0.13 287)', border: 'oklch(0.48 0.1 287)' },
   movie:    { name: 'Movie',    bg: 'linear-gradient(160deg, oklch(0.4 0.09 58), oklch(0.33 0.075 56))',     solid: 'oklch(0.39 0.085 58)',  edge: 'oklch(0.78 0.12 68)',  border: 'oklch(0.5 0.1 60)' },

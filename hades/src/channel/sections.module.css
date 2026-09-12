@@ -1,0 +1,144 @@
+.cardOuter {
+  border-radius: var(--hds-radius-btn);
+  border: 1px solid var(--hds-line);
+  margin-bottom: var(--hds-space-3);
+  overflow: hidden;
+  background: oklch(0.21 0.022 288 / 0.5);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  padding: 11px 13px;
+}
+
+.cardDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--hds-gold);
+  flex-shrink: 0;
+}
+
+.cardTitle {
+  flex: 1;
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.2em;
+  color: var(--hds-txt);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.cardSummary {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.cardBody {
+  padding: var(--hds-space-1) 14px 16px;
+  border-top: 1px solid var(--hds-line-s);
+}
+
+.accordionOuter {
+  border-radius: var(--hds-radius-btn);
+  border: 1px solid var(--hds-line-s);
+  margin-bottom: var(--hds-space-3);
+  overflow: hidden;
+}
+
+.accordionToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  width: 100%;
+  padding: 9px 13px;
+  background: oklch(0.2 0.018 286 / 0.6);
+  border: none;
+  cursor: pointer;
+}
+
+.accordionChevron {
+  font-size: 9px;
+  color: var(--hds-txt-3);
+  display: inline-block;
+  transition: transform 0.15s;
+  /* transform (open/closed rotation) is dynamic, set inline */
+}
+
+.accordionTitle {
+  flex: 1;
+  font-size: var(--hds-font-size-tv-caption);
+  letter-spacing: 0.2em;
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  text-align: left;
+}
+
+.accordionBody {
+  padding: 14px 14px 16px;
+  border-top: 1px solid var(--hds-line-s);
+}
+
+.launcherRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-4);
+  padding: var(--hds-space-4) 13px;
+  margin-bottom: var(--hds-space-tile-gap);
+  border-radius: var(--hds-radius-lg);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+  /* border-color/background (hover state) are dynamic, set inline */
+}
+
+.launcherIcon {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-line-s);
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-title);
+}
+
+.launcherTextWrap { flex: 1; min-width: 0; }
+
+.launcherTitle {
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-small-title);
+  letter-spacing: 0.18em;
+  color: var(--hds-txt);
+}
+
+.launcherSummary {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launcherChevron {
+  font-size: 13px;
+  color: var(--hds-violet);
+  flex-shrink: 0;
+}
+
+.dropZone {
+  border-radius: var(--hds-radius-tile);
+  padding: 11px 14px;
+  text-align: center;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  transition: border-color 0.1s, background 0.1s, color 0.1s;
+  cursor: copy;
+  user-select: none;
+  /* border/background/color (drag-over state) are dynamic, set inline */
+}

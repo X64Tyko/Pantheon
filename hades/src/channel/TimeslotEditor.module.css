@@ -1,0 +1,128 @@
+.slotRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  padding: 9px var(--hds-space-4);
+  margin-bottom: var(--hds-space-2);
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-line-s);
+  background: oklch(0.19 0.018 288 / 0.45);
+  cursor: grab;
+  transition: border-color 0.1s, background 0.1s, opacity 0.1s;
+  /* opacity (dragging) and box-shadow (drag-over indicator) are dynamic, set inline */
+}
+
+.dragHandle {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+  flex-shrink: 0;
+  cursor: grab;
+  line-height: 1;
+  margin-right: -2px;
+}
+
+.slotTime {
+  font-family: var(--hds-font-mono-brand);
+  font-size: 9.5px;
+  color: var(--hds-txt-3);
+  flex-shrink: 0;
+}
+
+.slotTitle {
+  flex: 1;
+  font-size: var(--hds-font-size-tv-small-title);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* color/font-style: dynamic on whether a head episode exists, set inline */
+}
+
+.slotTitleFilled {
+  color: var(--hds-txt);
+  font-style: normal;
+}
+
+.slotTitleEmpty {
+  color: var(--hds-txt-3);
+  font-style: italic;
+}
+
+.episodePos {
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  flex-shrink: 0;
+}
+
+.chevron {
+  font-size: var(--hds-font-size-tv-badge);
+  color: var(--hds-violet);
+  flex-shrink: 0;
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-body);
+  line-height: 1;
+  flex-shrink: 0;
+  padding: 0;
+  margin-left: 2px;
+}
+
+.convertBanner {
+  margin-bottom: var(--hds-space-4);
+  padding: var(--hds-space-4) 14px;
+  border-radius: var(--hds-radius-btn);
+  border: 1px solid oklch(0.55 0.12 290 / 0.5);
+  background: oklch(0.38 0.09 287 / 0.08);
+}
+
+.convertBannerTitle {
+  font-size: 10.5px;
+  color: var(--hds-txt);
+  margin-bottom: var(--hds-space-1);
+}
+
+.convertBannerBody {
+  font-size: 9.5px;
+  color: var(--hds-txt-3);
+  line-height: 1.55;
+  margin-bottom: var(--hds-space-3);
+}
+
+.convertBtn {
+  padding: var(--hds-space-2) 14px;
+  border-radius: var(--hds-radius-tile);
+  border: 1px solid var(--hds-violet);
+  background: oklch(0.38 0.09 287 / 0.15);
+  color: var(--hds-violet);
+  cursor: pointer;
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-small-title);
+  letter-spacing: 0.08em;
+}
+
+.slotsHeading {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--hds-txt-3);
+  margin-bottom: var(--hds-space-3);
+}
+
+.addSlotBtn {
+  width: 100%;
+  padding: 9px 0;
+  margin-top: var(--hds-space-1);
+  border: 1px dashed var(--hds-violet);
+  border-radius: var(--hds-radius-btn);
+  background: oklch(0.38 0.09 287 / 0.08);
+  color: var(--hds-violet);
+  cursor: pointer;
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-label);
+  letter-spacing: 0.08em;
+  transition: 0.12s;
+}

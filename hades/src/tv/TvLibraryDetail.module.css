@@ -1,0 +1,274 @@
+.loadingScreen {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loadingSkeleton {
+  width: 300px;
+  height: 450px;
+  border-radius: var(--hds-radius-skeleton);
+}
+
+.screen {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  transition: height .3s ease;
+}
+
+.backdropFallback {
+  background: linear-gradient(135deg,
+    var(--hds-backdrop-fallback-1) 0%,
+    var(--hds-backdrop-fallback-2) 50%,
+    var(--hds-backdrop-fallback-3) 100%);
+}
+
+.backdropScrimH {
+  position: absolute;
+  inset: 0;
+  /* rgba, not oklch-alpha — see TvLibrary.module.css's .filterOverlay
+     comment: oklch(... / alpha) is invalid (declaration dropped, not just a
+     wrong color) on TV browsers without CSS Color-5 alpha support. */
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.3) 55%, transparent 100%);
+}
+
+.backdropScrimV {
+  position: absolute;
+  inset: 0;
+  /* Fades over more of the (now-shorter) backdrop's height than the old
+     50% stop did, so the transition into the body reads as a smooth fade
+     rather than a hard edge. */
+  background: linear-gradient(to top, var(--hds-bg) 0%, transparent 75%);
+}
+
+.scrollContainer {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.heroSpacer {
+    /* mirrors TvLibraryDetail.tsx's HERO_HEIGHT_CSS (36vh, floored at the same
+       --hds-tile-hero-height-tv token) minus --hds-tile-hero-overlap-tv — both
+       sides now read the same two real tokens instead of two independently-
+       hardcoded literals that used to need manual syncing (see index.css). */
+    height: calc(max(36vh, var(--hds-tile-hero-height-tv, 320px)) - var(--hds-tile-hero-overlap-tv, 40px));
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 40px 48px;
+}
+
+/* .backdrop's own scrims are sized/tuned to the *unscrolled* hero height
+   (percentage-based, so they do rescale once the backdrop shrinks to match
+   this header's collapsed height, but .backdropScrimV's gradient stays
+   weak over roughly its own top 25% — see that rule's comment) — wide
+   enough that title/meta text sitting in that region on a tall header
+   (long overview, several genre chips) was reading straight off the raw
+   backdrop image. Scoped to .headerCollapsed (applied by TvLibraryDetail.tsx
+   once useScrollCollapse's sentinel reports the header actually stuck) —
+   the header is only ever fully overlaid on the backdrop in that state (the
+   rest of the time only its top ~40px overlaps, already covered by
+   .backdropScrimH/.backdropScrimV). Applying this unconditionally used to
+   paint a second, opaque-ish gradient the full size of the header at all
+   times, which — once collapsed, when the header exactly matches the
+   shrunk backdrop's bounds — completely eclipsed the real backdrop image
+   instead of just tinting it, reading as a duplicate flat banner rather
+   than the same image shrinking in place. rgba, not oklch-alpha — see
+   .filterOverlay's own comment on TV browsers dropping oklch(... / alpha)
+   entirely. */
+.header.headerCollapsed {
+  background: linear-gradient(to bottom,
+    rgba(0, 0, 0, 0.25) 0%,
+    rgba(0, 0, 0, 0.55) 50%,
+    rgba(0, 0, 0, 0.7) 100%);
+}
+
+.headerRow {
+  display: flex;
+  gap: 40px;
+  align-items: flex-end;
+}
+
+.poster {
+  width: 170px;
+  height: 255px;
+  border-radius: var(--hds-radius-skeleton);
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--hds-bg-3);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+.posterImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.infoCol {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: var(--hds-space-3);
+}
+
+.heroTitle {
+  font-family: var(--hds-font-display);
+  font-weight: 700;
+  font-size: var(--hds-font-size-tv-hero-title);
+  color: var(--hds-txt-hero);
+  margin: 0 0 var(--hds-space-4);
+  line-height: 1.1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: var(--hds-space-5);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-body);
+  color: var(--hds-txt-2);
+}
+
+.ratingText {
+  color: var(--hds-gold);
+}
+
+.contentTypeText {
+  opacity: 0.6;
+}
+
+.genreRow {
+  display: flex;
+  gap: var(--hds-space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--hds-space-5);
+}
+
+.genreChip {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-label);
+  padding: var(--hds-space-1) var(--hds-space-4);
+  border-radius: var(--hds-radius-lg);
+  background: var(--hds-glass);
+  border: 1px solid var(--hds-glass-border);
+  color: var(--hds-txt-2);
+}
+
+.overview {
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-body);
+  line-height: 1.7;
+  color: oklch(0.8 0.01 285);
+  margin: 0 0 var(--hds-space-7);
+  max-width: 760px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.buttonRow {
+  display: flex;
+  gap: 14px;
+}
+
+.playButton {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-tile-gap);
+  cursor: pointer;
+  padding: var(--hds-space-4) var(--hds-space-7);
+  border-radius: var(--hds-radius-md);
+  border: none;
+  background: var(--hds-gold);
+  color: oklch(0.15 0.02 90);
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-title);
+  font-weight: 700;
+}
+
+/* Play/Play from Beginning/Watch Together — icon-only while unfocused,
+   expanding to icon+label on remote focus (mirrors the Android TV Detail
+   treatment added for the same reason: three full-text buttons crowded this
+   row once Play from Beginning/Watch Together joined Play). Padding stays
+   fixed so only the label's own max-width/opacity animate, matching
+   Android's CollapsibleActionButton — the surrounding button never jumps. */
+.actionButton {
+    display: flex;
+    align-items: center;
+    gap: var(--hds-space-tile-gap);
+    cursor: pointer;
+    padding: var(--hds-space-4) var(--hds-space-5);
+    border-radius: var(--hds-radius-md);
+    border: none;
+    background: var(--hds-glass);
+    color: var(--hds-txt-hero);
+    font-family: var(--hds-font-display);
+    font-size: var(--hds-font-size-tv-title);
+    font-weight: 600;
+}
+
+.actionButtonFilled {
+    background: var(--hds-gold);
+    color: oklch(0.15 0.02 90);
+    font-weight: 700;
+}
+
+.actionButtonDisabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.actionLabel {
+    display: inline-block;
+    max-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    opacity: 0;
+    transition: max-width var(--hds-transition-fast) ease, opacity var(--hds-transition-fast) ease;
+}
+
+.actionLabelExpanded {
+    max-width: 280px;
+    opacity: 1;
+}
+
+.backButtonDetail {
+  padding: var(--hds-space-4) var(--hds-space-7);
+  border-radius: var(--hds-radius-md);
+  cursor: pointer;
+  border: 1px solid var(--hds-glass-border);
+  background: var(--hds-glass);
+  color: var(--hds-txt-hero);
+  font-family: var(--hds-font-display);
+  font-size: var(--hds-font-size-tv-title);
+  font-weight: 600;
+}
+
+.episodesSection {
+  padding: var(--hds-space-3) 48px 64px;
+}
+
+.notFound {
+  padding: 48px;
+  text-align: center;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+}

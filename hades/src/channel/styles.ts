@@ -1,52 +1,59 @@
 import type { CSSProperties } from 'react'
 
+// NOTE: these CSSProperties objects are kept for backward compatibility with
+// existing `style={xStyle}` / `style={{...xStyle, ...}}` consumers outside
+// this pass's scope (pages/*, components/media/*) — their values below are
+// tokenized (var(--hds-*)) but the export shape is unchanged so nothing that
+// already imports these breaks. New/converted call sites should prefer the
+// real CSS classes in sharedStyles.module.css instead of importing these.
+
 export const inputStyle: CSSProperties = {
   width: '100%', padding: '9px 10px',
-  border: '1px solid var(--hds-line)', borderRadius: 8,
+  border: '1px solid var(--hds-line)', borderRadius: 'var(--hds-radius-input)',
   background: 'var(--hds-bg-3)', color: 'var(--hds-txt)',
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 13,
+  fontFamily: 'var(--hds-font-mono-brand)', fontSize: 'var(--hds-font-size-tv-meta)',
   boxSizing: 'border-box',
 }
 
 export const filterInputStyle: CSSProperties = {
   padding: '5px 7px',
-  border: '1px solid var(--hds-line)', borderRadius: 6,
+  border: '1px solid var(--hds-line)', borderRadius: 'var(--hds-radius-sm)',
   background: 'var(--hds-bg-3)', color: 'var(--hds-txt)',
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+  fontFamily: 'var(--hds-font-mono-brand)', fontSize: 'var(--hds-font-size-tv-small-title)',
   boxSizing: 'border-box',
 }
 
 export const goldBtnStyle: CSSProperties = {
-  padding: '10px 18px', border: 'none', borderRadius: 9,
+  padding: '10px 18px', border: 'none', borderRadius: 'var(--hds-radius-btn)',
   background: 'linear-gradient(180deg, var(--hds-gold), var(--hds-gold-2))',
-  color: 'oklch(0.2 0.04 70)', fontFamily: "'Chakra Petch', sans-serif",
+  color: 'var(--hds-txt-on-gold)', fontFamily: 'var(--hds-font-display)',
   fontWeight: 700, fontSize: 13, cursor: 'pointer',
-  boxShadow: '0 4px 14px -4px oklch(0.83 0.13 84 / 0.4)',
+  boxShadow: 'var(--hds-gold-btn-shadow)',
 }
 
 export const ghostBtnStyle: CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 6,
-  padding: '10px 14px', border: '1px solid var(--hds-line)', borderRadius: 9,
+  display: 'flex', alignItems: 'center', gap: 'var(--hds-space-2)',
+  padding: '10px 14px', border: '1px solid var(--hds-line)', borderRadius: 'var(--hds-radius-btn)',
   background: 'transparent', color: 'var(--hds-txt-2)',
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 12, cursor: 'pointer',
+  fontFamily: 'var(--hds-font-mono-brand)', fontSize: 'var(--hds-font-size-tv-label)', cursor: 'pointer',
 }
 
 export const dangerBtnStyle: CSSProperties = {
-  padding: '10px 16px', border: '1px solid oklch(0.5 0.14 22 / 0.5)', borderRadius: 9,
-  background: 'transparent', color: 'oklch(0.72 0.16 22)',
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 12, cursor: 'pointer',
+  padding: '10px 16px', border: '1px solid var(--hds-danger-border)', borderRadius: 'var(--hds-radius-btn)',
+  background: 'transparent', color: 'var(--hds-danger-text)',
+  fontFamily: 'var(--hds-font-mono-brand)', fontSize: 'var(--hds-font-size-tv-label)', cursor: 'pointer',
 }
 
 export const seasonBtnStyle: CSSProperties = {
-  padding: '2px 6px', borderRadius: 4, border: '1px solid var(--hds-line)',
+  padding: '2px 6px', borderRadius: 'var(--hds-radius-xs)', border: '1px solid var(--hds-line)',
   background: 'transparent', color: 'var(--hds-txt-2)',
-  fontFamily: "'JetBrains Mono', monospace", fontSize: 10, cursor: 'pointer',
+  fontFamily: 'var(--hds-font-mono-brand)', fontSize: 'var(--hds-font-size-tv-caption)', cursor: 'pointer',
 }
 
 export const zoomBtnStyle: CSSProperties = {
   width: 28, height: 26, border: 'none', background: 'transparent',
-  color: 'var(--hds-txt-2)', borderRadius: 6, cursor: 'pointer', fontSize: 16,
-  fontFamily: "'JetBrains Mono', monospace",
+  color: 'var(--hds-txt-2)', borderRadius: 'var(--hds-radius-sm)', cursor: 'pointer', fontSize: 16,
+  fontFamily: 'var(--hds-font-mono-brand)',
 }
 
 // Backdrop-darkening gradients only guarantee contrast against a flat
@@ -54,5 +61,4 @@ export const zoomBtnStyle: CSSProperties = {
 // out. A real per-glyph shadow holds up regardless of what's under it.
 // Shared by the Home hero (desktop + TV) and MediaDetailHero so title/meta/
 // overview text reads the same way everywhere it sits over backdrop art.
-export const heroTextShadow = '0 1px 3px oklch(0 0 0 / 0.9), 0 2px 14px oklch(0 0 0 / 0.7)'
-
+export const heroTextShadow = 'var(--hds-text-shadow-hero)'

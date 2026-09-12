@@ -1,148 +1,298 @@
 #include "MediaProbe.h"
 #include <nlohmann/json.hpp>
 #include <array>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
 
 using json = nlohmann::json;
 
-static std::string runCommand(const std::string& cmd) {
-    std::array<char, 4096> buf{};
-    std::string result;
-    auto closer = [](FILE* f) { if (f) pclose(f); };
-    std::unique_ptr<FILE, decltype(closer)> pipe(popen(cmd.c_str(), "r"), closer);
-    if (!pipe) return "";
-    while (fgets(buf.data(), static_cast<int>(buf.size()), pipe.get()))
-        result += buf.data();
-    return result;
+int64_t statMtimeEpochSecs(const std::string& file_path)
+{
+	std::error_code ec;
+	auto ftime = std::filesystem::last_write_time(file_path, ec);
+	if (ec) return 0;
+	auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+	return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+}
+
+static std::string runCommand(const std::string& cmd)
+{
+	std::array < char, 4096 > buf{};
+	std::string result;
+	auto closer = [](FILE* f) { if (f) pclose(f); };
+	std::unique_ptr<FILE, decltype(closer)> pipe(popen(cmd.c_str(), "r"), closer);
+	if (!pipe) return "";
+	while (fgets(buf.data(), static_cast<int>(buf.size()), pipe.get())) result += buf.data();
+	return result;
 }
 
 // ffprobe reports "bits_per_raw_sample" as a JSON string (e.g. "10"), and
 // not every container/muxer populates it reliably — pix_fmt's "10le"/"12le"
 // suffix (e.g. "yuv420p10le") is a solid fallback when it's absent.
-static int parseBitDepth(const json& s) {
-    if (s.contains("bits_per_raw_sample")) {
-        try {
-            auto raw = s["bits_per_raw_sample"].get<std::string>();
-            if (!raw.empty()) return std::stoi(raw);
-        } catch (...) {}
-    }
-    std::string pix_fmt = s.value("pix_fmt", "");
-    if (pix_fmt.find("10le") != std::string::npos || pix_fmt.find("10be") != std::string::npos) return 10;
-    if (pix_fmt.find("12le") != std::string::npos || pix_fmt.find("12be") != std::string::npos) return 12;
-    return 8;
+static int parseBitDepth(const json& s)
+{
+	if (s.contains("bits_per_raw_sample"))
+	{
+		try
+		{
+			auto raw = s["bits_per_raw_sample"].get<std::string>();
+			if (!raw.empty()) return std::stoi(raw);
+		}
+		catch (...)
+		{
+		}
+	}
+	std::string pix_fmt = s.value("pix_fmt", "");
+	if (pix_fmt.find("10le") != std::string::npos || pix_fmt.find("10be") != std::string::npos) return 10;
+	if (pix_fmt.find("12le") != std::string::npos || pix_fmt.find("12be") != std::string::npos) return 12;
+	return 8;
 }
 
-bool isHdrTransfer(const std::string& color_transfer) {
-    return color_transfer == "smpte2084" || color_transfer == "arib-std-b67";
+bool isHdrTransfer(const std::string& color_transfer)
+{
+	return color_transfer == "smpte2084" || color_transfer == "arib-std-b67";
+}
+
+// ffprobe reports frame rates as "num/den" (e.g. "30000/1001"), occasionally
+// a bare integer, or "0/0" when it has no basis to compute one.
+double parseFrameRateFraction(const std::string& s)
+{
+	auto slash = s.find('/');
+	if (slash == std::string::npos)
+	{
+		try { return std::stod(s); }
+		catch (...) { return 0.0; }
+	}
+	try
+	{
+		double num = std::stod(s.substr(0, slash));
+		double den = std::stod(s.substr(slash + 1));
+		return den != 0.0 ? num / den : 0.0;
+	}
+	catch (...) { return 0.0; }
+}
+
+bool isLikelyVfr(const VideoTrack& v)
+{
+	double r_fps   = parseFrameRateFraction(v.r_frame_rate);
+	double avg_fps = parseFrameRateFraction(v.avg_frame_rate);
+	if (r_fps <= 0.0 || avg_fps <= 0.0) return false; // insufficient data — don't guess
+	return std::abs(r_fps - avg_fps) > 0.05;          // well beyond simple rounding noise
+}
+
+// Shell-escape a path by wrapping in single quotes (works for paths without
+// embedded single quotes, which covers all sane media file names).
+static std::string shellEscapeSingleQuoted(const std::string& path)
+{
+	std::string safe;
+	for (char c : path)
+	{
+		if (c == '\'') safe += "'\\''";
+		else safe           += c;
+	}
+	return safe;
 }
 
 std::optional<MediaInfo> probeMedia(const std::string& ffprobe_path,
-                                     const std::string& file_path) {
-    // Shell-escape the file path by wrapping in single quotes (works for paths
-    // without embedded single quotes, which covers all sane media file names).
-    std::string safe_path;
-    for (char c : file_path) {
-        if (c == '\'') safe_path += "'\\''";
-        else safe_path += c;
-    }
+									const std::string& file_path)
+{
+	std::string safe_path = shellEscapeSingleQuoted(file_path);
 
-    std::string cmd = ffprobe_path
-        + " -v quiet -print_format json -show_streams '"
-        + safe_path + "' 2>/dev/null";
+	// timeout -k 2 <N>: same guard Kairos's own MediaProbe.cpp puts around
+	// every ffprobe invocation it runs — without it, a hung probe (a stalled/
+	// unreachable network mount, a corrupt file ffprobe spins on) blocks
+	// whichever caller ran this forever. On the TaskRegistry callers
+	// (spawnFfmpeg's own probe, ChannelSession::prefetchLoop()'s prefetch),
+	// that leaks a real OS thread permanently — TaskRegistry has no forced
+	// reaping of its own. -k 2 gives a stuck process 2s to honor SIGTERM
+	// before timeout escalates to SIGKILL.
+	std::string cmd = "timeout -k 2 15 " + ffprobe_path
+		+ " -v quiet -print_format json -show_streams -show_format '"
+		+ safe_path + "' 2>/dev/null";
 
-    std::string output = runCommand(cmd);
-    if (output.empty()) return std::nullopt;
+	std::string output = runCommand(cmd);
+	if (output.empty()) return std::nullopt;
 
-    try {
-        auto j = json::parse(output);
-        MediaInfo info;
-        int audio_rel = 0, sub_rel = 0;
+	try
+	{
+		auto j = json::parse(output);
+		MediaInfo info;
+		int audio_rel = 0, sub_rel = 0;
 
-        for (auto& s : j.value("streams", json::array())) {
-            std::string codec_type = s.value("codec_type", "");
-            std::string lang       = "";
-            std::string title      = "";
-            if (s.contains("tags")) {
-                auto& tags = s["tags"];
-                lang  = tags.value("language", tags.value("LANGUAGE", ""));
-                title = tags.value("title",    tags.value("TITLE",    ""));
-            }
+		for (auto& s : j.value("streams", json::array()))
+		{
+			std::string codec_type = s.value("codec_type", "");
+			std::string lang       = "";
+			std::string title      = "";
+			if (s.contains("tags"))
+			{
+				auto& tags = s["tags"];
+				lang       = tags.value("language", tags.value("LANGUAGE", ""));
+				title      = tags.value("title", tags.value("TITLE", ""));
+			}
 
-            if (codec_type == "video") {
-                VideoTrack v;
-                v.stream_index = s.value("index", 0);
-                v.codec        = s.value("codec_name", "");
-                v.width        = s.value("width",  0);
-                v.height       = s.value("height", 0);
-                v.bit_depth       = parseBitDepth(s);
-                v.color_transfer  = s.value("color_transfer",  "");
-                v.color_primaries = s.value("color_primaries", "");
-                v.color_space     = s.value("color_space",     "");
-                info.video.push_back(v);
-            } else if (codec_type == "audio") {
-                AudioTrack a;
-                a.stream_index  = s.value("index", 0);
-                a.relative_index = audio_rel++;
-                a.codec         = s.value("codec_name", "");
-                a.language      = lang;
-                a.title         = title;
-                a.channels      = s.value("channels", 0);
-                info.audio.push_back(a);
-            } else if (codec_type == "subtitle") {
-                SubtitleTrack st;
-                st.stream_index  = s.value("index", 0);
-                st.relative_index = sub_rel++;
-                st.codec         = s.value("codec_name", "");
-                st.language      = lang;
-                st.title         = title;
-                info.subtitles.push_back(st);
-            }
-        }
-        return info;
-    } catch (const std::exception& e) {
-        std::cerr << "[probe] JSON parse error: " << e.what() << "\n";
-        return std::nullopt;
-    }
+			if (codec_type == "video")
+			{
+				VideoTrack v;
+				v.stream_index    = s.value("index", 0);
+				v.codec           = s.value("codec_name", "");
+				v.profile         = s.value("profile", "");
+				v.level           = s.value("level", 0);
+				v.width           = s.value("width", 0);
+				v.height          = s.value("height", 0);
+				v.bit_depth       = parseBitDepth(s);
+				v.color_transfer  = s.value("color_transfer", "");
+				v.color_primaries = s.value("color_primaries", "");
+				v.color_space     = s.value("color_space", "");
+				v.r_frame_rate    = s.value("r_frame_rate", "");
+				v.avg_frame_rate  = s.value("avg_frame_rate", "");
+				v.field_order     = s.value("field_order", "");
+				info.video.push_back(v);
+			}
+			else if (codec_type == "audio")
+			{
+				AudioTrack a;
+				a.stream_index   = s.value("index", 0);
+				a.relative_index = audio_rel++;
+				a.codec          = s.value("codec_name", "");
+				a.profile        = s.value("profile", "");
+				a.language       = lang;
+				a.title          = title;
+				a.channels       = s.value("channels", 0);
+				info.audio.push_back(a);
+			}
+			else if (codec_type == "subtitle")
+			{
+				SubtitleTrack st;
+				st.stream_index   = s.value("index", 0);
+				st.relative_index = sub_rel++;
+				st.codec          = s.value("codec_name", "");
+				st.language       = lang;
+				st.title          = title;
+				info.subtitles.push_back(st);
+			}
+		}
+
+		// format.duration is a JSON string, e.g. "1234.567000" — parse
+		// defensively and leave duration_ms at 0 (its default) on any
+		// failure/absence, same idiom as bits_per_raw_sample above.
+		if (j.contains("format") && j["format"].contains("duration"))
+		{
+			try
+			{
+				double secs      = std::stod(j["format"]["duration"].get<std::string>());
+				info.duration_ms = static_cast<int64_t>(secs * 1000.0 + 0.5);
+			}
+			catch (...)
+			{
+			}
+		}
+
+		return info;
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "[probe] JSON parse error: " << e.what() << "\n";
+		return std::nullopt;
+	}
 }
 
 std::optional<MediaInfo> probeMediaCached(const std::string& ffprobe_path,
-                                           const std::string& file_path) {
-    static std::mutex cache_mtx;
-    static std::unordered_map<std::string, MediaInfo> cache;
-    {
-        std::lock_guard<std::mutex> lock(cache_mtx);
-        auto it = cache.find(file_path);
-        if (it != cache.end()) return it->second;
-    }
-    auto info = probeMedia(ffprobe_path, file_path);
-    if (!info) return std::nullopt;
-    std::lock_guard<std::mutex> lock(cache_mtx);
-    cache.emplace(file_path, *info);
-    return info;
+										  const std::string& file_path)
+{
+	static std::mutex cache_mtx;
+	static std::unordered_map<std::string, MediaInfo> cache;
+	{
+		std::lock_guard<std::mutex> lock(cache_mtx);
+		auto it = cache.find(file_path);
+		if (it != cache.end()) return it->second;
+	}
+	auto info = probeMedia(ffprobe_path, file_path);
+	if (!info) return std::nullopt;
+	std::lock_guard<std::mutex> lock(cache_mtx);
+	cache.emplace(file_path, *info);
+	return info;
 }
 
-int pickAudioTrack(const MediaInfo& info, const std::string& preferred_lang) {
-    if (info.audio.empty()) return 0;
-    if (!preferred_lang.empty()) {
-        for (auto& a : info.audio) {
-            // Compare first 3 chars for ISO 639-2 vs 639-1 tolerance
-            if (a.language.substr(0, 3) == preferred_lang.substr(0, 3))
-                return a.relative_index;
-        }
-    }
-    return 0;
+int pickAudioTrack(const MediaInfo& info, const std::string& preferred_lang)
+{
+	if (info.audio.empty()) return 0;
+	if (!preferred_lang.empty())
+	{
+		for (auto& a : info.audio)
+		{
+			// Compare first 3 chars for ISO 639-2 vs 639-1 tolerance
+			if (a.language.substr(0, 3) == preferred_lang.substr(0, 3)) return a.relative_index;
+		}
+	}
+	return 0;
 }
 
-int pickSubtitleTrack(const MediaInfo& info, const std::string& preferred_lang) {
-    if (preferred_lang.empty() || info.subtitles.empty()) return -1;
-    for (auto& s : info.subtitles) {
-        if (s.language.substr(0, 3) == preferred_lang.substr(0, 3))
-            return s.relative_index;
-    }
-    return -1;
+int pickSubtitleTrack(const MediaInfo& info, const std::string& preferred_lang)
+{
+	if (preferred_lang.empty() || info.subtitles.empty()) return -1;
+	for (auto& s : info.subtitles)
+	{
+		if (s.language.substr(0, 3) == preferred_lang.substr(0, 3)) return s.relative_index;
+	}
+	return -1;
+}
+
+std::vector<int64_t> probeKeyframeTimestampsMs(const std::string& ffprobe_path,
+											   const std::string& file_path,
+											   int64_t* last_packet_ms)
+{
+	std::string safe_path = shellEscapeSingleQuoted(file_path);
+	// Packet-level probing (no decode): -show_entries packet=pts_time,flags
+	// reads demuxed packet headers only, fast even on long files. The flags
+	// column's leading 'K' marks a keyframe packet (ffmpeg's own convention,
+	// e.g. "K__" vs "__"). csv=p=0 drops the leading stream-index column
+	// ffprobe would otherwise prefix each line with.
+	// 120s, not probeMedia()'s much shorter header-only timeout — this scans
+	// every packet in the whole file, and a large (multi-hour 4K/2160p) file
+	// on a slow disk or network share can genuinely take minutes even
+	// without decoding. Whatever the budget, `timeout` still just kills
+	// ffprobe outright once it's spent — runCommand() then returns
+	// whatever partial CSV output had already been flushed, a real but
+	// INCOMPLETE prefix of the file's actual keyframes, not a failure this
+	// function can see and report on its own. Confirmed live as a two-hour
+	// movie's keyframe scan getting cut off after only its first keyframe —
+	// computeSegmentBoundaries() cross-checks the result against the file's
+	// own separately-probed duration specifically because no timeout value
+	// here can be trusted to always be long enough.
+	std::string cmd = "timeout -k 2 120 " + ffprobe_path
+		+ " -v quiet -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 '"
+		+ safe_path + "' 2>/dev/null";
+
+	std::string output = runCommand(cmd);
+	std::vector<int64_t> keyframes;
+	int64_t last_ms = -1;
+	std::istringstream iss(output);
+	std::string line;
+	while (std::getline(iss, line))
+	{
+		auto comma = line.find(',');
+		if (comma == std::string::npos || comma + 1 >= line.size()) continue;
+		try
+		{
+			double secs = std::stod(line.substr(0, comma));
+			int64_t ms  = static_cast<int64_t>(secs * 1000.0 + 0.5);
+			if (ms > last_ms) last_ms = ms;
+			if (line[comma + 1] == 'K') keyframes.push_back(ms);
+		}
+		catch (...)
+		{
+		}
+	}
+	if (last_packet_ms && last_ms >= 0) *last_packet_ms = last_ms;
+	return keyframes;
 }

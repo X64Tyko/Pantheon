@@ -1,0 +1,27 @@
+# Keeps the build context (repo root — see docker-*.yml, all of which build
+# from here so each service's Dockerfile can also reach shared/) from
+# uploading things no Dockerfile ever COPYs in. Each Dockerfile still only
+# copies the specific paths it needs, but without this Docker/BuildKit has to
+# read and hash everything below first.
+.git/
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+_deps/
+
+node_modules/
+dist/
+*.tsbuildinfo
+
+data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+image-cache/
+anidb-xml-cache/
+
+.idea/
+.vscode/
+*.iml

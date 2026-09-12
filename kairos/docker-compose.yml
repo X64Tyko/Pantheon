@@ -12,7 +12,7 @@ services:
       - KAIROS_DEBUG_EPG=1
     volumes:
       - ./data/kairos:/data
-      - /mnt/user/Media:/media:ro
+      - /mnt/user/Media:/media   # writable: Kairos writes NFO/poster/fanart sidecars back to local libraries
     restart: unless-stopped
 
   tunarr:

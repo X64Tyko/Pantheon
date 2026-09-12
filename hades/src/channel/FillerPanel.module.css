@@ -1,0 +1,241 @@
+/* Filler-type accent dot — always BLOCK_META.filler.edge in this file (every
+   picker/row here is filler-specific), so unlike BulkEditPanel's per-type
+   dot this one never actually varies — safe as a static value rather than
+   a runtime style. */
+.fillerDot {
+  background: oklch(0.62 0.03 262);
+}
+
+.entryRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  padding: var(--hds-space-3) var(--hds-space-4);
+  background: var(--hds-bg-3);
+  border: 1px solid var(--hds-line-s);
+  border-radius: var(--hds-radius-tile);
+}
+
+.entryDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.entryInfo { flex: 1; min-width: 0; }
+
+.entryTitle {
+  font-size: var(--hds-font-size-tv-meta);
+  font-weight: 500;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entrySeasonTag {
+  font-size: var(--hds-font-size-tv-micro);
+  color: var(--hds-violet);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.entryAdvancementSelect {
+  width: 92px;
+}
+
+.entryWeightInput {
+  width: 44px;
+  text-align: center;
+}
+
+.entryRemoveBtn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-meta);
+  flex-shrink: 0;
+}
+
+/* ── FillerContentPicker ─────────────────────────────────────────────────── */
+
+.pickerTabRow {
+  display: flex;
+  gap: 3px;
+  margin-bottom: var(--hds-space-2);
+}
+
+.pickerTab {
+  padding: 3px var(--hds-space-3);
+  border: none;
+  border-radius: var(--hds-radius-xs);
+  background: var(--hds-bg-3);
+  color: var(--hds-txt-2);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-micro);
+  cursor: pointer;
+  text-transform: capitalize;
+}
+.pickerTabActive {
+  background: var(--hds-violet);
+  color: oklch(0.15 0.02 286);
+}
+
+.pickerSearch {
+  width: 100%;
+  font-size: var(--hds-font-size-tv-meta);
+  padding: 5px var(--hds-space-3);
+  margin-bottom: var(--hds-space-2);
+  box-sizing: border-box;
+}
+
+.pickerListBox {
+  max-height: 140px;
+  overflow: auto;
+  border: 1px solid var(--hds-line-s);
+  border-radius: 7px;
+}
+
+.pickerEmptyText {
+  padding: 10px var(--hds-space-4);
+  font-size: var(--hds-font-size-tv-meta);
+  color: var(--hds-txt-3);
+}
+
+.pickerItemRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-3);
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--hds-line-s);
+}
+.pickerItemRow:hover {
+  background: var(--hds-bg-3);
+}
+
+.pickerItemTitle {
+  font-size: 11.5px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerItemPlus {
+  font-size: var(--hds-font-size-tv-micro);
+  color: var(--hds-violet);
+}
+
+/* ── SeasonPicker ────────────────────────────────────────────────────────── */
+
+.seasonPickerRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.seasonPickerLoading {
+  font-size: var(--hds-font-size-tv-caption);
+  color: var(--hds-txt-3);
+}
+
+.seasonBtn {
+  padding: 2px 6px;
+  border-radius: var(--hds-radius-xs);
+  border: 1px solid var(--hds-line);
+  background: transparent;
+  color: var(--hds-txt-3);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-micro);
+  cursor: pointer;
+}
+.seasonBtnActive {
+  border-color: var(--hds-violet);
+  background: var(--hds-violet-deep-wash);
+  color: var(--hds-violet);
+}
+
+/* ── FillerAddPanel ──────────────────────────────────────────────────────── */
+
+.addPanelRoot {
+  margin-top: var(--hds-space-3);
+  padding: 11px var(--hds-space-4);
+  background: oklch(0.16 0.016 286);
+  border: 1px solid var(--hds-line);
+  border-radius: var(--hds-radius-lg);
+}
+
+.armedRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hds-space-2);
+  margin-bottom: var(--hds-space-3);
+}
+
+.armedTitle {
+  font-size: var(--hds-font-size-tv-meta);
+  color: var(--hds-txt-2);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.armedTitlePrefix { color: var(--hds-txt-3); }
+
+.armedSeasonTag {
+  color: var(--hds-violet);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.armedClearBtn {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--hds-radius-xs);
+  background: transparent;
+  color: var(--hds-txt-3);
+  cursor: pointer;
+  font-size: var(--hds-font-size-tv-caption);
+  flex-shrink: 0;
+}
+
+.seasonFilterBlock {
+  margin-bottom: var(--hds-space-3);
+}
+
+.seasonFilterLabel {
+  font-size: var(--hds-font-size-tv-badge);
+  letter-spacing: 0.14em;
+  color: var(--hds-txt-3);
+  margin-bottom: var(--hds-space-1);
+  font-family: var(--hds-font-mono-brand);
+}
+
+.addRow {
+  display: flex;
+  gap: var(--hds-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.addAdvancementSelect { flex: 1; }
+
+.addWeightInput { width: 48px; }
+
+.addBtn {
+  padding: 5px var(--hds-space-4);
+  border: none;
+  border-radius: 6px;
+  background: var(--hds-violet);
+  color: oklch(0.15 0.02 286);
+  font-family: var(--hds-font-mono-brand);
+  font-size: var(--hds-font-size-tv-meta);
+  font-weight: 700;
+  cursor: pointer;
+}
