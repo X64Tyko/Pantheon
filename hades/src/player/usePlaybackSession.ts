@@ -128,6 +128,20 @@ export function usePlaybackSession(target: PlaybackTarget, initialPositionMs = 0
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.kind, target.id])
 
+  // After the full transcode finishes, hls.js downloads all remaining
+  // segments in a burst then stops making HTTP requests. Without a
+  // keepalive the server's 120 s idle reaper deletes the HLS directory —
+  // Android Chrome's smaller MSE buffer evicts buffered video and hls.js
+  // tries to re-fetch segments that are now gone (404 → freeze). Re-
+  // fetching the manifest every 30 s is enough to prevent the reap.
+  useEffect(() => {
+    if (isLive || !manifestUrl) return
+    const keepalive = setInterval(() => {
+      fetch(manifestUrl, { cache: 'no-store' }).catch(() => {})
+    }, 30_000)
+    return () => clearInterval(keepalive)
+  }, [isLive, manifestUrl])
+
   const reload: PlaybackSession['reload'] = useCallback(opts => {
     load(opts.positionMs ?? 0, opts.audioTrack ?? audioTrack, opts.subtitleTrack ?? subtitleTrack)
   }, [load, audioTrack, subtitleTrack])
