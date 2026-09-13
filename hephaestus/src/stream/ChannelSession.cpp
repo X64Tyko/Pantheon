@@ -37,6 +37,18 @@ static int64_t nowMs()
 static constexpr double kMinSpeed = 0.98;
 static constexpr double kMaxSpeed = 1.02;
 
+// Filler gets a much wider dilation range than a program's near-imperceptible
+// ±2%: it's interchangeable padding (station bumpers/idents), so a visibly
+// faster/slower playback is an acceptable price for keeping the channel on its
+// wall-clock schedule, and — unlike a program — it's the *only* place dilation
+// is allowed at all under the current design (programs play at 1.0x to their
+// real end; filler absorbs the resulting drift so the next program still
+// starts on schedule). Clamped, never refused: filler always applies its
+// best-effort correction (whatever fraction of the drift ±10% can close),
+// with any residual carried to the next filler rather than cutting content.
+static constexpr double fillerMinSpeed = 0.90;
+static constexpr double fillerMaxSpeed = 1.10;
+
 // Shared by appendOutputArgs' -hls_time and pushVideoEncoderArgs'
 // -force_key_frames so the two can never drift apart the way they did
 // before. Only the transcode bucket can actually honor this, though — a
@@ -438,7 +450,16 @@ static std::vector<std::string> buildHlsProducerArgs(
 	// pushHeadBoundArgs' -output_ts_offset below. Only the real file seek
 	// needs the absolute position; -output_ts_offset intentionally still
 	// uses the local, spawn-relative one.
-	int64_t seek_base_ms)
+	int64_t seek_base_ms,
+	// Playback speed. 1.0 for programs (never dilated — see project design);
+	// !=1.0 only for filler, which is dilated to reconcile schedule drift so
+	// the next program still starts on its scheduled wall-clock (see
+	// computeFillerSpeed()). Applied as a video setpts filter + audio tempo,
+	// exactly like buildArgs()' own speed handling. Only the transcode branch
+	// can honor it; a direct-stream copy has no filter graph, but filler is
+	// always forced onto the transcode bucket so speed!=1.0 never reaches the
+	// copy branch.
+	double speed = 1.0)
 {
 	std::vector<std::string> a;
 	a.push_back(ffmpeg_path);
@@ -482,6 +503,7 @@ static std::vector<std::string> buildHlsProducerArgs(
 
 		std::vector<std::string> vfParts;
 		pushScaleFilter(vfParts, resolveMaxHeight(max_resolution));
+		if (speed != 1.0) vfParts.push_back("setpts=PTS/" + fmtSpeed(speed));
 		pushVideoEncoderArgs(a, vfParts, hw_accel, kLiveHlsSegmentSecs, source_video);
 		if (verbose_transcode_logs) vfParts.push_back("showinfo");
 		pushVideoFilterArgs(a, vfParts);
@@ -491,7 +513,7 @@ static std::vector<std::string> buildHlsProducerArgs(
 										 : defaultBitrateCapKbps(effectiveOutputHeight(resolveMaxHeight(max_resolution), source_video));
 		pushBitrateCapArgs(a, effective_bitrate_kbps);
 
-		pushAudioEncoderArgs(a, loudnorm, /*speed=*/1.0, audio_bitrate_kbps,
+		pushAudioEncoderArgs(a, loudnorm, speed, audio_bitrate_kbps,
 							 /*client_caps=*/std::nullopt, /*source_audio=*/nullptr,
 							 /*debug_showinfo=*/verbose_transcode_logs);
 	}
@@ -749,6 +771,24 @@ std::optional<double> ChannelSession::computeSpeed(int64_t rawDriftMs, int64_t d
 	if (speed < kMinSpeed || speed > kMaxSpeed) return std::nullopt;
 
 	return speed;
+}
+
+double ChannelSession::computeFillerSpeed(int64_t rawDriftMs, int64_t fillerDurationMs)
+{
+	// rawDriftMs > 0: the channel is behind schedule (the preceding program(s)
+	// ran long), so this filler must finish in less wall-clock than its own
+	// content length — speed up. < 0: ahead of schedule — slow down. The exact
+	// factor that lands the next program on its scheduled start is
+	// content / (content - drift), same identity as computeSpeed(); the
+	// difference is filler always applies it clamped rather than refusing when
+	// it can't fully close (see fillerMinSpeed/fillerMaxSpeed).
+	if (fillerDurationMs <= 0) return 1.0;
+	int64_t targetWallclockMs = fillerDurationMs - rawDriftMs;
+	// Drift >= the whole filler (can't be absorbed here at any sane speed) —
+	// run as fast as allowed and let the residual carry to the next filler.
+	if (targetWallclockMs <= 0) return fillerMaxSpeed;
+	double speed = static_cast<double>(fillerDurationMs) / static_cast<double>(targetWallclockMs);
+	return std::clamp(speed, fillerMinSpeed, fillerMaxSpeed);
 }
 
 bool ChannelSession::start()
@@ -1714,7 +1754,7 @@ ChannelSession::HlsProducerHandle ChannelSession::hlsCreateProducer(const Kairos
 		"hls", dir, "seg-", std::move(argsBuilder),
 		opts.buffer_size, opts.ffmpeg_debug_logs, opts.verbose_transcode_logs,
 		kHlsProducerLookaheadSecs, kLiveHlsSegmentSecs, kHlsHeadWindowSegments,
-		VodEncodeStream::kDefaultStallTimeoutMs, opts.encoder_admission,
+		VodEncodeStream::defaultStallTimeoutMs, opts.encoder_admission,
 		/*gate_encoder_slot=*/opts.hw_accel != HwAccel::none);
 	// A live channel is consumed strictly forward, so its head handoffs can be
 	// prewarmed instead of cold-started right at the boundary.

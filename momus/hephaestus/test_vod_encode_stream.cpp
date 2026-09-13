@@ -342,7 +342,7 @@ TEST_F(VodEncodeStreamTest, PrewarmSpawnsNextBoundaryHeadBeforeFrontierReachesIt
 	ASSERT_EQ(stream.prepareSegment(0, seg, 20), VodEncodeStream::SegmentPrep::WaitColdStart);
 	ASSERT_EQ(stream.liveHeadCount(), 1);
 
-	// Frontier requested within kHeadPrewarmLeadSegments of the [0,4) boundary.
+	// Frontier requested within headPrewarmLeadSegments of the [0,4) boundary.
 	stream.prepareSegment(1, seg, 20);
 	stream.tick(20);
 
@@ -390,7 +390,7 @@ TEST_F(VodEncodeStreamTest, GatedHeadAcquiresAndReleasesEncoderSlot)
 		VodEncodeStream stream("video", dir.string(), "seg-", args,
 							   /*buffer_size=*/65536, /*ffmpeg_debug_logs=*/false, /*verbose_transcode_logs=*/false,
 							   /*lookahead_secs=*/12, /*hls_time_secs=*/6, /*head_window_segments=*/100,
-							   VodEncodeStream::kDefaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
+							   VodEncodeStream::defaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
 		ASSERT_EQ(stream.prepareSegment(0, segmentStartMs(50), 50), VodEncodeStream::SegmentPrep::WaitColdStart);
 		EXPECT_EQ(admission.activeCount(), 1) << "a gated head must hold a host encoder slot while live";
 	}
@@ -410,10 +410,10 @@ TEST_F(VodEncodeStreamTest, GatedSpawnRefusedWhenHostAtEncoderCap)
 	std::filesystem::create_directories(dir / "b");
 	VodEncodeStream s1("video", (dir / "a").string(), "seg-", args,
 					   65536, false, false, 12, 6, 100,
-					   VodEncodeStream::kDefaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
+					   VodEncodeStream::defaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
 	VodEncodeStream s2("video", (dir / "b").string(), "seg-", args,
 					   65536, false, false, 12, 6, 100,
-					   VodEncodeStream::kDefaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
+					   VodEncodeStream::defaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/true);
 
 	ASSERT_EQ(s1.prepareSegment(0, segmentStartMs(50), 50), VodEncodeStream::SegmentPrep::WaitColdStart);
 	EXPECT_EQ(admission.activeCount(), 1);
@@ -436,7 +436,7 @@ TEST_F(VodEncodeStreamTest, UngatedStreamNeverTouchesEncoderAdmission)
 	// spawn freely and never acquire, even sharing the same admission object.
 	VodEncodeStream stream("audio", dir.string(), "aseg-", args,
 						   65536, false, false, 12, 6, 100,
-						   VodEncodeStream::kDefaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/false);
+						   VodEncodeStream::defaultStallTimeoutMs, &admission, /*gate_encoder_slot=*/false);
 	ASSERT_EQ(stream.prepareSegment(0, segmentStartMs(50), 50), VodEncodeStream::SegmentPrep::WaitColdStart);
 	EXPECT_EQ(admission.activeCount(), 0) << "an ungated stream must not consume host encoder slots";
 }

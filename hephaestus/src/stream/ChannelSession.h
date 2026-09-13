@@ -367,6 +367,16 @@ private:
 	// speed adjustment — callers should fall back to offset-based seeking.
 	static std::optional<double> computeSpeed(int64_t rawDriftMs, int64_t durationMs);
 
+	// Filler-only counterpart to computeSpeed(): the playback speed to run a
+	// filler of fillerDurationMs at so it consumes exactly (fillerDurationMs -
+	// rawDriftMs) of wall-clock and hands off to the next program on its
+	// scheduled start. Unlike computeSpeed() this never refuses — filler is
+	// interchangeable padding and is the only slot allowed to dilate, so it
+	// always returns a best-effort speed clamped to filler's wide range, with
+	// any un-absorbed drift carried to the next filler rather than cutting
+	// content. Returns 1.0 for a zero/unknown filler duration.
+	static double computeFillerSpeed(int64_t rawDriftMs, int64_t fillerDurationMs);
+
 	// Snaps offsetMs down to the nearest real keyframe at/before it, using
 	// item's cached keyframes_ms (Kairos's own sync-time probe — see
 	// KairosNowResponse's own comment) if it's still valid for the file's
@@ -390,6 +400,11 @@ public:
 	static std::optional<double> computeSpeedForTest(int64_t rawDriftMs, int64_t durationMs)
 	{
 		return computeSpeed(rawDriftMs, durationMs);
+	}
+
+	static double computeFillerSpeedForTest(int64_t rawDriftMs, int64_t fillerDurationMs)
+	{
+		return computeFillerSpeed(rawDriftMs, fillerDurationMs);
 	}
 
 	// The preroll mismatch-fallback safety property (hlsMaintainPrerollQueue()'s own

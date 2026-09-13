@@ -59,7 +59,7 @@ namespace
 	// Enough lead to absorb the successor's own cold-start (reopen/reprobe/
 	// reseek/NVENC-init) before its first segment is due — ~3 segments of
 	// runway at the live channel's segment length.
-	constexpr int kHeadPrewarmLeadSegments = 3;
+	constexpr int headPrewarmLeadSegments = 3;
 }
 
 VodEncodeStream::Head::~Head()
@@ -457,7 +457,7 @@ void VodEncodeStream::tick(int total_segments)
 			{
 				if (!h->ffmpeg) continue;
 				if (h->window_end_segment >= total_segments) continue; // last head — nothing follows it
-				if (h->window_end_segment - h->last_requested.load() > kHeadPrewarmLeadSegments) continue;
+				if (h->window_end_segment - h->last_requested.load() > headPrewarmLeadSegments) continue;
 				int we      = h->window_end_segment;
 				bool covered = std::any_of(heads_.begin(), heads_.end(),
 										   [&](const std::unique_ptr<Head>& o) { return o->start_segment == we; });

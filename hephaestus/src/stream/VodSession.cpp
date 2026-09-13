@@ -186,7 +186,9 @@ static std::vector<std::string> buildVodVideoArgs(
 	bool verbose_transcode_logs,
 	const std::string& dir,
 	int hlsStartNumber,
-	const std::optional<ClientCapabilities>& client_caps)
+	const std::optional<ClientCapabilities>& client_caps,
+	const std::vector<int64_t>& segment_start_ms,
+	int total_segments)
 {
 	std::vector<std::string> a;
 	a.push_back(ffmpeg_path);
@@ -255,22 +257,31 @@ static std::vector<std::string> buildVodVideoArgs(
 
 	pushHeadBoundArgs(a, positionMs, windowDurationSecs);
 
-	// "vod" playlist type (not "event" as this used to be): ffmpeg's own
-	// playlist output here is now purely a private scratch file Hephaestus
-	// itself never serves — VodSession synthesizes and serves the real,
-	// complete, #EXT-X-ENDLIST-terminated playlist.m3u8 directly (see
-	// buildStaticPlaylist()), so the old "does ffmpeg's own HLS muxer emit
-	// the playlist incrementally or hold it back" distinction that used to
-	// matter here no longer applies to anything a client ever sees.
+	// Pin cuts to the shared playlist's exact boundaries (same -segment_times
+	// approach as buildVodAudioArgs), not -hls_time's own keyframe choice — a
+	// divergent cut yields a segment whose real duration != the declared
+	// #EXTINF and wedges a strict player. For copy the muxer still only splits
+	// on real keyframes, which these boundaries already are.
+	std::optional<int64_t> window_end_ms;
+	if (windowDurationSecs) window_end_ms = positionMs + static_cast<int64_t>(std::llround(*windowDurationSecs * 1000.0));
+	std::string segment_times;
+	for (int i = hlsStartNumber + 1; i < total_segments; ++i)
+	{
+		int64_t boundary_ms = segment_start_ms[static_cast<size_t>(i)];
+		if (window_end_ms && boundary_ms >= *window_end_ms) break;
+		if (!segment_times.empty()) segment_times += ",";
+		std::ostringstream ss;
+		ss << std::fixed << std::setprecision(3) << ((boundary_ms - positionMs) / 1000.0);
+		segment_times += ss.str();
+	}
+
 	a.insert(a.end(), {
-				 "-f", "hls",
-				 "-hls_time", std::to_string(kVodHlsSegmentSecs),
-				 "-hls_playlist_type", "vod",
-				 "-hls_list_size", "0",
-				 "-start_number", std::to_string(hlsStartNumber),
-				 "-hls_segment_filename", dir + "/seg-%05d.ts",
-				 dir + "/video-encoder.m3u8"
+				 "-f", "segment",
+				 "-reset_timestamps", "0",
+				 "-segment_start_number", std::to_string(hlsStartNumber),
 			 });
+	if (!segment_times.empty()) a.insert(a.end(), {"-segment_times", segment_times});
+	a.push_back(dir + "/seg-%05d.ts");
 
 	return a;
 }
@@ -644,17 +655,21 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 	int burn_in_track     = vkey.burn_in_track;
 	bool video_direct     = direct_stream;
 	bool video_burn_in    = subtitle_burn_in;
+	std::vector<int64_t> segment_start_ms_copy = segment_start_ms;
+	int total_segments_copy                    = total_segments;
 
 	video_stream_ = manager_.getOrCreateVideoStream(vkey,
 													[vdir, ffmpeg_path_copy, file_path_copy, opts_copy, client_caps_copy, source_codec_copy,
-														source_video_copy, hdr_capable_copy, burn_in_track, video_direct, video_burn_in]()
+														source_video_copy, hdr_capable_copy, burn_in_track, video_direct, video_burn_in,
+														segment_start_ms_copy, total_segments_copy]()
 													{
 														std::error_code ec;
 														std::filesystem::create_directories(vdir, ec);
 														return std::make_shared<VodEncodeStream>(
 															"video", vdir, "seg-",
 															[ffmpeg_path_copy, file_path_copy, opts_copy, client_caps_copy, source_codec_copy,
-																source_video_copy, hdr_capable_copy, burn_in_track, video_direct, video_burn_in, vdir]
+																source_video_copy, hdr_capable_copy, burn_in_track, video_direct, video_burn_in, vdir,
+																segment_start_ms_copy, total_segments_copy]
 														(int segment_index, int64_t posMs, std::optional<double> windowSecs)
 															{
 																const VideoTrack* source_video = source_video_copy ? &*source_video_copy : nullptr;
@@ -663,11 +678,11 @@ bool VodSession::start(const std::string& file_path, int64_t position_ms,
 																						 opts_copy.hw_accel, opts_copy.vaapi_device, opts_copy.decode_hw_accel,
 																						 opts_copy.decodable_codecs, source_codec_copy, source_video,
 																						 hdr_capable_copy, opts_copy.verbose_transcode_logs, vdir, segment_index,
-																						 client_caps_copy);
+																						 client_caps_copy, segment_start_ms_copy, total_segments_copy);
 															},
 															opts_copy.buffer_size, opts_copy.ffmpeg_debug_logs, opts_copy.verbose_transcode_logs,
 															opts_copy.lookahead_secs, kVodHlsSegmentSecs,
-															/*head_window_segments=*/100, VodEncodeStream::kDefaultStallTimeoutMs, opts_copy.encoder_admission,
+															/*head_window_segments=*/100, VodEncodeStream::defaultStallTimeoutMs, opts_copy.encoder_admission,
 															// direct-stream (copy) video runs no encoder, so gate only a real hw encode
 															/*gate_encoder_slot=*/!video_direct && opts_copy.hw_accel != HwAccel::none);
 													});

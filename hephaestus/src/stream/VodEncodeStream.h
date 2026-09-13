@@ -73,7 +73,7 @@ public:
 	// to offer (e.g. a live channel wanting room to eventually nudge speed
 	// per-head) can pass something much smaller.
 	// stall_timeout_ms: exposed purely so tests can shrink it (the default is
-	// kDefaultStallTimeoutMs) — no production caller needs anything but the
+	// defaultStallTimeoutMs) — no production caller needs anything but the
 	// default real-world budget.
 	// admission/gate_encoder_slot: host-wide hardware-encode-session cap (see
 	// EncoderAdmission). gate_encoder_slot must be true only when this stream's
@@ -81,11 +81,11 @@ public:
 	// consume a GPU session) — when true and admission is non-null, each head
 	// acquires a slot before spawning and releases it on teardown (RAII, see
 	// Head). nullptr/false leaves behaviour exactly as before (opt-in).
-	static constexpr int64_t kDefaultStallTimeoutMs = 15'000;
+	static constexpr int64_t defaultStallTimeoutMs = 15'000;
 	VodEncodeStream(std::string label, std::string segment_dir, std::string segment_prefix,
 					ArgsBuilder argsBuilder, int buffer_size, bool ffmpeg_debug_logs, bool verbose_transcode_logs,
 					int lookahead_secs, int hls_time_secs, int head_window_segments = 100,
-					int64_t stall_timeout_ms                                        = kDefaultStallTimeoutMs,
+					int64_t stall_timeout_ms                                        = defaultStallTimeoutMs,
 					EncoderAdmission* admission = nullptr, bool gate_encoder_slot = false);
 	~VodEncodeStream();
 

@@ -63,6 +63,37 @@ TEST(ChannelSessionTest, ComputeSpeed)
 	EXPECT_FALSE(s4.has_value());
 }
 
+TEST(ChannelSessionTest, ComputeFillerSpeed)
+{
+	// 30s filler.
+	int64_t filler = 30000;
+
+	// Behind by 1s: filler must finish in 29s of wall-clock, so play 30s of
+	// content in 29s -> 30000/29000 = 1.0345. Well within filler's ±10%.
+	EXPECT_NEAR(ChannelSession::computeFillerSpeedForTest(1000, filler), 1.0345, 0.0005);
+
+	// Ahead by 1s: stretch 30s of content over 31s -> 30000/31000 = 0.9677.
+	EXPECT_NEAR(ChannelSession::computeFillerSpeedForTest(-1000, filler), 0.9677, 0.0005);
+
+	// Large behind-drift that a program would refuse (computeSpeed returns
+	// nullopt) is instead clamped to filler's max and applied best-effort —
+	// 6s behind on 30s wants 1.25, clamps to 1.10.
+	EXPECT_NEAR(ChannelSession::computeFillerSpeedForTest(6000, filler), 1.10, 1e-9);
+
+	// Large ahead-drift clamps to the min.
+	EXPECT_NEAR(ChannelSession::computeFillerSpeedForTest(-6000, filler), 0.90, 1e-9);
+
+	// Drift >= the whole filler can't be absorbed at any sane speed — go max,
+	// residual carries to the next filler rather than dividing by <= 0.
+	EXPECT_NEAR(ChannelSession::computeFillerSpeedForTest(filler, filler), 1.10, 1e-9);
+	EXPECT_NEAR(ChannelSession::computeFillerSpeedForTest(filler + 5000, filler), 1.10, 1e-9);
+
+	// Zero drift is exactly 1.0 (no dilation), and an unknown filler duration
+	// is a no-op rather than a divide-by-zero.
+	EXPECT_NEAR(ChannelSession::computeFillerSpeedForTest(0, filler), 1.0, 1e-9);
+	EXPECT_NEAR(ChannelSession::computeFillerSpeedForTest(1000, 0), 1.0, 1e-9);
+}
+
 // ── hlsSameItem: the preroll mismatch-fallback safety property ─────────────
 //
 // hlsMaintainPrerollQueue() builds a producer for whatever Kairos resolves as next
